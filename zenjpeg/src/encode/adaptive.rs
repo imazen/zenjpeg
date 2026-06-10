@@ -155,8 +155,8 @@ use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{
     ChromaSubsampling, Effort, ProgressiveScanMode, Quality, XybSubsampling,
 };
+use crate::encode::trellis::TrellisConfig;
 use crate::encode::trellis::TrellisSpeedMode;
-use crate::encode::trellis::{HybridConfig, TrellisConfig};
 use zenpixels::PixelSlice;
 
 /// Restart-marker density choice for [`AdaptiveOptions`].
@@ -603,12 +603,10 @@ fn adaptive_internal(
         cfg = cfg.sharp_yuv(sharp_yuv);
     }
 
-    // Trellis / hybrid: gated behind feature flag + caller permission.
-    // TrellisConfig::default() is "AC + DC trellis enabled, Adaptive
-    // speed". HybridConfig is AQ-coupled trellis with configurable
-    // `base_lambda_scale1` (the lambda the oracle's `hyb*` codec_name
-    // suffix encodes). `hybrid_config(enabled=true)` zeroes the
-    // standalone trellis slot internally.
+    // Trellis: gated behind caller permission (effort). The oracle's
+    // `hyb*` cells map to a fixed lower lambda with DC trellis off (the
+    // shape the old hybrid path produced); `trelStd` cells use the
+    // default "AC + DC trellis, Adaptive speed" config.
     {
         cfg = match trellis_choice {
             TrellisChoice::Off => cfg,
@@ -616,10 +614,10 @@ fn adaptive_internal(
                 speed_mode: TrellisSpeedMode::Adaptive,
                 ..TrellisConfig::default()
             }),
-            TrellisChoice::Hybrid(lambda) => cfg.hybrid_config(HybridConfig {
-                enabled: true,
-                base_lambda_scale1: lambda,
-                ..HybridConfig::default()
+            TrellisChoice::Hybrid(lambda) => cfg.trellis(TrellisConfig {
+                lambda_log_scale1: lambda,
+                dc_enabled: false,
+                ..TrellisConfig::default()
             }),
         };
     }

@@ -462,8 +462,6 @@ pub struct EncoderConfig {
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: Option<super::encoder_types::ParallelEncoding>,
-    /// Hybrid quantization configuration (AQ-coupled trellis lambda).
-    pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -661,7 +659,6 @@ impl EncoderConfig {
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
-            hybrid_config: super::trellis::HybridConfig::disabled(),
             deringing: true,
             aq_enabled: true,
             allow_16bit_quant_tables: false,
@@ -1211,33 +1208,13 @@ impl EncoderConfig {
         self
     }
 
-    /// Configure hybrid quantization (jpegli AQ + mozjpeg trellis).
-    ///
-    /// Set hybrid AQ+trellis configuration directly.
-    ///
-    /// **Expert API.** Prefer using [`.expert()`](Self::expert) with
-    /// [`ExpertConfig`](super::search::ExpertConfig) for full control.
-    ///
-    /// When a `HybridConfig` with `enabled = true` is set, it takes
-    /// priority over any `TrellisConfig`.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
-        self.hybrid_config = config;
-        if config.enabled {
-            self.trellis = None;
-        }
-        self
-    }
-
     // === Trellis Quantization ===
 
     /// Set trellis quantization configuration directly.
     ///
-    /// **Expert API.** Prefer using [`.expert()`](Self::expert) with
-    /// [`ExpertConfig`](super::search::ExpertConfig) for full control,
-    /// or [`.optimization()`](Self::optimization) with presets.
-    #[doc(hidden)]
+    /// **Expert API.** Prefer [`.optimization()`](Self::optimization)
+    /// presets. Set [`TrellisConfig::aq_coupling`] for AQ-coupled
+    /// (hybrid) per-block lambda.
     #[must_use]
     pub fn trellis(mut self, config: TrellisConfig) -> Self {
         self.trellis = Some(config);
@@ -1248,45 +1225,6 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_trellis(&self) -> Option<&TrellisConfig> {
         self.trellis.as_ref()
-    }
-
-    /// Apply expert configuration overlay.
-    ///
-    /// Customizes quantization tables and trellis/hybrid settings on top of
-    /// the current configuration. Only specified fields are overridden.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ExpertConfig, QuantTableConfig, ChromaSubsampling};
-    /// use zenjpeg::encode::trellis::TrellisConfig;
-    ///
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .expert(ExpertConfig::default()
-    ///         .tables(QuantTableConfig::MozjpegRobidoux)
-    ///         .trellis(TrellisConfig::default()));
-    /// ```
-    #[must_use]
-    pub fn expert(mut self, expert: super::encoder_types::ExpertConfig) -> Self {
-        // Apply tables if specified
-        if let Some(tables) = expert.tables {
-            self.quant_table_config = tables;
-        }
-
-        // Apply trellis/hybrid - hybrid takes priority
-        if let Some(ref hybrid) = expert.hybrid
-            && hybrid.enabled
-        {
-            self.hybrid_config = *hybrid;
-            self.trellis = None;
-        }
-        if (expert.hybrid.is_none() || !expert.hybrid.as_ref().is_some_and(|h| h.enabled))
-            && let Some(trellis) = expert.trellis
-        {
-            self.trellis = Some(trellis);
-        }
-
-        self
     }
 
     // === Color Mode ===
@@ -1357,7 +1295,7 @@ impl EncoderConfig {
     /// - vs JpegliProg: **+1.5 SSIM2** points average
     /// - vs cjpegli-444: **+1.6 SSIM2** and **-0.3 Butteraugli**
     ///
-    /// Uses jpegli quant tables with hybrid trellis λ=14.5 and progressive encoding.
+    /// Uses jpegli quant tables with fixed-λ₁=14.5 AC trellis and progressive encoding.
     ///
     /// Quality thresholds (below these, falls back to defaults):
     /// - 4:2:0: q50+ (distance < 5.0)
@@ -1378,23 +1316,21 @@ impl EncoderConfig {
 
         let distance = self.quality.to_distance();
 
-        // Determine if we're in the quality range where hybrid optimization wins
+        // Determine if we're in the quality range where trellis wins
         // (q50+ for both 4:2:0 and 4:4:4 based on R-D benchmarks)
-        let should_use_hybrid = match self.color_mode {
+        let should_use_trellis = match self.color_mode {
             ColorMode::YCbCr { .. } => distance < 5.0, // q50+
             _ => false,
         };
 
-        // Enable hybrid trellis with λ=14.5 (best R-D tradeoff from benchmarks)
-        // Uses default jpegli quant tables - NOT CMA-ES scaling (incompatible)
-        if should_use_hybrid {
-            self.hybrid_config = super::trellis::HybridConfig {
-                enabled: true,
-                base_lambda_scale1: 14.5,
-                ..Default::default()
-            };
-            // Clear standalone trellis (hybrid supersedes it)
-            self.trellis = None;
+        // Fixed-lambda AC trellis, λ1=14.5 (best R-D tradeoff from benchmarks;
+        // DC trellis off, matching historical auto_optimize behaviour).
+        if should_use_trellis {
+            self.trellis = Some(TrellisConfig {
+                lambda_log_scale1: 14.5,
+                dc_enabled: false,
+                ..TrellisConfig::default()
+            });
         }
 
         // Enable progressive for better compression

@@ -60,7 +60,6 @@ pub(crate) struct StreamingEncoderBuilder {
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
     /// Hybrid quantization configuration
-    pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Custom AQ map
     pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
@@ -112,7 +111,6 @@ impl StreamingEncoderBuilder {
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
-            hybrid_config: super::trellis::HybridConfig::disabled(),
             custom_aq_map: None,
             trellis: None,
             quant_source: QuantTableSource::default(),
@@ -306,13 +304,6 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
         self.scan_strategy = strategy;
-        self
-    }
-
-    /// Sets custom hybrid quantization configuration.
-    #[must_use]
-    pub(crate) fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
-        self.hybrid_config = config;
         self
     }
 

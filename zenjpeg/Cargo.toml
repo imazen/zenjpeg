@@ -450,9 +450,6 @@ required-features = ["__test-utils"]
 
 # Expert/tuning examples
 [[example]]
-name = "hybrid_auto_detect"
-
-[[example]]
 name = "hybrid_parameter_sweep"
 
 [[example]]

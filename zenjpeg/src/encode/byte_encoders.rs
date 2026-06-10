@@ -207,13 +207,9 @@ impl BytesEncoder {
             builder = builder.parallel(true);
         }
 
-        // Apply trellis or hybrid quantization config
-        {
-            if let Some(ref trellis) = config.trellis {
-                builder = builder.trellis(*trellis);
-            } else if config.hybrid_config.enabled {
-                builder = builder.hybrid_config(config.hybrid_config);
-            }
+        // Apply trellis quantization config
+        if let Some(ref trellis) = config.trellis {
+            builder = builder.trellis(*trellis);
         }
 
         builder.start()

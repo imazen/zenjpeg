@@ -122,6 +122,95 @@ impl TrellisSpeedMode {
     }
 }
 
+/// Per-block AQ→lambda coupling for trellis quantization.
+///
+/// When `scale != 0.0`, the per-block trellis lambda is adjusted from the
+/// block's adaptive-quantization strength before the rate-distortion search:
+///
+/// ```text
+/// adj    = clamp(±max_adjustment)( aq^exponent × scale [× dampen] [× chroma_mul] )
+/// scale1 = lambda_log_scale1 + adj            (additive, default)
+///        | lambda_log_scale1 × (1 + adj)      (multiplicative)
+/// ```
+///
+/// `scale == 0.0` (the default) is exactly mozjpeg-style standalone trellis —
+/// the lambda is fixed for every block.
+///
+/// Positive `scale` spends more bits on high-AQ (smooth/sensitive) blocks;
+/// negative spends fewer. Measured envelope: `scale = -4` ≈ 2 % smaller files
+/// at ~3 % DSSIM cost on photos; `+4` ≈ 2–3 % better DSSIM at ~3 % size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AqCoupling {
+    /// Lambda adjustment per unit of AQ strength. `0.0` = coupling off.
+    pub scale: f32,
+    /// Non-linear AQ mapping exponent (`1.0` = linear).
+    pub exponent: f32,
+    /// Minimum AQ strength before any adjustment applies.
+    pub threshold: f32,
+    /// Clamp `|adjustment|` to this bound. `0.0` = unclamped.
+    pub max_adjustment: f32,
+    /// Extra multiplier applied to the adjustment on chroma blocks.
+    pub chroma_mul: f32,
+    /// Multiplicative coupling (`scale1 × (1 + adj)`) instead of additive.
+    pub multiplicative: bool,
+    /// Scale the adjustment by the quality-derived dampen factor.
+    pub quality_adaptive: bool,
+}
+
+impl Default for AqCoupling {
+    fn default() -> Self {
+        Self::OFF
+    }
+}
+
+impl AqCoupling {
+    /// Coupling disabled — fixed-lambda (standalone) trellis.
+    pub const OFF: Self = Self {
+        scale: 0.0,
+        exponent: 1.0,
+        threshold: 0.0,
+        max_adjustment: 0.0,
+        chroma_mul: 1.0,
+        multiplicative: false,
+        quality_adaptive: false,
+    };
+
+    /// Whether this coupling changes any block's lambda.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.scale != 0.0
+    }
+
+    /// Compute the lambda adjustment for one block.
+    ///
+    /// `aq_strength` is the block's AQ strength (typically 0.0–0.5);
+    /// `dampen` the quality-derived factor (only used with
+    /// [`quality_adaptive`](Self::quality_adaptive)); `is_chroma` selects
+    /// the [`chroma_mul`](Self::chroma_mul) term.
+    #[must_use]
+    pub fn compute_adjustment(&self, aq_strength: f32, dampen: f32, is_chroma: bool) -> f32 {
+        if !self.is_active() || aq_strength < self.threshold {
+            return 0.0;
+        }
+        let effective_aq = if self.exponent != 1.0 {
+            aq_strength.powf(self.exponent)
+        } else {
+            aq_strength
+        };
+        let mut adjustment = effective_aq * self.scale;
+        if self.quality_adaptive {
+            adjustment *= dampen;
+        }
+        if is_chroma {
+            adjustment *= self.chroma_mul;
+        }
+        if self.max_adjustment > 0.0 {
+            adjustment = adjustment.clamp(-self.max_adjustment, self.max_adjustment);
+        }
+        adjustment
+    }
+}
+
 /// Configuration for trellis quantization.
 ///
 /// Trellis quantization uses dynamic programming to find optimal quantization
@@ -169,6 +258,10 @@ pub struct TrellisConfig {
     /// large vertical DC jumps that create visible banding.
     /// Default: 0.0 (disabled, matching C mozjpeg default).
     pub delta_dc_weight: f32,
+    /// AQ→lambda coupling. [`AqCoupling::OFF`] (default) keeps the classic
+    /// fixed-lambda mozjpeg behaviour; a non-zero `scale` adjusts the lambda
+    /// per block from the AQ strength (the old "hybrid" mode).
+    pub aq_coupling: AqCoupling,
 }
 
 /// Default lambda_log_scale1 value (matches mozjpeg)
@@ -190,6 +283,7 @@ impl Default for TrellisConfig {
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             speed_mode: TrellisSpeedMode::Adaptive,
             delta_dc_weight: 0.0,
+            aq_coupling: AqCoupling::OFF,
         }
     }
 }
@@ -214,6 +308,7 @@ impl TrellisConfig {
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             speed_mode: TrellisSpeedMode::Adaptive,
             delta_dc_weight: 0.0,
+            aq_coupling: AqCoupling::OFF,
         }
     }
 
@@ -254,6 +349,15 @@ impl TrellisConfig {
             speed_mode: TrellisSpeedMode::Thorough,
             ..Self::default()
         }
+    }
+
+    /// Set the AQ→lambda coupling (see [`AqCoupling`]).
+    ///
+    /// `AqCoupling::OFF` (the default) is classic fixed-lambda trellis.
+    #[must_use]
+    pub fn aq_coupling(mut self, coupling: AqCoupling) -> Self {
+        self.aq_coupling = coupling;
+        self
     }
 
     // === Builder Methods ===

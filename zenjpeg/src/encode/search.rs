@@ -7,26 +7,24 @@
 //!
 //! # Design
 //!
-//! The encoder has 4 separate config types (`EncodingTables`, `TrellisConfig`,
-//! `HybridConfig`, [`EncoderConfig`]) with overlapping fields and different
-//! visibility. `ExpertConfig` eliminates this overlap:
+//! The encoder has 3 config types ([`EncodingTables`], [`TrellisConfig`],
+//! [`EncoderConfig`]) at different altitudes. `ExpertConfig` flattens them:
 //!
-//! - **One set of trellis parameters** (not duplicated between `TrellisConfig` and
-//!   `HybridConfig`). The `aq_trellis_coupling` field controls the transition:
-//!   `0.0` = standalone mozjpeg trellis, `> 0.0` = AQ-coupled hybrid mode.
+//! - **One set of trellis parameters.** The `aq_trellis_coupling` field maps
+//!   onto [`AqCoupling`]: `0.0` = fixed-lambda mozjpeg trellis, non-zero =
+//!   AQ-coupled per-block lambda (the old "hybrid" mode).
 //! - **All fields `pub`** for direct mutation by optimizers.
-//! - **No mode booleans** for hybrid vs standalone — coupling strength is the control.
+//! - **No mode booleans** for coupled vs standalone — coupling strength is the control.
 //!
-//! # Standalone vs Hybrid Trellis
+//! # Standalone vs coupled trellis
 //!
-//! When `trellis_enabled == true`, the mode depends on `aq_trellis_coupling`:
+//! When `trellis_enabled == true`, `aq_trellis_coupling` selects the mode:
 //!
-//! - **`== 0.0` (standalone):** Produces a `TrellisConfig`. All `trellis_*` fields
-//!   are forwarded. This matches C mozjpeg behavior.
-//! - **`> 0.0` (hybrid):** Produces a `HybridConfig`. The hybrid path creates
-//!   per-block trellis configs internally via `HybridConfig::to_trellis_config()`,
-//!   which does **not** forward all fields. See the "Hybrid-Mode Limitations" section
-//!   on `ExpertConfig` for which fields are ignored.
+//! - **`== 0.0` (standalone):** Fixed lambda for every block. Matches C
+//!   mozjpeg behavior.
+//! - **`!= 0.0` (coupled):** Per-block lambda adjusted from AQ strength.
+//!   Every field — including `trellis_speed_mode` and
+//!   `trellis_delta_dc_weight` — is forwarded in both modes.
 //!
 //! # Parameter Count
 //!
@@ -68,8 +66,7 @@ use super::encoder_types::{
     ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset, ProgressiveScanMode,
     Quality, QuantTableConfig,
 };
-use super::trellis::HybridConfig;
-use super::trellis::{TrellisConfig, TrellisSpeedMode};
+use super::trellis::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 use super::tuning::{EncodingTables, PerComponent};
 
 /// All tunable encoder parameters for external optimization.
@@ -562,9 +559,9 @@ impl ExpertConfig {
     /// are used as-is — call [`blend_zero_bias()`](Self::blend_zero_bias) first if
     /// you changed quality or zero-bias fields after construction.
     ///
-    /// The trellis/hybrid dispatch depends on `trellis_enabled` and
-    /// `aq_trellis_coupling`. See the struct-level "Hybrid-Mode Limitations"
-    /// docs for which fields are ignored in each mode.
+    /// The trellis dispatch depends on `trellis_enabled`;
+    /// `aq_trellis_coupling` maps onto [`AqCoupling`]. All trellis fields
+    /// are forwarded in both coupled and uncoupled modes.
     #[must_use]
     pub fn to_encoder_config(&self, color_mode: ColorMode) -> EncoderConfig {
         let mut config = match color_mode {
@@ -590,59 +587,40 @@ impl ExpertConfig {
         config.allow_16bit_quant_tables = self.allow_16bit_quant_tables;
         config.downsampling_method = self.downsampling_method;
 
-        // Trellis / hybrid dispatch
-        let (trellis, hybrid) = self.build_trellis_or_hybrid();
-        config.trellis = trellis;
-        config.hybrid_config = hybrid;
+        // Trellis dispatch
+        config.trellis = self.build_trellis();
 
         config
     }
 
-    /// Pack trellis + coupling fields into `TrellisConfig` (standalone) or
-    /// `HybridConfig` (coupled).
+    /// Pack the trellis + coupling fields into a single [`TrellisConfig`].
     ///
-    /// Returns `(Some(TrellisConfig), disabled HybridConfig)` for standalone mode,
-    /// or `(None, enabled HybridConfig)` for hybrid mode.
-    ///
-    /// In hybrid mode, the following fields are NOT forwarded to per-block trellis
-    /// configs (see struct-level docs): `trellis_speed_mode`,
-    /// `trellis_delta_dc_weight`.
-    fn build_trellis_or_hybrid(&self) -> (Option<TrellisConfig>, HybridConfig) {
+    /// `aq_trellis_coupling == 0.0` produces classic fixed-lambda trellis;
+    /// non-zero coupling populates [`AqCoupling`] for per-block lambda
+    /// adjustment. Every field — including `trellis_speed_mode` and
+    /// `trellis_delta_dc_weight` — is forwarded in both modes.
+    fn build_trellis(&self) -> Option<TrellisConfig> {
         if !self.trellis_enabled {
-            return (None, HybridConfig::disabled());
+            return None;
         }
 
-        if self.aq_trellis_coupling != 0.0 {
-            // Hybrid mode: AQ-coupled trellis (positive or negative coupling).
-            // Note: trellis_speed_mode and trellis_delta_dc_weight are NOT
-            // forwarded to per-block TrellisConfig by to_trellis_config().
-            // See struct-level "Hybrid-Mode Limitations" docs.
-            let hybrid = HybridConfig {
-                enabled: true,
-                aq_lambda_scale: self.aq_trellis_coupling,
-                base_lambda_scale1: self.trellis_lambda_log_scale1,
-                base_lambda_scale2: self.trellis_lambda_log_scale2,
-                dc_enabled: self.trellis_dc_enabled,
-                aq_exponent: self.aq_trellis_exponent,
-                aq_threshold: self.aq_trellis_threshold,
-                quality_adaptive: self.aq_trellis_quality_adaptive,
-                chroma_scale: self.aq_trellis_chroma_scale,
-                multiplicative: self.aq_trellis_multiplicative,
+        Some(TrellisConfig {
+            enabled: true,
+            dc_enabled: self.trellis_dc_enabled,
+            lambda_log_scale1: self.trellis_lambda_log_scale1,
+            lambda_log_scale2: self.trellis_lambda_log_scale2,
+            speed_mode: self.trellis_speed_mode,
+            delta_dc_weight: self.trellis_delta_dc_weight,
+            aq_coupling: AqCoupling {
+                scale: self.aq_trellis_coupling,
+                exponent: self.aq_trellis_exponent,
+                threshold: self.aq_trellis_threshold,
                 max_adjustment: self.aq_trellis_max_adjustment,
-            };
-            (None, hybrid)
-        } else {
-            // Standalone trellis: all fields forwarded directly.
-            let trellis = TrellisConfig {
-                enabled: true,
-                dc_enabled: self.trellis_dc_enabled,
-                lambda_log_scale1: self.trellis_lambda_log_scale1,
-                lambda_log_scale2: self.trellis_lambda_log_scale2,
-                speed_mode: self.trellis_speed_mode,
-                delta_dc_weight: self.trellis_delta_dc_weight,
-            };
-            (Some(trellis), HybridConfig::disabled())
-        }
+                chroma_mul: self.aq_trellis_chroma_scale,
+                multiplicative: self.aq_trellis_multiplicative,
+                quality_adaptive: self.aq_trellis_quality_adaptive,
+            },
+        })
     }
 }
 
@@ -744,7 +722,6 @@ mod tests {
         });
 
         assert!(enc.trellis.is_none());
-        assert!(!enc.hybrid_config.enabled);
         assert!(enc.deringing);
         assert_eq!(enc.scan_mode, ProgressiveScanMode::Progressive);
     }
@@ -759,11 +736,11 @@ mod tests {
         });
 
         assert!(enc.trellis.is_some());
-        assert!(!enc.hybrid_config.enabled);
 
         let trellis = enc.trellis.unwrap();
         assert!(trellis.enabled);
         assert!(trellis.dc_enabled);
+        assert!(!trellis.aq_coupling.is_active());
         assert_eq!(trellis.speed_mode, TrellisSpeedMode::Thorough);
     }
 
@@ -778,12 +755,14 @@ mod tests {
             subsampling: ChromaSubsampling::Quarter,
         });
 
-        // Hybrid mode: trellis is None, hybrid_config is enabled
-        assert!(enc.trellis.is_none());
-        assert!(enc.hybrid_config.enabled);
-        assert_eq!(enc.hybrid_config.aq_lambda_scale, 2.0);
-        assert_eq!(enc.hybrid_config.aq_exponent, 0.5);
-        assert_eq!(enc.hybrid_config.chroma_scale, 0.8);
+        // Coupled mode: trellis is Some with an active AqCoupling
+        let trellis = enc.trellis.expect("coupled trellis present");
+        assert!(trellis.aq_coupling.is_active());
+        assert_eq!(trellis.aq_coupling.scale, 2.0);
+        assert_eq!(trellis.aq_coupling.exponent, 0.5);
+        assert_eq!(trellis.aq_coupling.chroma_mul, 0.8);
+        // Speed mode is forwarded in coupled mode too (old hybrid dropped it).
+        assert_eq!(trellis.speed_mode, TrellisSpeedMode::Adaptive);
     }
 
     #[test]
@@ -857,11 +836,10 @@ mod tests {
         assert!((trellis.delta_dc_weight - 0.5).abs() < 1e-6);
     }
 
-    /// Verify hybrid-mode fields pass through to HybridConfig.
-    /// Note: some trellis fields are NOT forwarded to per-block TrellisConfig
-    /// by HybridConfig::to_trellis_config() — see struct-level docs.
+    /// Verify coupled-mode fields pass through to the TrellisConfig's
+    /// AqCoupling — every field is forwarded, unlike the old hybrid path.
     #[test]
-    fn test_hybrid_fields_pass_through() {
+    fn test_coupling_fields_pass_through() {
         let mut expert = ExpertConfig::default_ycbcr(85.0);
         expert.trellis_enabled = true;
         expert.aq_trellis_coupling = 3.5;
@@ -877,16 +855,17 @@ mod tests {
             subsampling: ChromaSubsampling::None,
         });
 
-        assert!(enc.trellis.is_none());
-        assert!(enc.hybrid_config.enabled);
-        assert_eq!(enc.hybrid_config.aq_lambda_scale, 3.5);
-        assert_eq!(enc.hybrid_config.aq_exponent, 2.0);
-        assert_eq!(enc.hybrid_config.aq_threshold, 0.1);
-        assert_eq!(enc.hybrid_config.chroma_scale, 0.7);
-        assert!(enc.hybrid_config.quality_adaptive);
-        assert!((enc.hybrid_config.base_lambda_scale1 - 15.0).abs() < 1e-6);
-        assert!((enc.hybrid_config.base_lambda_scale2 - 17.0).abs() < 1e-6);
-        assert!(!enc.hybrid_config.dc_enabled);
+        let trellis = enc.trellis.expect("coupled trellis present");
+        let coupling = trellis.aq_coupling;
+        assert!(coupling.is_active());
+        assert_eq!(coupling.scale, 3.5);
+        assert_eq!(coupling.exponent, 2.0);
+        assert_eq!(coupling.threshold, 0.1);
+        assert_eq!(coupling.chroma_mul, 0.7);
+        assert!(coupling.quality_adaptive);
+        assert!((trellis.lambda_log_scale1 - 15.0).abs() < 1e-6);
+        assert!((trellis.lambda_log_scale2 - 17.0).abs() < 1e-6);
+        assert!(!trellis.dc_enabled);
     }
 
     #[test]

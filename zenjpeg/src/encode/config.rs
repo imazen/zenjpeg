@@ -72,8 +72,6 @@ pub struct ComputedConfig {
     ///
     /// Has no effect for 4:4:4 (no downsampling needed).
     pub chroma_downsampling: DownsamplingMethod,
-    /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
-    pub hybrid_config: super::trellis::HybridConfig,
     /// Custom AQ map (optional). If None, computed automatically.
     /// Allows pre-scaling the AQ map for size control.
     pub custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
@@ -151,8 +149,8 @@ pub struct ComputedConfig {
     /// Trellis quantization configuration (mozjpeg-compatible API).
     ///
     /// When set, enables trellis quantization for rate-distortion optimization.
-    /// This is the mozjpeg-compatible API. For hybrid AQ+trellis mode, use
-    /// `hybrid_config` instead.
+    /// AQ-coupled (hybrid) lambda is configured via
+    /// [`TrellisConfig::aq_coupling`](super::trellis::TrellisConfig::aq_coupling).
     pub trellis: Option<super::trellis::TrellisConfig>,
 
     /// Whether tiny-file optimizations (shared Huffman tables etc.) are
@@ -281,7 +279,6 @@ impl Default for ComputedConfig {
             huffman: HuffmanStrategy::Optimize,
             // Box filter matches C++ jpegli default
             chroma_downsampling: DownsamplingMethod::Box,
-            hybrid_config: super::trellis::HybridConfig::disabled(),
             custom_aq_map: None,
             encoding_tables: None,
             edge_padding: EdgePaddingConfig::default(),

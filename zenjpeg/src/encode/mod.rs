@@ -142,7 +142,7 @@ pub mod tuning;
 /// Consolidates all trellis/hybrid code into one deletable unit:
 /// - AC/DC trellis DP algorithms
 /// - [`TrellisConfig`](trellis::TrellisConfig) mozjpeg-compatible API
-/// - [`HybridConfig`](trellis::HybridConfig) AQ-coupled trellis
+/// - [`AqCoupling`](trellis::AqCoupling) AQ-coupled per-block lambda
 pub mod trellis;
 
 /// Expert configuration for external optimization (simulated annealing, etc.).
@@ -169,8 +169,6 @@ pub use encoder_config::EncoderConfig;
 #[cfg(feature = "boundary-rd")]
 #[allow(unused_imports)] // Public API re-exports (opt-in behind boundary-rd feature)
 pub use encoder_config::{BoundaryRd, BoundaryRdConfig, NeighborScope, RetryPolicy, SeamPenalty};
-#[allow(unused_imports)] // Public API re-export
-pub use encoder_types::ExpertConfig;
 #[cfg(feature = "parallel")]
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_types::ParallelEncoding;

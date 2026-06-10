@@ -60,9 +60,12 @@ fn main() {
 
             // Rust XYB with hybrid trellis (matches C jpegli's AQ)
             let rust_jpeg = {
-                use zenjpeg::encode::trellis::HybridConfig;
-                let config = EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter)
-                    .hybrid_config(HybridConfig::default());
+                use zenjpeg::encode::trellis::TrellisConfig;
+                let config =
+                    EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter).trellis(TrellisConfig {
+                        dc_enabled: false,
+                        ..TrellisConfig::default()
+                    });
                 let mut enc = config
                     .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                     .expect("encoder setup");

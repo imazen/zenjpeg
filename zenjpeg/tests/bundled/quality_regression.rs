@@ -958,7 +958,7 @@ fn diagnostic_scan_structure() {
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn diagnostic_isolate_trellis_progressive() {
-    use zenjpeg::encode::trellis::HybridConfig;
+    use zenjpeg::encode::trellis::TrellisConfig;
 
     let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
@@ -979,9 +979,9 @@ fn diagnostic_isolate_trellis_progressive() {
         // B: trellis + baseline
         let config_b = EncoderConfig::ycbcr(q_f32, ChromaSubsampling::Quarter)
             .progressive(false)
-            .hybrid_config(HybridConfig {
-                enabled: true,
-                base_lambda_scale1: 14.5,
+            .trellis(TrellisConfig {
+                lambda_log_scale1: 14.5,
+                dc_enabled: false,
                 ..Default::default()
             })
             .allow_16bit_quant_tables(false);

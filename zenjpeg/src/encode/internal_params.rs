@@ -33,7 +33,7 @@ use super::encoder_types::{
     ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, TinyFileMode,
     XybSubsampling,
 };
-use super::trellis::HybridConfig;
+use super::trellis::TrellisConfig;
 
 /// Color-path selection for [`InternalParams::color_path`].
 ///
@@ -161,9 +161,9 @@ pub struct InternalParams {
     #[cfg(feature = "boundary-rd")]
     pub boundary_rd: Option<BoundaryRdConfig>,
 
-    /// Hybrid AQ + trellis configuration. Requires the `trellis` cargo
-    /// feature; without it this field has no effect.
-    pub hybrid: Option<HybridConfig>,
+    /// Trellis quantization configuration. Set
+    /// [`TrellisConfig::aq_coupling`] for AQ-coupled (hybrid) lambda.
+    pub trellis: Option<TrellisConfig>,
 
     /// Chroma distance scale (jpegli butteraugli path). Default `1.0`,
     /// clamped to `[0.1, 5.0]` by the builder.
@@ -175,8 +175,7 @@ pub struct InternalParams {
     /// existing value alone.
     pub chroma_quality: Option<Option<u8>>,
 
-    /// Enable [`EncoderConfig::auto_optimize`]. Requires the `trellis`
-    /// cargo feature.
+    /// Enable [`EncoderConfig::auto_optimize`].
     ///
     /// [`EncoderConfig::auto_optimize`]: super::encoder_config::EncoderConfig::auto_optimize
     pub auto_optimize: Option<bool>,
@@ -230,8 +229,8 @@ impl EncoderConfig {
     /// 5. `scan_strategy` / `optimize_scans` then `progressive`
     /// 6. `optimize_huffman` then `huffman`
     /// 7. `allow_16bit_quant_tables`
-    /// 8. `auto_optimize` (trellis feature)
-    /// 9. `hybrid` (trellis feature)
+    /// 8. `auto_optimize`
+    /// 9. `trellis`
     /// 10. `boundary_rd` (boundary-rd feature)
     /// 11. `chroma_distance_scale`, `chroma_quality`
     /// 12. `deringing`, `aq_enabled`, `pre_blur`, `tiny_file_mode`,
@@ -285,8 +284,8 @@ impl EncoderConfig {
         if let Some(b) = params.auto_optimize {
             self = self.auto_optimize(b);
         }
-        if let Some(h) = params.hybrid {
-            self = self.hybrid_config(h);
+        if let Some(t) = params.trellis {
+            self = self.trellis(t);
         }
         #[cfg(feature = "boundary-rd")]
         if let Some(brd) = params.boundary_rd {
@@ -515,19 +514,15 @@ mod tests {
             auto_optimize: Some(true),
             ..Default::default()
         });
-        assert!(cfg.hybrid_config.enabled);
+        assert!(cfg.trellis.is_some());
     }
     #[test]
-    fn hybrid_field_applies() {
-        let hybrid = HybridConfig {
-            enabled: true,
-            ..HybridConfig::default()
-        };
+    fn trellis_field_applies() {
         let cfg = baseline().with_internal_params(InternalParams {
-            hybrid: Some(hybrid),
+            trellis: Some(TrellisConfig::default()),
             ..Default::default()
         });
-        assert!(cfg.hybrid_config.enabled);
+        assert!(cfg.trellis.is_some());
     }
 
     /// Per-field permutation: every non-default field should produce
@@ -560,10 +555,7 @@ mod tests {
             downsampling_method: Some(DownsamplingMethod::GammaAware),
             ..Default::default()
         };
-        // Trellis-only fields don't compile when the feature is off.
-        {
-            params.auto_optimize = Some(false);
-        }
+        params.auto_optimize = Some(false);
         // suppress unused-mut when all conditional cfgs are off.
         let _ = &mut params;
 
