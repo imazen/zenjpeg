@@ -124,11 +124,11 @@ impl JpegEncoderConfig {
     ///
     /// Returns `None` for unrecognized preset names.
     ///
-    /// Uses [`ExpertConfig`](crate::encode::search::ExpertConfig).
+    /// Uses [`ExpertConfig`](crate::encode::expert::ExpertConfig).
     #[must_use]
     pub fn from_preset(preset_name: &str, quality: f32) -> Option<Self> {
         use crate::encode::encoder_types::OptimizationPreset;
-        use crate::encode::search::ExpertConfig;
+        use crate::encode::expert::ExpertConfig;
 
         let preset = match preset_name {
             "mozjpeg_baseline" => OptimizationPreset::MozjpegBaseline,

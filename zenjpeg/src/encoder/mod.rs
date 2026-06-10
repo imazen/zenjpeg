@@ -161,6 +161,14 @@ pub use crate::encode::encoder_types::{
     should_activate_tiny_file_mode, should_activate_tiny_file_mode_for_subsampling,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
+// === Expert tuning surface ===
+// One trellis engine: `TrellisConfig` with `AqCoupling` (scale 0.0 = classic
+// fixed-lambda mozjpeg trellis; non-zero = AQ-coupled per-block lambda).
+// `ExpertConfig` is the complete flat parameter vector (incl. raw quant
+// tables) for external optimizers. See `encode::expert` module docs for the
+// three expert altitudes (builder methods / InternalParams / ExpertConfig).
+pub use crate::encode::expert::ExpertConfig;
+pub use crate::encode::trellis::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 // === Cross-codec uniformity bundle (`__expert`-gated) ===
 // Mirrors `zenwebp::InternalParams` so external pipelines (calibration
 // sweeps, picker training, learned auto-tuners) can drive every zen

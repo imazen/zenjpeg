@@ -63,6 +63,7 @@ impl RateTable {
 
     /// Get the code length for a symbol. Returns 0 if no code assigned.
     #[inline]
+    #[allow(dead_code)] // exercised by rate-table unit tests + trellis_mozjpeg_comparison
     pub fn get_code_length(&self, symbol: u8) -> u8 {
         self.sizes[symbol as usize]
     }

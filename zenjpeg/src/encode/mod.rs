@@ -148,8 +148,8 @@ pub mod trellis;
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
 /// Flattens all quality/size-affecting parameters into a single struct with
-/// no overlapping fields. See [`ExpertConfig`](search::ExpertConfig).
-pub mod search;
+/// no overlapping fields. See [`ExpertConfig`](expert::ExpertConfig).
+pub mod expert;
 
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
@@ -181,6 +181,8 @@ pub use encoder_types::{
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
 pub use exif::{Exif, ExifFields, Orientation};
+#[allow(unused_imports)] // Public API re-export
+pub use expert::ExpertConfig;
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "__expert")]

@@ -24,7 +24,7 @@ use enough::Unstoppable;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use zenjpeg::encode::search::ExpertConfig;
+use zenjpeg::encode::expert::ExpertConfig;
 use zenjpeg::encode::{ChromaSubsampling, ColorMode, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
     ChromaSubsampling as BenchSub, ColorMode as BenchColor, EncoderConfig as BenchEncoderConfig,

@@ -5,6 +5,14 @@
 //! Bayesian search, etc.) can mutate fields directly and call
 //! `to_encoder_config()` to encode.
 //!
+//! # The three expert altitudes
+//!
+//! | Surface | Shape | Use when |
+//! |---|---|---|
+//! | [`EncoderConfig`] builder methods | per-axis setters | normal tuning (quality, scan, chroma, [`TrellisConfig`]) |
+//! | `InternalParams` (`__expert` feature) | partial-merge `Option<_>` bundle | cross-codec pickers / calibration sweeps overriding a few axes |
+//! | [`ExpertConfig`] (this module) | complete flat parameter vector incl. raw 3×64 tables | optimizers that own *every* knob and build configs from scratch |
+//!
 //! # Design
 //!
 //! The encoder has 3 config types ([`EncodingTables`], [`TrellisConfig`],
