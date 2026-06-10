@@ -10,6 +10,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # public_api_doc test skips itself (needs nightly rustdoc + cargo-public-api;
+  # the =check gate runs in ci.yml's clippy job only).
+  ZEN_API_DOC: off
 
 jobs:
   coverage:

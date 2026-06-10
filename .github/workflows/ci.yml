@@ -13,6 +13,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CI: true
+  # Public-API snapshot regen (zenjpeg/tests/public_api_doc.rs) needs nightly
+  # rustdoc + cargo-public-api; only the clippy job carries them and runs the
+  # =check gate. Everywhere else the test skips.
+  ZEN_API_DOC: off
 
 jobs:
   test:
@@ -352,6 +356,16 @@ jobs:
 
       - name: Clippy (__expert + boundary-rd)
         run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
+
+      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for cargo-public-api
+      - uses: dtolnay/rust-toolchain@stable # restore stable as default
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api
+      - name: Public-API snapshots are current
+        run: cargo test -p zenjpeg --test public_api_doc
+        env:
+          ZEN_API_DOC: check
 
   fmt:
     name: Format
