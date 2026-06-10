@@ -66,10 +66,10 @@ jobs:
           fi
 
       - name: Run tests
-        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec"
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec"
 
       - name: Build docs
-        run: cargo doc -p zenjpeg --no-deps --features "trellis,parallel,moxcms,ultrahdr,zencodec"
+        run: cargo doc -p zenjpeg --no-deps --features "parallel,moxcms,ultrahdr,zencodec"
 
       - name: Publish (dry run)
         if: github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch'

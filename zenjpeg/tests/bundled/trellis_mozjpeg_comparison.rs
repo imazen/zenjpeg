@@ -1,4 +1,3 @@
-#![cfg(feature = "trellis")]
 //! Comparison: zenjpeg internalized trellis vs mozjpeg-rs trellis.
 //!
 //! Two levels of testing:

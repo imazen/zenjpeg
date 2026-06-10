@@ -60,12 +60,10 @@ pub(crate) struct StreamingEncoderBuilder {
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
     /// Hybrid quantization configuration
-    #[cfg(feature = "trellis")]
     pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Custom AQ map
     pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
-    #[cfg(feature = "trellis")]
     pub(crate) trellis: Option<super::trellis::TrellisConfig>,
     /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
     /// Only used when `encoding_tables` is `None` (no custom tables).
@@ -114,10 +112,8 @@ impl StreamingEncoderBuilder {
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
-            #[cfg(feature = "trellis")]
             hybrid_config: super::trellis::HybridConfig::disabled(),
             custom_aq_map: None,
-            #[cfg(feature = "trellis")]
             trellis: None,
             quant_source: QuantTableSource::default(),
             tiny_file_mode: TinyFileMode::default(),
@@ -314,7 +310,6 @@ impl StreamingEncoderBuilder {
     }
 
     /// Sets custom hybrid quantization configuration.
-    #[cfg(feature = "trellis")]
     #[must_use]
     pub(crate) fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
         self.hybrid_config = config;
@@ -322,7 +317,6 @@ impl StreamingEncoderBuilder {
     }
 
     /// Sets trellis quantization configuration (mozjpeg-compatible API).
-    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn trellis(mut self, config: super::trellis::TrellisConfig) -> Self {
         self.trellis = Some(config);

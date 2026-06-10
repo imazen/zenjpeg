@@ -1,5 +1,4 @@
 #![allow(clippy::collapsible_if)]
-#![cfg(feature = "trellis")]
 //! Comprehensive zensim regression testing: zenjpeg vs mozjpeg across the entire
 //! imageflow codec corpus.
 //!

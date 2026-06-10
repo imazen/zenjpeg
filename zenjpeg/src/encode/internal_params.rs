@@ -33,7 +33,6 @@ use super::encoder_types::{
     ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, TinyFileMode,
     XybSubsampling,
 };
-#[cfg(feature = "trellis")]
 use super::trellis::HybridConfig;
 
 /// Color-path selection for [`InternalParams::color_path`].
@@ -164,7 +163,6 @@ pub struct InternalParams {
 
     /// Hybrid AQ + trellis configuration. Requires the `trellis` cargo
     /// feature; without it this field has no effect.
-    #[cfg(feature = "trellis")]
     pub hybrid: Option<HybridConfig>,
 
     /// Chroma distance scale (jpegli butteraugli path). Default `1.0`,
@@ -181,7 +179,6 @@ pub struct InternalParams {
     /// cargo feature.
     ///
     /// [`EncoderConfig::auto_optimize`]: super::encoder_config::EncoderConfig::auto_optimize
-    #[cfg(feature = "trellis")]
     pub auto_optimize: Option<bool>,
 
     /// Toggle overshoot deringing.
@@ -285,11 +282,9 @@ impl EncoderConfig {
         if let Some(b) = params.allow_16bit_quant_tables {
             self = self.allow_16bit_quant_tables(b);
         }
-        #[cfg(feature = "trellis")]
         if let Some(b) = params.auto_optimize {
             self = self.auto_optimize(b);
         }
-        #[cfg(feature = "trellis")]
         if let Some(h) = params.hybrid {
             self = self.hybrid_config(h);
         }
@@ -511,8 +506,6 @@ mod tests {
         });
         assert!(matches!(cfg.get_tiny_file_mode(), TinyFileMode::Off));
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn auto_optimize_applies() {
         // auto_optimize(true) only takes effect within the q≥50 band
@@ -524,8 +517,6 @@ mod tests {
         });
         assert!(cfg.hybrid_config.enabled);
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn hybrid_field_applies() {
         let hybrid = HybridConfig {
@@ -570,7 +561,6 @@ mod tests {
             ..Default::default()
         };
         // Trellis-only fields don't compile when the feature is off.
-        #[cfg(feature = "trellis")]
         {
             params.auto_optimize = Some(false);
         }

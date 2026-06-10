@@ -124,8 +124,7 @@ impl JpegEncoderConfig {
     ///
     /// Returns `None` for unrecognized preset names.
     ///
-    /// Requires the `trellis` feature (uses [`ExpertConfig`](crate::encode::search::ExpertConfig)).
-    #[cfg(feature = "trellis")]
+    /// Uses [`ExpertConfig`](crate::encode::search::ExpertConfig).
     #[must_use]
     pub fn from_preset(preset_name: &str, quality: f32) -> Option<Self> {
         use crate::encode::encoder_types::OptimizationPreset;
@@ -211,12 +210,8 @@ impl JpegEncoderConfig {
         use crate::encode::encoder_types::OptimizationPreset;
         let preset = match self.effort {
             0 => OptimizationPreset::JpegliBaseline,
-            #[cfg(feature = "trellis")]
             2 => OptimizationPreset::HybridMaxCompression,
-            #[cfg(feature = "trellis")]
             _ => OptimizationPreset::HybridProgressive,
-            #[cfg(not(feature = "trellis"))]
-            _ => OptimizationPreset::JpegliProgressive,
         };
         self.inner.clone().optimization(preset)
     }
@@ -2379,7 +2374,7 @@ mod tests {
         let meta = Metadata::default().with_icc(icc.as_slice());
         let output = enc
             .job()
-            .with_metadata(meta)
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .encoder()
             .unwrap()
             .encode(PixelSlice::from(img.as_ref()).into())
@@ -2399,7 +2394,7 @@ mod tests {
 
         let output = enc
             .job()
-            .with_metadata(meta)
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .with_policy(policy)
             .encoder()
             .unwrap()

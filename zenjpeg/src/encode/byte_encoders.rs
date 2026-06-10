@@ -208,7 +208,6 @@ impl BytesEncoder {
         }
 
         // Apply trellis or hybrid quantization config
-        #[cfg(feature = "trellis")]
         {
             if let Some(ref trellis) = config.trellis {
                 builder = builder.trellis(*trellis);

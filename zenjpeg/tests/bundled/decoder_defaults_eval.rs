@@ -1,4 +1,3 @@
-#![cfg(feature = "trellis")]
 //! Evaluate all decoder configurations: quality (zensim vs original) AND speed.
 //!
 //! Tests every combination of IDCT method × chroma upsampling × dequant_bias

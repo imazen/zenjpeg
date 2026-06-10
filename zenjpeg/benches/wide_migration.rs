@@ -23,7 +23,6 @@ use enough::Unstoppable;
 use zenbench::prelude::*;
 use zenjpeg::decode::Decoder;
 use zenjpeg::decoder::PixelFormat;
-#[cfg(feature = "trellis")]
 use zenjpeg::encode::trellis::TrellisConfig;
 use zenjpeg::encode::{
     ChromaSubsampling, EncoderConfig, ParallelEncoding, PixelLayout, XybSubsampling,
@@ -351,8 +350,6 @@ fn bench_encode(suite: &mut Suite) {
     });
 
     // ── Trellis / auto_optimize (2k, 420, progressive) ────────────────
-
-    #[cfg(feature = "trellis")]
     suite.group("enc/2k/optimize", |g| {
         g.throughput(Throughput::Bytes((S2K.0 * S2K.1 * 3) as u64));
 

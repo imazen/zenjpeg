@@ -176,8 +176,9 @@ default = ["decoder"]
 decoder = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
-# Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
-# with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
+# DEPRECATED no-op: trellis quantization is now always compiled in (data-gated
+# at runtime, off by default). Kept as an empty feature so existing
+# `--features trellis` invocations keep working.
 trellis = []
 # Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time
 # overhead when `BoundaryRd::On` is used (default remains `BoundaryRd::Off` which
@@ -258,7 +259,7 @@ target-zq = ["decoder", "dep:zensim"]
 # so enabling this barely moves compile time. The closed-loop IQA refinement
 # (`Budget::MaxIterations` > 1 / `MaxTime`) needs the perceptual metric, so it
 # is split into `recompress-iqa` (pulls `zensim`, like `target-zq`).
-recompress = ["decoder", "trellis"]
+recompress = ["decoder"]
 # Closed-loop measurement for `recompress` (generation loss vs source).
 recompress-iqa = ["recompress", "dep:zensim"]
 # Expose `recompress::expert` (per-strategy entry points, calibration-table
@@ -380,31 +381,38 @@ required-features = ["__test-utils"]
 #
 # `bbs_measure` is independent of boundary-RD (it measures block-boundary
 # scores on any JPEG) so it stays outside the feature gate. `rd_explore`
-# uses `auto_optimize` (trellis-only). The other three examples
+# uses `auto_optimize`. The other three examples
 # instantiate `BoundaryRd::On(...)` or call the boundary-RD harness
 # directly — they require `--features boundary-rd`.
 [[example]]
 name = "bbs_measure"
 
 [[example]]
+name = "zq_calibrate"
+required-features = ["target-zq"]
+
+[[example]]
+name = "zq_pareto_calibrate"
+required-features = ["target-zq"]
+
+[[example]]
 name = "rd_explore"
-required-features = ["trellis"]
 
 [[example]]
 name = "rd_compare"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["decoder", "boundary-rd"]
 
 [[example]]
 name = "boundary_rd_low_q_sweep"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["decoder", "boundary-rd"]
 
 [[example]]
 name = "boundary_rd_perf_bench"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["decoder", "boundary-rd"]
 
 [[example]]
 name = "boundary_rd_callgrind"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["decoder", "boundary-rd"]
 
 # v0.3 picker held-out A/B harness (loads .bin externally; lives in
 # dev/ so the file isn't shipped as part of the public examples dir).
@@ -418,7 +426,7 @@ required-features = ["trellis", "decoder", "boundary-rd"]
 [[example]]
 name = "picker_v0_3_holdout_ab"
 path = "dev/picker_v0_3_holdout_ab.rs"
-required-features = ["target-zq", "trellis", "__picker-research"]
+required-features = ["target-zq", "__picker-research"]
 
 # Per-class quant table signal probe (gating experiment, 2026-05-04).
 # See dev/per_class_signal_probe.rs.
@@ -440,42 +448,37 @@ name = "color_loss"
 path = "dev/color_loss.rs"
 required-features = ["__test-utils"]
 
-# Examples requiring trellis feature
+# Expert/tuning examples
 [[example]]
 name = "hybrid_auto_detect"
-required-features = ["trellis"]
 
 [[example]]
 name = "hybrid_parameter_sweep"
-required-features = ["trellis"]
 
 [[example]]
 name = "knobs_vs_jpegli"
-required-features = ["trellis", "decoder"]
+required-features = ["decoder"]
 
 [[example]]
 name = "mozjpeg_parity_regress"
-required-features = ["trellis", "decoder"]
+required-features = ["decoder"]
 
 [[example]]
 name = "mozjpeg_parity_tuning"
-required-features = ["trellis", "decoder"]
+required-features = ["decoder"]
 
 [[example]]
 name = "mozjpeg_quality_vs_original"
-required-features = ["trellis", "decoder"]
+required-features = ["decoder"]
 
 [[example]]
 name = "ssim2_pareto_sweep"
-required-features = ["trellis"]
 
 [[example]]
 name = "xyb_parity_test"
-required-features = ["trellis"]
 
 [[example]]
 name = "xyb_cpp_comparison"
-required-features = ["trellis"]
 
 # C++ comparison tools
 [[example]]
@@ -498,7 +501,7 @@ required-features = ["ultrahdr"]
 
 [[example]]
 name = "reencode_calibration"
-required-features = ["trellis", "decoder"]
+required-features = ["decoder"]
 
 [[example]]
 name = "bench_decode_matrix"

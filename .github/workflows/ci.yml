@@ -70,13 +70,13 @@ jobs:
         run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec" --lib --tests
 
       - name: Test (no defaults, decoder only)
         run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
 
       - name: Test (__expert + all user features)
-        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
 
 
   i686:
@@ -291,10 +291,10 @@ jobs:
           cmake --build build --target cjpegli djpegli --config Release --parallel
 
       - name: Build (includes C++ jpegli compilation)
-        run: cargo build -p zenjpeg --release --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
+        run: cargo build -p zenjpeg --release --tests --features "parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
 
       - name: Test (all features + C++ FFI parity)
-        run: cargo test -p zenjpeg --release --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
+        run: cargo test -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
 
       - name: Upload failing JPEGs
         if: failure()
@@ -345,13 +345,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy -p zenjpeg --lib --tests --benches --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
 
       - name: Clippy (default features)
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
 
-      - name: Clippy (__expert + boundary-rd + trellis)
-        run: cargo clippy -p zenjpeg --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
+      - name: Clippy (__expert + boundary-rd)
+        run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
 
   fmt:
     name: Format

@@ -155,9 +155,7 @@ use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{
     ChromaSubsampling, Effort, ProgressiveScanMode, Quality, XybSubsampling,
 };
-#[cfg(feature = "trellis")]
 use crate::encode::trellis::TrellisSpeedMode;
-#[cfg(feature = "trellis")]
 use crate::encode::trellis::{HybridConfig, TrellisConfig};
 use zenpixels::PixelSlice;
 
@@ -243,7 +241,6 @@ pub struct AdaptiveOptions {
     /// - [`Effort::Balanced`]: oracle's trellis pick honored
     ///   (`Standard` or `Hybrid` lambda) but scan-script search stays
     ///   off. The middle gear that didn't exist with the old `bool`.
-    ///   Requires the `trellis` feature.
     /// - [`Effort::Max`]: oracle's trellis pick honored AND
     ///   `ProgressiveScanMode::ProgressiveSearch` enabled. ~2× slower
     ///   than `Balanced` for another ~2% bpp. Requires the `trellis`
@@ -302,17 +299,12 @@ impl AdaptiveOptions {
     /// control the decoder and want the smallest file at a given
     /// target metric value.
     ///
-    /// Requires the `trellis` feature; without it, falls back to
-    /// [`Effort::Fast`] (the only variant available).
     #[must_use]
     pub const fn best_quality() -> Self {
         Self {
             allow_xyb: true,
             allow_progressive: true,
-            #[cfg(feature = "trellis")]
             effort: Effort::Max,
-            #[cfg(not(feature = "trellis"))]
-            effort: Effort::Fast,
             restart_markers: RestartMarkers::Off,
         }
     }
@@ -567,10 +559,6 @@ fn adaptive_internal(
     let trellis_choice = match options.effort {
         Effort::Fast => TrellisChoice::Off,
         // Balanced + Max both honor the oracle's trellis pick.
-        // (Trellis-feature-gated variants only exist when `trellis`
-        // is on, so we don't need a feature-cfg here — the match is
-        // already exhaustive at compile time.)
-        #[cfg(feature = "trellis")]
         Effort::Balanced | Effort::Max => pick.trellis,
     };
 
@@ -583,9 +571,7 @@ fn adaptive_internal(
     } else {
         match options.effort {
             Effort::Fast => ProgressiveScanMode::Progressive,
-            #[cfg(feature = "trellis")]
             Effort::Balanced => ProgressiveScanMode::Progressive,
-            #[cfg(feature = "trellis")]
             Effort::Max => ProgressiveScanMode::ProgressiveSearch,
         }
     };
@@ -623,7 +609,6 @@ fn adaptive_internal(
     // `base_lambda_scale1` (the lambda the oracle's `hyb*` codec_name
     // suffix encodes). `hybrid_config(enabled=true)` zeroes the
     // standalone trellis slot internally.
-    #[cfg(feature = "trellis")]
     {
         cfg = match trellis_choice {
             TrellisChoice::Off => cfg,
@@ -638,11 +623,6 @@ fn adaptive_internal(
             }),
         };
     }
-    #[cfg(not(feature = "trellis"))]
-    {
-        let _ = trellis_choice;
-    }
-
     cfg
 }
 
@@ -650,19 +630,15 @@ fn adaptive_internal(
 struct OraclePick {
     subsampling: ChromaSubsampling,
     use_xyb: bool,
-    /// Only consulted when `Effort::Balanced | Effort::Max` are
-    /// reachable (i.e. the `trellis` feature is on). Without trellis,
-    /// every dispatch path lands on `TrellisChoice::Off` directly.
-    #[cfg_attr(not(feature = "trellis"), allow(dead_code))]
+    /// Only consulted when `Effort::Balanced | Effort::Max` are in
+    /// play; `Effort::Fast` lands on `TrellisChoice::Off` directly.
     trellis: TrellisChoice,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum TrellisChoice {
     Off,
-    #[cfg_attr(not(feature = "trellis"), allow(dead_code))]
     Standard,
-    #[cfg_attr(not(feature = "trellis"), allow(dead_code))]
     Hybrid(f32),
 }
 
@@ -880,16 +856,7 @@ mod tests {
         let opts = AdaptiveOptions::default()
             .allow_xyb(true)
             .allow_progressive(false)
-            .effort({
-                #[cfg(feature = "trellis")]
-                {
-                    Effort::Balanced
-                }
-                #[cfg(not(feature = "trellis"))]
-                {
-                    Effort::Fast
-                }
-            })
+            .effort(Effort::Balanced)
             .restart_markers(RestartMarkers::AutoSparse);
         assert!(opts.allow_xyb);
         assert!(!opts.allow_progressive);
@@ -908,12 +875,7 @@ mod tests {
         let best = AdaptiveOptions::best_quality();
         assert!(best.allow_xyb);
         assert!(best.allow_progressive);
-        // best_quality picks Max when trellis is on, falls back to
-        // Fast otherwise.
-        #[cfg(feature = "trellis")]
         assert!(matches!(best.effort, Effort::Max));
-        #[cfg(not(feature = "trellis"))]
-        assert!(matches!(best.effort, Effort::Fast));
         assert_eq!(best.restart_markers, RestartMarkers::Off);
     }
 

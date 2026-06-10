@@ -319,7 +319,6 @@ fn build_encoder(spec: ConfigSpec, q: u8) -> EncoderConfig {
     } else {
         cfg = cfg.progressive(zenjpeg::encode::ProgressiveScanMode::Baseline);
     }
-    #[cfg(feature = "trellis")]
     if spec.auto_optimize {
         cfg = cfg.auto_optimize(true);
     }

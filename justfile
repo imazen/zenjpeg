@@ -155,10 +155,10 @@ feature-check:
     cargo test -p zenjpeg --release --features decoder
     cargo test -p zenjpeg --release --features "decoder,parallel"
     cargo test -p zenjpeg --release --features "decoder,sharp-yuv"
-    cargo test -p zenjpeg --release --features "decoder,trellis"
+    cargo test -p zenjpeg --release --features "decoder"
     cargo test -p zenjpeg --release --features "decoder,mozjpeg-tables"
     cargo test -p zenjpeg --release --features "decoder,optimized-tables"
-    cargo test -p zenjpeg --release --features "decoder,parallel,trellis"
+    cargo test -p zenjpeg --release --features "decoder,parallel"
     cargo check -p zenjpeg --no-default-features --features "std,zencodec"
     cargo check -p zenjpeg --no-default-features --features "std,ultrahdr"
     cargo check -p zenjpeg --no-default-features --features "std,layout"

@@ -1,4 +1,3 @@
-#![cfg(feature = "trellis")]
 #![cfg(feature = "__ffi-tests")]
 //! Quality regression tests using zensim-regress with real photographic images.
 //!

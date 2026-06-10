@@ -1,4 +1,3 @@
-#![cfg(feature = "trellis")]
 #![allow(clippy::len_zero, clippy::print_literal)]
 //! Measure runtime and file size for each encoder configuration.
 //!

@@ -1,5 +1,4 @@
 #![allow(clippy::collapsible_if)]
-#![cfg(feature = "trellis")]
 //! zensim regression testing on real photographic corpora: CID22, CLIC, gb82.
 //!
 //! **No synthetic images, no gradients, no test patterns.** Every image is a
