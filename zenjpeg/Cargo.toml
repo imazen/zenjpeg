@@ -54,6 +54,7 @@ imgref = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
 zenpixels = { workspace = true }
+zenpixels-convert = { workspace = true, optional = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)
 # used by `EncoderConfig::adaptive`. Pulls rows on demand from any
 # PixelSlice via zenpixels-convert internally.
@@ -106,6 +107,8 @@ zenpredict = { path = "../../zenanalyze/zenpredict", optional = true }
 [dev-dependencies]
 wide = { workspace = true }
 zenyuv = { workspace = true }
+# Oracle for the color-emit synthesized-ICC test (bundled DISPLAY_P3_V4 const).
+zenpixels-convert = { workspace = true }
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
 test-case = { workspace = true }
@@ -246,8 +249,10 @@ __picker-research = ["dep:zenpredict", "zenpredict/advanced", "zenanalyze/hdr"]
 # ColorPrimaries, TransferFunction, PixelBuffer).
 # `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
 ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
-# zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
-zencodec = ["decoder"]
+# zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
+# zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
+# path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
+zencodec = ["decoder", "dep:zenpixels-convert"]
 # Target-perceptual-quality (`Quality::Zq` / `Quality::ZqExplicit`) closed-loop
 # encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
 # score target (issue #113). Pulls in `decoder` (for re-decoding each pass)

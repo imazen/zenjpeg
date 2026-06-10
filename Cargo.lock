@@ -3110,9 +3110,9 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb719d8324f653b14e4aa8c3870e5c48c91a4f46c68981de5b4194df442e4c69"
+checksum = "5125c73491ecfc1a47a721bdb3c9a538b92777463cfcee9aafc0b5dbf1472965"
 dependencies = [
  "almost-enough",
  "enough",
@@ -3190,6 +3190,7 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenpixels",
+ "zenpixels-convert",
  "zenpredict 0.2.0",
  "zenresize",
  "zensim",
@@ -3232,9 +3233,9 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.11"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d0f4d117f75bb4d2471c7c0b940f27492839d1e23e83dd4ee7a53232c78076e"
+checksum = "0782d10bc02dab53ee1eae285925c6f42ef0bd4e21c29543fdb591e99ad81513"
 dependencies = [
  "archmage 0.9.26",
  "bytemuck",

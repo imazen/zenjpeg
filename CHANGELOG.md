@@ -43,6 +43,18 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- zencodec 0.1.21 color-emit integration (`zencodec` feature): the trait
+  encode path resolves which color description to embed via
+  `resolve_color_emit` under the caller's `ColorEmitPolicy`. JPEG's only
+  color carrier is an APP2 ICC profile (no CICP carrier), so a CICP-only
+  source (e.g. Display-P3) synthesizes an embedded ICC via zenpixels-convert
+  `synthesize_icc_for_cicp` instead of silently emitting an untagged
+  sRGB-assumed JPEG; grayscale encodes suppress RGB synthesis. Deps:
+  zencodec 0.1.21, zenpixels-convert 0.2.12 (optional, behind `zencodec`).
+  Tests: `tests/bundled/emit_integration.rs` (6 cases incl. P3 synthesis
+  oracle vs the bundled `DISPLAY_P3_V4` profile). Supersedes the parked
+  pre-release `resolve_emit` dogfooding worktree (the scenario/EmitFacts
+  machinery never shipped; its codec-level subset became 0.1.21's API).
 - `adaptive()` emits `ProgressiveScanMode::Smallest` for Fast/Balanced
   effort (Max keeps `ProgressiveSearch`; Smallest × Search composition
   is an open avenue; `allow_progressive(false)` keeps Baseline). Output
@@ -93,11 +105,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
-- `codec.rs` zencodec tests reverted to `.with_metadata(meta)`: the
-  crate depends on registry zencodec 0.1.20, which has no
-  `with_metadata_policy`; the earlier migration compiled only against a
-  local path override that no longer applies. Re-migrate when zencodec
-  0.2 is published.
+- `codec.rs` zencodec tests use `.with_metadata_policy(meta,
+  PreserveExact)` again: the interim revert to deprecated
+  `.with_metadata(meta)` assumed the API was unpublished, but it shipped
+  in zencodec 0.1.21 (now the workspace dep) — no 0.2 wait needed.
 
 - `encode::sweep`: `rd_core()` is progressive-only (baseline never sits
   on the RD front at normal sizes — same coefficients, better entropy

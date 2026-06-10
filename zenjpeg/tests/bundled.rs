@@ -138,6 +138,8 @@ mod encode_api;
 mod encode_request_guide;
 #[path = "bundled/encoder_matrix.rs"]
 mod encoder_matrix;
+#[path = "bundled/emit_integration.rs"]
+mod emit_integration;
 #[path = "bundled/error_handling.rs"]
 mod error_handling;
 #[path = "bundled/fast_math_cpp_comparison.rs"]

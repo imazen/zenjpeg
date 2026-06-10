@@ -55,6 +55,12 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_icc(true)
     .with_exif(true)
     .with_xmp(true)
+    // JPEG has no CICP carrier: color is signaled only via an embedded APP2
+    // ICC profile. Declare this explicitly so `resolve_color_emit` knows a
+    // CICP-only source must synthesize an ICC rather than emit CICP. The two
+    // carrier flags (`cicp_is_valid_carrier` / `cicp_safe_sole_carrier`) stay
+    // at their `false` defaults for the same reason.
+    .with_cicp(false)
     .with_stop(true)
     .with_lossy(true)
     .with_push_rows(true)
@@ -485,22 +491,77 @@ impl JpegEncoder {
     }
 
     /// Build an EncodeRequest from current config + metadata, applying policy.
-    fn build_request(&self) -> crate::encode::request::EncodeRequest<'_> {
-        self.build_request_from(&self.effective_config)
+    ///
+    /// `channel_count` is the channel count of the pixels being encoded
+    /// (1 = gray, 3 = RGB, 4 = RGBA); it lets the color-emit resolver
+    /// suppress ICC synthesis for grayscale, where an RGB profile would
+    /// recolor the image. Pass `None` when the count is not yet known.
+    fn build_request(
+        &self,
+        channel_count: Option<u8>,
+    ) -> crate::encode::request::EncodeRequest<'_> {
+        self.build_request_from(&self.effective_config, channel_count)
     }
 
     /// Build an EncodeRequest from a specific config + metadata, applying policy.
+    ///
+    /// The color carrier decision (which ICC bytes JPEG embeds, if any) is
+    /// resolved through [`zencodec::resolve_color_emit`] under the job's
+    /// [`ColorEmitPolicy`](zencodec::ColorEmitPolicy): JPEG's only color
+    /// carrier is an APP2 ICC profile (no CICP carrier), so a CICP-only
+    /// source synthesizes an ICC via zenpixels-convert's
+    /// `synthesize_icc_for_cicp` instead of silently producing an untagged
+    /// (sRGB-assumed) JPEG. EXIF/XMP pass through verbatim — the blessed
+    /// `with_metadata_policy` path has already filtered them (sub-field EXIF
+    /// retention + orientation-tag reconciliation) before the bytes get here.
     fn build_request_from<'b>(
         &'b self,
         config: &'b EncoderConfig,
+        channel_count: Option<u8>,
     ) -> crate::encode::request::EncodeRequest<'b> {
         let mut req = config.request();
         if let Some(ref meta) = self.metadata {
             let policy = self.policy.unwrap_or_default();
-            if policy.resolve_icc(true)
-                && let Some(ref icc) = meta.icc_profile
-            {
-                req = req.icc_profile(icc);
+            if policy.resolve_icc(true) {
+                let color_policy = policy.resolve_color(zencodec::ColorEmitPolicy::Balanced);
+                let mut src = zencodec::SourceColor::default();
+                if let Some(n) = channel_count {
+                    src = src.with_channel_count(n);
+                }
+                if let Some(c) = meta.cicp {
+                    src = src.with_cicp(c);
+                }
+                if let Some(ref icc) = meta.icc_profile {
+                    src = src.with_icc_profile(icc.clone());
+                }
+                let plan = zencodec::resolve_color_emit(&src, &JPEG_ENCODE_CAPS, color_policy);
+                match plan.icc {
+                    zencodec::IccDisposition::KeepSource => {
+                        if let Some(ref icc) = meta.icc_profile {
+                            req = req.icc_profile(icc);
+                        }
+                    }
+                    zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+                        use zenpixels_convert::icc_profiles::{
+                            SynthesizedIcc, synthesize_icc_for_cicp,
+                        };
+                        // Best-effort: on any non-Profile outcome embed
+                        // nothing — never fabricate or mis-tag a profile.
+                        // (Bundled coverage is Display-P3 + SDR BT.2020;
+                        // zenpixels-convert's `cms-moxcms` extends it.)
+                        if let SynthesizedIcc::Profile(bytes) = synthesize_icc_for_cicp(cicp) {
+                            req = req.icc_profile_owned(bytes.into_owned());
+                        }
+                    }
+                    zencodec::IccDisposition::Drop => {}
+                    // `IccDisposition` is #[non_exhaustive]; conservatively
+                    // keep the source ICC rather than silently dropping it.
+                    _ => {
+                        if let Some(ref icc) = meta.icc_profile {
+                            req = req.icc_profile(icc);
+                        }
+                    }
+                }
             }
             if policy.resolve_exif(true)
                 && let Some(ref exif) = meta.exif
@@ -553,7 +614,7 @@ impl JpegEncoder {
         layout: PixelLayout,
     ) -> Result<EncodeOutput, Error> {
         self.check_limits(width, height, layout)?;
-        let req = self.build_request();
+        let req = self.build_request(Some(layout.channels() as u8));
         let output = req.encode_bytes(data, width, height, layout)?;
         self.check_output_size(&output)?;
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
@@ -563,7 +624,7 @@ impl JpegEncoder {
     fn encode_accumulated(&self, acc: RowAccumulator) -> Result<EncodeOutput, Error> {
         self.check_limits(acc.width, acc.total_rows, acc.layout)?;
 
-        let req = self.build_request();
+        let req = self.build_request(Some(acc.layout.channels() as u8));
         let stop = self.stop_ref();
         let mut enc = req.encode_from_bytes(acc.width, acc.total_rows, acc.layout)?;
         // Stream through native encoder — it processes MCU rows as they arrive
@@ -608,7 +669,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let layout = PixelLayout::Rgba8Srgb;
         self.check_limits(width, height, layout)?;
-        let req = self.build_request();
+        let req = self.build_request(Some(layout.channels() as u8));
         let stop = self.stop_ref();
         let stride_bytes = stride_pixels as usize * 4;
         let mut enc = req.encode_from_bytes(width, height, layout)?;
@@ -635,7 +696,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
                     .clone()
                     .progressive(false)
                     .optimize_huffman(false);
-                let req = self.build_request_from(&streaming_config);
+                let req =
+                    self.build_request_from(&streaming_config, Some(layout.channels() as u8));
                 let enc = req.encode_from_bytes(img_w, img_h, layout)?;
                 self.streaming_enc = Some(enc);
             }
@@ -730,7 +792,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
             .clone()
             .progressive(false)
             .optimize_huffman(false);
-        let req = self.build_request_from(&streaming_config);
+        let req = self.build_request_from(&streaming_config, Some(layout.channels() as u8));
         let mut enc = req.encode_from_bytes(img_w, img_h, layout)?;
         let stop = self.stop_ref();
 
@@ -2374,7 +2436,7 @@ mod tests {
         let meta = Metadata::default().with_icc(icc.as_slice());
         let output = enc
             .job()
-            .with_metadata(meta)
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .encoder()
             .unwrap()
             .encode(PixelSlice::from(img.as_ref()).into())
@@ -2394,7 +2456,7 @@ mod tests {
 
         let output = enc
             .job()
-            .with_metadata(meta)
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .with_policy(policy)
             .encoder()
             .unwrap()

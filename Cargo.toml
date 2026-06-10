@@ -103,9 +103,9 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { version = "0.1.20" }
+zencodec = { version = "0.1.21" }
 zenpixels = { version = "0.2.11", default-features = false, features = ["imgref"] }
-zenpixels-convert = { version = "0.2.11", default-features = false }
+zenpixels-convert = { version = "0.2.12", default-features = false }
 garb = { version = "0.2.6", default-features = false }
 
 # Published crates
