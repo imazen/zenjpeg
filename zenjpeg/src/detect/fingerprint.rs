@@ -41,11 +41,15 @@ pub enum EncoderFamily {
 
     /// Windows GDI+ / WIC (System.Drawing, WPF, Paint, Windows Photos).
     ///
-    /// Emits byte-exact IJG-formula tables at an internal index `k`
-    /// (GDI+ integer quality `q` maps to `k = q - 1`, except `k = q`
-    /// when `q` is a multiple of 25), standard Huffman, baseline,
-    /// 4:2:0 — structurally identical to libjpeg-turbo except for the
-    /// JFIF density field: Windows stamps the bitmap DPI (default
+    /// One engine, two quality front-ends (headers are byte-identical
+    /// at equal table index; only entropy data differs). Emits
+    /// byte-exact IJG-formula tables at an internal index `k`: GDI+
+    /// integer quality `q` gives `k = q - 1` (except `k = q` at
+    /// multiples of 25); WIC integer-percent `ImageQuality` gives
+    /// `k = q` (except `q ∈ {53, 59}` give `k = q - 1`). Standard
+    /// Huffman, baseline, 4:2:0 from GDI+ (WIC also emits 4:4:4 and
+    /// 4:2:2) — structurally identical to libjpeg-turbo except for
+    /// the JFIF density field: Windows stamps the bitmap DPI (default
     /// 96×96 dots-per-inch) where libjpeg-turbo writes 1×1 aspect
     /// ratio. Windows files carrying a non-default source DPI are
     /// indistinguishable from libjpeg-turbo and classify as such.

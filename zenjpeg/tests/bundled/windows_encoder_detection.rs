@@ -2,11 +2,13 @@
 //!
 //! Fixtures in `tests/testdata/windows_encoder/` were produced by a
 //! Windows JPEG encoder via `https://z.zr.io/ri/red-leaf.jpg;width=256;quality=Q`
-//! (fetched 2026-06-09). The full q=1..=100 sweep lives in
+//! (`win_*` = default GDI+ builder; `wic*` = `;builder=wic` with
+//! `;subsampling=444|422`; fetched 2026-06-09). The full q=1..=100
+//! sweeps (GDI+ + WIC×{420,444,422}, 400 files) live in
 //! `/mnt/v/input/zenjpeg/windows-encoder/` with the analysis scripts;
-//! every file in that sweep carries IJG tables at index `k = q - 1`
-//! (except `k = q` for multiples of 25), standard Huffman, baseline,
-//! 4:2:0, and JFIF density 96×96 DPI.
+//! every file carries byte-exact IJG tables (GDI+: index `k = q - 1`
+//! except `k = q` at multiples of 25; WIC: `k = q` except 53/59),
+//! standard Huffman, baseline, and JFIF density 96×96 DPI.
 
 use zenjpeg::detect::{Confidence, EncoderFamily, QualityScale, probe};
 
@@ -19,17 +21,22 @@ fn fixture(name: &str) -> Vec<u8> {
 
 #[test]
 fn windows_fixtures_detect_as_windows_imaging() {
-    // (file, encoded-at GDI+ quality, expected reported quality)
+    // (file, expected reported quality, expected subsampling)
     // win_q26 reports 25: GDI+ q=25 and q=26 emit byte-identical
     // tables (IJG index 25); the estimator reports the round number.
+    // wic422_q90 reports 91: WIC q=90 emits IJG index 90, and reports
+    // follow the GDI+ convention (k + 1).
+    use zenjpeg::types::Subsampling;
     let cases = [
-        ("win_q10.jpg", 10.0f32),
-        ("win_q26.jpg", 25.0),
-        ("win_q50.jpg", 50.0),
-        ("win_q85.jpg", 85.0),
+        ("win_q10.jpg", 10.0f32, Subsampling::S420),
+        ("win_q26.jpg", 25.0, Subsampling::S420),
+        ("win_q50.jpg", 50.0, Subsampling::S420),
+        ("win_q85.jpg", 85.0, Subsampling::S420),
+        ("wic444_q24.jpg", 24.0, Subsampling::S444),
+        ("wic422_q90.jpg", 91.0, Subsampling::S422),
     ];
 
-    for (name, want_quality) in cases {
+    for (name, want_quality, want_subsampling) in cases {
         let data = fixture(name);
         let result = probe(&data).unwrap_or_else(|e| panic!("probe {name}: {e}"));
 
@@ -47,11 +54,7 @@ fn windows_fixtures_detect_as_windows_imaging() {
         );
         assert_eq!(result.quality.confidence, Confidence::Exact, "{name}");
         assert_eq!(result.mode, zenjpeg::types::JpegMode::Baseline, "{name}");
-        assert_eq!(
-            result.subsampling,
-            zenjpeg::types::Subsampling::S420,
-            "{name}"
-        );
+        assert_eq!(result.subsampling, want_subsampling, "{name}");
         assert_eq!(result.num_components, 3, "{name}");
         assert_eq!(result.dimensions.width, 256, "{name}");
     }

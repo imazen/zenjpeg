@@ -37,27 +37,39 @@ proprietary databases.
 
 ### Windows GDI+ / WIC (System.Drawing, WPF, Paint)
 
-Measured on a q=1..=100 sweep of real Windows-encoded JPEGs
-(`https://z.zr.io/ri/red-leaf.jpg;width=256;quality=Q`, fetched
-2026-06-09; raw files + analysis scripts in
-`/mnt/v/input/zenjpeg/windows-encoder/`, four fixtures committed under
+Measured on real Windows-encoded q=1..=100 sweeps
+(`https://z.zr.io/ri/red-leaf.jpg;width=256;quality=Q` — default
+GDI+ builder, plus `;builder=wic` × `;subsampling=420|444|422`, 400
+files total, fetched 2026-06-09; raw files + analysis scripts in
+`/mnt/v/input/zenjpeg/windows-encoder/`, six fixtures committed under
 `zenjpeg/tests/testdata/windows_encoder/`):
 
 - **Tables are byte-exact IJG tables** — same Annex K bases, same
   truncating `5000/q` / `200-2q` scale, same `(base*scale+50)/100`
-  rounding, same 1..=255 clamp. All 100 files matched an IJG index
+  rounding, same 1..=255 clamp. All 400 files matched an IJG index
   with zero exceptions.
-- **The index is offset**: Windows quality `q` produces the IJG table
-  at `k = q - 1`, EXCEPT `k = q` when `q` is a multiple of 25. The
+- **GDI+ index offset**: GDI+ quality `q` produces the IJG table at
+  `k = q - 1`, EXCEPT `k = q` when `q` is a multiple of 25. The
   exception set {25, 50, 75, 100} is exactly the qualities where
   `q/100` is representable in binary floating point, so the offset is
   almost certainly a float round-trip in the GDI+ quality plumbing.
-  Consequences: GDI+ cannot emit indices {24, 49, 74, 99} (WIC's
-  float `ImageQuality` can), and `q`/`q+1` collide at multiples of 25
-  (q=25 and q=26 produce identical files).
-- **Structure**: always baseline SOF0, 4:2:0 (2×2,1×1,1×1), component
-  IDs 1,2,3, two 8-bit DQT segments, standard Huffman tables
-  (12 DC + 162 AC symbols), single scan, no Adobe/EXIF markers.
+  Consequences: GDI+ cannot emit indices {24, 49, 74, 99}, and
+  `q`/`q+1` collide at multiples of 25 (q=25 and q=26 produce
+  identical files).
+- **WIC maps nearly directly**: WIC integer-percent `ImageQuality`
+  gives `k = q`, except q ∈ {53, 59} give `k = q - 1` — the two
+  percentages where `(int)((float)(q/100.0) * 100.0f)` truncates
+  below the integer (q=53 and q=52 produce identical files).
+  Arbitrary float `ImageQuality` values reach any index.
+- **One engine, two front-ends**: at equal `k`, GDI+ and WIC output
+  has byte-identical headers; only the entropy-coded data differs
+  (GDI+ ~5% larger on the test image — different DCT internals).
+  The front-ends are therefore indistinguishable by header probing.
+- **Structure**: always baseline SOF0, component IDs 1,2,3, two 8-bit
+  DQT segments, standard Huffman tables (12 DC + 162 AC symbols),
+  single scan, no Adobe/EXIF markers. GDI+ always writes 4:2:0
+  (2×2,1×1,1×1); WIC also offers 4:4:4 (1×1) and 4:2:2 (2×1), with
+  quant tables unchanged across subsampling modes.
 - **The discriminator vs libjpeg-turbo**: the JFIF APP0 density.
   Windows stamps the source bitmap DPI — 96×96 dots-per-inch for
   anything that doesn't carry its own resolution (the Windows default
@@ -68,9 +80,11 @@ Measured on a q=1..=100 sweep of real Windows-encoded JPEGs
   modulo the off-by-one).
 
 `EncoderFamily::WindowsImaging` reports quality on
-`QualityScale::WindowsQuality`: `k+1` normally, `k` (Exact) for the
-multiple-of-25 collisions, `k` (Approximate) for the GDI+-unreachable
-indices.
+`QualityScale::WindowsQuality` following the GDI+ convention: `k+1`
+normally; `k` for {24, 25, 49, 50, 74, 75, 99, 100} (the GDI+
+round-number collisions and the indices only WIC's integer scale
+reaches, where `k` is exactly the WIC quality). The WIC
+interpretation of a reported value is generally `value - 1`.
 
 ### Empirical Validation
 

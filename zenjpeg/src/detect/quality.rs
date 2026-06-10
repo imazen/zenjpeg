@@ -35,8 +35,12 @@ pub enum QualityScale {
     /// Windows GDI+ / System.Drawing quality 1-100.
     ///
     /// Same formula family as [`QualityScale::IjgQuality`] but offset:
-    /// Windows quality `q` produces the IJG table at index `q - 1`
+    /// GDI+ quality `q` produces the IJG table at index `q - 1`
     /// (except multiples of 25, which produce the table at `q`).
+    /// WIC's integer-percent `ImageQuality` produces the table at `q`
+    /// directly (except 53 and 59 → `q - 1`); the two front-ends are
+    /// indistinguishable from headers, and reported values follow the
+    /// GDI+ convention (subtract 1 for the WIC interpretation).
     WindowsQuality,
 }
 
@@ -151,17 +155,25 @@ fn estimate_ijg_quality_approximate(scan: &ScanResult) -> QualityEstimate {
 /// Estimate Windows (GDI+/WIC) quality from the IJG table index.
 ///
 /// Windows emits byte-exact IJG tables at an internal index `k`. The
-/// GDI+ integer quality `q` maps to `k = q - 1`, except `k = q` when
-/// `q` is a multiple of 25 (the qualities where `q/100` is exactly
-/// representable in binary floating point — verified empirically on a
-/// q=1..=100 sweep, zero exceptions). Inverting:
+/// two quality front-ends map onto `k` differently (both verified on
+/// real q=1..=100 sweeps, zero exceptions; same engine — headers are
+/// byte-identical at equal `k`, only entropy data differs):
 ///
-/// - `k ∈ {25, 50, 75}`: both `q = k` and `q = k + 1` produce this
-///   table; report the round-number `k` (overwhelmingly the more
-///   common user input).
-/// - `k ∈ {24, 49, 74, 99}`: unreachable from any GDI+ integer
-///   quality (only WIC's float `ImageQuality` lands here); report `k`
-///   with [`Confidence::Approximate`].
+/// - GDI+/System.Drawing integer quality: `k = q - 1`, except `k = q`
+///   when `q` is a multiple of 25 (the qualities where `q/100` is
+///   exactly representable in binary floating point).
+/// - WIC integer-percent `ImageQuality`: `k = q`, except `q ∈ {53,
+///   59}` give `k = q - 1` (where `(int)((float)(q/100.0) * 100.0f)`
+///   truncates low). Arbitrary float `ImageQuality` reaches any `k`.
+///
+/// The two interpretations are indistinguishable from headers, so the
+/// reported value follows the GDI+ convention (the dominant creator
+/// path); the WIC interpretation of a report is generally `value - 1`:
+///
+/// - `k ∈ {25, 50, 75}`: GDI+ `q = k` and `q = k + 1` collide; report
+///   the round-number `k`.
+/// - `k ∈ {24, 49, 74, 99}`: unreachable from GDI+ integer quality;
+///   report `k` (exactly the WIC integer quality that produces it).
 /// - otherwise: report `k + 1`.
 fn estimate_windows_quality(scan: &ScanResult) -> QualityEstimate {
     let luma = match &scan.dqt_tables[0] {
@@ -215,8 +227,7 @@ fn estimate_windows_quality(scan: &ScanResult) -> QualityEstimate {
 /// Map a matched IJG table index `k` back to the Windows user quality.
 fn windows_quality_from_ijg_index(k: u8) -> (f32, Confidence) {
     match k {
-        25 | 50 | 75 | 100 => (k as f32, Confidence::Exact),
-        24 | 49 | 74 | 99 => (k as f32, Confidence::Approximate),
+        24 | 25 | 49 | 50 | 74 | 75 | 99 | 100 => (k as f32, Confidence::Exact),
         _ => ((k + 1) as f32, Confidence::Exact),
     }
 }
@@ -392,18 +403,19 @@ mod tests {
     #[test]
     fn test_windows_quality_full_index_sweep() {
         // Every IJG table index k=1..=100 maps to a Windows quality:
-        // k+1 normally, k for multiples of 25 (Exact), k Approximate
-        // for the GDI+-unreachable indices {24, 49, 74, 99}.
+        // k+1 normally (GDI+ convention); k for the GDI+ collision /
+        // unreachable indices {24, 25, 49, 50, 74, 75, 99, 100} (k is
+        // the exact WIC integer quality there, and the round-number
+        // GDI+ input at multiples of 25).
         for k in 1..=100u8 {
             let luma = generate_ijg_table(k, false);
             let chroma = generate_ijg_table(k, true);
             let scan = mock_scan_two_tables(&luma, &chroma);
             let est = estimate_windows_quality(&scan);
 
-            let (want_value, want_conf) = match k {
-                25 | 50 | 75 | 100 => (k as f32, Confidence::Exact),
-                24 | 49 | 74 | 99 => (k as f32, Confidence::Approximate),
-                _ => ((k + 1) as f32, Confidence::Exact),
+            let want_value = match k {
+                24 | 25 | 49 | 50 | 74 | 75 | 99 | 100 => k as f32,
+                _ => (k + 1) as f32,
             };
             assert_eq!(est.scale, QualityScale::WindowsQuality, "k={k}");
             assert_eq!(
@@ -411,7 +423,36 @@ mod tests {
                 "k={k}: expected Windows quality {want_value}, got {}",
                 est.value
             );
-            assert_eq!(est.confidence, want_conf, "k={k}");
+            assert_eq!(est.confidence, Confidence::Exact, "k={k}");
+        }
+    }
+
+    #[test]
+    fn test_windows_quality_wic_forward_map_roundtrip() {
+        // WIC integer-percent map (verified on the q=1..=100
+        // builder=wic z.zr.io sweeps, all three subsampling modes):
+        // k = q except q ∈ {53, 59} → k = q - 1. The estimator reports
+        // the GDI+ convention, so a WIC encode at q comes back as q+1
+        // except at the special indices.
+        for q in 1..=100u32 {
+            let k = match q {
+                53 | 59 => q - 1,
+                other => other,
+            } as u8;
+            let luma = generate_ijg_table(k, false);
+            let chroma = generate_ijg_table(k, true);
+            let scan = mock_scan_two_tables(&luma, &chroma);
+            let est = estimate_windows_quality(&scan);
+
+            let want = match k {
+                24 | 25 | 49 | 50 | 74 | 75 | 99 | 100 => k as f32,
+                _ => (k + 1) as f32,
+            };
+            assert_eq!(
+                est.value, want,
+                "WIC q={q} (k={k}): expected estimate {want}, got {}",
+                est.value
+            );
         }
     }
 

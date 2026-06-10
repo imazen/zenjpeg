@@ -292,20 +292,21 @@ mod tests {
     #[test]
     fn test_probe_windows_96dpi_detected_as_windows() {
         // IJG tables + standard Huffman + baseline + JFIF 96×96 DPI →
-        // Windows GDI+/WIC. Table index k maps back to GDI+ quality:
-        // k+1 normally; k for multiples of 25; k Approximate for the
-        // GDI+-unreachable {24, 49, 74, 99}.
+        // Windows GDI+/WIC. Table index k maps back to the reported
+        // Windows quality: k+1 normally (GDI+ convention); k for
+        // {24, 25, 49, 50, 74, 75, 99, 100} (GDI+ round-number
+        // collisions and WIC-integer-exact indices).
         for (k, want_q, want_conf) in [
             (9u8, 10.0f32, Confidence::Exact),
             (23, 24.0, Confidence::Exact),
-            (24, 24.0, Confidence::Approximate),
+            (24, 24.0, Confidence::Exact),
             (25, 25.0, Confidence::Exact),
-            (49, 49.0, Confidence::Approximate),
+            (49, 49.0, Confidence::Exact),
             (50, 50.0, Confidence::Exact),
-            (74, 74.0, Confidence::Approximate),
+            (74, 74.0, Confidence::Exact),
             (75, 75.0, Confidence::Exact),
             (84, 85.0, Confidence::Exact),
-            (99, 99.0, Confidence::Approximate),
+            (99, 99.0, Confidence::Exact),
             (100, 100.0, Confidence::Exact),
         ] {
             let jpeg = build_minimal_jpeg_with_density(k, false, 1, 96, 96);
