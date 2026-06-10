@@ -160,7 +160,7 @@ fn main() {
         None => QUALITY_LEVELS.to_vec(),
     };
 
-    let zensim = Zensim::new(ZensimProfile::latest());
+    let zensim = Zensim::new(ZensimProfile::latest_preview());
     let mut rows: Vec<Row> = Vec::new();
 
     for (name, img) in &images {

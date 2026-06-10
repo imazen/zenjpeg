@@ -18,8 +18,8 @@
 //!    zero-bias + entropy-relevant knobs). Configs that alias — Glassa
 //!    above its q25 anchor clamp, `allow_16bit` at qualities where no
 //!    value exceeds 255, `auto_optimize` vs its explicit trellis
-//!    spelling, output-neutral `speed_mode` variants — collapse into one
-//!    encode with the merged ids recorded as aliases.
+//!    spelling — collapse into one encode with the merged ids recorded
+//!    as aliases.
 //! 4. **Budget ladder** — [`SweepBuilder::with_budget`] reduces
 //!    deterministically: collapse low-tier mode axes to their first
 //!    value (recorded in [`SweepPlan::dropped`]), then coarsen the
@@ -39,14 +39,21 @@
 //!
 //! | knob | bound | curated steps (modes_full) | provenance |
 //! |---|---|---|---|
-//! | trellis λ₁ | 12.0–17.0 (useful) | 13.5, 14.0, 14.5, 14.75, 15.5, 16.0 | expert.rs envelope (−46 %..+12 %); adaptive oracle uses 12.0–16.0 |
-//! | trellis λ₂ | 14.0–18.0 | 16.0, 16.5, 17.0 (at λ₁ = 14.75) | expert.rs envelope (−19 %..+11 %); ridge: only λ₁−λ₂ matters at low block energy |
-//! | aq_coupling.scale | −8..+8 | −8 (with max_adj 1.0), −4, +4 | measured: −4 ≈ 2 % smaller/3 % DSSIM; −8 needs the clamp (screenshot protection) |
-//! | coupling.exponent | 0.5–2.0 | 2.0 probe (at scale −4) | historical sweep grid {0.5, 1, 2} |
-//! | delta_dc_weight | 0.0–5.0 | 1.0 probe | expert.rs: 0..+1 %, diminishing above 2.0 |
-//! | chroma_distance_scales | [0.1, 5.0] each | [0.5,0.5], [2,2], [1,2], [2,1] | clamp range; asymmetric probes exercise the per-channel axes |
-//! | pre_blur σ | 0.0–1.0 | 0.4 | documented ~5 % size win at negligible quality cost |
+//! | trellis λ₁ | 12.0–17.0 (useful) | 13.5, 14.0, 14.5, 14.75, 15.5, 16.0 | expert.rs envelope (−46 %..+12 %); adaptive oracle uses 12.0–16.0. Validated 2026-06-10 (`sweep_validate`): strictly monotone in size, spanning −0.9 %..+15 % around no-trellis on mixed 512² content |
+//! | trellis λ₂ | 14.0–18.0 | 16.0, 16.5, 17.0 (at λ₁ = 14.75) | expert.rs envelope (−19 %..+11 %); ridge: only λ₁−λ₂ matters at low block energy. Validated: 16.0 vs 17.0 distinct on 42/42 cells |
+//! | aq_coupling.scale | −8..+8 | −8, −4, +4, ALL clamped ±1.0 | measured: −4 ≈ 2 % smaller/3 % DSSIM on photos. Unclamped steps are FORBIDDEN: validated 2026-06-10 that unclamped −4 destroys high-AQ content (SSIM2 −31 on noise q85, −90 % bytes) |
+//! | coupling.exponent | 0.5–2.0 | 2.0 probe (at scale −4, clamped) | historical sweep grid {0.5, 1, 2} |
+//! | delta_dc_weight | 0.0–5.0 | 1.0 probe | expert.rs: 0..+1 % size, diminishing above 2.0. Validated 2026-06-10: SIZE claim holds, but quality collapses at q≤70 (SSIM2 −8..−36 on photos) — probe retained for response-surface mapping; NOT a default candidate, and possibly mis-scaled (worth a look before trusting sweeps that include it) |
+//! | chroma_distance_scales | [0.1, 5.0] each | [0.5,0.5], [2,2], [1,2], [2,1] | clamp range; asymmetric probes exercise the per-channel axes. Validated: [1,2] vs [2,1] distinct on 42/42 cells (Cb/Cr independently wired) |
+//! | pre_blur σ | 0.0–1.0 | 0.4 | ~5 % size win on photos (validated −11 % best case; synthetic aligned patterns can INFLATE up to +450 % — checker8's DCT degenerates) |
 //! | quality | 1–100 | grids in [`QualityGrid`] | step-5 floor / training-dense per sweep discipline |
+//!
+//! Empirical validation harness: `examples/sweep_validate.rs` (run
+//! 2026-06-10, results in `benchmarks/sweep_validate_2026-06-10.tsv`).
+//! It encodes the default stratum + every single-deviation stratum on
+//! mixed content and fails hard on inert steps, fingerprint-contract
+//! violations, and ordering breakage. Re-run it after touching the
+//! curated axes or the fingerprint.
 //!
 //! `MozjpegRobidoux::chroma_quality` is deliberately unswept here: it is
 //! an ABSOLUTE quality while the grid moves q, so any static value is
@@ -115,14 +122,21 @@ pub fn trellis_auto_shape() -> TrellisConfig {
 }
 
 /// AQ-coupled trellis with the given coupling scale (DC off, defaults
-/// otherwise). Measured envelope: `-4` ≈ 2 % smaller / ~3 % DSSIM cost
-/// on photos; `+4` ≈ the reverse.
+/// otherwise), clamped to ±1.0 λ-adjustment. Measured envelope: `-4` ≈
+/// 2 % smaller / ~3 % DSSIM cost on photos; `+4` ≈ the reverse.
+///
+/// The clamp is not optional for curated steps: unclamped coupling
+/// reproduces the historical screenshot-destruction mode on high-AQ
+/// content (validated 2026-06-10 — unclamped −4 scored SSIM2 −31 on
+/// 512² noise at q85 while shedding up to 90 % of bytes). Build the
+/// struct directly if you genuinely want the unclamped extreme.
 #[must_use]
 pub fn trellis_coupled(scale: f32) -> TrellisConfig {
     TrellisConfig {
         dc_enabled: false,
         aq_coupling: AqCoupling {
             scale,
+            max_adjustment: 1.0,
             ..AqCoupling::OFF
         },
         ..TrellisConfig::default()
@@ -130,8 +144,11 @@ pub fn trellis_coupled(scale: f32) -> TrellisConfig {
 }
 
 /// Fixed-lambda trellis at the given λ₁ (DC off, λ₂ default 16.5).
-/// Useful λ₁ range 12.0–17.0; below 12 trellis zeroes nearly all AC,
-/// above 17 it approaches no-trellis.
+/// Useful λ₁ range 12.0–17.0; below 12 trellis zeroes nearly all AC.
+/// Higher λ₁ keeps more coefficients than jpegli's zero-bias rounding —
+/// it does NOT converge to the no-trellis output (validated 2026-06-10:
+/// λ₁ = 16 is ~15 % larger and ~+3 SSIM2 better than no-trellis on
+/// mixed 512² content).
 #[must_use]
 pub fn trellis_lambda(lambda_log_scale1: f32) -> TrellisConfig {
     TrellisConfig {
@@ -231,25 +248,19 @@ impl SweepAxes {
         // λ₂ ridge probes at default λ₁.
         axes.coeff_opt.push(Some(trellis_lambda2(16.0)));
         axes.coeff_opt.push(Some(trellis_lambda2(17.0)));
-        // AQ coupling: measured envelope ±4; −8 only with the clamp
-        // that protected screenshots in the historical sweeps.
+        // AQ coupling: measured envelope ±4, every step clamped to ±1.0
+        // λ-adjustment — the unclamped form is the known screenshot/
+        // noise quality-destruction mode (see `trellis_coupled`).
         axes.coeff_opt.push(Some(trellis_coupled(-4.0)));
         axes.coeff_opt.push(Some(trellis_coupled(4.0)));
-        axes.coeff_opt.push(Some(TrellisConfig {
-            dc_enabled: false,
-            aq_coupling: AqCoupling {
-                scale: -8.0,
-                max_adjustment: 1.0,
-                ..AqCoupling::OFF
-            },
-            ..TrellisConfig::default()
-        }));
+        axes.coeff_opt.push(Some(trellis_coupled(-8.0)));
         // Non-linear coupling probe (historical grid {0.5, 1, 2}).
         axes.coeff_opt.push(Some(TrellisConfig {
             dc_enabled: false,
             aq_coupling: AqCoupling {
                 scale: -4.0,
                 exponent: 2.0,
+                max_adjustment: 1.0,
                 ..AqCoupling::OFF
             },
             ..TrellisConfig::default()
@@ -470,12 +481,12 @@ impl SweepBuilder {
             // Reduction ladder, one step per iteration.
             if let Some(d) = collapse_one_axis(&mut axes) {
                 // Coalesce repeated single-value drops of the same axis.
-                if let Some(last) = dropped.last_mut() {
-                    if last.axis == d.axis {
-                        last.dropped.extend(d.dropped);
-                        last.kept = d.kept;
-                        continue;
-                    }
+                if let Some(last) = dropped.last_mut()
+                    && last.axis == d.axis
+                {
+                    last.dropped.extend(d.dropped);
+                    last.kept = d.kept;
+                    continue;
                 }
                 dropped.push(d);
                 continue;
@@ -635,12 +646,28 @@ impl Stratum<'_> {
         let co = match self.coeff {
             None => "t0".to_string(),
             Some(t) => {
+                // Render every output-relevant field that deviates from the
+                // TrellisConfig default — ids must be collision-free across
+                // the λ₂ / delta-DC / coupling-exponent probe configs.
+                let d = TrellisConfig::default();
                 let mut s = format!("tr{:.4}", t.lambda_log_scale1);
+                if t.lambda_log_scale2 != d.lambda_log_scale2 {
+                    s.push_str(&format!("l2{:.1}", t.lambda_log_scale2));
+                }
                 if t.dc_enabled {
                     s.push_str("+dc");
                 }
+                if t.delta_dc_weight != d.delta_dc_weight {
+                    s.push_str(&format!("ddc{:.1}", t.delta_dc_weight));
+                }
                 if t.aq_coupling.is_active() {
                     s.push_str(&format!("cpl{:+.1}", t.aq_coupling.scale));
+                    if t.aq_coupling.exponent != 1.0 {
+                        s.push_str(&format!("e{:.1}", t.aq_coupling.exponent));
+                    }
+                    if t.aq_coupling.max_adjustment > 0.0 {
+                        s.push_str(&format!("cl{:.1}", t.aq_coupling.max_adjustment));
+                    }
                 }
                 s
             }
@@ -841,7 +868,10 @@ impl Fnv {
 /// - quality is fully mediated by the resolved tables + zero-bias
 ///   (Glassa/Piecewise anchor clamps, `allow_16bit` at qualities where
 ///   no value exceeds 255, …);
-/// - `TrellisSpeedMode` is excluded (output-neutral by construction);
+/// - `TrellisSpeedMode` IS included: it bounds the coefficient search on
+///   high-entropy blocks and therefore changes output bytes (empirically
+///   validated 2026-06-10 — an earlier revision excluded it as
+///   "output-neutral by construction" and was wrong);
 /// - restart rows are resolved to zero under progressive scan modes
 ///   (suppressed there unless forced).
 #[must_use]
@@ -890,7 +920,39 @@ pub fn fingerprint(config: &EncoderConfig) -> u64 {
             h.f32(t.lambda_log_scale1);
             h.f32(t.lambda_log_scale2);
             h.f32(t.delta_dc_weight);
-            // speed_mode excluded: output-neutral.
+            // speed_mode IS hashed: it bounds the trellis search
+            // (lookback/candidates on high-entropy blocks), so it changes
+            // chosen coefficients. Empirically falsified as "neutral" on
+            // 2026-06-10: Adaptive vs Thorough differed by 582 bytes on
+            // 512² noise at q95 (and 2 bytes on a CID22 photo).
+            match t.speed_mode {
+                super::trellis::TrellisSpeedMode::Thorough => h.u8(0),
+                super::trellis::TrellisSpeedMode::Adaptive => h.u8(1),
+                super::trellis::TrellisSpeedMode::Level(l) => {
+                    h.u8(2);
+                    h.u8(l);
+                }
+                super::trellis::TrellisSpeedMode::Custom {
+                    tier1_threshold,
+                    tier1_lookback,
+                    tier1_candidates,
+                    tier2_threshold,
+                    tier2_lookback,
+                    tier2_candidates,
+                } => {
+                    h.u8(3);
+                    for v in [
+                        tier1_threshold,
+                        tier1_lookback,
+                        tier1_candidates,
+                        tier2_threshold,
+                        tier2_lookback,
+                        tier2_candidates,
+                    ] {
+                        h.u8(v);
+                    }
+                }
+            }
             h.u8(u8::from(t.aq_coupling.multiplicative));
             h.f32(t.aq_coupling.scale);
             h.f32(t.aq_coupling.exponent);
@@ -1100,6 +1162,48 @@ mod tests {
                 .any(|t| { t.aq_coupling.scale == -8.0 && t.aq_coupling.max_adjustment == 1.0 }),
             "clamped −8 coupling missing"
         );
+        // No curated coupling step may be unclamped: the unclamped form
+        // is the validated quality-destruction mode on high-AQ content.
+        for t in axes.coeff_opt.iter().flatten() {
+            if t.aq_coupling.is_active() {
+                assert!(
+                    t.aq_coupling.max_adjustment > 0.0,
+                    "unclamped coupling step in curated axes: {t:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn speed_mode_changes_fingerprint() {
+        // speed_mode bounds the trellis search and changes output bytes
+        // (validated empirically 2026-06-10) — it must be hashed.
+        use super::super::trellis::TrellisSpeedMode;
+        let base = EncoderConfig::ycbcr(95, ChromaSubsampling::Quarter);
+        let adaptive = base.clone().trellis(TrellisConfig::default());
+        let thorough = base.trellis(TrellisConfig {
+            speed_mode: TrellisSpeedMode::Thorough,
+            ..TrellisConfig::default()
+        });
+        assert_ne!(fingerprint(&adaptive), fingerprint(&thorough));
+    }
+
+    #[test]
+    fn cell_ids_are_unique_across_modes_full() {
+        // Regression: λ₂ / delta-DC / coupling-exponent probes used to
+        // render identically to their base configs ("tr14.7500" twice,
+        // "tr14.7500+dc" colliding with default trellis, the exponent-2
+        // probe colliding with plain cpl−4), making TSV rows and alias
+        // reports ambiguous. Every id — canonical or alias — is unique.
+        let plan =
+            SweepBuilder::new(SweepAxes::modes_full(), QualityGrid::Explicit(vec![85.0])).plan();
+        let mut seen = std::collections::HashSet::new();
+        for cell in &plan.cells {
+            assert!(seen.insert(cell.id.clone()), "duplicate id {}", cell.id);
+            for a in &cell.aliases {
+                assert!(seen.insert(a.clone()), "duplicate alias id {a}");
+            }
+        }
     }
 
     #[test]

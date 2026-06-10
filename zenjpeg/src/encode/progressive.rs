@@ -377,12 +377,18 @@ impl ComputedConfig {
             // The frequency estimator can't accurately compare scripts with
             // different numbers of scans (Huffman clustering effects), so we
             // use actual encoding for the final selection.
-            let candidates = super::scan_optimize::generate_candidate_scripts(
+            let mut candidates = super::scan_optimize::generate_candidate_scripts(
                 y_blocks,
                 cb_blocks,
                 cr_blocks,
                 num_components as u8,
             )?;
+            // The canonical mozjpeg script is a known-good shape the
+            // generated candidates don't cover; trialing it makes Search
+            // a byte-superset of `ScanStrategy::Mozjpeg` (sweep_validate
+            // 2026-06-10 caught it beating the search winner by 0.09 %
+            // on a CID22 photo at q70).
+            candidates.push(self.get_mozjpeg_scan_script(is_color));
 
             let mut best_output = Vec::new();
             for (i, candidate) in candidates.iter().enumerate() {

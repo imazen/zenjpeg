@@ -403,6 +403,10 @@ name = "sweep_plan"
 required-features = ["__expert"]
 
 [[example]]
+name = "sweep_validate"
+required-features = ["__expert", "decoder"]
+
+[[example]]
 name = "zq_calibrate"
 required-features = ["target-zq"]
 

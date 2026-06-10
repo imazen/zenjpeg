@@ -140,7 +140,10 @@ fn main() {
 
     // === Metrics comparison ===
     // Decode zen with zune for metrics (same pipeline as bench-utils)
-    let zen_dec = zenjpeg_bench_utils::decode_jpeg_to_rgb(&zen_jpeg).unwrap();
+    let zen_dec = {
+        let (px, w, h) = zenjpeg_bench_utils::decode_jpeg(&zen_jpeg).unwrap();
+        zenjpeg_bench_utils::bytes_to_rgb(&px, w, h)
+    };
     let zen_ba = QualityMetrics::butteraugli(reference.as_ref(), zen_dec.as_ref());
     let zen_ss2 = QualityMetrics::ssimulacra2(reference.as_ref(), zen_dec.as_ref());
     let zen_rms = QualityMetrics::rms(reference.as_ref(), zen_dec.as_ref());

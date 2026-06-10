@@ -75,12 +75,23 @@ structural `Force` case only), never guessed.
 
 A sweep cell's identity is its resolved state, not its config spelling:
 hash the actual tables + zero-bias + entropy-relevant knobs; **exclude**
-output-neutral knobs (speed modes) and inputs fully mediated by hashed
-state (raw quality; the `allow_16bit` flag when every value fits 8-bit;
-boundary-rd when a trellis config makes it inert). Equal fingerprint ⇒
-identical bytes for the same input ⇒ one encode serves all aliased
-spellings. In zenjpeg's `rd_core × Step5` this merges 46% of the naive
-cross product before any encode runs.
+only inputs fully mediated by hashed state (raw quality; the
+`allow_16bit` flag when every value fits 8-bit; boundary-rd when a
+trellis config makes it inert). Equal fingerprint ⇒ identical bytes for
+the same input ⇒ one encode serves all aliased spellings. In zenjpeg's
+`rd_core × Step5` this merges 46% of the naive cross product before any
+encode runs.
+
+**Every exclusion must be proven by encode, not by reading code.**
+zenjpeg's first fingerprint excluded `TrellisSpeedMode` as
+"output-neutral by construction" — it reads like a pure speed knob, but
+it bounds the coefficient search on high-entropy blocks, and the
+empirical harness (pattern 6) falsified the exclusion in one run: 582
+bytes of divergence on 512² noise at q95. Search-effort knobs (speed
+levels, candidate counts, lookback limits, zopfli iterations) are
+usually output-AFFECTING; treat "neutral" as a claim requiring an
+encode-level test that an adversarial input (noise, q95) gets to vote
+on.
 
 ### 5. Budgeted, ordered, no-silent-caps sweep plans
 
@@ -102,6 +113,35 @@ deduplicated cells, with:
 - **Scalar steps carry provenance** (module docs table: bound, steps,
   and the measurement each step came from). A bound without provenance
   is a guess; steps without bounds are a dart board.
+
+### 6. Validate the axes empirically before trusting them
+
+Curated steps, fingerprint exclusions, and trial gates are all *claims
+about encoder behavior*, and claims drift. Ship a harness that encodes
+the **default stratum plus every single-deviation stratum** on a small
+mixed corpus (a few real photos + adversarial synthetics: noise,
+aligned checkerboard, one tiny image) and hard-fails on:
+
+- an **inert step** (a curated value that never changes output bytes),
+- a **fingerprint-contract violation** (equal fingerprint, different
+  bytes — checked on real encodes of the alias pairs),
+- an **exact-trial contract violation** (a `Smallest`-style mode losing
+  to a candidate it claims to subsume),
+- **ordering breakage** (defaults-first, deviations non-decreasing),
+
+with soft direction checks (sign/monotonicity per the provenance table)
+and per-label Δsize/Δquality aggregates as the report. zenjpeg's
+implementation is `examples/sweep_validate.rs` — ~200 cells × 7 images,
+32 seconds — and its first run caught five real defects: colliding cell
+ids across λ₂/delta-DC probe spellings, the `speed_mode` fingerprint
+exclusion, unclamped coupling steps reproducing a known
+quality-destruction mode (SSIM2 −31 on noise), a byte-gate
+counterexample 24% above the gate on a real CID22 photo, and
+`SmallestSearch` losing to the canonical mozjpeg scan script it didn't
+trial. Every one of those was invisible to unit tests that only check
+plan *structure*. Re-run the harness whenever the axes, the
+fingerprint, or a trial gate changes; commit the TSV next to the run
+date.
 
 ## What each codec should adopt, concretely
 
@@ -132,6 +172,17 @@ the trials need.
 - Trial candidates must emit **exactly** what their explicit mode would
   (zenjpeg's first Smallest draft beat explicit Baseline by a 6-byte DRI
   it had silently dropped — the equality contract caught it).
+- Byte gates are empirical bounds, not theorems. The 16 KiB entropy-trial
+  gate shipped with "7× margin over every observed crossover"; the
+  validation harness found a real-photo crossover at 19.8 KB (CID22
+  1044329, q10 — baseline 2.0% smaller than progressive). Now 32 KiB,
+  with the counterexample recorded at the constant. Expect to revise
+  again; what matters is that the gate self-measures and the regret
+  above it stays small and shrinking with size.
+- "Strictly additive" marker reasoning has a tail: restart markers also
+  re-base DC prediction, which on rare content nets out *cheaper* than
+  the marker bytes (8 bytes / 0.04% observed once in 42 cells).
+  `Smallest` deliberately does not sweep restart-interval space.
 - Per-anchor/exotic parameter grids (boundary-rd's 66-combo space)
   belong in the calibration harness (coefficient), not the curated axes.
 - Follow-ups tracked in imazen/zenjpeg#143.

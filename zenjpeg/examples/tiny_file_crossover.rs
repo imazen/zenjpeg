@@ -64,9 +64,7 @@ fn resize_nearest(
             let src_x = (x as u64 * src_w as u64 / out_w as u64) as u32;
             let src_idx = ((src_y as usize) * (src_w as usize) + (src_x as usize)) * channels;
             let dst_idx = ((y as usize) * (out_w as usize) + (x as usize)) * channels;
-            for c in 0..channels {
-                out[dst_idx + c] = src[src_idx + c];
-            }
+            out[dst_idx..dst_idx + channels].copy_from_slice(&src[src_idx..src_idx + channels]);
         }
     }
     out
@@ -90,7 +88,7 @@ fn gradient_gray(w: u32, h: u32) -> Vec<u8> {
     for y in 0..h {
         for x in 0..w {
             let idx = (y as usize) * (w as usize) + (x as usize);
-            out[idx] = (((x * y) / w.max(1) as u32) & 0xFF) as u8;
+            out[idx] = (((x * y) / w.max(1)) & 0xFF) as u8;
         }
     }
     out
@@ -104,7 +102,6 @@ fn load_rgb_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 struct Measurement {
     width: u32,
-    height: u32,
     quality: u8,
     subsampling: &'static str,
     off: usize,
@@ -113,9 +110,6 @@ struct Measurement {
 }
 
 impl Measurement {
-    fn pixels(&self) -> u64 {
-        self.width as u64 * self.height as u64
-    }
     fn delta(&self) -> i64 {
         self.off as i64 - self.force as i64
     }
@@ -203,7 +197,6 @@ fn main() {
                     let auto = encode(&resized, target, target, TinyFileMode::Auto, q, sub);
                     measurements.push(Measurement {
                         width: target,
-                        height: target,
                         quality: q,
                         subsampling: sub_name,
                         off,

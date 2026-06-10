@@ -43,6 +43,16 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `examples/sweep_validate.rs` — empirical validation harness for the
+  curated sweep axes: encodes the default stratum + every
+  single-deviation stratum of `modes_full` on mixed content (CID22
+  photos + adversarial synthetics) and hard-fails on inert steps,
+  fingerprint-contract violations, exact-trial contract violations, and
+  queue-ordering breakage; soft direction checks per the provenance
+  table. First run (results: `benchmarks/sweep_validate_2026-06-10.tsv`)
+  caught the five defects fixed below.
+
+
 - `zencodec::GainMapRender` wired through the decode trait path (`ultrahdr`
   feature): `BaseOnly` (default, SDR base), `Components` (surfaces the decoded
   gain map as `zencodec::decode::DecodedGainMap` extras — pixels + ISO 21496-1
@@ -113,6 +123,19 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- `ENTROPY_TRIAL_MAX_BYTES` raised 16 KiB → 32 KiB: `sweep_validate`
+  found a real-photo counterexample above the old gate (CID22 1044329
+  q10 — 19.8 KB progressive, baseline 2.0 % smaller). Counterexample and
+  margin recorded at the constant.
+- `ScanStrategy::Search` now also trial-encodes the canonical mozjpeg
+  scan script, making `ProgressiveSearch`/`SmallestSearch` byte-supersets
+  of `ProgressiveMozjpeg` (it had won by 0.09 % on a CID22 photo at q70).
+- `encode::sweep::trellis_coupled()` clamps λ-adjustment to ±1.0 and the
+  curated coupling steps are all clamped: the unclamped form reproduced
+  the historical screenshot-destruction mode on noise (SSIM2 −31, −90 %
+  bytes at q85). Unclamped remains constructible explicitly.
+
+
 - `TinyFileMode::Auto` grayscale arm: structural DOMINANCE, not trial —
   single-component tiny mode is pure header pruning (~208 B) with no
   shared-table cost, so Auto takes it at every size without a gate
@@ -155,6 +178,21 @@ All notable changes to zenjpeg are documented here. Earlier history
   scan axis leaves heuristic space.
 
 ### Fixed
+
+- Sweep fingerprint now hashes `TrellisSpeedMode`: it bounds the trellis
+  coefficient search, so it changes output bytes (582-byte divergence on
+  512² noise at q95) — the prior "output-neutral" exclusion violated the
+  equal-fingerprint ⇒ identical-bytes contract.
+- Sweep cell ids disambiguate λ₂, delta-DC, coupling-exponent, and
+  coupling-clamp deviations (the λ₂/delta-DC/exponent probes used to
+  render identically to their base configs; ids now unique across
+  `modes_full`, enforced by test).
+- Example lint debt cleared so `clippy --all-targets -D warnings` is
+  green on default and full feature sets: migrated six examples off
+  deprecated `decode_jpeg_to_rgb` (XYB-capable ones to
+  `decode_jpeg_with_icc`), fixed `zensim_regress` API drift
+  (`ToleranceSpec`, `latest_preview()`), and misc one-line lints.
+
 
 - `codec.rs` zencodec tests use `.with_metadata_policy(meta,
   PreserveExact)` again: the interim revert to deprecated

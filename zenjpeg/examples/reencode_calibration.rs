@@ -33,8 +33,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use zenjpeg::detect;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
-    ImageData, QualityMetrics, RgbImage, bytes_to_rgb, decode_jpeg_to_rgb, decode_jpeg_with_icc,
-    rgb_to_bytes, write_ppm,
+    ImageData, QualityMetrics, RgbImage, bytes_to_rgb, decode_jpeg_with_icc, rgb_to_bytes,
+    write_ppm,
 };
 
 fn default_output_dir() -> std::path::PathBuf {
@@ -440,7 +440,7 @@ fn process_source(
     }
 
     // Decode source JPEG
-    let decoded = match decode_jpeg_to_rgb(source_jpeg) {
+    let decoded = match decode_jpeg_with_icc(source_jpeg) {
         Ok(d) => d,
         Err(e) => {
             if verbose {
@@ -510,7 +510,7 @@ fn process_resize(
 ) -> Vec<RawResult> {
     let mut results = Vec::new();
 
-    let decoded = match decode_jpeg_to_rgb(source_jpeg) {
+    let decoded = match decode_jpeg_with_icc(source_jpeg) {
         Ok(d) => d,
         Err(_) => return results,
     };

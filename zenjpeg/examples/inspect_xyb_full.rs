@@ -69,7 +69,7 @@ fn main() {
             let id = jpeg[off];
             let samp = jpeg[off + 1];
             let qt = jpeg[off + 2];
-            let id_char = if (b'A'..=b'Z').contains(&id) {
+            let id_char = if id.is_ascii_uppercase() {
                 id as char
             } else {
                 '?'

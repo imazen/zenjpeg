@@ -75,18 +75,14 @@ fn parse_args() -> Args {
         limit_images: None,
         limit_configs: None,
         lineart_dir: PathBuf::from("benchmarks/boundary_rd/sweep_corpus/lineart"),
-        screenshots_dir: PathBuf::from(
-            std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join("work/codec-eval/codec-corpus/gb82-sc"))
-                .unwrap_or_else(|| PathBuf::from("gb82-sc")),
-        ),
-        photo_dir: PathBuf::from(
-            std::env::var_os("HOME")
-                .map(|h| {
-                    PathBuf::from(h).join("work/codec-eval/codec-corpus/CID22/CID22-512/validation")
-                })
-                .unwrap_or_else(|| PathBuf::from("CID22/validation")),
-        ),
+        screenshots_dir: std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("work/codec-eval/codec-corpus/gb82-sc"))
+            .unwrap_or_else(|| PathBuf::from("gb82-sc")),
+        photo_dir: std::env::var_os("HOME")
+            .map(|h| {
+                PathBuf::from(h).join("work/codec-eval/codec-corpus/CID22/CID22-512/validation")
+            })
+            .unwrap_or_else(|| PathBuf::from("CID22/validation")),
         photo_names: vec![
             "1025469.png".into(),
             "1044329.png".into(),

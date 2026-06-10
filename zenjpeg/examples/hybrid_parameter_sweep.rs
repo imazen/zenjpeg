@@ -10,7 +10,13 @@
 use std::env;
 use std::path::Path;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zenjpeg_bench_utils::{ImageData, QualityMetrics, RgbImage, decode_jpeg_to_rgb};
+use zenjpeg_bench_utils::{ImageData, QualityMetrics, RgbImage, bytes_to_rgb, decode_jpeg};
+
+/// Raw zune-jpeg decode (this example is YCbCr-only; no XYB/ICC input).
+fn decode_to_rgb_raw(data: &[u8]) -> RgbImage {
+    let (pixels, w, h) = decode_jpeg(data).expect("decode");
+    bytes_to_rgb(&pixels, w, h)
+}
 
 fn main() {
     // Find test images
@@ -89,8 +95,7 @@ fn run_sweep(image_path: &str) {
     let baseline_config =
         EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::Quarter).optimize_huffman(true);
     let baseline_bytes = encode_and_measure_bytes(&baseline_config, &img);
-    let baseline_decoded: RgbImage =
-        decode_jpeg_to_rgb(&encode_image(&baseline_config, &img)).expect("decode");
+    let baseline_decoded: RgbImage = decode_to_rgb_raw(&encode_image(&baseline_config, &img));
     let orig_rgb = zenjpeg_bench_utils::bytes_to_rgb(&img.pixels, img.width, img.height);
     let baseline_dssim = QualityMetrics::dssim(orig_rgb.as_ref(), baseline_decoded.as_ref());
     let baseline_ssim2 = QualityMetrics::ssimulacra2(orig_rgb.as_ref(), baseline_decoded.as_ref());
@@ -110,7 +115,7 @@ fn run_sweep(image_path: &str) {
         let config = create_hybrid_config(quality, coupling);
         let jpeg_bytes = encode_image(&config, &img);
         let bytes = jpeg_bytes.len();
-        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+        let decoded: RgbImage = decode_to_rgb_raw(&jpeg_bytes);
 
         let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
         let ssim2 = QualityMetrics::ssimulacra2(orig_rgb.as_ref(), decoded.as_ref());
@@ -197,7 +202,7 @@ fn run_sweep(image_path: &str) {
         let config = create_hybrid_config_multiplicative(quality, coupling);
         let jpeg_bytes = encode_image(&config, &img);
         let bytes = jpeg_bytes.len();
-        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+        let decoded: RgbImage = decode_to_rgb_raw(&jpeg_bytes);
 
         let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
 
@@ -229,7 +234,7 @@ fn run_sweep(image_path: &str) {
         let config = create_hybrid_config_with_threshold(quality, -4.0, threshold);
         let jpeg_bytes = encode_image(&config, &img);
         let bytes = jpeg_bytes.len();
-        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+        let decoded: RgbImage = decode_to_rgb_raw(&jpeg_bytes);
 
         let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
 
@@ -262,7 +267,7 @@ fn run_sweep(image_path: &str) {
         let config = create_hybrid_config_with_exponent(quality, -4.0, exp);
         let jpeg_bytes = encode_image(&config, &img);
         let bytes = jpeg_bytes.len();
-        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+        let decoded: RgbImage = decode_to_rgb_raw(&jpeg_bytes);
 
         let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
 
@@ -294,7 +299,7 @@ fn run_sweep(image_path: &str) {
         let config = create_hybrid_config_with_max_adj(quality, -8.0, max_adj);
         let jpeg_bytes = encode_image(&config, &img);
         let bytes = jpeg_bytes.len();
-        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+        let decoded: RgbImage = decode_to_rgb_raw(&jpeg_bytes);
 
         let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
 

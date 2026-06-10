@@ -28,7 +28,7 @@ use zenjpeg::encode::expert::ExpertConfig;
 use zenjpeg::encode::{ChromaSubsampling, ColorMode, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
     ChromaSubsampling as BenchSub, ColorMode as BenchColor, EncoderConfig as BenchEncoderConfig,
-    EncoderImpl, ImageData, QualityMetrics, ScanMode, bytes_to_rgb, decode_jpeg_to_rgb,
+    EncoderImpl, ImageData, QualityMetrics, ScanMode, bytes_to_rgb, decode_jpeg,
 };
 
 // --- Constants ---
@@ -151,7 +151,8 @@ fn encode_cpp(dist: f32, img: &ImageData) -> Option<Vec<u8>> {
 
 fn compute_ssim2(img: &ImageData, jpeg: &[u8]) -> Option<f64> {
     let orig = bytes_to_rgb(&img.pixels, img.width, img.height);
-    let dec = decode_jpeg_to_rgb(jpeg).ok()?;
+    let (dec_px, dec_w, dec_h) = decode_jpeg(jpeg).ok()?;
+    let dec = bytes_to_rgb(&dec_px, dec_w, dec_h);
     Some(QualityMetrics::ssimulacra2(orig.as_ref(), dec.as_ref()))
 }
 

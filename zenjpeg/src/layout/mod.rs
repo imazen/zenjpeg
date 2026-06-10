@@ -130,10 +130,9 @@ impl LayoutConfig {
 
     /// Build an `EncoderConfig` from layout settings.
     pub(crate) fn build_encoder_config(&self) -> EncoderConfig {
-        let config =
-            EncoderConfig::ycbcr(self.quality, self.subsampling).progressive(self.progressive);
-        let config = config.auto_optimize(self.auto_optimize);
-        config
+        EncoderConfig::ycbcr(self.quality, self.subsampling)
+            .progressive(self.progressive)
+            .auto_optimize(self.auto_optimize)
     }
 }
 

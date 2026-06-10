@@ -243,10 +243,10 @@ fn list_pngs(dir: &Path, limit: usize) -> Vec<PathBuf> {
 
 fn main() {
     let args = parse_args();
-    if let Some(parent) = args.out.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = fs::create_dir_all(parent);
-        }
+    if let Some(parent) = args.out.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = fs::create_dir_all(parent);
     }
 
     let mut writer = fs::File::create(&args.out).expect("create csv");

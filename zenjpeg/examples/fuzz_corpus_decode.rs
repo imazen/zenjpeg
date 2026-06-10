@@ -400,7 +400,7 @@ fn main() {
         if w.is_empty() {
             continue;
         }
-        w.sort_by(|a, b| b.1.cmp(&a.1));
+        w.sort_by_key(|e| std::cmp::Reverse(e.1));
         println!();
         println!(
             "=== {} files with max_diff > 4 vs jpeg-decoder ({}) ===",

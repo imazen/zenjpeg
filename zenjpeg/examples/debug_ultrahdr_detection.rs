@@ -98,9 +98,9 @@ fn main() {
                     );
                 }
             }
-            0xE2 => {
-                // APP2
-                if seg_data.starts_with(MPF_SIG) {
+            // APP2
+            0xE2 if seg_data.starts_with(MPF_SIG) => {
+                {
                     println!("Found MPF at pos {} ({} bytes)", pos - 4, seg_data.len());
                     // Parse MPF
                     let is_le = &seg_data[4..6] == b"II";

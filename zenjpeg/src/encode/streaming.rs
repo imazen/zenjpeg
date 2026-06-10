@@ -55,16 +55,21 @@ use enough::{Stop, Unstoppable};
 /// little entropy content, which bounds the cost of the extra
 /// sequential passes regardless of dimensions.
 ///
-/// Provenance: every observed sequential win sits at ≤ ~2.4 KB of
-/// progressive output (200×160 q10 noise: sequential ~10 % smaller
-/// at 2.3 KB; the tiny-file regime ~1.2 KB), and RD sweeps over
-/// photographic corpora found zero wins at larger outputs. 16 KiB
-/// gives ~7× margin over the largest observed crossover. Empirical
-/// bound, not a theorem (successive approximation + EOBn
-/// restructure the symbol stream, so no partitioned-coding
-/// dominance argument closes); revisit with sweep evidence if a
-/// larger counterexample appears.
-pub(crate) const ENTROPY_TRIAL_MAX_BYTES: usize = 16 * 1024;
+/// Provenance: the original 16 KiB gate was set at ~7× the largest
+/// crossover then observed (sequential wins at ≤ ~2.4 KB of
+/// progressive output; zero wins at larger outputs in photographic
+/// RD sweeps). The 2026-06-10 `sweep_validate` run produced a
+/// counterexample ABOVE that gate: CID22 1044329 at q10 emits
+/// 19.8 KB progressive while plain baseline is 2.0 % smaller
+/// (19.4 KB) — low-q photographic content, not synthetic. Gate
+/// raised to 32 KiB (~1.6× the new largest observed crossover);
+/// regret above the gate shrinks with size (−2.0 % at 19.8 KB is
+/// the worst seen) and the trial cost stays bounded by
+/// construction. Empirical bound, not a theorem (successive
+/// approximation + EOBn restructure the symbol stream, so no
+/// partitioned-coding dominance argument closes); revisit again if
+/// a larger counterexample appears.
+pub(crate) const ENTROPY_TRIAL_MAX_BYTES: usize = 32 * 1024;
 
 pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
 
@@ -1341,9 +1346,15 @@ impl StreamingEncoder {
         seq_cfg.smallest_scan = false;
         seq_cfg.mode = JpegMode::Baseline;
         seq_cfg.tiny_file_active = false;
-        // Pure rate minimizer: restart markers are strictly additive
-        // bytes, and the progressive alternative cannot
-        // restart-parallel-decode either, so 0 trades nothing away.
+        // Pure rate minimizer: restart-free, and the progressive
+        // alternative cannot restart-parallel-decode either, so 0
+        // trades essentially nothing away. NOT a strict dominance:
+        // restart markers also re-base DC prediction, which on rare
+        // content nets out cheaper than the marker overhead
+        // (sweep_validate 2026-06-10: a 4-MCU-row-interval baseline
+        // beat this restart-free candidate by 8 bytes / 0.04 % on
+        // CID22 1044329 q10). Smallest deliberately does not sweep
+        // restart-interval space for that tail.
         // `force_restart_markers` overrides via
         // smallest_seq_restart_interval (resolved in byte_encoders,
         // where that knob is in scope).
