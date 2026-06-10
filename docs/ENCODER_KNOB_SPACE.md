@@ -36,8 +36,20 @@ This document answers three questions:
 >   XYB now rejects the YCbCr-only families in `validate()`. The inert
 >   `quality_adaptive`/dampen coupling knob was deleted outright.
 >   `EncodePlan` reports `table_family` + `quality_drives_tables`.
-> - Still open: §9.1 per-channel `ResolvedQuality` (per-channel zero-bias,
->   §9.6.5), §9.6.1 piecewise-v4 wiring, §9.5 canonical search vector.
+> - **Per-channel + piecewise wave (2026-06-10):** §9.1 ResolvedQuality
+>   landed — per-component distances are the internal currency; the jpegli
+>   families carry `chroma_distance_scales: [f32; 2]` (Cb/Cr or X/B
+>   independently — new optimizer axes). §9.6.5 landed with a parity seam:
+>   neutral scales keep the joint-inversion zero-bias bit-exactly (C++
+>   behaviour); divergent scales derive each channel's zero-bias from its
+>   own table. §9.6.1 landed: `QuantTableConfig::PiecewiseV4` is
+>   selectable (3-table, quality-anchored, YCbCr-only). NOT yet an
+>   `adaptive()` pick — piecewise×trellis/subsampling sweeps must run
+>   first; per-anchor zero-bias SA + per-content anchors are the recorded
+>   retraining avenues.
+> - Still open: §9.5 canonical search vector; piecewise adoption sweep for
+>   `adaptive()`; Custom-tables distance-space note (full table-space
+>   control supersedes it — see `encode::expert` docs).
 >
 > Sections §5–§6 and §8 below describe the **pre-refactor** state — kept
 > as the rationale record for why the merge happened.

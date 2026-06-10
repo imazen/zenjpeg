@@ -34,6 +34,19 @@
 //!   Every field — including `trellis_speed_mode` and
 //!   `trellis_delta_dc_weight` — is forwarded in both modes.
 //!
+//! # Per-channel distance control
+//!
+//! `ExpertConfig` packages its tables as `QuantTableConfig::Custom`, which
+//! receives **uniform** per-component distances. This closes no avenue:
+//! for `ScalingParams::Scaled` tables, any per-channel distance ratio is
+//! exactly expressible in table space — `table_c[k] = B_c[k] · f(d)^e[k]`,
+//! so scaling channel c's distance to `d_c` is identical to replacing the
+//! base matrix with `B'_c[k] = B_c[k] · (f(d_c)/f(d))^e[k]`, and the 192
+//! base values plus 64 exponents are all direct optimizer parameters.
+//! Distance-space per-channel control (the jpegli families'
+//! `chroma_distance_scales: [f32; 2]`) is the *convenient* projection of
+//! that space, not a larger one.
+//!
 //! # Parameter Count
 //!
 //! ~30 direct fields, controlling ~481 f32-representable parameters:

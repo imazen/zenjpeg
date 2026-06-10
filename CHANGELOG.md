@@ -43,6 +43,27 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `QuantTableConfig::PiecewiseV4` — the SA-piecewise v4 anchor tables
+  (CID22-512-trained, +6.602 mean pareto vs jpegli on training, +6.09 on
+  the 41-image holdout) are now a selectable 3-table family. Quality
+  derives from the config's `Quality` knob; YCbCr only (rejected for XYB
+  in `validate()`). `adaptive()` does NOT yet pick it — the
+  piecewise×trellis and piecewise×subsampling interactions are unswept;
+  that calibration is the documented next step, and per-anchor zero-bias
+  SA / per-content anchor sets remain open retraining avenues.
+- Per-channel chroma distances: the jpegli families' knob widened to
+  `chroma_distance_scales: [f32; 2]` (`[Cb, Cr]` in YCbCr, `[X, B]` in
+  XYB; each clamped to [0.1, 5.0]); `QuantTableConfig::jpegli_chroma_scale(s)`
+  keeps the uniform one-liner. Internal `ResolvedQuality` (per-component
+  distance vector) is now the single quality currency feeding tables and
+  zero-bias.
+- Per-channel zero-bias (§9.6.5): when chroma scales are non-neutral,
+  each channel's zero-bias derives from that channel's own effective
+  distance (new `quant_table_to_distance_component`). Neutral scales keep
+  the joint three-component inversion **bit-identically** (C++-parity
+  path, enforced by the locked suites). Divergent-scale outputs change vs
+  the previous global-inversion behaviour — previously chroma zero-bias
+  barely responded to the chroma distance at all.
 - `EncodePlan.table_family` (the `QuantTableConfig` with its live knobs)
   and `EncodePlan.quality_drives_tables` (false only for
   `Custom`+`ScalingParams::Exact` tables — where changing `Quality`

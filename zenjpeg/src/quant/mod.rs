@@ -567,6 +567,76 @@ pub fn quant_vals_to_distance(
     }
 }
 
+/// Per-component variant of [`quant_vals_to_distance`]: inverts ONE
+/// component's quantization table against its own third of the base matrix.
+///
+/// Used for zero-bias derivation when per-component distances diverge
+/// (non-neutral `chroma_distance_scales`): each channel's zero-bias then
+/// follows that channel's own effective distance. The joint
+/// three-component inversion above remains the C++-parity path for
+/// uniform distances (bit-identical to historical output).
+#[must_use]
+pub fn quant_table_to_distance_component(
+    quant: &QuantTable,
+    component: usize,
+    use_xyb: bool,
+) -> f32 {
+    use crate::foundation::consts::{
+        BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
+    };
+
+    const DIST_MAX: f32 = 10000.0;
+
+    let (base_matrix, global_scale) = if use_xyb {
+        (&BASE_QUANT_MATRIX_XYB[..], GLOBAL_SCALE_XYB)
+    } else {
+        (&BASE_QUANT_MATRIX_YCBCR[..], GLOBAL_SCALE_YCBCR)
+    };
+
+    let quant_max = if quant.precision > 0 {
+        QUANT_MAX_EXTENDED
+    } else {
+        QUANT_MAX_BASELINE
+    };
+
+    let mut dist_min = 0.0f32;
+    let mut dist_max = DIST_MAX;
+
+    let base_idx = component.min(2) * DCT_BLOCK_SIZE;
+    let base_qm = &base_matrix[base_idx..base_idx + DCT_BLOCK_SIZE];
+
+    for k in 0..DCT_BLOCK_SIZE {
+        let mut dmin = 0.0f32;
+        let mut dmax = DIST_MAX;
+        let invq = 1.0 / base_qm[k] / global_scale;
+        let qval = quant.values[k];
+
+        if qval > 1 {
+            let scale_min = (qval as f32 - 0.5) * invq;
+            dmin = scale_to_distance(scale_min, k);
+        }
+        if qval < quant_max {
+            let scale_max = (qval as f32 + 0.5) * invq;
+            dmax = scale_to_distance(scale_max, k);
+        }
+
+        if dmin <= dist_max {
+            dist_min = dist_min.max(dmin);
+        }
+        if dmax >= dist_min {
+            dist_max = dist_max.min(dmax);
+        }
+    }
+
+    if dist_min == 0.0 {
+        dist_max
+    } else if dist_max >= DIST_MAX {
+        dist_min
+    } else {
+        0.5 * (dist_min + dist_max)
+    }
+}
+
 /// Standard JPEG luminance quantization table.
 /// From ITU-T T.81 (1992) K.1
 pub const STD_LUMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [

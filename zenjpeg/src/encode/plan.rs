@@ -27,6 +27,53 @@ use super::trellis::TrellisConfig;
 // Shared quant-table resolution (used by StreamingEncoder + EncodePlan)
 // ============================================================================
 
+/// Per-component butteraugli distances — the internal quality currency.
+///
+/// Every quality front-end (the six [`Quality`] unit systems, the jpegli
+/// families' `chroma_distance_scales`) resolves into this vector before
+/// any table or zero-bias math runs. Component order follows the JPEG
+/// component order: `[Y, Cb, Cr]` in YCbCr mode, `[X, Y, B]` in XYB mode.
+pub(crate) struct ResolvedQuality {
+    /// Per-component distances feeding table scaling and (when divergent)
+    /// per-channel zero-bias.
+    pub distances: [f32; 3],
+    /// All components share the base distance (neutral scales). The
+    /// uniform path uses the joint three-component table inversion for
+    /// zero-bias — bit-identical to C++ jpegli parity behaviour.
+    pub uniform: bool,
+}
+
+/// Resolve `Quality` + the table family's distance knobs into the
+/// per-component distance vector.
+pub(crate) fn resolve_quality(
+    quality: Quality,
+    table_config: &QuantTableConfig,
+    use_xyb: bool,
+) -> ResolvedQuality {
+    let d = quality.to_distance();
+    match table_config.chroma_distance_scales() {
+        Some(scales) => {
+            let s = [scales[0].clamp(0.1, 5.0), scales[1].clamp(0.1, 5.0)];
+            // The scales apply to the chroma-like channels in ascending
+            // component order. YCbCr: Cb, Cr (components 1, 2). XYB:
+            // X, B (components 0, 2); Y keeps the base distance.
+            let distances = if use_xyb {
+                [d * s[0], d, d * s[1]]
+            } else {
+                [d, d * s[0], d * s[1]]
+            };
+            ResolvedQuality {
+                distances,
+                uniform: s[0] == 1.0 && s[1] == 1.0,
+            }
+        }
+        None => ResolvedQuality {
+            distances: [d; 3],
+            uniform: true,
+        },
+    }
+}
+
 /// Inputs for [`resolve_quant_tables`]. Both `StreamingEncoder::new` and
 /// [`EncoderConfig::resolve_plan`] construct this from their own state.
 pub(crate) struct TableResolveInputs<'a> {
@@ -67,6 +114,7 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
         allow_16bit,
     } = inputs;
 
+    let rq = resolve_quality(quality, table_config, use_xyb);
     let distance = quality.to_distance();
     let color_space = if use_xyb {
         ColorSpace::Xyb
@@ -100,6 +148,22 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
                 zero_bias,
                 distances,
                 quality_drives_tables: !tables.is_exact(),
+            }
+        }
+        QuantTableConfig::PiecewiseV4 => {
+            // SA-piecewise anchors are indexed by quality; derive it from
+            // the config's one quality knob (internal jpegli scale). The
+            // generator clamps to its trained Q5-Q100 anchor range.
+            let q = quality.to_internal().round().clamp(1.0, 100.0) as u8;
+            let tables = super::tables::sa_piecewise_v4::tables_for_quality(q);
+            let distances = [distance; 3];
+            let quant = clamp_baseline(tables.generate_quant_tables(distances, is_420));
+            let zero_bias = tables.generate_zero_bias_all();
+            ResolvedTables {
+                quant,
+                zero_bias,
+                distances,
+                quality_drives_tables: true,
             }
         }
         QuantTableConfig::GlassaLowBpp => {
@@ -141,22 +205,10 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
                 quality_drives_tables: true,
             }
         }
-        QuantTableConfig::Jpegli {
-            chroma_distance_scale,
-        }
-        | QuantTableConfig::JpegliSharedChroma {
-            chroma_distance_scale,
-        } => {
-            let cs = chroma_distance_scale.clamp(0.1, 5.0);
-            // The scale applies to the chroma-like channels. YCbCr: Cb, Cr
-            // (components 1, 2). XYB: X (red-green) and B (blue) — components
-            // 0 and 2; Y (component 1) is the luma-like channel and keeps
-            // the base distance.
-            let distances = if use_xyb {
-                [distance * cs, distance, distance * cs]
-            } else {
-                [distance, distance * cs, distance * cs]
-            };
+        QuantTableConfig::Jpegli { .. } | QuantTableConfig::JpegliSharedChroma { .. } => {
+            // Per-component distances come from ResolvedQuality (base
+            // distance + the family's per-channel chroma scales).
+            let distances = rq.distances;
             // 2-table mode uses the Cr base matrix (component 2) for both
             // chroma tables, matching jpeg_set_quality(). XYB always uses
             // per-component matrices (shared-chroma is rejected for XYB
@@ -193,25 +245,39 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
                 ),
             );
 
-            // Compute effective distance for quality-adaptive zero bias.
-            // Color-space aware: XYB tables invert against the XYB base
-            // matrix + GLOBAL_SCALE_XYB; YCbCr tables invert against
-            // their own matrix + GLOBAL_SCALE_YCBCR.
-            let effective_distance =
-                quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2, use_xyb);
+            // Zero-bias derives from the effective distance of the
+            // ACTUALLY-WRITTEN tables (post clamping/rounding), matching
+            // C++ jpegli. Two modes:
+            //
+            // - Uniform distances (neutral scales): the joint
+            //   three-component inversion — bit-identical to the
+            //   historical / C++-parity output.
+            // - Divergent distances: each channel inverts its own table,
+            //   so zero-bias follows that channel's effective distance
+            //   (per-channel zero-bias, §9.6.5).
+            let eff = if rq.uniform {
+                let e = quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2, use_xyb);
+                [e; 3]
+            } else {
+                [
+                    quant::quant_table_to_distance_component(&quant.0, 0, use_xyb),
+                    quant::quant_table_to_distance_component(&quant.1, 1, use_xyb),
+                    quant::quant_table_to_distance_component(&quant.2, 2, use_xyb),
+                ]
+            };
 
             // Auto-select zero bias based on color mode
             let zero_bias = if use_xyb {
                 (
-                    ZeroBiasParams::for_xyb(effective_distance, 0),
-                    ZeroBiasParams::for_xyb(effective_distance, 1),
-                    ZeroBiasParams::for_xyb(effective_distance, 2),
+                    ZeroBiasParams::for_xyb(eff[0], 0),
+                    ZeroBiasParams::for_xyb(eff[1], 1),
+                    ZeroBiasParams::for_xyb(eff[2], 2),
                 )
             } else {
                 (
-                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
-                    ZeroBiasParams::for_ycbcr(effective_distance, 1),
-                    ZeroBiasParams::for_ycbcr(effective_distance, 2),
+                    ZeroBiasParams::for_ycbcr(eff[0], 0),
+                    ZeroBiasParams::for_ycbcr(eff[1], 1),
+                    ZeroBiasParams::for_ycbcr(eff[2], 2),
                 )
             };
 
@@ -309,15 +375,16 @@ impl core::fmt::Display for EncodePlan {
         )?;
         let family = match &self.table_family {
             QuantTableConfig::Jpegli {
-                chroma_distance_scale,
-            } => format!("Jpegli(chroma_scale={chroma_distance_scale:.2})"),
+                chroma_distance_scales: [a, b],
+            } => format!("Jpegli(chroma_scales=[{a:.2}, {b:.2}])"),
             QuantTableConfig::JpegliSharedChroma {
-                chroma_distance_scale,
-            } => format!("JpegliSharedChroma(chroma_scale={chroma_distance_scale:.2})"),
+                chroma_distance_scales: [a, b],
+            } => format!("JpegliSharedChroma(chroma_scales=[{a:.2}, {b:.2}])"),
             QuantTableConfig::MozjpegRobidoux { chroma_quality } => {
                 format!("MozjpegRobidoux(chroma_q={chroma_quality:?})")
             }
             QuantTableConfig::Custom(_) => "Custom".to_string(),
+            QuantTableConfig::PiecewiseV4 => "PiecewiseV4".to_string(),
             QuantTableConfig::GlassaLowBpp => "GlassaLowBpp".to_string(),
         };
         writeln!(
@@ -528,7 +595,7 @@ mod tests {
     fn chroma_distance_scale_moves_chroma_distances() {
         let plan = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .quant_table_config(QuantTableConfig::Jpegli {
-                chroma_distance_scale: 2.0,
+                chroma_distance_scales: [2.0, 2.0],
             })
             .resolve_plan(512, 512);
         assert!((plan.distances[1] - plan.distances[0] * 2.0).abs() < 1e-6);
@@ -540,7 +607,7 @@ mod tests {
         use crate::encode::encoder_types::XybSubsampling;
         let plan = EncoderConfig::xyb(85, XybSubsampling::BQuarter)
             .quant_table_config(QuantTableConfig::Jpegli {
-                chroma_distance_scale: 2.0,
+                chroma_distance_scales: [2.0, 2.0],
             })
             .resolve_plan(512, 512);
         // XYB component order is X, Y, B: the chroma-like X and B carry
@@ -554,7 +621,7 @@ mod tests {
         use crate::encode::encoder_types::XybSubsampling;
         let shared = EncoderConfig::xyb(85, XybSubsampling::BQuarter).quant_table_config(
             QuantTableConfig::JpegliSharedChroma {
-                chroma_distance_scale: 1.0,
+                chroma_distance_scales: [1.0, 1.0],
             },
         );
         assert!(shared.validate().is_err());
@@ -602,6 +669,109 @@ mod tests {
         assert!(!p.quality_drives_tables);
         // Same tables at any quality — the plan says so and the maxima agree.
         assert_eq!(p.quant_max, plan(30.0).quant_max);
+    }
+
+    #[test]
+    fn per_channel_chroma_scales_move_independently() {
+        let plan = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .quant_table_config(QuantTableConfig::Jpegli {
+                chroma_distance_scales: [0.5, 3.0],
+            })
+            .resolve_plan(512, 512);
+        assert!((plan.distances[1] - plan.distances[0] * 0.5).abs() < 1e-6);
+        assert!((plan.distances[2] - plan.distances[0] * 3.0).abs() < 1e-6);
+        // Independent channels: Cb table finer than uniform, Cr coarser.
+        assert_ne!(plan.quant_max[1], plan.quant_max[2]);
+    }
+
+    #[test]
+    fn per_channel_scales_xyb_x_and_b_independent() {
+        use crate::encode::encoder_types::XybSubsampling;
+        let plan = EncoderConfig::xyb(85, XybSubsampling::BQuarter)
+            .quant_table_config(QuantTableConfig::Jpegli {
+                chroma_distance_scales: [0.5, 3.0],
+            })
+            .resolve_plan(512, 512);
+        // [X, Y, B]: X gets scales[0], B gets scales[1], Y stays base.
+        assert!((plan.distances[0] - plan.distances[1] * 0.5).abs() < 1e-6);
+        assert!((plan.distances[2] - plan.distances[1] * 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn uniform_scales_use_joint_inversion_for_zero_bias() {
+        // The uniform path must stay bit-identical to the legacy joint
+        // three-component inversion (C++ parity behaviour).
+        let resolved = resolve_quant_tables(TableResolveInputs {
+            quality: crate::encode::encoder_types::Quality::ApproxJpegli(75.0),
+            table_config: &QuantTableConfig::default(),
+            use_xyb: false,
+            is_420: true,
+            allow_16bit: false,
+        });
+        let eff = crate::quant::quant_vals_to_distance(
+            &resolved.quant.0,
+            &resolved.quant.1,
+            &resolved.quant.2,
+            false,
+        );
+        let expected = crate::quant::ZeroBiasParams::for_ycbcr(eff, 2);
+        assert_eq!(resolved.zero_bias.2.mul, expected.mul);
+        assert_eq!(resolved.zero_bias.2.offset, expected.offset);
+    }
+
+    #[test]
+    fn divergent_scales_give_per_channel_zero_bias() {
+        let uniform = resolve_quant_tables(TableResolveInputs {
+            quality: crate::encode::encoder_types::Quality::ApproxJpegli(75.0),
+            table_config: &QuantTableConfig::default(),
+            use_xyb: false,
+            is_420: true,
+            allow_16bit: false,
+        });
+        let divergent = resolve_quant_tables(TableResolveInputs {
+            quality: crate::encode::encoder_types::Quality::ApproxJpegli(75.0),
+            table_config: &QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 3.0],
+            },
+            use_xyb: false,
+            is_420: true,
+            allow_16bit: false,
+        });
+        // Cr's zero-bias now follows Cr's own (coarser) effective distance.
+        let eff_cr = crate::quant::quant_table_to_distance_component(&divergent.quant.2, 2, false);
+        let expected_cr = crate::quant::ZeroBiasParams::for_ycbcr(eff_cr, 2);
+        assert_eq!(divergent.zero_bias.2.mul, expected_cr.mul);
+        assert_ne!(
+            divergent.zero_bias.2.mul, uniform.zero_bias.2.mul,
+            "divergent chroma distance must move that channel's zero-bias"
+        );
+    }
+
+    #[test]
+    fn piecewise_v4_resolves_three_quality_tracked_tables() {
+        let plan = |q: f32| {
+            EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
+                .quant_table_config(QuantTableConfig::PiecewiseV4)
+                .resolve_plan(512, 512)
+        };
+        let p50 = plan(50.0);
+        assert!(p50.separate_chroma_tables, "piecewise anchors are 3-table");
+        assert!(p50.quality_drives_tables);
+        assert_ne!(
+            p50.quant_max,
+            plan(90.0).quant_max,
+            "anchors must follow the quality knob"
+        );
+        // Lower quality must not produce finer tables than higher quality.
+        assert!(p50.quant_max[0] >= plan(90.0).quant_max[0]);
+    }
+
+    #[test]
+    fn piecewise_v4_rejected_for_xyb() {
+        use crate::encode::encoder_types::XybSubsampling;
+        let cfg = EncoderConfig::xyb(85, XybSubsampling::BQuarter)
+            .quant_table_config(QuantTableConfig::PiecewiseV4);
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

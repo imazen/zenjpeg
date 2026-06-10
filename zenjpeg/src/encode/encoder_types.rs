@@ -1319,10 +1319,11 @@ pub enum QuantTableSource {
 ///
 /// | Variant | Tables | Live knobs | `Quality` drives tables? |
 /// |---------|--------|------------|--------------------------|
-/// | `Jpegli` | 3 (Y, Cb, Cr) | `chroma_distance_scale` | yes (distance scaling) |
-/// | `JpegliSharedChroma` | 2 (Y, shared) | `chroma_distance_scale` | yes |
+/// | `Jpegli` | 3 (Y, Cb, Cr) | `chroma_distance_scales` | yes (distance scaling) |
+/// | `JpegliSharedChroma` | 2 (Y, shared) | `chroma_distance_scales` | yes |
 /// | `MozjpegRobidoux` | 2 (Y, shared) | `chroma_quality` | yes (libjpeg quality scaling) |
 /// | `Custom` | user-defined | the tables themselves | only if `ScalingParams::Scaled` |
+/// | `PiecewiseV4` | 3 (Y, Cb, Cr) | — | yes (SA anchor interpolation) |
 /// | `GlassaLowBpp` | 2 (shared) | — | yes (anchor interpolation, q clamped 3–25) |
 ///
 /// XYB color mode accepts only `Jpegli` and `Custom` — the 2-table
@@ -1334,23 +1335,30 @@ pub enum QuantTableConfig {
     /// Jpegli perceptual defaults with 3 separate quantization tables
     /// (Y, Cb, Cr). Matches C++ jpegli's `jpegli_set_distance()` behavior.
     Jpegli {
-        /// Multiplier on the butteraugli distance for the chroma-like
-        /// channels — Cb/Cr in YCbCr mode, X/B in XYB mode (Y, the
-        /// luma-like channel, keeps the base distance). `1.0` = same
-        /// treatment as luma. Clamped to `[0.1, 5.0]` at resolution.
+        /// Per-channel multipliers on the butteraugli distance for the two
+        /// chroma-like channels, in ascending component order:
+        /// `[Cb, Cr]` in YCbCr mode, `[X, B]` in XYB mode (Y, the
+        /// luma-like channel, always keeps the base distance).
+        /// `[1.0, 1.0]` = same treatment as luma. Each clamped to
+        /// `[0.1, 5.0]` at resolution.
         ///
-        /// `> 1.0` encodes chroma more aggressively (flat-chroma images);
-        /// `< 1.0` more carefully (sharp-chroma images).
-        chroma_distance_scale: f32,
+        /// `> 1.0` encodes that channel more aggressively (flat-chroma
+        /// images); `< 1.0` more carefully (sharp-chroma images). The two
+        /// entries are independent — optimizers can move Cb and Cr (or X
+        /// and B) separately. When the scales are non-neutral, zero-bias
+        /// follows each channel's own effective distance.
+        chroma_distance_scales: [f32; 2],
     },
 
     /// Jpegli perceptual defaults with 2 quantization tables (Y, shared
     /// chroma using the Cr base matrix). Matches C++ jpegli's
     /// `jpeg_set_quality()` behavior. YCbCr only.
     JpegliSharedChroma {
-        /// Same semantics as [`Jpegli`](Self::Jpegli)'s field; applies to
-        /// the shared chroma table.
-        chroma_distance_scale: f32,
+        /// Same semantics as [`Jpegli`](Self::Jpegli)'s field. The shared
+        /// chroma table is generated from the Cr base matrix using
+        /// `scales[1]`; `scales[0]` still shapes the Cb distance input
+        /// (relevant only to zero-bias when divergent).
+        chroma_distance_scales: [f32; 2],
     },
 
     /// Mozjpeg Robidoux psychovisual tables scaled by libjpeg's quality
@@ -1371,6 +1379,24 @@ pub enum QuantTableConfig {
     /// (quality then affects only gates like `auto_optimize`, not bytes).
     Custom(Box<super::tuning::EncodingTables>),
 
+    /// SA-piecewise v4 tables: 20 quality-anchored sets with linear
+    /// interpolation, trained by coefficient's piecewise SA optimizer on
+    /// CID22-512 (209 photos) with GPU butteraugli, jpegli encoder,
+    /// 4:2:0 chroma. Beats jpegli's parametric tables on 99/100 quality
+    /// levels — mean pareto +6.602 (training), +6.09 (41-image holdout).
+    ///
+    /// The anchor quality derives from the config's one `Quality` knob
+    /// (internal jpegli q). YCbCr only (anchors are YCbCr-space; rejected
+    /// for XYB in `validate()`). Trained on photographic content —
+    /// screenshots/illustrations may regress; retrain via
+    /// `coefficient`'s piecewise optimizer for other corpora.
+    ///
+    /// Open avenues (deliberately not closed by this wiring): per-anchor
+    /// zero-bias SA (the v4 run held zero-bias at neutral), per-content
+    /// anchor sets, 4:4:4-trained anchors, trellis-interaction sweeps
+    /// before `adaptive()` adopts it per-cell.
+    PiecewiseV4,
+
     /// Glassa low-BPP optimized tables for extreme compression.
     ///
     /// SA-optimized anchors achieving +20 to +33 pareto gains at
@@ -1386,7 +1412,7 @@ impl Default for QuantTableConfig {
     /// `jpegli_set_distance()`.
     fn default() -> Self {
         Self::Jpegli {
-            chroma_distance_scale: 1.0,
+            chroma_distance_scales: [1.0, 1.0],
         }
     }
 }
@@ -1399,6 +1425,7 @@ impl QuantTableConfig {
             Self::Jpegli { .. }
             | Self::JpegliSharedChroma { .. }
             | Self::Custom(_)
+            | Self::PiecewiseV4
             | Self::GlassaLowBpp => QuantTableSource::Jpegli,
             Self::MozjpegRobidoux { .. } => QuantTableSource::MozjpegDefault,
         }
@@ -1408,7 +1435,7 @@ impl QuantTableConfig {
     #[must_use]
     pub const fn separate_chroma_tables(&self) -> bool {
         match self {
-            Self::Jpegli { .. } => true,
+            Self::Jpegli { .. } | Self::PiecewiseV4 => true,
             Self::JpegliSharedChroma { .. } | Self::MozjpegRobidoux { .. } | Self::GlassaLowBpp => {
                 false
             }
@@ -1417,17 +1444,26 @@ impl QuantTableConfig {
         }
     }
 
-    /// The chroma distance scale, when this family has one (jpegli
-    /// families only).
+    /// Jpegli family with one uniform chroma scale applied to both
+    /// chroma-like channels — the common case.
     #[must_use]
-    pub fn chroma_distance_scale(&self) -> Option<f32> {
+    pub const fn jpegli_chroma_scale(scale: f32) -> Self {
+        Self::Jpegli {
+            chroma_distance_scales: [scale, scale],
+        }
+    }
+
+    /// The per-channel chroma distance scales, when this family has them
+    /// (jpegli families only).
+    #[must_use]
+    pub fn chroma_distance_scales(&self) -> Option<[f32; 2]> {
         match self {
             Self::Jpegli {
-                chroma_distance_scale,
+                chroma_distance_scales,
             }
             | Self::JpegliSharedChroma {
-                chroma_distance_scale,
-            } => Some(*chroma_distance_scale),
+                chroma_distance_scales,
+            } => Some(*chroma_distance_scales),
             _ => None,
         }
     }

@@ -992,8 +992,10 @@ impl EncoderConfig {
         // Map the bool to the appropriate QuantTableConfig variant,
         // preserving mozjpeg vs jpegli distinction.
         match self.quant_table_config {
-            QuantTableConfig::Custom(_) | QuantTableConfig::GlassaLowBpp => {
-                // Don't touch custom or Glassa tables (Glassa always uses shared chroma)
+            QuantTableConfig::Custom(_)
+            | QuantTableConfig::GlassaLowBpp
+            | QuantTableConfig::PiecewiseV4 => {
+                // Custom/Glassa/Piecewise tables define their own layout.
             }
             QuantTableConfig::MozjpegRobidoux { .. } => {
                 // MozjpegRobidoux is always shared chroma; can't separate
@@ -1004,19 +1006,19 @@ impl EncoderConfig {
                 }
             }
             QuantTableConfig::Jpegli {
-                chroma_distance_scale,
+                chroma_distance_scales,
             }
             | QuantTableConfig::JpegliSharedChroma {
-                chroma_distance_scale,
+                chroma_distance_scales,
             } => {
-                // Preserve the chroma scale across the layout toggle.
+                // Preserve the chroma scales across the layout toggle.
                 self.quant_table_config = if enable {
                     QuantTableConfig::Jpegli {
-                        chroma_distance_scale,
+                        chroma_distance_scales,
                     }
                 } else {
                     QuantTableConfig::JpegliSharedChroma {
-                        chroma_distance_scale,
+                        chroma_distance_scales,
                     }
                 };
             }
@@ -1480,6 +1482,13 @@ impl EncoderConfig {
                 QuantTableConfig::MozjpegRobidoux { .. } => {
                     return Err(crate::error::Error::invalid_config(
                         "MozjpegRobidoux tables are YCbCr psychovisual tables; \
+                         use QuantTableConfig::Jpegli (default) or Custom for XYB"
+                            .into(),
+                    ));
+                }
+                QuantTableConfig::PiecewiseV4 => {
+                    return Err(crate::error::Error::invalid_config(
+                        "PiecewiseV4 anchors are YCbCr-trained; \
                          use QuantTableConfig::Jpegli (default) or Custom for XYB"
                             .into(),
                     ));

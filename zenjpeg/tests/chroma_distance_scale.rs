@@ -19,10 +19,8 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, QuantTableC
 
 /// Sharp-chroma test image: gradient stripes that stress Cb and Cr.
 /// `width` and `height` both divisible by 16 so chroma 4:2:0 lines up.
-fn jpegli_scale(chroma_distance_scale: f32) -> QuantTableConfig {
-    QuantTableConfig::Jpegli {
-        chroma_distance_scale,
-    }
+fn jpegli_scale(scale: f32) -> QuantTableConfig {
+    QuantTableConfig::jpegli_chroma_scale(scale)
 }
 
 fn sharp_chroma_rgb(w: u32, h: u32) -> Vec<u8> {

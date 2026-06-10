@@ -296,13 +296,17 @@ impl EncoderConfig {
             // The knob lives on the jpegli table families; for other
             // families the axis has no meaning (set `quant_table_config`
             // first — it is applied before this field).
+            // The scalar cross-codec axis applies uniformly to both
+            // chroma-like channels; per-channel control goes through the
+            // quant_table_config axis directly.
+            let s = scale.clamp(0.1, 5.0);
             self.quant_table_config = match self.quant_table_config {
                 QuantTableConfig::Jpegli { .. } => QuantTableConfig::Jpegli {
-                    chroma_distance_scale: scale.clamp(0.1, 5.0),
+                    chroma_distance_scales: [s, s],
                 },
                 QuantTableConfig::JpegliSharedChroma { .. } => {
                     QuantTableConfig::JpegliSharedChroma {
-                        chroma_distance_scale: scale.clamp(0.1, 5.0),
+                        chroma_distance_scales: [s, s],
                     }
                 }
                 other => other,
@@ -450,8 +454,8 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            cfg.get_quant_table_config().chroma_distance_scale(),
-            Some(2.0)
+            cfg.get_quant_table_config().chroma_distance_scales(),
+            Some([2.0, 2.0])
         );
     }
 
@@ -466,7 +470,7 @@ mod tests {
         });
         // The axis has no meaning for this family; the bundle's
         // quant_table_config wins.
-        assert_eq!(cfg.get_quant_table_config().chroma_distance_scale(), None);
+        assert_eq!(cfg.get_quant_table_config().chroma_distance_scales(), None);
     }
 
     #[test]
@@ -531,7 +535,7 @@ mod tests {
     fn quant_table_config_applies() {
         let cfg = baseline().with_internal_params(InternalParams {
             quant_table_config: Some(QuantTableConfig::JpegliSharedChroma {
-                chroma_distance_scale: 1.0,
+                chroma_distance_scales: [1.0, 1.0],
             }),
             ..Default::default()
         });
@@ -593,7 +597,7 @@ mod tests {
             scan_strategy: None,
             optimize_scans: None,
             quant_table_config: Some(QuantTableConfig::JpegliSharedChroma {
-                chroma_distance_scale: 1.0,
+                chroma_distance_scales: [1.0, 1.0],
             }),
             quant_source: None,
             optimization: None,
@@ -629,8 +633,8 @@ mod tests {
         // chroma_distance_scale lands on the SharedChroma family set above;
         // chroma_quality is inert there (mozjpeg-only knob).
         assert_eq!(
-            cfg.get_quant_table_config().chroma_distance_scale(),
-            Some(1.5)
+            cfg.get_quant_table_config().chroma_distance_scales(),
+            Some([1.5, 1.5])
         );
         assert_eq!(cfg.get_quant_table_config().chroma_quality(), None);
         assert!(!cfg.deringing);
