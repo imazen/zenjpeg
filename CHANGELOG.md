@@ -43,6 +43,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `encode::sweep`: `rd_core()` is progressive-only (baseline never sits
+  on the RD front at normal sizes — same coefficients, better entropy
+  structure; it stays in `modes_full()` for the tiny-size bucket where
+  sequential-only tiny-file mode wins). Boundary-RD is a sweep axis when
+  built with `--features boundary-rd` (`rd_core` carries Off/On-default);
+  the fingerprint hashes the RESOLVED flat knobs and only on the
+  non-trellis path, so boundary × trellis cells dedupe with their
+  trellis-only twins (the engine skips boundary-rd under trellis).
 - `encode::sweep` (`__expert`): budgeted sweep-plan builder over the knob
   space. Strata (`SweepAxes::rd_core`/`modes_full`) × quality grids
   (`Step5` floor / `TrainingDense`), with byte-identity fingerprint

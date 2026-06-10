@@ -69,6 +69,11 @@ pub struct SweepAxes {
     pub allow_16bit: Vec<bool>,
     /// Pre-encode Gaussian blur sigma.
     pub pre_blur: Vec<f32>,
+    /// Boundary-continuity refinement (only with `--features boundary-rd`).
+    /// Inert when a trellis config is set (the engine skips it there) —
+    /// such cells fingerprint-dedupe with their trellis-only twins.
+    #[cfg(feature = "boundary-rd")]
+    pub boundary_rd: Vec<super::encoder_config::BoundaryRd>,
 }
 
 /// Trellis config matching `auto_optimize`'s tuned point (λ₁ = 14.5,
@@ -100,8 +105,16 @@ pub fn trellis_coupled(scale: f32) -> TrellisConfig {
 impl SweepAxes {
     /// The axes that move the rate-distortion front, with everything
     /// else at production defaults: 4 table families × {no trellis,
-    /// default trellis, the auto_optimize shape} × {progressive,
-    /// baseline} × {4:2:0, 4:4:4}. 48 strata before the quality grid.
+    /// default trellis, the auto_optimize shape} × {4:2:0, 4:4:4}
+    /// (× boundary-rd off/on when that feature is enabled).
+    ///
+    /// Progressive-only: at equal quality, progressive re-orders the same
+    /// coefficients with better entropy structure, so baseline never sits
+    /// on the RD front at normal sizes. The exception is the tiny-size
+    /// bucket (≲128²), where tiny-file mode (sequential-only, shared
+    /// Huffman tables) beats progressive's multi-SOS intercept cost —
+    /// baseline therefore stays in [`modes_full`](Self::modes_full),
+    /// which a size-bucketed sweep should use.
     #[must_use]
     pub fn rd_core() -> Self {
         Self {
@@ -118,10 +131,7 @@ impl SweepAxes {
                 Some(TrellisConfig::default()),
                 Some(trellis_auto_shape()),
             ],
-            scans: vec![
-                ProgressiveScanMode::Progressive,
-                ProgressiveScanMode::Baseline,
-            ],
+            scans: vec![ProgressiveScanMode::Progressive],
             color_modes: vec![
                 ColorMode::YCbCr {
                     subsampling: ChromaSubsampling::Quarter,
@@ -135,6 +145,15 @@ impl SweepAxes {
             downsampling: vec![DownsamplingMethod::Box],
             allow_16bit: vec![false],
             pre_blur: vec![0.0],
+            // Off first: if the budget ladder collapses this axis, the
+            // cheaper status-quo value is the one kept.
+            #[cfg(feature = "boundary-rd")]
+            boundary_rd: vec![
+                super::encoder_config::BoundaryRd::Off,
+                super::encoder_config::BoundaryRd::On(
+                    super::encoder_config::BoundaryRdConfig::default(),
+                ),
+            ],
         }
     }
 
@@ -146,6 +165,7 @@ impl SweepAxes {
     #[must_use]
     pub fn modes_full() -> Self {
         let mut axes = Self::rd_core();
+        axes.scans.push(ProgressiveScanMode::Baseline);
         axes.coeff_opt.push(Some(trellis_coupled(-4.0)));
         axes.coeff_opt.push(Some(trellis_coupled(4.0)));
         axes.scans.push(ProgressiveScanMode::ProgressiveMozjpeg);
@@ -365,37 +385,48 @@ impl SweepBuilder {
     }
 }
 
+fn collapse<T: core::fmt::Debug + Clone>(
+    name: &'static str,
+    v: &mut Vec<T>,
+    keep: usize,
+) -> Option<DroppedAxis> {
+    if v.len() <= keep {
+        return None;
+    }
+    let dropped = v[keep..].iter().map(|x| format!("{x:?}")).collect();
+    let kept = v[..keep]
+        .iter()
+        .map(|x| format!("{x:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    v.truncate(keep);
+    Some(DroppedAxis {
+        axis: name,
+        kept,
+        dropped,
+    })
+}
+
+#[cfg(feature = "boundary-rd")]
+fn collapse_boundary(axes: &mut SweepAxes) -> Option<DroppedAxis> {
+    collapse("boundary_rd", &mut axes.boundary_rd, 1)
+}
+
+#[cfg(not(feature = "boundary-rd"))]
+fn collapse_boundary(_axes: &mut SweepAxes) -> Option<DroppedAxis> {
+    None
+}
+
 /// Collapse the lowest-tier multi-valued axis to its first value.
 fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
-    fn collapse<T: core::fmt::Debug + Clone>(
-        name: &'static str,
-        v: &mut Vec<T>,
-        keep: usize,
-    ) -> Option<DroppedAxis> {
-        if v.len() <= keep {
-            return None;
-        }
-        let dropped = v[keep..].iter().map(|x| format!("{x:?}")).collect();
-        let kept = v[..keep]
-            .iter()
-            .map(|x| format!("{x:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        v.truncate(keep);
-        Some(DroppedAxis {
-            axis: name,
-            kept,
-            dropped,
-        })
-    }
-
     // Tier order: cheapest-to-lose first. Families are never collapsed.
     collapse("pre_blur", &mut axes.pre_blur, 1)
         .or_else(|| collapse("allow_16bit", &mut axes.allow_16bit, 1))
         .or_else(|| collapse("downsampling", &mut axes.downsampling, 1))
         .or_else(|| collapse("deringing", &mut axes.deringing, 1))
         .or_else(|| collapse("aq", &mut axes.aq, 1))
-        .or_else(|| collapse("scans", &mut axes.scans, 2))
+        .or_else(|| collapse_boundary(axes))
+        .or_else(|| collapse("scans", &mut axes.scans, 1))
         .or_else(|| collapse("color_modes", &mut axes.color_modes, 2))
         .or_else(|| collapse("coeff_opt", &mut axes.coeff_opt, 3))
 }
@@ -411,6 +442,140 @@ fn coarsen_keep_endpoints(points: &[f32]) -> Vec<f32> {
         .collect()
 }
 
+/// One point in the categorical cross product.
+struct Stratum<'a> {
+    color: ColorMode,
+    family: &'a QuantTableConfig,
+    coeff: &'a Option<TrellisConfig>,
+    scan: ProgressiveScanMode,
+    aq: bool,
+    dering: bool,
+    down: DownsamplingMethod,
+    allow16: bool,
+    blur: f32,
+    #[cfg(feature = "boundary-rd")]
+    boundary_rd: super::encoder_config::BoundaryRd,
+}
+
+impl Stratum<'_> {
+    fn build_config(&self, q: f32) -> EncoderConfig {
+        let mut cfg = match self.color {
+            ColorMode::YCbCr { subsampling } => EncoderConfig::ycbcr(q, subsampling),
+            ColorMode::Xyb { subsampling } => EncoderConfig::xyb(q, subsampling),
+            ColorMode::Grayscale => EncoderConfig::grayscale(q),
+        };
+        cfg = cfg
+            .quant_table_config(self.family.clone())
+            .progressive(self.scan)
+            .aq_enabled(self.aq)
+            .deringing(self.dering)
+            .downsampling_method(self.down)
+            .allow_16bit_quant_tables(self.allow16)
+            .pre_blur(self.blur);
+        if let Some(t) = self.coeff {
+            cfg = cfg.trellis(*t);
+        }
+        #[cfg(feature = "boundary-rd")]
+        {
+            cfg = cfg.boundary_rd(self.boundary_rd);
+        }
+        cfg
+    }
+
+    fn id(&self) -> String {
+        let fam = match self.family {
+            QuantTableConfig::Jpegli {
+                chroma_distance_scales: [a, b],
+            } => {
+                if *a == 1.0 && *b == 1.0 {
+                    "jp3".to_string()
+                } else {
+                    format!("jp3[{a},{b}]")
+                }
+            }
+            QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scales: [a, b],
+            } => {
+                if *a == 1.0 && *b == 1.0 {
+                    "jp2".to_string()
+                } else {
+                    format!("jp2[{a},{b}]")
+                }
+            }
+            QuantTableConfig::MozjpegRobidoux { chroma_quality } => match chroma_quality {
+                None => "moz".to_string(),
+                Some(cq) => format!("moz[cq{cq}]"),
+            },
+            QuantTableConfig::Custom(_) => "custom".to_string(),
+            QuantTableConfig::PiecewiseV4 => "pw4".to_string(),
+            QuantTableConfig::GlassaLowBpp => "gls".to_string(),
+        };
+        let co = match self.coeff {
+            None => "t0".to_string(),
+            Some(t) => {
+                let mut s = format!("tr{:.4}", t.lambda_log_scale1);
+                if t.dc_enabled {
+                    s.push_str("+dc");
+                }
+                if t.aq_coupling.is_active() {
+                    s.push_str(&format!("cpl{:+.1}", t.aq_coupling.scale));
+                }
+                s
+            }
+        };
+        let sc = match self.scan {
+            ProgressiveScanMode::Baseline => "base",
+            ProgressiveScanMode::Progressive => "prog",
+            ProgressiveScanMode::ProgressiveMozjpeg => "pmoz",
+            ProgressiveScanMode::ProgressiveSearch => "psrch",
+        };
+        let col = match self.color {
+            ColorMode::YCbCr { subsampling } => match subsampling {
+                ChromaSubsampling::Quarter => "420",
+                ChromaSubsampling::None => "444",
+                ChromaSubsampling::HalfHorizontal => "422",
+                ChromaSubsampling::HalfVertical => "440",
+            },
+            ColorMode::Xyb { subsampling } => match subsampling {
+                super::encoder_types::XybSubsampling::BQuarter => "xybBq",
+                super::encoder_types::XybSubsampling::Full => "xybFull",
+            },
+            ColorMode::Grayscale => "gray",
+        };
+        let mut s = format!("{fam}_{co}_{sc}_{col}");
+        if !self.aq {
+            s.push_str("-noaq");
+        }
+        if !self.dering {
+            s.push_str("-noder");
+        }
+        match self.down {
+            DownsamplingMethod::Box => {}
+            DownsamplingMethod::GammaAware => s.push_str("-gaware"),
+            DownsamplingMethod::GammaAwareIterative => s.push_str("-sharp"),
+        }
+        if self.allow16 {
+            s.push_str("-16b");
+        }
+        if self.blur != 0.0 {
+            s.push_str(&format!("-blur{}", self.blur));
+        }
+        #[cfg(feature = "boundary-rd")]
+        if let super::encoder_config::BoundaryRd::On(cfg) = self.boundary_rd {
+            if cfg == super::encoder_config::BoundaryRdConfig::default() {
+                s.push_str("-brd");
+            } else {
+                // Non-default knobs: compact content hash keeps ids unique
+                // without leaking the whole Debug dump into every row.
+                let mut h = Fnv::new();
+                h.write(format!("{cfg:?}").as_bytes());
+                s.push_str(&format!("-brd#{:04x}", h.0 & 0xffff));
+            }
+        }
+        s
+    }
+}
+
 /// Cross axes × quality points into deduplicated cells.
 fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, usize) {
     let mut cells: Vec<SweepCell> = Vec::new();
@@ -418,6 +583,11 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
         std::collections::HashMap::new();
     let mut invalid = Vec::new();
     let mut merged = 0usize;
+
+    #[cfg(feature = "boundary-rd")]
+    let brd_values = axes.boundary_rd.clone();
+    #[cfg(not(feature = "boundary-rd"))]
+    let brd_values: Vec<()> = vec![()];
 
     for color in &axes.color_modes {
         for family in &axes.families {
@@ -428,44 +598,46 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
                             for &down in &axes.downsampling {
                                 for &allow16 in &axes.allow_16bit {
                                     for &blur in &axes.pre_blur {
-                                        // Validity is quality-independent; check once
-                                        // per stratum at a representative q.
-                                        let probe = build_config(
-                                            *color, family, coeff, scan, aq, dering, down, allow16,
-                                            blur, 75.0,
-                                        );
-                                        if probe.validate().is_err() {
-                                            invalid.push(stratum_id(
-                                                color, family, coeff, scan, aq, dering, down,
-                                                allow16, blur,
-                                            ));
-                                            continue;
-                                        }
-                                        for &q in q_points {
-                                            let config = build_config(
-                                                *color, family, coeff, scan, aq, dering, down,
-                                                allow16, blur, q,
-                                            );
-                                            let fingerprint = fingerprint(&config);
-                                            let id = format!(
-                                                "{}_q{q}",
-                                                stratum_id(
-                                                    color, family, coeff, scan, aq, dering, down,
-                                                    allow16, blur,
-                                                )
-                                            );
-                                            if let Some(&idx) = by_fingerprint.get(&fingerprint) {
-                                                cells[idx].aliases.push(id);
-                                                merged += 1;
-                                            } else {
-                                                by_fingerprint.insert(fingerprint, cells.len());
-                                                cells.push(SweepCell {
-                                                    id,
-                                                    config,
-                                                    quality: q,
-                                                    fingerprint,
-                                                    aliases: Vec::new(),
-                                                });
+                                        for brd in &brd_values {
+                                            #[cfg(not(feature = "boundary-rd"))]
+                                            let _ = brd;
+                                            let stratum = Stratum {
+                                                color: *color,
+                                                family,
+                                                coeff,
+                                                scan,
+                                                aq,
+                                                dering,
+                                                down,
+                                                allow16,
+                                                blur,
+                                                #[cfg(feature = "boundary-rd")]
+                                                boundary_rd: *brd,
+                                            };
+                                            // Validity is quality-independent;
+                                            // check once per stratum.
+                                            if stratum.build_config(75.0).validate().is_err() {
+                                                invalid.push(stratum.id());
+                                                continue;
+                                            }
+                                            for &q in q_points {
+                                                let config = stratum.build_config(q);
+                                                let fingerprint = fingerprint(&config);
+                                                let id = format!("{}_q{q}", stratum.id());
+                                                if let Some(&idx) = by_fingerprint.get(&fingerprint)
+                                                {
+                                                    cells[idx].aliases.push(id);
+                                                    merged += 1;
+                                                } else {
+                                                    by_fingerprint.insert(fingerprint, cells.len());
+                                                    cells.push(SweepCell {
+                                                        id,
+                                                        config,
+                                                        quality: q,
+                                                        fingerprint,
+                                                        aliases: Vec::new(),
+                                                    });
+                                                }
                                             }
                                         }
                                     }
@@ -478,130 +650,6 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
         }
     }
     (cells, invalid, merged)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_config(
-    color: ColorMode,
-    family: &QuantTableConfig,
-    coeff: &Option<TrellisConfig>,
-    scan: ProgressiveScanMode,
-    aq: bool,
-    dering: bool,
-    down: DownsamplingMethod,
-    allow16: bool,
-    blur: f32,
-    q: f32,
-) -> EncoderConfig {
-    let mut cfg = match color {
-        ColorMode::YCbCr { subsampling } => EncoderConfig::ycbcr(q, subsampling),
-        ColorMode::Xyb { subsampling } => EncoderConfig::xyb(q, subsampling),
-        ColorMode::Grayscale => EncoderConfig::grayscale(q),
-    };
-    cfg = cfg
-        .quant_table_config(family.clone())
-        .progressive(scan)
-        .aq_enabled(aq)
-        .deringing(dering)
-        .downsampling_method(down)
-        .allow_16bit_quant_tables(allow16)
-        .pre_blur(blur);
-    if let Some(t) = coeff {
-        cfg = cfg.trellis(*t);
-    }
-    cfg
-}
-
-#[allow(clippy::too_many_arguments)]
-fn stratum_id(
-    color: &ColorMode,
-    family: &QuantTableConfig,
-    coeff: &Option<TrellisConfig>,
-    scan: ProgressiveScanMode,
-    aq: bool,
-    dering: bool,
-    down: DownsamplingMethod,
-    allow16: bool,
-    blur: f32,
-) -> String {
-    let fam = match family {
-        QuantTableConfig::Jpegli {
-            chroma_distance_scales: [a, b],
-        } => {
-            if *a == 1.0 && *b == 1.0 {
-                "jp3".to_string()
-            } else {
-                format!("jp3[{a},{b}]")
-            }
-        }
-        QuantTableConfig::JpegliSharedChroma {
-            chroma_distance_scales: [a, b],
-        } => {
-            if *a == 1.0 && *b == 1.0 {
-                "jp2".to_string()
-            } else {
-                format!("jp2[{a},{b}]")
-            }
-        }
-        QuantTableConfig::MozjpegRobidoux { chroma_quality } => match chroma_quality {
-            None => "moz".to_string(),
-            Some(cq) => format!("moz[cq{cq}]"),
-        },
-        QuantTableConfig::Custom(_) => "custom".to_string(),
-        QuantTableConfig::PiecewiseV4 => "pw4".to_string(),
-        QuantTableConfig::GlassaLowBpp => "gls".to_string(),
-    };
-    let co = match coeff {
-        None => "t0".to_string(),
-        Some(t) => {
-            let mut s = format!("tr{:.4}", t.lambda_log_scale1);
-            if t.dc_enabled {
-                s.push_str("+dc");
-            }
-            if t.aq_coupling.is_active() {
-                s.push_str(&format!("cpl{:+.1}", t.aq_coupling.scale));
-            }
-            s
-        }
-    };
-    let sc = match scan {
-        ProgressiveScanMode::Baseline => "base",
-        ProgressiveScanMode::Progressive => "prog",
-        ProgressiveScanMode::ProgressiveMozjpeg => "pmoz",
-        ProgressiveScanMode::ProgressiveSearch => "psrch",
-    };
-    let col = match color {
-        ColorMode::YCbCr { subsampling } => match subsampling {
-            ChromaSubsampling::Quarter => "420",
-            ChromaSubsampling::None => "444",
-            ChromaSubsampling::HalfHorizontal => "422",
-            ChromaSubsampling::HalfVertical => "440",
-        },
-        ColorMode::Xyb { subsampling } => match subsampling {
-            super::encoder_types::XybSubsampling::BQuarter => "xybBq",
-            super::encoder_types::XybSubsampling::Full => "xybFull",
-        },
-        ColorMode::Grayscale => "gray",
-    };
-    let mut s = format!("{fam}_{co}_{sc}_{col}");
-    if !aq {
-        s.push_str("-noaq");
-    }
-    if !dering {
-        s.push_str("-noder");
-    }
-    match down {
-        DownsamplingMethod::Box => {}
-        DownsamplingMethod::GammaAware => s.push_str("-gaware"),
-        DownsamplingMethod::GammaAwareIterative => s.push_str("-sharp"),
-    }
-    if allow16 {
-        s.push_str("-16b");
-    }
-    if blur != 0.0 {
-        s.push_str(&format!("-blur{blur}"));
-    }
-    s
 }
 
 // ============================================================================
@@ -740,6 +788,26 @@ pub fn fingerprint(config: &EncoderConfig) -> u64 {
     };
     h.u16(restart_rows);
     h.u8(u8::from(config.force_restart_markers));
+    // Boundary-RD only fires on the non-trellis path (the engine skips
+    // it when a trellis config is set), so it is hashed only there —
+    // boundary × trellis cells dedupe with their trellis-only twins.
+    #[cfg(feature = "boundary-rd")]
+    {
+        match (config.get_trellis(), config.resolve_boundary_rd()) {
+            (Some(_), _) | (None, None) => h.u8(0),
+            (None, Some(flat)) => {
+                h.u8(1);
+                h.f32(flat.alpha);
+                h.f32(flat.threshold);
+                h.f32(flat.shrink);
+                h.u8(flat.max_retries);
+                h.u8(u8::from(flat.above));
+                h.f32(flat.drift_gain);
+                h.f32(flat.retry_beta);
+            }
+        }
+    }
+
     h.u8(match config.tiny_file_mode {
         super::encoder_types::TinyFileMode::Auto => 0,
         super::encoder_types::TinyFileMode::Off => 1,
@@ -766,7 +834,50 @@ mod tests {
             downsampling: vec![DownsamplingMethod::Box],
             allow_16bit: vec![false],
             pre_blur: vec![0.0],
+            #[cfg(feature = "boundary-rd")]
+            boundary_rd: vec![super::super::encoder_config::BoundaryRd::Off],
         }
+    }
+
+    #[test]
+    fn rd_core_is_progressive_only_modes_full_restores_baseline() {
+        assert_eq!(
+            SweepAxes::rd_core().scans,
+            vec![ProgressiveScanMode::Progressive]
+        );
+        assert!(
+            SweepAxes::modes_full()
+                .scans
+                .contains(&ProgressiveScanMode::Baseline),
+            "baseline must stay reachable for the tiny-size bucket"
+        );
+    }
+
+    #[cfg(feature = "boundary-rd")]
+    #[test]
+    fn boundary_rd_inert_under_trellis_dedupes() {
+        use super::super::encoder_config::{BoundaryRd, BoundaryRdConfig};
+        let mut axes = tiny_axes();
+        axes.coeff_opt = vec![Some(TrellisConfig::default())];
+        axes.boundary_rd = vec![BoundaryRd::Off, BoundaryRd::On(BoundaryRdConfig::default())];
+        let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![75.0])).plan();
+        assert_eq!(
+            plan.cells.len(),
+            1,
+            "engine skips boundary-rd under trellis"
+        );
+        assert_eq!(plan.duplicates_merged, 1);
+    }
+
+    #[cfg(feature = "boundary-rd")]
+    #[test]
+    fn boundary_rd_distinct_without_trellis() {
+        use super::super::encoder_config::{BoundaryRd, BoundaryRdConfig};
+        let mut axes = tiny_axes();
+        axes.coeff_opt = vec![None];
+        axes.boundary_rd = vec![BoundaryRd::Off, BoundaryRd::On(BoundaryRdConfig::default())];
+        let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![75.0])).plan();
+        assert_eq!(plan.cells.len(), 2);
     }
 
     #[test]
