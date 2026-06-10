@@ -167,12 +167,13 @@ fn smallest_respects_tiny_off() {
 
 #[test]
 fn smallest_above_trial_gate_is_byte_identical_to_progressive() {
-    // Above 256x256 the sequential candidates are skipped (zero observed
-    // wins at those sizes in RD sweeps) — Smallest must equal the
-    // progressive encode byte-for-byte, proving one serialization.
-    let (w, h) = (320u32, 280u32); // 89,600 px > 65,536
+    // Above the 16 KiB progressive-output gate the sequential candidates
+    // are skipped (zero observed wins at those sizes in RD sweeps) —
+    // Smallest must equal the progressive encode byte-for-byte, proving
+    // one serialization. 512x512 q90 noise lands far above the gate.
+    let (w, h) = (512u32, 512u32);
     let rgb = photo_ish_rgb(w, h);
-    let base = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
 
     let smallest = encode(
         &base.clone().progressive(ProgressiveScanMode::Smallest),
@@ -185,6 +186,11 @@ fn smallest_above_trial_gate_is_byte_identical_to_progressive() {
         &rgb,
         w,
         h,
+    );
+    assert!(
+        prog.len() > 16 * 1024,
+        "test premise: progressive output ({}) must exceed the byte gate",
+        prog.len()
     );
     assert_eq!(smallest, prog);
 }

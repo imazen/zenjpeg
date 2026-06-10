@@ -1525,18 +1525,19 @@ pub enum ProgressiveScanMode {
 
     /// Smallest-output selection across the entropy stage.
     ///
-    /// Quantized coefficients are computed once. For images at or below
-    /// 256×256 pixels they are serialized as up to three candidates —
-    /// sequential (+ tiny-file shared-table variant when eligible and
-    /// [`TinyFileMode`] is not `Off`) and progressive (jpegli script) —
-    /// and the smallest byte stream is emitted: a **lossless rate
-    /// decision** (identical pixels, exact `min(bytes)`). The extra
-    /// entropy passes cost microseconds at these sizes.
+    /// Quantized coefficients are computed once and the progressive
+    /// (jpegli script) candidate is serialized. If its output is at or
+    /// below 16 KiB — the byte domain where every observed sequential
+    /// win lives — the sequential candidates (+ tiny-file shared-table
+    /// variant when eligible and [`TinyFileMode`] is not `Off`) are
+    /// also serialized and the exact `min(bytes)` is emitted: a
+    /// **lossless rate decision** (identical pixels). Small progressive
+    /// output implies little entropy content, so the extra passes are
+    /// bounded cheap regardless of image dimensions.
     ///
-    /// Above 256×256 the progressive candidate is emitted directly (one
-    /// serialization): RD sweeps found zero sequential wins at those
-    /// sizes, while confirmed wins exist below (low-q noise, tiny-file
-    /// territory). Empirical bound, documented at the constant.
+    /// Above the byte gate the progressive stream is emitted directly
+    /// (one serialization): sweeps found zero sequential wins there.
+    /// Empirical bound with provenance, documented at the constant.
     ///
     /// Restart markers are suppressed in every candidate (they are
     /// strictly additive bytes, and the progressive alternative cannot

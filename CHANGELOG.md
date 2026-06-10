@@ -49,11 +49,15 @@ All notable changes to zenjpeg are documented here. Earlier history
   when eligible and not `Off`, progressive jpegli script) and the exact
   min(bytes) is emitted — a pure rate decision (identical pixels),
   replacing tiny-file's pixel-count crossover heuristic with the exact
-  answer at the cost of microsecond entropy passes. Above 256×256 the
-  progressive candidate is emitted directly (one serialization): RD
-  sweeps found zero sequential wins at those sizes, while confirmed wins
-  exist below (e.g. ~10% at 200×160 q10 noise); the bound is empirical
-  and documented at `SMALLEST_TRIAL_MAX_PIXELS` with provenance.
+  answer. The trial gate lives in the BYTE domain: the progressive
+  candidate is serialized first, and only when its output is ≤16 KiB —
+  where every observed sequential win lives (~10% at 200×160 q10 noise
+  at 2.3 KB; tiny-file ~1.2 KB; sweeps found zero wins above) — do the
+  sequential candidates run. Pixel count was a proxy that degenerate
+  (near-flat, large-dimension) content breaks; bytes are self-measuring
+  and self-cost-limiting (small progressive output ⇒ little entropy
+  content ⇒ cheap extra passes). Above the gate: one serialization.
+  Documented at `SMALLEST_TRIAL_MAX_PROGRESSIVE_BYTES` with provenance.
   Sequential candidates are restart-free (strictly additive bytes; the
   progressive alternative cannot restart-parallel-decode either);
   `force_restart_markers(true)` restores RSTs in sequential winners.

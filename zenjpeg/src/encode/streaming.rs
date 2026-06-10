@@ -1201,20 +1201,30 @@ impl StreamingEncoder {
         Ok(output)
     }
 
-    /// Pixel count at or below which `Smallest` trials the sequential
-    /// candidates. Above it, the progressive candidate is emitted
-    /// directly (one serialization).
+    /// Progressive output size at or below which `Smallest` trials the
+    /// sequential candidates. Above it, the progressive stream is
+    /// emitted directly (one serialization).
     ///
-    /// Provenance: RD sweeps (>256×256 images) found ZERO cases of a
-    /// Huffman-optimized sequential stream beating the jpegli
-    /// progressive script; confirmed sequential wins exist only below —
-    /// e.g. 200×160 noise at q10 (sequential ~10 % smaller, measured in
-    /// `tests/smallest_scan.rs` territory) and the tiny-file regime.
-    /// This is an empirical bound, not a theorem (successive
-    /// approximation + EOBn restructure the symbol stream, so no
-    /// partitioned-coding dominance argument closes); revisit with sweep
-    /// evidence if a larger counterexample ever appears.
-    const SMALLEST_TRIAL_MAX_PIXELS: u64 = 256 * 256;
+    /// The gate lives in the BYTE domain, not pixels: the crossover is
+    /// driven by progressive's per-scan overhead versus how much
+    /// entropy-coded content amortizes it, and pixel count is only a
+    /// proxy that degenerate content breaks (a near-flat large image
+    /// produces few bytes). The trigger is self-measuring — the
+    /// progressive candidate is serialized first, so its size is in
+    /// hand — and self-cost-limiting: small progressive output implies
+    /// little entropy content, which bounds the cost of the extra
+    /// sequential passes regardless of dimensions.
+    ///
+    /// Provenance: every observed sequential win sits at ≤ ~2.4 KB of
+    /// progressive output (200×160 q10 noise: sequential ~10 % smaller
+    /// at 2.3 KB; the tiny-file regime ~1.2 KB), and RD sweeps over
+    /// photographic corpora found zero wins at larger outputs. 16 KiB
+    /// gives ~7× margin over the largest observed crossover. Empirical
+    /// bound, not a theorem (successive approximation + EOBn
+    /// restructure the symbol stream, so no partitioned-coding
+    /// dominance argument closes); revisit with sweep evidence if a
+    /// larger counterexample appears.
+    const SMALLEST_TRIAL_MAX_PROGRESSIVE_BYTES: usize = 16 * 1024;
 
     /// Smallest-entropy selection: emit the smallest byte stream for the
     /// SAME quantized coefficients.
@@ -1239,11 +1249,6 @@ impl StreamingEncoder {
             ));
         }
 
-        // Above SMALLEST_TRIAL_MAX_PIXELS the sequential candidates are
-        // skipped entirely — one serialization, zero trial overhead.
-        let run_trials =
-            u64::from(config.width) * u64::from(config.height) <= Self::SMALLEST_TRIAL_MAX_PIXELS;
-
         // Candidate 1: progressive, jpegli default script.
         let mut prog_cfg = config.clone();
         prog_cfg.smallest_scan = false;
@@ -1260,6 +1265,10 @@ impl StreamingEncoder {
             &mut prog,
         )?;
 
+        // Gate the sequential trials on the measured progressive size:
+        // above the threshold, emit progressive directly (one
+        // serialization, zero trial overhead).
+        let run_trials = prog.len() <= Self::SMALLEST_TRIAL_MAX_PROGRESSIVE_BYTES;
         if !run_trials {
             output.clear();
             output
