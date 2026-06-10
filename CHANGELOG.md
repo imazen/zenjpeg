@@ -5,7 +5,55 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+- `encode::trellis::HybridConfig` removed — `TrellisConfig` gained
+  `aq_coupling: AqCoupling` (`scale == 0.0` ≡ the old standalone mode,
+  bit-identical). `EncoderConfig::hybrid_config()` and the 3-field
+  `encode::ExpertConfig` overlay + `.expert()` are gone;
+  `EncoderConfig::trellis()` is the single coefficient-opt entry
+  (last-set-wins, no cross-clearing). `InternalParams::hybrid` →
+  `InternalParams::trellis`. (eaf6e4fc→f3a5255d)
+- `encode::search` module renamed to `encode::expert`;
+  `encode::search::ExpertConfig` → `encode::expert::ExpertConfig`
+  (re-exported as `encoder::ExpertConfig`). (676f9379)
+
 ### Added
+
+- `EncoderConfig::resolve_plan(width, height) -> EncodePlan` — pure
+  introspection of every resolved knob (per-component distances, table
+  family + DQT precision, trellis λ-policy + AQ coupling, scan/SOF,
+  restart, tiny-file). Quant tables resolve through the same function
+  the streaming encoder uses, so the plan cannot drift from reality.
+- `AqCoupling` on `TrellisConfig`: per-block AQ→lambda coupling with
+  `exponent` / `threshold` / `max_adjustment` / `chroma_mul` /
+  `multiplicative` / `quality_adaptive` knobs. Unlike the old hybrid
+  path, `speed_mode` and `delta_dc_weight` are forwarded in coupled
+  mode too.
+- `encoder` facade now exports the expert tier: `ExpertConfig`,
+  `TrellisConfig`, `TrellisSpeedMode`, `AqCoupling`, `EncodePlan`,
+  `SofMarker`.
+
+### Changed
+
+- The `trellis` cargo feature is now an empty no-op: trellis code is
+  always compiled and data-gated at runtime (default output unchanged,
+  enforced by locked-hash tests). Existing `--features trellis`
+  invocations keep working. (da4d64ec)
+- `cargo update`: archmage/magetypes 0.9.23 → 0.9.26 (sibling
+  zenpixels-convert 0.2.12 requirement); no SIMD rounding drift
+  (locked suites verified). (561e65e1)
+
+### Removed
+
+- `HybridConfig` presets (`favor_size`/`favor_quality`/`balanced`/
+  `aggressive_compression`/`safe_compression`/`quality_boost`) and the
+  AQ-mean image-type heuristics (`should_use_hybrid`,
+  `detect_image_type`, `adaptive_config`, `texture_adaptive_coupling`,
+  `estimate_hybrid_improvement`) — all documented as derived from ~5
+  images, unvalidated. The measured envelope lives in
+  `docs/ENCODER_KNOB_SPACE.md`.
+- `hybrid_auto_detect` example (used the deleted heuristics).
 
 - `detect`: Windows GDI+/WIC encoder detection
   (`EncoderFamily::WindowsImaging`, `QualityScale::WindowsQuality`).

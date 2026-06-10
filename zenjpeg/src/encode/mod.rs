@@ -145,6 +145,9 @@ pub mod tuning;
 /// - [`AqCoupling`](trellis::AqCoupling) AQ-coupled per-block lambda
 pub mod trellis;
 
+/// Encode-plan resolution and introspection ([`EncodePlan`](plan::EncodePlan)).
+pub mod plan;
+
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
 /// Flattens all quality/size-affecting parameters into a single struct with
@@ -188,6 +191,8 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "__expert")]
 #[allow(unused_imports)] // Public API re-exports gated behind __expert
 pub use internal_params::{ColorPath, InternalParams};
+#[allow(unused_imports)] // Public API re-export
+pub use plan::{EncodePlan, SofMarker};
 #[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
 #[allow(unused_imports)] // Public API re-exports

@@ -10,6 +10,30 @@ This document answers three questions:
 3. **Why is the optimization search space clumsy, and how could it be
    simplified?** (§8–§9)
 
+> **Status update 2026-06-09** — the simplification landed the same day
+> (commits `561e65e1`, `da4d64ec`, `f3a5255d`, `676f9379` + EncodePlan):
+>
+> - The `trellis` feature gate is gone (empty no-op feature kept for
+>   invocation compat). §5's two-priority knot is **dead**: `HybridConfig`
+>   was merged into `TrellisConfig` as `aq_coupling: AqCoupling`
+>   (`scale == 0` ≡ standalone, bit-identical), `EncoderConfig.trellis` is
+>   the single coefficient-opt field, last-set-wins. `auto_optimize` now
+>   *sets that field* with the same effective values (§5.3 numbers
+>   unchanged). The 3-field `ExpertConfig` overlay and `.expert()` are
+>   deleted; `encode::search` became `encode::expert`, exported with
+>   `TrellisConfig`/`AqCoupling` via the `encoder` facade. The old
+>   "Hybrid-Mode Limitations" (speed/delta_dc dropped under coupling) no
+>   longer exist — every field forwards.
+> - **§9.4 EncodePlan shipped**: `EncoderConfig::resolve_plan(w, h)`
+>   resolves every knob — including the actual quant tables, via the same
+>   function the encoder runs — into an inspectable/printable plan.
+> - Still open: §9.1 per-channel `ResolvedQuality` (incl. the XYB
+>   `chroma_distance_scale` mislabel, §9.6.2), §9.6.1 piecewise-v4 wiring,
+>   §9.5 canonical search vector, §9.6.5 per-channel zero-bias.
+>
+> Sections §5–§6 and §8 below describe the **pre-refactor** state — kept
+> as the rationale record for why the merge happened.
+
 ---
 
 ## 0. TL;DR — the five structural problems

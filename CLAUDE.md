@@ -1563,7 +1563,7 @@ use butteraugli::compute_butteraugli;
 ```toml
 [features]
 default = ["decoder"]
-trellis = []              # Rate-distortion trellis quantization (mozjpeg-style)
+trellis = []              # DEPRECATED no-op: trellis is always compiled (data-gated at runtime)
 decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
 boundary-rd = ["decoder"] # Boundary-continuity refinement (#91 / PR #102, opt-in).

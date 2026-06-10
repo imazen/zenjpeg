@@ -34,8 +34,8 @@ use crate::encode::config::ComputedConfig;
 use crate::encode::encoder_types::HuffmanStrategy;
 use crate::encode::strip::StripProcessor;
 use crate::error::{Error, Result};
-use crate::quant::{self, QuantTable, ZeroBiasParams};
-use crate::types::{ColorSpace, JpegMode, Subsampling};
+use crate::quant::QuantTable;
+use crate::types::{JpegMode, Subsampling};
 use enough::{Stop, Unstoppable};
 
 pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
@@ -156,122 +156,23 @@ impl StreamingEncoder {
             ));
         }
 
-        // Generate quantization tables and zero-bias params
+        // Generate quantization tables and zero-bias params. Shared with
+        // `EncoderConfig::resolve_plan` (encode::plan::resolve_quant_tables)
+        // so introspection can never drift from the encoder.
         let is_420 = builder.subsampling == Subsampling::S420;
-        let distance = builder.quality.to_distance();
-        // Per-component distance: [Y, Cb, Cr]. The scalar
-        // `chroma_distance_scale` multiplies the chroma distances
-        // identically. `scale == 1.0` reproduces the single-distance
-        // path bit-for-bit (verified by `chroma_scale_default_identity`
-        // in the tests below).
-        let chroma_scale = builder.chroma_distance_scale;
-        let chroma_distance = distance * chroma_scale;
-        let distances_per_component = [distance, chroma_distance, chroma_distance];
-        let color_space = if builder.use_xyb {
-            ColorSpace::Xyb
-        } else {
-            ColorSpace::YCbCr
-        };
-
-        let allow_16bit = builder.allow_16bit_quant_tables;
-        let ((y_quant, cb_quant, cr_quant), (y_zero_bias, cb_zero_bias, cr_zero_bias)) =
-            if let Some(ref tables) = builder.encoding_tables {
-                // Branch 1: Custom encoding tables provided explicitly
-                let quant = tables.generate_quant_tables(distances_per_component, is_420);
-                let zero_bias = tables.generate_zero_bias_all();
-                // Apply allow_16bit clamping if needed
-                let quant = if allow_16bit {
-                    quant
-                } else {
-                    (
-                        quant.0.clamp_to_baseline(),
-                        quant.1.clamp_to_baseline(),
-                        quant.2.clamp_to_baseline(),
-                    )
-                };
-                (quant, zero_bias)
-            } else if builder.quant_source == super::encoder_types::QuantTableSource::MozjpegDefault
-            {
-                // Branch 2: Mozjpeg Robidoux tables with quality scaling
-                // Use for_mozjpeg_tables() to preserve the original mozjpeg quality.
-                // to_internal() remaps for jpegli's distance system, producing wrong tables.
-                let quality_u8 = builder.quality.for_mozjpeg_tables();
-                let force_baseline = !allow_16bit;
-                // Optional independent chroma quality. `None` → chroma
-                // tables scaled with the same quality as luma (historical
-                // behaviour; bit-identical to old callers). `Some(cq)`
-                // → chroma table scaled with `cq` instead.
-                let tables = super::tables::robidoux::generate_mozjpeg_default_tables_with_chroma(
-                    quality_u8,
-                    builder.chroma_quality,
-                    force_baseline,
-                );
-                let quant = tables.generate_quant_tables(distances_per_component, is_420);
-                let zero_bias = tables.generate_zero_bias_all();
-                (quant, zero_bias)
-            } else {
-                // Branch 3: Jpegli perceptual defaults (original path)
-                //
-                // When separate_chroma_tables is false (2-table mode, jpeg_set_quality),
-                // use the Cr base matrix for both Cb and Cr tables. This matches C++
-                // jpegli behavior where the single chroma table uses the Cr matrix.
-                let cb_component = if builder.separate_chroma_tables { 1 } else { 2 };
-
-                // Luma uses the user's quality verbatim; chroma gets the
-                // scaled distance. When chroma_scale == 1.0 the
-                // `with_distance` call produces bit-identical tables to
-                // the old `ex`-variant (see quant_table_identity test).
-                let quant = (
-                    quant::generate_quant_table_ex(
-                        builder.quality,
-                        0,
-                        color_space,
-                        builder.use_xyb,
-                        is_420,
-                        allow_16bit,
-                    ),
-                    quant::generate_quant_table_with_distance(
-                        distances_per_component[1],
-                        cb_component,
-                        color_space,
-                        builder.use_xyb,
-                        is_420,
-                        allow_16bit,
-                    ),
-                    quant::generate_quant_table_with_distance(
-                        distances_per_component[2],
-                        2,
-                        color_space,
-                        builder.use_xyb,
-                        is_420,
-                        allow_16bit,
-                    ),
-                );
-
-                // Compute effective distance for quality-adaptive zero bias.
-                // Color-space aware: XYB tables invert against the XYB base
-                // matrix + GLOBAL_SCALE_XYB; YCbCr tables invert against
-                // their own matrix + GLOBAL_SCALE_YCBCR.
-                let effective_distance =
-                    quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2, builder.use_xyb);
-
-                // Auto-select zero bias based on color mode
-                let zero_bias = if builder.use_xyb {
-                    (
-                        ZeroBiasParams::for_xyb(effective_distance, 0),
-                        ZeroBiasParams::for_xyb(effective_distance, 1),
-                        ZeroBiasParams::for_xyb(effective_distance, 2),
-                    )
-                } else {
-                    (
-                        ZeroBiasParams::for_ycbcr(effective_distance, 0),
-                        ZeroBiasParams::for_ycbcr(effective_distance, 1),
-                        ZeroBiasParams::for_ycbcr(effective_distance, 2),
-                    )
-                };
-
-                (quant, zero_bias)
-            };
+        let resolved = super::plan::resolve_quant_tables(super::plan::TableResolveInputs {
+            quality: builder.quality,
+            chroma_distance_scale: builder.chroma_distance_scale,
+            chroma_quality: builder.chroma_quality,
+            quant_source: builder.quant_source,
+            separate_chroma_tables: builder.separate_chroma_tables,
+            encoding_tables: builder.encoding_tables.as_deref(),
+            use_xyb: builder.use_xyb,
+            is_420,
+            allow_16bit: builder.allow_16bit_quant_tables,
+        });
+        let (y_quant, cb_quant, cr_quant) = resolved.quant;
+        let (y_zero_bias, cb_zero_bias, cr_zero_bias) = resolved.zero_bias;
 
         // Build quantization context (all tables + SIMD variants)
         let quant_ctx = crate::encode::strip::QuantContext::new(

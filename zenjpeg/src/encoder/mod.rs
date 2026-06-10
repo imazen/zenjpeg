@@ -168,6 +168,7 @@ pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 // tables) for external optimizers. See `encode::expert` module docs for the
 // three expert altitudes (builder methods / InternalParams / ExpertConfig).
 pub use crate::encode::expert::ExpertConfig;
+pub use crate::encode::plan::{EncodePlan, SofMarker};
 pub use crate::encode::trellis::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 // === Cross-codec uniformity bundle (`__expert`-gated) ===
 // Mirrors `zenwebp::InternalParams` so external pipelines (calibration
