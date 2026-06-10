@@ -253,6 +253,12 @@ ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half",
 # zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
 # path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
 zencodec = ["decoder", "dep:zenpixels-convert"]
+# moxcms-backed ICC synthesis for the zencodec color-emit path: covers PQ/HLG
+# and any CICP moxcms can express. Without it only the bundled Display-P3 /
+# SDR BT.2020 / AdobeRGB profiles synthesize, and an unsynthesizable CICP is
+# an encode error (JPEG has no CICP carrier — never a silently mislabeled
+# image). Weak passthrough: only takes effect with `zencodec` enabled.
+cms = ["zenpixels-convert?/cms-moxcms"]
 # Target-perceptual-quality (`Quality::Zq` / `Quality::ZqExplicit`) closed-loop
 # encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
 # score target (issue #113). Pulls in `decoder` (for re-decoding each pass)

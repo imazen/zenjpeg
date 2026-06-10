@@ -3242,6 +3242,7 @@ dependencies = [
  "garb",
  "linear-srgb",
  "magetypes",
+ "moxcms 0.8.1",
  "once_cell",
  "paste",
  "rgb",

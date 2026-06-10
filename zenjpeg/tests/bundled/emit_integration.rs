@@ -114,6 +114,45 @@ fn emit_gray_cicp_only_synthesizes_nothing() {
     );
 }
 
+/// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
+/// produce. Without the `cms` feature that is an encode ERROR — JPEG has no
+/// CICP carrier, so emitting without the ICC would misrepresent the image as
+/// sRGB. Refusing beats mislabeling.
+#[cfg(not(feature = "cms"))]
+#[test]
+fn emit_cicp_pq_without_cms_is_an_encode_error() {
+    let pixels = rgb_4x4();
+    let slice =
+        PixelSlice::new(&pixels, 4, 4, 4 * 3, PixelDescriptor::RGB8_SRGB).expect("pixel slice");
+    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+    let enc = JpegEncoderConfig::new()
+        .job()
+        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .encoder()
+        .expect("encoder build");
+    let err = enc
+        .encode(slice)
+        .expect_err("PQ CICP without cms must refuse, not mislabel");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("cms"),
+        "error must point at the `cms` feature: {msg}"
+    );
+}
+
+/// With the `cms` feature, the same PQ CICP-only source synthesizes a real
+/// (moxcms-generated) ICC and the encode succeeds with an APP2 marker.
+#[cfg(feature = "cms")]
+#[test]
+fn emit_cicp_pq_with_cms_synthesizes_icc() {
+    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+    let jpeg = encode_with_meta(meta);
+    assert!(
+        has_marker(&jpeg, b"ICC_PROFILE\0"),
+        "cms build must embed a synthesized PQ ICC via APP2"
+    );
+}
+
 /// EXIF (including an orientation tag) provided via metadata must be carried
 /// through to an APP1 Exif segment.
 #[test]

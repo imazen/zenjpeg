@@ -499,7 +499,7 @@ impl JpegEncoder {
     fn build_request(
         &self,
         channel_count: Option<u8>,
-    ) -> crate::encode::request::EncodeRequest<'_> {
+    ) -> Result<crate::encode::request::EncodeRequest<'_>, Error> {
         self.build_request_from(&self.effective_config, channel_count)
     }
 
@@ -514,11 +514,15 @@ impl JpegEncoder {
     /// (sRGB-assumed) JPEG. EXIF/XMP pass through verbatim — the blessed
     /// `with_metadata_policy` path has already filtered them (sub-field EXIF
     /// retention + orientation-tag reconciliation) before the bytes get here.
+    ///
+    /// Errors when the plan needs an ICC synthesized for the source CICP and
+    /// this build can't produce one (see the `cms` feature): JPEG has no CICP
+    /// carrier, so encoding without the ICC would misrepresent the image.
     fn build_request_from<'b>(
         &'b self,
         config: &'b EncoderConfig,
         channel_count: Option<u8>,
-    ) -> crate::encode::request::EncodeRequest<'b> {
+    ) -> Result<crate::encode::request::EncodeRequest<'b>, Error> {
         let mut req = config.request();
         if let Some(ref meta) = self.metadata {
             let policy = self.policy.unwrap_or_default();
@@ -545,12 +549,30 @@ impl JpegEncoder {
                         use zenpixels_convert::icc_profiles::{
                             SynthesizedIcc, synthesize_icc_for_cicp,
                         };
-                        // Best-effort: on any non-Profile outcome embed
-                        // nothing — never fabricate or mis-tag a profile.
-                        // (Bundled coverage is Display-P3 + SDR BT.2020;
-                        // zenpixels-convert's `cms-moxcms` extends it.)
-                        if let SynthesizedIcc::Profile(bytes) = synthesize_icc_for_cicp(cicp) {
-                            req = req.icc_profile_owned(bytes.into_owned());
+                        // `Profile` → embed; `NotNeeded` (sRGB default) →
+                        // nothing. Every other outcome is an ERROR, not a
+                        // silent skip: JPEG has NO CICP carrier, so an
+                        // embedded APP2 ICC is the ONLY way this color
+                        // survives — emitting without it would misrepresent
+                        // the image as sRGB. The `cms` feature (moxcms-backed
+                        // synthesis) covers PQ/HLG and anything else moxcms
+                        // can express; bundled coverage is Display-P3 +
+                        // SDR BT.2020 + AdobeRGB.
+                        match synthesize_icc_for_cicp(cicp) {
+                            SynthesizedIcc::Profile(bytes) => {
+                                req = req.icc_profile_owned(bytes.into_owned());
+                            }
+                            SynthesizedIcc::NotNeeded => {}
+                            outcome => {
+                                return Err(Error::icc_error(alloc::format!(
+                                    "this image's color (CICP primaries {} / transfer {}) \
+                                     needs a synthesized ICC profile this build can't \
+                                     produce ({outcome:?}); enable zenjpeg's `cms` feature, \
+                                     supply an ICC profile in the metadata, or drop the CICP",
+                                    cicp.color_primaries,
+                                    cicp.transfer_characteristics
+                                )));
+                            }
                         }
                     }
                     zencodec::IccDisposition::Drop => {}
@@ -577,7 +599,7 @@ impl JpegEncoder {
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
-        req
+        Ok(req)
     }
 
     /// Pre-flight limit checks.
@@ -614,7 +636,7 @@ impl JpegEncoder {
         layout: PixelLayout,
     ) -> Result<EncodeOutput, Error> {
         self.check_limits(width, height, layout)?;
-        let req = self.build_request(Some(layout.channels() as u8));
+        let req = self.build_request(Some(layout.channels() as u8))?;
         let output = req.encode_bytes(data, width, height, layout)?;
         self.check_output_size(&output)?;
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
@@ -624,7 +646,7 @@ impl JpegEncoder {
     fn encode_accumulated(&self, acc: RowAccumulator) -> Result<EncodeOutput, Error> {
         self.check_limits(acc.width, acc.total_rows, acc.layout)?;
 
-        let req = self.build_request(Some(acc.layout.channels() as u8));
+        let req = self.build_request(Some(acc.layout.channels() as u8))?;
         let stop = self.stop_ref();
         let mut enc = req.encode_from_bytes(acc.width, acc.total_rows, acc.layout)?;
         // Stream through native encoder — it processes MCU rows as they arrive
@@ -669,7 +691,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let layout = PixelLayout::Rgba8Srgb;
         self.check_limits(width, height, layout)?;
-        let req = self.build_request(Some(layout.channels() as u8));
+        let req = self.build_request(Some(layout.channels() as u8))?;
         let stop = self.stop_ref();
         let stride_bytes = stride_pixels as usize * 4;
         let mut enc = req.encode_from_bytes(width, height, layout)?;
@@ -696,7 +718,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
                     .clone()
                     .progressive(false)
                     .optimize_huffman(false);
-                let req = self.build_request_from(&streaming_config, Some(layout.channels() as u8));
+                let req =
+                    self.build_request_from(&streaming_config, Some(layout.channels() as u8))?;
                 let enc = req.encode_from_bytes(img_w, img_h, layout)?;
                 self.streaming_enc = Some(enc);
             }
@@ -791,7 +814,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
             .clone()
             .progressive(false)
             .optimize_huffman(false);
-        let req = self.build_request_from(&streaming_config, Some(layout.channels() as u8));
+        let req = self.build_request_from(&streaming_config, Some(layout.channels() as u8))?;
         let mut enc = req.encode_from_bytes(img_w, img_h, layout)?;
         let stop = self.stop_ref();
 

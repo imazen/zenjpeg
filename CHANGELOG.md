@@ -43,6 +43,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `cms` feature: moxcms-backed ICC synthesis for the color-emit path
+  (`zenpixels-convert?/cms-moxcms`, weak passthrough — takes effect with
+  `zencodec`), covering PQ/HLG and any CICP moxcms can express. Failing to
+  synthesize a needed ICC is now an encode **error** (`ErrorKind::IccError`),
+  not a silent skip: JPEG has no CICP carrier, so an embedded APP2 ICC is the
+  only way the color survives. Tests
+  `emit_cicp_pq_without_cms_is_an_encode_error` /
+  `emit_cicp_pq_with_cms_synthesizes_icc`; CI's maximal feature line gains
+  `cms` while the base zencodec line keeps the no-cms error path covered.
 - zencodec 0.1.21 color-emit integration (`zencodec` feature): the trait
   encode path resolves which color description to embed via
   `resolve_color_emit` under the caller's `ColorEmitPolicy`. JPEG's only
