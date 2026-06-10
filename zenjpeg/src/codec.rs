@@ -696,8 +696,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                     .clone()
                     .progressive(false)
                     .optimize_huffman(false);
-                let req =
-                    self.build_request_from(&streaming_config, Some(layout.channels() as u8));
+                let req = self.build_request_from(&streaming_config, Some(layout.channels() as u8));
                 let enc = req.encode_from_bytes(img_w, img_h, layout)?;
                 self.streaming_enc = Some(enc);
             }

@@ -169,6 +169,7 @@ impl BytesEncoder {
         if matches!(
             config.scan_mode,
             super::encoder_types::ProgressiveScanMode::Smallest
+                | super::encoder_types::ProgressiveScanMode::SmallestSearch
         ) {
             // Sequential candidates are restart-free (pure rate
             // minimizer) unless restart markers are explicitly forced.
@@ -1186,6 +1187,7 @@ impl YCbCrPlanarEncoder {
         if matches!(
             config.scan_mode,
             super::encoder_types::ProgressiveScanMode::Smallest
+                | super::encoder_types::ProgressiveScanMode::SmallestSearch
         ) {
             // Sequential candidates are restart-free (pure rate
             // minimizer) unless restart markers are explicitly forced.

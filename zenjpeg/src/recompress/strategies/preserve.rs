@@ -187,7 +187,6 @@ pub fn run_preserve(
         Subsampling::S444 | Subsampling::S422 | Subsampling::S420 | Subsampling::S440 => {
             analysis.subsampling
         }
-        _ => Subsampling::S420,
     };
     let bytes = emit_preserved(&coeffs, subsampling, &cfg)?;
 

@@ -198,6 +198,8 @@ pub use internal_params::{ColorPath, InternalParams};
 pub use plan::{EncodePlan, SofMarker};
 #[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
+#[cfg(feature = "recompress")]
+pub(crate) use streaming::ENTROPY_TRIAL_MAX_BYTES;
 #[allow(unused_imports)] // Public API re-exports
 pub use tables::presets::{MozjpegTables, QuantTablePreset};
 

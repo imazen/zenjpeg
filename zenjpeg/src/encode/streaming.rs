@@ -38,6 +38,34 @@ use crate::quant::QuantTable;
 use crate::types::{JpegMode, Subsampling};
 use enough::{Stop, Unstoppable};
 
+/// Output size at or below which entropy-stage trials run (the
+/// `Smallest` sequential candidates; `TinyFileMode::Auto`'s exact
+/// tiny-table trial). For `Smallest`: progressive output at or
+/// below which the
+/// sequential candidates. Above it, the progressive stream is
+/// emitted directly (one serialization).
+///
+/// The gate lives in the BYTE domain, not pixels: the crossover is
+/// driven by progressive's per-scan overhead versus how much
+/// entropy-coded content amortizes it, and pixel count is only a
+/// proxy that degenerate content breaks (a near-flat large image
+/// produces few bytes). The trigger is self-measuring — the
+/// progressive candidate is serialized first, so its size is in
+/// hand — and self-cost-limiting: small progressive output implies
+/// little entropy content, which bounds the cost of the extra
+/// sequential passes regardless of dimensions.
+///
+/// Provenance: every observed sequential win sits at ≤ ~2.4 KB of
+/// progressive output (200×160 q10 noise: sequential ~10 % smaller
+/// at 2.3 KB; the tiny-file regime ~1.2 KB), and RD sweeps over
+/// photographic corpora found zero wins at larger outputs. 16 KiB
+/// gives ~7× margin over the largest observed crossover. Empirical
+/// bound, not a theorem (successive approximation + EOBn
+/// restructure the symbol stream, so no partitioned-coding
+/// dominance argument closes); revisit with sweep evidence if a
+/// larger counterexample appears.
+pub(crate) const ENTROPY_TRIAL_MAX_BYTES: usize = 16 * 1024;
+
 pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
 
 /// State for streaming-through encoding mode.
@@ -1188,7 +1216,7 @@ impl StreamingEncoder {
     ///
     /// `TinyFileMode::Auto` no longer uses pixel-count crossover
     /// heuristics: the plain sequential stream is emitted, and when it
-    /// lands at or below [`ENTROPY_TRIAL_MAX_BYTES`](Self::ENTROPY_TRIAL_MAX_BYTES)
+    /// lands at or below [`ENTROPY_TRIAL_MAX_BYTES`](ENTROPY_TRIAL_MAX_BYTES)
     /// the tiny-file shared-table variant is also serialized and the
     /// smaller wins — identical pixels, exact `min(bytes)`. `Force`
     /// activates tiny tables whenever structurally possible; `Off`
@@ -1231,7 +1259,7 @@ impl StreamingEncoder {
             collect_frequencies,
         )?;
 
-        if trial && output.len() <= Self::ENTROPY_TRIAL_MAX_BYTES {
+        if trial && output.len() <= ENTROPY_TRIAL_MAX_BYTES {
             let mut tiny_cfg = config.clone();
             tiny_cfg.tiny_file_active = true;
             let mut tiny = Vec::new();
@@ -1252,34 +1280,6 @@ impl StreamingEncoder {
 
         Ok(counts)
     }
-
-    /// Output size at or below which entropy-stage trials run (the
-    /// `Smallest` sequential candidates; `TinyFileMode::Auto`'s exact
-    /// tiny-table trial). For `Smallest`: progressive output at or
-    /// below which the
-    /// sequential candidates. Above it, the progressive stream is
-    /// emitted directly (one serialization).
-    ///
-    /// The gate lives in the BYTE domain, not pixels: the crossover is
-    /// driven by progressive's per-scan overhead versus how much
-    /// entropy-coded content amortizes it, and pixel count is only a
-    /// proxy that degenerate content breaks (a near-flat large image
-    /// produces few bytes). The trigger is self-measuring — the
-    /// progressive candidate is serialized first, so its size is in
-    /// hand — and self-cost-limiting: small progressive output implies
-    /// little entropy content, which bounds the cost of the extra
-    /// sequential passes regardless of dimensions.
-    ///
-    /// Provenance: every observed sequential win sits at ≤ ~2.4 KB of
-    /// progressive output (200×160 q10 noise: sequential ~10 % smaller
-    /// at 2.3 KB; the tiny-file regime ~1.2 KB), and RD sweeps over
-    /// photographic corpora found zero wins at larger outputs. 16 KiB
-    /// gives ~7× margin over the largest observed crossover. Empirical
-    /// bound, not a theorem (successive approximation + EOBn
-    /// restructure the symbol stream, so no partitioned-coding
-    /// dominance argument closes); revisit with sweep evidence if a
-    /// larger counterexample appears.
-    const ENTROPY_TRIAL_MAX_BYTES: usize = 16 * 1024;
 
     /// Smallest-entropy selection: emit the smallest byte stream for the
     /// SAME quantized coefficients.
@@ -1304,7 +1304,10 @@ impl StreamingEncoder {
             ));
         }
 
-        // Candidate 1: progressive, jpegli default script.
+        // Candidate 1: progressive. The clone inherits the config's
+        // ScanStrategy, so under SmallestSearch this candidate is the
+        // scan-script search winner (which always includes the default
+        // jpegli script in its candidate set).
         let mut prog_cfg = config.clone();
         prog_cfg.smallest_scan = false;
         prog_cfg.mode = JpegMode::Progressive;
@@ -1323,7 +1326,7 @@ impl StreamingEncoder {
         // Gate the sequential trials on the measured progressive size:
         // above the threshold, emit progressive directly (one
         // serialization, zero trial overhead).
-        let run_trials = prog.len() <= Self::ENTROPY_TRIAL_MAX_BYTES;
+        let run_trials = prog.len() <= ENTROPY_TRIAL_MAX_BYTES;
         if !run_trials {
             output.clear();
             output

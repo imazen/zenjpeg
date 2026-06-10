@@ -1547,6 +1547,18 @@ pub enum ProgressiveScanMode {
     /// encode.
     Smallest,
 
+    /// [`Smallest`](Self::Smallest) with the scan-script search as the
+    /// progressive candidate: the 64-candidate search picks the best
+    /// progressive structure (it always includes the default jpegli
+    /// script, so its winner is ≤ `Smallest`'s progressive candidate),
+    /// and the sequential (+ tiny) trials run under the same byte gate.
+    /// Strictly ≤ both [`Smallest`](Self::Smallest) and
+    /// [`ProgressiveSearch`](Self::ProgressiveSearch) at identical
+    /// pixels, for the search's extra trial-encode cost. The search is
+    /// skipped for XYB (existing emission rule); the sequential trials
+    /// still apply there.
+    SmallestSearch,
+
     /// Progressive JPEG with scan search optimization.
     ///
     /// Tests 64 candidate scan configurations (frequency splits, SA levels,
@@ -1570,7 +1582,7 @@ impl ProgressiveScanMode {
         match self {
             Self::Baseline | Self::Progressive | Self::Smallest => ScanStrategy::Default,
             Self::ProgressiveMozjpeg => ScanStrategy::Mozjpeg,
-            Self::ProgressiveSearch => ScanStrategy::Search,
+            Self::ProgressiveSearch | Self::SmallestSearch => ScanStrategy::Search,
         }
     }
 }

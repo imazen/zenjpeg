@@ -132,14 +132,14 @@ mod dump_decoder_diffs;
 mod edge_tile_ssim2_comparison;
 #[path = "bundled/effort_benchmark.rs"]
 mod effort_benchmark;
+#[path = "bundled/emit_integration.rs"]
+mod emit_integration;
 #[path = "bundled/encode_api.rs"]
 mod encode_api;
 #[path = "bundled/encode_request_guide.rs"]
 mod encode_request_guide;
 #[path = "bundled/encoder_matrix.rs"]
 mod encoder_matrix;
-#[path = "bundled/emit_integration.rs"]
-mod emit_integration;
 #[path = "bundled/error_handling.rs"]
 mod error_handling;
 #[path = "bundled/fast_math_cpp_comparison.rs"]

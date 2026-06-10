@@ -569,15 +569,15 @@ fn adaptive_internal(
     // (+tiny) candidates and keeps the exact minimum — strictly ≤ the
     // old Progressive emission at identical pixels. ProgressiveSearch
     // (64-candidate scan-script search) is the extra ~2× slower step
-    // that lives ONLY in Effort::Max (Smallest × Search composition is
-    // an open avenue).
+    // that lives ONLY in Effort::Max, where it composes with Smallest's
+    // sequential trials (SmallestSearch).
     let scan_mode = if !options.allow_progressive {
         ProgressiveScanMode::Baseline
     } else {
         match options.effort {
             Effort::Fast => ProgressiveScanMode::Smallest,
             Effort::Balanced => ProgressiveScanMode::Smallest,
-            Effort::Max => ProgressiveScanMode::ProgressiveSearch,
+            Effort::Max => ProgressiveScanMode::SmallestSearch,
         }
     };
 

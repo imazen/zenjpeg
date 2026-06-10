@@ -8,8 +8,8 @@
 
 #![cfg(feature = "zencodec")]
 
-use zencodec::{Metadata, MetadataPolicy};
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
+use zencodec::{Metadata, MetadataPolicy};
 use zenjpeg::JpegEncoderConfig;
 use zenpixels::{Orientation as ZpOrientation, PixelDescriptor, PixelSlice};
 

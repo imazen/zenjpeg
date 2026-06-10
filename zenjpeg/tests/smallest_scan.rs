@@ -196,6 +196,95 @@ fn smallest_above_trial_gate_is_byte_identical_to_progressive() {
 }
 
 #[test]
+fn smallest_search_equals_min_with_searched_progressive_below_gate() {
+    // SmallestSearch's progressive candidate is the scan-script search
+    // winner; below the byte gate the sequential (+tiny) trials run too.
+    let (w, h) = (200u32, 160u32);
+    let rgb = photo_ish_rgb(w, h);
+    let base = EncoderConfig::ycbcr(10.0, ChromaSubsampling::Quarter);
+
+    let smallest_search = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::SmallestSearch),
+        &rgb,
+        w,
+        h,
+    );
+    let psearch = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::ProgressiveSearch),
+        &rgb,
+        w,
+        h,
+    );
+    let seq = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::Baseline)
+            .restart_mcu_rows(0)
+            .tiny_file_mode(TinyFileMode::Off),
+        &rgb,
+        w,
+        h,
+    );
+    let tiny = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::Baseline)
+            .restart_mcu_rows(0)
+            .tiny_file_mode(TinyFileMode::Force),
+        &rgb,
+        w,
+        h,
+    );
+    let min = psearch.len().min(seq.len()).min(tiny.len());
+    assert_eq!(
+        smallest_search.len(),
+        min,
+        "SmallestSearch must EQUAL min (psearch={}, seq={}, tiny={})",
+        psearch.len(),
+        seq.len(),
+        tiny.len(),
+    );
+    // And it can never lose to plain Smallest (search winner ≤ default script).
+    let smallest = encode(
+        &base.clone().progressive(ProgressiveScanMode::Smallest),
+        &rgb,
+        w,
+        h,
+    );
+    assert!(smallest_search.len() <= smallest.len());
+}
+
+#[test]
+fn smallest_search_above_gate_is_byte_identical_to_progressive_search() {
+    let (w, h) = (512u32, 512u32);
+    let rgb = photo_ish_rgb(w, h);
+    let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+
+    let smallest_search = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::SmallestSearch),
+        &rgb,
+        w,
+        h,
+    );
+    let psearch = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::ProgressiveSearch),
+        &rgb,
+        w,
+        h,
+    );
+    assert!(psearch.len() > 16 * 1024, "premise: above the gate");
+    assert_eq!(smallest_search, psearch);
+}
+
+#[test]
 fn smallest_force_restart_markers_keeps_rst_in_sequential_winner() {
     // Pick a config where sequential wins (tiny image), force restarts,
     // and verify the winner carries a DRI segment (FF DD) — the explicit

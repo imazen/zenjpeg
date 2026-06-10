@@ -166,6 +166,7 @@ impl SweepAxes {
         let mut axes = Self::rd_core();
         axes.scans.push(ProgressiveScanMode::Progressive);
         axes.scans.push(ProgressiveScanMode::Baseline);
+        axes.scans.push(ProgressiveScanMode::SmallestSearch);
         axes.coeff_opt.push(Some(trellis_coupled(-4.0)));
         axes.coeff_opt.push(Some(trellis_coupled(4.0)));
         axes.scans.push(ProgressiveScanMode::ProgressiveMozjpeg);
@@ -527,6 +528,7 @@ impl Stratum<'_> {
             ProgressiveScanMode::Baseline => "base",
             ProgressiveScanMode::Progressive => "prog",
             ProgressiveScanMode::Smallest => "small",
+            ProgressiveScanMode::SmallestSearch => "smsrch",
             ProgressiveScanMode::ProgressiveMozjpeg => "pmoz",
             ProgressiveScanMode::ProgressiveSearch => "psrch",
         };
@@ -754,6 +756,7 @@ pub fn fingerprint(config: &EncoderConfig) -> u64 {
         ProgressiveScanMode::ProgressiveMozjpeg => 2,
         ProgressiveScanMode::ProgressiveSearch => 3,
         ProgressiveScanMode::Smallest => 4,
+        ProgressiveScanMode::SmallestSearch => 5,
     });
     h.u8(match &config.huffman {
         HuffmanStrategy::Optimize => 0,

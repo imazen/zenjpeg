@@ -57,7 +57,6 @@ pub fn analyze_source(jpeg_bytes: &[u8]) -> Result<SourceAnalysis, Error> {
     // `Subsampling` is `#[non_exhaustive]`; reject any new variant.
     match probe.subsampling {
         Subsampling::S444 | Subsampling::S422 | Subsampling::S420 | Subsampling::S440 => {}
-        _ => return Err(Error::Unsupported("unrecognized subsampling")),
     }
 
     // For "Approximate" confidence on IJG / mozjpeg, we still return the

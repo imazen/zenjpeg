@@ -53,9 +53,6 @@ pub fn run_deblock(
         Subsampling::S422 => ChromaSubsampling::HalfHorizontal,
         Subsampling::S420 => ChromaSubsampling::Quarter,
         Subsampling::S440 => ChromaSubsampling::HalfVertical,
-        // Future Subsampling variants we don't know about → fall back to
-        // the safe 4:2:0 default. `Subsampling` is `#[non_exhaustive]`.
-        _ => ChromaSubsampling::Quarter,
     };
 
     // Same encoder config as Tuned (HybridMaxCompression — the RD
@@ -63,7 +60,13 @@ pub fn run_deblock(
     // Tuned difference lives entirely in the decode-side
     // `DeblockMode::Auto` above.
     let cfg = EncoderConfig::ycbcr(params.target_ijg_q, chroma)
-        .optimization(OptimizationPreset::HybridMaxCompression);
+        .optimization(OptimizationPreset::HybridMaxCompression)
+        // Entropy-stage exactness on top of the RD-ablated param set:
+        // the scan search stays (preset behaviour) and the sequential
+        // (+tiny) trials run when the searched progressive output lands
+        // under the byte gate — exactly the small-output regime
+        // recompress serves. Identical pixels; only bytes improve.
+        .progressive(crate::encoder::ProgressiveScanMode::SmallestSearch);
 
     let mut enc = cfg
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

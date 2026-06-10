@@ -23,7 +23,7 @@
 //! trip**. Generation loss is bounded by the rounding error in the
 //! re-quantize step `round(coeff * old_q / new_q)`.
 
-use crate::decode::{DecodedCoefficients, PreservedSegment, SegmentType};
+use crate::decode::{DecodedCoefficients, PreservedSegment};
 use crate::entropy::{StreamingEntropyState, encode_blocks_mcu_order};
 use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::{
@@ -249,7 +249,6 @@ pub fn emit_preserved(
         Subsampling::S422 => (2, 1),
         Subsampling::S420 => (2, 2),
         Subsampling::S440 => (1, 2),
-        _ => (1, 1),
     };
     let luma = &coeffs.components[0];
     let blocks_wide = luma.blocks_wide;
@@ -740,7 +739,6 @@ fn write_scan_data(
         Subsampling::S422 => (2, 1),
         Subsampling::S420 => (2, 2),
         Subsampling::S440 => (1, 2),
-        _ => (1, 1),
     };
     let luma = &components[0];
     let mcus_x = luma.blocks_wide.div_ceil(h_samp);
