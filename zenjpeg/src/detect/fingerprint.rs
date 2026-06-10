@@ -1,7 +1,8 @@
 //! Encoder identification from structural JPEG signals.
 //!
-//! Implements the decision tree from `detection_heuristics.md`:
-//! DQT count → component IDs → table matching → Huffman analysis.
+//! Implements the decision tree from `docs/quality_estimation_research.md`:
+//! DQT count → component IDs → table matching → Huffman analysis →
+//! JFIF density.
 
 use crate::foundation::consts::MARKER_SOF0;
 use crate::quant::{STD_CHROMINANCE_QUANT, STD_LUMINANCE_QUANT};
@@ -37,6 +38,18 @@ pub enum EncoderFamily {
     /// Adobe Photoshop: APP14 Adobe marker + APP13 Photoshop 3.0 IPTC,
     /// non-IJG quantization tables (custom per quality preset 0-12).
     Photoshop,
+
+    /// Windows GDI+ / WIC (System.Drawing, WPF, Paint, Windows Photos).
+    ///
+    /// Emits byte-exact IJG-formula tables at an internal index `k`
+    /// (GDI+ integer quality `q` maps to `k = q - 1`, except `k = q`
+    /// when `q` is a multiple of 25), standard Huffman, baseline,
+    /// 4:2:0 — structurally identical to libjpeg-turbo except for the
+    /// JFIF density field: Windows stamps the bitmap DPI (default
+    /// 96×96 dots-per-inch) where libjpeg-turbo writes 1×1 aspect
+    /// ratio. Windows files carrying a non-default source DPI are
+    /// indistinguishable from libjpeg-turbo and classify as such.
+    WindowsImaging,
 
     /// Non-IJG tables, cameras, or other tools.
     Unknown,
@@ -165,10 +178,17 @@ fn matches_ijg_luma_table(table: &[u16; 64]) -> bool {
 }
 
 /// Distinguish between IJG variants using Huffman table characteristics.
-fn identify_ijg_variant(scan: &ScanResult, _sof: &super::scanner::SofInfo) -> EncoderFamily {
+fn identify_ijg_variant(scan: &ScanResult, sof: &super::scanner::SofInfo) -> EncoderFamily {
     let uses_standard_huffman = scan.total_ac_symbols == STANDARD_AC_SYMBOLS_TOTAL;
 
     if uses_standard_huffman {
+        // Windows GDI+/WIC: identical tables and Huffman to
+        // libjpeg-turbo, but stamps the bitmap DPI into the JFIF
+        // density field (96×96 DPI default) where turbo writes 1×1
+        // aspect-ratio units. Always baseline.
+        if sof.marker == MARKER_SOF0 && scan.jfif_density == Some((1, 96, 96)) {
+            return EncoderFamily::WindowsImaging;
+        }
         // libjpeg-turbo and Pillow both use standard Huffman tables
         // They are structurally identical — we report as LibjpegTurbo
         return EncoderFamily::LibjpegTurbo;

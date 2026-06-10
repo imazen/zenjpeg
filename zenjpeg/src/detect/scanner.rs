@@ -23,6 +23,10 @@ pub(crate) struct ScanResult {
     pub dht_count: u8,
     /// Whether a JFIF APP0 marker was found.
     pub has_jfif: bool,
+    /// JFIF density: (units, x_density, y_density). Units: 0 = aspect
+    /// ratio, 1 = dots per inch, 2 = dots per cm. `None` if no JFIF
+    /// APP0 or the segment is too short to carry density.
+    pub jfif_density: Option<(u8, u16, u16)>,
     /// Whether an ICC_PROFILE APP2 marker was found.
     pub has_icc_profile: bool,
     /// Whether an Adobe APP14 marker was found.
@@ -86,6 +90,7 @@ pub(crate) fn scan_headers(data: &[u8]) -> Result<ScanResult, ScanError> {
         total_ac_symbols: 0,
         dht_count: 0,
         has_jfif: false,
+        jfif_density: None,
         has_icc_profile: false,
         has_adobe: false,
         has_photoshop_iptc: false,
@@ -402,6 +407,14 @@ fn parse_app0(data: &[u8], pos: usize, result: &mut ScanResult) -> Result<usize,
         let id = &data[pos + 2..pos + 7];
         if id == b"JFIF\0" {
             result.has_jfif = true;
+            // Density: units (1 byte) + Xdensity (u16) + Ydensity (u16)
+            // at offsets 9..14 (after the 2-byte version field).
+            if seg_len >= 14 && pos + 14 <= data.len() {
+                let units = data[pos + 9];
+                let x_density = read_u16(data, pos + 10);
+                let y_density = read_u16(data, pos + 12);
+                result.jfif_density = Some((units, x_density, y_density));
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-//! Umbrella binary bundling 117 integration tests into one compile unit.
+//! Umbrella binary bundling 118 integration tests into one compile unit.
 //!
 //! Each bundled file keeps its own `#![cfg(...)]` inner attrs; when a
 //! feature is off, the module body becomes empty. Files carry their own
@@ -244,6 +244,8 @@ mod visual_encoding;
 mod wasm_decode;
 #[path = "bundled/wasm_simd.rs"]
 mod wasm_simd;
+#[path = "bundled/windows_encoder_detection.rs"]
+mod windows_encoder_detection;
 #[path = "bundled/xyb_cpp_comparison.rs"]
 mod xyb_cpp_comparison;
 #[path = "bundled/xyb_encoding_basic.rs"]

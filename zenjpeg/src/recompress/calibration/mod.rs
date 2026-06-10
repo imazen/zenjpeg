@@ -46,7 +46,11 @@ pub enum EncoderClass {
 impl EncoderClass {
     pub fn from_family(family: EncoderFamily) -> Self {
         match family {
-            EncoderFamily::LibjpegTurbo | EncoderFamily::IjgFamily => EncoderClass::IjgFamily,
+            // WindowsImaging emits byte-exact IJG tables (GDI+/WIC) —
+            // the IJG calibration applies directly.
+            EncoderFamily::LibjpegTurbo
+            | EncoderFamily::IjgFamily
+            | EncoderFamily::WindowsImaging => EncoderClass::IjgFamily,
             EncoderFamily::ImageMagick => EncoderClass::ImageMagick,
             EncoderFamily::Mozjpeg => EncoderClass::Mozjpeg,
             EncoderFamily::CjpegliYcbcr => EncoderClass::JpegliYcbcr,

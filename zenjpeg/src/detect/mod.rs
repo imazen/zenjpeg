@@ -171,7 +171,9 @@ impl zencodec::SourceEncodingDetails for JpegProbe {
         // Map to generic 0-100 scale. IJG quality is already 0-100.
         // For other scales, approximate.
         match self.quality.scale {
-            QualityScale::IjgQuality | QualityScale::MozjpegQuality => Some(self.quality.value),
+            QualityScale::IjgQuality
+            | QualityScale::MozjpegQuality
+            | QualityScale::WindowsQuality => Some(self.quality.value),
             QualityScale::ButteraugliDistance => {
                 // Butteraugli: lower = better. ~1.0 = visually lossless.
                 // Rough mapping: distance 0.0 → q100, 1.0 → q90, 3.0 → q75, 10.0 → q50
@@ -287,10 +289,83 @@ mod tests {
         assert_eq!(result.encoder, EncoderFamily::ImageMagick);
     }
 
+    #[test]
+    fn test_probe_windows_96dpi_detected_as_windows() {
+        // IJG tables + standard Huffman + baseline + JFIF 96×96 DPI →
+        // Windows GDI+/WIC. Table index k maps back to GDI+ quality:
+        // k+1 normally; k for multiples of 25; k Approximate for the
+        // GDI+-unreachable {24, 49, 74, 99}.
+        for (k, want_q, want_conf) in [
+            (9u8, 10.0f32, Confidence::Exact),
+            (23, 24.0, Confidence::Exact),
+            (24, 24.0, Confidence::Approximate),
+            (25, 25.0, Confidence::Exact),
+            (49, 49.0, Confidence::Approximate),
+            (50, 50.0, Confidence::Exact),
+            (74, 74.0, Confidence::Approximate),
+            (75, 75.0, Confidence::Exact),
+            (84, 85.0, Confidence::Exact),
+            (99, 99.0, Confidence::Approximate),
+            (100, 100.0, Confidence::Exact),
+        ] {
+            let jpeg = build_minimal_jpeg_with_density(k, false, 1, 96, 96);
+            let result = probe(&jpeg).unwrap();
+
+            assert_eq!(
+                result.encoder,
+                EncoderFamily::WindowsImaging,
+                "k={k} should detect as WindowsImaging"
+            );
+            assert_eq!(result.quality.scale, QualityScale::WindowsQuality);
+            assert_eq!(
+                result.quality.value, want_q,
+                "k={k}: expected Windows quality {want_q}, got {}",
+                result.quality.value
+            );
+            assert_eq!(result.quality.confidence, want_conf, "k={k}");
+        }
+    }
+
+    #[test]
+    fn test_probe_windows_density_progressive_not_windows() {
+        // Windows GDI+/WIC never writes progressive — 96 DPI alone
+        // must not flip a progressive IJG file to WindowsImaging.
+        let jpeg = build_minimal_jpeg_with_density(75, true, 1, 96, 96);
+        let result = probe(&jpeg).unwrap();
+        assert_ne!(result.encoder, EncoderFamily::WindowsImaging);
+    }
+
+    #[test]
+    fn test_probe_non_96_dpi_stays_libjpeg_turbo() {
+        // 72 DPI (GIMP-style) and aspect-ratio 96×96 both stay turbo.
+        for (units, x, y) in [(1u8, 72u16, 72u16), (0, 96, 96), (1, 96, 72)] {
+            let jpeg = build_minimal_jpeg_with_density(75, false, units, x, y);
+            let result = probe(&jpeg).unwrap();
+            assert_eq!(
+                result.encoder,
+                EncoderFamily::LibjpegTurbo,
+                "units={units} density={x}x{y} must not detect as Windows"
+            );
+        }
+    }
+
     /// Build a minimal synthetic JPEG for testing.
     ///
     /// Creates: SOI + DQT(luma) + DQT(chroma) + SOF0 + DHT(standard) + SOS + EOI
     fn build_minimal_jpeg(quality: u8, progressive: bool) -> Vec<u8> {
+        // libjpeg-turbo default JFIF density: aspect-ratio units, 1×1
+        build_minimal_jpeg_with_density(quality, progressive, 0, 1, 1)
+    }
+
+    /// Like [`build_minimal_jpeg`] but with explicit JFIF density
+    /// (units 0 = aspect ratio, 1 = DPI; Windows GDI+/WIC stamps 1, 96, 96).
+    fn build_minimal_jpeg_with_density(
+        quality: u8,
+        progressive: bool,
+        density_units: u8,
+        x_density: u16,
+        y_density: u16,
+    ) -> Vec<u8> {
         use super::fingerprint::generate_ijg_table;
         use crate::foundation::consts::MARKER_DHT;
 
@@ -312,11 +387,11 @@ mod tests {
             0x00, // Identifier
             0x01,
             0x01, // Version 1.1
-            0x00, // Aspect ratio units
-            0x00,
-            0x01, // X density
-            0x00,
-            0x01, // Y density
+            density_units,
+            (x_density >> 8) as u8,
+            (x_density & 0xFF) as u8,
+            (y_density >> 8) as u8,
+            (y_density & 0xFF) as u8,
             0x00,
             0x00, // No thumbnail
         ];
