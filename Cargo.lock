@@ -151,12 +151,13 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.23"
+version = "0.9.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e6248da30f2b6de70645c7af5b3658cf7d6dde8557a542efab62d21be13567d"
+checksum = "ae97b09d24389cf3f3a9db9fcc373bfe1cefdabef0d14fb253044a71c0427066"
 dependencies = [
- "archmage-macros 0.9.23",
+ "archmage-macros 0.9.26",
  "safe_unaligned_simd",
+ "winarm-cpufeatures",
 ]
 
 [[package]]
@@ -172,9 +173,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.23"
+version = "0.9.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0990742e24ab2b89d1b3623113cc474903d84151bef52e8b46d1ced2770c9ebb"
+checksum = "d6ab70b5e2a0c0290d9b8a294378f8a8053e407387a17d8a7b113c7a0b8a2eac"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -371,7 +372,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56839c76313cd315910678355f0cb8ec2390eb1ea91e7d932be62f094a0448cd"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "imgref",
  "magetypes",
  "rayon",
@@ -861,7 +862,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0bbcfa44e1cabf11af96ece5e9273f4dc238f2a557668e70f80cfd662fae25b"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "imgref",
  "magetypes",
  "num-traits",
@@ -980,7 +981,7 @@ version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b968bb36272be4662f264fd123e96915e7dd51c8ca529c2d35f621817ff4207"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "paste",
 ]
@@ -1326,7 +1327,7 @@ version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe0e61c33d85bc56dcaf27cdf48ca32b8e34af7236584eb1d8a47316c49e0be1"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "magetypes",
  "num-traits",
@@ -1361,11 +1362,12 @@ checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 
 [[package]]
 name = "magetypes"
-version = "0.9.23"
+version = "0.9.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98970401ec6a338f1762c7986866ead4ab2257747cb0c247c29c0f0c3718b78e"
+checksum = "c4d045ccf3f9d697e15f0b438f73b812ef93eb5e9d29cf5f5cb48dcf09f12e10"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
+ "rustversion",
 ]
 
 [[package]]
@@ -2329,7 +2331,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964a038e0f75524ef9bd01ee6bda6d2457a3b6c1ca8df22478b9bb94b3547669"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "enough",
  "half",
@@ -2345,7 +2347,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d65bd22a90785bb7360076b599ffbc201aef2c5817d2e5f37f37357829d476e"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "enough",
  "half",
@@ -2686,6 +2688,12 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "winarm-cpufeatures"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 
 [[package]]
 name = "windows"
@@ -3067,7 +3075,7 @@ name = "zenanalyze"
 version = "0.2.0"
 source = "git+https://github.com/imazen/zenanalyze?rev=13d40c3be60e#13d40c3be60ecfc3e482476ef068ff773b2c5b8d"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "garb",
  "linear-srgb",
  "magetypes",
@@ -3095,7 +3103,7 @@ version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d66daf1f95f9f3a3c7c4529ea1f993069e2691cc89a4f8b0f4002ced96179f68"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "magetypes",
  "safe_unaligned_simd",
 ]
@@ -3118,7 +3126,7 @@ version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8409543ad469f954834da58409f0d9c463156f01cfaf8a8a03fe277c73b1e0f5"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "enough",
  "libm",
 ]
@@ -3130,7 +3138,7 @@ dependencies = [
  "aligned-vec",
  "almost-enough",
  "approx",
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bincode",
  "butteraugli 0.9.1",
  "bytemuck",
@@ -3228,7 +3236,7 @@ version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d0f4d117f75bb4d2471c7c0b940f27492839d1e23e83dd4ee7a53232c78076e"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "garb",
  "linear-srgb",
@@ -3247,7 +3255,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34ef0ff0cfac28ce74a9241dbe8ba3abe60f385819d55675c4daced1ac8ac4bd"
 dependencies = [
  "almost-enough",
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "enough",
  "imgref",
@@ -3288,7 +3296,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0703679da7af627f10429532d0633b3d32fa0fd10d2b48ca94b5fcd0dbfd6e5a"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "imgref",
  "libm",
  "linear-srgb",
@@ -3305,7 +3313,7 @@ name = "zensim"
 version = "0.3.0"
 source = "git+https://github.com/imazen/zensim?rev=9d8f73a5a82a944420ca0e040ecfcea0f4afa263#9d8f73a5a82a944420ca0e040ecfcea0f4afa263"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "bytemuck",
  "imgref",
  "linear-srgb",
@@ -3343,7 +3351,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c602cc9010340287fd4ffcb2cd1ae9f6a665d37db59f0b9578352788cf8b304"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "libm",
  "linear-srgb",
  "magetypes",
@@ -3353,7 +3361,7 @@ dependencies = [
 name = "zenyuv"
 version = "0.1.3"
 dependencies = [
- "archmage 0.9.23",
+ "archmage 0.9.26",
  "libm",
  "linear-srgb",
  "magetypes",
