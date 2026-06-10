@@ -57,9 +57,10 @@ entropy-stage alternatives is governed by output bytes, not pixel
 dimensions (degenerate content breaks any pixel proxy). Serialize the
 expected winner first; run the other candidates only when its output
 lands at or below a provenance-documented byte gate
-(`ENTROPY_TRIAL_MAX_BYTES = 16 KiB`: every observed crossover sits at
-≤ ~2.4 KB; 7× margin). This is self-cost-limiting: small output implies
-little entropy content, bounding the trial cost by construction.
+(`ENTROPY_TRIAL_MAX_BYTES`, currently 32 KiB — raised from 16 KiB when
+the validation harness found a 19.8 KB real-photo crossover; see Known
+limits). This is self-cost-limiting: small output implies little
+entropy content, bounding the trial cost by construction.
 
 ### 3. Resolution is a function, introspection calls the same function
 
