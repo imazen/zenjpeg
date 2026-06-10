@@ -528,7 +528,8 @@ impl EncodingTables {
     /// want the pre-existing single-distance behaviour should pass
     /// `[d, d, d]`. Per-component distances allow luma vs chroma
     /// quality splits (see
-    /// [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]).
+    /// [`crate::encode::encoder_types::QuantTableConfig::Jpegli`]'s
+    /// `chroma_distance_scale`).
     #[must_use]
     pub fn generate_quant_tables(
         &self,

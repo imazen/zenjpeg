@@ -162,11 +162,7 @@ impl StreamingEncoder {
         let is_420 = builder.subsampling == Subsampling::S420;
         let resolved = super::plan::resolve_quant_tables(super::plan::TableResolveInputs {
             quality: builder.quality,
-            chroma_distance_scale: builder.chroma_distance_scale,
-            chroma_quality: builder.chroma_quality,
-            quant_source: builder.quant_source,
-            separate_chroma_tables: builder.separate_chroma_tables,
-            encoding_tables: builder.encoding_tables.as_deref(),
+            table_config: &builder.quant_table_config,
             use_xyb: builder.use_xyb,
             is_420,
             allow_16bit: builder.allow_16bit_quant_tables,
@@ -295,13 +291,12 @@ impl StreamingEncoder {
             parallel: builder.parallel,
             custom_aq_map: builder.custom_aq_map,
             trellis: builder.trellis,
-            encoding_tables: builder.encoding_tables,
             edge_padding: crate::types::EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,
             allow_16bit_quant_tables: builder.allow_16bit_quant_tables,
             force_sof1: builder.force_sof1,
-            separate_chroma_tables: builder.separate_chroma_tables,
+            separate_chroma_tables: builder.quant_table_config.separate_chroma_tables(),
             scan_strategy: builder.scan_strategy,
             tiny_file_active,
         };

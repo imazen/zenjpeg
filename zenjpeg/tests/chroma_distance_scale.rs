@@ -15,10 +15,16 @@
 //!      because the per-component scaling is applied only to Cb/Cr.
 
 use enough::Unstoppable;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, QuantTableConfig};
 
 /// Sharp-chroma test image: gradient stripes that stress Cb and Cr.
 /// `width` and `height` both divisible by 16 so chroma 4:2:0 lines up.
+fn jpegli_scale(chroma_distance_scale: f32) -> QuantTableConfig {
+    QuantTableConfig::Jpegli {
+        chroma_distance_scale,
+    }
+}
+
 fn sharp_chroma_rgb(w: u32, h: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((w * h * 3) as usize);
     for y in 0..h {
@@ -70,7 +76,7 @@ fn chroma_scale_default_identity() {
             ChromaSubsampling::HalfHorizontal,
         ] {
             let cfg_default = EncoderConfig::ycbcr(q, sub);
-            let cfg_one = EncoderConfig::ycbcr(q, sub).chroma_distance_scale(1.0);
+            let cfg_one = EncoderConfig::ycbcr(q, sub).quant_table_config(jpegli_scale(1.0));
 
             let a = encode(&cfg_default, &rgb, w, h);
             let b = encode(&cfg_one, &rgb, w, h);
@@ -103,7 +109,7 @@ fn chroma_scale_monotone_file_size_on_chroma_content() {
         let sizes: Vec<(f32, usize)> = [0.5, 1.0, 2.0]
             .iter()
             .map(|&s| {
-                let cfg = EncoderConfig::ycbcr(q, sub).chroma_distance_scale(s);
+                let cfg = EncoderConfig::ycbcr(q, sub).quant_table_config(jpegli_scale(s));
                 (s, encode(&cfg, &rgb, w, h).len())
             })
             .collect();
@@ -153,8 +159,10 @@ fn chroma_scale_grayscale_invariant_on_444() {
     let q = 75.0;
 
     let cfg_default = EncoderConfig::ycbcr(q, ChromaSubsampling::None);
-    let cfg_small = EncoderConfig::ycbcr(q, ChromaSubsampling::None).chroma_distance_scale(0.5);
-    let cfg_big = EncoderConfig::ycbcr(q, ChromaSubsampling::None).chroma_distance_scale(2.0);
+    let cfg_small =
+        EncoderConfig::ycbcr(q, ChromaSubsampling::None).quant_table_config(jpegli_scale(0.5));
+    let cfg_big =
+        EncoderConfig::ycbcr(q, ChromaSubsampling::None).quant_table_config(jpegli_scale(2.0));
 
     let a = encode(&cfg_default, &rgb, w, h);
     let b = encode(&cfg_small, &rgb, w, h);
@@ -188,18 +196,26 @@ fn chroma_scale_grayscale_invariant_on_444() {
 }
 
 #[test]
-fn chroma_scale_clamped_to_safe_range() {
-    // Out-of-range values are clamped, not rejected. 10.0 -> 5.0, 0.01 -> 0.1.
-    let cfg = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter).chroma_distance_scale(10.0);
-    assert_eq!(cfg.get_chroma_distance_scale(), 5.0);
+fn chroma_scale_clamped_at_resolution() {
+    // Out-of-range values are clamped when tables resolve, not rejected.
+    // 10.0 -> 5.0, 0.01 -> 0.1. Observable through the resolved plan's
+    // per-component distances.
+    let plan = |s: f32| {
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
+            .quant_table_config(jpegli_scale(s))
+            .resolve_plan(64, 64)
+    };
 
-    let cfg = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter).chroma_distance_scale(0.01);
-    assert_eq!(cfg.get_chroma_distance_scale(), 0.1);
+    let p = plan(10.0);
+    assert!((p.distances[1] / p.distances[0] - 5.0).abs() < 1e-5);
 
-    let cfg = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter).chroma_distance_scale(1.0);
-    assert_eq!(cfg.get_chroma_distance_scale(), 1.0);
+    let p = plan(0.01);
+    assert!((p.distances[1] / p.distances[0] - 0.1).abs() < 1e-5);
 
-    // Default is 1.0.
-    let cfg = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter);
-    assert_eq!(cfg.get_chroma_distance_scale(), 1.0);
+    let p = plan(1.0);
+    assert!((p.distances[1] - p.distances[0]).abs() < 1e-7);
+
+    // Default family carries scale 1.0.
+    let p = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter).resolve_plan(64, 64);
+    assert!((p.distances[1] - p.distances[0]).abs() < 1e-7);
 }

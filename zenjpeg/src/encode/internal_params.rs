@@ -165,14 +165,15 @@ pub struct InternalParams {
     /// [`TrellisConfig::aq_coupling`] for AQ-coupled (hybrid) lambda.
     pub trellis: Option<TrellisConfig>,
 
-    /// Chroma distance scale (jpegli butteraugli path). Default `1.0`,
-    /// clamped to `[0.1, 5.0]` by the builder.
+    /// Chroma distance scale (jpegli table families only; clamped to
+    /// `[0.1, 5.0]`). Applied onto [`Self::quant_table_config`]'s variant —
+    /// no effect when the active family is mozjpeg/custom/Glassa.
     pub chroma_distance_scale: Option<f32>,
 
-    /// Independent chroma quality (mozjpeg-compat path).
-    /// `Some(Some(q))` sets `q`; `Some(None)` clears the override
+    /// Independent chroma quality ([`QuantTableConfig::MozjpegRobidoux`]
+    /// only). `Some(Some(q))` sets `q`; `Some(None)` clears the override
     /// (revert to using luma quality for chroma); `None` leaves the
-    /// existing value alone.
+    /// existing value alone. No effect on other table families.
     pub chroma_quality: Option<Option<u8>>,
 
     /// Enable [`EncoderConfig::auto_optimize`].
@@ -292,10 +293,29 @@ impl EncoderConfig {
             self = self.boundary_rd(BoundaryRd::On(brd));
         }
         if let Some(scale) = params.chroma_distance_scale {
-            self = self.chroma_distance_scale(scale);
+            // The knob lives on the jpegli table families; for other
+            // families the axis has no meaning (set `quant_table_config`
+            // first — it is applied before this field).
+            self.quant_table_config = match self.quant_table_config {
+                QuantTableConfig::Jpegli { .. } => QuantTableConfig::Jpegli {
+                    chroma_distance_scale: scale.clamp(0.1, 5.0),
+                },
+                QuantTableConfig::JpegliSharedChroma { .. } => {
+                    QuantTableConfig::JpegliSharedChroma {
+                        chroma_distance_scale: scale.clamp(0.1, 5.0),
+                    }
+                }
+                other => other,
+            };
         }
         if let Some(cq) = params.chroma_quality {
-            self = self.chroma_quality(cq);
+            // Lives on the MozjpegRobidoux family only.
+            self.quant_table_config = match self.quant_table_config {
+                QuantTableConfig::MozjpegRobidoux { .. } => QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: cq.map(|q| q.clamp(1, 100)),
+                },
+                other => other,
+            };
         }
         if let Some(b) = params.deringing {
             self = self.deringing(b);
@@ -424,26 +444,58 @@ mod tests {
     }
 
     #[test]
-    fn chroma_distance_scale_applies() {
+    fn chroma_distance_scale_applies_on_jpegli_family() {
         let cfg = baseline().with_internal_params(InternalParams {
             chroma_distance_scale: Some(2.0),
             ..Default::default()
         });
-        assert!((cfg.get_chroma_distance_scale() - 2.0).abs() < 1e-6);
+        assert_eq!(
+            cfg.get_quant_table_config().chroma_distance_scale(),
+            Some(2.0)
+        );
     }
 
     #[test]
-    fn chroma_quality_some_some_applies() {
+    fn chroma_distance_scale_inert_on_mozjpeg_family() {
+        let cfg = baseline().with_internal_params(InternalParams {
+            quant_table_config: Some(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }),
+            chroma_distance_scale: Some(2.0),
+            ..Default::default()
+        });
+        // The axis has no meaning for this family; the bundle's
+        // quant_table_config wins.
+        assert_eq!(cfg.get_quant_table_config().chroma_distance_scale(), None);
+    }
+
+    #[test]
+    fn chroma_quality_applies_on_mozjpeg_family() {
+        let cfg = baseline().with_internal_params(InternalParams {
+            quant_table_config: Some(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }),
+            chroma_quality: Some(Some(70)),
+            ..Default::default()
+        });
+        assert_eq!(cfg.get_quant_table_config().chroma_quality(), Some(70));
+    }
+
+    #[test]
+    fn chroma_quality_inert_on_jpegli_family() {
         let cfg = baseline().with_internal_params(InternalParams {
             chroma_quality: Some(Some(70)),
             ..Default::default()
         });
-        assert_eq!(cfg.get_chroma_quality(), Some(70));
+        assert_eq!(cfg.get_quant_table_config().chroma_quality(), None);
     }
 
     #[test]
     fn chroma_quality_some_none_clears_override() {
         let with_value = baseline().with_internal_params(InternalParams {
+            quant_table_config: Some(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }),
             chroma_quality: Some(Some(70)),
             ..Default::default()
         });
@@ -451,7 +503,7 @@ mod tests {
             chroma_quality: Some(None),
             ..Default::default()
         });
-        assert_eq!(cleared.get_chroma_quality(), None);
+        assert_eq!(cleared.get_quant_table_config().chroma_quality(), None);
     }
 
     #[test]
@@ -478,12 +530,14 @@ mod tests {
     #[test]
     fn quant_table_config_applies() {
         let cfg = baseline().with_internal_params(InternalParams {
-            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma),
+            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scale: 1.0,
+            }),
             ..Default::default()
         });
         assert!(matches!(
             cfg.get_quant_table_config(),
-            QuantTableConfig::JpegliSharedChroma
+            QuantTableConfig::JpegliSharedChroma { .. }
         ));
     }
 
@@ -538,7 +592,9 @@ mod tests {
             progressive: Some(ProgressiveScanMode::Baseline),
             scan_strategy: None,
             optimize_scans: None,
-            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma),
+            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scale: 1.0,
+            }),
             quant_source: None,
             optimization: None,
             optimize_huffman: Some(true),
@@ -570,8 +626,13 @@ mod tests {
         ));
         assert!(!cfg.is_progressive());
         assert!(cfg.is_allow_16bit_quant_tables());
-        assert!((cfg.get_chroma_distance_scale() - 1.5).abs() < 1e-6);
-        assert_eq!(cfg.get_chroma_quality(), Some(60));
+        // chroma_distance_scale lands on the SharedChroma family set above;
+        // chroma_quality is inert there (mozjpeg-only knob).
+        assert_eq!(
+            cfg.get_quant_table_config().chroma_distance_scale(),
+            Some(1.5)
+        );
+        assert_eq!(cfg.get_quant_table_config().chroma_quality(), None);
         assert!(!cfg.deringing);
         assert!(!cfg.is_aq_enabled());
         assert!((cfg.pre_blur - 0.3).abs() < 1e-6);

@@ -128,7 +128,7 @@ impl TrellisSpeedMode {
 /// block's adaptive-quantization strength before the rate-distortion search:
 ///
 /// ```text
-/// adj    = clamp(±max_adjustment)( aq^exponent × scale [× dampen] [× chroma_mul] )
+/// adj    = clamp(±max_adjustment)( aq^exponent × scale [× chroma_mul] )
 /// scale1 = lambda_log_scale1 + adj            (additive, default)
 ///        | lambda_log_scale1 × (1 + adj)      (multiplicative)
 /// ```
@@ -153,8 +153,6 @@ pub struct AqCoupling {
     pub chroma_mul: f32,
     /// Multiplicative coupling (`scale1 × (1 + adj)`) instead of additive.
     pub multiplicative: bool,
-    /// Scale the adjustment by the quality-derived dampen factor.
-    pub quality_adaptive: bool,
 }
 
 impl Default for AqCoupling {
@@ -172,7 +170,6 @@ impl AqCoupling {
         max_adjustment: 0.0,
         chroma_mul: 1.0,
         multiplicative: false,
-        quality_adaptive: false,
     };
 
     /// Whether this coupling changes any block's lambda.
@@ -184,11 +181,9 @@ impl AqCoupling {
     /// Compute the lambda adjustment for one block.
     ///
     /// `aq_strength` is the block's AQ strength (typically 0.0–0.5);
-    /// `dampen` the quality-derived factor (only used with
-    /// [`quality_adaptive`](Self::quality_adaptive)); `is_chroma` selects
-    /// the [`chroma_mul`](Self::chroma_mul) term.
+    /// `is_chroma` selects the [`chroma_mul`](Self::chroma_mul) term.
     #[must_use]
-    pub fn compute_adjustment(&self, aq_strength: f32, dampen: f32, is_chroma: bool) -> f32 {
+    pub fn compute_adjustment(&self, aq_strength: f32, is_chroma: bool) -> f32 {
         if !self.is_active() || aq_strength < self.threshold {
             return 0.0;
         }
@@ -198,9 +193,6 @@ impl AqCoupling {
             aq_strength
         };
         let mut adjustment = effective_aq * self.scale;
-        if self.quality_adaptive {
-            adjustment *= dampen;
-        }
         if is_chroma {
             adjustment *= self.chroma_mul;
         }

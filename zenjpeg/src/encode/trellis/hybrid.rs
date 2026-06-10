@@ -156,7 +156,7 @@ pub(crate) fn quantize_block_dispatch(
     trellis_ctx: Option<&TrellisContext>,
 ) -> [i16; DCT_BLOCK_SIZE] {
     if let Some(ctx) = trellis_ctx {
-        ctx.quantize_block(dct, quant_values, aq_strength, 1.0, is_luma)
+        ctx.quantize_block(dct, quant_values, aq_strength, is_luma)
     } else {
         quant::quantize_block_with_zero_bias_simd(dct, quant_values, zero_bias, aq_strength)
     }
@@ -200,14 +200,12 @@ impl TrellisContext {
     /// * `dct_coeffs` - DCT coefficients
     /// * `quant` - Quantization table
     /// * `aq_strength` - Per-block AQ strength (used when AQ coupling is active)
-    /// * `dampen` - Quality-based dampen factor (0-1, used with `quality_adaptive`)
     /// * `is_luma` - True for Y component, false for Cb/Cr
     pub(crate) fn quantize_block(
         &self,
         dct_coeffs: &[f32; DCT_BLOCK_SIZE],
         quant: &[u16; DCT_BLOCK_SIZE],
         aq_strength: f32,
-        dampen: f32,
         is_luma: bool,
     ) -> [i16; DCT_BLOCK_SIZE] {
         let ac_table = if is_luma {
@@ -216,17 +214,17 @@ impl TrellisContext {
             &self.rate_tables.chroma_ac
         };
 
-        let trellis_config = self.block_config(aq_strength, dampen, !is_luma);
+        let trellis_config = self.block_config(aq_strength, !is_luma);
         hybrid_quantize_block(dct_coeffs, quant, ac_table, &trellis_config)
     }
 
     /// Effective per-block config: lambda adjusted by AQ coupling when active.
-    fn block_config(&self, aq_strength: f32, dampen: f32, is_chroma: bool) -> TrellisConfig {
+    fn block_config(&self, aq_strength: f32, is_chroma: bool) -> TrellisConfig {
         let coupling = &self.config.aq_coupling;
         if !coupling.is_active() {
             return self.config;
         }
-        let adjustment = coupling.compute_adjustment(aq_strength, dampen, is_chroma);
+        let adjustment = coupling.compute_adjustment(aq_strength, is_chroma);
         let scale1 = if coupling.multiplicative {
             self.config.lambda_log_scale1 * (1.0 + adjustment)
         } else {
@@ -321,7 +319,7 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
 
                     // X is luma-like in XYB, dampen=1.0
                     let x_quant_coeffs = if let Some(ctx) = trellis_ctx {
-                        ctx.quantize_block(&x_dct, &x_quant.values, aq_strength, 1.0, true)
+                        ctx.quantize_block(&x_dct, &x_quant.values, aq_strength, true)
                     } else {
                         quant::quantize_block(&x_dct, &x_quant.values)
                     };
@@ -343,7 +341,7 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
 
                     // Y is the primary luma channel in XYB, dampen=1.0
                     let y_quant_coeffs = if let Some(ctx) = trellis_ctx {
-                        ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
+                        ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
                     } else {
                         quant::quantize_block(&y_dct, &y_quant.values)
                     };
@@ -372,7 +370,7 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
 
             // B is chroma-like (blue channel), is_luma=false
             let b_quant_coeffs = if let Some(ctx) = trellis_ctx {
-                ctx.quantize_block(&b_dct, &b_quant.values, b_aq_strength, 1.0, false)
+                ctx.quantize_block(&b_dct, &b_quant.values, b_aq_strength, false)
             } else {
                 quant::quantize_block(&b_dct, &b_quant.values)
             };
@@ -392,7 +390,7 @@ mod tests {
     fn coupling_off_is_inactive_and_zero() {
         let c = AqCoupling::OFF;
         assert!(!c.is_active());
-        assert_eq!(c.compute_adjustment(0.5, 1.0, false), 0.0);
+        assert_eq!(c.compute_adjustment(0.5, false), 0.0);
     }
 
     #[test]
@@ -401,12 +399,12 @@ mod tests {
             scale: 4.0,
             ..AqCoupling::OFF
         };
-        assert!((c.compute_adjustment(0.5, 1.0, false) - 2.0).abs() < 1e-6);
+        assert!((c.compute_adjustment(0.5, false) - 2.0).abs() < 1e-6);
         let neg = AqCoupling {
             scale: -4.0,
             ..AqCoupling::OFF
         };
-        assert!((neg.compute_adjustment(0.5, 1.0, false) + 2.0).abs() < 1e-6);
+        assert!((neg.compute_adjustment(0.5, false) + 2.0).abs() < 1e-6);
     }
 
     #[test]
@@ -417,7 +415,7 @@ mod tests {
             ..AqCoupling::OFF
         };
         // 0.5^2 * 4 = 1.0
-        assert!((c.compute_adjustment(0.5, 1.0, false) - 1.0).abs() < 1e-6);
+        assert!((c.compute_adjustment(0.5, false) - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -427,8 +425,8 @@ mod tests {
             threshold: 0.3,
             ..AqCoupling::OFF
         };
-        assert_eq!(c.compute_adjustment(0.2, 1.0, false), 0.0);
-        assert!(c.compute_adjustment(0.4, 1.0, false) < 0.0);
+        assert_eq!(c.compute_adjustment(0.2, false), 0.0);
+        assert!(c.compute_adjustment(0.4, false) < 0.0);
     }
 
     #[test]
@@ -438,13 +436,13 @@ mod tests {
             max_adjustment: 1.0,
             ..AqCoupling::OFF
         };
-        assert_eq!(c.compute_adjustment(0.5, 1.0, false), -1.0);
+        assert_eq!(c.compute_adjustment(0.5, false), -1.0);
         let pos = AqCoupling {
             scale: 8.0,
             max_adjustment: 1.0,
             ..AqCoupling::OFF
         };
-        assert_eq!(pos.compute_adjustment(0.5, 1.0, false), 1.0);
+        assert_eq!(pos.compute_adjustment(0.5, false), 1.0);
     }
 
     #[test]
@@ -454,21 +452,9 @@ mod tests {
             chroma_mul: 0.5,
             ..AqCoupling::OFF
         };
-        let luma = c.compute_adjustment(0.5, 1.0, false);
-        let chroma = c.compute_adjustment(0.5, 1.0, true);
+        let luma = c.compute_adjustment(0.5, false);
+        let chroma = c.compute_adjustment(0.5, true);
         assert!((chroma - luma * 0.5).abs() < 1e-6);
-    }
-
-    #[test]
-    fn quality_adaptive_uses_dampen() {
-        let c = AqCoupling {
-            scale: 4.0,
-            quality_adaptive: true,
-            ..AqCoupling::OFF
-        };
-        let full = c.compute_adjustment(0.5, 1.0, false);
-        let damped = c.compute_adjustment(0.5, 0.5, false);
-        assert!((damped - full * 0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -479,7 +465,7 @@ mod tests {
             ..TrellisConfig::default()
         };
         let ctx = TrellisContext::new(cfg);
-        let eff = ctx.block_config(0.5, 1.0, false);
+        let eff = ctx.block_config(0.5, false);
         assert_eq!(eff, cfg);
     }
 
@@ -493,7 +479,7 @@ mod tests {
             ..TrellisConfig::default()
         };
         let ctx = TrellisContext::new(cfg);
-        let eff = ctx.block_config(0.5, 1.0, false);
+        let eff = ctx.block_config(0.5, false);
         assert!((eff.lambda_log_scale1 - (14.75 - 2.0)).abs() < 1e-6);
         assert_eq!(eff.lambda_log_scale2, cfg.lambda_log_scale2);
         assert_eq!(eff.dc_enabled, cfg.dc_enabled);
@@ -511,7 +497,7 @@ mod tests {
             ..TrellisConfig::default()
         };
         let ctx = TrellisContext::new(cfg);
-        let eff = ctx.block_config(0.5, 1.0, false);
+        let eff = ctx.block_config(0.5, false);
         // adj = 0.5 * 0.1 = 0.05 → scale1 = 14.75 * 1.05
         assert!((eff.lambda_log_scale1 - 14.75 * 1.05).abs() < 1e-4);
     }

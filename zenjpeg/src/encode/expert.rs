@@ -278,11 +278,6 @@ pub struct ExpertConfig {
     /// Default: `1.0`.
     pub aq_trellis_chroma_scale: f32,
 
-    /// Scale coupling by quality-derived dampen factor.
-    ///
-    /// Default: `false`.
-    pub aq_trellis_quality_adaptive: bool,
-
     /// Use multiplicative coupling instead of additive.
     ///
     /// Additive (default): `scale1 = base_scale1 + aq * coupling`
@@ -394,7 +389,6 @@ impl ExpertConfig {
             aq_trellis_exponent: 1.0,
             aq_trellis_threshold: 0.0,
             aq_trellis_chroma_scale: 1.0,
-            aq_trellis_quality_adaptive: false,
             aq_trellis_multiplicative: false,
             aq_trellis_max_adjustment: 0.0,
 
@@ -493,7 +487,6 @@ impl ExpertConfig {
             aq_trellis_exponent: 1.0,
             aq_trellis_threshold: 0.0,
             aq_trellis_chroma_scale: 1.0,
-            aq_trellis_quality_adaptive: false,
             aq_trellis_multiplicative: false,
             aq_trellis_max_adjustment: 0.0,
 
@@ -626,7 +619,6 @@ impl ExpertConfig {
                 max_adjustment: self.aq_trellis_max_adjustment,
                 chroma_mul: self.aq_trellis_chroma_scale,
                 multiplicative: self.aq_trellis_multiplicative,
-                quality_adaptive: self.aq_trellis_quality_adaptive,
             },
         })
     }
@@ -854,7 +846,6 @@ mod tests {
         expert.aq_trellis_exponent = 2.0;
         expert.aq_trellis_threshold = 0.1;
         expert.aq_trellis_chroma_scale = 0.7;
-        expert.aq_trellis_quality_adaptive = true;
         expert.trellis_lambda_log_scale1 = 15.0;
         expert.trellis_lambda_log_scale2 = 17.0;
         expert.trellis_dc_enabled = false;
@@ -870,7 +861,6 @@ mod tests {
         assert_eq!(coupling.exponent, 2.0);
         assert_eq!(coupling.threshold, 0.1);
         assert_eq!(coupling.chroma_mul, 0.7);
-        assert!(coupling.quality_adaptive);
         assert!((trellis.lambda_log_scale1 - 15.0).abs() < 1e-6);
         assert!((trellis.lambda_log_scale2 - 17.0).abs() < 1e-6);
         assert!(!trellis.dc_enabled);
@@ -886,7 +876,9 @@ mod tests {
             subsampling: ChromaSubsampling::Quarter,
         });
 
-        let custom = enc.quant_table_config.custom_tables().unwrap();
+        let QuantTableConfig::Custom(custom) = &enc.quant_table_config else {
+            panic!("expert config must produce Custom tables");
+        };
         assert!((custom.quant.c0[0] - 42.0).abs() < 1e-6);
         assert!((custom.quant.c1[63] - 99.0).abs() < 1e-6);
     }
@@ -1276,18 +1268,6 @@ mod tests {
                     format!("aq_trellis_chroma_scale={}", cs),
                     size,
                     pct
-                );
-            }
-
-            {
-                let mut c2 = c.clone();
-                c2.aq_trellis_quality_adaptive = true;
-                let size = encode_expert(&c2, &pixels, w, h);
-                let delta = size as i64 - hybrid_base_size as i64;
-                let pct = (delta as f64 / hybrid_base_size as f64) * 100.0;
-                println!(
-                    "  {:<45} {:>7} bytes  {:>+7.2}%",
-                    "aq_trellis_quality_adaptive=true", size, pct
                 );
             }
         }

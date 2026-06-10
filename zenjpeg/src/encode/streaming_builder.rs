@@ -6,12 +6,11 @@
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
-use super::encoder_types::QuantTableSource;
+use super::encoder_types::QuantTableConfig;
 use super::encoder_types::ScanStrategy;
 use super::encoder_types::TinyFileMode;
 use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
-use crate::encode::tuning::EncodingTables;
 use crate::error::Result;
 use crate::types::{JpegMode, PixelFormat, Subsampling};
 
@@ -28,10 +27,10 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) mode: JpegMode,
     pub(crate) huffman: HuffmanStrategy,
     pub(crate) chroma_downsampling: DownsamplingMethod,
+    /// Quantization table family + its live knobs. Resolved via
+    /// `encode::plan::resolve_quant_tables` at construction.
+    pub(crate) quant_table_config: QuantTableConfig,
     pub(crate) restart_interval: u16,
-    /// Custom encoding tables (quantization + zero-bias).
-    /// `None` means use perceptual defaults based on color mode and quality.
-    pub(crate) encoding_tables: Option<Box<EncodingTables>>,
     pub(crate) use_xyb: bool,
     /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
     pub(crate) xyb_subsampling: super::encoder_types::XybSubsampling,
@@ -52,34 +51,17 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Force SOF1 (extended sequential) regardless of quant table precision.
     /// Required for XYB (DC categories can exceed baseline limit of 11).
     pub(crate) force_sof1: bool,
-    /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
-    pub(crate) separate_chroma_tables: bool,
     /// Progressive scan script strategy
     pub(crate) scan_strategy: ScanStrategy,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
-    /// Hybrid quantization configuration
     /// Custom AQ map
     pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
     pub(crate) trellis: Option<super::trellis::TrellisConfig>,
-    /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
-    /// Only used when `encoding_tables` is `None` (no custom tables).
-    pub(crate) quant_source: QuantTableSource,
     /// Tiny-file optimization mode (default: Auto).
     pub(crate) tiny_file_mode: TinyFileMode,
-    /// Multiplier applied to the butteraugli distance for chroma (Cb, Cr)
-    /// components only. Default `1.0` is bit-identical to the single-
-    /// quality path. Clamped to `[0.1, 5.0]` on ingress by the public
-    /// [`EncoderConfig::chroma_distance_scale`] setter.
-    pub(crate) chroma_distance_scale: f32,
-    /// Independent chroma quality on the mozjpeg 1–100 scale. `None`
-    /// (the default) keeps the historical behaviour of using `quality`
-    /// for both luma and chroma tables. Only honoured by the mozjpeg-
-    /// compat (`QuantTableSource::MozjpegDefault`) path — the jpegli
-    /// path uses `chroma_distance_scale` for the same purpose.
-    pub(crate) chroma_quality: Option<u8>,
 }
 
 impl StreamingEncoderBuilder {
@@ -94,8 +76,8 @@ impl StreamingEncoderBuilder {
             mode: JpegMode::Baseline,
             huffman: HuffmanStrategy::Optimize,
             chroma_downsampling: DownsamplingMethod::Box,
+            quant_table_config: QuantTableConfig::default(),
             restart_interval: 0,
-            encoding_tables: None,
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             deringing: true,
@@ -107,16 +89,12 @@ impl StreamingEncoderBuilder {
             boundary_rd_flat: None,
             allow_16bit_quant_tables: false,
             force_sof1: false,
-            separate_chroma_tables: true,
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
             custom_aq_map: None,
             trellis: None,
-            quant_source: QuantTableSource::default(),
             tiny_file_mode: TinyFileMode::default(),
-            chroma_distance_scale: 1.0,
-            chroma_quality: None,
         }
     }
 
@@ -200,19 +178,6 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets custom encoding tables (quantization + zero-bias).
-    ///
-    /// This replaces both quantization tables and zero-bias configuration
-    /// with values from the provided `EncodingTables`.
-    ///
-    /// Takes `Box<EncodingTables>` since custom tables are rarely used and
-    /// the struct is ~1.5KB.
-    #[must_use]
-    pub(crate) fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
-        self.encoding_tables = Some(tables);
-        self
-    }
-
     /// Enables XYB color space encoding.
     ///
     /// XYB is a perceptual color space used by JPEG XL that better models human
@@ -290,16 +255,6 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Use separate Cb and Cr quantization tables.
-    ///
-    /// When enabled (default), uses 3 tables: Y, Cb, Cr.
-    /// When disabled, uses 2 tables: Y, shared chroma.
-    #[must_use]
-    pub(crate) fn separate_chroma_tables(mut self, enable: bool) -> Self {
-        self.separate_chroma_tables = enable;
-        self
-    }
-
     /// Sets the progressive scan script strategy.
     #[must_use]
     pub(crate) fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
@@ -314,10 +269,10 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets the quantization table source.
+    /// Sets the quantization table configuration (family + live knobs).
     #[must_use]
-    pub(crate) fn quant_source(mut self, source: QuantTableSource) -> Self {
-        self.quant_source = source;
+    pub(crate) fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
+        self.quant_table_config = config;
         self
     }
 
@@ -333,25 +288,6 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn tiny_file_mode(mut self, mode: TinyFileMode) -> Self {
         self.tiny_file_mode = mode;
-        self
-    }
-
-    /// Sets the chroma-distance multiplier. See
-    /// [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]
-    /// for full semantics. Default `1.0` is bit-identical to pre-existing
-    /// single-quality behaviour.
-    #[must_use]
-    pub(crate) fn chroma_distance_scale(mut self, scale: f32) -> Self {
-        self.chroma_distance_scale = scale.clamp(0.1, 5.0);
-        self
-    }
-
-    /// Sets the mozjpeg-compat chroma quality. Only honoured by the
-    /// mozjpeg Robidoux path (`quant_source == QuantTableSource::MozjpegDefault`).
-    /// See [`crate::encode::encoder_config::EncoderConfig::chroma_quality`].
-    #[must_use]
-    pub(crate) fn chroma_quality(mut self, quality: Option<u8>) -> Self {
-        self.chroma_quality = quality.map(|q| q.clamp(1, 100));
         self
     }
 

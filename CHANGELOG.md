@@ -18,8 +18,35 @@ All notable changes to zenjpeg are documented here. Earlier history
   `encode::search::ExpertConfig` → `encode::expert::ExpertConfig`
   (re-exported as `encoder::ExpertConfig`). (676f9379)
 
+### QUEUED BREAKING CHANGES (continued — knob discrimination wave)
+
+- `QuantTableConfig` variants now carry their live knobs:
+  `Jpegli { chroma_distance_scale }`, `JpegliSharedChroma { chroma_distance_scale }`,
+  `MozjpegRobidoux { chroma_quality }`, `GlassaLowBpp` (unit — quality now
+  derives from the config's `Quality`, clamped to the trained 3–25 range).
+  `EncoderConfig::{chroma_distance_scale, chroma_quality}` fields, setters
+  and getters are gone — the knobs exist only on the families where they
+  have an effect.
+- `EncoderConfig::validate()` rejects XYB + `JpegliSharedChroma` /
+  `MozjpegRobidoux` (YCbCr-only table layouts; previously produced
+  undefined-meaning tables).
+- XYB + `chroma_distance_scale` semantics FIXED: the scale now applies to
+  the chroma-like X and B channels; previously it scaled components 1,2 =
+  **Y and B**, leaving X at the luma distance. Output changes for
+  XYB + scale≠1.0 (no callers in-tree; the combination was mislabeled).
+- `Custom` tables no longer receive per-component scaled distances —
+  callers own the chroma policy via their per-component base matrices.
+- `AqCoupling::quality_adaptive` removed (and the `dampen` parameter with
+  it): the only call site hardwired `dampen = 1.0`, so the knob multiplied
+  by 1.0 in every live path since the old `HybridConfig` days.
+  `ExpertConfig::aq_trellis_quality_adaptive` removed accordingly.
+
 ### Added
 
+- `EncodePlan.table_family` (the `QuantTableConfig` with its live knobs)
+  and `EncodePlan.quality_drives_tables` (false only for
+  `Custom`+`ScalingParams::Exact` tables — where changing `Quality`
+  changes gates, not bytes).
 - `EncoderConfig::resolve_plan(width, height) -> EncodePlan` — pure
   introspection of every resolved knob (per-component distances, table
   family + DQT precision, trellis λ-policy + AQ coupling, scan/SOF,

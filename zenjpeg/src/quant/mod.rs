@@ -637,7 +637,7 @@ pub fn generate_quant_table_ex(
 /// When called with `distance = quality.to_distance()` for every
 /// component the output is bit-identical to `generate_quant_table_ex`.
 ///
-/// See [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]
+/// See [`crate::encode::encoder_types::QuantTableConfig::Jpegli`]'s `chroma_distance_scale`
 /// for the caller-facing API that drives this.
 #[must_use]
 pub fn generate_quant_table_with_distance(

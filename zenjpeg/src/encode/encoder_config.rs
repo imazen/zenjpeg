@@ -494,21 +494,6 @@ pub struct EncoderConfig {
     /// byte-identical to a feature-off build.
     #[cfg(feature = "boundary-rd")]
     pub(crate) boundary_rd_mode: BoundaryRd,
-    /// Multiplier applied to the butteraugli distance for chroma (Cb, Cr)
-    /// components only, independent of luma. Default `1.0` preserves the
-    /// existing single-quality behaviour bit-for-bit.
-    ///
-    /// - `> 1.0` — chroma is encoded more aggressively (flat-chroma case).
-    /// - `< 1.0` — chroma is encoded more carefully (sharp-chroma case).
-    ///
-    /// Clamped to `[0.1, 5.0]` by the builder.
-    pub(crate) chroma_distance_scale: f32,
-    /// Optional independent chroma quality on the mozjpeg 1–100 scale.
-    /// Only honoured by the mozjpeg-compat (Robidoux) quant-table path;
-    /// the jpegli perceptual path uses [`Self::chroma_distance_scale`]
-    /// for the same purpose. `None` keeps the historical behaviour of
-    /// using the same quality for both tables.
-    pub(crate) chroma_quality: Option<u8>,
     /// Pre-computed zenanalyze source features, as a
     /// [`zenanalyze::feature::AnalysisResults::pack`] `(u16 id, f32)` blob.
     /// When set, the `Quality::Zq` closed loop reuses these instead of
@@ -668,8 +653,6 @@ impl EncoderConfig {
             tiny_file_mode: TinyFileMode::Auto,
             #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
-            chroma_distance_scale: 1.0,
-            chroma_quality: None,
             packed_source_features: None,
         }
     }
@@ -774,7 +757,7 @@ impl EncoderConfig {
     /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, QuantTableConfig};
     ///
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .quant_table_config(QuantTableConfig::MozjpegRobidoux);
+    ///     .quant_table_config(QuantTableConfig::MozjpegRobidoux { chroma_quality: None });
     /// ```
     #[must_use]
     pub fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
@@ -797,13 +780,15 @@ impl EncoderConfig {
                 // Preserve current config if already jpegli; otherwise default to Jpegli
                 if matches!(
                     self.quant_table_config,
-                    QuantTableConfig::MozjpegRobidoux | QuantTableConfig::Custom(_)
+                    QuantTableConfig::MozjpegRobidoux { .. } | QuantTableConfig::Custom(_)
                 ) {
-                    self.quant_table_config = QuantTableConfig::Jpegli;
+                    self.quant_table_config = QuantTableConfig::default();
                 }
             }
             QuantTableSource::MozjpegDefault => {
-                self.quant_table_config = QuantTableConfig::MozjpegRobidoux;
+                self.quant_table_config = QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None,
+                };
             }
         }
         self
@@ -826,11 +811,15 @@ impl EncoderConfig {
 
         // Quant table config: bundles source + chroma layout
         let quant_table_config = match preset {
-            JpegliBaseline | JpegliProgressive => QuantTableConfig::Jpegli,
+            JpegliBaseline | JpegliProgressive => QuantTableConfig::default(),
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
-                QuantTableConfig::MozjpegRobidoux
+                QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None,
+                }
             }
-            HybridBaseline | HybridProgressive | HybridMaxCompression => QuantTableConfig::Jpegli,
+            HybridBaseline | HybridProgressive | HybridMaxCompression => {
+                QuantTableConfig::default()
+            }
         };
 
         // Trellis configuration depends on preset lineage:
@@ -937,77 +926,6 @@ impl EncoderConfig {
         self
     }
 
-    /// Scale the butteraugli distance applied to chroma (Cb, Cr) relative to
-    /// luma. Default `1.0` is bit-identical to the single-quality path.
-    ///
-    /// A typical consumer is an analyzer that has already measured chroma
-    /// sharpness on the image (e.g. [`evalchroma`](https://lib.rs/crates/evalchroma))
-    /// and wants to exploit flat chroma for extra bpp savings, or preserve
-    /// sharp chroma when 4:4:4 alone isn't enough.
-    ///
-    /// - `> 1.0` — chroma encoded more aggressively (flat chroma case).
-    ///   Each step of `+0.25` applies a larger per-coefficient quant value,
-    ///   compounding onto the existing Cb/Cr base-table asymmetry.
-    /// - `< 1.0` — chroma encoded more carefully (sharp chroma case).
-    ///
-    /// Clamped to `[0.1, 5.0]`. Applied identically to Cb and Cr; the
-    /// base-table asymmetry (Cb ≈ 2× Cr in median quant) is preserved.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Quality};
-    ///
-    /// // Analyzer decided chroma is flat enough to take a 30% discount.
-    /// let luma_dist   = Quality::ApproxJpegli(85.0).to_distance();
-    /// let chroma_dist = Quality::ApproxJpegli(70.0).to_distance();
-    /// let scale = chroma_dist / luma_dist;
-    ///
-    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-    ///     .chroma_distance_scale(scale);
-    /// ```
-    #[must_use]
-    pub fn chroma_distance_scale(mut self, scale: f32) -> Self {
-        self.chroma_distance_scale = scale.clamp(0.1, 5.0);
-        self
-    }
-
-    /// Set an independent chroma quality on the mozjpeg 1–100 scale.
-    ///
-    /// Only honoured by the mozjpeg-compat path
-    /// ([`QuantTableConfig::MozjpegRobidoux`]). On the jpegli
-    /// perceptual path (default), use
-    /// [`Self::chroma_distance_scale`] instead; the two surfaces do
-    /// the same thing but at different "scales of truth" — quality
-    /// numbers for mozjpeg users, butteraugli distance ratios for
-    /// jpegli users.
-    ///
-    /// `None` (the default) preserves the pre-existing behaviour of
-    /// using [`Self::quality`] for both luma and chroma tables —
-    /// output is bit-identical to callers that never touched this
-    /// setter.
-    ///
-    /// `Some(q)` scales the Robidoux chrominance base table by
-    /// `q`'s scale factor and the luminance table by the luma
-    /// quality's scale factor. Typical uses:
-    /// - `chroma_quality(Some(user_q - 15))` for flat-chroma
-    ///   photos to save bits on Cb/Cr without touching luma
-    /// - `chroma_quality(Some(user_q))` (or `None`) for
-    ///   text/screen content where chroma fidelity matters
-    ///
-    /// Clamped to 1..=100.
-    ///
-    /// *Hidden from rustdoc while the surface is experimental and
-    /// downstream calibration is ongoing. The API is stable and
-    /// tested, but we may tighten the semantics (e.g. whether
-    /// out-of-range clamps or errors) before promoting it.*
-    #[doc(hidden)]
-    #[must_use]
-    pub fn chroma_quality(mut self, quality: Option<u8>) -> Self {
-        self.chroma_quality = quality.map(|q| q.clamp(1, 100));
-        self
-    }
-
     /// Supply pre-computed zenanalyze source features so the `Quality::Zq`
     /// closed loop skips re-analyzing the image.
     ///
@@ -1073,23 +991,33 @@ impl EncoderConfig {
     pub fn separate_chroma_tables(mut self, enable: bool) -> Self {
         // Map the bool to the appropriate QuantTableConfig variant,
         // preserving mozjpeg vs jpegli distinction.
-        match &self.quant_table_config {
-            QuantTableConfig::Custom(_) | QuantTableConfig::GlassaLowBpp(_) => {
+        match self.quant_table_config {
+            QuantTableConfig::Custom(_) | QuantTableConfig::GlassaLowBpp => {
                 // Don't touch custom or Glassa tables (Glassa always uses shared chroma)
             }
-            QuantTableConfig::MozjpegRobidoux => {
+            QuantTableConfig::MozjpegRobidoux { .. } => {
                 // MozjpegRobidoux is always shared chroma; can't separate
                 if enable {
                     // User is asking for separate chroma with mozjpeg tables,
                     // which isn't a valid combo — switch to Jpegli
-                    self.quant_table_config = QuantTableConfig::Jpegli;
+                    self.quant_table_config = QuantTableConfig::default();
                 }
             }
-            QuantTableConfig::Jpegli | QuantTableConfig::JpegliSharedChroma => {
+            QuantTableConfig::Jpegli {
+                chroma_distance_scale,
+            }
+            | QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scale,
+            } => {
+                // Preserve the chroma scale across the layout toggle.
                 self.quant_table_config = if enable {
-                    QuantTableConfig::Jpegli
+                    QuantTableConfig::Jpegli {
+                        chroma_distance_scale,
+                    }
                 } else {
-                    QuantTableConfig::JpegliSharedChroma
+                    QuantTableConfig::JpegliSharedChroma {
+                        chroma_distance_scale,
+                    }
                 };
             }
         }
@@ -1537,6 +1465,28 @@ impl EncoderConfig {
     /// Invalid combinations:
     /// - Progressive mode with disabled Huffman optimization
     pub fn validate(&self) -> Result<()> {
+        // The 2-table shared-chroma layouts and Robidoux psychovisual
+        // tables are YCbCr concepts; they have no defined meaning for
+        // X,Y,B channels.
+        if matches!(self.color_mode, ColorMode::Xyb { .. }) {
+            match self.quant_table_config {
+                QuantTableConfig::JpegliSharedChroma { .. } => {
+                    return Err(crate::error::Error::invalid_config(
+                        "XYB color mode requires per-component quant tables; \
+                         QuantTableConfig::JpegliSharedChroma is YCbCr-only"
+                            .into(),
+                    ));
+                }
+                QuantTableConfig::MozjpegRobidoux { .. } => {
+                    return Err(crate::error::Error::invalid_config(
+                        "MozjpegRobidoux tables are YCbCr psychovisual tables; \
+                         use QuantTableConfig::Jpegli (default) or Custom for XYB"
+                            .into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
         if self.scan_mode.is_progressive() && !matches!(self.huffman, HuffmanStrategy::Optimize) {
             return Err(crate::error::Error::invalid_config(
                 "progressive mode requires optimized Huffman tables".into(),
@@ -1904,20 +1854,6 @@ impl EncoderConfig {
         self.allow_16bit_quant_tables
     }
 
-    /// Returns the configured chroma-distance multiplier. `1.0` when unset.
-    #[must_use]
-    pub fn get_chroma_distance_scale(&self) -> f32 {
-        self.chroma_distance_scale
-    }
-
-    /// Returns the configured independent chroma quality, or `None`
-    /// when the mozjpeg-compat path should reuse the luma quality.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn get_chroma_quality(&self) -> Option<u8> {
-        self.chroma_quality
-    }
-
     /// Check if adaptive quantization (AQ) is enabled.
     #[must_use]
     pub fn is_aq_enabled(&self) -> bool {
@@ -2162,7 +2098,7 @@ mod tests {
             .optimization(OptimizationPreset::JpegliBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(config.deringing);
-        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+        assert_eq!(config.quant_table_config, QuantTableConfig::default());
         assert!(config.trellis.is_none());
         assert!(!config.allow_16bit_quant_tables);
     }
@@ -2175,7 +2111,10 @@ mod tests {
             .optimization(OptimizationPreset::MozjpegBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
-        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::MozjpegRobidoux { .. }
+        ));
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
@@ -2190,7 +2129,10 @@ mod tests {
             .optimization(OptimizationPreset::MozjpegProgressive);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveMozjpeg);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
-        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::MozjpegRobidoux { .. }
+        ));
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
@@ -2205,7 +2147,10 @@ mod tests {
             .optimization(OptimizationPreset::MozjpegMaxCompression);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
         assert!(config.deringing); // JCP_MAX_COMPRESSION enables overshoot
-        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::MozjpegRobidoux { .. }
+        ));
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough);
@@ -2220,7 +2165,7 @@ mod tests {
             .optimization(OptimizationPreset::HybridProgressive);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
         assert!(config.deringing);
-        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+        assert_eq!(config.quant_table_config, QuantTableConfig::default());
         assert!(config.trellis.is_some());
         assert!(!config.allow_16bit_quant_tables);
     }
@@ -2290,9 +2235,11 @@ mod tests {
         // MozjpegRobidoux is always shared chroma; requesting separate
         // should switch to Jpegli tables
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .quant_table_config(QuantTableConfig::MozjpegRobidoux)
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            })
             .separate_chroma_tables(true);
-        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+        assert_eq!(config.quant_table_config, QuantTableConfig::default());
     }
 
     #[test]

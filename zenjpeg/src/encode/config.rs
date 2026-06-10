@@ -80,9 +80,6 @@ pub struct ComputedConfig {
     /// Not part of public API.
     #[doc(hidden)]
     #[allow(dead_code)]
-    // Set but not read from ComputedConfig; read from StreamingEncoderBuilder
-    pub(crate) encoding_tables: Option<Box<crate::encode::tuning::EncodingTables>>,
-
     // EncodingBackend removed - strip-based encoding is now the only backend
     /// Edge padding strategy for partial MCU blocks.
     ///
@@ -280,7 +277,6 @@ impl Default for ComputedConfig {
             // Box filter matches C++ jpegli default
             chroma_downsampling: DownsamplingMethod::Box,
             custom_aq_map: None,
-            encoding_tables: None,
             edge_padding: EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,

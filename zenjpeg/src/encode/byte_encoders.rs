@@ -160,13 +160,7 @@ impl BytesEncoder {
             .chroma_downsampling(config.downsampling_method)
             .restart_interval(restart_interval);
 
-        // Decompose QuantTableConfig into builder's individual fields
-        if let Some(tables) = config.quant_table_config.custom_tables() {
-            builder = builder.encoding_tables(Box::new(tables.clone()));
-        }
-        builder = builder.quant_source(config.quant_table_config.quant_source());
-        builder =
-            builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
+        builder = builder.quant_table_config(config.quant_table_config.clone());
 
         // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
@@ -197,8 +191,6 @@ impl BytesEncoder {
         ));
 
         builder = builder.tiny_file_mode(config.tiny_file_mode);
-        builder = builder.chroma_distance_scale(config.chroma_distance_scale);
-        builder = builder.chroma_quality(config.chroma_quality);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
@@ -1165,13 +1157,7 @@ impl YCbCrPlanarEncoder {
             .chroma_downsampling(config.downsampling_method)
             .restart_interval(restart_interval);
 
-        // Decompose QuantTableConfig into builder's individual fields
-        if let Some(tables) = config.quant_table_config.custom_tables() {
-            builder = builder.encoding_tables(Box::new(tables.clone()));
-        }
-        builder = builder.quant_source(config.quant_table_config.quant_source());
-        builder =
-            builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
+        builder = builder.quant_table_config(config.quant_table_config.clone());
 
         // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
@@ -1198,8 +1184,6 @@ impl YCbCrPlanarEncoder {
         ));
 
         builder = builder.tiny_file_mode(config.tiny_file_mode);
-        builder = builder.chroma_distance_scale(config.chroma_distance_scale);
-        builder = builder.chroma_quality(config.chroma_quality);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {

@@ -1314,81 +1314,93 @@ pub enum QuantTableSource {
 
 /// Unified quantization table configuration.
 ///
-/// Bundles the table source, chroma table layout, and custom table overrides
-/// into a single type, preventing invalid combinations such as:
+/// Bundles the table family with the knobs that are live for that family —
+/// each knob exists only on the variant where it has an effect:
 ///
-/// - `MozjpegDefault` + separate chroma tables (mozjpeg always uses 2 tables)
-/// - Custom tables + a quant source (custom overrides everything)
+/// | Variant | Tables | Live knobs | `Quality` drives tables? |
+/// |---------|--------|------------|--------------------------|
+/// | `Jpegli` | 3 (Y, Cb, Cr) | `chroma_distance_scale` | yes (distance scaling) |
+/// | `JpegliSharedChroma` | 2 (Y, shared) | `chroma_distance_scale` | yes |
+/// | `MozjpegRobidoux` | 2 (Y, shared) | `chroma_quality` | yes (libjpeg quality scaling) |
+/// | `Custom` | user-defined | the tables themselves | only if `ScalingParams::Scaled` |
+/// | `GlassaLowBpp` | 2 (shared) | — | yes (anchor interpolation, q clamped 3–25) |
 ///
-/// # Variants
-///
-/// | Variant | Tables | Source | Notes |
-/// |---------|--------|--------|-------|
-/// | `Jpegli` | 3 (Y, Cb, Cr) | jpegli perceptual | Default, matches `jpegli_set_distance()` |
-/// | `JpegliSharedChroma` | 2 (Y, shared) | jpegli perceptual | Matches `jpeg_set_quality()` |
-/// | `MozjpegRobidoux` | 2 (Y, shared) | Robidoux psychovisual | Matches C mozjpeg default |
-/// | `Custom` | (user-defined) | user-defined | Full control via `EncodingTables` |
-#[derive(Clone, Debug, Default, PartialEq)]
+/// XYB color mode accepts only `Jpegli` and `Custom` — the 2-table
+/// shared-chroma layouts are YCbCr concepts with no defined meaning for
+/// X,Y,B channels and are rejected by `EncoderConfig::validate()`.
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum QuantTableConfig {
-    /// Jpegli perceptual defaults with 3 separate quantization tables (Y, Cb, Cr).
-    ///
-    /// Matches C++ jpegli's `jpegli_set_distance()` behavior. Each chroma
-    /// component gets its own optimized table for best quality.
-    #[default]
-    Jpegli,
+    /// Jpegli perceptual defaults with 3 separate quantization tables
+    /// (Y, Cb, Cr). Matches C++ jpegli's `jpegli_set_distance()` behavior.
+    Jpegli {
+        /// Multiplier on the butteraugli distance for the chroma-like
+        /// channels — Cb/Cr in YCbCr mode, X/B in XYB mode (Y, the
+        /// luma-like channel, keeps the base distance). `1.0` = same
+        /// treatment as luma. Clamped to `[0.1, 5.0]` at resolution.
+        ///
+        /// `> 1.0` encodes chroma more aggressively (flat-chroma images);
+        /// `< 1.0` more carefully (sharp-chroma images).
+        chroma_distance_scale: f32,
+    },
 
-    /// Jpegli perceptual defaults with 2 quantization tables (Y, shared chroma).
-    ///
-    /// Matches C++ jpegli's `jpeg_set_quality()` behavior. Cb and Cr share
-    /// the same table — produces slightly larger files than 3-table mode
-    /// but is compatible with encoders that use `jpeg_set_quality()`.
-    JpegliSharedChroma,
+    /// Jpegli perceptual defaults with 2 quantization tables (Y, shared
+    /// chroma using the Cr base matrix). Matches C++ jpegli's
+    /// `jpeg_set_quality()` behavior. YCbCr only.
+    JpegliSharedChroma {
+        /// Same semantics as [`Jpegli`](Self::Jpegli)'s field; applies to
+        /// the shared chroma table.
+        chroma_distance_scale: f32,
+    },
 
-    /// Mozjpeg Robidoux psychovisual tables with 2 quantization tables.
-    ///
-    /// Uses Nicolas Robidoux's psychovisual tables scaled by libjpeg's
-    /// quality formula. Always 2 tables (shared chroma), matching C mozjpeg.
-    MozjpegRobidoux,
+    /// Mozjpeg Robidoux psychovisual tables scaled by libjpeg's quality
+    /// formula. Always 2 tables (shared chroma), matching C mozjpeg.
+    /// YCbCr only.
+    MozjpegRobidoux {
+        /// Optional independent chroma quality on the mozjpeg 1–100
+        /// scale (clamped at resolution). `None` scales chroma with the
+        /// luma quality — bit-identical to the historical behaviour.
+        chroma_quality: Option<u8>,
+    },
 
     /// User-provided custom encoding tables.
     ///
-    /// Overrides both quantization tables and zero-bias configuration.
-    /// Use `EncodingTables::default_ycbcr()` as a starting point for modifications.
+    /// The tables own the chroma policy via their per-component base
+    /// matrices. `Quality` drives them only when
+    /// `scaling == ScalingParams::Scaled`; `Exact` tables are used as-is
+    /// (quality then affects only gates like `auto_optimize`, not bytes).
     Custom(Box<super::tuning::EncodingTables>),
 
-    /// Glassa low-BPP optimized tables for extreme compression (Q3-Q25).
+    /// Glassa low-BPP optimized tables for extreme compression.
     ///
-    /// SA-optimized tables that achieve +20 to +33 pareto gains at ultra-low
-    /// bitrates (0.15-0.50 BPP). Aggressively zeros high-frequency coefficients.
-    ///
-    /// # When to Use
-    ///
-    /// - Thumbnails (<100px)
-    /// - LQIP (low-quality image placeholders)
-    /// - Progressive loading placeholders
-    /// - Any use case where quality < Q30 is acceptable
-    ///
-    /// # When NOT to Use
-    ///
-    /// - Q30+: No benefit over mozjpeg defaults
-    /// - High quality: Use [`Jpegli`](Self::Jpegli) instead
-    ///
-    /// The inner `u8` is the quality level (3-25 recommended).
-    GlassaLowBpp(u8),
+    /// SA-optimized anchors achieving +20 to +33 pareto gains at
+    /// 0.15–0.50 BPP (thumbnails, LQIP, progressive placeholders).
+    /// The anchor quality derives from the config's `Quality`: internal
+    /// jpegli q, rounded and clamped to the trained 3–25 range. At Q30+
+    /// prefer [`Jpegli`](Self::Jpegli) or mozjpeg defaults.
+    GlassaLowBpp,
+}
+
+impl Default for QuantTableConfig {
+    /// Jpegli 3-table with neutral chroma scale — matches
+    /// `jpegli_set_distance()`.
+    fn default() -> Self {
+        Self::Jpegli {
+            chroma_distance_scale: 1.0,
+        }
+    }
 }
 
 impl QuantTableConfig {
     /// Returns the internal `QuantTableSource` for this configuration.
-    ///
-    /// Custom and GlassaLowBpp tables return `Jpegli` (ignored when custom tables are present).
     #[must_use]
     pub const fn quant_source(&self) -> QuantTableSource {
         match self {
-            Self::Jpegli | Self::JpegliSharedChroma | Self::Custom(_) | Self::GlassaLowBpp(_) => {
-                QuantTableSource::Jpegli
-            }
-            Self::MozjpegRobidoux => QuantTableSource::MozjpegDefault,
+            Self::Jpegli { .. }
+            | Self::JpegliSharedChroma { .. }
+            | Self::Custom(_)
+            | Self::GlassaLowBpp => QuantTableSource::Jpegli,
+            Self::MozjpegRobidoux { .. } => QuantTableSource::MozjpegDefault,
         }
     }
 
@@ -1396,22 +1408,36 @@ impl QuantTableConfig {
     #[must_use]
     pub const fn separate_chroma_tables(&self) -> bool {
         match self {
-            Self::Jpegli => true,
-            // Glassa uses shared chroma (mozjpeg-style 2 tables)
-            Self::JpegliSharedChroma | Self::MozjpegRobidoux | Self::GlassaLowBpp(_) => false,
+            Self::Jpegli { .. } => true,
+            Self::JpegliSharedChroma { .. } | Self::MozjpegRobidoux { .. } | Self::GlassaLowBpp => {
+                false
+            }
             // Custom tables define their own layout; default to separate.
             Self::Custom(_) => true,
         }
     }
 
-    /// Returns the custom encoding tables, if any.
-    ///
-    /// For `GlassaLowBpp`, this generates tables on-demand via interpolation.
+    /// The chroma distance scale, when this family has one (jpegli
+    /// families only).
     #[must_use]
-    pub fn custom_tables(&self) -> Option<super::tuning::EncodingTables> {
+    pub fn chroma_distance_scale(&self) -> Option<f32> {
         match self {
-            Self::Custom(t) => Some((**t).clone()),
-            Self::GlassaLowBpp(q) => Some(super::tables::glassa::tables_for_quality(*q)),
+            Self::Jpegli {
+                chroma_distance_scale,
+            }
+            | Self::JpegliSharedChroma {
+                chroma_distance_scale,
+            } => Some(*chroma_distance_scale),
+            _ => None,
+        }
+    }
+
+    /// The independent chroma quality, when this family has one
+    /// (`MozjpegRobidoux` only).
+    #[must_use]
+    pub fn chroma_quality(&self) -> Option<u8> {
+        match self {
+            Self::MozjpegRobidoux { chroma_quality } => *chroma_quality,
             _ => None,
         }
     }

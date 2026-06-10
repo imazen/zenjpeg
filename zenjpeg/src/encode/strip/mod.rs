@@ -450,7 +450,6 @@ fn quantize_chroma_blocks(
                 &dct_arr,
                 quant_values,
                 aq_strength,
-                1.0,
                 false, // is_chroma
             );
             let mut result = [0i16; DCT_BLOCK_SIZE];
@@ -1527,7 +1526,6 @@ impl StripProcessor {
                         &dct_arr,
                         &quant.y_quant.values,
                         aq_strength,
-                        1.0,  // dampen
                         true, // is_luma
                     );
                     // Apply zigzag reordering

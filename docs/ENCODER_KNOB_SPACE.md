@@ -27,9 +27,17 @@ This document answers three questions:
 > - **§9.4 EncodePlan shipped**: `EncoderConfig::resolve_plan(w, h)`
 >   resolves every knob — including the actual quant tables, via the same
 >   function the encoder runs — into an inspectable/printable plan.
-> - Still open: §9.1 per-channel `ResolvedQuality` (incl. the XYB
->   `chroma_distance_scale` mislabel, §9.6.2), §9.6.1 piecewise-v4 wiring,
->   §9.5 canonical search vector, §9.6.5 per-channel zero-bias.
+> - **Knob-discrimination wave (same day, follow-up):** `QuantTableConfig`
+>   variants now carry their live knobs (`Jpegli`/`JpegliSharedChroma`
+>   `{ chroma_distance_scale }`, `MozjpegRobidoux { chroma_quality }`,
+>   `GlassaLowBpp` derives its anchor q from `Quality`). The §6 table of
+>   family-dead chroma knobs is obsolete — each knob now exists only where
+>   it is live. §9.6.2 FIXED: XYB chroma scale applies to X+B (was Y+B);
+>   XYB now rejects the YCbCr-only families in `validate()`. The inert
+>   `quality_adaptive`/dampen coupling knob was deleted outright.
+>   `EncodePlan` reports `table_family` + `quality_drives_tables`.
+> - Still open: §9.1 per-channel `ResolvedQuality` (per-channel zero-bias,
+>   §9.6.5), §9.6.1 piecewise-v4 wiring, §9.5 canonical search vector.
 >
 > Sections §5–§6 and §8 below describe the **pre-refactor** state — kept
 > as the rationale record for why the merge happened.
