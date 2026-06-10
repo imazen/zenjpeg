@@ -1523,6 +1523,25 @@ pub enum ProgressiveScanMode {
     /// Closest parity with C mozjpeg's default progressive output.
     ProgressiveMozjpeg,
 
+    /// Exact smallest-output selection across the entropy stage.
+    ///
+    /// Quantized coefficients are computed once, then serialized as up to
+    /// three candidates — sequential (+ tiny-file shared-table variant
+    /// when eligible and [`TinyFileMode`] is not `Off`) and progressive
+    /// (jpegli script) — and the smallest byte stream is emitted.
+    ///
+    /// This is a **lossless rate decision**: every candidate decodes to
+    /// identical pixels, so min(bytes) is correct 100 % of the time — no
+    /// size threshold or content heuristic involved. Costs one extra
+    /// entropy pass per candidate (~12 % of encode time each); the
+    /// DCT/AQ/quantization work is shared.
+    ///
+    /// Each candidate emits exactly what its explicit mode would —
+    /// sequential candidates honor `restart_mcu_rows` like a plain
+    /// Baseline encode; the progressive candidate follows progressive
+    /// restart suppression.
+    Smallest,
+
     /// Progressive JPEG with scan search optimization.
     ///
     /// Tests 64 candidate scan configurations (frequency splits, SA levels,
@@ -1544,7 +1563,7 @@ impl ProgressiveScanMode {
     #[must_use]
     pub const fn scan_strategy(self) -> ScanStrategy {
         match self {
-            Self::Baseline | Self::Progressive => ScanStrategy::Default,
+            Self::Baseline | Self::Progressive | Self::Smallest => ScanStrategy::Default,
             Self::ProgressiveMozjpeg => ScanStrategy::Mozjpeg,
             Self::ProgressiveSearch => ScanStrategy::Search,
         }

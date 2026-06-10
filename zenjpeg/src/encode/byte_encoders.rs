@@ -166,6 +166,19 @@ impl BytesEncoder {
         if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
         }
+        if matches!(
+            config.scan_mode,
+            super::encoder_types::ProgressiveScanMode::Smallest
+        ) {
+            builder = builder.smallest_scan(true).smallest_seq_restart_interval(
+                super::config::resolve_restart_rows(
+                    config.restart_mcu_rows,
+                    width,
+                    height,
+                    subsampling,
+                ),
+            );
+        }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
         if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
@@ -1162,6 +1175,19 @@ impl YCbCrPlanarEncoder {
         // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
+        }
+        if matches!(
+            config.scan_mode,
+            super::encoder_types::ProgressiveScanMode::Smallest
+        ) {
+            builder = builder.smallest_scan(true).smallest_seq_restart_interval(
+                super::config::resolve_restart_rows(
+                    config.restart_mcu_rows,
+                    width,
+                    height,
+                    subsampling,
+                ),
+            );
         }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 

@@ -2374,7 +2374,7 @@ mod tests {
         let meta = Metadata::default().with_icc(icc.as_slice());
         let output = enc
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_metadata(meta)
             .encoder()
             .unwrap()
             .encode(PixelSlice::from(img.as_ref()).into())
@@ -2394,7 +2394,7 @@ mod tests {
 
         let output = enc
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_metadata(meta)
             .with_policy(policy)
             .encoder()
             .unwrap()

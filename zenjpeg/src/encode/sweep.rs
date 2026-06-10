@@ -131,7 +131,7 @@ impl SweepAxes {
                 Some(TrellisConfig::default()),
                 Some(trellis_auto_shape()),
             ],
-            scans: vec![ProgressiveScanMode::Progressive],
+            scans: vec![ProgressiveScanMode::Smallest],
             color_modes: vec![
                 ColorMode::YCbCr {
                     subsampling: ChromaSubsampling::Quarter,
@@ -165,6 +165,7 @@ impl SweepAxes {
     #[must_use]
     pub fn modes_full() -> Self {
         let mut axes = Self::rd_core();
+        axes.scans.push(ProgressiveScanMode::Progressive);
         axes.scans.push(ProgressiveScanMode::Baseline);
         axes.coeff_opt.push(Some(trellis_coupled(-4.0)));
         axes.coeff_opt.push(Some(trellis_coupled(4.0)));
@@ -526,6 +527,7 @@ impl Stratum<'_> {
         let sc = match self.scan {
             ProgressiveScanMode::Baseline => "base",
             ProgressiveScanMode::Progressive => "prog",
+            ProgressiveScanMode::Smallest => "small",
             ProgressiveScanMode::ProgressiveMozjpeg => "pmoz",
             ProgressiveScanMode::ProgressiveSearch => "psrch",
         };
@@ -752,6 +754,7 @@ pub fn fingerprint(config: &EncoderConfig) -> u64 {
         ProgressiveScanMode::Progressive => 1,
         ProgressiveScanMode::ProgressiveMozjpeg => 2,
         ProgressiveScanMode::ProgressiveSearch => 3,
+        ProgressiveScanMode::Smallest => 4,
     });
     h.u8(match &config.huffman {
         HuffmanStrategy::Optimize => 0,
@@ -843,7 +846,7 @@ mod tests {
     fn rd_core_is_progressive_only_modes_full_restores_baseline() {
         assert_eq!(
             SweepAxes::rd_core().scans,
-            vec![ProgressiveScanMode::Progressive]
+            vec![ProgressiveScanMode::Smallest]
         );
         assert!(
             SweepAxes::modes_full()

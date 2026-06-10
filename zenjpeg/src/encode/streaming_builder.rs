@@ -62,6 +62,12 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) trellis: Option<super::trellis::TrellisConfig>,
     /// Tiny-file optimization mode (default: Auto).
     pub(crate) tiny_file_mode: TinyFileMode,
+    /// Exact smallest-entropy selection (ProgressiveScanMode::Smallest).
+    pub(crate) smallest_scan: bool,
+    /// Restart interval the SEQUENTIAL candidates use under Smallest —
+    /// exactly what an explicit Baseline encode would emit (the
+    /// progressive candidate keeps progressive suppression).
+    pub(crate) smallest_seq_restart_interval: u16,
 }
 
 impl StreamingEncoderBuilder {
@@ -95,6 +101,8 @@ impl StreamingEncoderBuilder {
             custom_aq_map: None,
             trellis: None,
             tiny_file_mode: TinyFileMode::default(),
+            smallest_scan: false,
+            smallest_seq_restart_interval: 0,
         }
     }
 
@@ -119,7 +127,22 @@ impl StreamingEncoderBuilder {
     ///
     /// When disabled, if the current mode is Progressive, it switches to Baseline.
     /// Otherwise, the current mode (e.g., Extended) is preserved.
+    ///
+    /// Enables exact smallest-entropy selection (implies progressive
+    /// buffering + optimized Huffman; the winner may still be sequential).
     #[must_use]
+    pub(crate) fn smallest_scan(mut self, enable: bool) -> Self {
+        self.smallest_scan = enable;
+        self
+    }
+
+    /// Restart interval for Smallest's sequential candidates.
+    #[must_use]
+    pub(crate) fn smallest_seq_restart_interval(mut self, interval: u16) -> Self {
+        self.smallest_seq_restart_interval = interval;
+        self
+    }
+
     pub(crate) fn progressive(mut self, enable: bool) -> Self {
         if enable {
             self.mode = JpegMode::Progressive;

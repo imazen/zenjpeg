@@ -298,6 +298,9 @@ impl StreamingEncoder {
             force_sof1: builder.force_sof1,
             separate_chroma_tables: builder.quant_table_config.separate_chroma_tables(),
             scan_strategy: builder.scan_strategy,
+            smallest_scan: builder.smallest_scan,
+            smallest_seq_restart_interval: builder.smallest_seq_restart_interval,
+            tiny_file_mode: builder.tiny_file_mode,
             tiny_file_active,
         };
 
@@ -996,6 +999,25 @@ impl StreamingEncoder {
             let cr_quant = self.cr_quant;
             let strip_output = self.processor.finalize()?;
 
+            if config.smallest_scan {
+                let is_color = !config.pixel_format.is_grayscale();
+                let counts = Box::new(config.count_block_frequencies(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                ));
+                Self::build_smallest_into(
+                    &config,
+                    &y_quant,
+                    &cb_quant,
+                    &cr_quant,
+                    &strip_output,
+                    output,
+                )?;
+                return Ok(Some(counts));
+            }
+
             match config.mode {
                 JpegMode::Progressive => {
                     if !matches!(config.huffman, HuffmanStrategy::Optimize) {
@@ -1034,7 +1056,7 @@ impl StreamingEncoder {
                         &y_quant,
                         &cb_quant,
                         &cr_quant,
-                        strip_output,
+                        &strip_output,
                         output,
                         true,
                     )
@@ -1110,6 +1132,17 @@ impl StreamingEncoder {
     ) -> Result<()> {
         stop.check()?;
 
+        if config.smallest_scan {
+            return Self::build_smallest_into(
+                config,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                &strip_output,
+                output,
+            );
+        }
+
         // Branch based on encoding mode (mirrors encode_strip_based in encode/mod.rs)
         match config.mode {
             JpegMode::Progressive => {
@@ -1137,7 +1170,7 @@ impl StreamingEncoder {
                     y_quant,
                     cb_quant,
                     cr_quant,
-                    strip_output,
+                    &strip_output,
                     output,
                     false,
                 )?;
@@ -1161,11 +1194,106 @@ impl StreamingEncoder {
             y_quant,
             cb_quant,
             cr_quant,
-            strip_output,
+            &strip_output,
             &mut output,
             false,
         )?;
         Ok(output)
+    }
+
+    /// Exact smallest-entropy selection: serialize sequential (+ tiny-file
+    /// variant when eligible) and progressive candidates from the SAME
+    /// quantized coefficients and emit the smallest.
+    ///
+    /// This is a pure rate decision — every candidate decodes to identical
+    /// pixels — so `min(bytes)` is correct by construction. No size
+    /// thresholds, no content heuristics.
+    fn build_smallest_into(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        if !matches!(config.huffman, HuffmanStrategy::Optimize) {
+            return Err(Error::unsupported_feature(
+                "Smallest scan selection requires optimized Huffman tables",
+            ));
+        }
+
+        // Candidate 1: progressive, jpegli default script.
+        let mut prog_cfg = config.clone();
+        prog_cfg.smallest_scan = false;
+        prog_cfg.mode = JpegMode::Progressive;
+        prog_cfg.tiny_file_active = false;
+        let mut prog = Vec::new();
+        prog_cfg.encode_progressive_from_blocks_into(
+            &strip_output.y_blocks,
+            &strip_output.cb_blocks,
+            &strip_output.cr_blocks,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            &mut prog,
+        )?;
+
+        // Candidate 2: plain sequential.
+        let mut seq_cfg = config.clone();
+        seq_cfg.smallest_scan = false;
+        seq_cfg.mode = JpegMode::Baseline;
+        seq_cfg.tiny_file_active = false;
+        // Sequential candidates emit exactly what an explicit Baseline
+        // encode would — including its restart markers.
+        seq_cfg.restart_interval = config.smallest_seq_restart_interval;
+        let mut seq = Vec::new();
+        Self::build_jpeg_sequential_into(
+            &seq_cfg,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            strip_output,
+            &mut seq,
+            false,
+        )?;
+
+        let mut best = if seq.len() < prog.len() { seq } else { prog };
+
+        // Candidate 3: sequential with tiny-file shared tables. Replaces the
+        // pixel-count activation heuristic with the exact answer; skipped
+        // only when structurally ineligible (XYB) or explicitly Off.
+        let tiny_eligible = !config.use_xyb
+            && !matches!(
+                config.tiny_file_mode,
+                super::encoder_types::TinyFileMode::Off
+            );
+        if tiny_eligible {
+            let mut tiny_cfg = config.clone();
+            tiny_cfg.smallest_scan = false;
+            tiny_cfg.mode = JpegMode::Baseline;
+            tiny_cfg.tiny_file_active = true;
+            tiny_cfg.restart_interval = config.smallest_seq_restart_interval;
+            let mut tiny = Vec::new();
+            Self::build_jpeg_sequential_into(
+                &tiny_cfg,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                strip_output,
+                &mut tiny,
+                false,
+            )?;
+            if tiny.len() < best.len() {
+                best = tiny;
+            }
+        }
+
+        output.clear();
+        output
+            .try_reserve(best.len())
+            .map_err(|_| Error::allocation_failed(best.len(), "smallest-scan output"))?;
+        output.extend_from_slice(&best);
+        Ok(())
     }
 
     /// Builds sequential JPEG output from processed blocks into provided buffer.
@@ -1178,7 +1306,7 @@ impl StreamingEncoder {
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
-        strip_output: crate::encode::strip::StripProcessorOutput,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
         collect_frequencies: bool,
     ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
@@ -1196,7 +1324,7 @@ impl StreamingEncoder {
                 y_quant,
                 cb_quant,
                 cr_quant,
-                &strip_output,
+                strip_output,
                 output,
                 collect_frequencies,
             )?
@@ -1206,7 +1334,7 @@ impl StreamingEncoder {
                 y_quant,
                 cb_quant,
                 cr_quant,
-                &strip_output,
+                strip_output,
                 output,
                 collect_frequencies,
             )?

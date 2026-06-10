@@ -150,6 +150,18 @@ pub struct ComputedConfig {
     /// [`TrellisConfig::aq_coupling`](super::trellis::TrellisConfig::aq_coupling).
     pub trellis: Option<super::trellis::TrellisConfig>,
 
+    /// Exact smallest-entropy selection: serialize sequential (+tiny)
+    /// and progressive candidates from the same coefficients, emit the
+    /// smallest. See `ProgressiveScanMode::Smallest`.
+    pub smallest_scan: bool,
+    /// Restart interval Smallest's sequential candidates emit (matches an
+    /// explicit Baseline encode; the progressive candidate stays
+    /// suppressed-unless-forced).
+    pub smallest_seq_restart_interval: u16,
+    /// Tiny-file mode as configured (the resolved per-image flag is
+    /// `tiny_file_active`). `Smallest` consults this to decide whether
+    /// the tiny candidate participates.
+    pub tiny_file_mode: super::encoder_types::TinyFileMode,
     /// Whether tiny-file optimizations (shared Huffman tables etc.) are
     /// active for this image. Resolved from [`TinyFileMode`] plus the image
     /// size heuristic at `ComputedConfig` construction time. Checked by the
@@ -288,6 +300,9 @@ impl Default for ComputedConfig {
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
             trellis: None,
+            smallest_scan: false,
+            smallest_seq_restart_interval: 0,
+            tiny_file_mode: super::encoder_types::TinyFileMode::Auto,
             tiny_file_active: false,
         }
     }

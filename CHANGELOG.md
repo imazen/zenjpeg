@@ -43,6 +43,28 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `ProgressiveScanMode::Smallest` — exact min-bytes entropy-stage
+  selection. Coefficients are computed once, then serialized as up to
+  three candidates (sequential, sequential+tiny-file when eligible and
+  not `Off`, progressive jpegli script) and the smallest is emitted.
+  Pure rate decision: every candidate decodes to identical pixels, so
+  min(bytes) is correct 100% of the time — this replaces size-threshold
+  heuristics (e.g. tiny-file's pixel-count crossover) with the exact
+  answer. Sequential candidates emit exactly what an explicit Baseline
+  encode would, including restart markers. Cost: one extra entropy pass
+  per candidate (~12% of encode time each); DCT/AQ/quant shared.
+  Tests pin byte-equality with min(explicit modes) and pixel-identity.
+  `encode::sweep::rd_core()` now uses `Smallest` as its scan value —
+  the scan axis leaves heuristic space entirely.
+
+### Fixed
+
+- `codec.rs` zencodec tests reverted to `.with_metadata(meta)`: the
+  crate depends on registry zencodec 0.1.20, which has no
+  `with_metadata_policy`; the earlier migration compiled only against a
+  local path override that no longer applies. Re-migrate when zencodec
+  0.2 is published.
+
 - `encode::sweep`: `rd_core()` is progressive-only (baseline never sits
   on the RD front at normal sizes — same coefficients, better entropy
   structure; it stays in `modes_full()` for the tiny-size bucket where
