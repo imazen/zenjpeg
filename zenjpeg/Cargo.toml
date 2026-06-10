@@ -388,6 +388,10 @@ required-features = ["__test-utils"]
 name = "bbs_measure"
 
 [[example]]
+name = "sweep_plan"
+required-features = ["__expert"]
+
+[[example]]
 name = "zq_calibrate"
 required-features = ["target-zq"]
 

@@ -43,6 +43,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `encode::sweep` (`__expert`): budgeted sweep-plan builder over the knob
+  space. Strata (`SweepAxes::rd_core`/`modes_full`) × quality grids
+  (`Step5` floor / `TrainingDense`), with byte-identity fingerprint
+  dedup over the RESOLVED state — aliased cells (Glassa/Piecewise anchor
+  clamps, `allow_16bit` where tables fit 8-bit, `auto_optimize` vs its
+  explicit spelling, output-neutral speed modes) collapse before any
+  encode is spent (rd_core: 1008 candidates → 816 cells). Budget ladder
+  collapses mode axes lowest-tier-first with an explicit `dropped`
+  report, coarsens the q-grid uniformly (endpoints kept, ≥11 points),
+  and sets `over_budget` rather than sampling silently. Invalid strata
+  (XYB × YCbCr-only families) are reported, not lost.
+  `SweepPlan::encodes(images, sizes)` gives the real encode count.
+  Demo: `cargo run --example sweep_plan --features __expert`.
+
 - `QuantTableConfig::PiecewiseV4` — the SA-piecewise v4 anchor tables
   (CID22-512-trained, +6.602 mean pareto vs jpegli on training, +6.09 on
   the 41-image holdout) are now a selectable 3-table family. Quality

@@ -47,9 +47,16 @@ This document answers three questions:
 >   `adaptive()` pick — piecewise×trellis/subsampling sweeps must run
 >   first; per-anchor zero-bias SA + per-content anchors are the recorded
 >   retraining avenues.
-> - Still open: §9.5 canonical search vector; piecewise adoption sweep for
->   `adaptive()`; Custom-tables distance-space note (full table-space
->   control supersedes it — see `encode::expert` docs).
+> - **Sweep planner (2026-06-10):** `encode::sweep` (`__expert`) turns the
+>   space into finite, auditable encode-cell lists: axes × q-grid with
+>   byte-identity fingerprint dedup over the resolved state, explicit
+>   no-silent-caps budget ladder, validity-filtered strata. This is the
+>   §9.5 "canonical search surface" for grid sweeps; the continuous-dim
+>   optimizer vector (λ ridge reparameterization etc.) remains open.
+> - Still open: §9.5 continuous optimizer vector; piecewise adoption sweep
+>   for `adaptive()` (the sweep planner now generates exactly that plan);
+>   Custom-tables distance-space note (table-space control supersedes it —
+>   see `encode::expert` docs).
 >
 > Sections §5–§6 and §8 below describe the **pre-refactor** state — kept
 > as the rationale record for why the merge happened.

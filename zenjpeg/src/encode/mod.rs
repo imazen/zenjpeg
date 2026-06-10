@@ -148,6 +148,9 @@ pub mod trellis;
 /// Encode-plan resolution and introspection ([`EncodePlan`](plan::EncodePlan)).
 pub mod plan;
 
+/// Budgeted sweep-plan construction over the knob space (`__expert`).
+pub mod sweep;
+
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
 /// Flattens all quality/size-affecting parameters into a single struct with

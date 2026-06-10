@@ -177,6 +177,10 @@ pub use crate::encode::trellis::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 #[cfg(feature = "__expert")]
 pub use crate::encode::internal_params::{ColorPath, InternalParams};
 pub use crate::encode::request::EncodeRequest;
+#[cfg(feature = "__expert")]
+pub use crate::encode::sweep::{
+    DroppedAxis, QualityGrid, SweepAxes, SweepBuilder, SweepCell, SweepPlan,
+};
 pub use crate::foundation::alloc::EncodeStats;
 pub use crate::types::Limits;
 
