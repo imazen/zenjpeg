@@ -50,6 +50,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- `TinyFileMode::Auto` grayscale arm: structural DOMINANCE, not trial —
+  single-component tiny mode is pure header pruning (~208 B) with no
+  shared-table cost, so Auto takes it at every size without a gate
+  (restores the pre-trial always-on grayscale behavior; pinned by a
+  640×640-noise dominance test).
 - `TinyFileMode::Auto` is now an exact byte-gated trial, not a
   pixel-count heuristic: the plain sequential stream is emitted, and
   when it lands ≤16 KiB the tiny shared-table variant is also

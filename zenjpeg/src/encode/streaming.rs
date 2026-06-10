@@ -1206,9 +1206,16 @@ impl StreamingEncoder {
         // Tiny shared tables need optimized Huffman and are not defined
         // for the XYB serialization path.
         let tiny_possible = !config.use_xyb && matches!(config.huffman, HuffmanStrategy::Optimize);
+        // Grayscale tiny mode is a DOMINANCE case, not a trial case:
+        // with a single component there is no shared-table cost to
+        // weigh — it is pure header pruning (~208 B), smaller at every
+        // size. Color tiny mode trades shared-table scan bits against
+        // header savings, so it gets the exact byte-gated trial.
+        let is_grayscale = config.pixel_format.is_grayscale();
         let (plain_active, trial) = match config.tiny_file_mode {
             TinyFileMode::Off => (false, false),
             TinyFileMode::Force => (tiny_possible, false),
+            TinyFileMode::Auto if is_grayscale => (tiny_possible, false),
             TinyFileMode::Auto => (false, tiny_possible),
         };
 

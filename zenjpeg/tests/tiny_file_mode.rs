@@ -268,6 +268,42 @@ fn auto_trial_beats_legacy_heuristic_above_its_threshold() {
 }
 
 #[test]
+fn auto_grayscale_dominance_holds_on_large_noisy_image() {
+    // Grayscale tiny is structural (header pruning only), so Auto must
+    // take it even when the output is far above the color-trial byte
+    // gate. Noise guarantees a large stream; the test pins both the
+    // dominance premise (force < off) and that Auto follows it.
+    // Deterministic noise (banned: smooth gradients) — guarantees a
+    // stream far above the 16 KiB color-trial gate.
+    let mut pixels = Vec::with_capacity(640 * 640);
+    let mut state = 0xA076_1D64_78BD_642Fu64;
+    for _ in 0..640 * 640 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        pixels.push((state >> 32) as u8);
+    }
+    let c_auto = baseline_grayscale(85).tiny_file_mode(TinyFileMode::Auto);
+    let c_force = baseline_grayscale(85).tiny_file_mode(TinyFileMode::Force);
+    let c_off = baseline_grayscale(85).tiny_file_mode(TinyFileMode::Off);
+
+    let j_auto = encode_gray(640, 640, &pixels, &c_auto).unwrap();
+    let j_force = encode_gray(640, 640, &pixels, &c_force).unwrap();
+    let j_off = encode_gray(640, 640, &pixels, &c_off).unwrap();
+
+    assert!(
+        j_force.len() < j_off.len(),
+        "dominance premise: grayscale tiny must be smaller (force={}, off={})",
+        j_force.len(),
+        j_off.len(),
+    );
+    assert_eq!(
+        j_auto, j_force,
+        "grayscale Auto must take the structural win at any size"
+    );
+}
+
+#[test]
 fn auto_activates_for_grayscale_at_any_size() {
     // Grayscale: Force always wins (fixed ~208 B saving), so Auto always
     // activates regardless of pixel count.
