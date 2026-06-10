@@ -158,6 +158,17 @@ that, per codec:
 | Fingerprint dedup | yes — resolved segment params | yes | yes | yes |
 | Sweep planner | port `encode::sweep` shape | port | port | port |
 
+**Consumers:** zenmetrics' sweep driver executes these plans directly —
+`zen-metrics sweep --codec zenjpeg --plan rd_core|modes_full
+[--plan-budget N]` (zenmetrics commit 2524d81f) asks
+`zenjpeg::encode::sweep` for its cells instead of spelling a JSON knob
+grid, carries the cell id + resolved-state fingerprint in the
+`knob_tuple_json` identity column, and writes the plan's
+no-silent-caps manifest to `<output>.plan.json`. A codec that adopts
+the planner shape gets fleet execution for free; the knob-vocabulary
+translation layer in `zen-metrics-cli/src/sweep/encode.rs` is only
+needed for axes the planner doesn't own.
+
 Adoption order that paid off here: **discriminate knobs → add
 resolve_plan → fingerprints → sweep planner → exact trials**. The trials
 come last because the fingerprint work forces you to learn which knobs
