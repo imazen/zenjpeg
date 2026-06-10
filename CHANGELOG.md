@@ -55,6 +55,20 @@ All notable changes to zenjpeg are documented here. Earlier history
   oracle vs the bundled `DISPLAY_P3_V4` profile). Supersedes the parked
   pre-release `resolve_emit` dogfooding worktree (the scenario/EmitFacts
   machinery never shipped; its codec-level subset became 0.1.21's API).
+- `ProgressiveScanMode::SmallestSearch` — Smallest's sequential/tiny
+  trials composed with the 64-candidate scan-script search as the
+  progressive candidate (the search always includes the default jpegli
+  script, so SmallestSearch ≤ both `Smallest` and `ProgressiveSearch`
+  at identical pixels). `adaptive()` `Effort::Max` now emits it; the
+  Smallest×Search open avenue is closed. Search remains skipped for XYB
+  (existing emission rule); sequential trials still apply there.
+- Recompress exact emission: `tuned`/`deblock` strategies add
+  `.progressive(SmallestSearch)` on top of the RD-ablated
+  HybridMaxCompression param set (entropy-stage only); the `lossless`
+  strategy trials both `OutputMode`s under the shared 16 KiB gate and
+  ships the exact min (`ENTROPY_TRIAL_MAX_BYTES` now module-scoped).
+  `preserve_emit` (own scan emitter), the per-image 8-bit DQT downgrade
+  proof, and recompress clippy debt are logged in imazen/zenjpeg#143.
 - `adaptive()` emits `ProgressiveScanMode::Smallest` for Fast/Balanced
   effort (Max keeps `ProgressiveSearch`; Smallest × Search composition
   is an open avenue; `allow_progressive(false)` keeps Baseline). Output
