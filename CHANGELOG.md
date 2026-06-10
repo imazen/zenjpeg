@@ -43,6 +43,19 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `zencodec::GainMapRender` wired through the decode trait path (`ultrahdr`
+  feature): `BaseOnly` (default, SDR base), `Components` (surfaces the decoded
+  gain map as `zencodec::decode::DecodedGainMap` extras — pixels + ISO 21496-1
+  params), and `ReconstructHdr { target_headroom }` — zenjpeg applies the gain
+  map itself and `DecodeCapabilities::reconstructs_hdr()` honestly says so.
+  Reconstruction outputs linear f32 (or f16 when preferred) RGBA at the
+  requested headroom (`None` = the gain map's encoded maximum) and fulfills
+  the envelope obligation: `content_light_level` (derived peak) +
+  `mastering_display` (from the alternate-image capacity) on the output
+  `ImageInfo`. A plain JPEG under `ReconstructHdr` decodes as its (complete)
+  base image; without the `ultrahdr` feature `ReconstructHdr`/`Components`
+  are an honest `UnsupportedFeature` error — never SDR-silently-labeled-HDR.
+  Tests: `tests/bundled/gain_map_render.rs` (4 cases).
 - `cms` feature: moxcms-backed ICC synthesis for the color-emit path
   (`zenpixels-convert?/cms-moxcms`, weak passthrough — takes effect with
   `zencodec`), covering PQ/HLG and any CICP moxcms can express. Failing to

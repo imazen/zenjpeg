@@ -146,6 +146,8 @@ mod error_handling;
 mod fast_math_cpp_comparison;
 #[path = "bundled/fused_parallel_decode.rs"]
 mod fused_parallel_decode;
+#[path = "bundled/gain_map_render.rs"]
+mod gain_map_render;
 #[path = "bundled/grayscale_decode_test.rs"]
 mod grayscale_decode_test;
 #[path = "bundled/high_bit_depth_roundtrip.rs"]

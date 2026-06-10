@@ -917,19 +917,27 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
 // ============================================================================
 
 /// JPEG decode capabilities.
-static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
-    .with_icc(true)
-    .with_exif(true)
-    .with_xmp(true)
-    .with_stop(true)
-    .with_cheap_probe(true)
-    .with_streaming(true)
-    .with_native_gray(true)
-    .with_native_f32(true)
-    .with_enforces_max_pixels(true)
-    .with_enforces_max_memory(true)
-    .with_enforces_max_input_bytes(true)
-    .with_threads_supported_range(1, if cfg!(feature = "parallel") { 32 } else { 1 });
+static JPEG_DECODE_CAPS: DecodeCapabilities = {
+    let caps = DecodeCapabilities::new()
+        .with_icc(true)
+        .with_exif(true)
+        .with_xmp(true)
+        .with_stop(true)
+        .with_cheap_probe(true)
+        .with_streaming(true)
+        .with_native_gray(true)
+        .with_native_f32(true)
+        .with_enforces_max_pixels(true)
+        .with_enforces_max_memory(true)
+        .with_enforces_max_input_bytes(true)
+        .with_threads_supported_range(1, if cfg!(feature = "parallel") { 32 } else { 1 });
+    // Ultra HDR gain maps: with the `ultrahdr` feature zenjpeg both surfaces
+    // the gain map (GainMapRender::Components) and applies it itself
+    // (GainMapRender::ReconstructHdr) — the honest reconstructs_hdr signal.
+    #[cfg(feature = "ultrahdr")]
+    let caps = caps.with_gain_map(true).with_reconstructs_hdr(true);
+    caps
+};
 
 /// JPEG decoder configuration implementing [`zencodec::decode::DecoderConfig`].
 ///
@@ -1003,6 +1011,7 @@ impl JpegDecoderConfig {
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
+            gain_map_render: zencodec::GainMapRender::default(),
             cached_header: None,
         }
     }
@@ -1111,6 +1120,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
+            gain_map_render: zencodec::GainMapRender::default(),
             cached_header: None,
         }
     }
@@ -1129,6 +1139,9 @@ pub struct JpegDecodeJob {
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
     policy: Option<zencodec::decode::DecodePolicy>,
+    /// How an Ultra HDR gain-map image is rendered (BaseOnly / ReconstructHdr /
+    /// Components). Default `BaseOnly`.
+    gain_map_render: zencodec::GainMapRender,
     /// Cached header info from probe(). Avoids re-parsing in push_decoder_native.
     cached_header: Option<crate::decode::JpegInfo>,
 }
@@ -1161,6 +1174,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 
     fn with_orientation(mut self, hint: zencodec::OrientationHint) -> Self {
         self.orientation = hint;
+        self
+    }
+
+    fn with_gain_map_render(mut self, render: zencodec::GainMapRender) -> Self {
+        self.gain_map_render = render;
         self
     }
 
@@ -1235,6 +1253,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             crop_hint: self.crop_hint,
             orientation: self.orientation,
             policy: self.policy,
+            gain_map_render: self.gain_map_render,
             data,
             preferred: preferred.to_vec(),
         })
@@ -1939,6 +1958,7 @@ pub struct JpegDecoder<'a> {
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
     policy: Option<zencodec::decode::DecodePolicy>,
+    gain_map_render: zencodec::GainMapRender,
     data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
 }
@@ -1952,6 +1972,43 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
             use zenpixels::ChannelType;
+
+            // Ultra HDR rendition intent. ReconstructHdr takes a dedicated
+            // path when the file actually carries gain-map XMP; an image
+            // without one decodes below as the (complete) base image.
+            // Components decorates the normal decode at the end. Unknown
+            // future modes are refused — never silently mis-rendered.
+            match self.gain_map_render {
+                zencodec::GainMapRender::BaseOnly | zencodec::GainMapRender::Components => {}
+                zencodec::GainMapRender::ReconstructHdr { target_headroom } => {
+                    #[cfg(feature = "ultrahdr")]
+                    {
+                        let has_gain_map_xmp = self
+                            .config
+                            .inner
+                            .read_info(&self.data)
+                            .ok()
+                            .and_then(|i| i.xmp)
+                            .is_some_and(|x| x.contains("hdrgm:"));
+                        if has_gain_map_xmp {
+                            return self.decode_reconstruct_hdr(target_headroom);
+                        }
+                        // No gain map: the base image IS the image.
+                    }
+                    #[cfg(not(feature = "ultrahdr"))]
+                    {
+                        let _ = target_headroom;
+                        return Err(Error::unsupported_feature(
+                            "GainMapRender::ReconstructHdr requires the `ultrahdr` feature",
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(Error::unsupported_feature(
+                        "unrecognized GainMapRender mode",
+                    ));
+                }
+            }
 
             let data = self.data;
             let preferred = &self.preferred;
@@ -2031,31 +2088,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             // Extract metadata
             let mut info = ImageInfo::new(w, h, ImageFormat::Jpeg);
             if let Some(extras) = result.extras() {
-                if let Some(icc) = extras.icc_profile() {
-                    info = info.with_icc_profile(icc.to_vec());
-                }
-                if let Some(exif) = extras.exif() {
-                    if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-                        // If auto-orient was applied, report Identity; else source
-                        if will_auto_orient(self.orientation) {
-                            info = info.with_orientation(zencodec::Orientation::Identity);
-                        } else {
-                            info = info.with_orientation(
-                                zencodec::Orientation::from_exif(orient).unwrap_or_default(),
-                            );
-                        }
-                    }
-                    info = info.with_exif(exif.to_vec());
-                }
-                if let Some(xmp) = extras.xmp() {
-                    info = info.with_xmp(xmp.as_bytes().to_vec());
-                }
-                // Populate resolution from JFIF APP0 density.
-                if let Some(jfif) = extras.jfif()
-                    && let Some(resolution) = jfif_to_resolution(&jfif)
-                {
-                    info = info.with_resolution(resolution);
-                }
+                info = populate_info_from_jpeg_extras(info, extras, self.orientation);
             }
 
             let jpeg_extras = result.take_extras();
@@ -2149,6 +2182,24 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             };
 
             let mut output = DecodeOutput::new(buf, info);
+
+            // GainMapRender::Components: surface the decoded gain map (pixels
+            // + ISO 21496-1 parameters) as `zencodec::decode::DecodedGainMap`
+            // in the output extras. Absent on non-gain-map images.
+            #[cfg(feature = "ultrahdr")]
+            if matches!(self.gain_map_render, zencodec::GainMapRender::Components)
+                && let Some(ref extras) = jpeg_extras
+                && let Some(dgm) = decode_gain_map_components(extras)?
+            {
+                output = output.with_extras(dgm);
+            }
+            #[cfg(not(feature = "ultrahdr"))]
+            if matches!(self.gain_map_render, zencodec::GainMapRender::Components) {
+                return Err(Error::unsupported_feature(
+                    "GainMapRender::Components requires the `ultrahdr` feature",
+                ));
+            }
+
             if let Some(extras) = jpeg_extras {
                 output = output.with_extras(extras);
             }
@@ -2175,6 +2226,153 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             Err(Error::unsupported_feature("decoder feature required"))
         }
     }
+}
+
+#[cfg(all(feature = "decoder", feature = "ultrahdr"))]
+impl JpegDecoder<'_> {
+    /// Dedicated `GainMapRender::ReconstructHdr` path: decode the SDR base,
+    /// decode the MPF gain-map image, apply it at the requested headroom, and
+    /// return a linear HDR buffer (1.0 = SDR white, 203 nits).
+    ///
+    /// Envelope obligation (see `GainMapRender::ReconstructHdr`): the output
+    /// [`ImageInfo`]'s `SourceColor` carries the derived peak as
+    /// `content_light_level` and a mastering display built from the gain
+    /// map's alternate-image capacity, so a downstream native-HDR encode is
+    /// complete.
+    fn decode_reconstruct_hdr(self, target_headroom: Option<f32>) -> Result<DecodeOutput, Error> {
+        use crate::ultrahdr::UltraHdrExtras;
+        use ultrahdr_core::gainmap::{HdrOutputFormat, apply_gainmap};
+
+        /// SDR reference white (cd/m²) — 1.0 in the linear output maps here.
+        const SDR_WHITE_NITS: f32 = 203.0;
+
+        let limits = self.limits;
+        let mut cfg = build_decode_config(
+            &self.config.inner,
+            &limits,
+            self.crop_hint,
+            self.orientation,
+            self.policy.as_ref(),
+        );
+        cfg = cfg.preserve_all_metadata();
+        // apply_gainmap consumes RGBA8 SDR input.
+        cfg = cfg.output_format(crate::types::PixelFormat::Rgba);
+
+        let header = cfg.read_info(&self.data)?;
+        if limits.max_width.is_some() || limits.max_height.is_some() {
+            limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
+        }
+
+        let stop: &dyn enough::Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+        let mut result = cfg.decode(&self.data, stop)?;
+        let w = result.width();
+        let h = result.height();
+
+        let mut info = ImageInfo::new(w, h, ImageFormat::Jpeg);
+        if let Some(extras) = result.extras() {
+            info = populate_info_from_jpeg_extras(info, extras, self.orientation);
+        }
+
+        let extras = result.take_extras().ok_or_else(|| {
+            Error::icc_error("Ultra HDR reconstruction: decoder produced no extras".into())
+        })?;
+        let (metadata, _) = extras.ultrahdr_metadata().ok_or_else(|| {
+            Error::unsupported_feature("ReconstructHdr requested but the XMP has no gain map")
+        })??;
+        let gainmap = extras.decode_gainmap().ok_or_else(|| {
+            Error::unsupported_feature("ReconstructHdr requested but the MPF has no gain-map image")
+        })??;
+
+        let pixels_u8 = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("decoder produced no u8 pixels"))?;
+        let sdr = PixelBuffer::from_vec(pixels_u8, w, h, zenpixels::PixelDescriptor::RGBA8_SRGB)
+            .map_err(|_| Error::internal("pixel buffer creation failed"))?;
+
+        // Output form: honor an f16 preference; default linear f32 RGBA.
+        let wants_f16 = self
+            .preferred
+            .iter()
+            .any(|d| d.channel_type() == zenpixels::ChannelType::F16);
+        let format = if wants_f16 {
+            HdrOutputFormat::LinearF16
+        } else {
+            HdrOutputFormat::LinearFloat
+        };
+
+        // `None` = full reconstruction at the gain map's encoded maximum
+        // (alternate_hdr_headroom is log2 of the alternate/SDR peak ratio).
+        let capacity_max = (metadata.alternate_hdr_headroom as f32).exp2();
+        let display_boost = target_headroom.unwrap_or(capacity_max).max(1.0);
+
+        let hdr = apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop)
+            .map_err(|e| Error::icc_error(alloc::format!("gain-map apply failed: {e}")))?;
+
+        // Envelope: derived peak (capped at the reconstruction boost) +
+        // mastering display from the alternate-image capacity. Primaries are
+        // the base image's (sRGB/BT.709 — apply_gainmap preserves them).
+        let peak_nits = SDR_WHITE_NITS * capacity_max.min(display_boost);
+        info.source_color.content_light_level =
+            Some(zencodec::ContentLightLevel::new(peak_nits as u16, 0));
+        info.source_color.mastering_display = Some(zencodec::MasteringDisplay::new(
+            [[0.640, 0.330], [0.300, 0.600], [0.150, 0.060]],
+            [0.3127, 0.3290],
+            peak_nits,
+            0.005,
+        ));
+
+        let mut output = DecodeOutput::new(hdr, info).with_extras(extras);
+        if let Ok(probe) = crate::detect::probe(&self.data) {
+            output = output.with_source_encoding_details(probe);
+        }
+
+        let output_bytes = output.pixels().rows() as u64
+            * output.pixels().width() as u64
+            * output.pixels().descriptor().bytes_per_pixel() as u64;
+        limits.check_output_size(output_bytes).map_err(|_| {
+            Error::allocation_failed(
+                output_bytes as usize,
+                "decoded output exceeds max_output_bytes limit",
+            )
+        })?;
+
+        Ok(output)
+    }
+}
+
+/// Decode the Ultra HDR gain-map components for `GainMapRender::Components`.
+///
+/// Returns `Ok(None)` when the image carries no gain map (Components on a
+/// plain JPEG surfaces nothing); errors only when a gain map is present but
+/// malformed.
+#[cfg(all(feature = "decoder", feature = "ultrahdr"))]
+fn decode_gain_map_components(
+    extras: &crate::decode::DecodedExtras,
+) -> Result<Option<zencodec::decode::DecodedGainMap>, Error> {
+    use crate::ultrahdr::UltraHdrExtras;
+
+    let Some(metadata) = extras.ultrahdr_metadata() else {
+        return Ok(None);
+    };
+    let (metadata, _) = metadata?;
+    let Some(gainmap) = extras.decode_gainmap() else {
+        return Ok(None);
+    };
+    let gainmap = gainmap?;
+
+    let desc = if gainmap.channels == 3 {
+        zenpixels::PixelDescriptor::RGB8_SRGB
+    } else {
+        zenpixels::PixelDescriptor::GRAY8_SRGB
+    };
+    let pixels = PixelBuffer::from_vec(gainmap.data, gainmap.width, gainmap.height, desc)
+        .map_err(|_| Error::internal("gain-map pixel buffer creation failed"))?;
+    let gm_info =
+        zencodec::GainMapInfo::new(metadata, gainmap.width, gainmap.height, gainmap.channels);
+    Ok(Some(zencodec::decode::DecodedGainMap::new(pixels, gm_info)))
 }
 
 // ── StreamingDecode ─────────────────────────────────────────────────────────
@@ -2393,6 +2591,42 @@ fn decode_descriptor(
         &sc,
         corrected_cicp.as_ref(),
     )
+}
+
+/// Populate [`ImageInfo`] metadata (ICC / EXIF + orientation / XMP / JFIF
+/// resolution) from decoded JPEG extras. Shared by the normal decode path and
+/// the Ultra HDR reconstruction path.
+#[cfg(feature = "decoder")]
+fn populate_info_from_jpeg_extras(
+    mut info: ImageInfo,
+    extras: &crate::decode::DecodedExtras,
+    orientation: zencodec::OrientationHint,
+) -> ImageInfo {
+    if let Some(icc) = extras.icc_profile() {
+        info = info.with_icc_profile(icc.to_vec());
+    }
+    if let Some(exif) = extras.exif() {
+        if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
+            // If auto-orient was applied, report Identity; else source
+            if will_auto_orient(orientation) {
+                info = info.with_orientation(zencodec::Orientation::Identity);
+            } else {
+                info = info
+                    .with_orientation(zencodec::Orientation::from_exif(orient).unwrap_or_default());
+            }
+        }
+        info = info.with_exif(exif.to_vec());
+    }
+    if let Some(xmp) = extras.xmp() {
+        info = info.with_xmp(xmp.as_bytes().to_vec());
+    }
+    // Populate resolution from JFIF APP0 density.
+    if let Some(jfif) = extras.jfif()
+        && let Some(resolution) = jfif_to_resolution(&jfif)
+    {
+        info = info.with_resolution(resolution);
+    }
+    info
 }
 
 /// Convert JFIF density info to a zencodec [`Resolution`](zencodec::Resolution).
