@@ -1,14 +1,17 @@
 //! Windows (GDI+/WIC) encoder detection against real Windows-encoded JPEGs.
 //!
 //! Fixtures in `tests/testdata/windows_encoder/` were produced by a
-//! Windows JPEG encoder via `https://z.zr.io/ri/red-leaf.jpg;width=256;quality=Q`
+//! Windows JPEG encoder via `https://z.zr.io/ri/red-leaf.jpg;width=8;quality=Q`
 //! (`win_*` = default GDI+ builder; `wic*` = `;builder=wic` with
-//! `;subsampling=444|422`; fetched 2026-06-09). The full q=1..=100
-//! sweeps (GDI+ + WIC×{420,444,422}, 400 files) live in
-//! `/mnt/v/input/zenjpeg/windows-encoder/` with the analysis scripts;
-//! every file carries byte-exact IJG tables (GDI+: index `k = q - 1`
-//! except `k = q` at multiples of 25; WIC: `k = q` except 53/59),
-//! standard Huffman, baseline, and JFIF density 96×96 DPI.
+//! `;subsampling=444|422`; fetched 2026-06-10 — headers verified
+//! byte-identical to the 256px corpus apart from SOF dimensions; the
+//! probe is header-only so pixel count is irrelevant). The full
+//! q=1..=100 sweeps at width=256 (GDI+ + WIC×{420,444,422}, 400
+//! files) live in `/mnt/v/input/zenjpeg/windows-encoder/` with the
+//! analysis scripts; every file carries byte-exact IJG tables (GDI+:
+//! index `k = q - 1` except `k = q` at multiples of 25; WIC: `k = q`
+//! except 53/59), standard Huffman, baseline, and JFIF density
+//! 96×96 DPI.
 
 use zenjpeg::detect::{Confidence, EncoderFamily, QualityScale, probe};
 
@@ -56,7 +59,7 @@ fn windows_fixtures_detect_as_windows_imaging() {
         assert_eq!(result.mode, zenjpeg::types::JpegMode::Baseline, "{name}");
         assert_eq!(result.subsampling, want_subsampling, "{name}");
         assert_eq!(result.num_components, 3, "{name}");
-        assert_eq!(result.dimensions.width, 256, "{name}");
+        assert_eq!(result.dimensions.width, 8, "{name}");
     }
 }
 
