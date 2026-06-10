@@ -356,7 +356,10 @@ pub struct EncodePlan {
     pub pre_blur_sigma: f32,
     /// Restart interval in MCUs (0 = no restart markers).
     pub restart_interval_mcus: u16,
-    /// Tiny-file optimizations active for this image size.
+    /// Tiny-file shared tables STRUCTURALLY guaranteed active
+    /// (`Force` on an eligible path). Under `Auto` the decision is an
+    /// exact byte-gated trial at emission time and is reported `false`
+    /// here — the plan is static and cannot know the trial outcome.
     pub tiny_file_active: bool,
     /// SOF marker that will be emitted.
     pub sof: SofMarker,
@@ -494,28 +497,15 @@ impl EncoderConfig {
             super::config::resolve_restart_rows(self.restart_mcu_rows, width, height, subsampling)
         };
 
-        let is_color = !matches!(self.color_mode, ColorMode::Grayscale);
-        // Mirror StreamingEncoder: tiny-file requires non-XYB sequential
-        // encoding with optimized Huffman tables.
-        let tiny_file_eligible = !use_xyb
-            && !self.scan_mode.is_progressive()
+        // Tiny-file participation under Auto is decided by an exact
+        // byte-gated trial at emission time (content-dependent), so a
+        // static plan reports only the structural cases: Force when
+        // possible (non-XYB explicit-Baseline with optimized Huffman).
+        // Smallest's sequential candidates trial tiny tables at emission.
+        let tiny_possible = !use_xyb
+            && matches!(self.scan_mode, ProgressiveScanMode::Baseline)
             && matches!(self.huffman, HuffmanStrategy::Optimize);
-        let tiny_file_active = if !tiny_file_eligible {
-            false
-        } else {
-            match self.tiny_file_mode {
-                TinyFileMode::Off => false,
-                TinyFileMode::Force => true,
-                TinyFileMode::Auto => {
-                    super::encoder_types::should_activate_tiny_file_mode_for_subsampling(
-                        width,
-                        height,
-                        is_color,
-                        subsampling,
-                    )
-                }
-            }
-        };
+        let tiny_file_active = tiny_possible && matches!(self.tiny_file_mode, TinyFileMode::Force);
 
         // SOF resolution mirrors the serializer: progressive → SOF2; XYB
         // forces SOF1; 16-bit DQT requires SOF1; otherwise SOF0.

@@ -108,13 +108,12 @@ impl SweepAxes {
     /// default trellis, the auto_optimize shape} × {4:2:0, 4:4:4}
     /// (× boundary-rd off/on when that feature is enabled).
     ///
-    /// Progressive-only: at equal quality, progressive re-orders the same
-    /// coefficients with better entropy structure, so baseline never sits
-    /// on the RD front at normal sizes. The exception is the tiny-size
-    /// bucket (≲128²), where tiny-file mode (sequential-only, shared
-    /// Huffman tables) beats progressive's multi-SOS intercept cost —
-    /// baseline therefore stays in [`modes_full`](Self::modes_full),
-    /// which a size-bucketed sweep should use.
+    /// Scan axis: [`ProgressiveScanMode::Smallest`] — the exact
+    /// entropy-stage minimizer covers the whole sequential/tiny/
+    /// progressive crossover by trial, so no scan heuristic exists in
+    /// the core sweep at all. Explicit Baseline stays in
+    /// [`modes_full`](Self::modes_full) purely for mode-coverage of the
+    /// individual scan modes.
     #[must_use]
     pub fn rd_core() -> Self {
         Self {

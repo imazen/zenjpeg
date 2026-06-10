@@ -43,6 +43,25 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `adaptive()` emits `ProgressiveScanMode::Smallest` for Fast/Balanced
+  effort (Max keeps `ProgressiveSearch`; Smallest × Search composition
+  is an open avenue; `allow_progressive(false)` keeps Baseline). Output
+  is strictly ≤ the previous Progressive emission at identical pixels.
+
+### Changed
+
+- `TinyFileMode::Auto` is now an exact byte-gated trial, not a
+  pixel-count heuristic: the plain sequential stream is emitted, and
+  when it lands ≤16 KiB the tiny shared-table variant is also
+  serialized and the smaller wins (identical pixels). The legacy
+  64²/128² crossover rules are gone — a 144×144 solid (legacy: no
+  tiny) now ships the tiny stream because it measures smaller, and a
+  degenerate large-dimension flat image is no longer mis-gated by its
+  pixel count. `Force`/`Off` unchanged. All locked-hash suites pass
+  unchanged. `EncodePlan.tiny_file_active` now reports only the
+  structural `Force` case (a static plan cannot know a trial outcome);
+  `should_activate_tiny_file_mode*` remain as legacy estimators.
+
 - `ProgressiveScanMode::Smallest` — smallest-output entropy-stage
   selection. Coefficients are computed once; at ≤256×256 pixels they are
   serialized as up to three candidates (sequential, sequential+tiny-file

@@ -16,7 +16,6 @@ mod test_utils;
 use test_utils::{TestImage, generate_gradient_d};
 use zenjpeg::encoder::{
     ChromaSubsampling, EncoderConfig, PixelLayout, TinyFileMode, XybSubsampling,
-    should_activate_tiny_file_mode,
 };
 
 // ---------- helpers ---------------------------------------------------------
@@ -81,6 +80,17 @@ fn decode_zenjpeg(jpeg: &[u8]) {
 }
 
 // ---------- regression: Off is byte-identical to default-before-field -------
+
+/// The `TinyFileMode::Auto` spec: an exact trial — the tiny variant ships
+/// iff the plain stream is at or below the 16 KiB entropy-trial gate AND
+/// the tiny stream is strictly smaller. No pixel-count heuristics.
+fn expected_auto(off: &[u8], force: &[u8]) -> Vec<u8> {
+    if off.len() <= 16 * 1024 && force.len() < off.len() {
+        force.to_vec()
+    } else {
+        off.to_vec()
+    }
+}
 
 #[test]
 fn off_matches_pre_change_baseline() {
@@ -152,10 +162,9 @@ fn force_is_strictly_smaller_for_gray_32x32() {
 // ---------- Auto heuristic --------------------------------------------------
 
 #[test]
-fn auto_matches_force_below_threshold() {
-    // 64×64 YCbCr is well below the heuristic's ~65k pixel cutoff.
-    assert!(should_activate_tiny_file_mode(64, 64, true));
-
+fn auto_picks_tiny_where_it_wins() {
+    // 64×64 solid color: the tiny variant is strictly smaller (see
+    // force_is_strictly_smaller_at_64x64), so the exact trial picks it.
     let img = solid_rgb_image(64, 64);
     let c_auto = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Auto);
     let c_force = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Force);
@@ -165,17 +174,18 @@ fn auto_matches_force_below_threshold() {
 
     assert_eq!(
         jpeg_auto, jpeg_force,
-        "Auto must match Force at 64×64 (well under the activation threshold)"
+        "Auto must match Force at 64×64 (tiny strictly smaller, trial picks it)"
     );
 }
 
 #[test]
-fn auto_matches_off_above_threshold() {
-    // 768×768 is well above every Auto threshold (128² for subsampled, 64²
-    // for 4:4:4).
-    assert!(!should_activate_tiny_file_mode(768, 768, true));
-
+fn auto_is_exact_on_large_flat_image() {
+    // 768×768 solid color: huge pixel count, tiny byte count — exactly
+    // the degenerate case where a pixel heuristic is a broken proxy.
+    // Auto must equal the exact-trial spec, byte for byte.
     let img = solid_rgb_image(768, 768);
+    let c_force = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Force);
+    let jpeg_force = encode_rgb(768, 768, &img.pixels, &c_force).unwrap();
     let c_auto = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Auto);
     let c_off = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Off);
 
@@ -183,15 +193,20 @@ fn auto_matches_off_above_threshold() {
     let jpeg_off = encode_rgb(768, 768, &img.pixels, &c_off).unwrap();
 
     assert_eq!(
-        jpeg_auto, jpeg_off,
-        "Auto must match Off at 768×768 (above both activation zones)"
+        jpeg_auto,
+        expected_auto(&jpeg_off, &jpeg_force),
+        "Auto must equal the exact-trial spec (off={}, force={})",
+        jpeg_off.len(),
+        jpeg_force.len(),
     );
 }
 
 #[test]
-fn auto_follows_subsampling_threshold_at_128() {
-    // At exactly 128×128, 4:2:0 Auto should activate (<=128² rule) but 4:4:4
-    // Auto should NOT activate (only <=64² rule).
+fn auto_is_exact_at_legacy_thresholds() {
+    // 128×128 was the legacy heuristic boundary (4:2:0 activated, 4:4:4
+    // did not). The exact trial replaces both rules with min(bytes); at
+    // these fixtures the trial happens to agree with the old rules, and
+    // the asserts below now FOLLOW from the exact spec.
     let img = solid_rgb_image(128, 128);
 
     let c_auto_420 = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Auto);
@@ -216,6 +231,40 @@ fn auto_follows_subsampling_threshold_at_128() {
         j_auto_444, j_off_444,
         "4:4:4 Auto must NOT activate at 128×128 (above 64² threshold)"
     );
+}
+
+#[test]
+fn auto_trial_beats_legacy_heuristic_above_its_threshold() {
+    // 144×144 solid 4:2:0: the legacy rule said NO tiny (>128²), but the
+    // exact trial picks whatever is smaller. This pins that Auto follows
+    // the trial, not the old pixel rule — and documents the spec with
+    // measured sizes if the relationship ever changes.
+    let img = solid_rgb_image(144, 144);
+    let c_auto = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Auto);
+    let c_off = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Off);
+    let c_force = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Force);
+
+    let j_auto = encode_rgb(144, 144, &img.pixels, &c_auto).unwrap();
+    let j_off = encode_rgb(144, 144, &img.pixels, &c_off).unwrap();
+    let j_force = encode_rgb(144, 144, &img.pixels, &c_force).unwrap();
+
+    assert_eq!(
+        j_auto,
+        expected_auto(&j_off, &j_force),
+        "Auto must follow the exact trial (off={}, force={})",
+        j_off.len(),
+        j_force.len(),
+    );
+    // The interesting premise: tiny wins here even though the legacy
+    // heuristic forbade it. If this stops holding, the assert above
+    // still defines Auto; this one documents the disagreement point.
+    assert!(
+        j_force.len() < j_off.len(),
+        "premise: tiny tables should win on 144×144 solid (off={}, force={})",
+        j_off.len(),
+        j_force.len(),
+    );
+    assert_eq!(j_auto, j_force);
 }
 
 #[test]

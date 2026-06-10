@@ -251,28 +251,11 @@ impl StreamingEncoder {
         //   off there for now.
         // - Optimized Huffman tables must be requested; the shared-table
         //   path builds tables from symbol frequencies.
-        let is_sequential = !matches!(builder.mode, crate::types::JpegMode::Progressive);
-        let optimize_huffman = matches!(builder.huffman, HuffmanStrategy::Optimize);
-        let tiny_file_eligible = !builder.use_xyb && is_sequential && optimize_huffman;
-        let tiny_file_active = if !tiny_file_eligible {
-            false
-        } else {
-            match builder.tiny_file_mode {
-                super::encoder_types::TinyFileMode::Off => false,
-                super::encoder_types::TinyFileMode::Force => true,
-                super::encoder_types::TinyFileMode::Auto => {
-                    // Use the subsampling-aware heuristic so we pick tighter
-                    // thresholds for 4:4:4 (crossover ~64²) versus 4:2:0
-                    // (crossover ~128²).
-                    super::encoder_types::should_activate_tiny_file_mode_for_subsampling(
-                        builder.width,
-                        builder.height,
-                        !builder.pixel_format.is_grayscale(),
-                        builder.subsampling,
-                    )
-                }
-            }
-        };
+        // Tiny-file participation is resolved at EMISSION time now:
+        // `TinyFileMode::Auto` runs an exact byte-gated trial (see
+        // `build_sequential_with_tiny_trial`), `Force` activates when
+        // structurally possible, `Off` never. Nothing to resolve here.
+        let tiny_file_active = false;
 
         // Create config for final JPEG output
         let config = ComputedConfig {
@@ -1051,7 +1034,7 @@ impl StreamingEncoder {
                 _ => {
                     // Sequential: collect_frequencies=true gets the counts
                     // from the optimize pass at no extra cost.
-                    Self::build_jpeg_sequential_into(
+                    Self::build_sequential_with_tiny_trial(
                         &config,
                         &y_quant,
                         &cb_quant,
@@ -1165,7 +1148,7 @@ impl StreamingEncoder {
             }
             _ => {
                 // Sequential encoding
-                Self::build_jpeg_sequential_into(
+                Self::build_sequential_with_tiny_trial(
                     config,
                     y_quant,
                     cb_quant,
@@ -1201,7 +1184,72 @@ impl StreamingEncoder {
         Ok(output)
     }
 
-    /// Progressive output size at or below which `Smallest` trials the
+    /// Sequential emission with exact tiny-file resolution.
+    ///
+    /// `TinyFileMode::Auto` no longer uses pixel-count crossover
+    /// heuristics: the plain sequential stream is emitted, and when it
+    /// lands at or below [`ENTROPY_TRIAL_MAX_BYTES`](Self::ENTROPY_TRIAL_MAX_BYTES)
+    /// the tiny-file shared-table variant is also serialized and the
+    /// smaller wins — identical pixels, exact `min(bytes)`. `Force`
+    /// activates tiny tables whenever structurally possible; `Off`
+    /// never does.
+    fn build_sequential_with_tiny_trial(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+        collect_frequencies: bool,
+    ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
+        use super::encoder_types::TinyFileMode;
+        // Tiny shared tables need optimized Huffman and are not defined
+        // for the XYB serialization path.
+        let tiny_possible = !config.use_xyb && matches!(config.huffman, HuffmanStrategy::Optimize);
+        let (plain_active, trial) = match config.tiny_file_mode {
+            TinyFileMode::Off => (false, false),
+            TinyFileMode::Force => (tiny_possible, false),
+            TinyFileMode::Auto => (false, tiny_possible),
+        };
+
+        let mut plain_cfg = config.clone();
+        plain_cfg.tiny_file_active = plain_active;
+        let counts = Self::build_jpeg_sequential_into(
+            &plain_cfg,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            strip_output,
+            output,
+            collect_frequencies,
+        )?;
+
+        if trial && output.len() <= Self::ENTROPY_TRIAL_MAX_BYTES {
+            let mut tiny_cfg = config.clone();
+            tiny_cfg.tiny_file_active = true;
+            let mut tiny = Vec::new();
+            Self::build_jpeg_sequential_into(
+                &tiny_cfg,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                strip_output,
+                &mut tiny,
+                false,
+            )?;
+            if tiny.len() < output.len() {
+                output.clear();
+                output.extend_from_slice(&tiny);
+            }
+        }
+
+        Ok(counts)
+    }
+
+    /// Output size at or below which entropy-stage trials run (the
+    /// `Smallest` sequential candidates; `TinyFileMode::Auto`'s exact
+    /// tiny-table trial). For `Smallest`: progressive output at or
+    /// below which the
     /// sequential candidates. Above it, the progressive stream is
     /// emitted directly (one serialization).
     ///
@@ -1224,7 +1272,7 @@ impl StreamingEncoder {
     /// restructure the symbol stream, so no partitioned-coding
     /// dominance argument closes); revisit with sweep evidence if a
     /// larger counterexample appears.
-    const SMALLEST_TRIAL_MAX_PROGRESSIVE_BYTES: usize = 16 * 1024;
+    const ENTROPY_TRIAL_MAX_BYTES: usize = 16 * 1024;
 
     /// Smallest-entropy selection: emit the smallest byte stream for the
     /// SAME quantized coefficients.
@@ -1268,7 +1316,7 @@ impl StreamingEncoder {
         // Gate the sequential trials on the measured progressive size:
         // above the threshold, emit progressive directly (one
         // serialization, zero trial overhead).
-        let run_trials = prog.len() <= Self::SMALLEST_TRIAL_MAX_PROGRESSIVE_BYTES;
+        let run_trials = prog.len() <= Self::ENTROPY_TRIAL_MAX_BYTES;
         if !run_trials {
             output.clear();
             output

@@ -564,14 +564,19 @@ fn adaptive_internal(
 
     // Progressive: oracle universally prefers progressive at every
     // q-bin; respect caller's allow_progressive=false override.
-    // ProgressiveSearch (64-candidate scan-script search) is the
-    // extra ~2× slower step that lives ONLY in Effort::Max.
+    // Smallest emits the progressive jpegli script and, when the output
+    // lands in the small-bytes regime, also trials the sequential
+    // (+tiny) candidates and keeps the exact minimum — strictly ≤ the
+    // old Progressive emission at identical pixels. ProgressiveSearch
+    // (64-candidate scan-script search) is the extra ~2× slower step
+    // that lives ONLY in Effort::Max (Smallest × Search composition is
+    // an open avenue).
     let scan_mode = if !options.allow_progressive {
         ProgressiveScanMode::Baseline
     } else {
         match options.effort {
-            Effort::Fast => ProgressiveScanMode::Progressive,
-            Effort::Balanced => ProgressiveScanMode::Progressive,
+            Effort::Fast => ProgressiveScanMode::Smallest,
+            Effort::Balanced => ProgressiveScanMode::Smallest,
             Effort::Max => ProgressiveScanMode::ProgressiveSearch,
         }
     };
