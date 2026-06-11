@@ -2043,8 +2043,14 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             let h = result.height();
             let format = result.format();
 
-            // Extract metadata
-            let mut info = ImageInfo::new(w, h, ImageFormat::Jpeg);
+            // Extract metadata. Source precision comes from the SOF header
+            // (always 8 today — the parser rejects 12-bit streams; this
+            // stays truthful when 12-bit support lands). Note this is the
+            // SOURCE depth: an f32 output buffer still carries only
+            // `bit_depth` significant bits (#146).
+            let mut info = ImageInfo::new(w, h, ImageFormat::Jpeg)
+                .with_bit_depth(header.precision)
+                .with_channel_count(header.num_components);
             if let Some(extras) = result.extras() {
                 info = populate_info_from_jpeg_extras(info, extras, self.orientation);
             }

@@ -5,6 +5,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- zencodec decode-path `ImageInfo` now populates
+  `source_color.bit_depth` (SOF sample precision) and `channel_count` —
+  previously only the probe path set them, so precision-aware callers
+  saw `None` after a full decode (#146).
+
 ### Added
 - `DecodedCoefficients::huffman_tables()` — harvest the decoded
   stream's DHT tables as an encoder-ready `HuffmanTableSet` for

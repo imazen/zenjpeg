@@ -249,6 +249,22 @@ fn descriptor_unknown_for_non_srgb_icc() {
     );
 }
 
+/// The decode-path `ImageInfo` must carry the SOF source precision and
+/// channel count (#146) — previously only the probe path populated them.
+/// 8-bit is the only decodable JPEG precision today (12-bit is rejected
+/// at parse), and an f32 output buffer still carries only `bit_depth`
+/// significant bits.
+#[test]
+fn decode_info_reports_bit_depth_and_channel_count() {
+    let jpeg = encode_4x2(Orientation::Normal, ChromaSubsampling::None);
+    let output = JpegDecoderConfig::new()
+        .decode(&jpeg)
+        .expect("decode failed");
+    let info = output.info();
+    assert_eq!(info.source_color.bit_depth, Some(8));
+    assert_eq!(info.source_color.channel_count, Some(3));
+}
+
 // ── Orientation × subsampling matrix ───────────────────────────────────
 
 #[test]
