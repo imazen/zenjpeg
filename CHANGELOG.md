@@ -43,6 +43,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `encode::sweep::config_from_cell_id(base_id, q)` — reconstructs the
+  exact `EncoderConfig` from a plan-cell stratum id. The id grammar is
+  now a documented durable identity contract (fleet ledgers store these
+  ids; zenmetrics verifies the carried fingerprint after parsing), with
+  a grammar-totality roundtrip test over every id the planner can emit.
+  Trellis numbers in ids switched from fixed precision to shortest-
+  roundtrip `Display` so ids are lossless (`tr14.7500` → `tr14.75`,
+  `cpl-4.0` → `cpl-4`) — done before any durable consumer existed.
 - `examples/sweep_validate.rs` — empirical validation harness for the
   curated sweep axes: encodes the default stratum + every
   single-deviation stratum of `modes_full` on mixed content (CID22

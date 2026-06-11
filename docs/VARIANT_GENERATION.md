@@ -159,16 +159,41 @@ that, per codec:
 | Fingerprint dedup | yes — resolved segment params | yes | yes | yes |
 | Sweep planner | port `encode::sweep` shape | port | port | port |
 
-**Consumers:** zenmetrics' sweep driver executes these plans directly —
-`zen-metrics sweep --codec zenjpeg --plan rd_core|modes_full
-[--plan-budget N]` (zenmetrics commit 2524d81f) asks
-`zenjpeg::encode::sweep` for its cells instead of spelling a JSON knob
-grid, carries the cell id + resolved-state fingerprint in the
-`knob_tuple_json` identity column, and writes the plan's
-no-silent-caps manifest to `<output>.plan.json`. A codec that adopts
-the planner shape gets fleet execution for free; the knob-vocabulary
-translation layer in `zen-metrics-cli/src/sweep/encode.rs` is only
-needed for axes the planner doesn't own.
+**Consumers — two execution models, one identity.** zenmetrics executes
+plans through both of its scheduling models, and the difference matters:
+
+1. **Chunk mode** (`zen-metrics sweep --codec zenjpeg --plan
+   rd_core|modes_full [--plan-budget N]`, zenmetrics 2524d81f): the
+   executor expands the plan at run time; the unit of retry is
+   (image × whole plan). Right for GPU-metric fleet runs that complete
+   in one pass.
+2. **Job-system mode** (zen-job-core ledger): for sweeps that *never*
+   complete in one pass (the 100k-cell AVIF problem), cells become
+   per-cell content-addressed `DesiredJob`s at **declare time**
+   (`zen-metrics sweep --plan … --dry-run --emit-cells`), completion is
+   `declare → gap → run → re-reconcile` against the Parquet ledger, and
+   chunk bookkeeping disappears. See zenmetrics
+   `docs/RUNNING_JOBS.md` §"Plan-driven sweeps".
+
+Both carry the same identity: `{"cell": <stratum-id>, "fp":
+<fingerprint>, "plan": <name>}` in the `knob_tuple_json` column /
+`JobKind::Encode.knobs`. **That makes the cell-id grammar a durable
+contract**: `encode::sweep::config_from_cell_id(base_id, q)`
+reconstructs the exact `EncoderConfig` from the id alone (numbers are
+shortest-roundtrip `Display` — lossless), so a ledger job is
+self-describing and regenerable years later, and the carried `fp` is
+verified after parsing so grammar drift fails loudly instead of
+encoding the wrong cell. Grammar evolution is additive-only — never
+rename a token or change numeric formatting; the
+`cell_ids_roundtrip_to_their_configs` test enforces parser totality
+over everything the planner emits. (`custom` table bytes and
+content-hashed boundary-RD knobs are the two documented
+non-self-describing cases.)
+
+A codec that adopts the planner shape gets both execution models for
+free; the knob-vocabulary translation layer in
+`zen-metrics-cli/src/sweep/encode.rs` is only needed for axes the
+planner doesn't own.
 
 Adoption order that paid off here: **discriminate knobs → add
 resolve_plan → fingerprints → sweep planner → exact trials**. The trials

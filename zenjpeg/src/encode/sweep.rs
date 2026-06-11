@@ -649,24 +649,28 @@ impl Stratum<'_> {
                 // Render every output-relevant field that deviates from the
                 // TrellisConfig default — ids must be collision-free across
                 // the λ₂ / delta-DC / coupling-exponent probe configs.
+                // Numbers use f32 `Display` (shortest-roundtrip): LOSSLESS,
+                // so [`config_from_cell_id`] reconstructs the exact bits —
+                // fixed-precision rendering would silently truncate off-grid
+                // values and break the identity contract.
                 let d = TrellisConfig::default();
-                let mut s = format!("tr{:.4}", t.lambda_log_scale1);
+                let mut s = format!("tr{}", t.lambda_log_scale1);
                 if t.lambda_log_scale2 != d.lambda_log_scale2 {
-                    s.push_str(&format!("l2{:.1}", t.lambda_log_scale2));
+                    s.push_str(&format!("l2{}", t.lambda_log_scale2));
                 }
                 if t.dc_enabled {
                     s.push_str("+dc");
                 }
                 if t.delta_dc_weight != d.delta_dc_weight {
-                    s.push_str(&format!("ddc{:.1}", t.delta_dc_weight));
+                    s.push_str(&format!("ddc{}", t.delta_dc_weight));
                 }
                 if t.aq_coupling.is_active() {
-                    s.push_str(&format!("cpl{:+.1}", t.aq_coupling.scale));
+                    s.push_str(&format!("cpl{:+}", t.aq_coupling.scale));
                     if t.aq_coupling.exponent != 1.0 {
-                        s.push_str(&format!("e{:.1}", t.aq_coupling.exponent));
+                        s.push_str(&format!("e{}", t.aq_coupling.exponent));
                     }
                     if t.aq_coupling.max_adjustment > 0.0 {
-                        s.push_str(&format!("cl{:.1}", t.aq_coupling.max_adjustment));
+                        s.push_str(&format!("cl{}", t.aq_coupling.max_adjustment));
                     }
                 }
                 s
@@ -725,6 +729,252 @@ impl Stratum<'_> {
         }
         s
     }
+}
+
+// ============================================================================
+// Cell-id grammar: the stable identity contract
+// ============================================================================
+
+/// Reconstruct the [`EncoderConfig`] a plan cell denotes from its stratum
+/// id (the cell id with the trailing `_q<q>` removed) and quality point.
+///
+/// # The id grammar is a durable identity contract
+///
+/// Plan-cell ids are stored as row identity in fleet ledgers and training
+/// parquets (zenmetrics carries `{"cell": <id>, "fp": …, "plan": …}` in its
+/// `knob_tuple_json` column, and the job system's content-addressed
+/// `JobKind::Encode.knobs` hashes that string into the `JobId`). A stratum
+/// id therefore **fully determines its encoder config**:
+///
+/// ```text
+/// <fam>_<coeff>_<scan>_<color>[-flag…]
+/// fam   = jp3 | jp3[<f32>,<f32>] | jp2 | jp2[<f32>,<f32>]
+///       | moz | moz[cq<u8>] | pw4 | gls | custom†
+/// coeff = t0 | tr<f32> [l2<f32>] [+dc] [ddc<f32>]
+///         [cpl<±f32> [e<f32>] [cl<f32>]]
+/// scan  = base | prog | small | smsrch | pmoz | psrch
+/// color = 420 | 444 | 422 | 440 | xybBq | xybFull | gray
+/// flag  = noaq | noder | gaware | sharp | 16b | blur<f32>
+///       | brd | brd#<hash>†
+/// ```
+///
+/// Numbers are f32 `Display` (shortest-roundtrip), so parsing returns the
+/// exact bits that produced the id. † `custom` (opaque table bytes) and
+/// `brd#<hash>` (non-default boundary-RD knobs, content-hashed) are NOT
+/// self-describing and return an error — those cells cannot ride the
+/// id-only ledger path.
+///
+/// **Evolving the grammar:** extend additively (a new suffix for a new
+/// deviation; defaults render as absence so old ids stay valid). Never
+/// rename a token or change numeric formatting — that orphans every id
+/// already stored in a ledger. `Stratum::id()` and this parser must move
+/// in lockstep; the `cell_ids_roundtrip_to_their_configs` test enforces
+/// parser totality (fingerprint-exact) over everything the planner emits.
+///
+/// Consumers that carry the cell fingerprint alongside the id (zenmetrics
+/// does) should verify `fingerprint(&config) == carried_fp` after parsing
+/// — it turns any grammar drift into a loud deterministic failure instead
+/// of a silently wrong encode.
+pub fn config_from_cell_id(base_id: &str, quality: f32) -> Result<EncoderConfig, String> {
+    let mut parts = base_id.splitn(4, '_');
+    let (Some(fam_s), Some(co_s), Some(sc_s), Some(colflags)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(format!(
+            "cell id {base_id:?} does not have the 4-token <fam>_<coeff>_<scan>_<color> shape"
+        ));
+    };
+
+    let family = parse_family(fam_s)?;
+    let coeff = parse_coeff(co_s)?;
+    let scan = match sc_s {
+        "base" => ProgressiveScanMode::Baseline,
+        "prog" => ProgressiveScanMode::Progressive,
+        "small" => ProgressiveScanMode::Smallest,
+        "smsrch" => ProgressiveScanMode::SmallestSearch,
+        "pmoz" => ProgressiveScanMode::ProgressiveMozjpeg,
+        "psrch" => ProgressiveScanMode::ProgressiveSearch,
+        other => return Err(format!("unknown scan token {other:?} in {base_id:?}")),
+    };
+
+    let mut flags = colflags.split('-');
+    let col = flags.next().unwrap_or_default();
+    let mut cfg = match col {
+        "420" => EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter),
+        "444" => EncoderConfig::ycbcr(quality, ChromaSubsampling::None),
+        "422" => EncoderConfig::ycbcr(quality, ChromaSubsampling::HalfHorizontal),
+        "440" => EncoderConfig::ycbcr(quality, ChromaSubsampling::HalfVertical),
+        "xybBq" => EncoderConfig::xyb(quality, super::encoder_types::XybSubsampling::BQuarter),
+        "xybFull" => EncoderConfig::xyb(quality, super::encoder_types::XybSubsampling::Full),
+        "gray" => EncoderConfig::grayscale(quality),
+        other => return Err(format!("unknown color token {other:?} in {base_id:?}")),
+    };
+    cfg = cfg.quant_table_config(family).progressive(scan);
+
+    let mut aq = true;
+    let mut dering = true;
+    let mut down = DownsamplingMethod::Box;
+    let mut allow16 = false;
+    let mut blur = 0.0f32;
+    for flag in flags {
+        match flag {
+            "noaq" => aq = false,
+            "noder" => dering = false,
+            "gaware" => down = DownsamplingMethod::GammaAware,
+            "sharp" => down = DownsamplingMethod::GammaAwareIterative,
+            "16b" => allow16 = true,
+            f if f.starts_with("blur") => {
+                blur = f[4..]
+                    .parse::<f32>()
+                    .map_err(|e| format!("bad blur value in {base_id:?}: {e}"))?;
+            }
+            "brd" => {
+                #[cfg(feature = "boundary-rd")]
+                {
+                    cfg = cfg.boundary_rd(super::encoder_config::BoundaryRd::On(
+                        super::encoder_config::BoundaryRdConfig::default(),
+                    ));
+                }
+                #[cfg(not(feature = "boundary-rd"))]
+                return Err(format!("cell id {base_id:?} needs the boundary-rd feature"));
+            }
+            f if f.starts_with("brd#") => {
+                return Err(format!(
+                    "cell id {base_id:?} carries content-hashed boundary-RD knobs \
+                     and is not self-describing"
+                ));
+            }
+            other => return Err(format!("unknown flag {other:?} in {base_id:?}")),
+        }
+    }
+    cfg = cfg
+        .aq_enabled(aq)
+        .deringing(dering)
+        .downsampling_method(down)
+        .allow_16bit_quant_tables(allow16)
+        .pre_blur(blur);
+    if let Some(t) = coeff {
+        cfg = cfg.trellis(t);
+    }
+    Ok(cfg)
+}
+
+/// Split a leading f32 literal (digits and `.`) off `s`.
+fn take_f32(s: &str) -> Result<(f32, &str), String> {
+    let end = s
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(s.len());
+    s[..end]
+        .parse::<f32>()
+        .map(|v| (v, &s[end..]))
+        .map_err(|e| format!("bad number at {s:?}: {e}"))
+}
+
+/// Like [`take_f32`] but with a mandatory leading sign (the `cpl` render).
+fn take_signed_f32(s: &str) -> Result<(f32, &str), String> {
+    match s.as_bytes().first() {
+        Some(b'+') => take_f32(&s[1..]),
+        Some(b'-') => take_f32(&s[1..]).map(|(v, r)| (-v, r)),
+        _ => Err(format!("expected sign at {s:?}")),
+    }
+}
+
+fn parse_family(s: &str) -> Result<QuantTableConfig, String> {
+    fn scales(inner: &str) -> Result<[f32; 2], String> {
+        let (a, b) = inner
+            .split_once(',')
+            .ok_or_else(|| format!("expected two scales in {inner:?}"))?;
+        Ok([
+            a.parse::<f32>()
+                .map_err(|e| format!("bad scale {a:?}: {e}"))?,
+            b.parse::<f32>()
+                .map_err(|e| format!("bad scale {b:?}: {e}"))?,
+        ])
+    }
+    match s {
+        "jp3" => Ok(QuantTableConfig::default()),
+        "jp2" => Ok(QuantTableConfig::JpegliSharedChroma {
+            chroma_distance_scales: [1.0, 1.0],
+        }),
+        "moz" => Ok(QuantTableConfig::MozjpegRobidoux {
+            chroma_quality: None,
+        }),
+        "pw4" => Ok(QuantTableConfig::PiecewiseV4),
+        "gls" => Ok(QuantTableConfig::GlassaLowBpp),
+        "custom" => Err("custom quant tables are not self-describing".to_string()),
+        _ => {
+            if let Some(inner) = s.strip_prefix("jp3[").and_then(|r| r.strip_suffix(']')) {
+                Ok(QuantTableConfig::Jpegli {
+                    chroma_distance_scales: scales(inner)?,
+                })
+            } else if let Some(inner) = s.strip_prefix("jp2[").and_then(|r| r.strip_suffix(']')) {
+                Ok(QuantTableConfig::JpegliSharedChroma {
+                    chroma_distance_scales: scales(inner)?,
+                })
+            } else if let Some(inner) = s.strip_prefix("moz[cq").and_then(|r| r.strip_suffix(']')) {
+                let cq = inner
+                    .parse::<u8>()
+                    .map_err(|e| format!("bad chroma_quality {inner:?}: {e}"))?;
+                Ok(QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: Some(cq),
+                })
+            } else {
+                Err(format!("unknown family token {s:?}"))
+            }
+        }
+    }
+}
+
+fn parse_coeff(s: &str) -> Result<Option<TrellisConfig>, String> {
+    if s == "t0" {
+        return Ok(None);
+    }
+    let rest = s
+        .strip_prefix("tr")
+        .ok_or_else(|| format!("unknown coeff token {s:?}"))?;
+    let (lambda1, mut rest) = take_f32(rest)?;
+    let mut t = TrellisConfig {
+        lambda_log_scale1: lambda1,
+        dc_enabled: false,
+        ..TrellisConfig::default()
+    };
+    if let Some(r) = rest.strip_prefix("l2") {
+        let (v, r) = take_f32(r)?;
+        t.lambda_log_scale2 = v;
+        rest = r;
+    }
+    if let Some(r) = rest.strip_prefix("+dc") {
+        t.dc_enabled = true;
+        rest = r;
+    }
+    if let Some(r) = rest.strip_prefix("ddc") {
+        let (v, r) = take_f32(r)?;
+        t.delta_dc_weight = v;
+        rest = r;
+    }
+    if let Some(r) = rest.strip_prefix("cpl") {
+        let (scale, mut r) = take_signed_f32(r)?;
+        let mut coupling = AqCoupling {
+            scale,
+            ..AqCoupling::OFF
+        };
+        if let Some(r2) = r.strip_prefix('e') {
+            let (v, r2) = take_f32(r2)?;
+            coupling.exponent = v;
+            r = r2;
+        }
+        if let Some(r2) = r.strip_prefix("cl") {
+            let (v, r2) = take_f32(r2)?;
+            coupling.max_adjustment = v;
+            r = r2;
+        }
+        t.aq_coupling = coupling;
+        rest = r;
+    }
+    if !rest.is_empty() {
+        return Err(format!("trailing {rest:?} in coeff token {s:?}"));
+    }
+    Ok(Some(t))
 }
 
 /// Cross axes × quality points into deduplicated, priority-ordered cells.
@@ -1203,6 +1453,81 @@ mod tests {
             for a in &cell.aliases {
                 assert!(seen.insert(a.clone()), "duplicate alias id {a}");
             }
+        }
+    }
+
+    #[test]
+    fn cell_ids_roundtrip_to_their_configs() {
+        // Grammar-totality gate for the stable id contract: every id the
+        // planner can emit — canonical or alias — must parse back to a
+        // config with the IDENTICAL resolved-state fingerprint. Covers
+        // rd_core in full plus, for each axis, a main-effects plan
+        // substituting modes_full's full value list (every token spelling
+        // appears without paying for the whole cross product).
+        let full = SweepAxes::modes_full();
+        let mut variants: Vec<SweepAxes> = Vec::new();
+        macro_rules! axis_variant {
+            ($field:ident) => {{
+                let mut a = tiny_axes();
+                a.$field = full.$field.clone();
+                variants.push(a);
+            }};
+        }
+        axis_variant!(families);
+        axis_variant!(coeff_opt);
+        axis_variant!(scans);
+        axis_variant!(color_modes);
+        axis_variant!(aq);
+        axis_variant!(deringing);
+        axis_variant!(downsampling);
+        axis_variant!(allow_16bit);
+        axis_variant!(pre_blur);
+        #[cfg(feature = "boundary-rd")]
+        {
+            let mut a = tiny_axes();
+            a.boundary_rd = SweepAxes::rd_core().boundary_rd.clone();
+            variants.push(a);
+        }
+        variants.push(SweepAxes::rd_core());
+
+        let mut checked = 0usize;
+        for axes in variants {
+            let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![10.0, 85.0])).plan();
+            for cell in &plan.cells {
+                for id in std::iter::once(&cell.id).chain(cell.aliases.iter()) {
+                    let at = id.rfind("_q").expect("id ends in _q<q>");
+                    let q: f32 = id[at + 2..].parse().expect("q parses");
+                    let cfg =
+                        config_from_cell_id(&id[..at], q).unwrap_or_else(|e| panic!("{id}: {e}"));
+                    assert_eq!(
+                        fingerprint(&cfg),
+                        cell.fingerprint,
+                        "fingerprint drift for {id}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(
+            checked > 100,
+            "grammar coverage suspiciously thin: {checked}"
+        );
+    }
+
+    #[test]
+    fn non_self_describing_and_malformed_ids_error() {
+        for bad in [
+            "custom_t0_small_420",      // opaque table bytes
+            "jp3_t0_small_999",         // unknown color
+            "jp3_trbogus_small_420",    // unparseable lambda
+            "jp3_t0_small",             // missing token
+            "jp3_t0_small_420-warp",    // unknown flag
+            "jp3_tr14.5junk_small_420", // trailing garbage in coeff
+        ] {
+            assert!(
+                config_from_cell_id(bad, 75.0).is_err(),
+                "{bad:?} must be rejected"
+            );
         }
     }
 

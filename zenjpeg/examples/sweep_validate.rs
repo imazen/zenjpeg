@@ -435,23 +435,23 @@ fn main() {
     };
     let must_differ = [
         (
-            "jp3_tr14.7500l216.0_small_420",
-            "jp3_tr14.7500l217.0_small_420",
+            "jp3_tr14.75l216_small_420",
+            "jp3_tr14.75l217_small_420",
             "lambda2 16.0 vs 17.0",
         ),
         (
-            "jp3_tr14.7500+dcddc1.0_small_420",
-            "jp3_tr14.7500+dc_small_420",
+            "jp3_tr14.75+dcddc1_small_420",
+            "jp3_tr14.75+dc_small_420",
             "delta_dc 1.0 vs 0.0",
         ),
         (
-            "jp3_tr14.7500cpl-4.0e2.0cl1.0_small_420",
-            "jp3_tr14.7500cpl-4.0cl1.0_small_420",
+            "jp3_tr14.75cpl-4e2cl1_small_420",
+            "jp3_tr14.75cpl-4cl1_small_420",
             "coupling exponent 2 vs 1",
         ),
         (
-            "jp3_tr14.7500cpl-8.0cl1.0_small_420",
-            "jp3_tr14.7500cpl-4.0cl1.0_small_420",
+            "jp3_tr14.75cpl-8cl1_small_420",
+            "jp3_tr14.75cpl-4cl1_small_420",
             "coupling -8 vs -4 (both clamped)",
         ),
         (
@@ -460,13 +460,13 @@ fn main() {
             "asymmetric chroma [1,2] vs [2,1]",
         ),
         (
-            "jp3_tr13.5000_small_420",
-            "jp3_tr14.0000_small_420",
+            "jp3_tr13.5_small_420",
+            "jp3_tr14_small_420",
             "lambda 13.5 vs 14.0",
         ),
         (
-            "jp3_tr15.5000_small_420",
-            "jp3_tr16.0000_small_420",
+            "jp3_tr15.5_small_420",
+            "jp3_tr16_small_420",
             "lambda 15.5 vs 16.0",
         ),
     ];
@@ -598,11 +598,11 @@ fn main() {
     };
     println!();
     let ladder = [
-        ("jp3_tr13.5000_small_420", 13.5),
-        ("jp3_tr14.0000_small_420", 14.0),
-        ("jp3_tr14.5000_small_420", 14.5),
-        ("jp3_tr15.5000_small_420", 15.5),
-        ("jp3_tr16.0000_small_420", 16.0),
+        ("jp3_tr13.5_small_420", 13.5),
+        ("jp3_tr14_small_420", 14.0),
+        ("jp3_tr14.5_small_420", 14.5),
+        ("jp3_tr15.5_small_420", 15.5),
+        ("jp3_tr16_small_420", 16.0),
     ];
     let sizes: Vec<f64> = ladder.iter().map(|(b, _)| mean_bytes(b)).collect();
     let monotone = sizes.windows(2).all(|w| w[0] < w[1]);
@@ -627,8 +627,8 @@ fn main() {
     let checks = [
         (
             "coupling -4 smaller than +4",
-            mean_bytes("jp3_tr14.7500cpl-4.0cl1.0_small_420"),
-            mean_bytes("jp3_tr14.7500cpl+4.0cl1.0_small_420"),
+            mean_bytes("jp3_tr14.75cpl-4cl1_small_420"),
+            mean_bytes("jp3_tr14.75cpl+4cl1_small_420"),
         ),
         (
             "pre_blur 0.4 shrinks vs default",
