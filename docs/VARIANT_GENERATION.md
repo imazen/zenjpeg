@@ -556,11 +556,14 @@ that, per codec:
 | Fingerprint dedup | yes — resolved segment params | **landed** (calibration-plateau q≤20 merges; exclusions encode-proven) | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | yes |
 | Sweep planner + validation harness | port `encode::sweep` shape | **landed** — mode-discriminated planner + harness with decode/roundtrip gates (caught jxl-encoder#68 ×2 + #69; patterns 14–16) | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | port |
 
-(zenjxl's adoption landed 2026-06-10/11 — steps 1–6 complete, harness
-green end-to-end against the stock published decoder after the two
-jxl-encoder#68 fixes; exact trials audited and queued upstream where
-encode state can be shared; step-8 executor wiring is its one open
-step. zenavif's adoption landed 2026-06-10/11 —
+(zenjxl's adoption is complete as of 2026-06-11: steps 1–6 landed with
+the harness green end-to-end against the stock published decoder after
+the two jxl-encoder#68 fixes; pattern 7 landed (zenjxl bcf67e09 —
+`variant_from_cell_id` + label registries, totality over q- AND
+distance-grids); step-8 executor wiring landed (zenmetrics 57aa2963 —
+third codec on the bridge, lossless cells on the q=0 sentinel, threads
+pinned per pattern 9); exact trials remain audited-and-queued upstream
+where encode state can be shared. zenavif's adoption landed 2026-06-10/11 —
 audit, findings, and run evidence in zenavif `docs/VARIANT_GENERATION.md`;
 its pattern-7 id grammar/parser landed 2026-06-11 (zenavif a5a564f1 —
 the totality test caught a tokenizer bug on its first run) and the
