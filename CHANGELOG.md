@@ -5,6 +5,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- `container::xmp::parse_xmp` now parses hdrgm per-channel fields
+  written as XMP elements in rdf:Seq form (`<hdrgm:GainMapMax><rdf:Seq>
+  <rdf:li>…`) — Adobe Camera Raw output. Previously these parsed as
+  `min = max = gamma = 0.0`, so `apply_gainmap` silently reconstructed
+  HDR == SDR and `zencodec` validation rejected the params. Unparseable
+  values now leave spec defaults intact instead of writing zeros.
+  Fixes #144. (689c5686)
+
 ### Documentation
 - `docs/VARIANT_GENERATION.md`: added the wrapped-engine patterns (8–13)
   from the zenavif adoption — encode-pinned resolution mirrors,
