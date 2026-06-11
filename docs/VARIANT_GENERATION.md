@@ -1,7 +1,8 @@
 # Variant Generation: the zenjpeg approach, and what other zen codecs should adopt
 
 Written 2026-06-10, extended 2026-06-11 after the empirical-validation
-wave and the zenmetrics fleet/job-system integration (see
+wave, the zenmetrics fleet/job-system integration, and the zenavif
+(wrapped-engine) adoption (see
 `ENCODER_KNOB_SPACE.md` for the rationale history and `CHANGELOG.md` for
 the commit trail). zenjpeg is the reference implementation; this
 document states the patterns in codec-neutral terms so zenwebp / zenjxl
@@ -234,6 +235,153 @@ rules on the id grammar any codec planner emits:
   and executing builds becomes a loud deterministic failure naming both
   fingerprints — never a silently wrong encode.
 
+## The wrapped-engine patterns (zenavif adoption, 2026-06-10/11)
+
+zenavif was the second full adoption and the first **wrapper codec**:
+it drives an engine crate (zenravif → zenrav1e) instead of owning the
+encoder, and most of what follows exists because of that boundary.
+Every rule below was earned by a failing check or a byte-level proof
+(see zenavif's `docs/VARIANT_GENERATION.md` for the audit and run
+evidence). They are stated codec-neutrally: zenjxl (jxl-encoder),
+zentiff (image-tiff), and any future wrapper hits the same walls.
+
+### 8. Wrapped engines: the resolution mirror is pinned by encode
+
+Pattern 3's ideal — introspection calls the same function the encoder
+runs — cannot hold across a crate boundary when the engine keeps its
+resolution `pub(crate)` (zenravif's quality→quantizer curve and
+per-speed search tables). The fallback is a **mirror**, which is a
+second implementation and therefore a drift risk. Make it safe:
+
+- every mirrored constant/curve carries a provenance comment citing
+  the engine version and source line;
+- every mirror is pinned **by encode** with an alias pair plus a
+  near-miss negative control: two inputs the mirror says share a
+  mediator must be byte-identical, the adjacent input that maps to a
+  different mediator must differ (zenavif pins the quantizer curve
+  with q 80.0 ≡ q 80.2 ≠ q 81.0, and the speed tables with
+  override==preset ≡ unset ≠ override≠preset);
+- the harness re-runs on **every engine dep bump** — that is when
+  mirrors die;
+- the structural fix is queued, not forgotten: export resolution from
+  the engine and delete the mirror (tracked for zenravif 0.1.4).
+
+**Wrapper defaults that claim to follow another knob are claims about
+the engine — verify them.** zenavif's `alpha_quality` docs promised
+"unset follows the color quality"; the engine's default actually
+pinned the alpha quantizer to the quality-80 equivalent, so every
+alpha-bearing encode at quality≠80 silently disagreed with the docs.
+Forward such defaults explicitly (`unwrap_or(quality)`) and pin the
+contract with a three-way encode test: unset ≡ explicit(q) ≠
+explicit(engine-default).
+
+### 9. Pin ambient-machine defaults in every cell
+
+Any knob whose default resolves from **ambient machine state** makes
+encoded bytes machine-dependent. zenavif's instance: the AV1 tile
+count is `min(threads, w·h / min_tile_size²)`, and unset `threads`
+substitutes the *host's* core count — default-config encodes are not
+byte-reproducible across machines, which silently poisons
+content-addressed ledgers and cross-box dedup. Rules:
+
+- the planner pins the knob in every cell (`threads(Some(1))`);
+  parallelize across cells, not within them;
+- `resolve_plan` reports the machine dependence honestly
+  (`TilesResolution::MachineDependent { cap }`) instead of guessing;
+- the fingerprint hashes the raw setting and never merges unset
+  spellings — not even with another unset spelling, since two hosts
+  disagree about what it means.
+
+Audit for siblings: thread counts, detected SIMD level, available
+memory, anything `num_cpus`-shaped feeding the bitstream.
+
+### 10. Three ways a knob lies about being alive
+
+Discrimination (pattern 1), continued — all three found by the
+zenavif harness or audit, all three invisible to code reading:
+
+- **The neutral-value no-op spelling.** "Enabled at the neutral
+  value" can be structurally identical to off: zenavif's VAQ at
+  strength 1.0 is byte-identical to VAQ disabled (the still/psy tunes
+  always compute the activity mask; the engine skips the rescale at
+  1.0). Caught as an inert step in one harness run. Fix the *type*:
+  the sweep axis is `Option<scale>` so the no-op cannot be curated,
+  and the fingerprint hashes the **active** form
+  (`enabled && scale ≠ neutral`).
+- **The envelope-dead knob.** A knob can be live in the engine yet
+  byte-inert across the product's whole usage envelope: `lru_on_skip`
+  only changes decisions when entire restoration units are skip
+  blocks, which intra-only still images at the curated speeds never
+  produce (28/28 inert comparisons, including content purpose-built
+  to maximize skips). De-curate with the evidence recorded in the
+  provenance table; keep the probe constructible for
+  envelope-expanding sweeps (speed ≤ 1 there).
+- **The class-conditional knob.** Alpha knobs are byte-inert without
+  an alpha plane; sweeping them on an RGB corpus trips the inert-step
+  check *correctly*. Give them a per-content-class preset
+  (`modes_full_alpha`) and a per-class harness leg with a two-sided
+  check: every class probe must change bytes **on** its class AND
+  leave off-class output byte-identical (no coupling into the other
+  path). Same shape for animation-only, HDR-only, ICC-conditional
+  knobs.
+
+Also in this family: **backend selection is a knob.** Selecting a
+backend the build doesn't contain must fail `validate()` — zenavif's
+svtav1 request silently fell back to zenravif, i.e. the config asked
+for one encoder and was served by another. And when a backend dies,
+its orphaned fields die with it: `matrix_coefficients`' only reader
+was the removed svtav1 path, so the field is documented as
+informational and fingerprint-excluded (byte-proven) rather than left
+implying liveness.
+
+### 11. The single-deviation probe axis
+
+Engines expose many deep binary overrides (zenavif: CDEF, RDO-TX,
+SGR, segmentation, bottom-up, LRF, fast-deblock, …). One axis per
+override explodes the cross product with interaction combos nobody
+asked for. Put them all on **one shared probe axis**: a probe never
+combines with another probe, only with the primary axes, so the plan
+stays main-effects-shaped by construction. Probe each override **both
+ways** — the spelling that equals the preset's derived value
+fingerprint-dedupes away (pattern 4 hashes post-override resolved
+state), leaving exactly the informative direction per (speed, q)
+region with zero curation effort.
+
+### 12. Sweeps feed optimizers: emit features from resolved state
+
+The consumer of all this is a trainer (zentrain) fitting pickers /
+MLP optimizers, and it should never parse cell-id strings. Ship the
+training bridge with the planner: `feature_columns()` (stable,
+append-only names) + `SweepCell::feature_row(input) -> Vec<f64>` —
+one numeric column per knob, booleans 0/1, enums as small documented
+integers, −1 sentinels for not-applicable. The load-bearing choice:
+columns carry **resolved mediators**, not config spellings — the
+quantizer rather than raw quality, the post-override search settings
+rather than `Option` overrides — so the model generalizes across the
+aliases the fingerprint merges instead of learning that q 80.0 and
+q 80.2 are different inputs. Training-row identity is
+`(image_id, cell_id, fingerprint, features…, bytes, metrics…)`.
+
+### 13. Two validation tiers, sized to the engine
+
+- **Tier 1 — encode-level contract tests** behind the plain `encode`
+  feature, in the normal test suite, running in CI on every push: the
+  mirror alias pairs, the three-way follows-X pin, knob-liveness spot
+  checks (4:2:0 must shrink chroma-textured content). No corpus, no
+  expert features, seconds.
+- **Tier 2 — the corpus harness** (pattern 6) behind the expert
+  feature, re-run on axis/fingerprint/engine-bump changes, TSV
+  committed with the date.
+
+For expensive engines (AV1-class encodes cost 100–1000× a JPEG), size
+tier 2 down instead of skipping it: small crops (256²) of real
+photos, an explicit q subset spanning low-q ({10, 30, 60, 85}), the
+default + single-deviation strata only. Minutes, not hours — full
+grids belong to the fleet. One ops gotcha that will eat an afternoon:
+deep-recursion engines (AV1 partition RDO) overflow rayon's default
+2 MB worker stacks; any harness or executor running encodes inside a
+rayon pool needs `stack_size(32 MB)`.
+
 ## Where each piece lives
 
 Four layers, one compact deterministic spec flowing down. Getting a
@@ -289,16 +437,19 @@ that, per codec:
 
 | Pattern | zenwebp | zenjxl | zenavif | zenpng |
 |---|---|---|---|---|
-| Variant-scoped knobs + validate() | segments/partitions config | **landed** (noise×lossless rejection et al., 2026-06-11) | tile/speed knobs | filter/zopfli knobs |
-| Dominance cases | always-on optimized entropy | — audit in flight | — audit needed | palette-when-fewer-colors checks |
-| Exact trials (pixel-invariant) | lossless: trial entropy backends | modular: trial MA-tree configs at fixed quantization? (audit which stages are pixel-invariant) | OBU/layout-level only (most knobs are metric-class) | **filter-per-row is already exact**; trial zopfli iterations under a byte gate |
-| resolve_plan() introspection | yes — port shape directly | **landed** (`__expert`, 2026-06-11) | yes (auto_tune explains itself) | yes |
-| Fingerprint dedup | yes — resolved segment params | in flight | yes | yes |
-| Sweep planner + validation harness | port `encode::sweep` shape | **harness landed**, evidence-driven axes corrections | port | port |
+| Variant-scoped knobs + validate() | segments/partitions config | **landed** (noise×lossless rejection et al., 2026-06-11) | **landed** (backend/420×RGB/420×16-bit rejections; no-op spellings made untypeable, 2026-06-10/11) | filter/zopfli knobs |
+| Dominance cases | always-on optimized entropy | — audit in flight | **landed** — container metadata is the dominance class; full audit in its doc | palette-when-fewer-colors checks |
+| Exact trials (pixel-invariant) | lossless: trial entropy backends | modular: trial MA-tree configs at fixed quantization? (audit which stages are pixel-invariant) | **confirmed none** — single-invocation engine + fixed container layout; the predicted empty trial class held | **filter-per-row is already exact**; trial zopfli iterations under a byte gate |
+| resolve_plan() introspection | yes — port shape directly | **landed** (`__expert`, 2026-06-11) | **landed** (`PlanInput → EncodePlan`; engine mirrors pinned by encode, pattern 8) | yes |
+| Fingerprint dedup | yes — resolved segment params | in flight | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | yes |
+| Sweep planner + validation harness | port `encode::sweep` shape | **harness landed**, evidence-driven axes corrections | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | port |
 
 (zenjxl adoption is an active parallel effort — see its own
 `VARIANT_GENERATION` adoption doc in that repo for current state rather
-than trusting this snapshot.)
+than trusting this snapshot. zenavif's adoption landed 2026-06-10/11 —
+audit, findings, and run evidence in zenavif `docs/VARIANT_GENERATION.md`;
+its remaining opens are the pattern-7 id grammar/parser and the step-8
+executor wiring.)
 
 **Consumers — two execution models, one identity.** zenmetrics executes
 plans through both of its scheduling models, and the difference matters:
@@ -380,6 +531,10 @@ patterns 4/5/7 exist, because the executor only needs `plan()`,
 - Absolute-valued knobs interact badly with quality grids
   (`MozjpegRobidoux::chroma_quality` is absolute while the grid moves q;
   a relative form is the fix — do not sweep a static absolute value).
+  The relative form is now proven: zenavif sweeps alpha quality as a
+  clamped **delta against the grid q** (`KnobProbe::AlphaQualityDelta`,
+  ±25), and `Delta(0)` is the follow-color spelling that
+  fingerprint-aliases away. Port that shape here for `chroma_quality`.
 - Trial candidates must emit **exactly** what their explicit mode would
   (zenjpeg's first Smallest draft beat explicit Baseline by a 6-byte DRI
   it had silently dropped — the equality contract caught it).

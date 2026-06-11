@@ -5,6 +5,17 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Documentation
+- `docs/VARIANT_GENERATION.md`: added the wrapped-engine patterns (8–13)
+  from the zenavif adoption — encode-pinned resolution mirrors,
+  ambient-machine-default pins, the three knob-liveness lies
+  (neutral-value no-ops / envelope-dead / class-conditional), the
+  single-deviation probe axis, resolved-state MLP feature emission, and
+  two-tier validation sizing. Adoption table updated (zenavif landed);
+  the absolute-valued-knob known limit now points at the proven
+  delta-vs-grid-q pattern.
+
+
 ### QUEUED BREAKING CHANGES
 
 - `encode::trellis::HybridConfig` removed — `TrellisConfig` gained
