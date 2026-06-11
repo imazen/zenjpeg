@@ -22,7 +22,6 @@ pub use encode::{
 };
 
 // Decoder-only exports
-#[cfg(feature = "decoder")]
 pub use encode::HuffmanDecodeTable;
 
 // Re-export from classic

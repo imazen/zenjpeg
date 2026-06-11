@@ -23,7 +23,7 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 
 /// Decode JPEG data using C++ jpegli FFI (libjpeg-compatible API).
 /// Returns RGB pixel data.
-#[cfg(all(feature = "decoder", feature = "__ffi-tests"))]
+#[cfg(feature = "__ffi-tests")]
 unsafe fn decode_with_cjpegli(data: &[u8]) -> Vec<u8> {
     unsafe {
         use jpegli_internals_sys::*;
@@ -212,7 +212,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg baseline
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-baseline", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -229,7 +228,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg baseline fast mode (box filter + fused upsample)
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-baseline-fast", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -248,7 +246,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // C++ jpegli baseline
-        #[cfg(all(feature = "decoder", feature = "__ffi-tests"))]
+        #[cfg(feature = "__ffi-tests")]
         group.bench_with_input(
             BenchmarkId::new("cjpegli-baseline", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -275,7 +273,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg progressive
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-progressive", format!("{}x{}", width, height)),
             &jpeg_progressive,
@@ -292,7 +289,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg progressive fast mode
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-progressive-fast", format!("{}x{}", width, height)),
             &jpeg_progressive,
@@ -311,7 +307,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // C++ jpegli progressive
-        #[cfg(all(feature = "decoder", feature = "__ffi-tests"))]
+        #[cfg(feature = "__ffi-tests")]
         group.bench_with_input(
             BenchmarkId::new("cjpegli-progressive", format!("{}x{}", width, height)),
             &jpeg_progressive,
@@ -321,7 +317,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg baseline parallel (requires parallel + decoder features)
-        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        #[cfg(feature = "parallel")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-baseline-parallel", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -338,7 +334,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg progressive parallel (requires parallel + decoder features)
-        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        #[cfg(feature = "parallel")]
         group.bench_with_input(
             BenchmarkId::new(
                 "zenjpeg-progressive-parallel",
@@ -358,7 +354,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg scanline reader (baseline 4:2:0)
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-scanline-420", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -388,7 +383,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         // zenjpeg wave-parallel scanline reader (baseline 4:2:0, box filter)
         // Uses the scanline_reader() API with parallel feature — wave decode
         // activates automatically when DRI is present.
-        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        #[cfg(feature = "parallel")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-wave-scanline-420", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -418,7 +413,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
 
         // zenjpeg sequential scanline reader (baseline 4:2:0, box filter, forced sequential)
         // For comparing wave-parallel vs sequential scanline performance.
-        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        #[cfg(feature = "parallel")]
         group.bench_with_input(
             BenchmarkId::new(
                 "zenjpeg-seq-scanline-box-420",
@@ -475,7 +470,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg full-frame 4:4:4
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-baseline-444", format!("{}x{}", width, height)),
             &jpeg_444,
@@ -492,7 +486,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // C++ jpegli 4:4:4
-        #[cfg(all(feature = "decoder", feature = "__ffi-tests"))]
+        #[cfg(feature = "__ffi-tests")]
         group.bench_with_input(
             BenchmarkId::new("cjpegli-baseline-444", format!("{}x{}", width, height)),
             &jpeg_444,
@@ -502,7 +496,6 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // zenjpeg scanline reader 4:4:4 (fast path)
-        #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("zenjpeg-scanline-444", format!("{}x{}", width, height)),
             &jpeg_444,
@@ -537,7 +530,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
 ///
 /// Compares PerSegment (stride=1), Grouped{2}, Grouped{1}, and Auto to measure
 /// cache locality impact from different segment-to-task mapping strategies.
-#[cfg(all(feature = "decoder", feature = "parallel"))]
+#[cfg(feature = "parallel")]
 fn bench_parallel_strategies(c: &mut Criterion) {
     use zenjpeg::decode::{Decoder, ParallelStrategy};
     use zenjpeg::decoder::PixelFormat;
@@ -602,8 +595,8 @@ fn bench_parallel_strategies(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "decoder", feature = "parallel"))]
+#[cfg(feature = "parallel")]
 criterion_group!(benches, bench_decode_comparison, bench_parallel_strategies);
-#[cfg(not(all(feature = "decoder", feature = "parallel")))]
+#[cfg(not(feature = "parallel"))]
 criterion_group!(benches, bench_decode_comparison);
 criterion_main!(benches);

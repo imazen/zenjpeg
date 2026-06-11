@@ -3,7 +3,6 @@
 //!
 //! Run: `cargo test --release -p zenjpeg --test sharp_yuv_jpeg_roundtrip --features decoder -- --nocapture`
 
-#[cfg(feature = "decoder")]
 mod tests {
     use enough::Unstoppable;
     use zenjpeg::decode::Decoder;

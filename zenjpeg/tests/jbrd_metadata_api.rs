@@ -13,8 +13,6 @@
 //!
 //! Run: `cargo test --release --test jbrd_metadata_api --features decoder`
 
-#![cfg(feature = "decoder")]
-
 use enough::Unstoppable;
 use zenjpeg::decode::Decoder;
 use zenjpeg::encode::EncoderConfig;

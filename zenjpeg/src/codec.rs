@@ -36,7 +36,6 @@ use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
 use crate::encode::exif::Exif;
 use crate::error::Error;
-#[cfg(feature = "decoder")]
 use crate::types::PixelFormat;
 
 // ── Backwards compat aliases ─────────────────────────────────────────────────
@@ -946,7 +945,6 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = {
 /// Wraps [`crate::decode::DecodeConfig`] with the zencodec trait interface.
 #[derive(Clone, Debug)]
 pub struct JpegDecoderConfig {
-    #[cfg(feature = "decoder")]
     inner: crate::decode::DecodeConfig,
     #[allow(dead_code)]
     limits: ResourceLimits,
@@ -993,7 +991,6 @@ impl JpegDecoderConfig {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "decoder")]
             inner: crate::decode::DecodeConfig::new(),
             limits: ResourceLimits::none(),
             cmyk_handling: CmykHandling::Passthrough,
@@ -1019,14 +1016,12 @@ impl JpegDecoderConfig {
     }
 
     /// Access the underlying [`DecodeConfig`](crate::decode::DecodeConfig).
-    #[cfg(feature = "decoder")]
     #[must_use]
     pub fn inner(&self) -> &crate::decode::DecodeConfig {
         &self.inner
     }
 
     /// Mutable access to the underlying [`DecodeConfig`](crate::decode::DecodeConfig).
-    #[cfg(feature = "decoder")]
     pub fn inner_mut(&mut self) -> &mut crate::decode::DecodeConfig {
         &mut self.inner
     }
@@ -1035,7 +1030,6 @@ impl JpegDecoderConfig {
     ///
     /// Delegates to [`DecodeConfig::deblock()`](crate::decode::DecodeConfig::deblock).
     /// See [`DeblockMode`](crate::decode::DeblockMode) for available modes.
-    #[cfg(feature = "decoder")]
     #[must_use]
     pub fn deblock(mut self, mode: crate::decode::DeblockMode) -> Self {
         self.inner = self.inner.deblock(mode);
@@ -1185,7 +1179,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
-        #[cfg(feature = "decoder")]
         {
             // Check input size limits
             self.check_input_size(data)?;
@@ -1196,17 +1189,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             }
             Ok(image_info)
         }
-        #[cfg(not(feature = "decoder"))]
-        {
-            let _ = data;
-            Err(Error::unsupported_feature(
-                "decoder feature required for probing",
-            ))
-        }
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, Self::Error> {
-        #[cfg(feature = "decoder")]
         {
             self.check_input_size(data)?;
             let info = self.config.inner.read_info(data)?;
@@ -1235,11 +1220,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 
             Ok(out)
         }
-        #[cfg(not(feature = "decoder"))]
-        {
-            let _ = data;
-            Err(Error::unsupported_feature("decoder feature required"))
-        }
     }
 
     fn decoder(
@@ -1267,7 +1247,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, Self::Error> {
-        #[cfg(feature = "decoder")]
         {
             // Pre-cache the header so push_decoder_native can reuse it
             // instead of calling read_info() again.
@@ -1278,13 +1257,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             }
             push_decoder_native(self, data, sink, preferred)
         }
-        #[cfg(not(feature = "decoder"))]
-        {
-            let _ = (data, sink, preferred);
-            Err(Error::unsupported_feature(
-                "decoder feature required for push_decoder",
-            ))
-        }
     }
 
     fn streaming_decoder(
@@ -1292,7 +1264,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<Self::StreamDec, Self::Error> {
-        #[cfg(feature = "decoder")]
         {
             self.check_input_size(&data)?;
             let cfg = build_decode_config(
@@ -1330,13 +1301,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                 stop: self.stop,
             })
         }
-        #[cfg(not(feature = "decoder"))]
-        {
-            let _ = (data, preferred);
-            Err(Error::unsupported_feature(
-                "decoder feature required for streaming decode",
-            ))
-        }
     }
 
     fn animation_frame_decoder(
@@ -1362,7 +1326,6 @@ impl JpegDecodeJob {
     /// Check whether the decode policy allows progressive JPEGs.
     ///
     /// Returns an error if the image is progressive and the policy forbids it.
-    #[cfg(feature = "decoder")]
     fn check_progressive_policy(&self, mode: crate::types::JpegMode) -> Result<(), Error> {
         if let Some(ref policy) = self.policy {
             let is_progressive = matches!(
@@ -1385,7 +1348,6 @@ impl JpegDecodeJob {
 /// full-image allocation that `helpers::copy_decode_to_sink` requires.
 /// Peak memory is reduced from full image size to one MCU-row strip
 /// (typically 8 or 16 rows × width × bytes-per-pixel).
-#[cfg(feature = "decoder")]
 fn push_decoder_native<'a>(
     mut job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
@@ -1597,7 +1559,6 @@ fn push_decoder_native<'a>(
 
 /// Returns `Some(PixelFormat)` if the descriptor + component count are eligible
 /// for the direct decode-into-sink fast path; `None` otherwise.
-#[cfg(feature = "decoder")]
 fn direct_path_pixel_format(
     descriptor: PixelDescriptor,
     num_components: u8,
@@ -1620,7 +1581,6 @@ fn direct_path_pixel_format(
 
 /// Direct fast path: read header for dims, decode straight into the sink via
 /// `DecodeConfig::decode_into` (skips ScanlineReader's buffered_rgb intermediate).
-#[cfg(feature = "decoder")]
 fn push_decoder_direct<'a>(
     job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
@@ -1791,7 +1751,6 @@ fn push_decoder_direct<'a>(
 /// honors `CmykHandling::Passthrough`) and then forward the whole frame to
 /// the sink as a single strip. This gives up the streaming memory advantage
 /// but is the only way to emit raw CMYK today.
-#[cfg(feature = "decoder")]
 fn push_decoder_via_full_decode<'a>(
     job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
@@ -1846,7 +1805,6 @@ fn will_auto_orient(hint: zencodec::OrientationHint) -> bool {
 }
 
 /// Build a DecodeConfig with limit overrides and hints applied.
-#[cfg(feature = "decoder")]
 fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
@@ -1906,7 +1864,6 @@ fn build_decode_config(
 }
 
 /// Select the appropriate pixel descriptor for decode output.
-#[cfg(feature = "decoder")]
 fn select_decode_descriptor(preferred: &[PixelDescriptor], num_components: u8) -> PixelDescriptor {
     use zenpixels::{ChannelLayout, ChannelType};
 
@@ -1969,7 +1926,6 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
     type Error = Error;
 
     fn decode(self) -> Result<DecodeOutput, Error> {
-        #[cfg(feature = "decoder")]
         {
             use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
@@ -2222,15 +2178,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
 
             Ok(output)
         }
-
-        #[cfg(not(feature = "decoder"))]
-        {
-            Err(Error::unsupported_feature("decoder feature required"))
-        }
     }
 }
 
-#[cfg(all(feature = "decoder", feature = "ultrahdr"))]
+#[cfg(feature = "ultrahdr")]
 impl JpegDecoder<'_> {
     /// Dedicated `GainMapRender::ReconstructHdr` path: decode the SDR base,
     /// decode the MPF gain-map image, apply it at the requested headroom, and
@@ -2350,7 +2301,7 @@ impl JpegDecoder<'_> {
 /// Returns `Ok(None)` when the image carries no gain map (Components on a
 /// plain JPEG surfaces nothing); errors only when a gain map is present but
 /// malformed.
-#[cfg(all(feature = "decoder", feature = "ultrahdr"))]
+#[cfg(feature = "ultrahdr")]
 fn decode_gain_map_components(
     extras: &crate::decode::DecodedExtras,
 ) -> Result<Option<zencodec::decode::DecodedGainMap>, Error> {
@@ -2384,7 +2335,6 @@ fn decode_gain_map_components(
 /// Wraps zenjpeg's `ScanlineReader` to yield scanline batches via `next_batch()`.
 /// Each batch contains one MCU-row worth of decoded pixels (8 or 16 rows).
 pub struct JpegStreamingDecoder<'a> {
-    #[cfg(feature = "decoder")]
     reader: crate::decode::ScanlineReader<'a>,
     info: ImageInfo,
     descriptor: PixelDescriptor,
@@ -2396,15 +2346,12 @@ pub struct JpegStreamingDecoder<'a> {
     mcu_height: u32,
     /// Cooperative cancellation token.
     stop: Option<zencodec::StopToken>,
-    #[cfg(not(feature = "decoder"))]
-    _phantom: core::marker::PhantomData<&'a ()>,
 }
 
 impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
     type Error = Error;
 
     fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Error> {
-        #[cfg(feature = "decoder")]
         {
             use imgref::ImgRefMut;
             use zenpixels::{ChannelLayout, ChannelType};
@@ -2508,13 +2455,6 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
 
             Ok(Some((y, slice)))
         }
-
-        #[cfg(not(feature = "decoder"))]
-        {
-            Err(Error::unsupported_feature(
-                "decoder feature required for streaming decode",
-            ))
-        }
     }
 
     fn info(&self) -> &ImageInfo {
@@ -2525,7 +2465,6 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Convert JpegInfo to zc ImageInfo.
-#[cfg(feature = "decoder")]
 fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     let mut img_info = ImageInfo::new(
         info.dimensions.width,
@@ -2564,7 +2503,6 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
 }
 
 /// Build a [`SourceColor`] from a JPEG header for descriptor derivation.
-#[cfg(feature = "decoder")]
 fn source_color_from_header(info: &crate::decode::JpegInfo) -> zencodec::decode::SourceColor {
     let mut sc = zencodec::decode::SourceColor::default();
     if let Some(ref icc) = info.icc_profile {
@@ -2577,7 +2515,6 @@ fn source_color_from_header(info: &crate::decode::JpegInfo) -> zencodec::decode:
 ///
 /// Uses the shared zencodec utility to map source color metadata to a
 /// descriptor that accurately reflects the pixel data's color space.
-#[cfg(feature = "decoder")]
 #[allow(deprecated)] // IccMatchTolerance placebo param — see note on impl Decode::decode
 fn decode_descriptor(
     preferred: &[PixelDescriptor],
@@ -2598,7 +2535,6 @@ fn decode_descriptor(
 /// Populate [`ImageInfo`] metadata (ICC / EXIF + orientation / XMP / JFIF
 /// resolution) from decoded JPEG extras. Shared by the normal decode path and
 /// the Ultra HDR reconstruction path.
-#[cfg(feature = "decoder")]
 fn populate_info_from_jpeg_extras(
     mut info: ImageInfo,
     extras: &crate::decode::DecodedExtras,
@@ -2634,7 +2570,6 @@ fn populate_info_from_jpeg_extras(
 /// Convert JFIF density info to a zencodec [`Resolution`](zencodec::Resolution).
 ///
 /// Returns `None` for aspect-ratio-only density (unit = 0) or zero densities.
-#[cfg(feature = "decoder")]
 fn jfif_to_resolution(jfif: &crate::encode::extras::JfifInfo) -> Option<zencodec::Resolution> {
     use crate::encode::extras::DensityUnits;
     use zencodec::ResolutionUnit;
@@ -2790,7 +2725,6 @@ mod tests {
         assert_eq!(enc.generic_effort(), Some(2));
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn decode_roundtrip() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
@@ -2812,7 +2746,6 @@ mod tests {
         assert_eq!(output.info().format, ImageFormat::Jpeg);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn decode_zero_copy_rgb8() {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
@@ -2844,7 +2777,6 @@ mod tests {
         assert!(pixel_data.as_contiguous_bytes().is_some());
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn probe_info() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
@@ -2859,7 +2791,6 @@ mod tests {
         assert_eq!(info.format, ImageFormat::Jpeg);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn streaming_decode_roundtrip() {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
@@ -2896,7 +2827,6 @@ mod tests {
         assert_eq!(total_rows, 16);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn streaming_decode_batches_mcu_rows() {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
@@ -2935,7 +2865,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn streaming_decode_cow_owned() {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
@@ -2992,7 +2921,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn streaming_decode_cow_owned_is_effectively_static() {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
@@ -3189,7 +3117,6 @@ mod tests {
         assert!(caps.effort_range().is_some());
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn capabilities_decode() {
         use zencodec::decode::DecoderConfig;
@@ -3307,7 +3234,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn animation_frame_decoder_returns_unsupported() {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
@@ -3323,7 +3249,6 @@ mod tests {
     /// Previously, the f32-to-u8 conversion used `bytemuck::cast_vec::<f32, u8>()`
     /// which requires identical alignment (f32=4, u8=1 — always panics with
     /// AlignmentMismatch).
-    #[cfg(feature = "decoder")]
     #[test]
     fn decode_with_full_descriptor_list_no_alignment_panic() {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
@@ -3357,7 +3282,6 @@ mod tests {
         assert_eq!(output.info().height, 8);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn encode_from_pull_basic() {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};

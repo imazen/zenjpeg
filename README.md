@@ -26,13 +26,6 @@ let jpeg: Vec<u8> = config.encode(&rgb_pixels, width, height)?;
 
 ### Decode
 
-Requires the `decoder` feature:
-
-```toml
-[dependencies]
-zenjpeg = { version = "0.6", features = ["decoder"] }
-```
-
 ```rust,ignore
 use zenjpeg::decoder::{Decoder, DecodeResult};
 
@@ -174,7 +167,7 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 
 ## Decoder features
 
-The decoder API is in prerelease. Enable with `features = ["decoder"]`.
+The decoder API is in prerelease (always compiled; breaking changes expected).
 
 - **Streaming decode** -- single-pass for baseline, multi-pass for
   progressive
@@ -211,17 +204,11 @@ The decoder API is in prerelease. Enable with `features = ["decoder"]`.
 ### Common configurations
 
 ```toml
-# Encode only (default features)
+# Encode + decode (default)
 zenjpeg = "0.8"
 
-# Decode + encode
-zenjpeg = { version = "0.6", features = ["decoder"] }
-
 # Server workload (parallel encode + decode)
-zenjpeg = { version = "0.6", features = ["decoder", "parallel"] }
-
-# Minimal (no trellis, no SharpYUV)
-zenjpeg = { version = "0.6", default-features = false }
+zenjpeg = { version = "0.8", features = ["parallel"] }
 
 # UltraHDR
 zenjpeg = { version = "0.6", features = ["ultrahdr"] }
@@ -236,8 +223,7 @@ map data, and ICC profiles.
 
 ## Lossless transforms
 
-With `features = ["decoder"]`, DCT-domain rotate/flip operations are
-available with zero generation loss. The `layout` feature adds a
+DCT-domain rotate/flip operations are available with zero generation loss. The `layout` feature adds a
 decode-resize-encode pipeline integrating `zenlayout` and `zenresize`.
 
 ## SIMD and platform support

@@ -1562,15 +1562,16 @@ use butteraugli::compute_butteraugli;
 
 ```toml
 [features]
-default = ["decoder"]
+default = []
 trellis = []              # DEPRECATED no-op: trellis is always compiled (data-gated at runtime)
-decoder = []              # Enable decoder (prerelease, API will change)
+decoder = []              # DEPRECATED no-op: decoder is always compiled (2026-06-11)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
-boundary-rd = ["decoder"] # Boundary-continuity refinement (#91 / PR #102, opt-in).
+boundary-rd = []          # Boundary-continuity refinement (#91 / PR #102, opt-in).
 moxcms = ["dep:moxcms"]   # Color management (pure-Rust, SIMD). Required for XYB + .correct_color()
-ultrahdr = ["dep:ultrahdr-core", "decoder"]  # UltraHDR HDR gain map support
-layout = ["decoder", "dep:zenlayout", "dep:zenresize"]  # Layout pipeline (geometry + resize)
-zencodec = ["decoder"]    # zencodec trait impls
+ultrahdr = [...]          # UltraHDR HDR gain map support
+layout = ["dep:zenresize"]  # Layout pipeline (geometry + resize)
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]  # zencodec trait impls + ICC synth
+cms = []                  # DEPRECATED no-op: icc-db synthesis always on with zencodec (2026-06-11)
 __ffi-tests = []          # C++ parity tests (requires C++ jpegli submodule + toolchain)
 __corpus-tests = []       # Corpus comparison tests
 __test-utils = []         # Testing utilities
@@ -1590,8 +1591,9 @@ produces bit-for-bit identical output to pre-boundary-RD `origin/main`
 evolvable — coefficient (#94, #103) drives parameter-space exploration
 with GPU-backed metrics behind this flag.
 
-**Decoder:** The decoder API is in prerelease. Enable with `features = ["decoder"]`.
-API will have breaking changes.
+**Decoder:** The decoder API is in prerelease (always compiled — the old
+`decoder` flag is a no-op). API will have breaking changes. Historical
+`--features decoder` invocations in this file still work (no-op).
 
 **SIMD:** archmage + magetypes are mandatory dependencies (token-based safe intrinsics).
 `wide` crate provides portable fallback. On x86_64, archmage dispatches to AVX2/FMA/AVX-512

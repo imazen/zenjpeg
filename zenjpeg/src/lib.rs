@@ -100,10 +100,10 @@
 //!
 //! ## Decoder API
 //!
-//! The decoder is in prerelease. Enable with `features = ["decoder"]`.
+//! The decoder is in prerelease (always compiled; the API will have
+//! breaking changes).
 //!
 //! ```rust,ignore
-//! #[cfg(feature = "decoder")]
 //! use zenjpeg::decoder::{Decoder, DecodedImage};
 //!
 //! let image = Decoder::new().decode(&jpeg_data)?;
@@ -114,7 +114,7 @@
 //!
 //! | Feature | Default | Description | When to Use |
 //! |---------|---------|-------------|-------------|
-//! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
+//! | `decoder` | — | Deprecated no-op (the decoder is always compiled) | Kept so `zenjpeg/decoder` doesn't break downstream |
 //! | `std` | — | Legacy (std is always required) | Kept so `zenjpeg/std` doesn't break downstream |
 //! | `moxcms` | ❌ No | ICC color management via moxcms (pure Rust) | Color-managed decode pipelines |
 //! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
@@ -126,19 +126,13 @@
 //!
 //! ```toml
 //! # Decode + encode (most common)
-//! zenjpeg = { version = "0.6", features = ["decoder"] }
-//!
-//! # Encode only (default)
-//! zenjpeg = "0.6"
+//! zenjpeg = "0.8"
 //!
 //! # High-performance server
-//! zenjpeg = { version = "0.6", features = ["decoder", "parallel"] }
-//!
-//! # Minimal (encode only, no CMS)
-//! zenjpeg = { version = "0.6", default-features = false }
+//! zenjpeg = { version = "0.8", features = ["parallel"] }
 //!
 //! # UltraHDR support
-//! zenjpeg = { version = "0.6", features = ["decoder", "ultrahdr"] }
+//! zenjpeg = { version = "0.8", features = ["ultrahdr"] }
 //! ```
 //!
 //! ## Capabilities
@@ -197,56 +191,7 @@ pub mod detect;
 /// Contains: `Decoder`, `DecodeResult`, `Error`, `Result`, etc.
 ///
 /// **Note:** The decoder is in prerelease and the API will have breaking changes.
-/// Enable with the `decoder` feature flag:
-///
-/// ```toml
-/// [dependencies]
-/// zenjpeg = { version = "0.6", features = ["decoder"] }
-/// ```
-#[cfg(feature = "decoder")]
 pub mod decoder;
-
-/// Decoder module is behind a feature flag.
-///
-/// Enable the decoder with:
-/// ```toml
-/// [dependencies]
-/// zenjpeg = { version = "0.6", features = ["decoder"] }
-/// ```
-///
-/// See the [decoder module documentation](decoder/index.html) for usage examples.
-#[cfg(not(feature = "decoder"))]
-pub mod decoder {
-    /// The decoder module requires the `decoder` feature flag.
-    ///
-    /// # How to enable
-    ///
-    /// Add to your `Cargo.toml`:
-    /// ```toml
-    /// [dependencies]
-    /// zenjpeg = { version = "0.6", features = ["decoder"] }
-    /// ```
-    ///
-    /// # What you'll get
-    ///
-    /// - `Decoder` - Main decoder configuration and execution
-    /// - `DecodeResult` - Unified decode output (u8 or f32)
-    /// - `ScanlineReader` - Streaming row-by-row decoding
-    /// - `UltraHdrReader` - HDR gain map decoding
-    /// - `JpegInfo` - Header metadata extraction
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use zenjpeg::decoder::Decoder;
-    /// use enough::Unstoppable;
-    ///
-    /// let result = Decoder::new().decode(&jpeg_data, Unstoppable)?;
-    /// let pixels = result.pixels_u8().expect("u8 output");
-    /// ```
-    #[doc(hidden)]
-    pub struct DecoderRequiresFeatureFlag;
-}
 
 /// UltraHDR support - HDR gain map encoding and decoding.
 ///
@@ -282,9 +227,9 @@ pub mod encode;
 pub(crate) mod encode;
 
 // Internal decoder implementation
-#[cfg(all(feature = "decoder", feature = "__test-utils"))]
+#[cfg(feature = "__test-utils")]
 pub mod decode;
-#[cfg(all(feature = "decoder", not(feature = "__test-utils")))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod decode;
 
 // Internal shared error type (encoder/decoder have their own public errors)
@@ -329,12 +274,10 @@ pub(crate) mod types;
 #[cfg(feature = "__test-utils")]
 pub mod test_utils;
 
-// Post-decode deblocking filters (requires decoder for coefficient access)
-#[cfg(feature = "decoder")]
+// Post-decode deblocking filters
 pub mod deblock;
 
-// Lossless JPEG transforms (requires decoder for coefficient access)
-#[cfg(feature = "decoder")]
+// Lossless JPEG transforms
 pub mod lossless;
 
 // Layout pipeline: lossless transforms + lossy decode→resize→encode

@@ -619,7 +619,6 @@ impl ComputedConfig {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_restart_marker_overhead_progressive() {
         use crate::encode::encoder_config::EncoderConfig;
         use crate::encode::encoder_types::ChromaSubsampling;

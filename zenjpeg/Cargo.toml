@@ -174,8 +174,12 @@ zensim = { workspace = true, features = ["classification"] }
 image = "0.25"
 
 [features]
-default = ["decoder"]
-# Enable the decoder API.
+default = []
+# DEPRECATED no-op: the decoder is always compiled. The flag gated encoder
+# features that need decode roundtrips (target-zq's re-decode loop,
+# boundary-rd's candidate IDCTs, recompress) and split the build for no
+# real size win. Kept as an empty feature so existing
+# `features = ["decoder"]` lines keep resolving.
 decoder = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
@@ -189,9 +193,7 @@ trellis = []
 # default `EncoderConfig` produces byte-identical output to a feature-off build.
 # The knob set and defaults are evolvable — coefficient (#94, #103) will use this
 # feature for broader parameter-space exploration with GPU-backed metrics.
-# Requires `decoder` because the refinement IDCTs candidate blocks through the
-# decode path.
-boundary-rd = ["decoder"]
+boundary-rd = []
 # Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
 moxcms = ["dep:moxcms"]
 # ── Internal / dev-only features (prefixed with __ to signal "don't use") ──
@@ -248,7 +250,7 @@ __picker-research = ["dep:zenpredict", "zenpredict/advanced", "zenanalyze/hdr"]
 # + zenjpeg::container::xmp; types fold to zenpixels (PixelFormat,
 # ColorPrimaries, TransferFunction, PixelBuffer).
 # `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
-ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
+ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
 # zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
 # path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
@@ -261,7 +263,7 @@ ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half",
 # 0.2.13 ships icc-db in its defaults, so any default-features consumer
 # anywhere in a build graph flipped the capability on regardless of zenjpeg's
 # flag.
-zencodec = ["decoder", "dep:zenpixels-convert", "zenpixels-convert/icc-db"]
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]
 # DEPRECATED no-op: icc-db synthesis is always enabled with `zencodec` (see
 # above). Kept so downstream `features = ["cms"]` lines keep resolving.
 cms = []
@@ -269,14 +271,14 @@ cms = []
 # encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
 # score target (issue #113). Pulls in `decoder` (for re-decoding each pass)
 # and the zensim crate (for the perceptual metric).
-target-zq = ["decoder", "dep:zensim"]
+target-zq = ["dep:zensim"]
 # JPEG→JPEG recompression to a target zensim Profile A quality with no size
 # regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
 # core router/strategies/calibration need only the decoder — no heavy deps,
 # so enabling this barely moves compile time. The closed-loop IQA refinement
 # (`Budget::MaxIterations` > 1 / `MaxTime`) needs the perceptual metric, so it
 # is split into `recompress-iqa` (pulls `zensim`, like `target-zq`).
-recompress = ["decoder"]
+recompress = []
 # Closed-loop measurement for `recompress` (generation loss vs source).
 recompress-iqa = ["recompress", "dep:zensim"]
 # Expose `recompress::expert` (per-strategy entry points, calibration-table
@@ -286,7 +288,7 @@ recompress-expert = ["recompress"]
 # Geometry/constraint solving (FitMode) and EXIF-orientation bridge live in
 # zenresize itself; orientation group algebra comes from zenpixels (re-exported
 # via zenresize). No separate zenlayout dep needed.
-layout = ["decoder", "dep:zenresize"]
+layout = ["dep:zenresize"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
 # zennode = ["dep:zennode", "zencodec"]
 
@@ -297,7 +299,6 @@ harness = false
 [[bench]]
 name = "decode"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "cpp_comparison"
@@ -314,7 +315,6 @@ harness = false
 [[bench]]
 name = "color_convert"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "simd_blocks"
@@ -352,27 +352,24 @@ required-features = ["__test-utils"]
 [[bench]]
 name = "decode_compare"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "decode_zenbench"
 harness = false
-required-features = ["decoder", "zencodec"]
+required-features = ["zencodec"]
 
 [[bench]]
 name = "huffman_decode"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "decode_mozjpeg"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "wide_migration"
 harness = false
-required-features = ["decoder", "parallel"]
+required-features = ["parallel"]
 
 [[bench]]
 name = "encode_zenbench"
@@ -410,7 +407,7 @@ required-features = ["__expert"]
 
 [[example]]
 name = "sweep_validate"
-required-features = ["__expert", "decoder"]
+required-features = ["__expert"]
 
 [[example]]
 name = "zq_calibrate"
@@ -425,19 +422,19 @@ name = "rd_explore"
 
 [[example]]
 name = "rd_compare"
-required-features = ["decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 [[example]]
 name = "boundary_rd_low_q_sweep"
-required-features = ["decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 [[example]]
 name = "boundary_rd_perf_bench"
-required-features = ["decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 [[example]]
 name = "boundary_rd_callgrind"
-required-features = ["decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 # v0.3 picker held-out A/B harness (loads .bin externally; lives in
 # dev/ so the file isn't shipped as part of the public examples dir).
@@ -479,19 +476,15 @@ name = "hybrid_parameter_sweep"
 
 [[example]]
 name = "knobs_vs_jpegli"
-required-features = ["decoder"]
 
 [[example]]
 name = "mozjpeg_parity_regress"
-required-features = ["decoder"]
 
 [[example]]
 name = "mozjpeg_parity_tuning"
-required-features = ["decoder"]
 
 [[example]]
 name = "mozjpeg_quality_vs_original"
-required-features = ["decoder"]
 
 [[example]]
 name = "ssim2_pareto_sweep"
@@ -505,7 +498,7 @@ name = "xyb_cpp_comparison"
 # C++ comparison tools
 [[example]]
 name = "cpp_parity_matrix"
-required-features = ["decoder", "__test-utils", "moxcms"]
+required-features = ["__test-utils", "moxcms"]
 
 # Note: cpp_quality_comparison and quality_matrix were previously standalone
 # [[test]] entries with required-features. They now live under tests/bundled/ and
@@ -523,11 +516,10 @@ required-features = ["ultrahdr"]
 
 [[example]]
 name = "reencode_calibration"
-required-features = ["decoder"]
 
 [[example]]
 name = "bench_decode_matrix"
-required-features = ["parallel", "decoder"]
+required-features = ["parallel"]
 
 [[example]]
 name = "layout_cli"
@@ -535,7 +527,6 @@ required-features = ["layout"]
 
 [[example]]
 name = "deblock_harness"
-required-features = ["decoder"]
 
 # --- recompress module examples (moved from the zenjpeg-recompress crate) ---
 [[example]]

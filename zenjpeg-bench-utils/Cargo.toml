@@ -34,7 +34,7 @@ butteraugli = { workspace = true }
 
 # For test image discovery and encoding (decoder required for comparison utilities)
 # moxcms enables ICC profile support for XYB JPEG decoding
-zenjpeg = { path = "../zenjpeg", default-features = false, features = ["__test-utils", "decoder", "moxcms"] }
+zenjpeg = { path = "../zenjpeg", default-features = false, features = ["__test-utils", "moxcms"] }
 
 # C++ jpegli FFI bindings (optional)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }

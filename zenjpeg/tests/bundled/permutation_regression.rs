@@ -11,7 +11,7 @@
 //!
 //! Tracking: imazen/zenjpeg#29 — zen/all-the-images reproducible corpus.
 
-#![cfg(all(feature = "decoder", not(target_arch = "wasm32")))]
+#![cfg(not(target_arch = "wasm32"))]
 
 use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;

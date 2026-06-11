@@ -76,8 +76,8 @@ jobs:
       - name: Test (all user features)
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec" --lib --tests
 
-      - name: Test (no defaults, decoder only)
-        run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
+      - name: Test (no defaults, minimal)
+        run: cargo test -p zenjpeg --release --no-default-features --lib --tests
 
       - name: Test (__expert + all user features)
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
@@ -182,17 +182,17 @@ jobs:
           key: wasm32-wasip1
 
       - name: Build (scalar)
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features decoder
+        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features
 
       - name: Build (SIMD128)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features decoder
+        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features
 
       - name: Build wasm_bench example (SIMD128)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features --features decoder
+        run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features
 
   cpp-parity:
     name: C++ Parity (${{ matrix.os }})

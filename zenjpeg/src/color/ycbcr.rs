@@ -728,7 +728,6 @@ pub fn bgra_to_rgba(bgra: &[u8; 4]) -> [u8; 4] {
 /// Swaps R and B channels in-place for a packed RGB/BGR u8 buffer.
 ///
 /// The buffer length must be a multiple of 3.
-#[cfg(feature = "decoder")]
 pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
     debug_assert_eq!(data.len() % 3, 0);
     for pixel in data.chunks_exact_mut(3) {
@@ -739,7 +738,6 @@ pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
 /// Converts packed RGB u8 to packed RGBA u8 (alpha = 255).
 ///
 /// `src.len()` must be a multiple of 3 and `dst.len() >= src.len() / 3 * 4`.
-#[cfg(feature = "decoder")]
 pub fn rgb_u8_to_rgba_u8(src: &[u8], dst: &mut [u8]) {
     rgb_u8_to_xrgba_u8(src, dst, false);
 }
@@ -747,7 +745,6 @@ pub fn rgb_u8_to_rgba_u8(src: &[u8], dst: &mut [u8]) {
 /// Converts packed RGB u8 to packed BGRA u8 (alpha = 255, R/B swapped).
 ///
 /// `src.len()` must be a multiple of 3 and `dst.len() >= src.len() / 3 * 4`.
-#[cfg(feature = "decoder")]
 pub fn rgb_u8_to_bgra_u8(src: &[u8], dst: &mut [u8]) {
     rgb_u8_to_xrgba_u8(src, dst, true);
 }
@@ -755,7 +752,6 @@ pub fn rgb_u8_to_bgra_u8(src: &[u8], dst: &mut [u8]) {
 /// Shared RGB→RGBA/BGRA implementation with optional R/B swap.
 ///
 /// Delegates to `garb`'s SIMD kernels (AVX2 8 pixels/iter, NEON, WASM128, scalar).
-#[cfg(feature = "decoder")]
 pub fn rgb_u8_to_xrgba_u8(src: &[u8], dst: &mut [u8], swap_rb: bool) {
     debug_assert_eq!(src.len() % 3, 0);
     let npixels = src.len() / 3;
@@ -771,7 +767,6 @@ pub fn rgb_u8_to_xrgba_u8(src: &[u8], dst: &mut [u8], swap_rb: bool) {
 /// Converts packed RGB u8 to packed BGRX u8 (pad = 255, R/B swapped).
 ///
 /// Identical to [`rgb_u8_to_bgra_u8`] — the pad byte is set to 255.
-#[cfg(feature = "decoder")]
 #[inline]
 pub fn rgb_u8_to_bgrx_u8(src: &[u8], dst: &mut [u8]) {
     rgb_u8_to_bgra_u8(src, dst);
@@ -2970,7 +2965,6 @@ mod tests {
         assert_eq!(bgra_to_rgba(&[1, 2, 3, 4]), [3, 2, 1, 4]);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn test_rgb_u8_swap_rb_inplace() {
         let mut data = vec![10, 20, 30, 40, 50, 60]; // 2 pixels
@@ -2978,7 +2972,6 @@ mod tests {
         assert_eq!(data, [30, 20, 10, 60, 50, 40]);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn test_rgb_u8_to_rgba_u8() {
         let src = [10, 20, 30, 40, 50, 60]; // 2 pixels
@@ -2987,7 +2980,6 @@ mod tests {
         assert_eq!(dst, [10, 20, 30, 255, 40, 50, 60, 255]);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn test_rgb_u8_to_bgra_u8() {
         let src = [10, 20, 30, 40, 50, 60]; // 2 RGB pixels
@@ -2997,7 +2989,6 @@ mod tests {
         assert_eq!(dst, [30, 20, 10, 255, 60, 50, 40, 255]);
     }
 
-    #[cfg(feature = "decoder")]
     #[test]
     fn test_rgb_u8_to_bgrx_u8() {
         let src = [10, 20, 30];

@@ -2270,7 +2270,7 @@ impl DecodeConfig {
     ///
     /// Returns `Ok(bytes_written)` on success, `Err` if the streaming path
     /// fails internally (e.g., coefficient guard triggers).
-    #[cfg(all(feature = "decoder", feature = "zencodec"))]
+    #[cfg(feature = "zencodec")]
     pub(crate) fn decode_streaming_into(
         &self,
         data: &[u8],

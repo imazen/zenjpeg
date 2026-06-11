@@ -8,7 +8,7 @@
 //! - `PixelDescriptor` reflects source color metadata (not hardcoded sRGB)
 //! - `OutputInfo.orientation_applied` matches what was actually applied
 
-#![cfg(all(feature = "decoder", feature = "zencodec"))]
+#![cfg(feature = "zencodec")]
 
 use std::borrow::Cow;
 

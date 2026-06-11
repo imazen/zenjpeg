@@ -12,8 +12,6 @@
 //!
 //! Run: `cargo test --release --test restart_markers --features decoder`
 
-#![cfg(feature = "decoder")]
-
 use enough::Unstoppable;
 use zenjpeg::decode::Decoder;
 use zenjpeg::encode::EncoderConfig;

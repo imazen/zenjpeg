@@ -13,7 +13,7 @@
 //!
 //! NOTE: Node.js WASM may pass while browser WASM crashes - this is the bug.
 
-#![cfg(all(target_arch = "wasm32", feature = "decoder"))]
+#![cfg(target_arch = "wasm32")]
 
 use enough::Unstoppable;
 use wasm_bindgen_test::*;

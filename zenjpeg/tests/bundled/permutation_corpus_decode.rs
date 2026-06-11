@@ -21,7 +21,7 @@
 //!   ZENJPEG_PERM_LIMIT  max files to process (for smoke runs)
 //!   ZENJPEG_PERM_REPORT output TSV path (default: <out>/validation.tsv)
 
-#![cfg(all(feature = "decoder", not(target_arch = "wasm32")))]
+#![cfg(not(target_arch = "wasm32"))]
 
 use rayon::prelude::*;
 use std::fs::{self, File};

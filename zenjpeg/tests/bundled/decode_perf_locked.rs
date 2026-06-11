@@ -16,8 +16,6 @@
 //! zune-jpeg 0.5.12 silently corrupts progressive output with DRI, making
 //! cross-decoder comparisons invalid.
 
-#![cfg(feature = "decoder")]
-
 use enough::Unstoppable;
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},

@@ -152,16 +152,13 @@ wasm-magetypes:
 # Check all locally-resolvable feature permutations
 feature-check:
     cargo test -p zenjpeg --release --no-default-features --features std
-    cargo test -p zenjpeg --release --features decoder
-    cargo test -p zenjpeg --release --features "decoder,parallel"
-    cargo test -p zenjpeg --release --features "decoder,sharp-yuv"
-    cargo test -p zenjpeg --release --features "decoder"
-    cargo test -p zenjpeg --release --features "decoder,mozjpeg-tables"
-    cargo test -p zenjpeg --release --features "decoder,optimized-tables"
-    cargo test -p zenjpeg --release --features "decoder,parallel"
+    cargo test -p zenjpeg --release
+    cargo test -p zenjpeg --release --features parallel
     cargo check -p zenjpeg --no-default-features --features "std,zencodec"
     cargo check -p zenjpeg --no-default-features --features "std,ultrahdr"
     cargo check -p zenjpeg --no-default-features --features "std,layout"
+    cargo check -p zenjpeg --no-default-features --features "std,boundary-rd"
+    cargo check -p zenjpeg --no-default-features --features "std,recompress"
 
 # Cross-compile and test via QEMU user-mode emulation.
 # Strips jpegli-internals-sys (C++ FFI) from the workspace since it can't cross-compile,

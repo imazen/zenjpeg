@@ -993,7 +993,6 @@ mod cross_crate_tests {
 
 // ── Extended XMP round-trip tests ───────────────────────────────────────────
 
-#[cfg(feature = "decoder")]
 mod extended_xmp {
     use super::*;
     use enough::Unstoppable;

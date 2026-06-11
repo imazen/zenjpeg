@@ -6,6 +6,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- The decoder is always compiled; the `decoder` feature is a deprecated
+  no-op (kept so downstream `features = ["decoder"]` keeps resolving,
+  e.g. zenpipe/zencodecs). The flag gated encoder features that need
+  decode roundtrips — `target-zq`'s re-decode loop, `boundary-rd`'s
+  candidate IDCTs, `recompress` — and split the build for no real win.
+  ~74 cfg gates removed; `default` is now empty; `boundary-rd` /
+  `ultrahdr` / `zencodec` / `target-zq` / `recompress` / `layout` no
+  longer pull a `decoder` feature.
 - `zencodec` feature now always carries zenpixels-convert's `icc-db`
   (~36 KB bundled profile blob): CICP-described colors (incl PQ/HLG)
   always synthesize a real embedded ICC; only off-grid (reserved H.273)

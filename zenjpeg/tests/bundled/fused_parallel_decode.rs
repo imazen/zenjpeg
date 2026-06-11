@@ -8,7 +8,7 @@
 //! data via fused path (multi-thread rayon pool) and sequential path (1-thread
 //! pool where fused grouping produces < 4 segments, falling through to existing
 //! parallel which runs sequentially in 1 thread). Compare byte-for-byte.
-#![cfg(all(feature = "parallel", feature = "decoder"))]
+#![cfg(feature = "parallel")]
 
 use enough::Unstoppable;
 use zenjpeg::decode::{ChromaUpsampling, Decoder, ParallelStrategy};

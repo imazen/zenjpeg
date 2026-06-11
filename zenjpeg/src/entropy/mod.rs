@@ -12,16 +12,12 @@
 //! - Pre-computed category lookup table (4KB) for O(1) category lookup
 //! - Combined Huffman code + extra bits writes to reduce write_bits calls
 
-#[cfg(feature = "decoder")]
 pub mod arithmetic;
-#[cfg(feature = "decoder")]
 pub mod decoder;
 pub mod encoder;
 
 // Re-export main types
-#[cfg(feature = "decoder")]
 pub use arithmetic::ArithmeticDecoder;
-#[cfg(feature = "decoder")]
 pub use decoder::{EntropyDecoder, EntropyDecoderState};
 pub use encoder::EntropyEncoder;
 

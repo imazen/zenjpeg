@@ -2264,7 +2264,6 @@ mod tests {
 
     /// Decode streaming output and verify dimensions and pixel count.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_round_trip_decode() {
         let width = 128;
         let height = 128;
@@ -2287,7 +2286,6 @@ mod tests {
 
     /// Decode 4:2:0 streaming output and verify dimensions.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_420_round_trip_decode() {
         let width = 128;
         let height = 128;
@@ -2310,7 +2308,6 @@ mod tests {
 
     /// Decode streaming output with restart markers and verify it decodes correctly.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_restart_round_trip_decode() {
         let width = 128;
         let height = 128;
@@ -2334,7 +2331,6 @@ mod tests {
 
     /// Decode non-aligned streaming output with 4:2:0.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_non_aligned_420_round_trip() {
         let width = 100;
         let height = 75;
