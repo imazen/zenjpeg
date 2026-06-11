@@ -385,6 +385,48 @@ fn feature_columns() -> Vec<AnalysisFeature> {
     zenanalyze::feature::FeatureSet::SUPPORTED.iter().collect()
 }
 
+/// Whether an append-mode TSV needs its header written, refusing to
+/// proceed when an existing header doesn't match (#133).
+///
+/// Appending rows under a stale header silently scrambles the
+/// downstream `csv.DictReader` column mapping — picker training then
+/// succeeds on garbage. This bites whenever zenanalyze ships new
+/// `AnalysisFeature` variants between runs against the same output
+/// path, in both `--features-only` and sweep-resume modes. A
+/// header-equal file appends as before (legit resume); a missing or
+/// empty file gets a fresh header (an empty file previously collected
+/// headerless rows).
+fn tsv_needs_header(path: &std::path::Path, expected_header: &str) -> bool {
+    use std::io::BufRead;
+    let Ok(file) = std::fs::File::open(path) else {
+        return true; // missing → write header
+    };
+    let mut existing = String::new();
+    if std::io::BufReader::new(file)
+        .read_line(&mut existing)
+        .unwrap_or(0)
+        == 0
+    {
+        return true; // empty → write header
+    }
+    let existing = existing.trim_end_matches(['\r', '\n']);
+    if existing == expected_header {
+        return false; // schema matches → append rows, no header
+    }
+    eprintln!(
+        "ERROR: {} was written for a different schema (existing header: {} cols, \
+         current: {} cols).",
+        path.display(),
+        existing.split('\t').count(),
+        expected_header.split('\t').count(),
+    );
+    eprintln!(
+        "Appending would silently scramble downstream column mapping (#133). \
+         Re-run with a fresh output path or remove the file."
+    );
+    std::process::exit(1);
+}
+
 fn feature_value_str(
     analysis: &zenanalyze::feature::AnalysisResults,
     f: AnalysisFeature,
@@ -457,39 +499,40 @@ fn main() {
     let main_file: Option<Mutex<std::fs::File>> = if args.features_only {
         None
     } else {
-        let main_is_new = !args.output.exists();
+        const MAIN_HEADER: &str = "image_path\tsize_class\twidth\theight\tconfig_id\tconfig_name\tq\tbytes\tzensim\tencode_ms\ttotal_ms";
+        let main_needs_header = tsv_needs_header(&args.output, MAIN_HEADER);
         let main_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&args.output)
             .expect("open output");
         let main_file = Mutex::new(main_file);
-        if main_is_new {
+        if main_needs_header {
             let mut f = main_file.lock().unwrap();
-            writeln!(
-                f,
-                "image_path\tsize_class\twidth\theight\tconfig_id\tconfig_name\tq\tbytes\tzensim\tencode_ms\ttotal_ms"
-            )
-            .ok();
+            writeln!(f, "{MAIN_HEADER}").ok();
         }
         Some(main_file)
     };
 
-    let feat_is_new = !args.features_output.exists();
+    let cols = feature_columns();
+    let feat_header = {
+        let mut h = String::from("image_path\tsize_class\twidth\theight");
+        for c in &cols {
+            h.push_str("\tfeat_");
+            h.push_str(c.name());
+        }
+        h
+    };
+    let feat_needs_header = tsv_needs_header(&args.features_output, &feat_header);
     let feat_file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&args.features_output)
         .expect("open features output");
     let feat_file = Mutex::new(feat_file);
-    let cols = feature_columns();
-    if feat_is_new {
+    if feat_needs_header {
         let mut f = feat_file.lock().unwrap();
-        write!(f, "image_path\tsize_class\twidth\theight").ok();
-        for c in &cols {
-            write!(f, "\tfeat_{}", c.name()).ok();
-        }
-        writeln!(f).ok();
+        writeln!(f, "{feat_header}").ok();
     }
 
     // Build the work units. We unwrap (image, size) up-front (to avoid
