@@ -550,8 +550,9 @@ that, per codec:
 `VARIANT_GENERATION` adoption doc in that repo for current state rather
 than trusting this snapshot. zenavif's adoption landed 2026-06-10/11 —
 audit, findings, and run evidence in zenavif `docs/VARIANT_GENERATION.md`;
-its remaining opens are the pattern-7 id grammar/parser and the step-8
-executor wiring.)
+its pattern-7 id grammar/parser landed 2026-06-11 (zenavif a5a564f1 —
+the totality test caught a tokenizer bug on its first run); the only
+remaining open is the step-8 executor wiring.)
 
 **Consumers — two execution models, one identity.** zenmetrics executes
 plans through both of its scheduling models, and the difference matters:
