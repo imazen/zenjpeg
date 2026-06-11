@@ -325,6 +325,32 @@ zenavif harness or audit, all three invisible to code reading:
   path). Same shape for animation-only, HDR-only, ICC-conditional
   knobs.
 
+Three more lies from the zenjxl adoption (2026-06-11):
+
+- **The build-feature-dead knob.** A knob can act only inside code the
+  cargo-feature set compiles out: jxl-encoder's `lossy_search_seeds`
+  acts inside the butteraugli quality loop, which the default
+  `__expert` build does not include — curating it is a guaranteed
+  inert step. Liveness discrimination extends to the build config:
+  curated axes are a function of the feature set, and the provenance
+  table says which features a probe needs.
+- **The quantization-flattened knob.** A continuous knob can be
+  consumed through a quantizer that collapses whole ranges:
+  jxl-encoder's tree-sample fraction becomes a pixel stride via
+  `ceil(1/f)`, so every override in (0.5, 1.0) is byte-identical to
+  0.5 — the e7→e9 schedule ramp (0.5→0.65) was a no-op, and so was
+  the probe. Curated steps must land on distinct *effective* values;
+  the provenance table records the quantization function, not just
+  the bound.
+- **The deliberately-dropped knob.** A knob can be plumbed
+  config → options → call site and then discarded at the sink for an
+  architectural reason documented only in a code comment
+  (jxl-encoder's lossless multi-group writer drops lz77/lz77_method:
+  the global ANS code would mismatch per-group sections' histograms).
+  The effort schedule above it is aspirational; the setter docs must
+  say so, and the axis stays out until the architecture supports it
+  (jxl-encoder#69).
+
 Also in this family: **backend selection is a knob.** Selecting a
 backend the build doesn't contain must fail `validate()` — zenavif's
 svtav1 request silently fell back to zenravif, i.e. the config asked
@@ -382,6 +408,82 @@ deep-recursion engines (AV1 partition RDO) overflow rayon's default
 2 MB worker stacks; any harness or executor running encodes inside a
 rayon pool needs `stack_size(32 MB)`.
 
+## The format-encoder patterns (zenjxl adoption, 2026-06-10/11)
+
+zenjxl wraps an in-org *format encoder* (jxl-encoder), where the
+output is a bitstream other implementations must decode. That adds
+failure modes a metric-scored sweep can't see, and two of them shipped
+as real encoder bugs the harness caught on its first day
+(jxl-encoder#68, both fixed same-day upstream).
+
+### 14. The harness must decode what it encodes
+
+Bytes + metric scores are not enough: **hash-locks pin bytes, not
+decodability**, so an encoder suite can stay green while emitting
+streams no decoder accepts. The harness decode-verifies every cell —
+and for lossless cells the decoded pixels must equal the input
+**exactly** (the zero-tolerance rule as a hard gate). That gate found
+both #68 causes: e9+ lossless streams that zenjxl-decoder, jxl-oxide
+AND djxl all rejected.
+
+Two sub-rules earned scars:
+
+- **Internal consistency is not correctness.** Both bugs had the
+  encoder's gather, apply, and section-writer all agreeing with each
+  other and all diverging from the spec (ad-hoc `group_id` stream
+  numbering vs the decoder's ModularStreamId; a property record
+  truncated identically everywhere the encoder looked). No amount of
+  encoder-side cross-checking detects that class — only independent
+  decoders do. Arbitrate with at least the in-org decoder plus one
+  external (jxl-oxide / djxl); unanimous rejection means the
+  bitstream is wrong, not the decoders.
+- **Decoder fixes don't excuse the encoder.** Before blaming a
+  decoder version, re-verify against the *latest* of all of them —
+  but when current decoders are unanimous, stop looking for decoder
+  bugs (the "should have landed already" hope cost one detour).
+
+### 15. Verify fixes on every content class that failed
+
+The two #68 causes presented identically (same `SectionTooShort`,
+same e9+-only, same size gate) and were independent. The first fix
+was verified on the noise repro and declared done; the harness re-run
+exposed photo cells still red — their encodes were **byte-identical
+before/after the fix**, the tell that their trees never hit the fixed
+path. Rules:
+
+- A fix is verified when **every cell that failed now passes**, not
+  when one repro does. Byte-identical-pre/post on a still-failing
+  input means a second cause, not a deeper version of the first.
+- **Regression tests must be proven to bite**: flip the fix off and
+  watch the test fail before committing it (the group-distinct
+  synthetic was checked both ways). A regression test that never
+  failed anything is decoration.
+- **The corpus must cross the format's partition topology.** 256² and
+  512² differ by *code path*, not just pixel count, for any sectioned
+  format (one vs four modular groups — both #68 causes were
+  structurally invisible on single-group images: one made the
+  group_id property constant, the other needed a multi-section walk).
+  Pattern 13's small-crop advice has a sharp edge here: crops sized
+  inside one section would have hidden both bugs. Include at least
+  one image per side of every section/tile/group boundary the format
+  has.
+
+### 16. Bisect rule-outs need plumb-checks
+
+Ruling a knob out by toggling it is only valid if the toggle
+*reaches the encoder*: jxl-encoder's `with_lz77_method` no-ops on the
+lossless path, so "e9+Greedy still fails ⇒ lz77 isn't the culprit"
+was a void inference (it also produced byte-identical output — the
+tell, again). Every bisect arm carries a **bytes-differ assertion**
+against the baseline; an arm that didn't change bytes ruled out
+nothing. Same discipline as pattern 4's encode-proven exclusions,
+pointed at debugging instead of fingerprints. When the public surface
+can't express an arm (unconsumed setter, profile-internal field),
+flip it in source behind a temp marker and revert — and when a
+field-by-field profile diff is available, *enumerate the delta set
+first* instead of bisecting from memory (the e8→e9 diff dump turned
+an open-ended hunt into seven candidates).
+
 ## Where each piece lives
 
 Four layers, one compact deterministic spec flowing down. Getting a
@@ -438,11 +540,11 @@ that, per codec:
 | Pattern | zenwebp | zenjxl | zenavif | zenpng |
 |---|---|---|---|---|
 | Variant-scoped knobs + validate() | segments/partitions config | **landed** (noise×lossless rejection et al., 2026-06-11) | **landed** (backend/420×RGB/420×16-bit rejections; no-op spellings made untypeable, 2026-06-10/11) | filter/zopfli knobs |
-| Dominance cases | always-on optimized entropy | — audit in flight | **landed** — container metadata is the dominance class; full audit in its doc | palette-when-fewer-colors checks |
-| Exact trials (pixel-invariant) | lossless: trial entropy backends | modular: trial MA-tree configs at fixed quantization? (audit which stages are pixel-invariant) | **confirmed none** — single-invocation engine + fixed container layout; the predicted empty trial class held | **filter-per-row is already exact**; trial zopfli iterations under a byte gate |
+| Dominance cases | always-on optimized entropy | **landed** — container Auto is the only dominance case; audit in its doc | **landed** — container metadata is the dominance class; full audit in its doc | palette-when-fewer-colors checks |
+| Exact trials (pixel-invariant) | lossless: trial entropy backends | **audited** — whole lossless knob space + lossy entropy-stage knobs (use_ans / histogram strategy / clustering) are trial-class; exact trials belong upstream where state can be shared | **confirmed none** — single-invocation engine + fixed container layout; the predicted empty trial class held | **filter-per-row is already exact**; trial zopfli iterations under a byte gate |
 | resolve_plan() introspection | yes — port shape directly | **landed** (`__expert`, 2026-06-11) | **landed** (`PlanInput → EncodePlan`; engine mirrors pinned by encode, pattern 8) | yes |
-| Fingerprint dedup | yes — resolved segment params | in flight | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | yes |
-| Sweep planner + validation harness | port `encode::sweep` shape | **harness landed**, evidence-driven axes corrections | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | port |
+| Fingerprint dedup | yes — resolved segment params | **landed** (calibration-plateau q≤20 merges; exclusions encode-proven) | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | yes |
+| Sweep planner + validation harness | port `encode::sweep` shape | **landed** — mode-discriminated planner + harness with decode/roundtrip gates (caught jxl-encoder#68 ×2 + #69; patterns 14–16) | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | port |
 
 (zenjxl adoption is an active parallel effort — see its own
 `VARIANT_GENERATION` adoption doc in that repo for current state rather
