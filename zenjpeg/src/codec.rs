@@ -2515,7 +2515,6 @@ fn source_color_from_header(info: &crate::decode::JpegInfo) -> zencodec::decode:
 ///
 /// Uses the shared zencodec utility to map source color metadata to a
 /// descriptor that accurately reflects the pixel data's color space.
-#[allow(deprecated)] // IccMatchTolerance placebo param — see note on impl Decode::decode
 fn decode_descriptor(
     preferred: &[PixelDescriptor],
     header: &crate::decode::JpegInfo,
