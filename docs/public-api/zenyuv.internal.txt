@@ -1,0 +1,27 @@
+# zenyuv public API — doc(hidden) items and excluded-feature surface
+# excluded features: (none)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   inherent methods                            2
+#   trait roster entries (type × trait)         3
+#
+# per-module pub lines:
+#   (root)                            2
+
+## items (2 lines)
+
+pub fn Matrix::assert_fields_are_eq(&self)
+pub fn Range::assert_fields_are_eq(&self)
+
+## trait impls (3 types)
+
+Matrix: TrivialClone
+Range: TrivialClone
+sharp::SharpYuvConfig: TrivialClone

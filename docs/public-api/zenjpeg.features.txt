@@ -1,0 +1,466 @@
+# zenjpeg public API — additions from non-default features
+# features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 4
+#   pub types (struct/enum/trait/alias)        52
+#   pub consts/statics                          4
+#   free functions                             32
+#   inherent methods                          108
+#   struct fields                              70
+#   enum variants                              78
+#   re-exports                                 25
+#   trait roster entries (type × trait)       171
+#   auto-trait-complete types                  39
+#   auto-trait exceptions                       7
+#
+# per-module pub lines:
+#   (root)                           37
+#   decoder                           3
+#   encoder                          40
+#   layout                           67
+#   recompress                      154
+#   ultrahdr                         72
+
+## items (373 lines)
+
+pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<decoder::TargetColorSpace>) -> Self
+pub fn decoder::DecodeConfig::ultrahdr_reader<'a>(&self, &'a [u8], ultrahdr::UltraHdrReaderConfig) -> encoder::Result<ultrahdr::UltraHdrReader<'a>>
+pub fn decoder::ScanlineReader<'a>::gain_map_jpeg(&self) -> core::option::Option<&[u8]>
+#[non_exhaustive] pub enum encoder::BoundaryRd
+pub encoder::BoundaryRd::Off
+pub encoder::BoundaryRd::On(encoder::BoundaryRdConfig)
+#[non_exhaustive] pub enum encoder::NeighborScope
+pub encoder::NeighborScope::LeftAndAbove
+pub encoder::NeighborScope::LeftOnly
+pub const fn encoder::NeighborScope::includes_above(self) -> bool
+#[non_exhaustive] pub enum encoder::ParallelEncoding
+pub encoder::ParallelEncoding::Auto
+#[non_exhaustive] pub struct encoder::BoundaryRdConfig
+pub fn encoder::BoundaryRdConfig::neighbors(&self) -> encoder::NeighborScope
+pub fn encoder::BoundaryRdConfig::new() -> Self
+pub fn encoder::BoundaryRdConfig::retry(&self) -> encoder::RetryPolicy
+pub fn encoder::BoundaryRdConfig::seam(&self) -> encoder::SeamPenalty
+pub fn encoder::BoundaryRdConfig::with_above(self, bool) -> Self
+pub fn encoder::BoundaryRdConfig::with_alpha(self, f32) -> Self
+pub fn encoder::BoundaryRdConfig::with_max_retries(self, u8) -> Self
+pub fn encoder::BoundaryRdConfig::with_neighbors(self, encoder::NeighborScope) -> Self
+pub fn encoder::BoundaryRdConfig::with_retry(self, encoder::RetryPolicy) -> Self
+pub fn encoder::BoundaryRdConfig::with_seam(self, encoder::SeamPenalty) -> Self
+pub fn encoder::BoundaryRdConfig::with_shrink(self, f32) -> Self
+pub fn encoder::BoundaryRdConfig::with_threshold(self, f32) -> Self
+pub fn encoder::EncoderConfig::boundary_rd(self, encoder::BoundaryRd) -> Self
+pub fn encoder::EncoderConfig::encode_bytes_parallel(&self, &[u8], u32, u32) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::EncoderConfig::parallel(self, encoder::ParallelEncoding) -> Self
+#[non_exhaustive] pub struct encoder::RetryPolicy
+pub fn encoder::RetryPolicy::max_retries(&self) -> u8
+pub fn encoder::RetryPolicy::new() -> Self
+pub fn encoder::RetryPolicy::shrink(&self) -> f32
+pub fn encoder::RetryPolicy::with_max_retries(self, u8) -> Self
+pub fn encoder::RetryPolicy::with_shrink(self, f32) -> Self
+#[non_exhaustive] pub struct encoder::SeamPenalty
+pub fn encoder::SeamPenalty::alpha(&self) -> f32
+pub fn encoder::SeamPenalty::drift_gain(&self) -> f32
+pub fn encoder::SeamPenalty::new() -> Self
+pub fn encoder::SeamPenalty::retry_beta(&self) -> f32
+pub fn encoder::SeamPenalty::threshold(&self) -> f32
+pub fn encoder::SeamPenalty::with_alpha(self, f32) -> Self
+pub fn encoder::SeamPenalty::with_drift_gain(self, f32) -> Self
+pub fn encoder::SeamPenalty::with_retry_beta(self, f32) -> Self
+pub fn encoder::SeamPenalty::with_threshold(self, f32) -> Self
+pub mod layout
+pub use layout::Filter
+pub use layout::FitMode
+pub use layout::Orientation
+pub enum layout::Command
+pub layout::Command::AutoOrient(u8)
+pub layout::Command::Crop
+pub layout::Command::Crop::h: u32
+pub layout::Command::Crop::w: u32
+pub layout::Command::Crop::x: u32
+pub layout::Command::Crop::y: u32
+pub layout::Command::Fit
+pub layout::Command::Fit::h: u32
+pub layout::Command::Fit::mode: zenresize::fit::FitMode
+pub layout::Command::Fit::w: u32
+pub layout::Command::Flip(layout::FlipAxis)
+pub layout::Command::Rotate(layout::Rotation)
+pub enum layout::EdgeHandling
+pub layout::EdgeHandling::RejectPartialBlocks
+pub layout::EdgeHandling::TrimPartialBlocks
+pub enum layout::FlipAxis
+pub layout::FlipAxis::Horizontal
+pub layout::FlipAxis::Vertical
+pub enum layout::LayoutCommand
+pub layout::LayoutCommand::AutoOrient(u8)
+pub layout::LayoutCommand::Crop
+pub layout::LayoutCommand::Crop::h: u32
+pub layout::LayoutCommand::Crop::w: u32
+pub layout::LayoutCommand::Crop::x: u32
+pub layout::LayoutCommand::Crop::y: u32
+pub layout::LayoutCommand::Fit
+pub layout::LayoutCommand::Fit::h: u32
+pub layout::LayoutCommand::Fit::mode: zenresize::fit::FitMode
+pub layout::LayoutCommand::Fit::w: u32
+pub layout::LayoutCommand::Flip(layout::FlipAxis)
+pub layout::LayoutCommand::Rotate(layout::Rotation)
+pub enum layout::Rotation
+pub layout::Rotation::Rotate180
+pub layout::Rotation::Rotate270
+pub layout::Rotation::Rotate90
+pub struct layout::LayoutConfig
+pub fn layout::LayoutConfig::new(impl core::convert::Into<f32>) -> Self
+pub fn layout::LayoutConfig::request<'a>(&'a self, &'a [u8]) -> layout::LayoutRequest<'a>
+pub fn layout::LayoutConfig::with_auto_optimize(self, bool) -> Self
+pub fn layout::LayoutConfig::with_edge_handling(self, lossless::EdgeHandling) -> Self
+pub fn layout::LayoutConfig::with_fancy_upsampling(self, bool) -> Self
+pub fn layout::LayoutConfig::with_filter(self, zenresize::filter::Filter) -> Self
+pub fn layout::LayoutConfig::with_progressive(self, bool) -> Self
+pub fn layout::LayoutConfig::with_subsampling(self, encoder::ChromaSubsampling) -> Self
+pub struct layout::LayoutRequest<'a>
+pub fn layout::LayoutRequest<'a>::auto_orient(self, u8) -> Self
+pub fn layout::LayoutRequest<'a>::command(self, layout::Command) -> Self
+pub fn layout::LayoutRequest<'a>::crop(self, u32, u32, u32, u32) -> Self
+pub fn layout::LayoutRequest<'a>::execute(self, &dyn enough::Stop) -> encoder::Result<layout::LayoutResult>
+pub fn layout::LayoutRequest<'a>::fit(self, u32, u32) -> Self
+pub fn layout::LayoutRequest<'a>::fit_crop(self, u32, u32) -> Self
+pub fn layout::LayoutRequest<'a>::flip_h(self) -> Self
+pub fn layout::LayoutRequest<'a>::flip_v(self) -> Self
+pub fn layout::LayoutRequest<'a>::optimize_for_decode(self) -> Self
+pub fn layout::LayoutRequest<'a>::rotate_180(self) -> Self
+pub fn layout::LayoutRequest<'a>::rotate_270(self) -> Self
+pub fn layout::LayoutRequest<'a>::rotate_90(self) -> Self
+pub fn layout::LayoutRequest<'a>::within(self, u32, u32) -> Self
+pub struct layout::LayoutResult
+pub layout::LayoutResult::data: alloc::vec::Vec<u8>
+pub layout::LayoutResult::height: u32
+pub layout::LayoutResult::lossless: bool
+pub layout::LayoutResult::width: u32
+pub mod recompress
+pub mod recompress::expert
+pub enum recompress::expert::ActivityTier
+pub recompress::expert::ActivityTier::Detailed
+pub recompress::expert::ActivityTier::Flat
+pub recompress::expert::ActivityTier::MidDetail
+pub recompress::expert::ActivityTier::VeryFlat
+pub fn recompress::expert::ActivityTier::zero_from(self) -> usize
+pub enum recompress::expert::CellCi
+pub recompress::expert::CellCi::Empty
+pub recompress::expert::CellCi::Loose
+pub recompress::expert::CellCi::Moderate
+pub recompress::expert::CellCi::Tight
+pub enum recompress::expert::EncoderClass
+pub recompress::expert::EncoderClass::IjgFamily
+pub recompress::expert::EncoderClass::ImageMagick
+pub recompress::expert::EncoderClass::JpegliXyb
+pub recompress::expert::EncoderClass::JpegliYcbcr
+pub recompress::expert::EncoderClass::Mozjpeg
+pub recompress::expert::EncoderClass::Photoshop
+pub recompress::expert::EncoderClass::Unknown
+pub recompress::expert::EncoderClass::ZenjpegXyb
+pub recompress::expert::EncoderClass::ZenjpegYcbcr
+pub fn recompress::expert::EncoderClass::from_family(detect::EncoderFamily) -> Self
+pub enum recompress::expert::QuantStrategy
+pub recompress::expert::QuantStrategy::RobidouxTargetQuality
+pub recompress::expert::QuantStrategy::RobidouxTargetQuality::target_quality: u8
+pub recompress::expert::QuantStrategy::TargetQuality
+pub recompress::expert::QuantStrategy::TargetQuality::target_ijg_q: u8
+pub recompress::expert::QuantStrategy::UniformScale(recompress::expert::QuantScale)
+pub const recompress::expert::QuantStrategy::IDENTITY: Self
+pub enum recompress::expert::RouterOutput
+pub recompress::expert::RouterOutput::Lossless
+pub recompress::expert::RouterOutput::Lossless::reason: recompress::LosslessReason
+pub recompress::expert::RouterOutput::NoOp
+pub recompress::expert::RouterOutput::NoOp::reason: recompress::NoOpReason
+pub recompress::expert::RouterOutput::Strategy
+pub recompress::expert::RouterOutput::Strategy::kind: recompress::StrategyKind
+pub recompress::expert::RouterOutput::Strategy::params: recompress::expert::StrategyParams
+pub recompress::expert::RouterOutput::Strategy::projected_zensim_a: f32
+pub enum recompress::expert::TableId
+pub recompress::expert::TableId::Seed
+pub struct recompress::expert::CalibrationLookup
+pub const recompress::expert::CalibrationLookup::SEED: Self
+pub fn recompress::expert::CalibrationLookup::estimate_all(&self, recompress::expert::EncoderClass, decoder::Subsampling, f32, f32) -> [recompress::expert::StrategyChoice; 4]
+pub struct recompress::expert::CellEstimate
+pub recompress::expert::CellEstimate::ci: recompress::expert::CellCi
+pub recompress::expert::CellEstimate::dial_zensim_a: core::option::Option<f32>
+pub recompress::expert::CellEstimate::preferred: bool
+pub recompress::expert::CellEstimate::projected_size_ratio: f32
+pub recompress::expert::CellEstimate::projected_zensim_a: f32
+#[non_exhaustive] pub struct recompress::expert::EmitConfig
+pub recompress::expert::EmitConfig::aq_mask: core::option::Option<recompress::expert::AqMask>
+pub recompress::expert::EmitConfig::preserved_segments: alloc::vec::Vec<decoder::PreservedSegment>
+pub recompress::expert::EmitConfig::quant_strategy: recompress::expert::QuantStrategy
+pub fn recompress::expert::EmitConfig::robidoux_target_quality(u8) -> Self
+pub fn recompress::expert::EmitConfig::target_quality(u8) -> Self
+pub fn recompress::expert::EmitConfig::uniform_scale(recompress::expert::QuantScale) -> Self
+pub fn recompress::expert::EmitConfig::with_aq_mask(self, core::option::Option<recompress::expert::AqMask>) -> Self
+pub fn recompress::expert::EmitConfig::with_preserved_segments(self, alloc::vec::Vec<decoder::PreservedSegment>) -> Self
+pub struct recompress::expert::QuantScale
+pub recompress::expert::QuantScale::chroma: f32
+pub recompress::expert::QuantScale::luma: f32
+pub const recompress::expert::QuantScale::IDENTITY: Self
+pub struct recompress::expert::RouterInput<'a>
+pub recompress::expert::RouterInput::analysis: &'a recompress::expert::SourceAnalysis
+pub recompress::expert::RouterInput::budget: recompress::Budget
+pub recompress::expert::RouterInput::effective_target: f32
+pub recompress::expert::RouterInput::target_zensim_a: f32
+pub struct recompress::expert::SourceAnalysis
+pub recompress::expert::SourceAnalysis::encoder: detect::EncoderFamily
+pub recompress::expert::SourceAnalysis::height: u32
+pub recompress::expert::SourceAnalysis::mode: decoder::JpegMode
+pub recompress::expert::SourceAnalysis::num_components: u8
+pub recompress::expert::SourceAnalysis::quality: detect::QualityEstimate
+pub recompress::expert::SourceAnalysis::source_len: usize
+pub recompress::expert::SourceAnalysis::subsampling: decoder::Subsampling
+pub recompress::expert::SourceAnalysis::width: u32
+pub fn recompress::expert::SourceAnalysis::estimated_zensim_a_vs_reference(&self) -> f32
+pub struct recompress::expert::StrategyChoice
+pub recompress::expert::StrategyChoice::estimate: recompress::expert::CellEstimate
+pub recompress::expert::StrategyChoice::kind: recompress::StrategyKind
+pub struct recompress::expert::StrategyParams
+pub recompress::expert::StrategyParams::ci: recompress::expert::CellCi
+pub recompress::expert::StrategyParams::dial_zensim_a: f32
+pub recompress::expert::StrategyParams::projected_zensim_a: f32
+pub recompress::expert::StrategyParams::target_ba_distance: f32
+pub recompress::expert::StrategyParams::target_ijg_q: u8
+pub recompress::expert::StrategyParams::target_zensim_a: f32
+pub fn recompress::expert::analyze_source(&[u8]) -> core::result::Result<recompress::expert::SourceAnalysis, recompress::Error>
+pub fn recompress::expert::build_aq_mask(&decoder::DecodedCoefficients) -> core::option::Option<recompress::expert::AqMask>
+pub fn recompress::expert::build_aq_mask_busy(&decoder::DecodedCoefficients, usize) -> core::option::Option<recompress::expert::AqMask>
+pub fn recompress::expert::classify_block(&[i16; 64]) -> recompress::expert::ActivityTier
+pub fn recompress::expert::decide_strategy(&recompress::expert::RouterInput<'_>) -> core::result::Result<recompress::expert::RouterOutput, recompress::Error>
+pub fn recompress::expert::emit_preserved(&decoder::DecodedCoefficients, decoder::Subsampling, &recompress::expert::EmitConfig) -> core::result::Result<alloc::vec::Vec<u8>, recompress::Error>
+pub fn recompress::expert::mask_low_activity_fraction(&recompress::expert::AqMask) -> f32
+pub fn recompress::expert::run_deblock(&[u8], &recompress::expert::SourceAnalysis, &recompress::expert::StrategyParams, &recompress::RecompressOptions) -> core::result::Result<recompress::strategies::StrategyOutcome, recompress::Error>
+pub fn recompress::expert::run_lossless(&[u8], &recompress::expert::SourceAnalysis) -> core::result::Result<alloc::vec::Vec<u8>, recompress::Error>
+pub fn recompress::expert::run_preserve(&[u8], &recompress::expert::SourceAnalysis, &recompress::expert::StrategyParams, &recompress::RecompressOptions) -> core::result::Result<recompress::strategies::StrategyOutcome, recompress::Error>
+pub fn recompress::expert::run_tuned(&[u8], &recompress::expert::SourceAnalysis, &recompress::expert::StrategyParams, &recompress::RecompressOptions) -> core::result::Result<recompress::strategies::StrategyOutcome, recompress::Error>
+pub fn recompress::expert::score_against_reference(&[u8], u32, u32, &[u8]) -> core::result::Result<f32, recompress::Error>
+pub fn recompress::expert::score_recompression(&[u8], &[u8]) -> core::result::Result<f32, recompress::Error>
+pub fn recompress::expert::target_zensim_a_to_ba_distance(f32) -> f32
+pub fn recompress::expert::target_zensim_a_to_ijg_q(f32) -> u8
+pub fn recompress::expert::tier_histogram(&decoder::DecodedCoefficients) -> [u32; 4]
+pub type recompress::expert::AqMask = alloc::vec::Vec<u64>
+#[non_exhaustive] pub enum recompress::Budget
+pub recompress::Budget::MaxIterations(u32)
+pub recompress::Budget::MaxTime(core::time::Duration)
+pub recompress::Budget::OneShot
+#[non_exhaustive] pub enum recompress::Confidence
+pub recompress::Confidence::P25
+pub recompress::Confidence::P50
+pub recompress::Confidence::P75
+pub recompress::Confidence::P90
+pub recompress::Confidence::P95
+pub fn recompress::Confidence::target_shift(self) -> f32
+#[non_exhaustive] pub enum recompress::Error
+pub recompress::Error::Internal(&'static str)
+pub recompress::Error::Probe(alloc::string::String)
+pub recompress::Error::TargetOutOfRange(f32)
+pub recompress::Error::Unsupported(&'static str)
+pub recompress::Error::Zenjpeg(alloc::string::String)
+pub recompress::Error::Zensim(alloc::string::String)
+#[non_exhaustive] pub enum recompress::LosslessReason
+pub recompress::LosslessReason::RecompressionWouldInflateAtTarget
+pub recompress::LosslessReason::TargetTooCloseToSource
+#[non_exhaustive] pub enum recompress::NoOpReason
+pub recompress::NoOpReason::SourceAlreadyMeetsTarget
+#[non_exhaustive] pub enum recompress::RecompressResult
+pub recompress::RecompressResult::LosslessOnly
+pub recompress::RecompressResult::LosslessOnly::bytes: alloc::vec::Vec<u8>
+pub recompress::RecompressResult::LosslessOnly::reason: recompress::LosslessReason
+pub recompress::RecompressResult::NoOp
+pub recompress::RecompressResult::NoOp::reason: recompress::NoOpReason
+pub recompress::RecompressResult::Recompressed
+pub recompress::RecompressResult::Recompressed::bytes: alloc::vec::Vec<u8>
+pub recompress::RecompressResult::Recompressed::measured_zensim_a: core::option::Option<f32>
+pub recompress::RecompressResult::Recompressed::projected_zensim_a: f32
+pub recompress::RecompressResult::Recompressed::source_to_output_ratio: f32
+pub recompress::RecompressResult::Recompressed::strategy: recompress::StrategyKind
+pub fn recompress::RecompressResult::output_bytes(&self) -> core::option::Option<&[u8]>
+#[non_exhaustive] pub enum recompress::StrategyKind
+pub recompress::StrategyKind::Deblock
+pub recompress::StrategyKind::Lossless
+pub recompress::StrategyKind::Preserve
+pub recompress::StrategyKind::Tuned
+pub struct recompress::RecompressOptions
+pub recompress::RecompressOptions::budget: recompress::Budget
+pub recompress::RecompressOptions::confidence: recompress::Confidence
+pub recompress::RecompressOptions::target_zensim_a: f32
+pub fn recompress::RecompressOptions::new(f32) -> Self
+pub fn recompress::RecompressOptions::with_budget(self, recompress::Budget) -> Self
+pub fn recompress::RecompressOptions::with_confidence(self, recompress::Confidence) -> Self
+pub fn recompress::recompress(&[u8], &recompress::RecompressOptions) -> core::result::Result<recompress::RecompressResult, recompress::Error>
+pub mod ultrahdr
+pub use ultrahdr::AdaptiveTonemapper
+pub use ultrahdr::FitConfig
+pub use ultrahdr::FitMode
+pub use ultrahdr::FitStats
+pub use ultrahdr::GainMap
+pub use ultrahdr::GainMapConfig
+pub use ultrahdr::GainMapEncodingFormat
+pub use ultrahdr::GainMapMetadata
+pub use ultrahdr::HdrOutputFormat
+pub use ultrahdr::Iso21496Format
+pub use ultrahdr::Stop
+pub use ultrahdr::ToneMapConfig
+pub use ultrahdr::UhdrColorGamut
+pub use ultrahdr::UhdrColorTransfer
+pub use ultrahdr::UhdrPixelFormat
+pub use ultrahdr::UhdrRawImage
+pub use ultrahdr::UnsignedFraction
+pub use ultrahdr::Unstoppable
+pub use ultrahdr::apply_gainmap
+pub use ultrahdr::compute_gainmap
+pub use ultrahdr::parse_iso21496_fmt
+pub use ultrahdr::serialize_iso21496_fmt
+#[non_exhaustive] pub enum ultrahdr::GainMapMemory
+pub ultrahdr::GainMapMemory::Full
+pub ultrahdr::GainMapMemory::Streaming
+#[non_exhaustive] pub enum ultrahdr::UltraHdrMode
+pub ultrahdr::UltraHdrMode::Hdr
+pub ultrahdr::UltraHdrMode::SdrAndGainMap
+pub ultrahdr::UltraHdrMode::SdrAndHdr
+pub ultrahdr::UltraHdrMode::SdrOnly
+pub struct ultrahdr::UltraHdrReader<'a>
+pub fn ultrahdr::UltraHdrReader<'a>::current_row(&self) -> usize
+pub fn ultrahdr::UltraHdrReader<'a>::dimensions(&self) -> decoder::Dimensions
+pub fn ultrahdr::UltraHdrReader<'a>::gainmap_jpeg(&self) -> core::option::Option<&'a [u8]>
+pub fn ultrahdr::UltraHdrReader<'a>::is_finished(&self) -> bool
+pub fn ultrahdr::UltraHdrReader<'a>::is_ultrahdr(&self) -> bool
+pub fn ultrahdr::UltraHdrReader<'a>::metadata(&self) -> core::option::Option<&ultrahdr_core::types::GainMapMetadata>
+pub fn ultrahdr::UltraHdrReader<'a>::read_rows(&mut self, usize, core::option::Option<&mut [u8]>, core::option::Option<&mut [f32]>, core::option::Option<&mut [u8]>) -> encoder::Result<usize>
+pub fn ultrahdr::UltraHdrReader<'a>::take_extras(&mut self) -> core::option::Option<decoder::DecodedExtras>
+pub fn ultrahdr::UltraHdrReader<'a>::take_gainmap_data(&mut self) -> core::option::Option<alloc::vec::Vec<u8>>
+#[non_exhaustive] pub struct ultrahdr::UltraHdrReaderConfig
+pub ultrahdr::UltraHdrReaderConfig::display_boost: f32
+pub ultrahdr::UltraHdrReaderConfig::memory_strategy: ultrahdr::GainMapMemory
+pub ultrahdr::UltraHdrReaderConfig::mode: ultrahdr::UltraHdrMode
+pub ultrahdr::UltraHdrReaderConfig::preserve_metadata: bool
+pub fn ultrahdr::UltraHdrReaderConfig::display_boost(self, f32) -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::editing() -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::hdr_default() -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::memory_strategy(self, ultrahdr::GainMapMemory) -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::mode(self, ultrahdr::UltraHdrMode) -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::new() -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::preserve_metadata(self, bool) -> Self
+pub fn ultrahdr::UltraHdrReaderConfig::sdr_only() -> Self
+pub trait ultrahdr::UltraHdrExtras
+pub fn ultrahdr::UltraHdrExtras::decode_gainmap(&self) -> core::option::Option<encoder::Result<ultrahdr_core::types::GainMap>>
+pub fn ultrahdr::UltraHdrExtras::is_ultrahdr(&self) -> bool
+pub fn ultrahdr::UltraHdrExtras::ultrahdr_metadata(&self) -> core::option::Option<encoder::Result<(ultrahdr_core::types::GainMapMetadata, core::option::Option<usize>)>>
+pub fn ultrahdr::create_gainmap_computer(u32, u32, &ultrahdr_core::gainmap::compute::GainMapConfig, zenpixels::descriptor::ColorPrimaries) -> encoder::Result<ultrahdr_core::gainmap::streaming::RowEncoder>
+pub fn ultrahdr::create_hdr_reconstructor(u32, u32, &decoder::DecodedExtras, f32) -> encoder::Result<ultrahdr_core::gainmap::streaming::RowDecoder>
+pub fn ultrahdr::decode_ultrahdr(&[u8]) -> encoder::Result<zenpixels::buffer::PixelBuffer>
+pub fn ultrahdr::decode_ultrahdr_hdr(&[u8], f32, ultrahdr_core::gainmap::apply::HdrOutputFormat) -> encoder::Result<zenpixels::buffer::PixelBuffer>
+pub fn ultrahdr::encode_ultrahdr(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::gainmap::compute::GainMapConfig, &ultrahdr_core::color::tonemap::ToneMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_ultrahdr_luma(&zenpixels::buffer::PixelBuffer) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&zenpixels::buffer::PixelBuffer, &C, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String
+pub fn ultrahdr::generate_primary_xmp(usize) -> alloc::string::String
+pub fn ultrahdr::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String
+pub fn ultrahdr::parse_xmp(&str) -> core::result::Result<(zencodec::gainmap::GainMapParams, core::option::Option<usize>), container::xmp::XmpError>
+pub fn ultrahdr::tonemapper_from_ultrahdr(&decoder::DecodedExtras) -> encoder::Result<ultrahdr_core::color::tonemap::AdaptiveTonemapper>
+#[non_exhaustive] pub enum CmykHandling
+pub CmykHandling::BadRgb
+pub CmykHandling::Passthrough
+pub struct JpegDecodeJob
+pub struct JpegDecoder<'a>
+pub struct JpegDecoderConfig
+pub fn JpegDecoderConfig::cmyk_handling(self, CmykHandling) -> Self
+pub fn JpegDecoderConfig::deblock(self, decoder::DeblockMode) -> Self
+pub fn JpegDecoderConfig::decode(&self, &[u8]) -> core::result::Result<zencodec::output::DecodeOutput, encoder::Error>
+pub fn JpegDecoderConfig::inner(&self) -> &decoder::DecodeConfig
+pub fn JpegDecoderConfig::inner_mut(&mut self) -> &mut decoder::DecodeConfig
+pub fn JpegDecoderConfig::is_cmyk_handling(&self) -> CmykHandling
+pub fn JpegDecoderConfig::job_static(self) -> JpegDecodeJob
+pub fn JpegDecoderConfig::new() -> Self
+pub fn JpegDecoderConfig::probe_full_metadata(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, encoder::Error>
+pub fn JpegDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, encoder::Error>
+pub struct JpegEncodeJob
+pub struct JpegEncoder
+pub struct JpegEncoderConfig
+pub fn JpegEncoderConfig::encode(&self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zencodec::output::EncodeOutput, encoder::Error>
+pub fn JpegEncoderConfig::from_preset(&str, f32) -> core::option::Option<Self>
+pub fn JpegEncoderConfig::grayscale(f32) -> Self
+pub fn JpegEncoderConfig::inner(&self) -> &encoder::EncoderConfig
+pub fn JpegEncoderConfig::inner_mut(&mut self) -> &mut encoder::EncoderConfig
+pub fn JpegEncoderConfig::new() -> Self
+pub fn JpegEncoderConfig::with_calibrated_quality(self, f32) -> Self
+pub fn JpegEncoderConfig::with_progressive(self, bool) -> Self
+pub fn JpegEncoderConfig::with_sharp_yuv(self, bool) -> Self
+pub fn JpegEncoderConfig::with_subsampling(self, encoder::ChromaSubsampling) -> Self
+pub fn JpegEncoderConfig::ycbcr(f32, encoder::ChromaSubsampling) -> Self
+pub struct JpegStreamingDecoder<'a>
+pub type JpegDecoding = JpegDecoderConfig
+pub type JpegEncoding = JpegEncoderConfig
+
+## trait impls (46 types)
+
+CmykHandling: Clone, Copy, Debug, Default, Eq, PartialEq
+JpegDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
+JpegDecoder<'_>: zencodec::traits::decoder::Decode
+JpegDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+JpegEncodeJob: zencodec::traits::encoding::EncodeJob
+JpegEncoder: zencodec::traits::encoder::Encoder
+JpegEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
+JpegStreamingDecoder<'_>: zencodec::traits::decoder::StreamingDecode
+decoder::DecodedExtras: ultrahdr::UltraHdrExtras
+encoder::BoundaryRd: Clone, Copy, Debug, Default, PartialEq
+encoder::BoundaryRdConfig: Clone, Copy, Debug, Default, PartialEq
+encoder::Error: From<ultrahdr_core::types::Error>
+encoder::NeighborScope: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+encoder::ParallelEncoding: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::RetryPolicy: Clone, Copy, Debug, Default, PartialEq
+encoder::SeamPenalty: Clone, Copy, Debug, Default, PartialEq
+layout::Command: Clone, Copy, Debug
+layout::FlipAxis: Clone, Copy, Debug, Eq, PartialEq
+layout::LayoutConfig: Clone
+layout::Rotation: Clone, Copy, Debug, Eq, PartialEq
+recompress::Budget: Clone, Copy, Debug, Default, Eq, PartialEq
+recompress::Confidence: Clone, Copy, Debug, PartialEq
+recompress::Error: Debug, Display, Error, From<encoder::Error>
+recompress::LosslessReason: Clone, Copy, Debug, Eq, Hash, PartialEq
+recompress::NoOpReason: Clone, Copy, Debug, Eq, Hash, PartialEq
+recompress::RecompressOptions: Clone, Debug, Default
+recompress::RecompressResult: Clone, Debug
+recompress::StrategyKind: Clone, Copy, Debug, Eq, Hash, PartialEq
+recompress::expert::ActivityTier: Clone, Copy, Debug, Eq, PartialEq
+recompress::expert::CalibrationLookup: Clone, Copy, Debug
+recompress::expert::CellCi: Clone, Copy, Debug, Eq, Hash, PartialEq
+recompress::expert::CellEstimate: Clone, Copy, Debug
+recompress::expert::EmitConfig: Clone, Debug, Default
+recompress::expert::EncoderClass: Clone, Copy, Debug, Eq, Hash, PartialEq
+recompress::expert::QuantScale: Clone, Copy, Debug
+recompress::expert::QuantStrategy: Clone, Copy, Debug
+recompress::expert::RouterInput<'a>: Debug
+recompress::expert::RouterOutput: Clone, Debug
+recompress::expert::SourceAnalysis: Clone, Debug
+recompress::expert::StrategyChoice: Clone, Copy, Debug
+recompress::expert::StrategyParams: Clone, Copy, Debug
+recompress::expert::TableId: Clone, Copy, Debug, Eq, Hash, PartialEq
+ultrahdr::GainMapMemory: Clone, Copy, Debug, Default, Eq, PartialEq
+ultrahdr::UltraHdrMode: Clone, Copy, Debug, Default, Eq, PartialEq
+ultrahdr::UltraHdrReaderConfig: Clone, Debug, Default
+zenpixels::orientation::Orientation: From<layout::FlipAxis>, From<layout::Rotation>
+
+## auto traits
+
+39 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+JpegDecodeJob: !RefUnwindSafe !UnwindSafe
+JpegDecoder<'a>: !RefUnwindSafe !UnwindSafe
+JpegDecoderConfig: !RefUnwindSafe !UnwindSafe
+JpegEncodeJob: !RefUnwindSafe !UnwindSafe
+JpegEncoder: !RefUnwindSafe !Sync !UnwindSafe
+JpegStreamingDecoder<'a>: !RefUnwindSafe !UnwindSafe
+ultrahdr::UltraHdrReader<'a>: !Freeze
