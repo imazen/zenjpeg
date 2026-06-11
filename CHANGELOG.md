@@ -120,6 +120,10 @@ All notable changes to zenjpeg are documented here. Earlier history
   PASSED. Playbook updated in step: duplicated consumers block removed,
   checklist step 6 carries the decode/topology gates, adoption statuses
   made concrete (zenjxl steps 1–6 + zenavif full checklist landed).
+- Playbook adoption table finalized: all five zen codecs (jpeg, avif,
+  jxl, webp, png) landed across all eight checklist rows, with both
+  zenmetrics execution models wired (chunk mode + content-addressed
+  job system) through the one `{cell, fp, plan}` identity contract.
 - `docs/VARIANT_GENERATION.md` revised into the complete codec-neutral
   playbook: pattern 7 (cell ids as durable ledger identity — lossless
   numbers, additive-only grammar, roundtrip-totality, executor-side fp

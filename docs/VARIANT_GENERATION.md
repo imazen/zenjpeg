@@ -547,29 +547,24 @@ The cross-codec contract is `InternalParams` (the per-axis `Option<_>`
 partial-merge bundle, zenwebp-shaped) — keep mirroring it. On top of
 that, per codec:
 
+All five codecs have adopted the playbook (each repo's own
+`docs/VARIANT_GENERATION.md` is the authoritative status; this snapshot
+is from 2026-06-11):
+
 | Pattern | zenwebp | zenjxl | zenavif | zenpng |
 |---|---|---|---|---|
-| Variant-scoped knobs + validate() | segments/partitions config | **landed** (noise×lossless rejection et al., 2026-06-11) | **landed** (backend/420×RGB/420×16-bit rejections; no-op spellings made untypeable, 2026-06-10/11) | filter/zopfli knobs |
-| Dominance cases | always-on optimized entropy | **landed** — container Auto is the only dominance case; audit in its doc | **landed** — container metadata is the dominance class; full audit in its doc | palette-when-fewer-colors checks |
-| Exact trials (pixel-invariant) | lossless: trial entropy backends | **audited** — whole lossless knob space + lossy entropy-stage knobs (use_ans / histogram strategy / clustering) are trial-class; exact trials belong upstream where state can be shared | **confirmed none** — single-invocation engine + fixed container layout; the predicted empty trial class held | **filter-per-row is already exact**; trial zopfli iterations under a byte gate |
-| resolve_plan() introspection | yes — port shape directly | **landed** (`__expert`, 2026-06-11) | **landed** (`PlanInput → EncodePlan`; engine mirrors pinned by encode, pattern 8) | yes |
-| Fingerprint dedup | yes — resolved segment params | **landed** (calibration-plateau q≤20 merges; exclusions encode-proven) | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | yes |
-| Sweep planner + validation harness | port `encode::sweep` shape | **landed** — mode-discriminated planner + harness with decode/roundtrip gates (caught jxl-encoder#68 ×2 + #69; patterns 14–16) | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | port |
+| Variant-scoped knobs + validate() | **landed** — mode-discriminated `SweepVariant` (VP8/VP8L); exclusions documented (targets, preset macro-knob, alpha/exact, near_lossless) | **landed** (noise×lossless rejection et al., 2026-06-11) | **landed** (backend/420×RGB/420×16-bit rejections; no-op spellings made untypeable, 2026-06-10/11) | **landed** — near_lossless excluded as metric-class; `parallel` pinned per pattern 9 |
+| Dominance cases | always-on optimized entropy | **landed** — container Auto is the only dominance case; audit in its doc | **landed** — container metadata is the dominance class; full audit in its doc | downcast-when-representable (encoder default; format negotiation, not a sweep axis) |
+| Exact trials (pixel-invariant) | **audited** — the entire curated lossless (VP8L) space is trial-class by construction; exact lossless trial helper queued | **audited** — whole lossless knob space + lossy entropy-stage knobs (use_ans / histogram strategy / clustering) are trial-class; exact trials belong upstream where state can be shared | **confirmed none** — single-invocation engine + fixed container layout; the predicted empty trial class held | **the entire space is trial-class** (lossless); the zopfli-iteration trial is the `Effort(31+)` region, helper queued |
+| resolve_plan() introspection | holds trivially — `SweepVariant::build()` constructs the literal config; no hidden resolution layer | **landed** (`__expert`, 2026-06-11) | **landed** (`PlanInput → EncodePlan`; engine mirrors pinned by encode, pattern 8) | `Compression::effort()` IS the resolution fn; the fingerprint hashes it (`Effort(13)` ≡ `Balanced`) |
+| Fingerprint dedup | **landed** — every field hashed; 0 aliases (no plateaus in the quality chain) | **landed** (calibration-plateau q≤20 merges; exclusions encode-proven) | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | **landed** — resolved-effort identity merges spelling aliases |
+| Sweep planner + validation harness | **landed** — first harness run fully green (41 cells × 7 images; lossless exact, partial-MB 509×381 leg) | **landed** — mode-discriminated planner + harness with decode/roundtrip gates (caught jxl-encoder#68 ×2 + #69; patterns 14–16) | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | **landed** — exactness harness in the normal suite (~2.5 s); first run caught the downcast-format comparison hazard |
+| Id grammar + parser (pattern 7) | **landed** (`vp8-`/`vp8l-`, totality test) | **landed** (bcf67e09 — q- AND distance-grids) | **landed** (a5a564f1 — totality test caught a tokenizer bug) | **landed** (`png-<preset>`/`png-e<n>`) |
+| Executor wiring (step 8) | **landed** (zenmetrics 96234317) | **landed** (zenmetrics 57aa2963) | **landed** (zenmetrics 96a31b90) | **landed** (zenmetrics 171ebb04) |
 
-(zenjxl's adoption is complete as of 2026-06-11: steps 1–6 landed with
-the harness green end-to-end against the stock published decoder after
-the two jxl-encoder#68 fixes; pattern 7 landed (zenjxl bcf67e09 —
-`variant_from_cell_id` + label registries, totality over q- AND
-distance-grids); step-8 executor wiring landed (zenmetrics 57aa2963 —
-third codec on the bridge, lossless cells on the q=0 sentinel, threads
-pinned per pattern 9); exact trials remain audited-and-queued upstream
-where encode state can be shared. zenavif's adoption landed 2026-06-10/11 —
-audit, findings, and run evidence in zenavif `docs/VARIANT_GENERATION.md`;
-its pattern-7 id grammar/parser landed 2026-06-11 (zenavif a5a564f1 —
-the totality test caught a tokenizer bug on its first run) and the
-step-8 executor wiring landed the same day (zenmetrics 96a31b90: both
-execution models, e2e declare→jobexec→AVIF-bytes + tampered-fp
-tripwire) — the full checklist is adopted.)
+Open items live in each repo's adoption doc; the common queued work is
+the exact-trial helpers (zenwebp lossless, zenpng `Effort(31+)`,
+zenjxl's upstream in jxl-encoder where encode state can be shared).
 
 (Execution models and the identity contract live in "Where each piece
 lives" above and pattern 7 — not repeated here.)
