@@ -426,6 +426,16 @@ and for lossless cells the decoded pixels must equal the input
 both #68 causes: e9+ lossless streams that zenjxl-decoder, jxl-oxide
 AND djxl all rejected.
 
+This pattern audited its own reference implementation: zenjpeg's
+harness originally decode-verified only as a side effect of scoring,
+hard-gating failures at q85 alone — a decode failure at any other
+quality dissolved into a NaN that the aggregates skipped. It now
+hard-fails any undecodable cell at any quality (2026-06-11), and its
+corpus gained a 509×381 crop because every prior image was
+MCU-aligned — JPEG's partial-MCU edge paths were structurally
+invisible, pattern 15's exact blind spot. Re-audit your harness
+against patterns 14–15 even if it predates them.
+
 Two sub-rules earned scars:
 
 - **Internal consistency is not correctness.** Both bugs had the
@@ -546,9 +556,11 @@ that, per codec:
 | Fingerprint dedup | yes — resolved segment params | **landed** (calibration-plateau q≤20 merges; exclusions encode-proven) | **landed** (threads pinned per pattern 9; every exclusion encode-proven) | yes |
 | Sweep planner + validation harness | port `encode::sweep` shape | **landed** — mode-discriminated planner + harness with decode/roundtrip gates (caught jxl-encoder#68 ×2 + #69; patterns 14–16) | **landed** — probe-axis planner + harness (caught vaq@1.0 no-op, lru_on_skip envelope-death) + RGBA alpha leg + MLP feature emission | port |
 
-(zenjxl adoption is an active parallel effort — see its own
-`VARIANT_GENERATION` adoption doc in that repo for current state rather
-than trusting this snapshot. zenavif's adoption landed 2026-06-10/11 —
+(zenjxl's adoption landed 2026-06-10/11 — steps 1–6 complete, harness
+green end-to-end against the stock published decoder after the two
+jxl-encoder#68 fixes; exact trials audited and queued upstream where
+encode state can be shared; step-8 executor wiring is its one open
+step. zenavif's adoption landed 2026-06-10/11 —
 audit, findings, and run evidence in zenavif `docs/VARIANT_GENERATION.md`;
 its pattern-7 id grammar/parser landed 2026-06-11 (zenavif a5a564f1 —
 the totality test caught a tokenizer bug on its first run) and the
@@ -556,41 +568,8 @@ step-8 executor wiring landed the same day (zenmetrics 96a31b90: both
 execution models, e2e declare→jobexec→AVIF-bytes + tampered-fp
 tripwire) — the full checklist is adopted.)
 
-**Consumers — two execution models, one identity.** zenmetrics executes
-plans through both of its scheduling models, and the difference matters:
-
-1. **Chunk mode** (`zen-metrics sweep --codec zenjpeg --plan
-   rd_core|modes_full [--plan-budget N]`, zenmetrics 2524d81f): the
-   executor expands the plan at run time; the unit of retry is
-   (image × whole plan). Right for GPU-metric fleet runs that complete
-   in one pass.
-2. **Job-system mode** (zen-job-core ledger): for sweeps that *never*
-   complete in one pass (the 100k-cell AVIF problem), cells become
-   per-cell content-addressed `DesiredJob`s at **declare time**
-   (`zen-metrics sweep --plan … --dry-run --emit-cells`), completion is
-   `declare → gap → run → re-reconcile` against the Parquet ledger, and
-   chunk bookkeeping disappears. See zenmetrics
-   `docs/RUNNING_JOBS.md` §"Plan-driven sweeps".
-
-Both carry the same identity: `{"cell": <stratum-id>, "fp":
-<fingerprint>, "plan": <name>}` in the `knob_tuple_json` column /
-`JobKind::Encode.knobs`. **That makes the cell-id grammar a durable
-contract**: `encode::sweep::config_from_cell_id(base_id, q)`
-reconstructs the exact `EncoderConfig` from the id alone (numbers are
-shortest-roundtrip `Display` — lossless), so a ledger job is
-self-describing and regenerable years later, and the carried `fp` is
-verified after parsing so grammar drift fails loudly instead of
-encoding the wrong cell. Grammar evolution is additive-only — never
-rename a token or change numeric formatting; the
-`cell_ids_roundtrip_to_their_configs` test enforces parser totality
-over everything the planner emits. (`custom` table bytes and
-content-hashed boundary-RD knobs are the two documented
-non-self-describing cases.)
-
-A codec that adopts the planner shape gets both execution models for
-free; the knob-vocabulary translation layer in
-`zen-metrics-cli/src/sweep/encode.rs` is only needed for axes the
-planner doesn't own.
+(Execution models and the identity contract live in "Where each piece
+lives" above and pattern 7 — not repeated here.)
 
 ### Adoption checklist (the order that paid off)
 
@@ -613,10 +592,15 @@ Each step gates the next; the test named with it is the exit criterion.
 5. **Id grammar + parser** (pattern 7) — self-describing ids, lossless
    numbers, `config_from_cell_id` + fp verification. *Gate: the
    grammar-totality roundtrip test.*
-6. **Empirical validation harness** (pattern 6) — run it; expect it to
-   find real defects (zenjpeg: five on the first run; zenjxl: axes
-   corrections on its first run). Fix, re-run, commit the TSV. *Gate:
-   ALL HARD CHECKS PASSED.*
+6. **Empirical validation harness** (patterns 6 + 14 + 15) — run it;
+   expect it to find real defects (zenjpeg: five on the first run;
+   zenjxl: two encoder bugs + five mis-curated probes; zenavif: a no-op
+   spelling + an envelope-dead knob). Decode-verify EVERY cell (lossless
+   modes: exact roundtrip), and make the corpus cross the format's
+   partition topology — sections/tiles/groups for sectioned formats,
+   non-MCU-aligned dimensions for JPEG-shaped ones. Fix, re-run on every
+   content class that failed, commit the TSV. *Gate: ALL HARD CHECKS
+   PASSED, decode gate included.*
 7. **Exact trials** — last, because steps 3–6 teach you which knobs are
    dominance/trial/metric class. Byte-domain gates with provenance;
    supremum contracts tested. *Gate: exact-min equality tests + the
@@ -630,6 +614,12 @@ Each step gates the next; the test named with it is the exit criterion.
 Steps 1–7 live in the codec repo; step 8 is one PR in zenmetrics once
 patterns 4/5/7 exist, because the executor only needs `plan()`,
 `fingerprint()`, and `config_from_cell_id()`.
+
+Wrapper codecs (engine behind a crate boundary) take patterns 8–13
+alongside steps 1–4; format encoders (your bitstream, others' decoders)
+treat patterns 14–16 as additional step-6 gates. Both families were
+proven out in one day each (zenavif, zenjxl) once the zenjpeg shape
+existed to copy.
 
 ## Known limits / open items
 

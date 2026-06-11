@@ -71,14 +71,17 @@ fn encode(cfg: &EncoderConfig, img: &RgbImage) -> Vec<u8> {
     .unwrap_or_else(|e| panic!("encode failed: {e}"))
 }
 
-fn ssim2(orig: &RgbImage, jpeg: &[u8]) -> f64 {
+/// Decode the cell and score it. `Err` = the stream did not decode —
+/// per playbook pattern 14 ("the harness must decode what it encodes")
+/// that is a HARD failure at any quality, never a NaN to be averaged
+/// away. `Ok(NaN)` = decoded fine but the metric itself misbehaved.
+fn ssim2(orig: &RgbImage, jpeg: &[u8]) -> Result<f64, String> {
     use fast_ssim2::{LinearRgbImage, compute_ssimulacra2, srgb_u8_to_linear};
-    let decoded = match Decoder::new().decode(jpeg, enough::Unstoppable) {
-        Ok(d) => d,
-        Err(_) => return f64::NAN,
-    };
+    let decoded = Decoder::new()
+        .decode(jpeg, enough::Unstoppable)
+        .map_err(|e| format!("decode failed: {e}"))?;
     let Some(pixels) = decoded.pixels_u8() else {
-        return f64::NAN;
+        return Err("decoder returned no u8 pixels".to_string());
     };
     let to_linear = |bytes: &[u8]| {
         let px: Vec<[f32; 3]> = bytes
@@ -93,7 +96,7 @@ fn ssim2(orig: &RgbImage, jpeg: &[u8]) -> f64 {
             .collect();
         LinearRgbImage::new(px, orig.width(), orig.height())
     };
-    compute_ssimulacra2(to_linear(image_bytes(orig)), to_linear(pixels)).unwrap_or(f64::NAN)
+    Ok(compute_ssimulacra2(to_linear(image_bytes(orig)), to_linear(pixels)).unwrap_or(f64::NAN))
 }
 
 /// Strip the `_q…` suffix; return (base_id, q-token).
@@ -162,6 +165,20 @@ fn main() {
     for p in cid.iter().take(3) {
         let name = format!("cid_{}", p.file_stem().unwrap().to_string_lossy());
         images.push((name, load_png(p).expect("png load")));
+    }
+    // Pattern 15: the corpus must cross the format's partition topology.
+    // JPEG's is the MCU grid — 512^2 never exercises partial-MCU edge
+    // paths, so crop one photo to odd dimensions (509x381: partial MCUs
+    // on both axes for every subsampling mode).
+    {
+        let src = &images[0].1;
+        let (w, h) = (509usize, 381usize);
+        assert!(src.width() >= w && src.height() >= h);
+        let mut buf = Vec::with_capacity(w * h);
+        for row in src.sub_image(0, 0, w, h).rows() {
+            buf.extend_from_slice(row);
+        }
+        images.push(("cid_odd509x381".into(), imgref::Img::new(buf, w, h)));
     }
     images.push(("noise512".into(), generate_noise(512, 512, 42)));
     images.push(("complex512".into(), generate_complex(512, 512)));
@@ -248,7 +265,15 @@ fn main() {
         for &ci in &subset {
             let cell = &plan.cells[ci];
             let jpeg = encode(&cell.config, img);
-            let score = ssim2(img, &jpeg);
+            // Pattern 14: every cell must decode, at every quality —
+            // hash-locks pin bytes, not decodability.
+            let score = match ssim2(img, &jpeg) {
+                Ok(s) => s,
+                Err(e) => {
+                    hard_failures.push(format!("UNDECODABLE CELL: {} on {iname}: {e}", cell.id));
+                    f64::NAN
+                }
+            };
             measures.insert(
                 (ci, ii),
                 Measure {

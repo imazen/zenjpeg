@@ -54,6 +54,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- Harness brought into compliance with its own playbook patterns 14/15
+  (added by the zenjxl/zenavif adoptions): every cell now decode-verified
+  at every quality (undecodable = hard failure; previously only q85's
+  NaN was gated), and the corpus gained a 509×381 CID crop — all prior
+  images were MCU-aligned, leaving JPEG's partial-MCU edge paths
+  structurally unexercised. 197 cells × 8 images, ALL HARD CHECKS
+  PASSED. Playbook updated in step: duplicated consumers block removed,
+  checklist step 6 carries the decode/topology gates, adoption statuses
+  made concrete (zenjxl steps 1–6 + zenavif full checklist landed).
 - `docs/VARIANT_GENERATION.md` revised into the complete codec-neutral
   playbook: pattern 7 (cell ids as durable ledger identity — lossless
   numbers, additive-only grammar, roundtrip-totality, executor-side fp
