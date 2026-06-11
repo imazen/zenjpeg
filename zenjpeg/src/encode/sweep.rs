@@ -45,6 +45,7 @@
 //! | coupling.exponent | 0.5–2.0 | 2.0 probe (at scale −4, clamped) | historical sweep grid {0.5, 1, 2} |
 //! | delta_dc_weight | 0.0–5.0 | 1.0 probe | expert.rs: 0..+1 % size, diminishing above 2.0. Validated 2026-06-10: SIZE claim holds, but quality collapses at q≤70 (SSIM2 −8..−36 on photos) — probe retained for response-surface mapping; NOT a default candidate, and possibly mis-scaled (worth a look before trusting sweeps that include it) |
 //! | chroma_distance_scales | [0.1, 5.0] each | [0.5,0.5], [2,2], [1,2], [2,1] | clamp range; asymmetric probes exercise the per-channel axes. Validated: [1,2] vs [2,1] distinct on 42/42 cells (Cb/Cr independently wired) |
+//! | moz chroma_quality Δ | −30..0 useful | −10, −20 (relative to grid q, clamped 1..=100) | mozjpeg's two-quality idiom drops chroma 10–20 below luma; response-surface probes, RD validation pending. Relative form per the playbook (absolute values are wrong at most grid points) |
 //! | pre_blur σ | 0.0–1.0 | 0.4 | ~5 % size win on photos (validated −11 % best case; synthetic aligned patterns can INFLATE up to +450 % — checker8's DCT degenerates) |
 //! | quality | 1–100 | grids in [`QualityGrid`] | step-5 floor / training-dense per sweep discipline |
 //!
@@ -103,6 +104,15 @@ pub struct SweepAxes {
     pub allow_16bit: Vec<bool>,
     /// Pre-encode Gaussian blur sigma.
     pub pre_blur: Vec<f32>,
+    /// Chroma-quality DELTA probes for the `MozjpegRobidoux` family,
+    /// resolved per cell as `clamp(q + delta, 1, 100)` — the relative
+    /// form of `chroma_quality` (an absolute value is wrong at most
+    /// grid points; the delta moves with the grid, and `delta = 0`
+    /// aliases the follow-luma spelling via the resolved-table
+    /// fingerprint). Applies only to `MozjpegRobidoux { chroma_quality:
+    /// None }` strata; other families ignore the axis structurally
+    /// (no cross, no invalid spam).
+    pub moz_chroma_deltas: Vec<i8>,
     /// Boundary-continuity refinement (only with `--features boundary-rd`).
     /// Inert when a trellis config is set (the engine skips it there) —
     /// such cells fingerprint-dedupe with their trellis-only twins.
@@ -211,6 +221,7 @@ impl SweepAxes {
             downsampling: vec![DownsamplingMethod::Box],
             allow_16bit: vec![false],
             pre_blur: vec![0.0],
+            moz_chroma_deltas: vec![],
             // Off first: if the budget ladder collapses this axis, the
             // cheaper status-quo value is the one kept.
             #[cfg(feature = "boundary-rd")]
@@ -298,6 +309,10 @@ impl SweepAxes {
         axes.allow_16bit = vec![false, true];
         // Documented ~5 % size win at σ = 0.4.
         axes.pre_blur = vec![0.0, 0.4];
+        // Relative chroma-quality probes (mozjpeg's classic two-quality
+        // idiom drops chroma 10–20 below luma). RD validation pending —
+        // these map the response surface, like the delta_dc probe.
+        axes.moz_chroma_deltas = vec![-10, -20];
         axes
     }
 }
@@ -550,7 +565,8 @@ fn collapse_boundary(_axes: &mut SweepAxes) -> Option<DroppedAxis> {
 /// Collapse the lowest-tier multi-valued axis to its first value.
 fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
     // Tier order: cheapest-to-lose first. Families are never collapsed.
-    collapse("pre_blur", &mut axes.pre_blur, 1)
+    collapse("moz_chroma_deltas", &mut axes.moz_chroma_deltas, 0)
+        .or_else(|| collapse("pre_blur", &mut axes.pre_blur, 1))
         .or_else(|| collapse("allow_16bit", &mut axes.allow_16bit, 1))
         .or_else(|| collapse("downsampling", &mut axes.downsampling, 1))
         .or_else(|| collapse("deringing", &mut axes.deringing, 1))
@@ -579,6 +595,8 @@ fn coarsen_keep_endpoints(points: &[f32]) -> Vec<f32> {
 struct Stratum<'a> {
     color: ColorMode,
     family: &'a QuantTableConfig,
+    /// Per-cell chroma-quality delta (MozjpegRobidoux probes only).
+    moz_cq_delta: Option<i8>,
     coeff: &'a Option<TrellisConfig>,
     scan: ProgressiveScanMode,
     aq: bool,
@@ -597,8 +615,19 @@ impl Stratum<'_> {
             ColorMode::Xyb { subsampling } => EncoderConfig::xyb(q, subsampling),
             ColorMode::Grayscale => EncoderConfig::grayscale(q),
         };
+        let family = match (self.family, self.moz_cq_delta) {
+            (
+                QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None,
+                },
+                Some(d),
+            ) => QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: Some((q.round() as i32 + i32::from(d)).clamp(1, 100) as u8),
+            },
+            _ => self.family.clone(),
+        };
         cfg = cfg
-            .quant_table_config(self.family.clone())
+            .quant_table_config(family)
             .progressive(self.scan)
             .aq_enabled(self.aq)
             .deringing(self.dering)
@@ -635,10 +664,15 @@ impl Stratum<'_> {
                     format!("jp2[{a},{b}]")
                 }
             }
-            QuantTableConfig::MozjpegRobidoux { chroma_quality } => match chroma_quality {
-                None => "moz".to_string(),
-                Some(cq) => format!("moz[cq{cq}]"),
-            },
+            QuantTableConfig::MozjpegRobidoux { chroma_quality } => {
+                match (chroma_quality, self.moz_cq_delta) {
+                    // Relative probe: the id stays q-free; the parser
+                    // resolves clamp(q + delta) from the cell's own q.
+                    (None, Some(d)) => format!("moz[cqd{d:+}]"),
+                    (None, None) => "moz".to_string(),
+                    (Some(cq), _) => format!("moz[cq{cq}]"),
+                }
+            }
             QuantTableConfig::Custom(_) => "custom".to_string(),
             QuantTableConfig::PiecewiseV4 => "pw4".to_string(),
             QuantTableConfig::GlassaLowBpp => "gls".to_string(),
@@ -785,7 +819,7 @@ pub fn config_from_cell_id(base_id: &str, quality: f32) -> Result<EncoderConfig,
         ));
     };
 
-    let family = parse_family(fam_s)?;
+    let family = parse_family(fam_s, quality)?;
     let coeff = parse_coeff(co_s)?;
     let scan = match sc_s {
         "base" => ProgressiveScanMode::Baseline,
@@ -879,7 +913,7 @@ fn take_signed_f32(s: &str) -> Result<(f32, &str), String> {
     }
 }
 
-fn parse_family(s: &str) -> Result<QuantTableConfig, String> {
+fn parse_family(s: &str, quality: f32) -> Result<QuantTableConfig, String> {
     fn scales(inner: &str) -> Result<[f32; 2], String> {
         let (a, b) = inner
             .split_once(',')
@@ -910,6 +944,18 @@ fn parse_family(s: &str) -> Result<QuantTableConfig, String> {
             } else if let Some(inner) = s.strip_prefix("jp2[").and_then(|r| r.strip_suffix(']')) {
                 Ok(QuantTableConfig::JpegliSharedChroma {
                     chroma_distance_scales: scales(inner)?,
+                })
+            } else if let Some(inner) = s.strip_prefix("moz[cqd").and_then(|r| r.strip_suffix(']'))
+            {
+                // Relative probe: resolve against the cell's own q —
+                // the id stays q-free, the meaning moves with the grid.
+                let d = inner
+                    .parse::<i8>()
+                    .map_err(|e| format!("bad chroma_quality delta {inner:?}: {e}"))?;
+                Ok(QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: Some(
+                        (quality.round() as i32 + i32::from(d)).clamp(1, 100) as u8
+                    ),
                 })
             } else if let Some(inner) = s.strip_prefix("moz[cq").and_then(|r| r.strip_suffix(']')) {
                 let cq = inner
@@ -998,6 +1044,21 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
 
     for (ci, color) in axes.color_modes.iter().enumerate() {
         for (fi, family) in axes.families.iter().enumerate() {
+            // Chroma-quality deltas only apply to the follow-luma moz
+            // family; everywhere else the axis contributes exactly the
+            // no-delta entry (structural, not a validity rejection).
+            let delta_options: Vec<Option<i8>> = if matches!(
+                family,
+                QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None
+                }
+            ) {
+                std::iter::once(None)
+                    .chain(axes.moz_chroma_deltas.iter().map(|&d| Some(d)))
+                    .collect()
+            } else {
+                vec![None]
+            };
             for (oi, coeff) in axes.coeff_opt.iter().enumerate() {
                 for (si, &scan) in axes.scans.iter().enumerate() {
                     for (ai, &aq) in axes.aq.iter().enumerate() {
@@ -1008,32 +1069,44 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
                                         for (ri, brd) in brd_values.iter().enumerate() {
                                             #[cfg(not(feature = "boundary-rd"))]
                                             let _ = brd;
-                                            let idxs = [ci, fi, oi, si, ai, di, wi, xi, bi, ri];
-                                            let stratum = Stratum {
-                                                color: *color,
-                                                family,
-                                                coeff,
-                                                scan,
-                                                aq,
-                                                dering,
-                                                down,
-                                                allow16,
-                                                blur,
-                                                #[cfg(feature = "boundary-rd")]
-                                                boundary_rd: *brd,
-                                            };
-                                            if stratum.build_config(75.0).validate().is_err() {
-                                                invalid.push(stratum.id());
-                                                continue;
+                                            for (mi, &delta) in delta_options.iter().enumerate() {
+                                                // A delta is a sub-value of the FAMILY
+                                                // axis (like the jp3[a,b] scale
+                                                // variants): moz+delta is ONE deviation,
+                                                // ordered after plain moz.
+                                                let fam_idx = fi + mi;
+                                                let idxs =
+                                                    [ci, fam_idx, oi, si, ai, di, wi, xi, bi, ri];
+                                                let stratum = Stratum {
+                                                    color: *color,
+                                                    family,
+                                                    moz_cq_delta: delta,
+                                                    coeff,
+                                                    scan,
+                                                    aq,
+                                                    dering,
+                                                    down,
+                                                    allow16,
+                                                    blur,
+                                                    #[cfg(feature = "boundary-rd")]
+                                                    boundary_rd: *brd,
+                                                };
+                                                if stratum.build_config(75.0).validate().is_err() {
+                                                    invalid.push(stratum.id());
+                                                    continue;
+                                                }
+                                                entries.push(Entry {
+                                                    stratum,
+                                                    deviations: idxs
+                                                        .iter()
+                                                        .filter(|&&x| x != 0)
+                                                        .count()
+                                                        as u8,
+                                                    idx_sum: idxs.iter().sum(),
+                                                    seq,
+                                                });
+                                                seq += 1;
                                             }
-                                            entries.push(Entry {
-                                                stratum,
-                                                deviations: idxs.iter().filter(|&&x| x != 0).count()
-                                                    as u8,
-                                                idx_sum: idxs.iter().sum(),
-                                                seq,
-                                            });
-                                            seq += 1;
                                         }
                                     }
                                 }
@@ -1302,6 +1375,7 @@ mod tests {
             downsampling: vec![DownsamplingMethod::Box],
             allow_16bit: vec![false],
             pre_blur: vec![0.0],
+            moz_chroma_deltas: vec![],
             #[cfg(feature = "boundary-rd")]
             boundary_rd: vec![super::super::encoder_config::BoundaryRd::Off],
         }
@@ -1412,6 +1486,7 @@ mod tests {
                 .any(|t| { t.aq_coupling.scale == -8.0 && t.aq_coupling.max_adjustment == 1.0 }),
             "clamped −8 coupling missing"
         );
+        assert_eq!(axes.moz_chroma_deltas, vec![-10, -20]);
         // No curated coupling step may be unclamped: the unclamped form
         // is the validated quality-destruction mode on high-AQ content.
         for t in axes.coeff_opt.iter().flatten() {
@@ -1422,6 +1497,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn moz_chroma_delta_resolves_relative_to_grid_q() {
+        // The delta spelling at q85 must resolve to the SAME bytes-identity
+        // as the absolute spelling it denotes there (delta is fully
+        // mediated by the resolved tables)…
+        let delta = config_from_cell_id("moz[cqd-10]_t0_small_420", 85.0).unwrap();
+        let absolute = config_from_cell_id("moz[cq75]_t0_small_420", 85.0).unwrap();
+        assert_eq!(fingerprint(&delta), fingerprint(&absolute));
+        // …and to a DIFFERENT absolute at a different grid point — the
+        // relative semantics the absolute knob cannot express.
+        let delta_q50 = config_from_cell_id("moz[cqd-10]_t0_small_420", 50.0).unwrap();
+        let absolute_q50 = config_from_cell_id("moz[cq40]_t0_small_420", 50.0).unwrap();
+        assert_eq!(fingerprint(&delta_q50), fingerprint(&absolute_q50));
+        assert!(config_from_cell_id("moz[cqdx]_t0_small_420", 50.0).is_err());
     }
 
     #[test]
@@ -1482,6 +1573,15 @@ mod tests {
         axis_variant!(downsampling);
         axis_variant!(allow_16bit);
         axis_variant!(pre_blur);
+        {
+            // Deltas only act on the follow-luma moz family.
+            let mut a = tiny_axes();
+            a.families = vec![QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }];
+            a.moz_chroma_deltas = full.moz_chroma_deltas.clone();
+            variants.push(a);
+        }
         #[cfg(feature = "boundary-rd")]
         {
             let mut a = tiny_axes();

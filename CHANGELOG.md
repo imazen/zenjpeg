@@ -54,6 +54,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `SweepAxes::moz_chroma_deltas` — the relative chroma-quality form the
+  playbook queued: probes resolve `clamp(q + delta, 1, 100)` per cell
+  (curated −10/−20 from mozjpeg's two-quality idiom; ladder sheds the
+  axis first; only the follow-luma moz family crosses it). Cell ids stay
+  q-free (`moz[cqd-10]`); `config_from_cell_id` resolves against the
+  cell's own q, fingerprint-equal to the absolute spelling it denotes at
+  each grid point (test-pinned). Closes the absolute-knob known-limit.
 - Harness brought into compliance with its own playbook patterns 14/15
   (added by the zenjxl/zenavif adoptions): every cell now decode-verified
   at every quality (undecodable = hard failure; previously only q85's

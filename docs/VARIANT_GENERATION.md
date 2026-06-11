@@ -623,13 +623,15 @@ existed to copy.
 
 ## Known limits / open items
 
-- Absolute-valued knobs interact badly with quality grids
-  (`MozjpegRobidoux::chroma_quality` is absolute while the grid moves q;
-  a relative form is the fix — do not sweep a static absolute value).
-  The relative form is now proven: zenavif sweeps alpha quality as a
-  clamped **delta against the grid q** (`KnobProbe::AlphaQualityDelta`,
-  ±25), and `Delta(0)` is the follow-color spelling that
-  fingerprint-aliases away. Port that shape here for `chroma_quality`.
+- Absolute-valued knobs interact badly with quality grids — sweep them
+  as a clamped **delta against the grid q**, never as a static absolute.
+  Proven twice: zenavif's `KnobProbe::AlphaQualityDelta` (±25, `Delta(0)`
+  fingerprint-aliases the follow-color spelling), and zenjpeg's
+  `moz_chroma_deltas` axis (2026-06-11: `moz[cqd-10]` resolves
+  `clamp(q−10)` per cell; the id stays q-free, the parser resolves
+  against the cell's own q, and the fingerprint mediates it through the
+  resolved tables — `cqd-10` at q85 fingerprint-equals absolute `cq75`
+  there and `cq40` at q50).
 - Trial candidates must emit **exactly** what their explicit mode would
   (zenjpeg's first Smallest draft beat explicit Baseline by a 6-byte DRI
   it had silently dropped — the equality contract caught it).
