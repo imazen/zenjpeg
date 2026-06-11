@@ -554,10 +554,10 @@ impl JpegEncoder {
                         // silent skip: JPEG has NO CICP carrier, so an
                         // embedded APP2 ICC is the ONLY way this color
                         // survives — emitting without it would misrepresent
-                        // the image as sRGB. The `cms` feature (moxcms-backed
-                        // synthesis) covers PQ/HLG and anything else moxcms
-                        // can express; bundled coverage is Display-P3 +
-                        // SDR BT.2020 + AdobeRGB.
+                        // the image as sRGB. The `cms` feature (icc-db blob
+                        // synthesis) covers the full ITU-T H.273 grid incl
+                        // PQ/HLG, with no moxcms dependency; bundled const
+                        // coverage is Display-P3 + SDR BT.2020 + AdobeRGB.
                         match synthesize_icc_for_cicp(cicp) {
                             SynthesizedIcc::Profile(bytes) => {
                                 req = req.icc_profile_owned(bytes.into_owned());

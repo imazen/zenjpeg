@@ -110,10 +110,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   base image; without the `ultrahdr` feature `ReconstructHdr`/`Components`
   are an honest `UnsupportedFeature` error — never SDR-silently-labeled-HDR.
   Tests: `tests/bundled/gain_map_render.rs` (4 cases).
-- `cms` feature: moxcms-backed ICC synthesis for the color-emit path
-  (`zenpixels-convert?/cms-moxcms`, weak passthrough — takes effect with
-  `zencodec`), covering PQ/HLG and any CICP moxcms can express. Failing to
-  synthesize a needed ICC is now an encode **error** (`ErrorKind::IccError`),
+- `cms` feature: ICC synthesis for the color-emit path via
+  `zenpixels-convert?/icc-db` (a bundled LZ4 profile blob + pure-Rust
+  lz4_flex decoder — **no moxcms**; distinct from the `moxcms` feature, which
+  stays for `correct_color`/XYB), weak passthrough — takes effect with
+  `zencodec`, covering the full ITU-T H.273 grid incl PQ/HLG. Requires
+  `zenpixels-convert` 0.2.13 (unreleased — adds the `icc-db` feature). Failing
+  to synthesize a needed (off-grid) ICC is an encode **error**
+  (`ErrorKind::IccError`),
   not a silent skip: JPEG has no CICP carrier, so an embedded APP2 ICC is the
   only way the color survives. Tests
   `emit_cicp_pq_without_cms_is_an_encode_error` /
