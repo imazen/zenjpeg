@@ -110,7 +110,7 @@ flowchart LR
     A[Input rows<br/>PixelLayout ×16] --> B[S0 pre-filter<br/>pre_blur σ]
     B --> C[S1 color transform<br/>color_mode:<br/>YCbCr / XYB / Gray]
     C --> D[S2 chroma downsample<br/>ChromaSubsampling ×4<br/>XybSubsampling ×2<br/>DownsamplingMethod ×3]
-    D --> E[S3 AQ field<br/>aq_enabled<br/>custom_aq_map - internal<br/>AqController - scaffold]
+    D --> E[S3 AQ field<br/>aq_enabled<br/>AqController - scaffold]
     E --> F[S4 deringing<br/>deringing bool]
     F --> G[S5 DCT f32<br/>no knobs]
     G --> H[S6 quantize<br/>Quality ×6 units<br/>QuantTableConfig ×5<br/>chroma_distance_scale<br/>chroma_quality<br/>allow_16bit<br/>zero-bias auto]
@@ -125,7 +125,7 @@ flowchart LR
 | S0 | `pre_blur: f32` (σ, 0.0 = off) | 0.0 | encoder_config.rs:488 |
 | S1 | `color_mode: ColorMode{YCbCr{sub}, Xyb{sub}, Grayscale}` | per constructor | encoder_types.rs:280 |
 | S2 | `ChromaSubsampling{None,HalfHorizontal,Quarter,HalfVertical}`; `XybSubsampling{Full,BQuarter}`; `DownsamplingMethod{Box,GammaAware,GammaAwareIterative}` (`sharp_yuv()` = Box↔GammaAwareIterative) | ctor arg; BQuarter; Box | encoder_types.rs:304,373,385 |
-| S3 | `aq_enabled: bool`; `custom_aq_map` (pub(crate), streaming_builder.rs:343); `AqController` hook (unwired scaffold, strip/mod.rs:992) | true; None; None | encoder_config.rs:474 |
+| S3 | `aq_enabled: bool`; `AqController` hook (unwired scaffold, strip/mod.rs:992) | true; None | encoder_config.rs:474 |
 | S4 | `deringing: bool` (uses DC quant value; only fires on saturated pixels) | true | encoder_config.rs:470 |
 | S6 | see §2–§4 | — | — |
 | S7 | see §5; plus `boundary_rd_mode` (feature `boundary-rd`: SeamPenalty{alpha 2.0, threshold 0.02, drift_gain 0, retry_beta 1.0}, RetryPolicy{shrink 0.5, max_retries 2}, NeighborScope) | Off | encoder_config.rs:501 |
@@ -214,11 +214,12 @@ Things to notice:
 - Consumed twice:
   1. At quantization: per-block strength scales the effective quant step.
   2. In hybrid trellis mode: adjusts per-block λ (§5).
-- Per-block override hooks exist but are internal: `custom_aq_map`
-  (streaming_builder.rs:343, pub(crate)) and the `AqController` trait
-  scaffold (strip/mod.rs:992, `#[allow(dead_code)]`, "wired up by external
-  callers in PR-D"). The conflicted bookmark `feat/aq-controller-scaffold`
-  (918f581f) is this work.
+- Per-block override hook: the `AqController` trait scaffold
+  (strip/mod.rs:992, "wired up by external callers in PR-D"); the
+  conflicted bookmark `feat/aq-controller-scaffold` (918f581f) is this
+  work. (`custom_aq_map` was deleted 2026-06-11 — it fed only the
+  never-integrated XYB block-based path; caller-supplied maps should
+  ship as an AqController impl, see #76/#147.)
 
 ---
 
@@ -590,7 +591,7 @@ subsampling)` — all live, all documented, one override rule.
 | quality targeting | 6 unit systems + ZqTarget(5 fields) | — | zq without `target-zq` feature |
 | tables | 5 families × params + allow_16bit | chroma_quality (doc-hidden) | piecewise-v4, CMA-ES consts |
 | chroma | 4 subsampling + 2 xyb + downsampling(3) + chroma_distance_scale | — | HybridConfig.chroma_scale (inert at coupling 0) |
-| AQ | aq_enabled | custom_aq_map, AqController scaffold | — |
+| AQ | aq_enabled | AqController scaffold | — |
 | coeff-opt | TrellisConfig(6) + HybridConfig(11) + boundary-rd(8) | both setters doc-hidden | speed_mode (output-dead) |
 | scan/entropy | scan_mode(4), huffman(4), restart(2), tiny(3) | force_restart_markers | — |
 | pre/post | pre_blur, deringing | — | — |

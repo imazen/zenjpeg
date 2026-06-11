@@ -5,6 +5,16 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Removed
+- Dead `custom_aq_map` chain: the `ComputedConfig`/`StreamingEncoderBuilder`
+  field, the pub(crate) `aq_map()` setter, and the orphaned
+  `get_aq_map_or_compute` / `create_trellis_ctx` helpers — all fed only
+  the never-integrated XYB block-based encoding path; nothing public
+  could populate the map and setting it changed no encode. Caller-supplied
+  AQ maps are re-scoped as a `CustomMapController` behind the #113
+  `AqController` hook, gated on a validation experiment (#147). Closes #76.
+
+
 ### Fixed
 - zencodec decode-path `ImageInfo` now populates
   `source_color.bit_depth` (SOF sample precision) and `channel_count` —

@@ -72,10 +72,6 @@ pub struct ComputedConfig {
     ///
     /// Has no effect for 4:4:4 (no downsampling needed).
     pub chroma_downsampling: DownsamplingMethod,
-    /// Custom AQ map (optional). If None, computed automatically.
-    /// Allows pre-scaling the AQ map for size control.
-    pub custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
-
     /// Custom encoding tables (escape hatch for experimentation).
     /// Not part of public API.
     #[doc(hidden)]
@@ -288,7 +284,6 @@ impl Default for ComputedConfig {
             huffman: HuffmanStrategy::Optimize,
             // Box filter matches C++ jpegli default
             chroma_downsampling: DownsamplingMethod::Box,
-            custom_aq_map: None,
             edge_padding: EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,

@@ -305,7 +305,6 @@ impl StreamingEncoder {
             xyb_subsampling: builder.xyb_subsampling,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
-            custom_aq_map: builder.custom_aq_map,
             trellis: builder.trellis,
             edge_padding: crate::types::EdgePaddingConfig::default(),
             original_width: None,

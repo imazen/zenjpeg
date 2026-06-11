@@ -56,8 +56,6 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
-    /// Custom AQ map
-    pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
     pub(crate) trellis: Option<super::trellis::TrellisConfig>,
     /// Tiny-file optimization mode (default: Auto).
@@ -98,7 +96,6 @@ impl StreamingEncoderBuilder {
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
-            custom_aq_map: None,
             trellis: None,
             tiny_file_mode: TinyFileMode::default(),
             smallest_scan: false,
@@ -296,14 +293,6 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
         self.quant_table_config = config;
-        self
-    }
-
-    /// Sets a custom AQ (adaptive quantization) strength map.
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
-        self.custom_aq_map = Some(map);
         self
     }
 

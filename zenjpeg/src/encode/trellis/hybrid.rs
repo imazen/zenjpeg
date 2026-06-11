@@ -8,10 +8,8 @@
 
 use super::compat::TrellisConfig;
 use super::{RateTable, trellis_quantize_block};
-use crate::encode::config::ComputedConfig;
 use crate::encode::dct::forward_dct_8x8;
 use crate::encode::natural_to_zigzag_into;
-use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
@@ -102,39 +100,6 @@ pub fn hybrid_quantize_block(
 // ============================================================================
 // Encoder integration (from encode/hybrid.rs)
 // ============================================================================
-
-// ============================================================================
-// Setup Helpers
-// ============================================================================
-
-/// Get the AQ map, using custom if provided or computing from Y plane.
-#[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
-#[inline]
-pub(crate) fn get_aq_map_or_compute(
-    config: &ComputedConfig,
-    y_plane: &[f32],
-    width: usize,
-    height: usize,
-    y_quant_01: u16,
-) -> Result<AQStrengthMap> {
-    if let Some(ref custom) = config.custom_aq_map {
-        Ok(custom.clone())
-    } else {
-        Ok(crate::quant::aq::compute_aq_strength_map(
-            y_plane, width, height, y_quant_01,
-        )?)
-    }
-}
-
-/// Create the trellis quantization context if enabled in config.
-#[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
-#[inline]
-pub(crate) fn create_trellis_ctx(config: &ComputedConfig) -> Option<TrellisContext> {
-    config
-        .trellis
-        .filter(|t| t.is_enabled())
-        .map(TrellisContext::new)
-}
 
 // ============================================================================
 // Quantization Dispatch Helper
