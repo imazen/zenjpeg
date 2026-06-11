@@ -250,6 +250,7 @@ mod tests {
             height: 8,
             components: vec![comp],
             quant_tables: vec![Some([1u16; 64])],
+            huffman_tables: None,
         }
     }
 

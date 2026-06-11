@@ -1123,6 +1123,31 @@ impl<'a> JpegParser<'a> {
             height: self.height,
             components,
             quant_tables,
+            huffman_tables: self.harvest_huffman_tables(),
+        })
+    }
+
+    /// Rebuild an encoder-ready [`HuffmanTableSet`] from the decode tables'
+    /// stored DHT `(bits, values)` pairs. Table 0 → luma, table 1 → chroma
+    /// (luma reused when absent, e.g. grayscale). For progressive streams
+    /// this captures the final table state after all scans. `None` when the
+    /// luma tables were never defined or any table fails to rebuild (e.g. a
+    /// lenient-mode stream carried a malformed DHT).
+    fn harvest_huffman_tables(&self) -> Option<crate::huffman::optimize::HuffmanTableSet> {
+        use crate::huffman::optimize::{HuffmanTableSet, OptimizedTable};
+        let dc_luma = self.dc_tables[0].as_ref()?;
+        let ac_luma = self.ac_tables[0].as_ref()?;
+        let dc_chroma = self.dc_tables[1].as_ref().unwrap_or(dc_luma);
+        let ac_chroma = self.ac_tables[1].as_ref().unwrap_or(ac_luma);
+        let rebuild = |t: &HuffmanDecodeTable| {
+            let (bits, values) = t.to_bits_values();
+            OptimizedTable::from_bits_values(bits, values.to_vec()).ok()
+        };
+        Some(HuffmanTableSet {
+            dc_luma: rebuild(dc_luma)?,
+            ac_luma: rebuild(ac_luma)?,
+            dc_chroma: rebuild(dc_chroma)?,
+            ac_chroma: rebuild(ac_chroma)?,
         })
     }
 }

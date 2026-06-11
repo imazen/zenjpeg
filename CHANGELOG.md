@@ -5,6 +5,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Added
+- `DecodedCoefficients::huffman_tables()` — harvest the decoded
+  stream's DHT tables as an encoder-ready `HuffmanTableSet` for
+  transcode-time table reuse via `EncoderConfig::huffman()` (single-pass
+  re-encode with the source's symbol distribution). `HuffmanDecodeTable`
+  now stores its DHT `bits` histogram and exposes `to_bits_values()`.
+  Baseline Y/C slot convention; grayscale falls back chroma→luma;
+  progressive captures final post-scan state. Closes #77.
+
 ### Changed
 - `encoder::ExifFields::to_bytes()` delegates serialization to
   `zencodec::exif::Exif` (canonical authoring path: 32M+ fuzz

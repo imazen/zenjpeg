@@ -405,6 +405,9 @@ pub struct DecodedCoefficients {
     /// Quantization tables (one per table slot used)
     /// Index matches component's quant_table_idx
     pub quant_tables: Vec<Option<[u16; 64]>>,
+    /// Huffman tables harvested from the bitstream, if reconstructible.
+    /// Access via [`huffman_tables()`](Self::huffman_tables).
+    pub(crate) huffman_tables: Option<crate::huffman::optimize::HuffmanTableSet>,
 }
 
 impl DecodedCoefficients {
@@ -412,6 +415,49 @@ impl DecodedCoefficients {
     #[must_use]
     pub fn num_components(&self) -> usize {
         self.components.len()
+    }
+
+    /// Huffman tables harvested from the decoded bitstream, ready to feed
+    /// back into the encoder via
+    /// [`EncoderConfig::huffman`](crate::encoder::EncoderConfig::huffman)
+    /// for transcode-time table reuse (single-pass re-encoding with the
+    /// source's symbol distribution).
+    ///
+    /// Slot mapping follows the baseline Y/C convention: DC/AC table 0 →
+    /// luma, table 1 → chroma. Grayscale baseline streams define no chroma
+    /// tables; the luma tables are reused in the chroma slots (harmless —
+    /// they are unused when encoding grayscale). For **progressive** JPEGs
+    /// this is the final table state after all scans; scan scripts spread
+    /// tables across slots per scan, so the slots need not correspond to
+    /// Y/C and the set is best treated as a same-distribution warm start
+    /// rather than an exact table carry-over. Custom tables are a
+    /// baseline-encode strategy (progressive re-encoding always optimizes
+    /// per scan).
+    ///
+    /// Returns `None` when the stream's tables could not be reconstructed
+    /// (e.g. no luma tables were ever defined).
+    ///
+    /// ```
+    /// use enough::Unstoppable;
+    /// use zenjpeg::decoder::Decoder;
+    /// use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    ///
+    /// let rgb: Vec<u8> = (0..48 * 48 * 3).map(|i| (i * 31 % 251) as u8).collect();
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
+    /// let jpeg = config.encode_bytes(&rgb, 48, 48, PixelLayout::Rgb8Srgb)?;
+    ///
+    /// // Harvest the tables, then re-encode single-pass with them.
+    /// let coeffs = Decoder::new().decode_coefficients(&jpeg, Unstoppable)?;
+    /// let tables = coeffs.huffman_tables().expect("baseline stream").clone();
+    /// let reencoded = config
+    ///     .huffman(tables)
+    ///     .encode_bytes(&rgb, 48, 48, PixelLayout::Rgb8Srgb)?;
+    /// # let _ = reencoded;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn huffman_tables(&self) -> Option<&crate::huffman::optimize::HuffmanTableSet> {
+        self.huffman_tables.as_ref()
     }
 
     /// Compares coefficients with another decode result, returning statistics.

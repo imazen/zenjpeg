@@ -3,7 +3,7 @@
 # (regenerated on every `cargo test`; ZEN_API_DOC=check verifies, =off skips).
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (3515 items)
+## default features (3516 items)
 
 pub mod zenjpeg
 pub mod zenjpeg::blur
@@ -1557,6 +1557,7 @@ pub zenjpeg::decoder::DecodedCoefficients::quant_tables: alloc::vec::Vec<core::o
 pub zenjpeg::decoder::DecodedCoefficients::width: u32
 impl zenjpeg::decoder::DecodedCoefficients
 pub fn zenjpeg::decoder::DecodedCoefficients::compare(&self, &zenjpeg::decoder::DecodedCoefficients) -> zenjpeg::decode::image::CoefficientComparison
+pub fn zenjpeg::decoder::DecodedCoefficients::huffman_tables(&self) -> core::option::Option<&zenjpeg::encoder::HuffmanTableSet>
 pub fn zenjpeg::decoder::DecodedCoefficients::num_components(&self) -> usize
 impl core::clone::Clone for zenjpeg::decoder::DecodedCoefficients
 pub fn zenjpeg::decoder::DecodedCoefficients::clone(&self) -> zenjpeg::decoder::DecodedCoefficients

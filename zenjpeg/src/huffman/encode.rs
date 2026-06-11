@@ -261,6 +261,10 @@ pub struct HuffmanDecodeTable {
     pub maxcode_16bit: [i32; MAX_CODE_LENGTH + 2],
     /// Offset for decoding codes of each length
     pub valoffset: [i32; MAX_CODE_LENGTH + 2],
+    /// DHT code-length histogram (codes per length 1-16), as parsed.
+    /// Kept alongside `values` so a decoded table can be re-serialized
+    /// for re-encoding (decode → encode table reuse, issue #77).
+    pub bits: [u8; 16],
     /// Symbol values
     pub values: Vec<u8>,
     /// Whether the table is valid
@@ -280,9 +284,19 @@ impl HuffmanDecodeTable {
             maxcode: [-1; MAX_CODE_LENGTH + 2],
             maxcode_16bit: [i32::MAX; MAX_CODE_LENGTH + 2],
             valoffset: [0; MAX_CODE_LENGTH + 2],
+            bits: [0; 16],
             values: Vec::new(),
             valid: false,
         }
+    }
+
+    /// Recover the canonical DHT `(bits, values)` pair this table was
+    /// built from — e.g. to feed
+    /// [`OptimizedTable::from_bits_values`](crate::huffman::optimize::OptimizedTable::from_bits_values)
+    /// for decode → re-encode table reuse.
+    #[must_use]
+    pub fn to_bits_values(&self) -> ([u8; 16], &[u8]) {
+        (self.bits, &self.values)
     }
 
     /// Creates a decoding table from JPEG-format bits and values.
@@ -298,6 +312,7 @@ impl HuffmanDecodeTable {
 
     fn from_bits_values_impl(bits: &[u8; 16], values: &[u8], is_ac: bool) -> Result<Self> {
         let mut table = Self::new();
+        table.bits = *bits;
         table.values = values.to_vec();
 
         // Build huffsize and huffcode arrays

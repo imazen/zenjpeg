@@ -393,6 +393,7 @@ fn make_test_coefficients() -> DecodedCoefficients {
             quant_table_idx: 0,
         }],
         quant_tables: vec![Some([1u16; 64])],
+        huffman_tables: None,
     }
 }
 
@@ -526,6 +527,7 @@ fn test_transform_nonsquare_transpose() {
             quant_table_idx: 0,
         }],
         quant_tables: vec![Some([1u16; 64])],
+        huffman_tables: None,
     };
 
     let config = TransformConfig {
