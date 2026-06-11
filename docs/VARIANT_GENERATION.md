@@ -566,6 +566,23 @@ Open items live in each repo's adoption doc; the common queued work is
 the exact-trial helpers (zenwebp lossless, zenpng `Effort(31+)`,
 zenjxl's upstream in jxl-encoder where encode state can be shared).
 
+**Beyond the original five (2026-06-11):** zengif adopted
+(quantizer-dominated metric axes; build-feature liveness structural —
+uncompiled-backend ids rejected; ColorQuant's missing dithering knob
+structurally excluded; palette-representable content must roundtrip
+pixel-exact at q100/d0 through every compiled backend) and zentiff
+adopted (all-trial-class ≤16-cell space; first harness run proved
+`Predictor::Horizontal` gate-shadowed under `Uncompressed` and
+documented PackBits' byte-level-RLE loss on RGB band content) — both
+with step-8 zenmetrics wiring open (no `CodecKind` for gif/tiff yet).
+zenbitmaps has no variant space to sweep, but it wired
+zenpixels-convert's **load-bearing reduction** into its zencodec encode
+path (PNM/QOI/BMP/TGA) — raw formats pay full price for dead lanes, so
+the bit-exact narrowing wins more there than for any compressed codec.
+Remaining codecs are wrappers/decoders/knob-free by design (engines
+covered via zenavif/zenjxl; heic/zenraw/zenpdf decode-only;
+zenbitmaps/fax knob-free).
+
 (Execution models and the identity contract live in "Where each piece
 lives" above and pattern 7 — not repeated here.)
 
