@@ -3116,9 +3116,9 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.21"
+version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5125c73491ecfc1a47a721bdb3c9a538b92777463cfcee9aafc0b5dbf1472965"
+checksum = "b7caa71c10074d2ab050aa1e0e9aa519822c4e5f282a8e4cdfe970b96fb3d5da"
 dependencies = [
  "almost-enough",
  "enough",

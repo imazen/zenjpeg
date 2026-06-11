@@ -6,6 +6,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- `encoder::ExifFields::to_bytes()` delegates serialization to
+  `zencodec::exif::Exif` (canonical authoring path: 32M+ fuzz
+  executions, kamadak-exif differential tests); the private
+  `build_exif_tiff` / `write_ifd_entry` TIFF writer is deleted. Public
+  API unchanged. Out-of-line odd-length values now gain a TIFF 6.0
+  even-offset pad byte. Floor bump zencodec 0.1.21 → 0.1.22. Closes
+  #145.
 - The decoder is always compiled; the `decoder` feature is a deprecated
   no-op (kept so downstream `features = ["decoder"]` keeps resolving,
   e.g. zenpipe/zencodecs). The flag gated encoder features that need
