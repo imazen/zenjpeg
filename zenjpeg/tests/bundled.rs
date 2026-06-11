@@ -42,6 +42,8 @@ mod arithmetic_first_decode;
 mod arithmetic_minimal;
 #[path = "bundled/arithmetic_tolerance.rs"]
 mod arithmetic_tolerance;
+#[path = "bundled/auto_orient_pixel_parity.rs"]
+mod auto_orient_pixel_parity;
 #[path = "bundled/bt601_reference.rs"]
 mod bt601_reference;
 #[path = "bundled/chroma_benchmark.rs"]

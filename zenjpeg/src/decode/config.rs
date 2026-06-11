@@ -14,7 +14,8 @@ use super::extras::{DecodedExtras, PreserveConfig};
 /// How the decoder should handle image orientation.
 ///
 /// Combines EXIF auto-orientation and explicit transforms into a single enum,
-/// allowing the decoder to coalesce operations (e.g., JPEG lossless DCT rotation).
+/// allowing the decoder to coalesce operations (the combined transform is
+/// applied as a single lossless pixel permutation of the decoded image).
 ///
 /// Matches [`zencodec::OrientationHint`] when the `zencodec` feature is enabled.
 ///
@@ -46,9 +47,9 @@ pub enum OrientationHint {
 
     /// Resolve EXIF/container orientation to identity (default).
     ///
-    /// The decoder coalesces this with the decode operation when possible
-    /// (e.g., JPEG lossless DCT transform). The output will have correct
-    /// visual orientation.
+    /// The decoder applies the orientation as a lossless pixel permutation
+    /// of the decoded image — identical to decoding upright and reorienting
+    /// afterwards. The output will have correct visual orientation.
     #[default]
     Correct,
 
@@ -1089,6 +1090,54 @@ impl DecodeResult {
         self.gain_map = gain_map;
     }
 
+    /// Apply an orientation transform to the decoded pixels in place.
+    ///
+    /// Pure pixel permutation (no resampling, no precision loss) on whichever
+    /// buffer is present (u8 or f32), swapping `width`/`height` for
+    /// dimension-swapping transforms. Used by the pixel-domain orientation
+    /// fallback for images where the DCT-domain transform is not exact
+    /// (subsampled chroma with non-MCU-aligned dimensions, issue #149).
+    pub(crate) fn apply_pixel_transform(&mut self, transform: LosslessTransform) {
+        if transform == LosslessTransform::None {
+            return;
+        }
+        let w = self.width as usize;
+        let h = self.height as usize;
+        if let Some(px) = self.pixels_u8.take() {
+            // Interleaved u8: stride unit is bytes_per_pixel (4 for Bgrx).
+            let ch = self.format.bytes_per_pixel();
+            self.pixels_u8 = Some(transform_interleaved(&px, w, h, ch, transform));
+        }
+        if let Some(px) = self.pixels_f32.take() {
+            // f32 buffers are packed with one element per channel.
+            let ch = self.format.num_channels();
+            self.pixels_f32 = Some(transform_interleaved(&px, w, h, ch, transform));
+        }
+        if transform.swaps_dimensions() {
+            core::mem::swap(&mut self.width, &mut self.height);
+        }
+    }
+
+    /// Crop the decoded pixels in place to the given rectangle.
+    ///
+    /// Coordinates are in the current (post-transform) output space and must
+    /// be fully inside the image.
+    pub(crate) fn crop_in_place(&mut self, x: u32, y: u32, new_w: u32, new_h: u32) {
+        let w = self.width as usize;
+        let (x, y) = (x as usize, y as usize);
+        let (new_w, new_h) = (new_w as usize, new_h as usize);
+        if let Some(px) = self.pixels_u8.take() {
+            let ch = self.format.bytes_per_pixel();
+            self.pixels_u8 = Some(crop_interleaved(&px, w, x, y, new_w, new_h, ch));
+        }
+        if let Some(px) = self.pixels_f32.take() {
+            let ch = self.format.num_channels();
+            self.pixels_f32 = Some(crop_interleaved(&px, w, x, y, new_w, new_h, ch));
+        }
+        self.width = new_w as u32;
+        self.height = new_h as u32;
+    }
+
     /// Image width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {
@@ -1302,6 +1351,65 @@ impl DecodeInfo {
     pub fn warnings(&self) -> &[DecodeWarning] {
         &self.warnings
     }
+}
+
+/// Apply an orientation transform to an interleaved pixel buffer.
+///
+/// `src` is `h` rows of `w` pixels with `ch` elements per pixel (tightly
+/// packed). Returns a new buffer in the transformed geometry (dimensions
+/// swap for Transpose/Rotate90/Rotate270/Transverse). Pure permutation —
+/// every output pixel is copied verbatim from exactly one input pixel.
+fn transform_interleaved<T: Copy>(
+    src: &[T],
+    w: usize,
+    h: usize,
+    ch: usize,
+    transform: LosslessTransform,
+) -> Vec<T> {
+    debug_assert_eq!(src.len(), w * h * ch);
+    let (ow, oh) = if transform.swaps_dimensions() {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let mut dst = Vec::with_capacity(src.len());
+    for oy in 0..oh {
+        for ox in 0..ow {
+            // Source pixel for output (ox, oy). All transforms follow EXIF
+            // display semantics (Rotate90 = 90° clockwise, EXIF 6).
+            let (sx, sy) = match transform {
+                LosslessTransform::None => (ox, oy),
+                LosslessTransform::FlipHorizontal => (w - 1 - ox, oy),
+                LosslessTransform::FlipVertical => (ox, h - 1 - oy),
+                LosslessTransform::Rotate180 => (w - 1 - ox, h - 1 - oy),
+                LosslessTransform::Transpose => (oy, ox),
+                LosslessTransform::Rotate90 => (oy, h - 1 - ox),
+                LosslessTransform::Rotate270 => (w - 1 - oy, ox),
+                LosslessTransform::Transverse => (w - 1 - oy, h - 1 - ox),
+            };
+            let s = (sy * w + sx) * ch;
+            dst.extend_from_slice(&src[s..s + ch]);
+        }
+    }
+    dst
+}
+
+/// Copy a sub-rectangle out of an interleaved pixel buffer.
+fn crop_interleaved<T: Copy>(
+    src: &[T],
+    src_w: usize,
+    x: usize,
+    y: usize,
+    new_w: usize,
+    new_h: usize,
+    ch: usize,
+) -> Vec<T> {
+    let mut dst = Vec::with_capacity(new_w * new_h * ch);
+    for row in 0..new_h {
+        let start = ((y + row) * src_w + x) * ch;
+        dst.extend_from_slice(&src[start..start + new_w * ch]);
+    }
+    dst
 }
 
 // ============================================================================

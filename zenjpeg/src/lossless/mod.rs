@@ -28,7 +28,6 @@ mod restructure;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use coeff_transform::remap_block;
 pub use coeff_transform::{
     BlockTransform, EdgeHandling, LosslessTransform, TransformConfig, transform_coefficients,
 };

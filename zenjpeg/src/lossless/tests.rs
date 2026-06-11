@@ -2845,16 +2845,14 @@ fn test_15x17_border_pixels_lossless() {
 
     let jpeg = encode_test_image(w, h, &pixels, None);
 
-    // Decode reference with i16 IDCT (used for non-dimension-swapping transforms)
+    // Reference: the default decode. Decode-time transforms are pixel-domain
+    // permutations of the upright decode (issue #149), so every transform
+    // must match a pixel-space transform of this single reference exactly.
+    // (Before #149 the DCT-domain path forced the f32 IDCT for dimension-
+    // swapping transforms, which required a separate f32 reference here.)
     let config_none = DecodeConfig::new();
-    let (ref_w, ref_h, ref_pixels_i16) = decode_test(&jpeg, &config_none);
+    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
     assert_eq!((ref_w, ref_h), (w, h));
-
-    // Decode reference with f32 IDCT (used for dimension-swapping transforms,
-    // since they force f32 IDCT for symmetric rounding)
-    let mut config_f32 = DecodeConfig::new();
-    config_f32.force_f32_idct = true;
-    let (_, _, ref_pixels_f32) = decode_test(&jpeg, &config_f32);
 
     // Collect all border pixel positions for the original image
     let border_positions: Vec<(usize, usize)> = {
@@ -2873,18 +2871,13 @@ fn test_15x17_border_pixels_lossless() {
     for &transform in &LosslessTransform::ALL {
         let label = format!("{transform:?}");
 
-        // DCT-domain transform (uses f32 IDCT for dimension-swapping, i16 otherwise)
+        // Decode-time transform
         let config = DecodeConfig::new().transform(transform);
         let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
 
-        // Pixel-space transform of the matching reference
-        let ref_pixels = if transform.swaps_dimensions() {
-            &ref_pixels_f32
-        } else {
-            &ref_pixels_i16
-        };
+        // Pixel-space transform of the reference
         let (px_w, px_h, px_pixels) =
-            pixel_transform(ref_pixels, ref_w as usize, ref_h as usize, transform);
+            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
 
         assert_eq!(
             (dct_w, dct_h),
@@ -3018,13 +3011,14 @@ fn test_15x17_all_pixels_lossless() {
 
     let jpeg = encode_test_image(w, h, &pixels, None);
 
-    // Two references: i16 IDCT (default) and f32 IDCT (for dimension-swapping)
+    // Reference: the default decode. Decode-time transforms are pixel-domain
+    // permutations of the upright decode (issue #149), so every transform
+    // must match a pixel-space transform of this single reference exactly.
+    // (Before #149 the DCT-domain path forced the f32 IDCT for dimension-
+    // swapping transforms, which required a separate f32 reference here.)
     let config_none = DecodeConfig::new();
-    let (ref_w, ref_h, ref_pixels_i16) = decode_test(&jpeg, &config_none);
+    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
     assert_eq!((ref_w, ref_h), (w, h));
-    let mut config_f32 = DecodeConfig::new();
-    config_f32.force_f32_idct = true;
-    let (_, _, ref_pixels_f32) = decode_test(&jpeg, &config_f32);
 
     for &transform in &LosslessTransform::ALL {
         if transform == LosslessTransform::None {
@@ -3032,18 +3026,13 @@ fn test_15x17_all_pixels_lossless() {
         }
         let label = format!("{transform:?}");
 
-        // DCT-domain transform
+        // Decode-time transform
         let config = DecodeConfig::new().transform(transform);
         let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
 
-        // Pixel-space transform of matching reference
-        let ref_pixels = if transform.swaps_dimensions() {
-            &ref_pixels_f32
-        } else {
-            &ref_pixels_i16
-        };
+        // Pixel-space transform of the reference
         let (px_w, px_h, px_pixels) =
-            pixel_transform(ref_pixels, ref_w as usize, ref_h as usize, transform);
+            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
 
         assert_eq!(
             (dct_w as usize, dct_h as usize),

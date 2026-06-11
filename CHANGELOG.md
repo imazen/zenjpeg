@@ -16,6 +16,27 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 
 ### Fixed
+- `decoder::Decoder` with `auto_orient(true)` — the DEFAULT — produced
+  massively wrong pixels on EXIF-rotated 4:2:0 JPEGs (#149): on a
+  4000x3000 EXIF-Orientation-6 phone photo, 88% of bytes differed from
+  decode-upright-then-rotate (max abs diff 252, ~36% of pixels >2% off
+  vs an ImageMagick reference). Root cause: orientation was applied as
+  a DCT-coefficient-domain transform on the MCU-padded coefficient
+  grid, but the post-transform crop was computed at 8-px granularity
+  while 4:2:0 storage pads to 16-px MCUs — Rotate90 moved the bottom
+  padding block row to the left edge uncropped, shifting the whole
+  image 8 px and desyncing chroma. Dimension-swapping transforms also
+  forced the f32 IDCT, diverging from the default integer-IDCT decode
+  by up to 9 channel steps even on MCU-aligned images. Decode-time
+  orientation (EXIF auto-orient and explicit `transform()`) is now a
+  lossless pixel-domain permutation of the upright decode — output is
+  byte-identical to `auto_orient(false)` + an external orientation
+  bake for all 8 orientations, all subsampling modes, and all sizes,
+  and the upright decode keeps the streaming fast path. The scanline
+  reader routes transforms through the same path; DCT-domain
+  transforms remain for the lossless re-encode pipeline
+  (`lossless::transform`). New regression matrix:
+  `tests/bundled/auto_orient_pixel_parity.rs`.
 - `container::mpf::parse_mpf` now tolerates two in-the-wild MP Index
   quirks from the same writer family (#148): the MPFVersion UNDEFINED×4
   value written out of line (value field zeroed, ASCII `"0100"` spliced

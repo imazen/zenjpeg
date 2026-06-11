@@ -515,9 +515,9 @@ impl DecodeConfig {
 
     /// Sets an explicit lossless transform to apply during decode.
     ///
-    /// The transform is applied in DCT-coefficient space before IDCT,
-    /// so there is no quality loss from the transform itself. Only one
-    /// full entropy decode pass is performed.
+    /// The transform is applied as a lossless pixel permutation of the
+    /// decoded image, so there is no quality loss from the transform
+    /// itself. Only one full entropy decode pass is performed.
     ///
     /// When combined with [`auto_orient(true)`](Self::auto_orient), the
     /// EXIF orientation correction is applied first, then this transform.
@@ -738,10 +738,10 @@ impl DecodeConfig {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        // Check if we need a transform — if so, use coefficient-based path
+        // Check if we need a transform — if so, use the buffered pixel-domain path
         let effective_transform = self.compute_effective_transform_from_data(data);
         if effective_transform != crate::lossless::LosslessTransform::None {
-            return self.scanline_reader_with_transform(data, effective_transform);
+            return self.scanline_reader_with_transform(data);
         }
 
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
@@ -985,7 +985,7 @@ impl DecodeConfig {
         // Check if we need a transform
         let effective_transform = self.compute_effective_transform_from_data(&vec);
         if effective_transform != crate::lossless::LosslessTransform::None {
-            return self.scanline_reader_with_transform_owned(vec, effective_transform);
+            return self.scanline_reader_with_transform_owned(vec);
         }
 
         // Phase 1: parse the JPEG data, extract everything we need.
@@ -1267,137 +1267,57 @@ impl DecodeConfig {
         }
     }
 
+    /// MCU row height of the source image (max vertical sampling factor x 8),
+    /// from a header-only probe. Used to resolve user crop regions on the
+    /// scanline transform paths, matching the historical behavior of using
+    /// the pre-transform sampling factors.
+    fn source_mcu_height(&self, data: &[u8]) -> Result<usize> {
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        parser.read_header()?;
+        let max_v_samp = parser.components[..parser.num_components as usize]
+            .iter()
+            .map(|c| c.v_samp_factor as usize)
+            .max()
+            .unwrap_or(1);
+        Ok(max_v_samp * 8)
+    }
+
     /// Transform path for owned data: fully decodes and stores owned data.
+    ///
+    /// Transforms are applied in the pixel domain by decode() (issue #149:
+    /// the DCT-domain transform shifted content and desynced chroma for
+    /// non-MCU-aligned subsampled images, and diverged from the upright
+    /// IDCT for dimension swaps). Serve the oriented pixels from a buffered
+    /// reader so the scanline path matches decode() exactly.
     fn scanline_reader_with_transform_owned<'a>(
         &self,
         vec: alloc::vec::Vec<u8>,
-        transform: crate::lossless::LosslessTransform,
     ) -> Result<ScanlineReader<'a>> {
-        use crate::lossless::LosslessTransform;
         use crate::types::Subsampling;
         use alloc::borrow::Cow;
 
-        enum TransformResult {
-            Buffered {
-                vis_w: u32,
-                vis_h: u32,
-                num_components: u8,
-                pixels: alloc::vec::Vec<u8>,
-                mcu_height: usize,
-            },
-            Coefficient {
-                coefficients: DecodedCoefficients,
-                width: u32,
-                height: u32,
-                mcu_height: usize,
-            },
-        }
+        let mcu_height = self.source_mcu_height(&vec)?;
+        let mut config_no_crop = self.clone();
+        config_no_crop.crop_region = None;
+        let result = config_no_crop.decode(&vec, Unstoppable)?;
+        let vis_w = result.width();
+        let vis_h = result.height();
+        let num_components = result.format().num_channels() as u8;
+        let pixels = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
 
-        let result = {
-            let mut parser =
-                JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
-            parser.decode_mode = parser::DecodeMode::Coefficient;
-            parser.chroma_upsampling = self.chroma_upsampling;
-            parser.idct_method = self.effective_idct_method();
-            parser.decode(&Unstoppable)?;
-
-            let max_v_samp = parser.components[..parser.num_components as usize]
-                .iter()
-                .map(|c| c.v_samp_factor as usize)
-                .max()
-                .unwrap_or(1);
-            let mcu_height = max_v_samp * 8;
-
-            let orig_w = parser.width as usize;
-            let orig_h = parser.height as usize;
-            let pad_x = ((orig_w + 7) / 8) * 8 - orig_w;
-            let pad_y = ((orig_h + 7) / 8) * 8 - orig_h;
-
-            let (crop_x, crop_y) = match transform {
-                LosslessTransform::None => (0, 0),
-                LosslessTransform::FlipHorizontal => (pad_x, 0),
-                LosslessTransform::FlipVertical => (0, pad_y),
-                LosslessTransform::Rotate180 => (pad_x, pad_y),
-                LosslessTransform::Transpose => (0, 0),
-                LosslessTransform::Rotate90 => (pad_y, 0),
-                LosslessTransform::Rotate270 => (0, pad_x),
-                LosslessTransform::Transverse => (pad_y, pad_x),
-            };
-
-            parser.apply_dct_transform(transform);
-
-            let is_cmyk = parser.num_components == 4;
-
-            if crop_x > 0 || crop_y > 0 || transform.swaps_dimensions() || is_cmyk {
-                let mut config_no_crop = self.clone();
-                config_no_crop.crop_region = None;
-                let result = config_no_crop.decode(&vec, Unstoppable)?;
-                let vis_w = result.width();
-                let vis_h = result.height();
-                let num_components = result.format().num_channels() as u8;
-                let pixels = result
-                    .into_pixels_u8()
-                    .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
-
-                TransformResult::Buffered {
-                    vis_w,
-                    vis_h,
-                    num_components,
-                    pixels,
-                    mcu_height,
-                }
-            } else {
-                let coefficients = parser.extract_coefficients()?;
-                let width = parser.width;
-                let height = parser.height;
-
-                TransformResult::Coefficient {
-                    coefficients,
-                    width,
-                    height,
-                    mcu_height,
-                }
-            }
-        };
-        // parser dropped, borrow on vec released.
-
-        match result {
-            TransformResult::Buffered {
-                vis_w,
-                vis_h,
-                num_components,
-                pixels,
-                mcu_height,
-            } => {
-                let mut reader = ScanlineReader::new_buffered_cow(
-                    Cow::Owned(vec),
-                    vis_w,
-                    vis_h,
-                    num_components,
-                    Subsampling::S444,
-                    pixels,
-                    false,
-                );
-                self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
-                Ok(reader)
-            }
-            TransformResult::Coefficient {
-                coefficients,
-                width,
-                height,
-                mcu_height,
-            } => {
-                let mut reader = ScanlineReader::from_coefficients(
-                    coefficients,
-                    self.chroma_upsampling,
-                    self.effective_idct_method(),
-                    self.output_target,
-                )?;
-                reader.replace_data(Cow::Owned(vec));
-                self.apply_crop(&mut reader, width, height, mcu_height)?;
-                Ok(reader)
-            }
-        }
+        let mut reader = ScanlineReader::new_buffered_cow(
+            Cow::Owned(vec),
+            vis_w,
+            vis_h,
+            num_components,
+            Subsampling::S444,
+            pixels,
+            false,
+        );
+        self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+        Ok(reader)
     }
 
     /// Compute wave-parallel state from scan data without creating a reader.
@@ -1603,93 +1523,37 @@ impl DecodeConfig {
         ))
     }
 
+    /// Transform path for borrowed data.
     ///
-    /// For non-MCU-aligned images where the transform moves padding to a visible
-    /// edge, falls back to a buffered decode + crop approach (same as `decode()`).
-    fn scanline_reader_with_transform<'a>(
-        &self,
-        data: &'a [u8],
-        transform: crate::lossless::LosslessTransform,
-    ) -> Result<ScanlineReader<'a>> {
-        use crate::lossless::LosslessTransform;
+    /// Transforms are applied in the pixel domain by decode() (issue #149:
+    /// the DCT-domain transform shifted content and desynced chroma for
+    /// non-MCU-aligned subsampled images, and diverged from the upright
+    /// IDCT for dimension swaps). Serve the oriented pixels from a buffered
+    /// reader so the scanline path matches decode() exactly.
+    fn scanline_reader_with_transform<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        let mcu_height = self.source_mcu_height(data)?;
+        let mut config_no_crop = self.clone();
+        config_no_crop.crop_region = None;
+        let result = config_no_crop.decode(data, Unstoppable)?;
+        let vis_w = result.width();
+        let vis_h = result.height();
+        let num_components = result.format().num_channels() as u8;
+        let is_xyb = false; // XYB is converted to RGB during decode
+        let pixels = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
 
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
-        parser.decode_mode = parser::DecodeMode::Coefficient; // Need coefficient storage
-        parser.chroma_upsampling = self.chroma_upsampling;
-        parser.idct_method = self.effective_idct_method();
-        parser.decode(&Unstoppable)?;
-
-        // Compute MCU height for crop resolution
-        let max_v_samp = parser.components[..parser.num_components as usize]
-            .iter()
-            .map(|c| c.v_samp_factor as usize)
-            .max()
-            .unwrap_or(1);
-        let mcu_height = max_v_samp * 8;
-
-        // Check if crop is needed for non-MCU-aligned images
-        let orig_w = parser.width as usize;
-        let orig_h = parser.height as usize;
-        let pad_x = ((orig_w + 7) / 8) * 8 - orig_w;
-        let pad_y = ((orig_h + 7) / 8) * 8 - orig_h;
-
-        let (crop_x, crop_y) = match transform {
-            LosslessTransform::None => (0, 0),
-            LosslessTransform::FlipHorizontal => (pad_x, 0),
-            LosslessTransform::FlipVertical => (0, pad_y),
-            LosslessTransform::Rotate180 => (pad_x, pad_y),
-            LosslessTransform::Transpose => (0, 0),
-            LosslessTransform::Rotate90 => (pad_y, 0),
-            LosslessTransform::Rotate270 => (0, pad_x),
-            LosslessTransform::Transverse => (pad_y, pad_x),
-        };
-
-        parser.apply_dct_transform(transform);
-
-        // CMYK (4-component) coefficient path not supported by StripProcessor
-        // (h_samp/v_samp are [u8; 3]), so always use buffered decode for CMYK.
-        let is_cmyk = parser.num_components == 4;
-
-        if crop_x > 0 || crop_y > 0 || transform.swaps_dimensions() || is_cmyk {
-            // Crop needed, dimension-swapping transform (which uses f32 IDCT),
-            // or CMYK (4-component): fall back to full buffered decode + crop.
-            // This ensures the scanline path matches the buffered decode() path exactly.
-            // Use a config without crop_region for decode — we apply crop on the reader.
-            let mut config_no_crop = self.clone();
-            config_no_crop.crop_region = None;
-            let result = config_no_crop.decode(data, Unstoppable)?;
-            let vis_w = result.width();
-            let vis_h = result.height();
-            let num_components = result.format().num_channels() as u8;
-            let is_xyb = false; // XYB is converted to RGB during decode
-            let pixels = result
-                .into_pixels_u8()
-                .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
-
-            let mut reader = ScanlineReader::new_buffered(
-                data,
-                vis_w,
-                vis_h,
-                num_components,
-                Subsampling::S444,
-                pixels,
-                is_xyb,
-            );
-            // Crop is in output space (post-transform), resolve against visible dims
-            self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
-            return Ok(reader);
-        }
-
-        let coefficients = parser.extract_coefficients()?;
-        let width = parser.width;
-        let height = parser.height;
-        let mut reader = ScanlineReader::from_coefficients(
-            coefficients,
-            self.chroma_upsampling,
-            self.effective_idct_method(),
-            self.output_target,
-        )?;
-        self.apply_crop(&mut reader, width, height, mcu_height)?;
+        let mut reader = ScanlineReader::new_buffered(
+            data,
+            vis_w,
+            vis_h,
+            num_components,
+            Subsampling::S444,
+            pixels,
+            is_xyb,
+        );
+        // Crop is in output space (post-transform), resolve against visible dims
+        self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
         Ok(reader)
     }
 
@@ -1738,6 +1602,38 @@ impl DecodeConfig {
         }
     }
 
+    /// Decode upright, then apply `transform` as a pixel-domain permutation.
+    ///
+    /// This is how [`decode()`](Self::decode) applies EXIF orientation and
+    /// explicit transforms (issue #149). It matches decode-with-
+    /// `auto_orient(false)` followed by an external pixel-domain orientation
+    /// bake byte-for-byte, and keeps the streaming fast path eligible for
+    /// the upright decode. The user crop region is applied after orientation
+    /// (crop coordinates are in output space).
+    fn decode_upright_then_orient(
+        &self,
+        data: &[u8],
+        transform: crate::lossless::LosslessTransform,
+        stop: impl Stop,
+    ) -> Result<DecodeResult> {
+        let mut upright = self.clone();
+        upright.auto_orient = false;
+        upright.decode_transform = None;
+        upright.crop_region = None;
+
+        // EXIF extras handling matches the pre-#149 transform path: with
+        // auto_orient disabled on the inner decode, the user's own preserve
+        // config applies — EXIF is kept only when the caller asked for it.
+        let mut result = upright.decode(data, stop)?;
+        result.apply_pixel_transform(transform);
+
+        if let Some(crop_region) = self.crop_region {
+            let resolved = crop_region.resolve(result.width, result.height, 8)?;
+            result.crop_in_place(resolved.x, resolved.y, resolved.width, resolved.height);
+        }
+        Ok(result)
+    }
+
     /// Decodes a JPEG image.
     ///
     /// Uses streaming single-pass decode (entropy, IDCT, color convert in one
@@ -1765,11 +1661,29 @@ impl DecodeConfig {
         // This avoids disabling streaming for the common case of orientation=1.
         let effective_transform = self.compute_effective_transform_from_data(data);
 
+        // Orientation and explicit transforms are applied in the pixel
+        // domain: decode upright (streaming fast path stays eligible), then
+        // permute the decoded pixels. This matches decode-with-
+        // `auto_orient(false)` + an external pixel-domain orientation bake
+        // byte-for-byte. The previous DCT-coefficient-domain transform could
+        // not: the coefficient grid is MCU-padded, and transforms that move
+        // that padding onto a leading edge shifted the visible content and
+        // desynced chroma phase for subsampled non-MCU-aligned images (a
+        // 4000x3000 4:2:0 EXIF-6 photo came out shifted 8 px with 36% of
+        // pixels visibly wrong — issue #149); dimension-swapping transforms
+        // additionally forced the f32 IDCT, diverging from the integer-IDCT
+        // upright decode by up to 9 channel steps. DCT-domain transforms
+        // remain available through the lossless re-encode pipeline
+        // (`lossless::transform`), where they avoid generation loss.
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            return self.decode_upright_then_orient(data, effective_transform, stop);
+        }
+
         let mut parser =
             JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
 
         // Streaming decode produces RGB u8 directly — disable it when the output
-        // needs coefficients (f32, u16, precise, dequant_bias, transform, non-RGB formats,
+        // needs coefficients (f32, u16, precise, dequant_bias, non-RGB formats,
         // or Knusperli deblocking which requires DCT coefficients).
         //
         // Boundary4Tap, Auto, and AutoStreamable do NOT need coefficient storage —
@@ -1780,7 +1694,6 @@ impl DecodeConfig {
             let needs_coefficients = self.output_target.is_f32()
                 || self.output_target.is_precise()
                 || self.output_target.uses_dequant_bias()
-                || effective_transform != crate::lossless::LosslessTransform::None
                 || self.deblock_mode == DeblockMode::Knusperli
                 || !matches!(
                     output_format,
@@ -1815,49 +1728,7 @@ impl DecodeConfig {
         }
         parser.decode(&stop)?;
 
-        // Apply DCT transform if needed.
-        //
-        // For non-MCU-aligned images, padding moves to different edges after
-        // the transform (e.g., FlipH moves right padding to the left).
-        // We compute the crop offset, inflate parser dimensions so to_pixels()
-        // renders the full padded region, then crop the result.
-        let (crop_x, crop_y, visible_w, visible_h) =
-            if effective_transform != crate::lossless::LosslessTransform::None {
-                use crate::lossless::LosslessTransform;
-
-                // Compute padding before transform
-                let orig_w = parser.width as usize;
-                let orig_h = parser.height as usize;
-                let pad_x = ((orig_w + 7) / 8) * 8 - orig_w;
-                let pad_y = ((orig_h + 7) / 8) * 8 - orig_h;
-
-                parser.apply_dct_transform(effective_transform);
-
-                let vis_w = parser.width;
-                let vis_h = parser.height;
-
-                // Crop offset: where the visible region starts after transform
-                let (cx, cy) = match effective_transform {
-                    LosslessTransform::None => (0, 0),
-                    LosslessTransform::FlipHorizontal => (pad_x, 0),
-                    LosslessTransform::FlipVertical => (0, pad_y),
-                    LosslessTransform::Rotate180 => (pad_x, pad_y),
-                    LosslessTransform::Transpose => (0, 0),
-                    LosslessTransform::Rotate90 => (pad_y, 0),
-                    LosslessTransform::Rotate270 => (0, pad_x),
-                    LosslessTransform::Transverse => (pad_y, pad_x),
-                };
-
-                // Inflate dimensions so to_pixels() renders enough data
-                if cx > 0 || cy > 0 {
-                    parser.width = vis_w + cx as u32;
-                    parser.height = vis_h + cy as u32;
-                }
-
-                (cx, cy, vis_w, vis_h)
-            } else {
-                (0, 0, parser.width, parser.height)
-            };
+        let (visible_w, visible_h) = (parser.width, parser.height);
 
         // Extract gain map before pixel conversion (needs parser state)
         #[cfg(feature = "ultrahdr")]
@@ -1886,18 +1757,6 @@ impl DecodeConfig {
             } else {
                 parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?
             };
-
-            if crop_x > 0 || crop_y > 0 {
-                pixels = copy_cropped_rect(
-                    &pixels,
-                    parser.width as usize,
-                    crop_x,
-                    crop_y,
-                    visible_w as usize,
-                    visible_h as usize,
-                    output_format.num_channels(),
-                );
-            }
 
             // Apply ICC profile if enabled and the caller explicitly asked
             // for color correction. Pixels at this point are always RGB
@@ -1988,18 +1847,6 @@ impl DecodeConfig {
                 .map(|&v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8)
                 .collect();
 
-            if crop_x > 0 || crop_y > 0 {
-                pixels = copy_cropped_rect(
-                    &pixels,
-                    parser.width as usize,
-                    crop_x,
-                    crop_y,
-                    visible_w as usize,
-                    visible_h as usize,
-                    output_format.bytes_per_pixel(),
-                );
-            }
-
             let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
                 let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
                 pixels = copy_cropped_rect(
@@ -2062,18 +1909,6 @@ impl DecodeConfig {
                     height,
                     channels,
                     strength,
-                );
-            }
-
-            if crop_x > 0 || crop_y > 0 {
-                pixels = copy_cropped_rect(
-                    &pixels,
-                    parser.width as usize,
-                    crop_x,
-                    crop_y,
-                    visible_w as usize,
-                    visible_h as usize,
-                    output_format.bytes_per_pixel(),
                 );
             }
 
