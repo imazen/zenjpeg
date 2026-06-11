@@ -266,36 +266,21 @@ pub fn parse_xmp(xmp: &str) -> Result<(zencodec::GainMapParams, Option<usize>), 
     let mut metadata = zencodec::GainMapParams::default();
     let mut gainmap_length = None;
 
-    if let Some(val) = extract_attribute(xmp, "hdrgm:GainMapMin") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].min = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:GainMapMax") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].max = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:Gamma") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].gamma = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:OffsetSDR") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].base_offset = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:OffsetHDR") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].alternate_offset = *v;
-        }
-    }
+    apply_channel_triple(xmp, "hdrgm:GainMapMin", &mut metadata.channels, |c, v| {
+        c.min = v;
+    });
+    apply_channel_triple(xmp, "hdrgm:GainMapMax", &mut metadata.channels, |c, v| {
+        c.max = v;
+    });
+    apply_channel_triple(xmp, "hdrgm:Gamma", &mut metadata.channels, |c, v| {
+        c.gamma = v;
+    });
+    apply_channel_triple(xmp, "hdrgm:OffsetSDR", &mut metadata.channels, |c, v| {
+        c.base_offset = v;
+    });
+    apply_channel_triple(xmp, "hdrgm:OffsetHDR", &mut metadata.channels, |c, v| {
+        c.alternate_offset = v;
+    });
     if let Some(val) = extract_attribute(xmp, "hdrgm:HDRCapacityMin")
         && let Ok(v) = val.parse::<f64>()
     {
@@ -328,6 +313,10 @@ pub fn parse_xmp_full(xmp: &str) -> (Option<zencodec::GainMapParams>, Vec<Contai
     (metadata, items)
 }
 
+/// Extract an hdrgm property value from either XMP encoding: attribute
+/// form (`attr="…"`) or element form (`<attr>…</attr>`, opening tag may
+/// carry attributes). Element content is returned raw — it may be plain
+/// text or an `rdf:Seq` fragment; [`parse_triple`] handles both.
 fn extract_attribute(xmp: &str, attr: &str) -> Option<String> {
     let pattern = format!("{attr}=\"");
     if let Some(start) = xmp.find(&pattern) {
@@ -336,30 +325,89 @@ fn extract_attribute(xmp: &str, attr: &str) -> Option<String> {
             return Some(xmp[value_start..value_start + end].to_string());
         }
     }
-    let open_tag = format!("<{attr}>");
+    let open_prefix = format!("<{attr}");
     let close_tag = format!("</{attr}>");
-    if let Some(start) = xmp.find(&open_tag) {
-        let value_start = start + open_tag.len();
-        if let Some(end) = xmp[value_start..].find(&close_tag) {
-            return Some(xmp[value_start..value_start + end].trim().to_string());
+    let mut search = xmp;
+    while let Some(start) = search.find(&open_prefix) {
+        let after = &search[start + open_prefix.len()..];
+        // `<hdrgm:Gamma` must not match `<hdrgm:GammaSomethingElse>`.
+        let is_tag = after.starts_with('>') || after.starts_with(char::is_whitespace);
+        let gt = after.find('>')?;
+        let body = &after[gt + 1..];
+        if !is_tag || after[..gt].ends_with('/') {
+            search = body;
+            continue;
         }
+        return body
+            .find(&close_tag)
+            .map(|end| body[..end].trim().to_string());
     }
     None
 }
 
-/// Parse a comma-separated triple into exactly 3 f64 values. A single
-/// scalar is replicated to all three channels.
-fn parse_triple_f64(value: &str) -> [f64; 3] {
-    let parsed: Vec<f64> = value
-        .split(',')
-        .filter_map(|s| s.trim().parse::<f64>().ok())
-        .collect();
-    match parsed.len() {
-        0 => [0.0; 3],
-        1 => [parsed[0]; 3],
-        2 => [parsed[0], parsed[1], 0.0],
-        _ => [parsed[0], parsed[1], parsed[2]],
+/// Apply one hdrgm per-channel property (attribute or element form) to
+/// the channels that have a parseable value, leaving the rest at their
+/// spec defaults.
+fn apply_channel_triple(
+    xmp: &str,
+    attr: &str,
+    channels: &mut [zencodec::GainMapChannel; 3],
+    set: fn(&mut zencodec::GainMapChannel, f64),
+) {
+    if let Some(val) = extract_attribute(xmp, attr) {
+        for (ch, v) in channels.iter_mut().zip(parse_triple(&val)) {
+            if let Some(v) = v {
+                set(ch, v);
+            }
+        }
     }
+}
+
+/// Parse an hdrgm per-channel property value into up to three channel
+/// values. Accepts the comma-separated text form (`"1.0, 2.0, 3.0"` or
+/// a bare scalar) and the rdf:Seq element form
+/// (`<rdf:Seq><rdf:li>…</rdf:li>…</rdf:Seq>`). A single value
+/// replicates to all three channels per the Adobe hdrgm spec. Positions
+/// without a parseable number stay `None` so callers preserve defaults
+/// instead of writing zeros (issue #144).
+fn parse_triple(value: &str) -> [Option<f64>; 3] {
+    let pieces: Vec<Option<f64>> = if value.contains("<rdf:li") {
+        rdf_li_values(value)
+    } else {
+        value
+            .split(',')
+            .map(|s| s.trim().parse::<f64>().ok())
+            .collect()
+    };
+    match pieces.len() {
+        0 => [None; 3],
+        1 => [pieces[0]; 3],
+        2 => [pieces[0], pieces[1], None],
+        _ => [pieces[0], pieces[1], pieces[2]],
+    }
+}
+
+/// Parse the text content of each `<rdf:li>` in an rdf:Seq fragment.
+/// Tolerates attributes on the `li` opening tag; skips self-closing
+/// (empty) items entirely rather than recording them as unparseable.
+fn rdf_li_values(fragment: &str) -> Vec<Option<f64>> {
+    const OPEN: &str = "<rdf:li";
+    const CLOSE: &str = "</rdf:li>";
+    let mut values = Vec::new();
+    let mut rest = fragment;
+    while let Some(start) = rest.find(OPEN) {
+        let after = &rest[start + OPEN.len()..];
+        let is_tag = after.starts_with('>') || after.starts_with(char::is_whitespace);
+        let Some(gt) = after.find('>') else { break };
+        rest = &after[gt + 1..];
+        if !is_tag || after[..gt].ends_with('/') {
+            continue;
+        }
+        let Some(end) = rest.find(CLOSE) else { break };
+        values.push(rest[..end].trim().parse::<f64>().ok());
+        rest = &rest[end + CLOSE.len()..];
+    }
+    values
 }
 
 /// Wrap an XMP packet in a JPEG APP1 marker with the standard
@@ -524,19 +572,160 @@ mod tests {
     }
 
     #[test]
-    fn parse_triple_f64_single_scalar_replicates() {
-        assert_eq!(parse_triple_f64("1.5"), [1.5, 1.5, 1.5]);
+    fn extract_attribute_element_form_with_attributes_on_open_tag() {
+        let xmp = r#"<hdrgm:Gamma rdf:parseType="Resource">1.5</hdrgm:Gamma>"#;
+        assert_eq!(extract_attribute(xmp, "hdrgm:Gamma"), Some("1.5".into()));
     }
 
     #[test]
-    fn parse_triple_f64_three_values() {
-        assert_eq!(parse_triple_f64("1.0, 2.0, 3.0"), [1.0, 2.0, 3.0]);
+    fn extract_attribute_element_form_ignores_longer_tag_names() {
+        // `<hdrgm:Gamma` is a prefix of `<hdrgm:GammaExt` — must not match.
+        let xmp = "<hdrgm:GammaExt>9.0</hdrgm:GammaExt><hdrgm:Gamma>1.5</hdrgm:Gamma>";
+        assert_eq!(extract_attribute(xmp, "hdrgm:Gamma"), Some("1.5".into()));
+        let only_ext = "<hdrgm:GammaExt>9.0</hdrgm:GammaExt>";
+        assert_eq!(extract_attribute(only_ext, "hdrgm:Gamma"), None);
     }
 
     #[test]
-    fn parse_triple_f64_empty_is_zeros() {
-        assert_eq!(parse_triple_f64(""), [0.0, 0.0, 0.0]);
-        assert_eq!(parse_triple_f64("not-a-number"), [0.0, 0.0, 0.0]);
+    fn extract_attribute_skips_self_closing_element() {
+        assert_eq!(extract_attribute("<hdrgm:Gamma/>", "hdrgm:Gamma"), None);
+        assert_eq!(extract_attribute("<hdrgm:Gamma />", "hdrgm:Gamma"), None);
+    }
+
+    #[test]
+    fn parse_triple_single_scalar_replicates() {
+        assert_eq!(parse_triple("1.5"), [Some(1.5); 3]);
+    }
+
+    #[test]
+    fn parse_triple_three_values() {
+        assert_eq!(
+            parse_triple("1.0, 2.0, 3.0"),
+            [Some(1.0), Some(2.0), Some(3.0)]
+        );
+    }
+
+    /// Unparseable input must yield `None` (preserve defaults), never
+    /// 0.0 — writing zeros is exactly the issue #144 failure mode.
+    #[test]
+    fn parse_triple_unparseable_is_none() {
+        assert_eq!(parse_triple(""), [None; 3]);
+        assert_eq!(parse_triple("not-a-number"), [None; 3]);
+        assert_eq!(parse_triple("<rdf:Seq></rdf:Seq>"), [None; 3]);
+        // Positional: a bad middle value must not shift the third left
+        // or zero anything.
+        assert_eq!(parse_triple("1.0, junk, 3.0"), [Some(1.0), None, Some(3.0)]);
+    }
+
+    #[test]
+    fn parse_triple_rdf_seq_three_items() {
+        let v = "<rdf:Seq>\n <rdf:li>-0.25</rdf:li>\n <rdf:li>0.5</rdf:li>\n <rdf:li>1.25</rdf:li>\n</rdf:Seq>";
+        assert_eq!(parse_triple(v), [Some(-0.25), Some(0.5), Some(1.25)]);
+    }
+
+    #[test]
+    fn parse_triple_rdf_seq_single_item_replicates() {
+        let v = "<rdf:Seq><rdf:li>0.75</rdf:li></rdf:Seq>";
+        assert_eq!(parse_triple(v), [Some(0.75); 3]);
+    }
+
+    #[test]
+    fn parse_triple_rdf_li_with_attributes() {
+        let v = r#"<rdf:Seq><rdf:li xml:lang="x-default">2.0</rdf:li></rdf:Seq>"#;
+        assert_eq!(parse_triple(v), [Some(2.0); 3]);
+    }
+
+    /// Regression test for issue #144: the gain-map XMP packet from
+    /// `seine_sdr_gainmap_srgb.jpg` (Adobe Camera Raw output), verbatim.
+    /// Scalars are attributes; GainMapMin/Max/Gamma are rdf:Seq
+    /// elements. The old parser zeroed all three element-form fields.
+    #[test]
+    fn parse_xmp_rdf_seq_element_form_seine_fixture() {
+        let xmp = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"
+   hdrgm:Version="1.0"
+   hdrgm:BaseRenditionIsHDR="False"
+   hdrgm:OffsetSDR="0.015625"
+   hdrgm:OffsetHDR="0.015625"
+   hdrgm:HDRCapacityMin="0"
+   hdrgm:HDRCapacityMax="1.3">
+   <hdrgm:GainMapMin>
+    <rdf:Seq>
+     <rdf:li>-0.256907</rdf:li>
+     <rdf:li>-0.261365</rdf:li>
+     <rdf:li>-0.280284</rdf:li>
+    </rdf:Seq>
+   </hdrgm:GainMapMin>
+   <hdrgm:GainMapMax>
+    <rdf:Seq>
+     <rdf:li>1.277177</rdf:li>
+     <rdf:li>1.277203</rdf:li>
+     <rdf:li>1.277969</rdf:li>
+    </rdf:Seq>
+   </hdrgm:GainMapMax>
+   <hdrgm:Gamma>
+    <rdf:Seq>
+     <rdf:li>0.953784</rdf:li>
+     <rdf:li>0.941095</rdf:li>
+     <rdf:li>0.919422</rdf:li>
+    </rdf:Seq>
+   </hdrgm:Gamma>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#;
+        let (parsed, length) = parse_xmp(xmp).expect("seine gain-map XMP must parse");
+        assert_eq!(length, None);
+
+        let expect_min = [-0.256907, -0.261365, -0.280284];
+        let expect_max = [1.277177, 1.277203, 1.277969];
+        let expect_gamma = [0.953784, 0.941095, 0.919422];
+        for i in 0..3 {
+            assert!(
+                (parsed.channels[i].min - expect_min[i]).abs() < XMP_FLOAT_TOL,
+                "ch[{i}].min: {}",
+                parsed.channels[i].min
+            );
+            assert!(
+                (parsed.channels[i].max - expect_max[i]).abs() < XMP_FLOAT_TOL,
+                "ch[{i}].max: {}",
+                parsed.channels[i].max
+            );
+            assert!(
+                (parsed.channels[i].gamma - expect_gamma[i]).abs() < XMP_FLOAT_TOL,
+                "ch[{i}].gamma: {}",
+                parsed.channels[i].gamma
+            );
+            assert!((parsed.channels[i].base_offset - 0.015625).abs() < XMP_FLOAT_TOL);
+            assert!((parsed.channels[i].alternate_offset - 0.015625).abs() < XMP_FLOAT_TOL);
+        }
+        assert!((parsed.base_hdr_headroom - 0.0).abs() < XMP_FLOAT_TOL);
+        assert!((parsed.alternate_hdr_headroom - 1.3).abs() < XMP_FLOAT_TOL);
+        // The downstream gate that exposed #144: gamma=0 fails validate().
+        parsed.validate().expect("parsed params must validate");
+    }
+
+    /// An element-form field with no parseable number must leave the
+    /// defaults intact (gamma stays 1.0), never write 0.
+    #[test]
+    fn parse_xmp_unparseable_element_preserves_defaults() {
+        let xmp = r#"<rdf:Description hdrgm:Version="1.0">
+   <hdrgm:Gamma>
+    <rdf:Seq>
+     <rdf:li>oops</rdf:li>
+    </rdf:Seq>
+   </hdrgm:Gamma>
+   <hdrgm:GainMapMax>garbage</hdrgm:GainMapMax>
+  </rdf:Description>"#;
+        let (parsed, _) = parse_xmp(xmp).unwrap();
+        let defaults = zencodec::GainMapParams::default();
+        for i in 0..3 {
+            assert_eq!(parsed.channels[i].gamma, defaults.channels[i].gamma);
+            assert_eq!(parsed.channels[i].max, defaults.channels[i].max);
+        }
     }
 
     #[test]
