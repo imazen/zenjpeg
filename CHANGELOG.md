@@ -43,6 +43,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `docs/VARIANT_GENERATION.md` revised into the complete codec-neutral
+  playbook: pattern 7 (cell ids as durable ledger identity — lossless
+  numbers, additive-only grammar, roundtrip-totality, executor-side fp
+  verification), a "where each piece lives" layering section
+  (codec/executor/fleet/image + the two execution models and when each),
+  supremum-contract and adversarial-safety rules for search modes and
+  curated steps, harness-design gotchas (degenerate fixtures,
+  content-relative floors, completion-order rows, id attribution), an
+  8-step gated adoption checklist, and a live zenjxl adoption status.
 - `encode::sweep::config_from_cell_id(base_id, q)` — reconstructs the
   exact `EncoderConfig` from a plan-cell stratum id. The id grammar is
   now a documented durable identity contract (fleet ledgers store these
