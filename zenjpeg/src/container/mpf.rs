@@ -213,23 +213,21 @@ pub fn parse_mpf_segment(
 
     let mut mp_entry_offset = 0usize;
     let mut mp_entry_count = 0u32;
-    let entry_start = ifd_end;
-    for i in 0..num_entries {
-        // `off + 12` must be <= mpf_data.len(); compute checked so
-        // attacker-controlled num_entries * 12 can't wrap usize on 32-bit.
-        let Some(off) = i
-            .checked_mul(12)
-            .and_then(|delta| entry_start.checked_add(delta))
-        else {
-            break;
-        };
-        let Some(off_end) = off.checked_add(12) else {
+    // Cursor walk (not `ifd_end + i*12` indexing) so the out-of-line
+    // version quirk below can resync the stream for subsequent entries.
+    let mut cursor = ifd_end;
+    for _ in 0..num_entries {
+        // `cursor + 12` must be <= mpf_data.len(); checked so an
+        // attacker-controlled chain of advances can't wrap usize on 32-bit.
+        let Some(off_end) = cursor.checked_add(12) else {
             break;
         };
         if off_end > mpf_data.len() {
             break;
         }
-        // Bounds proved by the `off + 12 > len` guard above: `r16(off)`
+        let off = cursor;
+        cursor = off_end;
+        // Bounds proved by the `cursor + 12 > len` guard above: `r16(off)`
         // and `r32(off + 8)` both read within [off, off+12). Propagate
         // defensively via `?` so a future refactor of the guard can
         // surface as a parse error rather than a panic.
@@ -244,15 +242,54 @@ pub fn parse_mpf_segment(
         match tag {
             TAG_NUMBER_OF_IMAGES => mp_entry_count = value_offset,
             TAG_MP_ENTRY => mp_entry_offset = value_offset as usize,
+            // In-the-wild quirk (#148): some writers emit the MPFVersion
+            // UNDEFINED×4 value OUT OF LINE — the entry's value field is
+            // zeroed and the four ASCII version bytes (`"0100"`) are
+            // spliced directly after the 12-byte entry. That shifts every
+            // following entry by 4, so a strict stride-12 walk reads
+            // garbage tags, never sees B001/B002, and reports "MPF
+            // declares zero images" for a file whose index is otherwise
+            // fully self-consistent. Detect exactly that shape and consume
+            // the stray bytes; conformant files (version inline in the
+            // value field, non-zero) take the `_` arm untouched.
+            TAG_VERSION
+                if value_offset == 0
+                    && r16(off + 2) == Some(TYPE_UNDEFINED)
+                    && r32(off + 4) == Some(4)
+                    && mpf_data.get(cursor..cursor + 4) == Some(MPF_VERSION.as_slice()) =>
+            {
+                cursor += 4;
+            }
             _ => {}
         }
     }
 
-    if mp_entry_count == 0 || mp_entry_offset == 0 {
-        // Matches upstream `ultrahdr-core::metadata::mpf` behavior: a
-        // missing MP Entry offset or zero declared image count both
-        // surface as `NoImages`.
+    if mp_entry_count == 0 {
+        // Matches upstream `ultrahdr-core::metadata::mpf` behavior: a zero
+        // declared image count surfaces as `NoImages`.
         return Err(MpfError::NoImages);
+    }
+
+    // Resolve where the MP entries actually live. Conformant files put a
+    // TIFF-relative offset in B002; the same writer family as the version
+    // quirk above records it IFD-relative instead (observed: declared 0x2E
+    // for entries that physically sit at TIFF+0x36 — landing the declared
+    // offset *inside the IFD*). Sanity-check the declared offset by the
+    // first entry's image size (a real entry is never zero-sized); when it
+    // fails, fall back to the structural position — MP entries directly
+    // follow the IFD's next-IFD pointer (`cursor + 4`).
+    let entry_looks_sane = |off: usize| -> bool {
+        off != 0
+            && r32(off + 4).is_some_and(|size| size > 0)
+            && (mp_entry_count < 2 || r32(off + 16 + 4).is_some_and(|size| size > 0))
+    };
+    if !entry_looks_sane(mp_entry_offset) {
+        let post_ifd = cursor.saturating_add(4);
+        if entry_looks_sane(post_ifd) {
+            mp_entry_offset = post_ifd;
+        } else {
+            return Err(MpfError::NoImages);
+        }
     }
 
     // Cap entry count against actual payload size to prevent OOM on
@@ -894,5 +931,64 @@ mod tests {
             prop_assert_eq!(entries[0].size, primary_len);
             prop_assert_eq!(entries[1].size, secondary_len);
         }
+    }
+
+    /// Issue #148 regression: a real-world MP Index (the 7.6 KB
+    /// `ultrahdr_sample.jpg` fixture committed in zencodecs and
+    /// ultrahdr-rs) has two quirks from the same writer family:
+    /// the MPFVersion UNDEFINED×4 value is written OUT OF LINE (value
+    /// field zeroed, ASCII `"0100"` spliced after the 12-byte entry,
+    /// shifting later entries by 4), and the B002 MPEntry offset is
+    /// IFD-relative (0x2E) instead of TIFF-relative (entries physically
+    /// at TIFF+0x36). The strict walk used to report "MPF declares zero
+    /// images" for an index whose sizes sum exactly to the file length.
+    #[test]
+    fn out_of_line_version_and_ifd_relative_entries_resync() {
+        // Mirror the fixture's TIFF payload structure byte-for-byte:
+        // primary size 0x1A9D at offset 0, gain map size 0x321 at 0x1A9D.
+        let mut p = Vec::new();
+        p.extend_from_slice(b"MM");
+        p.extend_from_slice(&[0x00, 0x2A]);
+        p.extend_from_slice(&8u32.to_be_bytes()); // IFD at TIFF+8
+        p.extend_from_slice(&3u16.to_be_bytes()); // 3 IFD entries
+        // B000 Version, UNDEFINED×4 — value field ZEROED…
+        p.extend_from_slice(&TAG_VERSION.to_be_bytes());
+        p.extend_from_slice(&TYPE_UNDEFINED.to_be_bytes());
+        p.extend_from_slice(&4u32.to_be_bytes());
+        p.extend_from_slice(&0u32.to_be_bytes());
+        // …with the version bytes spliced out-of-line after the entry.
+        p.extend_from_slice(MPF_VERSION);
+        // B001 NumberOfImages, LONG×1 = 2.
+        p.extend_from_slice(&TAG_NUMBER_OF_IMAGES.to_be_bytes());
+        p.extend_from_slice(&TYPE_LONG.to_be_bytes());
+        p.extend_from_slice(&1u32.to_be_bytes());
+        p.extend_from_slice(&2u32.to_be_bytes());
+        // B002 MPEntry, UNDEFINED×32 — declared offset 0x2E is
+        // IFD-relative (lands inside the IFD when read TIFF-relative).
+        p.extend_from_slice(&TAG_MP_ENTRY.to_be_bytes());
+        p.extend_from_slice(&TYPE_UNDEFINED.to_be_bytes());
+        p.extend_from_slice(&32u32.to_be_bytes());
+        p.extend_from_slice(&0x2Eu32.to_be_bytes());
+        p.extend_from_slice(&0u32.to_be_bytes()); // next-IFD pointer
+        assert_eq!(p.len(), 0x36, "MP entries physically start at TIFF+0x36");
+        // MP entry 1: primary, attr 0x00030000, size 0x1A9D, offset 0.
+        p.extend_from_slice(&0x0003_0000u32.to_be_bytes());
+        p.extend_from_slice(&0x1A9Du32.to_be_bytes());
+        p.extend_from_slice(&0u32.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0]);
+        // MP entry 2: gain map, attr 0, size 0x321, offset 0x1A9D.
+        p.extend_from_slice(&0u32.to_be_bytes());
+        p.extend_from_slice(&0x321u32.to_be_bytes());
+        p.extend_from_slice(&0x1A9Du32.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0]);
+
+        let jpeg = jpeg_with_mpf_app2(&p);
+        let entries = parse_mpf(&jpeg).expect("resync must recover the index");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].size, 0x1A9D);
+        assert_eq!(entries[1].size, 0x321);
+        // Secondary offsets are absolute: tiff_header_pos (SOI 2 + APP2
+        // marker+len 4 + "MPF\0" 4 = 10) + the entry's data offset.
+        assert_eq!(entries[1].offset, 10 + 0x1A9D);
     }
 }

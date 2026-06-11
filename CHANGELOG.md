@@ -16,6 +16,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 
 ### Fixed
+- `container::mpf::parse_mpf` now tolerates two in-the-wild MP Index
+  quirks from the same writer family (#148): the MPFVersion UNDEFINED×4
+  value written out of line (value field zeroed, ASCII `"0100"` spliced
+  after the 12-byte entry, shifting later entries by 4 — the IFD walk is
+  now cursor-based and resyncs past it) and an IFD-relative B002 MPEntry
+  offset (declared 0x2E for entries physically at TIFF+0x36 — the
+  declared offset is sanity-checked by the first entry's image size and
+  falls back to the structural post-next-IFD position). Previously such
+  files — including the 7.6 KB `ultrahdr_sample.jpg` fixture in
+  zencodecs/ultrahdr-rs — errored with "MPF declares zero images" despite
+  carrying a fully self-consistent two-image index, which aborted
+  `ultrahdr_rs::Decoder` entirely (imazen/ultrahdr#26) and silently cost
+  consumers the HDR rendition. Conformant files are byte-for-byte
+  unaffected (existing roundtrip + property tests unchanged).
 - zencodec decode-path `ImageInfo` now populates
   `source_color.bit_depth` (SOF sample precision) and `channel_count` —
   previously only the probe path set them, so precision-aware callers
