@@ -80,7 +80,7 @@ jobs:
         run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
 
       - name: Test (__expert + all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,cms,boundary-rd,__expert" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
 
 
   i686:

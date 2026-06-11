@@ -554,10 +554,11 @@ impl JpegEncoder {
                         // silent skip: JPEG has NO CICP carrier, so an
                         // embedded APP2 ICC is the ONLY way this color
                         // survives — emitting without it would misrepresent
-                        // the image as sRGB. The `cms` feature (icc-db blob
-                        // synthesis) covers the full ITU-T H.273 grid incl
-                        // PQ/HLG, with no moxcms dependency; bundled const
-                        // coverage is Display-P3 + SDR BT.2020 + AdobeRGB.
+                        // the image as sRGB. The `zencodec` feature carries
+                        // zenpixels-convert's icc-db blob (full ITU-T H.273
+                        // grid incl PQ/HLG, no moxcms), so the only
+                        // unsynthesizable CICPs are outside the assigned
+                        // H.273 grid (reserved / unassigned code points).
                         match synthesize_icc_for_cicp(cicp) {
                             SynthesizedIcc::Profile(bytes) => {
                                 req = req.icc_profile_owned(bytes.into_owned());
@@ -566,9 +567,10 @@ impl JpegEncoder {
                             outcome => {
                                 return Err(Error::icc_error(alloc::format!(
                                     "this image's color (CICP primaries {} / transfer {}) \
-                                     needs a synthesized ICC profile this build can't \
-                                     produce ({outcome:?}); enable zenjpeg's `cms` feature, \
-                                     supply an ICC profile in the metadata, or drop the CICP",
+                                     needs a synthesized ICC profile that cannot be \
+                                     produced ({outcome:?}) — the CICP is outside the \
+                                     assigned H.273 grid; supply an ICC profile in the \
+                                     metadata or drop the CICP",
                                     cicp.color_primaries,
                                     cicp.transfer_characteristics
                                 )));

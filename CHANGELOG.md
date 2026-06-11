@@ -5,6 +5,17 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- `zencodec` feature now always carries zenpixels-convert's `icc-db`
+  (~36 KB bundled profile blob): CICP-described colors (incl PQ/HLG)
+  always synthesize a real embedded ICC; only off-grid (reserved H.273)
+  CICPs are an encode error. The `cms` feature is a deprecated no-op —
+  zenpixels-convert 0.2.13 ships icc-db in its defaults, so any
+  default-features consumer in a build graph (e.g. the zenpng dev-dep
+  chain) flipped the capability on via feature unification regardless
+  of zenjpeg's flag, making the opt-in contract untestable (Coverage CI
+  red since c93bb62d) and environment-dependent.
+
 ### Fixed
 - `container::xmp::parse_xmp` now parses hdrgm per-channel fields
   written as XMP elements in rdf:Seq form (`<hdrgm:GainMapMax><rdf:Seq>

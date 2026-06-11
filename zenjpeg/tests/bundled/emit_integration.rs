@@ -114,17 +114,32 @@ fn emit_gray_cicp_only_synthesizes_nothing() {
     );
 }
 
-/// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
-/// produce. Without the `cms` feature that is an encode ERROR — JPEG has no
-/// CICP carrier, so emitting without the ICC would misrepresent the image as
-/// sRGB. Refusing beats mislabeling.
-#[cfg(not(feature = "cms"))]
+/// A PQ (BT.2100) CICP-only source synthesizes a real ICC from the icc-db
+/// blob (always carried by the `zencodec` feature) and the encode succeeds
+/// with an APP2 marker. JPEG has no CICP carrier, so the embedded ICC is the
+/// only way this color survives — emitting without it would misrepresent the
+/// image as sRGB.
 #[test]
-fn emit_cicp_pq_without_cms_is_an_encode_error() {
+fn emit_cicp_pq_synthesizes_icc() {
+    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+    let jpeg = encode_with_meta(meta);
+    assert!(
+        has_marker(&jpeg, b"ICC_PROFILE\0"),
+        "PQ CICP must embed a synthesized ICC via APP2"
+    );
+}
+
+/// A CICP outside the assigned H.273 grid (reserved code points) cannot be
+/// expressed as an ICC at all. That is an encode ERROR, not a silent skip —
+/// refusing beats shipping an untagged file that decoders assume is sRGB.
+#[test]
+fn emit_cicp_offgrid_unsynthesizable_is_an_encode_error() {
     let pixels = rgb_4x4();
     let slice =
         PixelSlice::new(&pixels, 4, 4, 4 * 3, PixelDescriptor::RGB8_SRGB).expect("pixel slice");
-    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+    // Primaries 3 / transfer 3 are "reserved" in H.273 — never assigned, so
+    // no profile exists in the bundled consts or the icc-db blob.
+    let meta = Metadata::none().with_cicp(zencodec::Cicp::new(3, 3, 0, true));
     let enc = JpegEncoderConfig::new()
         .job()
         .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
@@ -132,24 +147,11 @@ fn emit_cicp_pq_without_cms_is_an_encode_error() {
         .expect("encoder build");
     let err = enc
         .encode(slice)
-        .expect_err("PQ CICP without cms must refuse, not mislabel");
+        .expect_err("off-grid CICP must refuse, not mislabel");
     let msg = format!("{err}");
     assert!(
-        msg.contains("cms"),
-        "error must point at the `cms` feature: {msg}"
-    );
-}
-
-/// With the `cms` feature, the same PQ CICP-only source synthesizes a real
-/// (moxcms-generated) ICC and the encode succeeds with an APP2 marker.
-#[cfg(feature = "cms")]
-#[test]
-fn emit_cicp_pq_with_cms_synthesizes_icc() {
-    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
-    let jpeg = encode_with_meta(meta);
-    assert!(
-        has_marker(&jpeg, b"ICC_PROFILE\0"),
-        "cms build must embed a synthesized PQ ICC via APP2"
+        msg.contains("H.273"),
+        "error must explain the CICP is outside the assigned grid: {msg}"
     );
 }
 
