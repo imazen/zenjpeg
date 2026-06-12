@@ -77,7 +77,7 @@ pub enum OrientationHint {
 ///
 /// | Method | Matches |
 /// |--------|---------|
-/// | `Triangle` | libjpeg-turbo, mozjpeg, djpeg (default) |
+/// | `Triangle` | libjpeg-turbo/mozjpeg/djpeg within ±1 (default; see below) |
 /// | `NearestNeighbor` | fastest, lowest quality |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -91,12 +91,19 @@ pub enum ChromaUpsampling {
 
     /// Fused 2D triangle filter with alternating rounding bias (default).
     ///
-    /// Uses fused vertical+horizontal interpolation with alternating `+7`/`+8`
-    /// rounding bias, avoiding systematic bias and intermediate rounding errors.
+    /// The same fused 9:3:3:1 filter as libjpeg-turbo's fancy upsampling.
+    /// 4:2:2 (h2v1) and 4:4:0 (h1v2) are bit-identical to libjpeg-turbo;
+    /// 4:2:0 (h2v2) row-alternates the `+8`/`+7` rounding bias where turbo
+    /// keeps it fixed, so odd output rows differ from turbo by ±1 on the
+    /// rounding-boundary cases (~3% of pixels; even rows bit-identical).
+    /// Both schemes are equally accurate vs the exact filter (max err 0.5,
+    /// ~zero bias).
     ///
     /// With the default [`IdctMethod::Jpegli`] IDCT, matches libjpeg-turbo/mozjpeg
     /// within max_diff <= 3. With [`IdctMethod::Libjpeg`], matches within
-    /// max_diff <= 2 (the remaining gap is upsampler rounding differences).
+    /// max_diff <= 2: ±1 from the h2v2 bias alternation plus ±1 from
+    /// YCbCr→RGB (ours is zune-style 14-bit; turbo uses 16-bit tables —
+    /// R identical, G/B differ on ~0.1–0.2% of inputs).
     /// The Libjpeg IDCT is SIMD (guarded, bit-exact with its scalar kernel)
     /// and runs within ~20% of the Jpegli kernel per block.
     #[default]

@@ -21,6 +21,23 @@ All notable changes to zenjpeg are documented here. Earlier history
   14.7 ms 12-bit-kernel ceiling — 85% of the regression recovered, the
   rest is the exactness guards. New `idct_kernels` zenbench bench.
 
+### Documentation
+- **Chroma upsampling parity vs libjpeg-turbo pinned and corrected**: the
+  Triangle h2v2 (4:2:0) upsampler is NOT bit-identical to turbo's fancy
+  upsampling as its comments claimed — turbo uses fixed +8/+7 rounding
+  biases on both rows of a pair (jdsample.c) while zenjpeg row-alternates
+  to +7/+8 (like turbo's own h1v2). Measured: even output rows bit-exact,
+  ~6.7% of odd-row pixels differ by ±1, both schemes equally accurate vs
+  the exact filter (max err 0.5, ~zero bias; checkerboard vs column-stripe
+  half-case structure). h2v1 (4:2:2) and h1v2 (4:4:0) ARE bit-identical to
+  turbo. The integer YCbCr→RGB (zune-style 14-bit) vs turbo's 16-bit
+  tables over the full 256³ cube: R identical, G 0.179% / B 0.104% differ
+  by ±1 — this is the residual in "box + Libjpeg IDCT matches mozjpeg
+  within max=1". New pinning tests: `h2v2_triangle_vs_libjpeg_turbo_reference`,
+  `h2v2_bias_schemes_accuracy_vs_ideal` (upsample.rs),
+  `int_ycbcr_vs_libjpeg_turbo_tables` (ycbcr.rs); docs updated with the
+  measured ±1 decomposition.
+
 ### Added
 - **SCALAR sweep-ladder densification** (`__expert` planner; dense-sweep
   program / `zenpicker-train --scalar-axes`, zenmetrics `docs/PLAN_SWEEPS.md`

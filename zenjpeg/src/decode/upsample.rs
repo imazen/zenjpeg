@@ -355,12 +355,20 @@ fn upsample_h1v2_row_avx2(
     }
 }
 
-/// Horizontal 2x + vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:2:0 → 4:4:4).
+/// Horizontal 2x + vertical 2x triangle upsampling in i16 (4:2:0 → 4:4:4).
 ///
-/// Uses fused 2D filter (NOT separable) with alternating rounding bias (+7/+8).
-/// Matches libjpeg-turbo's `jdsample.c` h2v2_fancy_upsample exactly.
-///
-/// The fused algorithm avoids intermediate rounding errors from separable passes.
+/// Same fused 9:3:3:1 filter as libjpeg-turbo's `jdsample.c`
+/// `h2v2_fancy_upsample`, but NOT bit-identical to it: turbo uses fixed
+/// rounding biases (+8 left output, +7 right output) on both rows of a
+/// pair, while this implementation row-alternates the pair to (7, 8) on
+/// lower rows — the same vertical alternation turbo itself applies in
+/// `h1v2_fancy_upsample` (+1/+2). Measured vs a turbo reference
+/// (`h2v2_triangle_vs_libjpeg_turbo_reference`): even output rows are
+/// bit-identical; ~6.7% of odd-row pixels differ by exactly ±1 (the
+/// half-boundary cases). Both schemes have max error 0.5 and ~zero global
+/// bias vs the exact real-valued filter; they differ only in the spatial
+/// arrangement of half-case rounding (checkerboard here, column stripes
+/// in turbo).
 pub fn upsample_h2v2_i16_libjpeg(
     input: &[i16],
     in_width: usize,
@@ -451,10 +459,12 @@ fn upsample_h2v2_libjpeg_row_scalar(
         return;
     }
 
-    // Rounding biases per libjpeg-turbo:
-    // For upper row (v=0): left=8, right=7
-    // For lower row (v=1): left=7, right=8
-    // This alternation eliminates systematic bias
+    // Rounding biases: libjpeg-turbo's h2v2 uses FIXED (left 8, right 7)
+    // for both rows of a pair; we additionally alternate to (7, 8) on lower
+    // rows (like turbo's own h1v2 +1/+2 scheme), which turns the half-case
+    // rounding pattern from column stripes into a checkerboard. This makes
+    // odd rows differ from turbo by ±1 on ~6.7% of pixels — see
+    // h2v2_triangle_vs_libjpeg_turbo_reference.
     let (bias_left, bias_right) = if is_upper { (8i32, 7i32) } else { (7i32, 8i32) };
 
     // Column sums: near * 3 + far
@@ -1194,6 +1204,215 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Simple LCG for reproducible random planes.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next_u8(&mut self) -> i16 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 33) & 0xFF) as i16
+        }
+    }
+
+    /// Exact port of libjpeg-turbo's `h2v2_fancy_upsample` (jdsample.c) with
+    /// edge-replicated context rows. Turbo uses FIXED rounding biases —
+    /// +8 on left outputs, +7 on right outputs — for BOTH rows of a pair.
+    /// zenjpeg's Triangle additionally alternates the pair to (7, 8) on
+    /// lower rows (the same vertical alternation turbo itself uses in
+    /// `h1v2_fancy_upsample`'s +1/+2 biases), so the two implementations
+    /// differ by at most ±1, only on odd output rows, only where the
+    /// 9:3:3:1 sum lands exactly on the rounding boundary.
+    fn turbo_h2v2_fancy_reference(
+        input: &[i16],
+        in_w: usize,
+        in_h: usize,
+        out_w: usize,
+        out_h: usize,
+    ) -> Vec<i16> {
+        let mut out = vec![0i16; out_w * out_h];
+        for oy in 0..out_h {
+            let iy = (oy / 2).min(in_h - 1);
+            let fy = if oy % 2 == 0 {
+                iy.saturating_sub(1)
+            } else {
+                (iy + 1).min(in_h - 1)
+            };
+            let near = &input[iy * in_w..][..in_w];
+            let far = &input[fy * in_w..][..in_w];
+            let colsum = |x: usize| near[x] as i32 * 3 + far[x] as i32;
+            let row = &mut out[oy * out_w..][..out_w];
+
+            // First column (turbo reads the duplicated edge sample when
+            // in_w == 1, via its padded row buffers).
+            let mut this = colsum(0);
+            row[0] = ((this * 4 + 8) >> 4) as i16;
+            if out_w > 1 {
+                let next = colsum(1.min(in_w - 1));
+                row[1] = ((this * 3 + next + 7) >> 4) as i16;
+            }
+            let mut last = this;
+            if in_w >= 2 {
+                this = colsum(1);
+            }
+            for ix in 1..in_w.saturating_sub(1) {
+                let next = colsum(ix + 1);
+                if ix * 2 < out_w {
+                    row[ix * 2] = ((this * 3 + last + 8) >> 4) as i16;
+                }
+                if ix * 2 + 1 < out_w {
+                    row[ix * 2 + 1] = ((this * 3 + next + 7) >> 4) as i16;
+                }
+                last = this;
+                this = next;
+            }
+            if in_w >= 2 {
+                let lx = in_w - 1;
+                if lx * 2 < out_w {
+                    row[lx * 2] = ((this * 3 + last + 8) >> 4) as i16;
+                }
+                if lx * 2 + 1 < out_w {
+                    row[lx * 2 + 1] = ((this * 4 + 7) >> 4) as i16;
+                }
+            }
+        }
+        out
+    }
+
+    /// Pin the exact relationship between zenjpeg's Triangle h2v2 and
+    /// libjpeg-turbo's fancy upsample: even output rows are bit-identical,
+    /// odd rows differ by at most ±1 (the row-alternated rounding bias),
+    /// and the divergence rate is reported.
+    #[test]
+    fn h2v2_triangle_vs_libjpeg_turbo_reference() {
+        let mut rng = Lcg(0xFA9C_75A3_11E0_2B4D);
+        let mut diffs = 0u64;
+        let mut total = 0u64;
+        let mut odd_row_pixels = 0u64;
+
+        let sizes: &[(usize, usize)] = &[(32, 24), (31, 17), (8, 8), (64, 48), (2, 2), (16, 1)];
+        for &(in_w, in_h) in sizes {
+            for trial in 0..40 {
+                let input: Vec<i16> = (0..in_w * in_h).map(|_| rng.next_u8()).collect();
+                // Even and odd output dims (odd = image width/height 2w-1)
+                let (out_w, out_h) = if trial % 2 == 0 {
+                    (in_w * 2, in_h * 2)
+                } else {
+                    (in_w * 2 - 1, (in_h * 2).saturating_sub(1).max(1))
+                };
+
+                let mut ours = vec![0i16; out_w * out_h];
+                upsample_h2v2_i16_libjpeg(&input, in_w, in_h, &mut ours, out_w, out_h);
+                let turbo = turbo_h2v2_fancy_reference(&input, in_w, in_h, out_w, out_h);
+
+                for oy in 0..out_h {
+                    for ox in 0..out_w {
+                        let a = ours[oy * out_w + ox];
+                        let b = turbo[oy * out_w + ox];
+                        let d = (a - b).abs();
+                        assert!(
+                            d <= 1,
+                            "h2v2 vs turbo diff > 1 at ({ox},{oy}) {in_w}x{in_h}: {a} vs {b}"
+                        );
+                        if oy % 2 == 0 {
+                            assert_eq!(
+                                a, b,
+                                "even rows must be bit-identical, ({ox},{oy}) {in_w}x{in_h}"
+                            );
+                        } else {
+                            odd_row_pixels += 1;
+                            if d != 0 {
+                                diffs += 1;
+                            }
+                        }
+                        total += 1;
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "h2v2 Triangle vs libjpeg-turbo fancy: {diffs}/{total} pixels differ \
+             ({:.2}% overall, {:.2}% of odd rows), all by ±1, even rows exact",
+            100.0 * diffs as f64 / total as f64,
+            100.0 * diffs as f64 / odd_row_pixels as f64
+        );
+        assert!(diffs > 0, "expected the documented odd-row bias divergence");
+    }
+
+    /// Accuracy of the two h2v2 rounding-bias schemes against the exact
+    /// real-valued 9:3:3:1 filter. Both schemes have max error 0.5 and
+    /// near-zero global bias; they differ only in the spatial STRUCTURE of
+    /// the half-case rounding (turbo: constant per column parity; zenjpeg:
+    /// alternating per row, checkerboard-like).
+    #[test]
+    fn h2v2_bias_schemes_accuracy_vs_ideal() {
+        let mut rng = Lcg(0x1DEA_1DEA_1DEA_1DEA);
+        let (in_w, in_h) = (64, 64);
+        let (out_w, out_h) = (128, 128);
+
+        // err[scheme][row parity][col parity] -> (sum, n)
+        let mut sums = [[[0.0f64; 2]; 2]; 2];
+        let mut counts = [[[0u64; 2]; 2]; 2];
+        let mut max_abs = [0.0f64; 2];
+
+        for _ in 0..30 {
+            let input: Vec<i16> = (0..in_w * in_h).map(|_| rng.next_u8()).collect();
+
+            let mut zen = vec![0i16; out_w * out_h];
+            upsample_h2v2_i16_libjpeg(&input, in_w, in_h, &mut zen, out_w, out_h);
+            let turbo = turbo_h2v2_fancy_reference(&input, in_w, in_h, out_w, out_h);
+
+            // Exact real-valued reference via the f32 path's formula in f64.
+            for oy in 0..out_h {
+                let iy = (oy / 2).min(in_h - 1);
+                let fy = if oy % 2 == 0 {
+                    iy.saturating_sub(1)
+                } else {
+                    (iy + 1).min(in_h - 1)
+                };
+                for ox in 0..out_w {
+                    let ix = (ox / 2).min(in_w - 1);
+                    let hx = if ox % 2 == 0 {
+                        ix.saturating_sub(1)
+                    } else {
+                        (ix + 1).min(in_w - 1)
+                    };
+                    let near_this = input[iy * in_w + ix] as f64;
+                    let near_adj = input[iy * in_w + hx] as f64;
+                    let far_this = input[fy * in_w + ix] as f64;
+                    let far_adj = input[fy * in_w + hx] as f64;
+                    let ideal =
+                        (9.0 * near_this + 3.0 * near_adj + 3.0 * far_this + far_adj) / 16.0;
+
+                    for (s, out) in [(0usize, &zen), (1usize, &turbo)] {
+                        let e = out[oy * out_w + ox] as f64 - ideal;
+                        sums[s][oy % 2][ox % 2] += e;
+                        counts[s][oy % 2][ox % 2] += 1;
+                        max_abs[s] = max_abs[s].max(e.abs());
+                    }
+                }
+            }
+        }
+
+        for (s, name) in [(0usize, "zen-alternating"), (1usize, "turbo-fixed")] {
+            let cell = |r: usize, c: usize| sums[s][r][c] / counts[s][r][c] as f64;
+            let total_n: u64 = counts[s].iter().flatten().sum();
+            let total: f64 = sums[s].iter().flatten().sum::<f64>() / total_n as f64;
+            eprintln!(
+                "{name}: max|err|={:.3} global mean={total:+.5} \
+                 per-cell [r0c0 {:+.4}, r0c1 {:+.4}, r1c0 {:+.4}, r1c1 {:+.4}]",
+                max_abs[s],
+                cell(0, 0),
+                cell(0, 1),
+                cell(1, 0),
+                cell(1, 1)
+            );
+            assert!(max_abs[s] <= 0.5 + 1e-9, "{name} exceeds half-step error");
+            assert!(total.abs() < 0.01, "{name} global bias too large");
         }
     }
 }

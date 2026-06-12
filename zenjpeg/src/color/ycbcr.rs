@@ -3416,4 +3416,81 @@ mod tests {
             );
         }
     }
+
+    /// Pin the exact relationship between our 14-bit integer YCbCr→RGB and
+    /// libjpeg-turbo's 16-bit table conversion (jdcolor.c
+    /// `build_ycc_rgb_table`: per-table rounding at SCALEBITS=16) over the
+    /// full 256³ input cube. Our 14-bit path (inherited from zune-jpeg)
+    /// differs by at most ±1 per channel; the rate is reported. This — not
+    /// the IDCT or the upsampler — is the residual ±1 in
+    /// "box + IdctMethod::Libjpeg matches mozjpeg within max=1".
+    #[test]
+    fn int_ycbcr_vs_libjpeg_turbo_tables() {
+        // turbo tables: FIX(x) = (x * 65536 + 0.5) as i32
+        const FIX_1_40200: i64 = 91881;
+        const FIX_1_77200: i64 = 116130;
+        const FIX_0_71414: i64 = 46802;
+        const FIX_0_34414: i64 = 22554;
+        const ONE_HALF: i64 = 1 << 15;
+
+        let mut cr_r = [0i32; 256];
+        let mut cb_b = [0i32; 256];
+        let mut cr_g = [0i64; 256];
+        let mut cb_g = [0i64; 256];
+        for i in 0..256 {
+            let x = i as i64 - 128;
+            cr_r[i] = ((FIX_1_40200 * x + ONE_HALF) >> 16) as i32;
+            cb_b[i] = ((FIX_1_77200 * x + ONE_HALF) >> 16) as i32;
+            cr_g[i] = -FIX_0_71414 * x;
+            cb_g[i] = -FIX_0_34414 * x + ONE_HALF;
+        }
+
+        let mut diff_count = [0u64; 3];
+        let mut max_diff = 0i32;
+        let mut total = 0u64;
+
+        for y in 0..256u16 {
+            for cb in 0..256u16 {
+                // Convert all 256 cr values in 16-wide batches.
+                for cr_base in (0..256u16).step_by(16) {
+                    let y_arr = [y as i16; 16];
+                    let cb_arr = [cb as i16; 16];
+                    let cr_arr: [i16; 16] = core::array::from_fn(|i| (cr_base as usize + i) as i16);
+                    let mut rgb = [0u8; 48];
+                    let mut offset = 0usize;
+                    ycbcr_to_rgb_i16_x16(&y_arr, &cb_arr, &cr_arr, &mut rgb, &mut offset);
+
+                    for i in 0..16 {
+                        let cr = cr_base as usize + i;
+                        let tr = (y as i32 + cr_r[cr]).clamp(0, 255);
+                        let tg = (y as i32 + ((cb_g[cb as usize] + cr_g[cr]) >> 16) as i32)
+                            .clamp(0, 255);
+                        let tb = (y as i32 + cb_b[cb as usize]).clamp(0, 255);
+
+                        for (ch, turbo_v) in [(0usize, tr), (1, tg), (2, tb)] {
+                            let ours = rgb[i * 3 + ch] as i32;
+                            let d = (ours - turbo_v).abs();
+                            if d != 0 {
+                                diff_count[ch] += 1;
+                                max_diff = max_diff.max(d);
+                            }
+                        }
+                        total += 1;
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "int YCbCr→RGB vs libjpeg-turbo tables over {total} triples: \
+             diff rate R={:.3}% G={:.3}% B={:.3}%, max diff {max_diff}",
+            100.0 * diff_count[0] as f64 / total as f64,
+            100.0 * diff_count[1] as f64 / total as f64,
+            100.0 * diff_count[2] as f64 / total as f64
+        );
+        assert!(
+            max_diff <= 1,
+            "14-bit vs turbo 16-bit conversion must stay within ±1"
+        );
+    }
 }
