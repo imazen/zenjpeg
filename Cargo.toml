@@ -194,3 +194,8 @@ doc_overindented_list_items = "allow"  # Doc formatting preferences
 manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
+
+[patch.crates-io]
+# ultrahdr-core 0.5.0 on crates.io predates full_reconstruction_boost (the
+# canonical ReconstructHdr boost route, heic#20). Drop on next publish.
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "3ac20f99d45e985e09f274fc07181b238385e703" }

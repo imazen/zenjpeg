@@ -571,3 +571,6 @@ required-features = ["ultrahdr"]
 
 [[example]]
 name = "gray_path_diff"
+
+[[example]]
+name = "gray_decode_bench"

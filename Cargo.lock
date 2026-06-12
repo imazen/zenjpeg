@@ -2350,8 +2350,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-core"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d65bd22a90785bb7360076b599ffbc201aef2c5817d2e5f37f37357829d476e"
+source = "git+https://github.com/imazen/ultrahdr?rev=3ac20f99d45e985e09f274fc07181b238385e703#3ac20f99d45e985e09f274fc07181b238385e703"
 dependencies = [
  "archmage 0.9.26",
  "bytemuck",

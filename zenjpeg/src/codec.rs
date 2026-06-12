@@ -2290,9 +2290,11 @@ impl JpegDecoder<'_> {
             HdrOutputFormat::LinearFloat
         };
 
-        // `None` = full reconstruction at the gain map's encoded maximum
-        // (alternate_hdr_headroom is log2 of the alternate/SDR peak ratio).
-        let capacity_max = (metadata.alternate_hdr_headroom as f32).exp2();
+        // `None` = full reconstruction at the gain map's encoded maximum,
+        // via the canonical rounding route shared across adapters (heic#20 —
+        // the previous `exp2` of the f32-cast stops double-rounded and could
+        // land 1 ULP from the heic adapter's boost for identical params).
+        let capacity_max = ultrahdr_core::full_reconstruction_boost(&metadata);
         let display_boost = target_headroom.unwrap_or(capacity_max).max(1.0);
 
         let hdr = apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop)
