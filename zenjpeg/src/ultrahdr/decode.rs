@@ -76,8 +76,13 @@ impl UltraHdrExtras for DecodedExtras {
         // Get the gain map JPEG from secondary images
         let gainmap_jpeg = self.gainmap()?;
 
-        // Decode it
-        Some(decode_gainmap_jpeg(gainmap_jpeg))
+        // Channel form comes from the hdrgm/ISO metadata, not pixel
+        // inspection (the ultrahdr-rs#27 model; zenjpeg#152).
+        let single_channel = self
+            .ultrahdr_metadata()
+            .and_then(|m| m.ok())
+            .map(|(m, _)| m.is_single_channel());
+        Some(decode_gainmap_jpeg(gainmap_jpeg, single_channel))
     }
 }
 
@@ -290,25 +295,68 @@ fn rgb_to_rgba8(rgb: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Decode a gain map JPEG to GainMap struct.
-fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
-    let decoded = Decoder::new().decode(jpeg_data, enough::Unstoppable)?;
+/// Decode a gain map JPEG to GainMap struct (#152).
+///
+/// `single_channel` is the metadata's channel form (`None` when no metadata
+/// parsed). Single (or unknown): decode with native Gray output — the exact
+/// luma plane (RGB-then-take-R rounds ±1 differently and promotes 4:2:0
+/// chroma noise on color-encoded maps). Multi-channel: decode RGB. The map
+/// decodes in stored orientation; callers orient it to the base (#151).
+fn decode_gainmap_jpeg(jpeg_data: &[u8], single_channel: Option<bool>) -> Result<GainMap> {
+    if single_channel != Some(false) {
+        // Some color encodings can't produce Gray output ("unsupported color
+        // conversion"); those fall through to the RGB path below.
+        if let Ok(decoded) = Decoder::new()
+            .output_format(JpegPixelFormat::Gray)
+            .auto_orient(false)
+            .decode(jpeg_data, enough::Unstoppable)
+            && let Some(px) = decoded.pixels_u8()
+        {
+            return Ok(GainMap {
+                width: decoded.width(),
+                height: decoded.height(),
+                channels: 1,
+                data: px.to_vec(),
+            });
+        }
+    }
 
+    let decoded = Decoder::new()
+        .output_format(JpegPixelFormat::Rgb)
+        .auto_orient(false)
+        .decode(jpeg_data, enough::Unstoppable)?;
     let width = decoded.width();
     let height = decoded.height();
-    let pixels = decoded.pixels_u8().unwrap().to_vec();
-
-    // Determine if single-channel or multi-channel based on decoded format
-    // The decoder typically outputs RGB, so we take the R channel for grayscale
-    // or all channels for multi-channel
-    let channels = if is_grayscale_content(&pixels) { 1 } else { 3 };
-
-    let data = if channels == 1 {
-        // Extract just the R (or first) channel
-        // Use chunks_exact to avoid panic on incomplete final chunk
-        pixels.chunks_exact(3).map(|p| p[0]).collect()
+    let rgb = decoded
+        .pixels_u8()
+        .ok_or_else(|| Error::decode_error("gain-map decode produced no u8 pixels".into()))?
+        .to_vec();
+    let collapse = match single_channel {
+        // Metadata says luma-only: collapse regardless of decode noise.
+        Some(true) => true,
+        // Metadata says per-channel: keep all three.
+        Some(false) => false,
+        // No metadata: collapse only when provably achromatic (full scan,
+        // no sampling).
+        None => rgb
+            .chunks_exact(3)
+            .all(|px| px[0] == px[1] && px[1] == px[2]),
+    };
+    let (data, channels) = if collapse {
+        // BT.709 luma — the same weighting the Gray decode applies.
+        (
+            rgb.chunks_exact(3)
+                .map(|px| {
+                    (0.2126_f32 * f32::from(px[0])
+                        + 0.7152 * f32::from(px[1])
+                        + 0.0722 * f32::from(px[2]))
+                    .clamp(0.0, 255.0) as u8
+                })
+                .collect(),
+            1,
+        )
     } else {
-        pixels
+        (rgb, 3)
     };
 
     Ok(GainMap {
@@ -317,15 +365,6 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
         channels,
         data,
     })
-}
-
-/// Check if decoded RGB content is actually grayscale (R==G==B for all pixels).
-fn is_grayscale_content(pixels: &[u8]) -> bool {
-    // Use chunks_exact to avoid incomplete final chunk
-    pixels
-        .chunks_exact(3)
-        .take(100) // Sample first 100 pixels
-        .all(|p| p[0] == p[1] && p[1] == p[2])
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
@@ -389,14 +428,4 @@ mod tests {
         assert!(!extras.is_ultrahdr());
     }
 
-    #[test]
-    fn test_is_grayscale_content() {
-        // Grayscale content
-        let gray = vec![128, 128, 128, 64, 64, 64, 200, 200, 200];
-        assert!(is_grayscale_content(&gray));
-
-        // Color content
-        let color = vec![255, 0, 0, 0, 255, 0, 0, 0, 255];
-        assert!(!is_grayscale_content(&color));
-    }
 }

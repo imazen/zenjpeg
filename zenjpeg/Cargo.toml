@@ -564,3 +564,7 @@ required-features = ["recompress-expert", "recompress-iqa"]
 [[example]]
 name = "zenjpeg_param_rd"
 required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "gm_extract_diff"
+required-features = ["ultrahdr"]
