@@ -427,5 +427,4 @@ mod tests {
         let extras = DecodedExtras::new();
         assert!(!extras.is_ultrahdr());
     }
-
 }

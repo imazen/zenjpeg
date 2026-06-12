@@ -41,8 +41,9 @@
 //! |---|---|---|---|
 //! | trellis λ₁ | 12.0–17.0 (useful) | 13.5, 14.0, 14.5, 14.75, 15.5, 16.0 | expert.rs envelope (−46 %..+12 %); adaptive oracle uses 12.0–16.0. Validated 2026-06-10 (`sweep_validate`): strictly monotone in size, spanning −0.9 %..+15 % around no-trellis on mixed 512² content |
 //! | trellis λ₂ | 14.0–18.0 | 16.0, 16.5, 17.0 (at λ₁ = 14.75) | expert.rs envelope (−19 %..+11 %); ridge: only λ₁−λ₂ matters at low block energy. Validated: 16.0 vs 17.0 distinct on 42/42 cells |
-//! | aq_coupling.scale | −8..+8 | −8, −4, +4, ALL clamped ±1.0 | measured: −4 ≈ 2 % smaller/3 % DSSIM on photos. Unclamped steps are FORBIDDEN: validated 2026-06-10 that unclamped −4 destroys high-AQ content (SSIM2 −31 on noise q85, −90 % bytes) |
-//! | coupling.exponent | 0.5–2.0 | 2.0 probe (at scale −4, clamped) | historical sweep grid {0.5, 1, 2} |
+//! | aq_coupling.scale (SCALAR) | −8..+8 | −8, −4, −2, +2, +4, +8, ALL clamped ±1.0 | measured: −4 ≈ 2 % smaller/3 % DSSIM on photos. ±2 mid-points + the +8 endpoint added 2026-06-12 (dense-sweep program) — symmetric 6-point ladder, aggressive end as dense as the gentle end. Unclamped steps are FORBIDDEN: validated 2026-06-10 that unclamped −4 destroys high-AQ content (SSIM2 −31 on noise q85, −90 % bytes) |
+//! | coupling.exponent (SCALAR) | 0.5–2.0 | 0.5, 2.0 probes (at scale −4, clamped) | historical sweep grid {0.5, 1, 2} — completed 2026-06-12 (1.0 is the default; spelling it would alias plain cpl−4) |
+//! | jpegli AQ strength (direct) | n/a | **axis blocked on encoder knob** | `aq_enabled` is bool-only; the AQ *field* shape has no config-exposed strength scalar — `quant/aq/mod.rs` bakes `mul = K_AC_QUANT × dampen`, `add = (1−dampen) × base_level` from jpegli constants + distance. A continuous AQ-strength axis needs an ExpertConfig knob first (e.g. an AQ-field strength multiplier); until then the continuous AQ-domain dials are the aq_coupling scale/exponent ladders above |
 //! | delta_dc_weight | 0.0–5.0 | 1.0 probe | expert.rs: 0..+1 % size, diminishing above 2.0. Validated 2026-06-10: SIZE claim holds, but quality collapses at q≤70 (SSIM2 −8..−36 on photos) — probe retained for response-surface mapping; NOT a default candidate, and possibly mis-scaled (worth a look before trusting sweeps that include it) |
 //! | chroma_distance_scales | [0.1, 5.0] each | [0.5,0.5], [2,2], [1,2], [2,1] | clamp range; asymmetric probes exercise the per-channel axes. Validated: [1,2] vs [2,1] distinct on 42/42 cells (Cb/Cr independently wired) |
 //! | moz chroma_quality Δ | −30..0 useful | −10, −20 (relative to grid q, clamped 1..=100) | mozjpeg's two-quality idiom drops chroma 10–20 below luma; response-surface probes, RD validation pending. Relative form per the playbook (absolute values are wrong at most grid points) |
@@ -279,6 +280,28 @@ impl SweepAxes {
         // DC banding-penalty probe (0..+1 % size, diminishing above 2).
         axes.coeff_opt.push(Some(TrellisConfig {
             delta_dc_weight: 1.0,
+            ..TrellisConfig::default()
+        }));
+        // SCALAR ladder densification (2026-06-12, dense-sweep program)
+        // — appended after the established probe set so the budget
+        // ladder (tail-shed) drops the newest values first. Coupling
+        // scale gains the ±2 mid-points (half the measured ±4 envelope)
+        // and the +8 bound endpoint (symmetric to the curated −8);
+        // every step clamped ±1.0 like the rest. The exponent probe at
+        // 0.5 completes the historical sweep grid {0.5, 1, 2} (1.0 is
+        // the default — spelling it would fingerprint-alias the plain
+        // cpl−4 step).
+        axes.coeff_opt.push(Some(trellis_coupled(-2.0)));
+        axes.coeff_opt.push(Some(trellis_coupled(2.0)));
+        axes.coeff_opt.push(Some(trellis_coupled(8.0)));
+        axes.coeff_opt.push(Some(TrellisConfig {
+            dc_enabled: false,
+            aq_coupling: AqCoupling {
+                scale: -4.0,
+                exponent: 0.5,
+                max_adjustment: 1.0,
+                ..AqCoupling::OFF
+            },
             ..TrellisConfig::default()
         }));
 
@@ -1486,6 +1509,32 @@ mod tests {
                 .any(|t| { t.aq_coupling.scale == -8.0 && t.aq_coupling.max_adjustment == 1.0 }),
             "clamped −8 coupling missing"
         );
+        // SCALAR coupling-scale ladder (dense-sweep program): symmetric
+        // 6-point set, every step clamped.
+        let mut scales: Vec<f32> = axes
+            .coeff_opt
+            .iter()
+            .flatten()
+            .filter(|t| t.aq_coupling.is_active() && t.aq_coupling.exponent == 1.0)
+            .map(|t| t.aq_coupling.scale)
+            .collect();
+        scales.sort_by(f32::total_cmp);
+        assert_eq!(
+            scales,
+            vec![-8.0, -4.0, -2.0, 2.0, 4.0, 8.0],
+            "coupling-scale ladder drifted"
+        );
+        // Exponent probes complete the historical {0.5, 1, 2} grid
+        // (1.0 = default, deliberately unspelled — would alias cpl−4).
+        let mut exps: Vec<f32> = axes
+            .coeff_opt
+            .iter()
+            .flatten()
+            .filter(|t| t.aq_coupling.is_active() && t.aq_coupling.exponent != 1.0)
+            .map(|t| t.aq_coupling.exponent)
+            .collect();
+        exps.sort_by(f32::total_cmp);
+        assert_eq!(exps, vec![0.5, 2.0], "coupling-exponent probes drifted");
         assert_eq!(axes.moz_chroma_deltas, vec![-10, -20]);
         // No curated coupling step may be unclamped: the unclamped form
         // is the validated quality-destruction mode on high-AQ content.

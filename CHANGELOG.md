@@ -5,6 +5,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Added
+- **SCALAR sweep-ladder densification** (`__expert` planner; dense-sweep
+  program / `zenpicker-train --scalar-axes`, zenmetrics `docs/PLAN_SWEEPS.md`
+  §5): aq_coupling.scale gains the ±2 mid-points and the +8 bound endpoint —
+  symmetric 6-point ladder {−8, −4, −2, +2, +4, +8}, every step clamped ±1.0;
+  coupling.exponent gains the 0.5 probe, completing the historical
+  {0.5, 1, 2} grid. New values ride the existing `cpl<scale>[e<exp>]cl<adj>`
+  id grammar and fingerprint. The doc-flagged "jpegli AQ strength" scalar is
+  recorded as **axis blocked on encoder knob** (`aq_enabled` is bool-only; the
+  AQ-field shape bakes `K_AC_QUANT × dampen` internally — a continuous axis
+  needs an ExpertConfig strength knob first). Harness re-run ALL HARD CHECKS
+  PASSED; all new steps live at 90 % diff with monotone byte direction
+  (`benchmarks/sweep_validate_2026-06-12.tsv`).
+
 ### Removed
 - Dead `custom_aq_map` chain: the `ComputedConfig`/`StreamingEncoderBuilder`
   field, the pub(crate) `aq_map()` setter, and the orphaned
