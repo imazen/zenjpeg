@@ -174,6 +174,7 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 }
 
 // Re-export config types (defined in config.rs, public API preserved)
+pub(crate) use config::transform_interleaved;
 pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
 
 /// Convert a `zenpixels::Orientation` to the internal `LosslessTransform`.

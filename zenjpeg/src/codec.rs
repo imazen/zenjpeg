@@ -2153,9 +2153,13 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             #[cfg(feature = "ultrahdr")]
             if matches!(self.gain_map_render, zencodec::GainMapRender::Components)
                 && let Some(ref extras) = jpeg_extras
-                && let Some(dgm) = decode_gain_map_components(extras)?
             {
-                output = output.with_extras(dgm);
+                // The gain map is surfaced in the same orientation as the base
+                // buffer above (#151).
+                let base_transform = cfg.compute_effective_transform_from_data(&data);
+                if let Some(dgm) = decode_gain_map_components(extras, base_transform)? {
+                    output = output.with_extras(dgm);
+                }
             }
             #[cfg(not(feature = "ultrahdr"))]
             if matches!(self.gain_map_render, zencodec::GainMapRender::Components) {
@@ -2206,14 +2210,28 @@ impl JpegDecoder<'_> {
         const SDR_WHITE_NITS: f32 = 203.0;
 
         let limits = self.limits;
+        // Crop hints are optional ("decoder may ignore"): a cropped base
+        // cannot be aligned with the full-frame gain map under normalized
+        // sampling, so this path decodes full-frame instead of mis-rendering
+        // the gain field (#151).
         let mut cfg = build_decode_config(
             &self.config.inner,
             &limits,
-            self.crop_hint,
+            None,
             self.orientation,
             self.policy.as_ref(),
         );
         cfg = cfg.preserve_all_metadata();
+        // The transform the requested decode would bake (EXIF when
+        // auto-orienting, composed with any user decode_transform). The
+        // reconstruction itself happens in stored space — upright base +
+        // stored gain map — and this permutation is baked into the finished
+        // HDR buffer at the end, so orientation is a pure pixel permutation
+        // of one canonical reconstruction (byte-identical to `Preserve` plus
+        // an external bake, the same construction as #149).
+        let base_transform = cfg.compute_effective_transform_from_data(&self.data);
+        cfg = cfg.auto_orient(false);
+        cfg.decode_transform = None;
         // apply_gainmap consumes RGBA8 SDR input.
         cfg = cfg.output_format(crate::types::PixelFormat::Rgba);
 
@@ -2229,11 +2247,6 @@ impl JpegDecoder<'_> {
         let mut result = cfg.decode(&self.data, stop)?;
         let w = result.width();
         let h = result.height();
-
-        let mut info = ImageInfo::new(w, h, ImageFormat::Jpeg);
-        if let Some(extras) = result.extras() {
-            info = populate_info_from_jpeg_extras(info, extras, self.orientation);
-        }
 
         let extras = result.take_extras().ok_or_else(|| {
             Error::icc_error("Ultra HDR reconstruction: decoder produced no extras".into())
@@ -2269,6 +2282,15 @@ impl JpegDecoder<'_> {
 
         let hdr = apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop)
             .map_err(|e| Error::icc_error(alloc::format!("gain-map apply failed: {e}")))?;
+        // Bake the requested orientation into the finished reconstruction —
+        // a pure pixel permutation of the stored-space result (#151).
+        let hdr = match lossless_to_orientation(base_transform) {
+            zencodec::Orientation::Identity => hdr,
+            o => zenpixels_convert::orient::apply_orientation(hdr.as_slice(), o),
+        };
+
+        let mut info = ImageInfo::new(hdr.width(), hdr.height(), ImageFormat::Jpeg);
+        info = populate_info_from_jpeg_extras(info, &extras, self.orientation);
 
         // Envelope: derived peak (capped at the reconstruction boost) +
         // mastering display from the alternate-image capacity. Primaries are
@@ -2302,14 +2324,58 @@ impl JpegDecoder<'_> {
     }
 }
 
+/// Map the decoder's lossless transform to the equivalent `Orientation`
+/// (both follow EXIF display semantics — `Rotate90` is 90° clockwise).
+#[cfg(feature = "ultrahdr")]
+fn lossless_to_orientation(t: crate::lossless::LosslessTransform) -> zencodec::Orientation {
+    use crate::lossless::LosslessTransform as T;
+    use zencodec::Orientation as O;
+    match t {
+        T::None => O::Identity,
+        T::FlipHorizontal => O::FlipH,
+        T::FlipVertical => O::FlipV,
+        T::Transpose => O::Transpose,
+        T::Transverse => O::Transverse,
+        T::Rotate90 => O::Rotate90,
+        T::Rotate180 => O::Rotate180,
+        T::Rotate270 => O::Rotate270,
+    }
+}
+
+/// Permute gain-map pixels by the same lossless transform the base decode
+/// baked, keeping the (base, gain map) pair aligned for normalized-coordinate
+/// sampling (#151). No-op for `LosslessTransform::None`.
+#[cfg(feature = "ultrahdr")]
+fn orient_gain_map(
+    mut gm: ultrahdr_core::GainMap,
+    transform: crate::lossless::LosslessTransform,
+) -> ultrahdr_core::GainMap {
+    if transform == crate::lossless::LosslessTransform::None {
+        return gm;
+    }
+    gm.data = crate::decode::transform_interleaved(
+        &gm.data,
+        gm.width as usize,
+        gm.height as usize,
+        usize::from(gm.channels),
+        transform,
+    );
+    if transform.swaps_dimensions() {
+        core::mem::swap(&mut gm.width, &mut gm.height);
+    }
+    gm
+}
+
 /// Decode the Ultra HDR gain-map components for `GainMapRender::Components`.
 ///
 /// Returns `Ok(None)` when the image carries no gain map (Components on a
 /// plain JPEG surfaces nothing); errors only when a gain map is present but
-/// malformed.
+/// malformed. The returned map is full-frame and oriented to match the base
+/// buffer (`base_transform`); a crop hint crops only the base.
 #[cfg(feature = "ultrahdr")]
 fn decode_gain_map_components(
     extras: &crate::decode::DecodedExtras,
+    base_transform: crate::lossless::LosslessTransform,
 ) -> Result<Option<zencodec::decode::DecodedGainMap>, Error> {
     use crate::ultrahdr::UltraHdrExtras;
 
@@ -2320,7 +2386,7 @@ fn decode_gain_map_components(
     let Some(gainmap) = extras.decode_gainmap() else {
         return Ok(None);
     };
-    let gainmap = gainmap?;
+    let gainmap = orient_gain_map(gainmap?, base_transform);
 
     let desc = if gainmap.channels == 3 {
         zenpixels::PixelDescriptor::RGB8_SRGB

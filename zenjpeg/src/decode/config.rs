@@ -1359,7 +1359,7 @@ impl DecodeInfo {
 /// packed). Returns a new buffer in the transformed geometry (dimensions
 /// swap for Transpose/Rotate90/Rotate270/Transverse). Pure permutation —
 /// every output pixel is copied verbatim from exactly one input pixel.
-fn transform_interleaved<T: Copy>(
+pub(crate) fn transform_interleaved<T: Copy>(
     src: &[T],
     w: usize,
     h: usize,
