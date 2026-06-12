@@ -1182,7 +1182,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         {
             // Check input size limits
             self.check_input_size(data)?;
-            let info = self.config.inner.read_info(data)?;
+            let info = self.limit_adjusted_inner().read_info(data)?;
             let mut image_info = to_image_info(&info);
             if let Ok(probe) = crate::detect::probe(data) {
                 image_info = image_info.with_source_encoding_details(probe);
@@ -1194,7 +1194,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, Self::Error> {
         {
             self.check_input_size(data)?;
-            let info = self.config.inner.read_info(data)?;
+            let info = self.limit_adjusted_inner().read_info(data)?;
             let native_format =
                 decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref());
             let mut w = info.dimensions.width;
@@ -1313,6 +1313,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 }
 
 impl JpegDecodeJob {
+    /// The inner decode config with this job's resource limits applied —
+    /// probes must honor `with_limits` exactly like the decode path does
+    /// (a 108 MP corpus file probes fine under a raised `max_pixels` but the
+    /// inner config's default cap rejected it).
+    fn limit_adjusted_inner(&self) -> crate::decode::DecodeConfig {
+        let mut cfg = self.config.inner.clone();
+        if let Some(max) = self.limits.max_pixels {
+            cfg = cfg.max_pixels(max);
+        }
+        if let Some(bytes) = self.limits.max_memory_bytes {
+            cfg = cfg.max_memory(bytes);
+        }
+        cfg
+    }
+
     /// Check input data size against limits.
     fn check_input_size(&self, data: &[u8]) -> Result<(), Error> {
         self.limits

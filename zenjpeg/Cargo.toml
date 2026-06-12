@@ -568,3 +568,6 @@ required-features = ["recompress-expert", "recompress-iqa"]
 [[example]]
 name = "gm_extract_diff"
 required-features = ["ultrahdr"]
+
+[[example]]
+name = "gray_path_diff"

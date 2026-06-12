@@ -422,3 +422,32 @@ fn components_gain_map_oriented_with_base() {
         );
     }
 }
+
+/// Probes honor `with_limits` like the decode path does: a header whose
+/// dimensions exceed the inner config's default pixel cap probes fine when
+/// the job raises `max_pixels` (and still fails without it).
+#[test]
+fn probe_honors_job_limits() {
+    // Patch a real fixture's SOF dimensions up to 12000x9000 (108 MP) —
+    // read_info only parses headers, so no scan data needs to match.
+    let mut jpeg = ultrahdr_jpeg();
+    let sof = jpeg
+        .windows(2)
+        .position(|w| w[0] == 0xFF && (w[1] == 0xC0 || w[1] == 0xC2))
+        .expect("SOF marker");
+    jpeg[sof + 5..sof + 7].copy_from_slice(&9000u16.to_be_bytes()); // height
+    jpeg[sof + 7..sof + 9].copy_from_slice(&12000u16.to_be_bytes()); // width
+
+    let probe_default = JpegDecoderConfig::new().job().probe(&jpeg);
+    assert!(
+        probe_default.is_err(),
+        "108 MP must exceed the default probe cap (precondition)"
+    );
+
+    let info = JpegDecoderConfig::new()
+        .job()
+        .with_limits(zencodec::ResourceLimits::default().with_max_pixels(1_000_000_000))
+        .probe(&jpeg)
+        .expect("probe with raised max_pixels");
+    assert_eq!((info.width, info.height), (12000, 9000));
+}
