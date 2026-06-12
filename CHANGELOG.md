@@ -34,6 +34,16 @@ All notable changes to zenjpeg are documented here. Earlier history
   under the mode. Default decode output (IdctMethod::Jpegli, alternating
   bias) is byte-identical to before.
 
+### Added
+- **Direct YCbCr plane parity proof vs mozjpeg**
+  (`test_libjpeg_idct_ycbcr_planes_match_mozjpeg`, `__ffi-tests`): mozjpeg's
+  actual runtime post-upsample planes (`JCS_YCbCr`) pushed through
+  zenjpeg's 14-bit converter reproduce `IdctMethod::Libjpeg` decoded RGB
+  byte-for-byte across 4 sizes × 3 qualities × {4:2:0, 4:4:4} — zenjpeg's
+  internal post-IDCT/post-upsample Y/Cb/Cr planes are bit-identical to
+  libjpeg-turbo's, and the only RGB-level residual is the documented
+  YCbCr→RGB table rounding.
+
 ### Documentation
 - **Chroma upsampling parity vs libjpeg-turbo pinned and corrected**: the
   Triangle h2v2 (4:2:0) upsampler is NOT bit-identical to turbo's fancy

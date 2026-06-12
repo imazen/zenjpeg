@@ -920,3 +920,115 @@ fn test_decode_path_consistency() {
         }
     }
 }
+
+/// Decode with mozjpeg to post-upsample YCbCr (fancy upsampling, no color
+/// conversion): `out_color_space = JCS_YCbCr` returns interleaved Y/Cb/Cr
+/// after libjpeg-turbo's islow IDCT and fancy upsampler — its internal
+/// planes, exactly.
+fn decode_mozjpeg_ycbcr(data: &[u8]) -> (u32, u32, Vec<u8>) {
+    use mozjpeg_sys::*;
+    use std::mem;
+    unsafe {
+        let mut err: jpeg_error_mgr = mem::zeroed();
+        jpeg_std_error(&mut err);
+        let mut ci: jpeg_decompress_struct = mem::zeroed();
+        ci.common.err = &mut err;
+        jpeg_create_decompress(&mut ci);
+        jpeg_mem_src(&mut ci, data.as_ptr(), data.len() as _);
+        assert_eq!(
+            jpeg_read_header(&mut ci, 1),
+            1,
+            "mozjpeg: read_header failed"
+        );
+        ci.out_color_space = J_COLOR_SPACE::JCS_YCbCr;
+        ci.do_fancy_upsampling = 1;
+        jpeg_start_decompress(&mut ci);
+        let w = ci.output_width;
+        let h = ci.output_height;
+        let stride = w as usize * ci.output_components as usize;
+        let mut out = vec![0u8; h as usize * stride];
+        while ci.output_scanline < h {
+            let off = ci.output_scanline as usize * stride;
+            let mut p = out[off..].as_mut_ptr();
+            jpeg_read_scanlines(&mut ci, &mut p, 1);
+        }
+        jpeg_finish_decompress(&mut ci);
+        jpeg_destroy_decompress(&mut ci);
+        (w, h, out)
+    }
+}
+
+/// zenjpeg's internal post-upsample Y/Cb/Cr planes under
+/// `IdctMethod::Libjpeg` are bit-identical to mozjpeg's.
+///
+/// zenjpeg has no YCbCr output, so the planes are pinned through the color
+/// converter: mozjpeg's post-upsample YCbCr (JCS_YCbCr — its actual
+/// runtime islow IDCT + SIMD fancy upsampler output) pushed through
+/// zenjpeg's exact 14-bit integer conversion formula must reproduce
+/// zenjpeg's decoded RGB byte-for-byte. A ±1 anywhere in zenjpeg's
+/// internal planes would shift predicted RGB at that pixel (Y moves all
+/// three channels pre-clamp; Cb/Cr move R/G/B through the 14-bit
+/// constants), so whole-image equality across patterns, sizes, qualities,
+/// and subsampling modes pins the planes themselves.
+#[test]
+fn test_libjpeg_idct_ycbcr_planes_match_mozjpeg() {
+    use zenjpeg::decode::IdctMethod;
+
+    // zenjpeg's production 14-bit fixed-point conversion (color/ycbcr.rs),
+    // replicated exactly; the in-lib dispatch-parity and turbo-table cube
+    // tests pin the production converter to this formula.
+    fn convert_14bit(ycc: &[u8]) -> Vec<u8> {
+        let mut rgb = vec![0u8; ycc.len()];
+        for (px, out) in ycc.chunks_exact(3).zip(rgb.chunks_exact_mut(3)) {
+            let y = px[0] as i32;
+            let cb = px[1] as i32 - 128;
+            let cr = px[2] as i32 - 128;
+            let y_scaled = y * 16384 + 8192;
+            let r = (y_scaled + cr * 22970) >> 14;
+            let g = (y_scaled + cr * -11700 + cb * -5638) >> 14;
+            let b = (y_scaled + cb * 29032) >> 14;
+            out[0] = r.clamp(0, 255) as u8;
+            out[1] = g.clamp(0, 255) as u8;
+            out[2] = b.clamp(0, 255) as u8;
+        }
+        rgb
+    }
+
+    let sizes = [(128usize, 128usize), (96, 80), (255, 255), (67, 45)];
+    let qualities = [50.0f32, 85.0, 95.0];
+
+    println!("\n=== YCbCr planes (via converter) vs mozjpeg JCS_YCbCr ===");
+    for (w, h) in sizes {
+        for q in qualities {
+            let pixels = make_stress_image(w, h);
+            for (sub, jpeg) in [
+                ("420", encode_420(&pixels, w as u32, h as u32, q)),
+                ("444", encode_444(&pixels, w as u32, h as u32, q)),
+            ] {
+                let (mw, mh, m_ycc) = decode_mozjpeg_ycbcr(&jpeg);
+                assert_eq!((mw as usize, mh as usize), (w, h));
+                let predicted = convert_14bit(&m_ycc);
+
+                let zen = Decoder::new()
+                    .idct_method(IdctMethod::Libjpeg)
+                    .decode(&jpeg, Unstoppable)
+                    .expect("zen decode")
+                    .into_pixels_u8()
+                    .unwrap();
+
+                let diffs = predicted
+                    .iter()
+                    .zip(zen.iter())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                let first = predicted.iter().zip(zen.iter()).position(|(a, b)| a != b);
+                println!("  {w}x{h} Q{q} {sub}: byte diffs={diffs} first={first:?}");
+                assert_eq!(
+                    diffs, 0,
+                    "{w}x{h} Q{q} {sub}: zenjpeg planes diverge from mozjpeg \
+                     (first diff at byte {first:?})"
+                );
+            }
+        }
+    }
+}
