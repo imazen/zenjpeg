@@ -2282,11 +2282,21 @@ impl JpegDecoder<'_> {
 
         let hdr = apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop)
             .map_err(|e| Error::icc_error(alloc::format!("gain-map apply failed: {e}")))?;
+        drop(sdr);
         // Bake the requested orientation into the finished reconstruction —
-        // a pure pixel permutation of the stored-space result (#151).
+        // a pure pixel permutation of the stored-space result (#151), done
+        // in place (cycle-following) so no second full-image HDR buffer is
+        // allocated. Allocating fallback for any future descriptor or
+        // orientation the in-place path declines.
         let hdr = match lossless_to_orientation(base_transform) {
             zencodec::Orientation::Identity => hdr,
-            o => zenpixels_convert::orient::apply_orientation(hdr.as_slice(), o),
+            o => {
+                let mut buf = hdr;
+                match zenpixels_convert::orient::apply_orientation_in_place(&mut buf, o) {
+                    Ok(()) => buf,
+                    Err(_) => zenpixels_convert::orient::apply_orientation(buf.as_slice(), o),
+                }
+            }
         };
 
         let mut info = ImageInfo::new(hdr.width(), hdr.height(), ImageFormat::Jpeg);
