@@ -1471,9 +1471,13 @@ impl<'a> JpegParser<'a> {
             IdctMethod::Jpegli => idct_int_tiered,
         };
 
-        // Only Triangle reaches this path (NearestNeighbor uses box path)
+        // Only Triangle reaches this path (NearestNeighbor uses box path).
+        // IdctMethod::Libjpeg => turbo's fixed h2v2 rounding bias (H2v2Bias).
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
-        let upsample_fn: UpsampleFn = upsample_h2v2_i16_libjpeg;
+        let upsample_fn: UpsampleFn = match idct_method {
+            IdctMethod::Libjpeg => super::upsample::upsample_h2v2_i16_libjpeg_turbo,
+            _ => upsample_h2v2_i16_libjpeg,
+        };
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
 
@@ -2018,7 +2022,7 @@ impl<'a> JpegParser<'a> {
                         &mut cb_row,
                         in_w,
                         y_cols_this_image,
-                        false,
+                        super::upsample::H2v2Bias::for_idct_method(idct_method, false),
                     );
                     upsample_h2v2_libjpeg_row(
                         &prev_seg.last_cr_row[..in_w],
@@ -2026,7 +2030,7 @@ impl<'a> JpegParser<'a> {
                         &mut cr_row,
                         in_w,
                         y_cols_this_image,
-                        false,
+                        super::upsample::H2v2Bias::for_idct_method(idct_method, false),
                     );
                     let rgb_off = bot_pixel_row * rgb_row_bytes;
                     if rgb_off + y_cols_this_image * 3 <= rgb.len() {
@@ -2059,7 +2063,7 @@ impl<'a> JpegParser<'a> {
                         &mut cb_row,
                         in_w,
                         y_cols_this_image,
-                        true,
+                        super::upsample::H2v2Bias::for_idct_method(idct_method, true),
                     );
                     upsample_h2v2_libjpeg_row(
                         &next_seg.first_cr_row[..in_w],
@@ -2067,7 +2071,7 @@ impl<'a> JpegParser<'a> {
                         &mut cr_row,
                         in_w,
                         y_cols_this_image,
-                        true,
+                        super::upsample::H2v2Bias::for_idct_method(idct_method, true),
                     );
                     let rgb_off = top_pixel_row * rgb_row_bytes;
                     if rgb_off + y_cols_this_image * 3 <= rgb.len() {

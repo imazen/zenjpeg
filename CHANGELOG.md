@@ -21,6 +21,19 @@ All notable changes to zenjpeg are documented here. Earlier history
   14.7 ms 12-bit-kernel ceiling — 85% of the regression recovered, the
   rest is the exactness guards. New `idct_kernels` zenbench bench.
 
+### Changed
+- **`IdctMethod::Libjpeg` now also selects libjpeg-turbo's fixed h2v2
+  fancy-upsampling biases** (`H2v2Bias::Turbo`, monomorphized plane/row
+  variants chosen at setup — zero hot-loop cost): the upsampler becomes
+  bit-exact with turbo's `h2v2_fancy_upsample` (asserted against an exact
+  reference port), so Triangle + Libjpeg decodes match mozjpeg within
+  **max_diff <= 1** (was <= 2; the residual is 14-bit vs 16-bit YCbCr→RGB
+  rounding — regression gate tightened in issue7_repro). Wired through all
+  decode paths (streaming, scanline/strip, coefficient, parallel, fused
+  boundary fixups); a new cross-path test pins decode() == scanline_reader()
+  under the mode. Default decode output (IdctMethod::Jpegli, alternating
+  bias) is byte-identical to before.
+
 ### Documentation
 - **Chroma upsampling parity vs libjpeg-turbo pinned and corrected**: the
   Triangle h2v2 (4:2:0) upsampler is NOT bit-identical to turbo's fancy

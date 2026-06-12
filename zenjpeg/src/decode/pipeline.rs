@@ -13,10 +13,10 @@ use super::idct_int::{
     idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
 };
 use super::upsample::{
-    upsample_h1v2_i16_libjpeg_strided, upsample_h1v2_i16_nearest_strided,
+    H2v2Bias, upsample_h1v2_i16_libjpeg_strided, upsample_h1v2_i16_nearest_strided,
     upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
-    upsample_h2v2_i16_libjpeg_strided, upsample_h2v2_i16_nearest_strided,
-    upsample_h2v2_libjpeg_row,
+    upsample_h2v2_i16_libjpeg_strided, upsample_h2v2_i16_libjpeg_strided_turbo,
+    upsample_h2v2_i16_nearest_strided, upsample_h2v2_libjpeg_row,
 };
 use crate::error::Result;
 use crate::foundation::alloc::try_alloc_maybeuninit;
@@ -600,7 +600,12 @@ impl StripProcessor {
     fn upsample_h2v2(&mut self) {
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg_strided,
+            // IdctMethod::Libjpeg selects turbo's fixed rounding bias so the
+            // whole decode is libjpeg-turbo-exact (see H2v2Bias).
+            ChromaUpsampling::Triangle => match self.idct_method {
+                super::IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_strided_turbo,
+                _ => upsample_h2v2_i16_libjpeg_strided,
+            },
             ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
         };
         self.upsample_both_channels(upsample_fn);
@@ -682,7 +687,7 @@ impl StripProcessor {
                     cb_out,
                     in_width,
                     out_width,
-                    false, // is_upper = false → lower half
+                    H2v2Bias::for_idct_method(self.idct_method, false), // lower half
                 );
                 let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_stride];
                 upsample_h2v2_libjpeg_row(
@@ -691,7 +696,7 @@ impl StripProcessor {
                     cr_out,
                     in_width,
                     out_width,
-                    false,
+                    H2v2Bias::for_idct_method(self.idct_method, false),
                 );
             }
             ChromaUpsampling::NearestNeighbor => {
@@ -763,7 +768,7 @@ impl StripProcessor {
                     cb_out,
                     in_width,
                     out_width,
-                    false, // lower
+                    H2v2Bias::for_idct_method(self.idct_method, false), // lower
                 );
                 let cr_out = &mut self.deferred_cr_row[..out_width];
                 upsample_h2v2_libjpeg_row(
@@ -772,7 +777,7 @@ impl StripProcessor {
                     cr_out,
                     in_width,
                     out_width,
-                    false,
+                    H2v2Bias::for_idct_method(self.idct_method, false),
                 );
             }
             ChromaUpsampling::NearestNeighbor => {
@@ -879,7 +884,7 @@ impl StripProcessor {
                     cb_out,
                     in_width,
                     out_width,
-                    true, // is_upper
+                    H2v2Bias::for_idct_method(self.idct_method, true), // upper
                 );
                 let cr_out = &mut self.cr_upsampled[..out_stride];
                 upsample_h2v2_libjpeg_row(
@@ -888,7 +893,7 @@ impl StripProcessor {
                     cr_out,
                     in_width,
                     out_width,
-                    true,
+                    H2v2Bias::for_idct_method(self.idct_method, true),
                 );
             }
             ChromaUpsampling::NearestNeighbor => {

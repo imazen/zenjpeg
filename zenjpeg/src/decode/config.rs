@@ -100,10 +100,11 @@ pub enum ChromaUpsampling {
     /// ~zero bias).
     ///
     /// With the default [`IdctMethod::Jpegli`] IDCT, matches libjpeg-turbo/mozjpeg
-    /// within max_diff <= 3. With [`IdctMethod::Libjpeg`], matches within
-    /// max_diff <= 2: ±1 from the h2v2 bias alternation plus ±1 from
-    /// YCbCr→RGB (ours is zune-style 14-bit; turbo uses 16-bit tables —
-    /// R identical, G/B differ on ~0.1–0.2% of inputs).
+    /// within max_diff <= 3. With [`IdctMethod::Libjpeg`] the h2v2 upsampler
+    /// switches to turbo's fixed biases (bit-exact with turbo), so decoded
+    /// RGB matches within max_diff <= 1 — the residual is YCbCr→RGB rounding
+    /// (ours is zune-style 14-bit; turbo uses 16-bit tables — R identical,
+    /// G/B differ on ~0.1–0.2% of inputs).
     /// The Libjpeg IDCT is SIMD (guarded, bit-exact with its scalar kernel)
     /// and runs within ~20% of the Jpegli kernel per block.
     #[default]
@@ -138,7 +139,10 @@ pub enum IdctMethod {
     ///
     /// Uses the Loeffler, Ligtenberg, Moschytz algorithm with 13-bit
     /// fixed-point constants, matching libjpeg-turbo's `jpeg_idct_islow`.
-    /// Use this when you need pixel-exact match with mozjpeg/djpeg output.
+    /// Also selects libjpeg-turbo's fixed h2v2 fancy-upsampling rounding
+    /// biases (see [`ChromaUpsampling::Triangle`]), making the IDCT and
+    /// upsampling stages bit-exact with mozjpeg/djpeg — decoded RGB matches
+    /// within max_diff <= 1 (the residual is YCbCr→RGB table rounding).
     Libjpeg,
 }
 

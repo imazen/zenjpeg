@@ -985,8 +985,12 @@ impl<'a> JpegParser<'a> {
                 self.chroma_upsampling,
                 super::super::ChromaUpsampling::NearestNeighbor
             );
-        let upsample_fn =
-            baseline_streaming::select_upsample_fn(&geom, self.chroma_upsampling, use_fused_box)?;
+        let upsample_fn = baseline_streaming::select_upsample_fn(
+            &geom,
+            self.chroma_upsampling,
+            self.idct_method,
+            use_fused_box,
+        )?;
         let idct_fn = baseline_streaming::select_idct_fn(self.idct_method);
         let is_rgb = !geom.is_grayscale && self.is_rgb_jpeg();
 

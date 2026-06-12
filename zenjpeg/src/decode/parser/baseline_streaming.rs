@@ -320,6 +320,7 @@ pub(super) type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
 pub(super) fn select_upsample_fn(
     geom: &StreamingGeometry,
     chroma_upsampling: ChromaUpsampling,
+    idct_method: IdctMethod,
     use_fused_box: bool,
 ) -> Result<Option<UpsampleFn>> {
     if geom.is_grayscale || (geom.h_ratio == 1 && geom.v_ratio == 1) || use_fused_box {
@@ -327,10 +328,15 @@ pub(super) fn select_upsample_fn(
     }
     use crate::decode::upsample::{
         upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg,
+        upsample_h2v2_i16_libjpeg_turbo,
     };
     Ok(Some(match (geom.h_ratio, geom.v_ratio) {
         (2, 2) => match chroma_upsampling {
-            ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
+            // IdctMethod::Libjpeg => turbo's fixed rounding bias (H2v2Bias).
+            ChromaUpsampling::Triangle => match idct_method {
+                IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_turbo,
+                _ => upsample_h2v2_i16_libjpeg,
+            },
             ChromaUpsampling::NearestNeighbor => {
                 unreachable!()
             }

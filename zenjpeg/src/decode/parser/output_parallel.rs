@@ -17,7 +17,8 @@ use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_i16_to_rg
 use crate::decode::idct_int::{idct_int_tiered, idct_int_tiered_libjpeg};
 use crate::decode::upsample::{
     upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
-    upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
+    upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_libjpeg_turbo,
+    upsample_h2v2_i16_nearest,
 };
 use crate::decode::{ChromaUpsampling, IdctMethod};
 use crate::error::{Error, Result};
@@ -234,8 +235,13 @@ impl<'a> JpegParser<'a> {
                 UpsampleFn,
                 UpsampleFn,
             ) = match chroma_upsampling {
+                // IdctMethod::Libjpeg => turbo's fixed h2v2 rounding bias
+                // (H2v2Bias); h2v1/h1v2 are already turbo-exact.
                 ChromaUpsampling::Triangle => (
-                    upsample_h2v2_i16_libjpeg,
+                    match self.idct_method {
+                        IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_turbo,
+                        _ => upsample_h2v2_i16_libjpeg,
+                    },
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,
                 ),

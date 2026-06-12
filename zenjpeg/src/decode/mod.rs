@@ -278,10 +278,12 @@ impl DecodeConfig {
     /// - Default is `Jpegli` for all upsampling modes
     ///
     /// The default `Triangle` upsampling matches libjpeg-turbo/mozjpeg within
-    /// max_diff ≤ 3. For pixel-exact matching (max_diff ≤ 2), also set
-    /// `.idct_method(IdctMethod::Libjpeg)` — the islow kernel is SIMD with a
-    /// scalar fallback and runs within ~20% of the default kernel per block
-    /// (~8% end-to-end on a 10 MP gray scan; ~50% when it was scalar-only).
+    /// max_diff ≤ 3. For near-exact matching (max_diff ≤ 1, YCbCr→RGB
+    /// rounding only), also set `.idct_method(IdctMethod::Libjpeg)` — that
+    /// selects both the libjpeg-exact IDCT and turbo's fixed h2v2 upsampling
+    /// biases. The islow kernel is SIMD with a scalar fallback and runs
+    /// within ~20% of the default kernel per block (~8% end-to-end on a
+    /// 10 MP gray scan; ~50% when it was scalar-only).
     pub(crate) fn effective_idct_method(&self) -> IdctMethod {
         self.idct_method.unwrap_or(IdctMethod::Jpegli)
     }

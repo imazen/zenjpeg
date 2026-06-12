@@ -4,7 +4,7 @@
 //! decode against mozjpeg-sys (libjpeg-turbo FFI).
 //!
 //! Triangle upsampling with default Jpegli IDCT: max_diff <= 3.
-//! Triangle upsampling with IdctMethod::Libjpeg: max_diff <= 2.
+//! Triangle upsampling with IdctMethod::Libjpeg: max_diff <= 1.
 //!
 //! Run: cargo test --release -p zenjpeg --test issue7_repro --features decoder -- --nocapture
 
@@ -161,7 +161,9 @@ fn issue7_triangle_jpegli_idct_delta() {
     );
 }
 
-/// Triangle + Libjpeg IDCT should match mozjpeg within max_diff <= 2.
+/// Triangle + Libjpeg IDCT should match mozjpeg within max_diff <= 1:
+/// the IDCT and the h2v2 upsampler (turbo fixed bias) are bit-exact with
+/// libjpeg-turbo, leaving only the 14-bit vs 16-bit YCbCr→RGB rounding.
 #[test]
 fn issue7_libjpeg_idct_delta() {
     let jpeg = fetch_test_image();
@@ -191,8 +193,8 @@ fn issue7_libjpeg_idct_delta() {
 
     println!("\nTriangle + Libjpeg IDCT max delta vs mozjpeg: {max_delta}");
     assert!(
-        max_delta <= 2,
-        "Triangle + Libjpeg IDCT delta vs mozjpeg = {max_delta}, expected <= 2"
+        max_delta <= 1,
+        "Triangle + Libjpeg IDCT delta vs mozjpeg = {max_delta}, expected <= 1"
     );
 }
 

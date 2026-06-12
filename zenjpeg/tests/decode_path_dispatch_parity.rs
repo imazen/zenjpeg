@@ -1201,3 +1201,54 @@ fn gray_source_rgb_output_matches_gray_plane() {
         "Rgb output of a gray JPEG must replicate the Gray output exactly"
     );
 }
+
+/// Color 4:2:0 with `IdctMethod::Libjpeg`: every decode path must select the
+/// turbo-bias h2v2 upsampler (`H2v2Bias::Turbo`), or streaming and scanline
+/// outputs diverge by ±1 on odd rows (the alternating-vs-fixed bias delta).
+/// Guards the per-path upsampler dispatch added with the turbo variant.
+#[test]
+fn libjpeg_idct_color_paths_agree() {
+    use zenjpeg::decode::IdctMethod;
+
+    // Odd dimensions exercise partial MCUs; aligned dimensions exercise none.
+    for &(w, h) in &[(67u32, 45u32), (128, 96), (33, 17)] {
+        let rgb = make_red_blue_blocks(w as usize, h as usize);
+        let jpeg = encode_jpeg(&rgb, w, h, ChromaSubsampling::Quarter, 85.0, false, 0);
+
+        let full = Decoder::new()
+            .idct_method(IdctMethod::Libjpeg)
+            .auto_orient(false)
+            .num_threads(1)
+            .decode(&jpeg, Unstoppable)
+            .expect("decode")
+            .into_pixels_u8()
+            .unwrap();
+
+        let scanline = {
+            let decoder = Decoder::new()
+                .idct_method(IdctMethod::Libjpeg)
+                .auto_orient(false)
+                .num_threads(1);
+            let mut reader = decoder.scanline_reader(&jpeg).expect("scanline_reader");
+            let width = reader.width() as usize;
+            let height = reader.height() as usize;
+            let stride = width * 3;
+            let mut pixels = vec![0u8; stride * height];
+            let mut total = 0;
+            while !reader.is_finished() {
+                let remaining = height - total;
+                let buf_start = total * stride;
+                let output = imgref::ImgRefMut::new(&mut pixels[buf_start..], stride, remaining);
+                let rows = reader.read_rows_rgb8(output).expect("read");
+                total += rows;
+            }
+            assert_eq!(total, height, "didn't read all rows");
+            pixels
+        };
+
+        assert_eq!(
+            full, scanline,
+            "{w}x{h}: decode() and scanline_reader() diverge under IdctMethod::Libjpeg"
+        );
+    }
+}

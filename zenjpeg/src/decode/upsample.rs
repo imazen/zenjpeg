@@ -136,6 +136,57 @@ pub fn upsample_h2v2_i16_nearest_strided(
 // libjpeg-turbo Compatible Upsampling
 // ============================================================================
 
+/// Rounding-bias mode for the fused h2v2 (4:2:0) triangle row kernel.
+///
+/// `Alternating` is zenjpeg's default Triangle behavior: biases (8, 7) on
+/// upper output rows and (7, 8) on lower rows, giving the half-case
+/// rounding a checkerboard arrangement. `Turbo` is libjpeg-turbo's
+/// `h2v2_fancy_upsample`: fixed (8, 7) on every row — bit-exact with
+/// turbo. Selected by [`IdctMethod::Libjpeg`](super::IdctMethod::Libjpeg),
+/// whose contract is libjpeg-turbo-exact decoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum H2v2Bias {
+    /// Row-alternating bias (default Triangle).
+    Alternating {
+        /// True on even output rows (nearer chroma row is above).
+        is_upper: bool,
+    },
+    /// libjpeg-turbo fixed bias: (8, 7) on every row.
+    Turbo,
+}
+
+impl H2v2Bias {
+    /// Select the mode for a decode: `Turbo` under [`super::IdctMethod::Libjpeg`].
+    #[inline]
+    pub(crate) fn for_idct_method(method: super::IdctMethod, is_upper: bool) -> Self {
+        match method {
+            super::IdctMethod::Libjpeg => H2v2Bias::Turbo,
+            _ => H2v2Bias::Alternating { is_upper },
+        }
+    }
+
+    /// (left-output bias, right-output bias) for this row.
+    #[inline(always)]
+    fn pair(self) -> (i32, i32) {
+        match self {
+            H2v2Bias::Alternating { is_upper: false } => (7, 8),
+            _ => (8, 7),
+        }
+    }
+
+    /// Bias of the second output when the chroma plane is a single column.
+    /// Alternating keeps zenjpeg's legacy duplicated first output (bias 8);
+    /// turbo emits the `(4c + 7) >> 4` right-output form its padded
+    /// buffers produce.
+    #[inline(always)]
+    fn single_col_second(self) -> i32 {
+        match self {
+            H2v2Bias::Turbo => 7,
+            H2v2Bias::Alternating { .. } => 8,
+        }
+    }
+}
+
 /// Horizontal 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:2:2 → 4:4:4).
 ///
 /// Uses alternating rounding bias: +1 for left pixel, +2 for right pixel.
@@ -377,42 +428,31 @@ pub fn upsample_h2v2_i16_libjpeg(
     out_width: usize,
     out_height: usize,
 ) {
-    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
-        return;
-    }
+    upsample_h2v2_i16_libjpeg_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
+}
 
-    for out_y in 0..out_height {
-        let in_y = out_y / 2;
-        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
-        let is_upper = out_y % 2 == 0;
-
-        // near_row = current chroma row, far_row = vertical neighbor
-        let far_y = if is_upper {
-            in_y_clamped.saturating_sub(1)
-        } else {
-            (in_y + 1).min(in_height.saturating_sub(1))
-        };
-
-        let near_row = in_y_clamped * in_width;
-        let far_row = far_y * in_width;
-        let out_row = out_y * out_width;
-
-        // Compute column sums: colsum[x] = near[x] * 3 + far[x]
-        // Then apply horizontal filter on column sums with /16 rounding
-        upsample_h2v2_libjpeg_row(
-            &input[near_row..near_row + in_width],
-            &input[far_row..far_row + in_width],
-            &mut output[out_row..],
-            in_width,
-            out_width,
-            is_upper,
-        );
-    }
+/// Like [`upsample_h2v2_i16_libjpeg`] but with libjpeg-turbo's fixed
+/// rounding biases — bit-exact with turbo's `h2v2_fancy_upsample`.
+/// Selected for [`IdctMethod::Libjpeg`](super::IdctMethod::Libjpeg) decodes.
+pub fn upsample_h2v2_i16_libjpeg_turbo(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    upsample_h2v2_i16_libjpeg_strided_turbo(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
 }
 
 /// Process one output row of fused h2v2 libjpeg-compat upsampling.
 ///
-/// `is_upper` controls the rounding bias alternation pattern.
+/// `bias` selects the rounding-bias scheme (row-alternating default or
+/// libjpeg-turbo fixed — see [`H2v2Bias`]).
 ///
 /// Dispatches to AVX2 SIMD on x86_64 when available, with scalar fallback.
 #[inline]
@@ -422,18 +462,18 @@ pub(super) fn upsample_h2v2_libjpeg_row(
     output: &mut [i16],
     in_width: usize,
     out_width: usize,
-    is_upper: bool,
+    bias: H2v2Bias,
 ) {
     // Try AVX2 SIMD path on x86_64
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
-            upsample_h2v2_libjpeg_row_avx2(token, near, far, output, in_width, out_width, is_upper);
+            upsample_h2v2_libjpeg_row_avx2(token, near, far, output, in_width, out_width, bias);
             return;
         }
     }
 
-    upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, is_upper);
+    upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, bias);
 }
 
 /// Scalar implementation of one output row of fused h2v2 libjpeg-compat upsampling.
@@ -444,28 +484,29 @@ fn upsample_h2v2_libjpeg_row_scalar(
     output: &mut [i16],
     in_width: usize,
     out_width: usize,
-    is_upper: bool,
+    bias: H2v2Bias,
 ) {
     if in_width == 1 {
         // Single column: just vertical filter
         let colsum = near[0] as i32 * 3 + far[0] as i32;
-        let val = ((colsum * 4 + 8) >> 4) as i16;
         if out_width > 0 {
-            output[0] = val;
+            output[0] = ((colsum * 4 + 8) >> 4) as i16;
         }
         if out_width > 1 {
-            output[1] = val;
+            output[1] = ((colsum * 4 + bias.single_col_second()) >> 4) as i16;
         }
         return;
     }
 
     // Rounding biases: libjpeg-turbo's h2v2 uses FIXED (left 8, right 7)
-    // for both rows of a pair; we additionally alternate to (7, 8) on lower
-    // rows (like turbo's own h1v2 +1/+2 scheme), which turns the half-case
-    // rounding pattern from column stripes into a checkerboard. This makes
-    // odd rows differ from turbo by ±1 on ~6.7% of pixels — see
+    // for both rows of a pair; the default Triangle mode alternates to
+    // (7, 8) on lower rows (like turbo's own h1v2 +1/+2 scheme), which
+    // turns the half-case rounding pattern from column stripes into a
+    // checkerboard but makes odd rows differ from turbo by ±1 on ~6.7% of
+    // pixels. `H2v2Bias::Turbo` (used by IdctMethod::Libjpeg) keeps the
+    // fixed pair and is bit-exact with turbo — see
     // h2v2_triangle_vs_libjpeg_turbo_reference.
-    let (bias_left, bias_right) = if is_upper { (8i32, 7i32) } else { (7i32, 8i32) };
+    let (bias_left, bias_right) = bias.pair();
 
     // Column sums: near * 3 + far
     let this_colsum = near[0] as i32 * 3 + far[0] as i32;
@@ -523,17 +564,18 @@ fn upsample_h2v2_libjpeg_row_avx2(
     output: &mut [i16],
     in_width: usize,
     out_width: usize,
-    is_upper: bool,
+    bias: H2v2Bias,
 ) {
     use core::arch::x86_64::*;
 
     // For very small widths, fall back to scalar (not worth SIMD overhead)
     if in_width < 18 {
-        upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, is_upper);
+        upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, bias);
         return;
     }
 
-    let (bias_left, bias_right) = if is_upper { (8i16, 7i16) } else { (7i16, 8i16) };
+    let (bias_left, bias_right) = bias.pair();
+    let (bias_left, bias_right) = (bias_left as i16, bias_right as i16);
 
     let v_three = _mm256_set1_epi16(3);
     let v_bias_left = _mm256_set1_epi16(bias_left);
@@ -681,6 +723,40 @@ pub fn upsample_h2v2_i16_libjpeg_strided(
     out_stride: usize,
     out_height: usize,
 ) {
+    upsample_h2v2_i16_libjpeg_strided_with(
+        input, in_width, in_stride, in_height, output, out_width, out_stride, out_height, false,
+    );
+}
+
+/// Like [`upsample_h2v2_i16_libjpeg_strided`] but with libjpeg-turbo's
+/// fixed rounding biases — bit-exact with turbo's `h2v2_fancy_upsample`.
+pub fn upsample_h2v2_i16_libjpeg_strided_turbo(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    upsample_h2v2_i16_libjpeg_strided_with(
+        input, in_width, in_stride, in_height, output, out_width, out_stride, out_height, true,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upsample_h2v2_i16_libjpeg_strided_with(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+    turbo_bias: bool,
+) {
     if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
         return;
     }
@@ -700,13 +776,18 @@ pub fn upsample_h2v2_i16_libjpeg_strided(
         let far_row = far_y * in_stride;
         let out_row = out_y * out_stride;
 
+        let bias = if turbo_bias {
+            H2v2Bias::Turbo
+        } else {
+            H2v2Bias::Alternating { is_upper }
+        };
         upsample_h2v2_libjpeg_row(
             &input[near_row..near_row + in_width],
             &input[far_row..far_row + in_width],
             &mut output[out_row..],
             in_width,
             out_width,
-            is_upper,
+            bias,
         );
     }
 }
@@ -1091,7 +1172,11 @@ mod tests {
                 ),
                 ("constant", vec![1000i16; in_width], vec![500i16; in_width]),
             ] {
-                for is_upper in [true, false] {
+                for bias in [
+                    H2v2Bias::Alternating { is_upper: true },
+                    H2v2Bias::Alternating { is_upper: false },
+                    H2v2Bias::Turbo,
+                ] {
                     // Compute reference using scalar path
                     let mut reference = vec![0i16; out_width];
                     upsample_h2v2_libjpeg_row_scalar(
@@ -1100,7 +1185,7 @@ mod tests {
                         &mut reference,
                         in_width,
                         out_width,
-                        is_upper,
+                        bias,
                     );
 
                     let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
@@ -1111,17 +1196,20 @@ mod tests {
                             &mut result,
                             in_width,
                             out_width,
-                            is_upper,
+                            bias,
                         );
 
                         assert_eq!(
                             result, reference,
                             "h2v2_libjpeg_row mismatch: {label} width={in_width} \
-                             is_upper={is_upper} at {perm}"
+                             bias={bias:?} at {perm}"
                         );
                     });
 
-                    if label == "gradient" && in_width == 32 && is_upper {
+                    if label == "gradient"
+                        && in_width == 32
+                        && bias == (H2v2Bias::Alternating { is_upper: true })
+                    {
                         eprintln!("h2v2_libjpeg_row dispatch: {report}");
                         assert!(
                             report.permutations_run >= 2,
@@ -1182,7 +1270,7 @@ mod tests {
                         &mut reference[out_row..],
                         in_w,
                         out_w,
-                        is_upper,
+                        H2v2Bias::Alternating { is_upper },
                     );
                 }
 
@@ -1309,6 +1397,17 @@ mod tests {
                 upsample_h2v2_i16_libjpeg(&input, in_w, in_h, &mut ours, out_w, out_h);
                 let turbo = turbo_h2v2_fancy_reference(&input, in_w, in_h, out_w, out_h);
 
+                // The Turbo bias variant (selected by IdctMethod::Libjpeg)
+                // must be bit-identical to libjpeg-turbo, every row, every
+                // size — including single-column planes.
+                let mut ours_turbo = vec![0i16; out_w * out_h];
+                upsample_h2v2_i16_libjpeg_turbo(&input, in_w, in_h, &mut ours_turbo, out_w, out_h);
+                assert_eq!(
+                    ours_turbo, turbo,
+                    "turbo-bias variant diverges from the turbo reference \
+                     ({in_w}x{in_h} trial={trial})"
+                );
+
                 for oy in 0..out_h {
                     for ox in 0..out_w {
                         let a = ours[oy * out_w + ox];
@@ -1334,6 +1433,22 @@ mod tests {
                 }
             }
         }
+        // Single-column planes (in_w == 1): the turbo variant matches the
+        // reference's padded-buffer behavior ((4c+8)/(4c+7)); the
+        // alternating mode keeps the legacy duplicated first output there,
+        // so only the turbo variant is asserted exact.
+        for trial in 0..10 {
+            let input: Vec<i16> = (0..16).map(|_| rng.next_u8()).collect();
+            let (in_w, in_h, out_w, out_h) = (1usize, 16usize, 2usize, 32usize);
+            let turbo_ref = turbo_h2v2_fancy_reference(&input, in_w, in_h, out_w, out_h);
+            let mut ours_turbo = vec![0i16; out_w * out_h];
+            upsample_h2v2_i16_libjpeg_turbo(&input, in_w, in_h, &mut ours_turbo, out_w, out_h);
+            assert_eq!(
+                ours_turbo, turbo_ref,
+                "single-column turbo mismatch trial={trial}"
+            );
+        }
+
         eprintln!(
             "h2v2 Triangle vs libjpeg-turbo fancy: {diffs}/{total} pixels differ \
              ({:.2}% overall, {:.2}% of odd rows), all by ±1, even rows exact",
