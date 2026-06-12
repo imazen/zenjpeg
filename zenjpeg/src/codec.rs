@@ -2645,6 +2645,14 @@ fn populate_info_from_jpeg_extras(
     {
         info = info.with_resolution(resolution);
     }
+    // Ultra HDR container signal (cheap XMP check, no MPF decode) — adapter
+    // parity with heic's `Supplements` population so callers can gate a
+    // ReconstructHdr pass on the base decode's info alone.
+    #[cfg(feature = "ultrahdr")]
+    {
+        use crate::ultrahdr::UltraHdrExtras;
+        info.supplements.gain_map = extras.is_ultrahdr();
+    }
     info
 }
 

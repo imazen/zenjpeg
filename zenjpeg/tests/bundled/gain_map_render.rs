@@ -34,7 +34,9 @@ fn ultrahdr_jpeg() -> Vec<u8> {
     encode_ultrahdr_luma(&hdr_fixture()).expect("ultrahdr encode")
 }
 
-/// Default (BaseOnly): a plain SDR decode — 8-bit buffer, no gain-map extras.
+/// Default (BaseOnly): a plain SDR decode — 8-bit buffer, no gain-map extras,
+/// and the info reports the Ultra HDR container via `supplements.gain_map`
+/// so callers can gate a ReconstructHdr pass on the base decode alone.
 #[test]
 fn base_only_default_decodes_sdr() {
     let jpeg = ultrahdr_jpeg();
@@ -53,6 +55,32 @@ fn base_only_default_decodes_sdr() {
         ChannelType::U8,
         "BaseOnly output is the SDR base image"
     );
+    assert!(
+        out.info().supplements.gain_map,
+        "Ultra HDR container must be reported in supplements.gain_map"
+    );
+}
+
+/// A plain (non-gain-map) JPEG reports no gain map in supplements.
+#[test]
+fn plain_jpeg_reports_no_gain_map_supplement() {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    let pixels: Vec<u8> = core::iter::repeat([10u8, 20, 30]).take(64).flatten().collect();
+    let slice = zenpixels::PixelSlice::new(&pixels, 8, 8, 8 * 3, PixelDescriptor::RGB8_SRGB)
+        .expect("pixel slice");
+    let plain = zenjpeg::JpegEncoderConfig::new()
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(slice)
+        .unwrap();
+    let out = JpegDecoderConfig::new()
+        .job()
+        .decoder(plain.data().to_vec().into(), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert!(!out.info().supplements.gain_map);
 }
 
 /// ReconstructHdr: zenjpeg applies the gain map — linear f32 output with
