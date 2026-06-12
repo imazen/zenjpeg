@@ -5,6 +5,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- **Libjpeg-exact IDCT is now SIMD** (`idct_int_libjpeg_auto`: AVX2
+  intrinsics on x86_64 + magetypes v3/neon/wasm128/scalar tiers): same
+  Loeffler islow butterfly and descale rounding in i32 lanes, bit-identical
+  to the scalar i64 kernel on every input via two range guards (inputs and
+  pass-1 outputs confined to the i16 window; worst-case L1 = 61214, so
+  61214 × 32768 + bias < 2^31 — derived and asserted in
+  `test_islow_i32_guard_bound_analysis`). Out-of-guard blocks
+  (near-adversarial streams only) fall back to the scalar kernel, so decoded
+  pixels never change anywhere. Covers `IdctMethod::Libjpeg`, all
+  1-component decodes (#154), and the Triangle-mode coefficient path.
+  Kernel: 28.1 ns/block vs 111.7 scalar (4.0x, Ryzen 9 7950X dense blocks);
+  the #154 gray A/B (10 MP scan, Q85) goes 22.4 → 15.8 ms median vs the
+  14.7 ms 12-bit-kernel ceiling — 85% of the regression recovered, the
+  rest is the exactness guards. New `idct_kernels` zenbench bench.
+
 ### Added
 - **SCALAR sweep-ladder densification** (`__expert` planner; dense-sweep
   program / `zenpicker-train --scalar-axes`, zenmetrics `docs/PLAN_SWEEPS.md`

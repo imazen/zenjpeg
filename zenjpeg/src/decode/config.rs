@@ -97,7 +97,8 @@ pub enum ChromaUpsampling {
     /// With the default [`IdctMethod::Jpegli`] IDCT, matches libjpeg-turbo/mozjpeg
     /// within max_diff <= 3. With [`IdctMethod::Libjpeg`], matches within
     /// max_diff <= 2 (the remaining gap is upsampler rounding differences).
-    /// The Libjpeg IDCT adds ~37% decode overhead.
+    /// The Libjpeg IDCT is SIMD (guarded, bit-exact with its scalar kernel)
+    /// and runs within ~20% of the Jpegli kernel per block.
     #[default]
     Triangle,
 }

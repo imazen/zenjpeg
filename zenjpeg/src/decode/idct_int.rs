@@ -109,14 +109,17 @@ pub fn is_dc_only_int(coeffs: &[i32; 64]) -> bool {
 
 /// 13-bit fixed-point constants for the Loeffler IDCT.
 ///
-/// These are i64 to match libjpeg-turbo's `JLONG` type (`long` = 64-bit on
-/// LP64 systems). Note: on Windows (LLP64), `long` is 32-bit, so libjpeg-turbo
-/// uses i32 there. Additionally, libjpeg-turbo's 8-bit path uses
-/// `MULTIPLY16C16` which truncates intermediates to INT16 before multiplying,
-/// so the JLONG workspace doesn't prevent overflow — both libjpeg-turbo and
-/// our i32 Jpegli IDCT wrap for extreme dequantized values (coefficient × quant
-/// \> 32767). Our i64 path is more mathematically correct but produces different
-/// output from libjpeg-turbo on such inputs.
+/// These are i64 to match libjpeg-turbo's `JLONG` type (`typedef long JLONG`
+/// in jpegint.h: 64-bit on LP64 Linux/macOS, 32-bit on Windows/LLP64).
+/// libjpeg-turbo's 8-bit C path nominally uses `MULTIPLY16C16`, but its
+/// default definition is a plain full-width multiply — the INT16-truncating
+/// variants are opt-in legacy defines (`SHORTxSHORT_32`) that modern builds
+/// don't set. The 16-bit-truncating arithmetic lives in libjpeg-turbo's
+/// x86/NEON SIMD islow (pmaddwd-style), which wraps dequantized values to
+/// i16 on load. So: our i64 path matches libjpeg-turbo's C islow on LP64
+/// exactly; for extreme dequantized values (|coeff x quant| > 32767) the
+/// turbo SIMD, turbo Windows C, and turbo LP64 C paths all diverge from one
+/// another, and we match the LP64 C (widest, no wrap) behavior.
 const LJ_FIX_0_298631336: i64 = 2446;
 const LJ_FIX_0_390180644: i64 = 3196;
 const LJ_FIX_0_541196100: i64 = 4433;
@@ -982,6 +985,181 @@ mod avx2 {
         pack_store_unclamped!(row6, row7);
         let _ = pos;
     }
+
+    /// AVX2 libjpeg-exact islow IDCT with the i32-exactness guards.
+    ///
+    /// Same Loeffler butterfly and descale rounding as `idct_int_libjpeg`,
+    /// in i32 lanes with an in-register transpose. Returns `false` (output
+    /// untouched) when a guard trips so the caller can fall back to the
+    /// scalar i64 kernel — see the guard derivation at the
+    /// "SIMD libjpeg-exact IDCT" section below.
+    ///
+    /// Within the guards every pre-clamp output fits i16 (|sum| < 2^31
+    /// before the >>18 implies |pixel| < 8192), so `packs_epi32`
+    /// saturation never engages and pack equals the scalar `as i16` cast.
+    #[arcane]
+    #[allow(unused_assignments)]
+    pub fn idct_int_libjpeg_avx2(
+        _token: archmage::X64V3Token,
+        in_vector: &[i32; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+        clamp_255: bool,
+    ) -> bool {
+        assert!(out_vector.len() >= stride * 7 + 8);
+
+        let mut row0 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
+        let mut row1 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
+        let mut row2 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap());
+        let mut row3 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap());
+        let mut row4 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap());
+        let mut row5 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap());
+        let mut row6 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap());
+        let mut row7 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap());
+
+        // Guard: all values must fit the i16 window [-32768, 32767].
+        // abs() maps i32::MIN to itself (sign bit set), which the mask
+        // test rejects, so the window check is exact on every input.
+        let out_of_window = _mm256_set1_epi32(!0x7FFF);
+        macro_rules! rows_fit_i16 {
+            () => {{
+                let mut acc = _mm256_abs_epi32(row0);
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row1));
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row2));
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row3));
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row4));
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row5));
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row6));
+                acc = _mm256_or_si256(acc, _mm256_abs_epi32(row7));
+                let over = _mm256_and_si256(acc, out_of_window);
+                _mm256_testz_si256(over, over) == 1
+            }};
+        }
+
+        if !rows_fit_i16!() {
+            return false;
+        }
+
+        // 13-bit islow constants
+        let c4433 = _mm256_set1_epi32(LJ32_0_541196100);
+        let cn15137 = _mm256_set1_epi32(-LJ32_1_847759065);
+        let c6270 = _mm256_set1_epi32(LJ32_0_765366865);
+        let c9633 = _mm256_set1_epi32(LJ32_1_175875602);
+        let c2446 = _mm256_set1_epi32(LJ32_0_298631336);
+        let c16819 = _mm256_set1_epi32(LJ32_2_053119869);
+        let c25172 = _mm256_set1_epi32(LJ32_3_072711026);
+        let c12299 = _mm256_set1_epi32(LJ32_1_501321110);
+        let cn7373 = _mm256_set1_epi32(-LJ32_0_899976223);
+        let cn20995 = _mm256_set1_epi32(-LJ32_2_562915447);
+        let cn16069 = _mm256_set1_epi32(-LJ32_1_961570560);
+        let cn3196 = _mm256_set1_epi32(-LJ32_0_390180644);
+        let bias1 = _mm256_set1_epi32(LJ32_PASS1_BIAS);
+        let bias2 = _mm256_set1_epi32(LJ32_PASS2_BIAS);
+
+        macro_rules! islow_pass {
+            ($bias:expr, $shift:literal) => {
+                // Even part
+                let z1 = _mm256_mullo_epi32(_mm256_add_epi32(row2, row6), c4433);
+                let tmp2 = _mm256_add_epi32(z1, _mm256_mullo_epi32(row6, cn15137));
+                let tmp3 = _mm256_add_epi32(z1, _mm256_mullo_epi32(row2, c6270));
+
+                let tmp0 = _mm256_slli_epi32(_mm256_add_epi32(row0, row4), 13);
+                let tmp1 = _mm256_slli_epi32(_mm256_sub_epi32(row0, row4), 13);
+
+                let tmp10 = _mm256_add_epi32(_mm256_add_epi32(tmp0, tmp3), $bias);
+                let tmp13 = _mm256_add_epi32(_mm256_sub_epi32(tmp0, tmp3), $bias);
+                let tmp11 = _mm256_add_epi32(_mm256_add_epi32(tmp1, tmp2), $bias);
+                let tmp12 = _mm256_add_epi32(_mm256_sub_epi32(tmp1, tmp2), $bias);
+
+                // Odd part
+                let z1o = _mm256_add_epi32(row7, row1);
+                let z2o = _mm256_add_epi32(row5, row3);
+                let z3o = _mm256_add_epi32(row7, row3);
+                let z4o = _mm256_add_epi32(row5, row1);
+                let z5 = _mm256_mullo_epi32(_mm256_add_epi32(z3o, z4o), c9633);
+
+                let t0 = _mm256_mullo_epi32(row7, c2446);
+                let t1 = _mm256_mullo_epi32(row5, c16819);
+                let t2 = _mm256_mullo_epi32(row3, c25172);
+                let t3 = _mm256_mullo_epi32(row1, c12299);
+                let z1o = _mm256_mullo_epi32(z1o, cn7373);
+                let z2o = _mm256_mullo_epi32(z2o, cn20995);
+                let z3o = _mm256_add_epi32(_mm256_mullo_epi32(z3o, cn16069), z5);
+                let z4o = _mm256_add_epi32(_mm256_mullo_epi32(z4o, cn3196), z5);
+
+                let t0 = _mm256_add_epi32(t0, _mm256_add_epi32(z1o, z3o));
+                let t1 = _mm256_add_epi32(t1, _mm256_add_epi32(z2o, z4o));
+                let t2 = _mm256_add_epi32(t2, _mm256_add_epi32(z2o, z3o));
+                let t3 = _mm256_add_epi32(t3, _mm256_add_epi32(z1o, z4o));
+
+                // islow output ordering
+                row0 = _mm256_srai_epi32(_mm256_add_epi32(tmp10, t3), $shift);
+                row7 = _mm256_srai_epi32(_mm256_sub_epi32(tmp10, t3), $shift);
+                row1 = _mm256_srai_epi32(_mm256_add_epi32(tmp11, t2), $shift);
+                row6 = _mm256_srai_epi32(_mm256_sub_epi32(tmp11, t2), $shift);
+                row2 = _mm256_srai_epi32(_mm256_add_epi32(tmp12, t1), $shift);
+                row5 = _mm256_srai_epi32(_mm256_sub_epi32(tmp12, t1), $shift);
+                row3 = _mm256_srai_epi32(_mm256_add_epi32(tmp13, t0), $shift);
+                row4 = _mm256_srai_epi32(_mm256_sub_epi32(tmp13, t0), $shift);
+            };
+        }
+
+        // Pass 1 (columns)
+        islow_pass!(bias1, 11);
+        // Guard: pass-1 outputs must fit i16 or pass-2 products overflow.
+        if !rows_fit_i16!() {
+            return false;
+        }
+        transpose_8x8_i32(
+            _token, &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6,
+            &mut row7,
+        );
+        // Pass 2 (rows) with the level shift folded into the bias
+        islow_pass!(bias2, 18);
+        transpose_8x8_i32(
+            _token, &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6,
+            &mut row7,
+        );
+
+        let mut pos = 0;
+        macro_rules! pack_store_islow {
+            ($r0:expr, $r1:expr) => {
+                let packed = _mm256_packs_epi32($r0, $r1);
+                let result = if clamp_255 {
+                    clamp_avx(_token, packed)
+                } else {
+                    packed
+                };
+                let reordered = _mm256_permute4x64_epi64(result, shuffle(3, 1, 2, 0));
+
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<0>(reordered),
+                );
+                pos += stride;
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<1>(reordered),
+                );
+                pos += stride;
+            };
+        }
+
+        pack_store_islow!(row0, row1);
+        pack_store_islow!(row2, row3);
+        pack_store_islow!(row4, row5);
+        pack_store_islow!(row6, row7);
+        let _ = pos;
+        true
+    }
 }
 
 // =============================================================================
@@ -1236,8 +1414,9 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
 
 /// libjpeg-compatible tiered IDCT dispatch.
 ///
-/// Uses DC-only fast path for single-coefficient blocks, otherwise
-/// uses `idct_int_libjpeg` (Loeffler algorithm with i64 intermediates).
+/// Uses DC-only fast path for single-coefficient blocks, otherwise the
+/// guarded SIMD islow kernel (bit-identical to `idct_int_libjpeg`, falling
+/// back to the scalar i64 kernel outside the i32-exactness guard).
 pub fn idct_int_tiered_libjpeg(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
@@ -1247,7 +1426,7 @@ pub fn idct_int_tiered_libjpeg(
     if coeff_count <= 1 {
         idct_int_dc_only(coeffs[0], output, stride);
     } else {
-        idct_int_libjpeg(coeffs, output, stride);
+        idct_int_libjpeg_auto(coeffs, output, stride);
     }
 }
 
@@ -1501,6 +1680,250 @@ pub fn idct_int_libjpeg_unclamped(
     }
 }
 
+// =============================================================================
+// SIMD libjpeg-exact IDCT (guarded i32 islow)
+// =============================================================================
+//
+// Same Loeffler butterfly and descale rounding as `idct_int_libjpeg`, computed
+// in i32 lanes (all 8 columns per pass, like the 12-bit kernel above). Bit
+// equality with the i64 scalar is guaranteed by two range guards whose
+// worst-case bound is derived in `test_islow_i32_guard_bound_analysis`:
+//
+// - guard 1 (inputs): every |dequantized coefficient| must fit the i16 window
+//   [-32768, 32767]. The largest pass-1 intermediate is then
+//   L1max * 32768 + 1024 < 2^31 (L1max = sum of |form coefficients| ~= 61213).
+// - guard 2 (pass-1 outputs): every |workspace value| must fit the same
+//   window, bounding pass-2 intermediates by L1max * 32768 + bias < 2^31.
+//
+// Honestly-encoded JPEGs sit far inside both guards (|coeff| <= ~4096 for
+// 8-bit imagery, workspace ~4x pixel scale); only near-adversarial streams
+// trip them and fall back to the scalar i64 kernel, so output never changes.
+
+/// i32 copies of the 13-bit constants for SIMD lanes.
+const LJ32_0_298631336: i32 = 2446;
+const LJ32_0_390180644: i32 = 3196;
+const LJ32_0_541196100: i32 = 4433;
+const LJ32_0_765366865: i32 = 6270;
+const LJ32_0_899976223: i32 = 7373;
+const LJ32_1_175875602: i32 = 9633;
+const LJ32_1_501321110: i32 = 12299;
+const LJ32_1_847759065: i32 = 15137;
+const LJ32_1_961570560: i32 = 16069;
+const LJ32_2_053119869: i32 = 16819;
+const LJ32_2_562915447: i32 = 20995;
+const LJ32_3_072711026: i32 = 25172;
+
+/// Pass-1 rounding bias: 1 << (CONST_BITS - PASS1_BITS - 1).
+const LJ32_PASS1_BIAS: i32 = 1 << (LJ_CONST_BITS - LJ_PASS1_BITS - 1);
+/// Pass-2 rounding bias with the +128 level shift folded in:
+/// (1 << 17) + (128 << 18). Folding is exact for arithmetic shifts because
+/// 128 << 18 is a multiple of 2^18.
+const LJ32_PASS2_BIAS: i32 = (1 << 17) + (128 << 18);
+
+/// True when every lane of every row fits the i16 window [-32768, 32767].
+///
+/// Uses ones-complement abs (`x ^ (x >> 31)`): exact magnitude for x >= 0,
+/// magnitude minus one for x < 0, and i32::MAX for i32::MIN — so OR-ing and
+/// testing bits 15..31 accepts exactly the [-32768, 32767] window per lane.
+#[inline(always)]
+fn islow_rows_fit_i16<T: magetypes::simd::backends::I32x8Backend>(
+    token: T,
+    rows: &[GenericI32x8<T>; 8],
+) -> bool {
+    let acc = rows
+        .iter()
+        .map(|r| *r ^ r.shr_arithmetic_const::<31>())
+        .reduce(|a, b| a | b)
+        .expect("rows is non-empty");
+    let over = acc & GenericI32x8::<T>::splat(token, !0x7FFF);
+    !over.simd_ne(GenericI32x8::<T>::splat(token, 0)).any_true()
+}
+
+/// One islow pass over 8 lanes (the exact `idct_int_libjpeg` butterfly).
+///
+/// `bias` is the descale rounding constant, added to the even-part
+/// accumulators so each output receives it exactly once before the
+/// arithmetic shift (descale). Pass 1 uses bias 1024 / shift 11; pass 2
+/// uses the level-shift-folded bias / shift 18.
+#[inline(always)]
+fn islow_pass_generic<T: magetypes::simd::backends::I32x8Backend>(
+    token: T,
+    rows: &mut [GenericI32x8<T>; 8],
+    bias: GenericI32x8<T>,
+    shift: i32,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x8<U> = GenericI32x8<U>;
+
+    // Even part
+    let z2 = rows[2];
+    let z3 = rows[6];
+    let z1 = (z2 + z3) * i32x8::splat(token, LJ32_0_541196100);
+    let tmp2 = z1 + z3 * i32x8::splat(token, -LJ32_1_847759065);
+    let tmp3 = z1 + z2 * i32x8::splat(token, LJ32_0_765366865);
+
+    let tmp0 = (rows[0] + rows[4]).shl_const::<13>();
+    let tmp1 = (rows[0] - rows[4]).shl_const::<13>();
+
+    let tmp10 = tmp0 + tmp3 + bias;
+    let tmp13 = tmp0 - tmp3 + bias;
+    let tmp11 = tmp1 + tmp2 + bias;
+    let tmp12 = tmp1 - tmp2 + bias;
+
+    // Odd part
+    let t0 = rows[7];
+    let t1 = rows[5];
+    let t2 = rows[3];
+    let t3 = rows[1];
+
+    let z1 = t0 + t3;
+    let z2 = t1 + t2;
+    let z3 = t0 + t2;
+    let z4 = t1 + t3;
+    let z5 = (z3 + z4) * i32x8::splat(token, LJ32_1_175875602);
+
+    let t0 = t0 * i32x8::splat(token, LJ32_0_298631336);
+    let t1 = t1 * i32x8::splat(token, LJ32_2_053119869);
+    let t2 = t2 * i32x8::splat(token, LJ32_3_072711026);
+    let t3 = t3 * i32x8::splat(token, LJ32_1_501321110);
+    let z1 = z1 * i32x8::splat(token, -LJ32_0_899976223);
+    let z2 = z2 * i32x8::splat(token, -LJ32_2_562915447);
+    let z3 = z3 * i32x8::splat(token, -LJ32_1_961570560) + z5;
+    let z4 = z4 * i32x8::splat(token, -LJ32_0_390180644) + z5;
+
+    let t0 = t0 + z1 + z3;
+    let t1 = t1 + z2 + z4;
+    let t2 = t2 + z2 + z3;
+    let t3 = t3 + z1 + z4;
+
+    match shift {
+        11 => {
+            rows[0] = (tmp10 + t3).shr_arithmetic_const::<11>();
+            rows[7] = (tmp10 - t3).shr_arithmetic_const::<11>();
+            rows[1] = (tmp11 + t2).shr_arithmetic_const::<11>();
+            rows[6] = (tmp11 - t2).shr_arithmetic_const::<11>();
+            rows[2] = (tmp12 + t1).shr_arithmetic_const::<11>();
+            rows[5] = (tmp12 - t1).shr_arithmetic_const::<11>();
+            rows[3] = (tmp13 + t0).shr_arithmetic_const::<11>();
+            rows[4] = (tmp13 - t0).shr_arithmetic_const::<11>();
+        }
+        18 => {
+            rows[0] = (tmp10 + t3).shr_arithmetic_const::<18>();
+            rows[7] = (tmp10 - t3).shr_arithmetic_const::<18>();
+            rows[1] = (tmp11 + t2).shr_arithmetic_const::<18>();
+            rows[6] = (tmp11 - t2).shr_arithmetic_const::<18>();
+            rows[2] = (tmp12 + t1).shr_arithmetic_const::<18>();
+            rows[5] = (tmp12 - t1).shr_arithmetic_const::<18>();
+            rows[3] = (tmp13 + t0).shr_arithmetic_const::<18>();
+            rows[4] = (tmp13 - t0).shr_arithmetic_const::<18>();
+        }
+        _ => unreachable!("islow_pass_generic only supports shift=11 or shift=18"),
+    }
+}
+
+/// SIMD islow over all 8 columns/rows. Returns `false` (output untouched)
+/// when a range guard trips; the caller must fall back to the scalar kernel.
+#[magetypes(v3, neon, wasm128, scalar)]
+fn idct_libjpeg_wide_impl(
+    token: Token,
+    in_vector: &[i32; 64],
+    out_vector: &mut [i16],
+    stride: usize,
+    clamp_255: bool,
+) -> bool {
+    #[allow(non_camel_case_types)]
+    type i32x8 = GenericI32x8<Token>;
+
+    let mut rows: [i32x8; 8] = core::array::from_fn(|i| {
+        i32x8::from_array(
+            token,
+            *<&[i32; 8]>::try_from(&in_vector[i * 8..(i + 1) * 8]).unwrap(),
+        )
+    });
+
+    // Guard 1: inputs must fit i16 or pass-1 products can exceed i32.
+    if !islow_rows_fit_i16(token, &rows) {
+        return false;
+    }
+    islow_pass_generic(token, &mut rows, i32x8::splat(token, LJ32_PASS1_BIAS), 11);
+    // Guard 2: pass-1 outputs must fit i16 or pass-2 products can exceed i32.
+    if !islow_rows_fit_i16(token, &rows) {
+        return false;
+    }
+    wide_simd::transpose_i32x8(token, &mut rows);
+    islow_pass_generic(token, &mut rows, i32x8::splat(token, LJ32_PASS2_BIAS), 18);
+    wide_simd::transpose_i32x8(token, &mut rows);
+
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out = &mut out_vector[..min_len];
+    let mut out_pos = 0;
+    if clamp_255 {
+        for row in &rows {
+            let arr = row.to_array();
+            for (j, &val) in arr.iter().enumerate() {
+                out[out_pos + j] = val.clamp(0, 255) as i16;
+            }
+            out_pos += stride;
+        }
+    } else {
+        // Unclamped: level-shifted but not clamped; values stay well inside
+        // i16 within the guards (|pre-shift| < 2^31 implies |pixel| < 7800).
+        for row in &rows {
+            let arr = row.to_array();
+            for (j, &val) in arr.iter().enumerate() {
+                out[out_pos + j] = val as i16;
+            }
+            out_pos += stride;
+        }
+    }
+    true
+}
+
+/// libjpeg-exact IDCT with SIMD fast path.
+///
+/// Bit-identical to [`idct_int_libjpeg`] on every input: blocks whose
+/// coefficients or pass-1 outputs exceed the i32-exactness guard fall back
+/// to the scalar i64 kernel (see the guard derivation above).
+pub fn idct_int_libjpeg_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+    if is_dc_only_int(coeffs) {
+        return idct_int_dc_only(coeffs[0], output, stride);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            if !avx2::idct_int_libjpeg_avx2(token, coeffs, output, stride, true) {
+                idct_int_libjpeg(coeffs, output, stride);
+            }
+            return;
+        }
+    }
+    if !incant!(idct_libjpeg_wide_impl(coeffs, output, stride, true)) {
+        idct_int_libjpeg(coeffs, output, stride);
+    }
+}
+
+/// Unclamped libjpeg-exact IDCT with SIMD fast path.
+///
+/// Bit-identical to [`idct_int_libjpeg_unclamped`] on every input.
+pub fn idct_int_libjpeg_auto_unclamped(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+    if is_dc_only_int(coeffs) {
+        return idct_int_dc_only_unclamped(coeffs[0], output, stride);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            if !avx2::idct_int_libjpeg_avx2(token, coeffs, output, stride, false) {
+                idct_int_libjpeg_unclamped(coeffs, output, stride);
+            }
+            return;
+        }
+    }
+    if !incant!(idct_libjpeg_wide_impl(coeffs, output, stride, false)) {
+        idct_int_libjpeg_unclamped(coeffs, output, stride);
+    }
+}
+
 /// Unclamped full 8x8 IDCT dispatch (non-tiered, for f32 output paths).
 pub fn idct_int_auto_unclamped(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
     #[cfg(target_arch = "x86_64")]
@@ -1536,7 +1959,8 @@ pub fn idct_int_tiered_unclamped(
 
 /// Unclamped libjpeg-compatible tiered IDCT dispatch.
 ///
-/// Uses i64 intermediates (Loeffler algorithm). Output is NOT clamped to \[0,255\].
+/// Output is NOT clamped to \[0,255\]. Uses the guarded SIMD islow kernel
+/// (bit-identical to `idct_int_libjpeg_unclamped` on every input).
 pub fn idct_int_tiered_libjpeg_unclamped(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
@@ -1546,7 +1970,7 @@ pub fn idct_int_tiered_libjpeg_unclamped(
     if coeff_count <= 1 {
         idct_int_dc_only_unclamped(coeffs[0], output, stride);
     } else {
-        idct_int_libjpeg_unclamped(coeffs, output, stride);
+        idct_int_libjpeg_auto_unclamped(coeffs, output, stride);
     }
 }
 
@@ -1919,6 +2343,395 @@ mod tests {
              max_err: loeffler={max_err_loeffler:.1}, \
              zune={max_err_zune:.1}, zune_simd={max_err_zune_simd:.1}"
         );
+    }
+
+    /// Simple LCG for reproducible randomized test blocks.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next_i32(&mut self) -> i32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 33) as i32
+        }
+        /// Uniform in [-mag, mag].
+        fn coeff(&mut self, mag: i32) -> i32 {
+            self.next_i32().rem_euclid(2 * mag + 1) - mag
+        }
+    }
+
+    /// The guarded SIMD islow kernel must be bit-identical to the scalar i64
+    /// kernel on EVERY input: inside the guards by exact i32 arithmetic,
+    /// outside them by falling back to the scalar kernel.
+    #[test]
+    fn test_libjpeg_simd_bit_exact_vs_scalar() {
+        let mut rng = Lcg(0xD1CE_5EED_0BAD_F00D);
+
+        let check = |coeffs: &[i32; 64], stride: usize, what: &str| {
+            let buf_len = stride * 7 + 8;
+
+            let mut c1 = *coeffs;
+            let mut scalar_clamped = vec![0i16; buf_len];
+            idct_int_libjpeg(&mut c1, &mut scalar_clamped, stride);
+            let mut c2 = *coeffs;
+            let mut auto_clamped = vec![0i16; buf_len];
+            idct_int_libjpeg_auto(&mut c2, &mut auto_clamped, stride);
+            assert_eq!(scalar_clamped, auto_clamped, "clamped mismatch: {what}");
+
+            let mut c3 = *coeffs;
+            let mut scalar_raw = vec![0i16; buf_len];
+            idct_int_libjpeg_unclamped(&mut c3, &mut scalar_raw, stride);
+            let mut c4 = *coeffs;
+            let mut auto_raw = vec![0i16; buf_len];
+            idct_int_libjpeg_auto_unclamped(&mut c4, &mut auto_raw, stride);
+            assert_eq!(scalar_raw, auto_raw, "unclamped mismatch: {what}");
+        };
+
+        // In-guard magnitudes: realistic JPEG through the full i16 window.
+        for &mag in &[16, 256, 2047, 8192, 32767] {
+            for trial in 0..300 {
+                let stride = [8, 11, 16][trial % 3];
+
+                // Dense random block
+                let dense: [i32; 64] = core::array::from_fn(|_| rng.coeff(mag));
+                check(&dense, stride, &format!("dense mag={mag} trial={trial}"));
+
+                // Sparse block (8 random nonzero positions — typical JPEG)
+                let mut sparse = [0i32; 64];
+                for _ in 0..8 {
+                    let pos = rng.next_i32().rem_euclid(64) as usize;
+                    sparse[pos] = rng.coeff(mag);
+                }
+                check(&sparse, stride, &format!("sparse mag={mag} trial={trial}"));
+            }
+
+            // Structured patterns that exercise the per-column/row scalar
+            // shortcuts the SIMD kernel doesn't have.
+            let mut col0 = [0i32; 64];
+            for r in 0..8 {
+                col0[r * 8] = rng.coeff(mag);
+            }
+            check(&col0, 8, &format!("col0-only mag={mag}"));
+
+            let mut row0 = [0i32; 64];
+            for c in 0..8 {
+                row0[c] = rng.coeff(mag);
+            }
+            check(&row0, 8, &format!("row0-only mag={mag}"));
+
+            let mut dc_only = [0i32; 64];
+            dc_only[0] = rng.coeff(mag);
+            check(&dc_only, 8, &format!("dc-only mag={mag}"));
+
+            let mut single_ac = [0i32; 64];
+            single_ac[63] = rng.coeff(mag);
+            check(&single_ac, 8, &format!("single-ac mag={mag}"));
+        }
+
+        // Guard-1 trips: inputs beyond the i16 window must fall back and
+        // still match the scalar kernel exactly.
+        for &mag in &[40_000, 200_000, 30_000_000] {
+            for trial in 0..50 {
+                let dense: [i32; 64] = core::array::from_fn(|_| rng.coeff(mag));
+                check(&dense, 8, &format!("out-of-guard mag={mag} trial={trial}"));
+
+                // Mixed: one huge coefficient among realistic ones
+                let mut mixed: [i32; 64] = core::array::from_fn(|_| rng.coeff(300));
+                let pos = rng.next_i32().rem_euclid(64) as usize;
+                mixed[pos] = if trial % 2 == 0 { mag } else { -mag };
+                check(&mixed, 8, &format!("mixed-spike mag={mag} trial={trial}"));
+            }
+        }
+
+        // Guard-2 trip: all inputs inside the i16 window, but sign-aligned so
+        // pass-1 outputs exceed it (|w| ~= 29.9 * 32000 >> 32767). The fallback
+        // must engage and match scalar exactly.
+        let aligned: [i32; 64] = [32_000; 64];
+        check(&aligned, 8, "guard2 all-positive 32000");
+        let neg_aligned: [i32; 64] = [-32_000; 64];
+        check(&neg_aligned, 8, "guard2 all-negative 32000");
+
+        // i32::MIN coefficients must not panic and must match scalar
+        // (ones-complement abs maps MIN to i32::MAX, tripping guard 1).
+        let mut min_block = [0i32; 64];
+        min_block[0] = i32::MIN;
+        min_block[9] = i32::MIN;
+        check(&min_block, 8, "i32::MIN coefficients");
+    }
+
+    /// Pin the GENERIC magetypes islow tiers to the scalar kernel directly:
+    /// on x86_64 with AVX2 the auto dispatch shortcuts to the intrinsics
+    /// kernel, so `test_libjpeg_simd_bit_exact_vs_scalar` alone would leave
+    /// the incant tiers (v3 generic / neon / wasm128 / scalar) unexercised
+    /// on this machine.
+    #[test]
+    fn test_libjpeg_generic_simd_bit_exact_vs_scalar() {
+        let mut rng = Lcg(0x9E3779B97F4A7C15);
+        for &mag in &[300, 2047, 32767, 200_000] {
+            for trial in 0..200 {
+                let stride = [8, 13][trial % 2];
+                let coeffs: [i32; 64] = core::array::from_fn(|_| rng.coeff(mag));
+                let buf_len = stride * 7 + 8;
+
+                let mut c1 = coeffs;
+                let mut scalar_out = vec![0i16; buf_len];
+                idct_int_libjpeg(&mut c1, &mut scalar_out, stride);
+
+                let mut generic_out = vec![0i16; buf_len];
+                if !incant!(idct_libjpeg_wide_impl(
+                    &coeffs,
+                    &mut generic_out,
+                    stride,
+                    true
+                )) {
+                    // Guard tripped (expected for the 200_000 population):
+                    // the production fallback is the scalar kernel.
+                    let mut c2 = coeffs;
+                    idct_int_libjpeg(&mut c2, &mut generic_out, stride);
+                }
+                assert_eq!(
+                    scalar_out, generic_out,
+                    "generic islow mismatch at mag={mag} trial={trial}"
+                );
+
+                let mut c3 = coeffs;
+                let mut scalar_raw = vec![0i16; buf_len];
+                idct_int_libjpeg_unclamped(&mut c3, &mut scalar_raw, stride);
+                let mut generic_raw = vec![0i16; buf_len];
+                if !incant!(idct_libjpeg_wide_impl(
+                    &coeffs,
+                    &mut generic_raw,
+                    stride,
+                    false
+                )) {
+                    let mut c4 = coeffs;
+                    idct_int_libjpeg_unclamped(&mut c4, &mut generic_raw, stride);
+                }
+                assert_eq!(
+                    scalar_raw, generic_raw,
+                    "generic islow unclamped mismatch at mag={mag} trial={trial}"
+                );
+            }
+        }
+    }
+
+    /// Derive the worst-case islow intermediate magnitude by exact L1-norm
+    /// propagation through the butterfly, and assert the SIMD guards keep
+    /// every i32 intermediate below 2^31. This is the provenance of the
+    /// `islow_rows_fit_i16` guard windows.
+    #[test]
+    fn test_islow_i32_guard_bound_analysis() {
+        // Each value is tracked as its vector of coefficients over the 8
+        // 1-D inputs; ops mirror `islow_pass_generic` exactly. f64 is exact
+        // here (all magnitudes << 2^53).
+        type Form = [f64; 8];
+        fn unit(i: usize) -> Form {
+            let mut f = [0.0; 8];
+            f[i] = 1.0;
+            f
+        }
+        fn add(a: Form, b: Form) -> Form {
+            core::array::from_fn(|i| a[i] + b[i])
+        }
+        fn sub(a: Form, b: Form) -> Form {
+            core::array::from_fn(|i| a[i] - b[i])
+        }
+        fn scale(a: Form, c: f64) -> Form {
+            core::array::from_fn(|i| a[i] * c)
+        }
+        fn l1(a: &Form) -> f64 {
+            a.iter().map(|x| x.abs()).sum()
+        }
+
+        let d: [Form; 8] = core::array::from_fn(unit);
+        let mut worst: f64 = 0.0;
+        let mut track = |f: Form| -> Form {
+            worst = worst.max(l1(&f));
+            f
+        };
+
+        // Even part
+        let z1 = track(scale(add(d[2], d[6]), 4433.0));
+        let tmp2 = track(add(z1, scale(d[6], -15137.0)));
+        let tmp3 = track(add(z1, scale(d[2], 6270.0)));
+        let tmp0 = track(scale(add(d[0], d[4]), 8192.0));
+        let tmp1 = track(scale(sub(d[0], d[4]), 8192.0));
+        let tmp10 = track(add(tmp0, tmp3));
+        let tmp13 = track(sub(tmp0, tmp3));
+        let tmp11 = track(add(tmp1, tmp2));
+        let tmp12 = track(sub(tmp1, tmp2));
+
+        // Odd part
+        let z1 = track(add(d[7], d[1]));
+        let z2 = track(add(d[5], d[3]));
+        let z3 = track(add(d[7], d[3]));
+        let z4 = track(add(d[5], d[1]));
+        let z5 = track(scale(add(z3, z4), 9633.0));
+        let t0 = track(scale(d[7], 2446.0));
+        let t1 = track(scale(d[5], 16819.0));
+        let t2 = track(scale(d[3], 25172.0));
+        let t3 = track(scale(d[1], 12299.0));
+        let z1 = track(scale(z1, -7373.0));
+        let z2 = track(scale(z2, -20995.0));
+        let z3 = track(add(scale(z3, -16069.0), z5));
+        let z4 = track(add(scale(z4, -3196.0), z5));
+        let t0 = track(add(add(t0, z1), z3));
+        let t1 = track(add(add(t1, z2), z4));
+        let t2 = track(add(add(t2, z2), z3));
+        let t3 = track(add(add(t3, z1), z4));
+
+        // Final pre-descale sums (the binding terms)
+        let finals = [
+            track(add(tmp10, t3)),
+            track(sub(tmp10, t3)),
+            track(add(tmp11, t2)),
+            track(sub(tmp11, t2)),
+            track(add(tmp12, t1)),
+            track(sub(tmp12, t1)),
+            track(add(tmp13, t0)),
+            track(sub(tmp13, t0)),
+        ];
+
+        eprintln!("islow worst-case L1 over one pass: {worst}");
+
+        // Guard window: inputs (pass 1) and workspace values (pass 2) are
+        // both confined to [-32768, 32767] by `islow_rows_fit_i16`.
+        const WINDOW: f64 = 32768.0;
+        const I32_MAX: f64 = 2147483647.0;
+        // Pass 1: worst intermediate + rounding bias must fit i32.
+        assert!(
+            worst * WINDOW + 1024.0 <= I32_MAX,
+            "pass-1 worst-case {} overflows i32",
+            worst * WINDOW + 1024.0
+        );
+        // Pass 2: worst intermediate + rounding bias + folded level shift.
+        let pass2_bias = 131072.0 + 33554432.0;
+        assert!(
+            worst * WINDOW + pass2_bias <= I32_MAX,
+            "pass-2 worst-case {} overflows i32",
+            worst * WINDOW + pass2_bias
+        );
+
+        // Sanity: the workspace bound used in the doc comment (|w| within
+        // ~30x input magnitude) holds, so honest images never trip guard 2.
+        let w_gain = finals.iter().map(l1).fold(0.0, f64::max) / 2048.0;
+        eprintln!("islow pass-1 output worst-case gain: {w_gain:.2}x input magnitude");
+        assert!(w_gain < 32.0);
+    }
+
+    /// IEEE 1180-style accuracy comparison of both integer kernels against
+    /// the f64 reference IDCT. Reports per-kernel max/mean/RMS error and the
+    /// kernel-vs-kernel divergence rate. Loeffler must meet the IEEE 1180
+    /// peak-pixel-error limit (<= 1); the 12-bit kernel's stats are the
+    /// measured answer to "which kernel is more correct".
+    #[test]
+    fn test_idct_accuracy_stats_vs_reference() {
+        struct Stats {
+            n: u64,
+            sum_err: f64,
+            sum_abs: f64,
+            sum_sq: f64,
+            max_abs: f64,
+        }
+        impl Stats {
+            fn new() -> Self {
+                Stats {
+                    n: 0,
+                    sum_err: 0.0,
+                    sum_abs: 0.0,
+                    sum_sq: 0.0,
+                    max_abs: 0.0,
+                }
+            }
+            fn push(&mut self, got: i16, want: f64) {
+                let e = got as f64 - want;
+                self.n += 1;
+                self.sum_err += e;
+                self.sum_abs += e.abs();
+                self.sum_sq += e * e;
+                self.max_abs = self.max_abs.max(e.abs());
+            }
+            fn report(&self, name: &str) -> (f64, f64, f64) {
+                let mean = self.sum_err / self.n as f64;
+                let mean_abs = self.sum_abs / self.n as f64;
+                let rms = (self.sum_sq / self.n as f64).sqrt();
+                eprintln!(
+                    "  {name:<14} ppe={:>4.1}  mean={mean:>+8.5}  mean_abs={mean_abs:.5}  rms={rms:.5}",
+                    self.max_abs
+                );
+                (self.max_abs, mean_abs, rms)
+            }
+        }
+
+        let mut rng = Lcg(0x1EEE_1180_CAFE_BABE);
+        // (range, blocks, label): IEEE 1180 prescribes L=H=256/5/300 over
+        // 10000 random blocks; plus a sparse "Q85 photo"-shaped population.
+        let configs: [(i32, usize, &str); 4] = [
+            (256, 10_000, "ieee [-256,255]"),
+            (300, 10_000, "ieee [-300,300]"),
+            (5, 10_000, "ieee [-5,5]"),
+            (0, 10_000, "sparse-q85"),
+        ];
+
+        for (mag, blocks, label) in configs {
+            let mut lj = Stats::new();
+            let mut zune = Stats::new();
+            let mut diverge = 0u64;
+            let mut diverge_max = 0i32;
+            let mut total = 0u64;
+
+            for _ in 0..blocks {
+                let coeffs: [i32; 64] = if mag > 0 {
+                    core::array::from_fn(|_| rng.coeff(mag))
+                } else {
+                    // Sparse realistic block: DC plus a handful of low-freq
+                    // ACs at photographic magnitudes.
+                    let mut c = [0i32; 64];
+                    c[0] = rng.coeff(1023);
+                    for _ in 0..6 {
+                        let pos = (rng.next_i32().rem_euclid(20) + 1) as usize;
+                        c[pos] = rng.coeff(300);
+                    }
+                    c
+                };
+
+                let reference = reference_idct_f64(&coeffs);
+
+                let mut c1 = coeffs;
+                let mut out_lj = [0i16; 64];
+                idct_int_libjpeg(&mut c1, &mut out_lj, 8);
+                let mut c2 = coeffs;
+                let mut out_zune = [0i16; 64];
+                idct_int(&mut c2, &mut out_zune, 8);
+
+                for i in 0..64 {
+                    let want = reference[i].round().clamp(0.0, 255.0);
+                    lj.push(out_lj[i], want);
+                    zune.push(out_zune[i], want);
+                    let d = (out_lj[i] as i32 - out_zune[i] as i32).abs();
+                    if d != 0 {
+                        diverge += 1;
+                        diverge_max = diverge_max.max(d);
+                    }
+                    total += 1;
+                }
+            }
+
+            eprintln!("IDCT accuracy, {label} ({blocks} blocks):");
+            let (lj_ppe, _, _) = lj.report("loeffler-13bit");
+            zune.report("zune-12bit");
+            eprintln!(
+                "  kernels diverge on {:.3}% of pixels (max diff {diverge_max})",
+                100.0 * diverge as f64 / total as f64
+            );
+
+            // IEEE 1180 peak-pixel-error requirement for a compliant IDCT.
+            assert!(
+                lj_ppe <= 1.0,
+                "loeffler kernel exceeds IEEE 1180 ppe=1 on {label}"
+            );
+        }
     }
 
     /// Test that the Loeffler IDCT handles extreme coefficients without panic

@@ -363,6 +363,10 @@ name = "huffman_decode"
 harness = false
 
 [[bench]]
+name = "idct_kernels"
+harness = false
+
+[[bench]]
 name = "decode_mozjpeg"
 harness = false
 
