@@ -1157,3 +1157,47 @@ fn progressive_420_dispatch_parity() {
         }
     }
 }
+
+// ============================================================================
+// #154: gray-source path parity (Gray output vs Rgb output)
+// ============================================================================
+
+/// A 1-component JPEG decodes to the same gray plane regardless of output
+/// format: `Rgb` output must be the exact replication of `Gray` output.
+/// Both decode paths (streaming strip for Rgb, coefficient for Gray) use the
+/// libjpeg-exact IDCT kernel for gray sources (#154).
+#[test]
+fn gray_source_rgb_output_matches_gray_plane() {
+    // Detail in every block, partial MCUs on both axes.
+    let (w, h) = (67usize, 45usize);
+    let pixels: Vec<u8> = (0..w * h).map(|i| ((i * 7) % 251) as u8).collect();
+    let config = EncoderConfig::grayscale(85.0);
+    let mut enc = config
+        .encode_from_bytes(w as u32, h as u32, PixelLayout::Gray8Srgb)
+        .expect("create encoder");
+    enc.push_packed(&pixels, Unstoppable).expect("push");
+    let jpeg = enc.finish().expect("finish");
+
+    let gray = Decoder::new()
+        .output_format(zenjpeg::decode::PixelFormat::Gray)
+        .decode(&jpeg, Unstoppable)
+        .expect("gray decode");
+    let rgb = Decoder::new()
+        .output_format(zenjpeg::decode::PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .expect("rgb decode");
+
+    let g = gray.pixels_u8().unwrap();
+    let r = rgb.pixels_u8().unwrap();
+    assert_eq!(g.len() * 3, r.len());
+    let mut diffs = 0usize;
+    for (i, &gv) in g.iter().enumerate() {
+        if r[i * 3] != gv || r[i * 3 + 1] != gv || r[i * 3 + 2] != gv {
+            diffs += 1;
+        }
+    }
+    assert_eq!(
+        diffs, 0,
+        "Rgb output of a gray JPEG must replicate the Gray output exactly"
+    );
+}

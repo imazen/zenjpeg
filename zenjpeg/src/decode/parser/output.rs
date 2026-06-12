@@ -291,6 +291,7 @@ fn idct_block_i16_into_plane(
     natural_coeffs: &[i16; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
     chroma_upsampling: super::super::ChromaUpsampling,
+    gray_source: bool,
     comp_plane_f32: &mut [f32],
     comp_width: usize,
     base_px: usize,
@@ -300,13 +301,13 @@ fn idct_block_i16_into_plane(
 ) {
     let mut dequant_i32 = dequantize_block_i32(natural_coeffs, quant);
     let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
-    match chroma_upsampling {
-        super::super::ChromaUpsampling::Triangle => {
-            idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
-        }
-        _ => {
-            idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
-        }
+    // 1-component sources always use the libjpeg-exact kernel: there is no
+    // chroma for the jpegli tuning to matter, and the gray plane must be
+    // identical regardless of decode path or upsampling mode (#154).
+    if gray_source || matches!(chroma_upsampling, super::super::ChromaUpsampling::Triangle) {
+        idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
+    } else {
+        idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
     }
 
     if cols_to_copy == DCT_SIZE {
@@ -1513,6 +1514,7 @@ impl<'a> JpegParser<'a> {
                                 &natural_coeffs,
                                 quant,
                                 chroma_upsampling,
+                                self.num_components == 1,
                                 comp_plane_f32,
                                 info.comp_width,
                                 base_px,

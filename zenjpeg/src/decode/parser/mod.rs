@@ -1248,3 +1248,16 @@ fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
 
     None
 }
+
+impl JpegParser<'_> {
+    /// Set the IDCT method, normalizing 1-component sources to the
+    /// libjpeg-exact kernel (#154): the gray plane must be identical across
+    /// decode paths, and there is no chroma for the jpegli tuning to matter.
+    pub(crate) fn apply_idct_method(&mut self, method: super::IdctMethod) {
+        self.idct_method = if self.num_components == 1 {
+            super::IdctMethod::Libjpeg
+        } else {
+            method
+        };
+    }
+}

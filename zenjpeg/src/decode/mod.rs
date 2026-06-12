@@ -821,7 +821,7 @@ impl DecodeConfig {
 
             // Fully decode the image (scanline reader doesn't support cancellation)
             parser.chroma_upsampling = self.chroma_upsampling;
-            parser.idct_method = self.effective_idct_method();
+            parser.apply_idct_method(self.effective_idct_method());
             parser.decode(&Unstoppable)?;
 
             // Compute subsampling from sampling factors
@@ -890,7 +890,7 @@ impl DecodeConfig {
             let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
 
             parser.chroma_upsampling = self.chroma_upsampling;
-            parser.idct_method = self.effective_idct_method();
+            parser.apply_idct_method(self.effective_idct_method());
             parser.decode(&Unstoppable)?;
 
             let output_format = if is_grayscale {
@@ -1086,7 +1086,7 @@ impl DecodeConfig {
                 let num_components = parser.num_components;
 
                 parser.chroma_upsampling = self.chroma_upsampling;
-                parser.idct_method = self.effective_idct_method();
+                parser.apply_idct_method(self.effective_idct_method());
                 parser.decode(&Unstoppable)?;
 
                 let subsampling = compute_subsampling(&parser.components, num_components);
@@ -1144,7 +1144,7 @@ impl DecodeConfig {
                     let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
 
                     parser.chroma_upsampling = self.chroma_upsampling;
-                    parser.idct_method = self.effective_idct_method();
+                    parser.apply_idct_method(self.effective_idct_method());
                     parser.decode(&Unstoppable)?;
 
                     let output_format = if is_grayscale {
@@ -1716,7 +1716,7 @@ impl DecodeConfig {
             }
         }
         parser.chroma_upsampling = self.chroma_upsampling;
-        parser.idct_method = self.effective_idct_method();
+        parser.apply_idct_method(self.effective_idct_method());
         parser.num_threads = self.num_threads;
         #[cfg(feature = "parallel")]
         {
@@ -2072,7 +2072,7 @@ impl DecodeConfig {
             }
 
             parser.chroma_upsampling = self.chroma_upsampling;
-            parser.idct_method = self.effective_idct_method();
+            parser.apply_idct_method(self.effective_idct_method());
             parser.num_threads = self.num_threads;
             #[cfg(feature = "parallel")]
             {
@@ -2130,7 +2130,7 @@ impl DecodeConfig {
             parser::JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.read_header()?;
         parser.chroma_upsampling = self.chroma_upsampling;
-        parser.idct_method = self.effective_idct_method();
+        parser.apply_idct_method(self.effective_idct_method());
         parser.num_threads = self.num_threads;
         #[cfg(feature = "parallel")]
         {

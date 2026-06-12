@@ -356,6 +356,8 @@ impl StripProcessor {
         };
 
         let unclamped = self.output_target.needs_unclamped_idct();
+        // self.idct_method is gray-normalized at the parser (#154).
+        let method = self.idct_method;
 
         if coeff_count <= 1 {
             let dc = coeffs[0] as i32 * quant[0] as i32;
@@ -366,7 +368,7 @@ impl StripProcessor {
             }
         } else {
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
-            match (unclamped, self.idct_method) {
+            match (unclamped, method) {
                 (false, IdctMethod::Libjpeg) => {
                     idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
                 }

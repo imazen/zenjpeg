@@ -65,7 +65,10 @@ fn base_only_default_decodes_sdr() {
 #[test]
 fn plain_jpeg_reports_no_gain_map_supplement() {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    let pixels: Vec<u8> = core::iter::repeat([10u8, 20, 30]).take(64).flatten().collect();
+    let pixels: Vec<u8> = core::iter::repeat([10u8, 20, 30])
+        .take(64)
+        .flatten()
+        .collect();
     let slice = zenpixels::PixelSlice::new(&pixels, 8, 8, 8 * 3, PixelDescriptor::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()

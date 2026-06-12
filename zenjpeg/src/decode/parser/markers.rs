@@ -196,6 +196,14 @@ impl<'a> JpegParser<'a> {
             self.components[i].quant_table_idx = quant_idx;
         }
 
+        // 1-component sources always use the libjpeg-exact IDCT kernel
+        // (#154): no chroma exists for the jpegli tuning to matter, and the
+        // gray plane must be identical across decode paths. Post-header
+        // assignments route through `apply_idct_method` for the same rule.
+        if self.num_components == 1 {
+            self.idct_method = super::super::IdctMethod::Libjpeg;
+        }
+
         Ok(())
     }
 
