@@ -1357,7 +1357,25 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
             return;
         }
     }
-    // Fallback to portable wide implementation
+    idct_int_portable(coeffs, output, stride);
+}
+
+/// Non-x86 full 8x8 IDCT: the magetypes-generic SIMD kernel normally
+/// (NEON on aarch64, wasm128 on wasm32+simd128), but the dedicated scalar
+/// kernel on wasm32 WITHOUT simd128.
+///
+/// On a no-simd128 wasm build the magetypes generic can't select its
+/// wasm128 tier and degrades to a lane-by-lane scalar *emulation* of a
+/// transpose-heavy 8-wide algorithm — measured ~60-68% slower than the
+/// purpose-written scalar i64 IDCT under wasmtime (2026-06-13). The two
+/// produce bit-identical output (`test_wide_matches_scalar`), so this is a
+/// pure speed routing. The production wasm config ships simd128, where the
+/// wasm128 tier wins, so this branch only affects no-simd128 builds.
+#[inline]
+fn idct_int_portable(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+    #[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+    idct_int(coeffs, output, stride);
+    #[cfg(not(all(target_arch = "wasm32", not(target_feature = "simd128"))))]
     wide_simd::idct_int_wide(coeffs, output, stride);
 }
 
@@ -1407,8 +1425,9 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
                 return;
             }
         }
-        // Fallback to portable SIMD
-        wide_simd::idct_int_wide(coeffs, output, stride);
+        // Portable fallback (NEON / wasm128 / scalar — see idct_int_portable;
+        // routes around the slow magetypes scalar emulation on no-simd128 wasm).
+        idct_int_portable(coeffs, output, stride);
     }
 }
 
@@ -1898,6 +1917,12 @@ pub fn idct_int_libjpeg_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride:
             return;
         }
     }
+    // wasm32 without simd128: idct_libjpeg_wide_impl degrades to slow scalar
+    // emulation; the dedicated scalar islow is ~60-68% faster there (measured,
+    // bit-identical). simd128/x86/NEON builds keep the SIMD path.
+    #[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+    idct_int_libjpeg(coeffs, output, stride);
+    #[cfg(not(all(target_arch = "wasm32", not(target_feature = "simd128"))))]
     if !incant!(idct_libjpeg_wide_impl(coeffs, output, stride, true)) {
         idct_int_libjpeg(coeffs, output, stride);
     }

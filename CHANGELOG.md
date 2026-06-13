@@ -5,6 +5,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- **wasm32 without simd128: IDCT used a slow magetypes scalar emulation**
+  (`decode/idct_int.rs`). On a no-simd128 wasm build the `*_auto`/tiered IDCT
+  dispatchers fell to the magetypes-generic kernel, which can't select its
+  wasm128 tier and degrades to a lane-by-lane scalar emulation of a
+  transpose-heavy 8-wide algorithm — measured ~60-68% slower than the
+  dedicated scalar i64 IDCT under wasmtime (2026-06-13). The two are
+  bit-identical, so the new `idct_int_portable` helper routes no-simd128 wasm
+  to the dedicated scalar kernel (and `idct_int_libjpeg_auto` likewise). Pure
+  speed routing, cfg-isolated to `wasm32 + not(simd128)` — x86, aarch64, and
+  the production simd128 wasm config (where the wasm128 tier wins, +10-37%
+  over scalar) are byte-for-byte and behavior unchanged. Part of the ARM/WASM
+  SIMD audit; the wasm128 production paths were confirmed optimal (no
+  scalar-beats-SIMD cliff like ARM has).
+
+
 ### Removed
 - **Dead/broken hand-NEON + hand-WASM DCT scaffolding** (`encode/arm_simd.rs`,
   `encode/wasm_simd.rs`, ~800 lines, both `#[doc(hidden)]` internal, zero
