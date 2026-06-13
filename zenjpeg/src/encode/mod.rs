@@ -66,14 +66,6 @@ pub(crate) mod linear_lut;
 #[doc(hidden)]
 pub mod mage_simd;
 
-#[cfg(target_arch = "aarch64")]
-#[doc(hidden)]
-pub mod arm_simd;
-
-#[cfg(target_arch = "wasm32")]
-#[doc(hidden)]
-pub mod wasm_simd;
-
 /// Overshoot deringing for reducing ringing artifacts on white backgrounds.
 ///
 /// This module implements the deringing algorithm pioneered by @kornel in mozjpeg.

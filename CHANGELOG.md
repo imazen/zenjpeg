@@ -5,6 +5,19 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Removed
+- **Dead/broken hand-NEON + hand-WASM DCT scaffolding** (`encode/arm_simd.rs`,
+  `encode/wasm_simd.rs`, ~800 lines, both `#[doc(hidden)]` internal, zero
+  production callers). A statistically-rigorous A/B on real aarch64
+  (`benchmarks/arm_simd_audit_2026-06-13.md` follow-up) proved the hand-NEON
+  forward DCT `neon_forward_dct_8x8` does NOT compute a DCT — it emits zeros
+  for whole rows (max abs diff 101.49 vs the correct generic) and its own doc
+  said "a simplified version… demonstrates the pattern". Its apparent ~100x
+  speed was LLVM eliding the garbage. The live ARM/WASM DCT runs the correct
+  `#[magetypes]`-generic path, unaffected. Builds verified on
+  default + aarch64 + wasm32.
+
+
 ### Documentation
 - **ARM SIMD audit + real-hardware benchmark** (Hetzner aarch64;
   `benchmarks/arm_simd_audit_2026-06-13.md`): verified every SIMD kernel's
