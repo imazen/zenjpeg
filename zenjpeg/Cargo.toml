@@ -372,6 +372,10 @@ harness = false
 required-features = ["__test-utils"]
 
 [[bench]]
+name = "upsample_ab"
+harness = false
+
+[[bench]]
 name = "decode_mozjpeg"
 harness = false
 

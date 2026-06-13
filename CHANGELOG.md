@@ -5,6 +5,19 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- **4:2:2 (h2v1) fancy chroma upsampler is now SIMD on all arches** — it was
+  pure scalar everywhere (confirmed via `cargo asm`: 177 scalar instrs, 0
+  vector — LLVM did not autovectorize it). New magetypes-generic interior
+  (AVX2 / NEON / wasm128) with the scalar path kept for narrow rows + edges,
+  byte-for-byte identical to the old output (`h2v1_generic_matches_scalar_
+  bit_exact`, 11 widths × strides × odd out-widths × 10 SIMD tiers).
+  Measured (`benchmarks/h2v1_upsample_ab_2026-06-13.txt`): **+18-20% on x86**
+  (1.77 vs 1.43 Gpx/s, Ryzen 9 7950X) and **+42-46% on aarch64 NEON**
+  (≈800 vs ≈550 Mops/s, Hetzner). Decode output unchanged (full suite 2184
+  pass). Affects 4:2:2 (`Subsampling::S422`) decodes only.
+
+
 ### Fixed
 - **wasm32 without simd128: IDCT used a slow magetypes scalar emulation**
   (`decode/idct_int.rs`). On a no-simd128 wasm build the `*_auto`/tiered IDCT

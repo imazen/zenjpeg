@@ -1,0 +1,19 @@
+# h2v1 (4:2:2) fancy upsampler: scalar vs magetypes-generic SIMD (2026-06-13)
+# scalar does NOT autovectorize (177 scalar instrs/0 vector, cargo asm); SIMD interior is a real win.
+# bit-exact across 10 SIMD tiers (h2v1_generic_matches_scalar_bit_exact).
+
+## x86_64 (Ryzen 9 7950X, AVX2 via magetypes v3):
+  h2v1_upsample_256x256  30 rounds × 56 calls
+  ├─ scalar         91.6 ±2.3µs  [90.4–92.9]µs      1.43G
+  ╰─ simd-generic   74.5 ±3.3µs  [-20.3%–-18.1%]    1.76G
+  h2v1_upsample_1024x256  30 rounds × 14 calls
+  ├─ scalar         364.4 ±8.0µs  [359.9–369.3]µs     1.44G
+  ╰─ simd-generic   293.9 ±7.9µs  [-20.2%–-18.1%]     1.78G
+  h2v1_upsample_4096x64  50 rounds × 13 calls
+  ├─ scalar         368.9 ±14.1µs  [363.2–375.5]µs     1.42G
+  ╰─ simd-generic   296.3 ±13.9µs  [-19.7%–-17.6%]     1.77G
+
+## aarch64 (Hetzner cax31 NEON):
+  256x256:   scalar 558 Mops/s -> simd 793 Mops/s (+42% / -29.7%)
+  1024x256:  scalar 547 Mops/s -> simd 799 Mops/s (+46% / -31.4%)
+  4096x64:   scalar 553 Mops/s -> simd 804 Mops/s (+45% / -31.6%)

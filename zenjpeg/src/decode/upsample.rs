@@ -9,6 +9,9 @@ use archmage::{SimdToken, arcane};
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
+use archmage::prelude::*;
+use magetypes::simd::generic::i32x8 as GenericI32x8;
+
 // Nearest-Neighbor Upsampling (Box Filter)
 // ============================================================================
 
@@ -224,7 +227,8 @@ pub fn upsample_h1v2_i16_libjpeg(
 ///
 /// Uses alternating rounding bias: +1 for left pixel, +2 for right pixel.
 /// Matches libjpeg-turbo's `jdsample.c` h2v1_fancy_upsample.
-pub fn upsample_h2v1_i16_libjpeg_strided(
+#[doc(hidden)]
+pub fn upsample_h2v1_i16_libjpeg_strided_scalar(
     input: &[i16],
     in_width: usize,
     in_stride: usize,
@@ -288,6 +292,126 @@ pub fn upsample_h2v1_i16_libjpeg_strided(
         }
         if right_out < out_width {
             output[out_row + right_out] = curr as i16;
+        }
+    }
+}
+
+/// 4:2:2 (h2v1) fancy upsampler. The interior columns run in i32x8 SIMD
+/// (AVX2/NEON/wasm128 via magetypes); edges and narrow rows fall to the
+/// bit-identical scalar path. The scalar kernel does NOT autovectorize on
+/// x86 (177 scalar instrs / 0 vector, measured 2026-06-13), so the SIMD
+/// interior is a real all-arch win on this otherwise-scalar path.
+pub fn upsample_h2v1_i16_libjpeg_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    if in_width < 10 {
+        // Too narrow for an 8-wide interior chunk; scalar is fine.
+        upsample_h2v1_i16_libjpeg_strided_scalar(
+            input, in_width, in_stride, in_height, output, out_width, out_stride, out_height,
+        );
+        return;
+    }
+    incant!(upsample_h2v1_generic_impl(
+        input, in_width, in_stride, in_height, output, out_width, out_stride, out_height
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[allow(clippy::too_many_arguments)]
+fn upsample_h2v1_generic_impl(
+    token: Token,
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x8 = GenericI32x8<Token>;
+    if in_width == 0 || in_height == 0 {
+        return;
+    }
+    let three = i32x8::splat(token, 3);
+    let one = i32x8::splat(token, 1);
+    let two = i32x8::splat(token, 2);
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_stride;
+        let in_row = in_y * in_stride;
+
+        // First column (bit-identical to scalar).
+        let curr0 = input[in_row] as i32;
+        let next0 = input[in_row + 1] as i32;
+        output[out_row] = curr0 as i16;
+        if out_width > 1 {
+            output[out_row + 1] = ((curr0 * 3 + next0 + 2) >> 2) as i16;
+        }
+
+        // Interior columns, SIMD in chunks of 8 input positions from x=1.
+        // Needs input[x-1 ..= x+8] and output[2x ..= 2x+15] in bounds.
+        let mut x = 1usize;
+        while x + 9 <= in_width && 2 * x + 15 < out_width {
+            let prev = i32x8::from_array(
+                token,
+                core::array::from_fn(|i| input[in_row + x - 1 + i] as i32),
+            );
+            let curr = i32x8::from_array(
+                token,
+                core::array::from_fn(|i| input[in_row + x + i] as i32),
+            );
+            let next = i32x8::from_array(
+                token,
+                core::array::from_fn(|i| input[in_row + x + 1 + i] as i32),
+            );
+            let curr3 = curr * three;
+            let left = (curr3 + prev + one).shr_arithmetic_const::<2>().to_array();
+            let right = (curr3 + next + two).shr_arithmetic_const::<2>().to_array();
+            let mut o = out_row + x * 2;
+            for i in 0..8 {
+                output[o] = left[i] as i16;
+                output[o + 1] = right[i] as i16;
+                o += 2;
+            }
+            x += 8;
+        }
+
+        // Scalar interior remainder.
+        while x < in_width - 1 {
+            let prev = input[in_row + x - 1] as i32;
+            let curr = input[in_row + x] as i32;
+            let next = input[in_row + x + 1] as i32;
+            let lo = x * 2;
+            let ro = lo + 1;
+            if lo < out_width {
+                output[out_row + lo] = ((curr * 3 + prev + 1) >> 2) as i16;
+            }
+            if ro < out_width {
+                output[out_row + ro] = ((curr * 3 + next + 2) >> 2) as i16;
+            }
+            x += 1;
+        }
+
+        // Last column (bit-identical to scalar).
+        let last = in_width - 1;
+        let prev = input[in_row + last - 1] as i32;
+        let curr = input[in_row + last] as i32;
+        let lo = last * 2;
+        let ro = lo + 1;
+        if lo < out_width {
+            output[out_row + lo] = ((curr * 3 + prev + 1) >> 2) as i16;
+        }
+        if ro < out_width {
+            output[out_row + ro] = curr as i16;
         }
     }
 }
@@ -1529,5 +1653,43 @@ mod tests {
             assert!(max_abs[s] <= 0.5 + 1e-9, "{name} exceeds half-step error");
             assert!(total.abs() < 0.01, "{name} global bias too large");
         }
+    }
+
+    /// The magetypes-generic 4:2:2 (h2v1) upsampler must be BYTE-IDENTICAL to
+    /// the scalar reference across widths (incl. the SIMD-chunk boundary at
+    /// 10), heights, strides, and odd output widths — and across every SIMD
+    /// tier. Decoded pixels are sacred; the SIMD interior is a speed-only swap.
+    #[test]
+    fn h2v1_generic_matches_scalar_bit_exact() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            for in_w in [1usize, 2, 7, 9, 10, 11, 16, 17, 31, 64, 100] {
+                for in_h in [1usize, 3] {
+                    for (in_stride, pad) in [(in_w, 0usize), (in_w + 5, 5)] {
+                        let _ = pad;
+                        let input = gradient_test_data(in_stride, in_h);
+                        for out_w in [in_w * 2, (in_w * 2).saturating_sub(1).max(1)] {
+                            let out_stride = out_w + 3;
+                            let n = out_stride * in_h;
+                            let mut a = vec![0i16; n];
+                            let mut b = vec![0i16; n];
+                            upsample_h2v1_i16_libjpeg_strided_scalar(
+                                &input, in_w, in_stride, in_h, &mut a, out_w, out_stride, in_h,
+                            );
+                            upsample_h2v1_i16_libjpeg_strided(
+                                &input, in_w, in_stride, in_h, &mut b, out_w, out_stride, in_h,
+                            );
+                            assert_eq!(
+                                a, b,
+                                "h2v1 generic != scalar: in_w={in_w} in_h={in_h} \
+                                 in_stride={in_stride} out_w={out_w} at {perm}"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        eprintln!("h2v1 generic vs scalar bit-exact: {report}");
+        assert!(report.permutations_run >= 2, "expected >=2 SIMD tiers");
     }
 }
