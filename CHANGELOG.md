@@ -5,6 +5,26 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- **`recompress` Preserve emit corrupted 16-bit-DQT (web-quality) sources**
+  (`recompress/strategies/preserve_emit.rs`): `emit_preserved` errored
+  outright on any quant table with a value > 255 ("16-bit quant tables not
+  supported"), and the `UniformScale` quant builder hard-clamped tables to
+  255 — so IDENTITY-preserving a low-quality source (Q < ~87, which uses
+  16-bit DQT) both lost precision AND made the old/new requant ratio ≠ 1.0,
+  requantizing coefficients that should pass through (non-identity output).
+  Since recompress targets web-quality JPEGs, this broke the common case.
+  Fix: `write_dqt` emits Pq=1 (16-bit, big-endian) tables and the frame
+  header becomes SOF1 when any value exceeds 255; the `UniformScale` ceiling
+  is now `max(255, old[i])` so a source's own 16-bit values pass through
+  unchanged while scaled-up 8-bit tables still clamp at 255 (preserving the
+  lossy-recompress confidence calibration). New regression test
+  `preserve_identity_emit_handles_16bit_dqt` (Q20 4:4:4 + 4:2:0,
+  pixel-identical roundtrip with a verified 16-bit table on both sides).
+  Note: zenjpeg does NOT do full trellis rewinding in the Preserve path —
+  it is a straight lossless coefficient re-emit.
+
+
 ### Changed
 - **Turbo YCbCr→RGB converter is now const-generic, not a separate slow
   kernel** — closes the perf gap from the prior commit. The turbo color

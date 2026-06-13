@@ -4,7 +4,8 @@
 //! `DecodeConfig::decode_coefficients`), optionally re-quantizes the
 //! coefficients against new quant tables, optionally applies a
 //! per-block AC zero-bias mask, recomputes optimal Huffman tables, and
-//! emits a baseline sequential JPEG.
+//! emits a sequential JPEG (baseline SOF0, or extended SOF1 with 16-bit
+//! DQT tables when the source/target quant values exceed 255).
 //!
 //! All of zenjpeg's primitives used here are *public*: the marker
 //! constants under [`crate::foundation::consts`], the [`BitWriter`]
@@ -14,10 +15,14 @@
 //!
 //! What this module deliberately does **not** do:
 //! - Progressive scans (single-scan sequential only; trade off
-//!   complexity vs payoff — Lossless path covers progressive).
+//!   complexity vs payoff — Lossless path covers progressive). zenjpeg
+//!   does **not** do full trellis rewinding here; this is a straight
+//!   lossless coefficient re-emit.
 //! - Restart markers (`restart_interval = 0`).
-//! - Preserved metadata (ICC / EXIF / JFIF). v0.2 will reuse zenjpeg's
-//!   `PreservedSegment` chain to carry these through.
+//!
+//! Metadata (ICC / EXIF / XMP / JFIF / Adobe / COM) IS carried through
+//! verbatim via the `EmitConfig::preserved_segments` chain, written after
+//! SOI before the frame header.
 //!
 //! This is a coefficient-domain edit: there is **no IDCT/FDCT round
 //! trip**. Generation loss is bounded by the rounding error in the
@@ -27,7 +32,7 @@ use crate::decode::{DecodedCoefficients, PreservedSegment};
 use crate::entropy::{StreamingEntropyState, encode_blocks_mcu_order};
 use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::{
-    MARKER_DHT, MARKER_DQT, MARKER_EOI, MARKER_SOF0, MARKER_SOI, MARKER_SOS,
+    MARKER_DHT, MARKER_DQT, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOI, MARKER_SOS,
 };
 use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet, OptimizedTable};
 use crate::types::Subsampling;
@@ -289,8 +294,14 @@ pub fn emit_preserved(
     for seg in &config.preserved_segments {
         write_marker_segment(&mut out, seg.marker, &seg.data);
     }
-    write_dqt(&mut out, &new_quant_tables)?;
-    write_sof0(&mut out, coeffs, subsampling, &edited_components)?;
+    let needs_sof1 = write_dqt(&mut out, &new_quant_tables)?;
+    write_sof(
+        &mut out,
+        coeffs,
+        subsampling,
+        &edited_components,
+        needs_sof1,
+    )?;
     write_dht(&mut out, &huff, is_color)?;
     write_sos(&mut out, &edited_components, is_color)?;
     // Pass the MCU-aligned width to the scan emitter so its computed
@@ -393,7 +404,18 @@ fn build_new_table(old: [u16; 64], is_luma: bool, strategy: QuantStrategy) -> [u
             let scl = if is_luma { scale.luma } else { scale.chroma };
             for i in 0..64 {
                 let scaled = (old[i] as f32 * scl).round() as i32;
-                new_table[i] = scaled.clamp(1, 255) as u16;
+                // Ceiling is `max(255, old)`, NOT a hard 255: a hard 255
+                // clamp silently corrupts IDENTITY of a 16-bit-table source
+                // (old 400 → 255 makes the old/new requant ratio ≠ 1.0,
+                // requantizing coefficients that should pass through, and
+                // loses precision). Capping at `max(255, old)` lets the
+                // source's own 16-bit values pass through unchanged while
+                // keeping the original baseline behavior (clamp scaled-up
+                // 8-bit tables at 255) that the lossy recompress confidence
+                // calibration relies on. `emit_preserved` emits a Pq=1 DQT
+                // under SOF1 whenever any value exceeds 255.
+                let ceiling = 255.max(old[i] as i32);
+                new_table[i] = scaled.clamp(1, ceiling) as u16;
             }
         }
         QuantStrategy::TargetQuality { target_ijg_q } => {
@@ -613,36 +635,49 @@ fn write_marker_segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
     }
 }
 
-fn write_dqt(out: &mut Vec<u8>, tables: &[Option<[u16; 64]>]) -> Result<(), Error> {
+/// Write the DQT segment. Each table is emitted at 8-bit precision (Pq=0)
+/// when all its values fit a byte, or 16-bit precision (Pq=1, 2 bytes
+/// big-endian per value) otherwise — exactly mirroring how the source was
+/// decoded. Returns `true` if any table needed 16-bit precision, in which
+/// case the frame header must be SOF1 (extended sequential): baseline SOF0
+/// only permits Pq=0 tables.
+fn write_dqt(out: &mut Vec<u8>, tables: &[Option<[u16; 64]>]) -> Result<bool, Error> {
     let mut payload = Vec::new();
+    let mut any_16bit = false;
     for (idx, t) in tables.iter().enumerate() {
         if let Some(table) = t {
-            // 8-bit precision (Pq=0) + table id in low 4 bits.
-            payload.push(idx as u8 & 0x0F);
+            // Pq=1 (16-bit) if any coefficient exceeds 255, else Pq=0.
+            let pq: u8 = if table.iter().any(|&v| v > 255) { 1 } else { 0 };
+            any_16bit |= pq == 1;
+            payload.push((pq << 4) | (idx as u8 & 0x0F));
             // `table` is stored in NATURAL (row-major) order — that's
             // how zenjpeg's decoder hands it back. The DQT marker
             // requires ZIGZAG order. Apply the zigzag mapping on write.
             for &zz_to_natural in &ZIGZAG {
                 let v = table[zz_to_natural];
-                if v > 255 {
-                    return Err(Error::Internal(
-                        "preserve: 16-bit quant tables not supported",
-                    ));
+                if pq == 1 {
+                    payload.extend_from_slice(&v.to_be_bytes());
+                } else {
+                    payload.push(v as u8);
                 }
-                payload.push(v as u8);
             }
         }
     }
     write_marker_segment(out, MARKER_DQT, &payload);
-    Ok(())
+    Ok(any_16bit)
 }
 
-fn write_sof0(
+fn write_sof(
     out: &mut Vec<u8>,
     coeffs: &DecodedCoefficients,
     _subsampling: Subsampling,
     components: &[EditedComponent],
+    needs_sof1: bool,
 ) -> Result<(), Error> {
+    // SOF1 (extended sequential) when any quant table is 16-bit; baseline
+    // SOF0 otherwise. Both are sequential Huffman frames — the only
+    // difference relevant here is that SOF0 forbids Pq=1 DQT tables.
+    let marker = if needs_sof1 { MARKER_SOF1 } else { MARKER_SOF0 };
     let mut payload = Vec::new();
     payload.push(8); // sample precision
     payload.extend_from_slice(&(coeffs.height as u16).to_be_bytes());
@@ -660,7 +695,7 @@ fn write_sof0(
         payload.push((comp.h_samp << 4) | (comp.v_samp & 0x0F));
         payload.push(comp.quant_table_idx);
     }
-    write_marker_segment(out, MARKER_SOF0, &payload);
+    write_marker_segment(out, marker, &payload);
     Ok(())
 }
 

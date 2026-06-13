@@ -231,6 +231,94 @@ fn preserve_identity_emit_is_pixel_identical() {
     }
 }
 
+/// Identity-preserve a LOW-quality source whose quant tables exceed 255
+/// (16-bit DQT / SOF1). The old emitter errored outright on such tables
+/// ("16-bit quant tables not supported"); it must now re-emit them at
+/// Pq=1 precision under an SOF1 frame and round-trip pixel-identical.
+/// Web-quality JPEGs (the recompress target) routinely land here.
+#[cfg(feature = "recompress-expert")]
+#[test]
+fn preserve_identity_emit_handles_16bit_dqt() {
+    use enough::Unstoppable as Unstop;
+    use zenjpeg::decode::DecodeConfig;
+    use zenjpeg::recompress::expert::{EmitConfig, QuantScale, emit_preserved};
+    use zenjpeg::types::Subsampling;
+
+    // Low quality + 16-bit tables allowed → at least one quant value > 255.
+    for (chroma, subs) in [
+        (ChromaSubsampling::None, Subsampling::S444),
+        (ChromaSubsampling::Quarter, Subsampling::S420),
+    ] {
+        let (w, h) = (96u32, 72u32);
+        let rgb = {
+            let mut v = Vec::with_capacity((w * h * 3) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let s: u32 = (x.wrapping_mul(2654435761u32) ^ y).wrapping_mul(2246822519u32);
+                    v.push(((x * 7 + y * 3) % 240 + (s & 0x0F)) as u8);
+                    v.push(((x * 5 + y * 11) % 220 + ((s >> 4) & 0x1F)) as u8);
+                    v.push(((x * 13 + y * 2) % 200 + ((s >> 9) & 0x3F)) as u8);
+                }
+            }
+            v
+        };
+        let cfg = EncoderConfig::ycbcr(zenjpeg::encoder::Quality::ApproxJpegli(20.0), chroma)
+            .allow_16bit_quant_tables(true);
+        let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+        enc.push_packed(&rgb, Unstop).unwrap();
+        let source = enc.finish().unwrap();
+
+        let coeffs = DecodeConfig::new()
+            .decode_coefficients(&source, Unstop)
+            .unwrap();
+        // Confirm the source genuinely has a >255 quant value (else the
+        // test wouldn't exercise the 16-bit path).
+        let has_16bit = coeffs
+            .quant_tables
+            .iter()
+            .flatten()
+            .any(|t| t.iter().any(|&v| v > 255));
+        assert!(
+            has_16bit,
+            "{chroma:?}: Q20 source should have a 16-bit quant table"
+        );
+
+        let emit_cfg = EmitConfig::uniform_scale(QuantScale::IDENTITY);
+        let emitted = emit_preserved(&coeffs, subs, &emit_cfg)
+            .expect("identity emit of a 16-bit-DQT source must succeed");
+
+        // The emitted stream must itself carry the 16-bit table and decode
+        // pixel-identically to the source.
+        let emit_coeffs = DecodeConfig::new()
+            .decode_coefficients(&emitted, Unstop)
+            .expect("16-bit-DQT emit must decode");
+        assert!(
+            emit_coeffs
+                .quant_tables
+                .iter()
+                .flatten()
+                .any(|t| t.iter().any(|&v| v > 255)),
+            "{chroma:?}: emitted stream must preserve the 16-bit quant table"
+        );
+
+        let sp = DecodeConfig::new()
+            .decode(&source, Unstop)
+            .unwrap()
+            .pixels_u8()
+            .unwrap()
+            .to_vec();
+        let ep = DecodeConfig::new()
+            .decode(&emitted, Unstop)
+            .unwrap()
+            .pixels_u8()
+            .unwrap()
+            .to_vec();
+        assert_eq!(sp.len(), ep.len(), "{chroma:?}: pixel length differs");
+        let n_diff = sp.iter().zip(ep.iter()).filter(|(a, b)| a != b).count();
+        assert_eq!(n_diff, 0, "{chroma:?}: 16-bit-DQT identity emit diverged");
+    }
+}
+
 /// Preserve must produce a JPEG with **different** quant tables and
 /// fewer non-zero coefficients than the source when called with a
 /// non-trivial quant scale. Catches a regression where Preserve
