@@ -367,6 +367,11 @@ name = "idct_kernels"
 harness = false
 
 [[bench]]
+name = "ycbcr_turbo"
+harness = false
+required-features = ["__test-utils"]
+
+[[bench]]
 name = "decode_mozjpeg"
 harness = false
 
