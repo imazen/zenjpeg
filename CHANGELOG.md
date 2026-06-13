@@ -5,6 +5,23 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Documentation
+- **ARM SIMD audit + real-hardware benchmark** (Hetzner aarch64;
+  `benchmarks/arm_simd_audit_2026-06-13.md`): verified every SIMD kernel's
+  dispatch and measured NEON-vs-scalar on real silicon. Key finding — the
+  scalar i16 YCbCr→RGB plane loop autovectorizes ~2.3× FASTER than the
+  magetypes-generic converter on aarch64, so the plane converters' scalar
+  fallback is already optimal there (the const-generic dispatch is x86-SIMD
+  / ARM-scalar, correct on both). Locked in with code comments at
+  `ycbcr_planes_i16_to_rgb_u8`/`_xrgba_u8` to prevent a future
+  "wire-the-generic" regression. Default jpegli-12bit IDCT gains only 6-7%
+  from NEON (scalar transpose between passes caps it) vs ~4× on x86; NEON
+  still wins for the libjpeg-13bit IDCT (1.3-1.5×) and the fused box convert
+  (1.6×). Identified ~800 lines of dead hand-NEON/WASM kernels
+  (`encode/arm_simd.rs`, `encode/wasm_simd.rs`, zero callers) as deletion
+  candidates pending a maintainer call.
+
+
 ### Fixed
 - **`recompress` Preserve emit corrupted 16-bit-DQT (web-quality) sources**
   (`recompress/strategies/preserve_emit.rs`): `emit_preserved` errored

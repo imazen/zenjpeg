@@ -1496,7 +1496,14 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
         }
     }
 
-    // Scalar fallback (non-x86, or x86 without AVX2).
+    // Scalar fallback (non-x86, or x86 without AVX2). This is the
+    // production path on aarch64/wasm32 — and intentionally so. LLVM
+    // autovectorizes this tight per-pixel loop better than the explicit
+    // magetypes-generic converter (`ycbcr_to_rgb_i16_x16`): on real
+    // Hetzner aarch64 the scalar loop ran ~770 Mops/s vs ~342 Mops/s for
+    // the generic-SIMD kernel (2.3x faster, measured 2026-06-13). Do NOT
+    // "fix the ARM cliff" by routing this through a magetypes/NEON
+    // converter — it would regress ARM. Keep it scalar.
     for i in 0..len {
         let (r, g, b) = ycc_rgb_pixel(
             i32::from(y_plane[i]),
@@ -1722,6 +1729,9 @@ pub fn ycbcr_planes_i16_to_xrgba_u8(
         }
     }
 
+    // Scalar fallback (aarch64/wasm32 production path). Intentionally
+    // scalar: LLVM autovectorizes this better than a magetypes/NEON
+    // converter on ARM (see `ycbcr_planes_i16_to_rgb_u8`; ~2.3x measured).
     let len = y_plane.len();
     for i in 0..len {
         let (r, g, b) = ycc_rgb_pixel(
