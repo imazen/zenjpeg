@@ -614,8 +614,9 @@ fn test_visual_diff_corpus_photo() {
     }
 }
 
-/// Verify that IdctMethod::Libjpeg with box filter matches mozjpeg box within max=1.
-/// This confirms the remaining max=2-3 diff on the default box path is purely IDCT rounding.
+/// IdctMethod::Libjpeg + box filter is now byte-for-byte identical to mozjpeg
+/// box (max=0): the islow IDCT, box upsampling, and (since the turbo color
+/// converter) the YCbCr→RGB stage are all bit-exact with libjpeg-turbo.
 #[test]
 fn test_idct_method_libjpeg_matches_mozjpeg() {
     use zenjpeg::decode::{ChromaUpsampling, IdctMethod};
@@ -629,7 +630,7 @@ fn test_idct_method_libjpeg_matches_mozjpeg() {
             let pixels = make_stress_image(w, h);
             let jpeg = encode_420(&pixels, w as u32, h as u32, q);
 
-            // Decode with zenjpeg: libjpeg IDCT + box filter
+            // Decode with zenjpeg: libjpeg IDCT + box filter + turbo color.
             let decoder = Decoder::new()
                 .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
                 .idct_method(IdctMethod::Libjpeg);
@@ -647,9 +648,57 @@ fn test_idct_method_libjpeg_matches_mozjpeg() {
                 .unwrap_or(0);
 
             println!("  {w}x{h} Q{q}: Libjpeg+box vs mozjpeg-box max_diff={max_diff}");
-            assert!(
-                max_diff <= 1,
-                "{w}x{h} Q{q}: IdctMethod::Libjpeg + box should match mozjpeg within 1, got {max_diff}"
+            assert_eq!(
+                max_diff, 0,
+                "{w}x{h} Q{q}: IdctMethod::Libjpeg + box must equal mozjpeg byte-for-byte, got {max_diff}"
+            );
+        }
+    }
+}
+
+/// The headline result: IdctMethod::Libjpeg with the default Triangle (fancy)
+/// upsampling is byte-for-byte identical to mozjpeg's full RGB decode
+/// (islow IDCT + h2v2_fancy_upsample + table YCbCr→RGB). Every stage —
+/// IDCT, chroma upsampling (turbo bias), color conversion (turbo tables) —
+/// is now bit-exact, so the whole pipeline matches at max=0.
+#[test]
+fn test_idct_method_libjpeg_fancy_matches_mozjpeg_exact() {
+    use zenjpeg::decode::{ChromaUpsampling, IdctMethod};
+
+    let sizes = [(128, 128), (256, 256), (96, 80), (255, 255), (67, 45)];
+    let qualities = [50.0, 75.0, 85.0, 95.0];
+
+    println!("\n=== IdctMethod::Libjpeg + Triangle vs mozjpeg Fancy (expect max=0) ===");
+    for (w, h) in sizes {
+        for q in qualities {
+            let pixels = make_stress_image(w, h);
+            let jpeg = encode_420(&pixels, w as u32, h as u32, q);
+
+            let zen_rgb = Decoder::new()
+                .chroma_upsampling(ChromaUpsampling::Triangle)
+                .idct_method(IdctMethod::Libjpeg)
+                .decode(&jpeg, Unstoppable)
+                .expect("decode")
+                .into_pixels_u8()
+                .unwrap();
+
+            let (_, _, moz_rgb) = decode_mozjpeg(&jpeg);
+
+            let (max_diff, first) = zen_rgb.iter().zip(moz_rgb.iter()).enumerate().fold(
+                (0i32, None),
+                |(m, f), (i, (a, b))| {
+                    let d = (*a as i32 - *b as i32).abs();
+                    (m.max(d), if d != 0 && f.is_none() { Some(i) } else { f })
+                },
+            );
+
+            println!(
+                "  {w}x{h} Q{q}: Libjpeg+Triangle vs mozjpeg-fancy max_diff={max_diff} first={first:?}"
+            );
+            assert_eq!(
+                max_diff, 0,
+                "{w}x{h} Q{q}: Libjpeg+Triangle must equal mozjpeg fancy byte-for-byte \
+                 (first diff at byte {first:?})"
             );
         }
     }
@@ -967,26 +1016,27 @@ fn decode_mozjpeg_ycbcr(data: &[u8]) -> (u32, u32, Vec<u8>) {
 /// zenjpeg's exact 14-bit integer conversion formula must reproduce
 /// zenjpeg's decoded RGB byte-for-byte. A ±1 anywhere in zenjpeg's
 /// internal planes would shift predicted RGB at that pixel (Y moves all
-/// three channels pre-clamp; Cb/Cr move R/G/B through the 14-bit
+/// three channels pre-clamp; Cb/Cr move R/G/B through the turbo
 /// constants), so whole-image equality across patterns, sizes, qualities,
 /// and subsampling modes pins the planes themselves.
 #[test]
 fn test_libjpeg_idct_ycbcr_planes_match_mozjpeg() {
     use zenjpeg::decode::IdctMethod;
 
-    // zenjpeg's production 14-bit fixed-point conversion (color/ycbcr.rs),
-    // replicated exactly; the in-lib dispatch-parity and turbo-table cube
-    // tests pin the production converter to this formula.
-    fn convert_14bit(ycc: &[u8]) -> Vec<u8> {
+    // libjpeg-turbo 16-bit conversion (jdcolor.c) — the formula
+    // IdctMethod::Libjpeg now uses (turbo color converter). Pushing mozjpeg's
+    // planes through it must reproduce zenjpeg's decoded RGB byte-for-byte,
+    // which holds only if zenjpeg's planes equal mozjpeg's.
+    fn convert_turbo(ycc: &[u8]) -> Vec<u8> {
         let mut rgb = vec![0u8; ycc.len()];
         for (px, out) in ycc.chunks_exact(3).zip(rgb.chunks_exact_mut(3)) {
             let y = px[0] as i32;
             let cb = px[1] as i32 - 128;
             let cr = px[2] as i32 - 128;
-            let y_scaled = y * 16384 + 8192;
-            let r = (y_scaled + cr * 22970) >> 14;
-            let g = (y_scaled + cr * -11700 + cb * -5638) >> 14;
-            let b = (y_scaled + cb * 29032) >> 14;
+            let ys = y * 65536 + 32768;
+            let r = (ys + cr * 91881) >> 16;
+            let g = (ys + cr * -46802 + cb * -22554) >> 16;
+            let b = (ys + cb * 116130) >> 16;
             out[0] = r.clamp(0, 255) as u8;
             out[1] = g.clamp(0, 255) as u8;
             out[2] = b.clamp(0, 255) as u8;
@@ -1007,7 +1057,7 @@ fn test_libjpeg_idct_ycbcr_planes_match_mozjpeg() {
             ] {
                 let (mw, mh, m_ycc) = decode_mozjpeg_ycbcr(&jpeg);
                 assert_eq!((mw as usize, mh as usize), (w, h));
-                let predicted = convert_14bit(&m_ycc);
+                let predicted = convert_turbo(&m_ycc);
 
                 let zen = Decoder::new()
                     .idct_method(IdctMethod::Libjpeg)

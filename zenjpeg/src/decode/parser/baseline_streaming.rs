@@ -524,6 +524,7 @@ pub(super) fn output_mcu_row(
     is_rgb: bool,
     out_4bpp: bool,
     swap_rb: bool,
+    turbo_color: bool,
 ) {
     let bpp = if out_4bpp { 4 } else { 3 };
     let y_start = mcu_y * y_strip_height;
@@ -563,6 +564,7 @@ pub(super) fn output_mcu_row(
                 &cr_up[up_off..up_off + cols],
                 &mut rgb[rgb_off..rgb_off + cols * 4],
                 swap_rb,
+                turbo_color,
             );
         } else {
             ycbcr_planes_i16_to_rgb_u8(
@@ -570,6 +572,7 @@ pub(super) fn output_mcu_row(
                 &cb_up[up_off..up_off + cols],
                 &cr_up[up_off..up_off + cols],
                 &mut rgb[rgb_off..rgb_off + cols * 3],
+                turbo_color,
             );
         }
     }
@@ -603,6 +606,8 @@ pub(super) struct LoopInputs<'a, 'b> {
     pub restart_interval: u32,
     pub idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
     pub is_rgb: bool,
+    /// libjpeg-turbo-exact YCbCr→RGB (IdctMethod::Libjpeg).
+    pub turbo_color: bool,
 }
 
 /// Fancy h2v2 decode loop: double-buffered Y + chroma strips with 1-row lag
@@ -709,6 +714,7 @@ pub(super) fn run_fancy_h2v2_loop(
                 inputs.is_rgb,
                 bufs.out_4bpp,
                 bufs.swap_rb,
+                inputs.turbo_color,
             );
 
             // Set B's above-context = A's last data row
@@ -788,6 +794,7 @@ pub(super) fn run_fancy_h2v2_loop(
             inputs.is_rgb,
             bufs.out_4bpp,
             bufs.swap_rb,
+            inputs.turbo_color,
         );
     }
     Ok(())
@@ -953,6 +960,7 @@ pub(super) fn run_simple_loop(
                         &bufs.cr_up[..cols],
                         &mut bufs.rgb[rgb_off..rgb_off + cols * 4],
                         swap_rb,
+                        inputs.turbo_color,
                     );
                 } else {
                     fused_h2v2_box_ycbcr_to_rgb_u8(
@@ -961,6 +969,7 @@ pub(super) fn run_simple_loop(
                         &bufs.cr_a[c_off..c_off + (cols + 1) / 2],
                         &mut bufs.rgb[rgb_off..rgb_off + cols * 3],
                         cols,
+                        inputs.turbo_color,
                     );
                 }
             }
@@ -997,6 +1006,7 @@ pub(super) fn run_simple_loop(
                 is_rgb,
                 out_4bpp,
                 swap_rb,
+                inputs.turbo_color,
             );
         }
     }

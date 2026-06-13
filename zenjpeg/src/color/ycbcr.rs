@@ -1032,6 +1032,304 @@ const CR_TO_G_INT: i32 = -11700; // -0.714136 << 14
 const CB_TO_G_INT: i32 = -5638; // -0.344136 << 14
 const YUV_ROUND: i32 = 8192; // 0.5 << 14 for rounding
 
+// libjpeg-turbo 16-bit (SCALEBITS=16) YCbCr→RGB coefficients, matching
+// jdcolor.c `build_ycc_rgb_table` exactly. Selected by IdctMethod::Libjpeg
+// for byte-exact mozjpeg/djpeg parity (vs the default zune-style 14-bit set
+// above, which differs by ±1 on ~0.15% of the G/B channels). The extra two
+// bits of constant precision are the entire residual — chroma upsampling and
+// the IDCT are already bit-exact under that method. FIX(x) = round(x·2^16);
+// the +128 level-shifted Y enters at unit weight (×2^16) so it cancels the
+// final >>16, matching turbo's `Y + ((const·chroma + ONE_HALF) >> 16)`.
+const TURBO_Y_CF: i32 = 65536; // 1 << 16
+const TURBO_CR_TO_R: i32 = 91881; // FIX(1.40200)
+const TURBO_CB_TO_B: i32 = 116130; // FIX(1.77200)
+const TURBO_CR_TO_G: i32 = -46802; // -FIX(0.71414)
+const TURBO_CB_TO_G: i32 = -22554; // -FIX(0.34414)
+const TURBO_ROUND: i32 = 32768; // ONE_HALF = 1 << 15
+
+/// Scalar libjpeg-turbo-exact YCbCr→RGB for one pixel.
+///
+/// `cb_c`/`cr_c` are the already-centered chroma values (sample − 128).
+/// Bit-identical to libjpeg-turbo's table converter (proven over the full
+/// 256³ cube by `int_ycbcr_vs_libjpeg_turbo_tables`).
+#[inline(always)]
+fn turbo_rgb_pixel(y: i32, cb_c: i32, cr_c: i32) -> (u8, u8, u8) {
+    let ys = y * TURBO_Y_CF + TURBO_ROUND;
+    let r = ((ys + cr_c * TURBO_CR_TO_R) >> 16).clamp(0, 255) as u8;
+    let g = ((ys + cr_c * TURBO_CR_TO_G + cb_c * TURBO_CB_TO_G) >> 16).clamp(0, 255) as u8;
+    let b = ((ys + cb_c * TURBO_CB_TO_B) >> 16).clamp(0, 255) as u8;
+    (r, g, b)
+}
+
+/// SIMD libjpeg-turbo-exact YCbCr→RGB for 4 pixels. Returns clamped
+/// [0,255] R/G/B as i32 arrays for the caller to scatter into any layout.
+/// `cb_c`/`cr_c` are already centered (sample − 128). Same integer math as
+/// [`turbo_rgb_pixel`], so every SIMD tier is bit-identical to the scalar
+/// reference and to libjpeg-turbo.
+#[inline(always)]
+fn turbo_rgb4<T: magetypes::simd::backends::I32x4Backend>(
+    token: T,
+    y4: GenericI32x4<T>,
+    cb_c: GenericI32x4<T>,
+    cr_c: GenericI32x4<T>,
+) -> ([i32; 4], [i32; 4], [i32; 4]) {
+    let ys = y4 * GenericI32x4::splat(token, TURBO_Y_CF) + GenericI32x4::splat(token, TURBO_ROUND);
+    let zero = GenericI32x4::zero(token);
+    let max255 = GenericI32x4::splat(token, 255);
+    let r = (ys + cr_c * GenericI32x4::splat(token, TURBO_CR_TO_R))
+        .shr_arithmetic::<16>()
+        .max(zero)
+        .min(max255);
+    let g = (ys
+        + cr_c * GenericI32x4::splat(token, TURBO_CR_TO_G)
+        + cb_c * GenericI32x4::splat(token, TURBO_CB_TO_G))
+    .shr_arithmetic::<16>()
+    .max(zero)
+    .min(max255);
+    let b = (ys + cb_c * GenericI32x4::splat(token, TURBO_CB_TO_B))
+        .shr_arithmetic::<16>()
+        .max(zero)
+        .min(max255);
+    (r.to_array(), g.to_array(), b.to_array())
+}
+
+/// Turbo-exact plane YCbCr→RGB (interleaved 3bpp). magetypes-generic
+/// (v3/NEON/WASM/scalar); selected by the `turbo` arg in
+/// [`ycbcr_planes_i16_to_rgb_u8`].
+#[magetypes(v3, neon, wasm128, scalar)]
+fn ycbcr_planes_i16_to_rgb_u8_turbo_impl(
+    token: Token,
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgb: &mut [u8],
+) {
+    #[allow(non_camel_case_types)]
+    type i32x4 = GenericI32x4<Token>;
+    let bias = i32x4::splat(token, 128);
+    let len = y_plane.len();
+    let chunks = len / 4;
+    for c in 0..chunks {
+        let b0 = c * 4;
+        let y4 = i32x4::from_array(
+            token,
+            [
+                i32::from(y_plane[b0]),
+                i32::from(y_plane[b0 + 1]),
+                i32::from(y_plane[b0 + 2]),
+                i32::from(y_plane[b0 + 3]),
+            ],
+        );
+        let cb4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cb_plane[b0]),
+                i32::from(cb_plane[b0 + 1]),
+                i32::from(cb_plane[b0 + 2]),
+                i32::from(cb_plane[b0 + 3]),
+            ],
+        ) - bias;
+        let cr4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cr_plane[b0]),
+                i32::from(cr_plane[b0 + 1]),
+                i32::from(cr_plane[b0 + 2]),
+                i32::from(cr_plane[b0 + 3]),
+            ],
+        ) - bias;
+        let (r, g, b) = turbo_rgb4(token, y4, cb4, cr4);
+        for i in 0..4 {
+            let idx = (b0 + i) * 3;
+            rgb[idx] = r[i] as u8;
+            rgb[idx + 1] = g[i] as u8;
+            rgb[idx + 2] = b[i] as u8;
+        }
+    }
+    for i in (chunks * 4)..len {
+        let (r, g, b) = turbo_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+        );
+        let idx = i * 3;
+        rgb[idx] = r;
+        rgb[idx + 1] = g;
+        rgb[idx + 2] = b;
+    }
+}
+
+/// Turbo-exact plane YCbCr→RGBA/BGRA (interleaved 4bpp, A=255).
+/// `swap_rb=true` writes B,G,R,255. Selected by the `turbo` arg in
+/// [`ycbcr_planes_i16_to_xrgba_u8`].
+#[magetypes(v3, neon, wasm128, scalar)]
+fn ycbcr_planes_i16_to_xrgba_u8_turbo_impl(
+    token: Token,
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgba: &mut [u8],
+    swap_rb: bool,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x4 = GenericI32x4<Token>;
+    let bias = i32x4::splat(token, 128);
+    let len = y_plane.len();
+    let chunks = len / 4;
+    for c in 0..chunks {
+        let b0 = c * 4;
+        let y4 = i32x4::from_array(
+            token,
+            [
+                i32::from(y_plane[b0]),
+                i32::from(y_plane[b0 + 1]),
+                i32::from(y_plane[b0 + 2]),
+                i32::from(y_plane[b0 + 3]),
+            ],
+        );
+        let cb4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cb_plane[b0]),
+                i32::from(cb_plane[b0 + 1]),
+                i32::from(cb_plane[b0 + 2]),
+                i32::from(cb_plane[b0 + 3]),
+            ],
+        ) - bias;
+        let cr4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cr_plane[b0]),
+                i32::from(cr_plane[b0 + 1]),
+                i32::from(cr_plane[b0 + 2]),
+                i32::from(cr_plane[b0 + 3]),
+            ],
+        ) - bias;
+        let (r, g, b) = turbo_rgb4(token, y4, cb4, cr4);
+        for i in 0..4 {
+            let idx = (b0 + i) * 4;
+            if swap_rb {
+                rgba[idx] = b[i] as u8;
+                rgba[idx + 1] = g[i] as u8;
+                rgba[idx + 2] = r[i] as u8;
+            } else {
+                rgba[idx] = r[i] as u8;
+                rgba[idx + 1] = g[i] as u8;
+                rgba[idx + 2] = b[i] as u8;
+            }
+            rgba[idx + 3] = 255;
+        }
+    }
+    for i in (chunks * 4)..len {
+        let (r, g, b) = turbo_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+        );
+        let idx = i * 4;
+        if swap_rb {
+            rgba[idx] = b;
+            rgba[idx + 1] = g;
+            rgba[idx + 2] = r;
+        } else {
+            rgba[idx] = r;
+            rgba[idx + 1] = g;
+            rgba[idx + 2] = b;
+        }
+        rgba[idx + 3] = 255;
+    }
+}
+
+/// Turbo-exact fused box-upsample + YCbCr→RGB (half-res chroma → 3bpp).
+/// Selected by the `turbo` arg in [`fused_h2v2_box_ycbcr_to_rgb_u8`].
+#[magetypes(v3, neon, wasm128, scalar)]
+fn fused_h2v2_box_ycbcr_to_rgb_u8_turbo_impl(
+    token: Token,
+    y_row: &[i16],
+    cb_row: &[i16],
+    cr_row: &[i16],
+    rgb: &mut [u8],
+    width: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x4 = GenericI32x4<Token>;
+    let bias = i32x4::splat(token, 128);
+    let chroma_width = width.div_ceil(2);
+    let safe_chroma = if width >= 8 { (width - 7) / 2 } else { 0 };
+    let chunks = safe_chroma / 4;
+    for chunk in 0..chunks {
+        let cx_base = chunk * 4;
+        let cb4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cb_row[cx_base]),
+                i32::from(cb_row[cx_base + 1]),
+                i32::from(cb_row[cx_base + 2]),
+                i32::from(cb_row[cx_base + 3]),
+            ],
+        ) - bias;
+        let cr4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cr_row[cx_base]),
+                i32::from(cr_row[cx_base + 1]),
+                i32::from(cr_row[cx_base + 2]),
+                i32::from(cr_row[cx_base + 3]),
+            ],
+        ) - bias;
+        let px_base = cx_base * 2;
+        let y_left = i32x4::from_array(
+            token,
+            [
+                i32::from(y_row[px_base]),
+                i32::from(y_row[px_base + 2]),
+                i32::from(y_row[px_base + 4]),
+                i32::from(y_row[px_base + 6]),
+            ],
+        );
+        let (rl, gl, bl) = turbo_rgb4(token, y_left, cb4, cr4);
+        let y_right = i32x4::from_array(
+            token,
+            [
+                i32::from(y_row[px_base + 1]),
+                i32::from(y_row[px_base + 3]),
+                i32::from(y_row[px_base + 5]),
+                i32::from(y_row[px_base + 7]),
+            ],
+        );
+        let (rr, gr, br) = turbo_rgb4(token, y_right, cb4, cr4);
+        for i in 0..4 {
+            let idx = (px_base + i * 2) * 3;
+            rgb[idx] = rl[i] as u8;
+            rgb[idx + 1] = gl[i] as u8;
+            rgb[idx + 2] = bl[i] as u8;
+            rgb[idx + 3] = rr[i] as u8;
+            rgb[idx + 4] = gr[i] as u8;
+            rgb[idx + 5] = br[i] as u8;
+        }
+    }
+    for cx in (chunks * 4)..chroma_width {
+        let cb_c = i32::from(cb_row[cx]) - 128;
+        let cr_c = i32::from(cr_row[cx]) - 128;
+        let px0 = cx * 2;
+        if px0 < width {
+            let (r, g, b) = turbo_rgb_pixel(i32::from(y_row[px0]), cb_c, cr_c);
+            let idx = px0 * 3;
+            rgb[idx] = r;
+            rgb[idx + 1] = g;
+            rgb[idx + 2] = b;
+        }
+        let px1 = cx * 2 + 1;
+        if px1 < width {
+            let (r, g, b) = turbo_rgb_pixel(i32::from(y_row[px1]), cb_c, cr_c);
+            let idx = px1 * 3;
+            rgb[idx] = r;
+            rgb[idx + 1] = g;
+            rgb[idx + 2] = b;
+        }
+    }
+}
+
 /// Fast integer YCbCr to RGB conversion for 16 pixels.
 ///
 /// This is the core conversion function for the fast decode path.
@@ -1405,10 +1703,20 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     cb_plane: &[i16],
     cr_plane: &[i16],
     rgb: &mut [u8],
+    turbo: bool,
 ) {
     debug_assert_eq!(y_plane.len(), cb_plane.len());
     debug_assert_eq!(y_plane.len(), cr_plane.len());
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    // libjpeg-turbo-exact color (IdctMethod::Libjpeg). magetypes-generic
+    // path; the default below keeps its hand-tuned AVX-512/AVX2 kernels.
+    if turbo {
+        incant!(ycbcr_planes_i16_to_rgb_u8_turbo_impl(
+            y_plane, cb_plane, cr_plane, rgb
+        ));
+        return;
+    }
 
     let len = y_plane.len();
 
@@ -1632,10 +1940,19 @@ pub fn ycbcr_planes_i16_to_xrgba_u8(
     cr_plane: &[i16],
     rgba: &mut [u8],
     swap_rb: bool,
+    turbo: bool,
 ) {
     debug_assert_eq!(y_plane.len(), cb_plane.len());
     debug_assert_eq!(y_plane.len(), cr_plane.len());
     debug_assert_eq!(rgba.len(), y_plane.len() * 4);
+
+    // libjpeg-turbo-exact color (IdctMethod::Libjpeg); default keeps AVX2.
+    if turbo {
+        incant!(ycbcr_planes_i16_to_xrgba_u8_turbo_impl(
+            y_plane, cb_plane, cr_plane, rgba, swap_rb
+        ));
+        return;
+    }
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2172,11 +2489,20 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
     cr_row: &[i16],
     rgb: &mut [u8],
     width: usize,
+    turbo: bool,
 ) {
     debug_assert!(y_row.len() >= width);
     debug_assert!(cb_row.len() >= (width + 1) / 2);
     debug_assert!(cr_row.len() >= (width + 1) / 2);
     debug_assert!(rgb.len() >= width * 3);
+
+    // libjpeg-turbo-exact color (IdctMethod::Libjpeg); default keeps AVX2.
+    if turbo {
+        incant!(fused_h2v2_box_ycbcr_to_rgb_u8_turbo_impl(
+            y_row, cb_row, cr_row, rgb, width
+        ));
+        return;
+    }
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -3295,7 +3621,7 @@ mod tests {
         let cr_plane: Vec<i16> = (0..32).map(|i| 128 + (i % 7) as i16).collect();
 
         let mut rgb = vec![0u8; 96];
-        ycbcr_planes_i16_to_rgb_u8(&y_plane, &cb_plane, &cr_plane, &mut rgb);
+        ycbcr_planes_i16_to_rgb_u8(&y_plane, &cb_plane, &cr_plane, &mut rgb, false);
 
         // Verify against scalar f32 conversion
         for i in 0..32 {
@@ -3492,5 +3818,92 @@ mod tests {
             max_diff <= 1,
             "14-bit vs turbo 16-bit conversion must stay within ±1"
         );
+    }
+
+    /// libjpeg-turbo reference RGB for one centered triple (the exact table
+    /// math from `int_ycbcr_vs_libjpeg_turbo_tables`).
+    fn turbo_ref_rgb(y: i32, cb: i32, cr: i32) -> (u8, u8, u8) {
+        const FIX_1_40200: i64 = 91881;
+        const FIX_1_77200: i64 = 116130;
+        const FIX_0_71414: i64 = 46802;
+        const FIX_0_34414: i64 = 22554;
+        const ONE_HALF: i64 = 1 << 15;
+        let xr = cr as i64 - 128;
+        let xb = cb as i64 - 128;
+        let r = (y + ((FIX_1_40200 * xr + ONE_HALF) >> 16) as i32).clamp(0, 255) as u8;
+        let g = (y + ((-FIX_0_71414 * xr + (-FIX_0_34414 * xb + ONE_HALF)) >> 16) as i32)
+            .clamp(0, 255) as u8;
+        let b = (y + ((FIX_1_77200 * xb + ONE_HALF) >> 16) as i32).clamp(0, 255) as u8;
+        (r, g, b)
+    }
+
+    /// The turbo color converters (all three layout families, every SIMD
+    /// tier) are bit-identical to libjpeg-turbo's table converter — 0 diffs,
+    /// not ≤1. This is what makes IdctMethod::Libjpeg byte-exact with mozjpeg
+    /// at the RGB level. Also pins SIMD dispatch parity (every tier ==
+    /// scalar) via `for_each_token_permutation`.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn turbo_converters_match_libjpeg_tables() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Pseudo-random planes spanning the full 0..=255 range, plus
+        // structured edges, at a length that exercises SIMD body + remainder.
+        let n = 67usize;
+        let y: Vec<i16> = (0..n).map(|i| ((i * 37 + 11) % 256) as i16).collect();
+        let cb: Vec<i16> = (0..n).map(|i| ((i * 53 + 200) % 256) as i16).collect();
+        let cr: Vec<i16> = (0..n).map(|i| ((i * 29 + 7) % 256) as i16).collect();
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            // Family 1: RGB plane.
+            let mut rgb = vec![0u8; n * 3];
+            ycbcr_planes_i16_to_rgb_u8(&y, &cb, &cr, &mut rgb, true);
+            for i in 0..n {
+                let (r, g, b) = turbo_ref_rgb(y[i] as i32, cb[i] as i32, cr[i] as i32);
+                assert_eq!(
+                    (rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]),
+                    (r, g, b),
+                    "turbo RGB plane != turbo tables at px {i} ({perm})"
+                );
+            }
+
+            // Family 2: RGBA and BGRA.
+            for swap in [false, true] {
+                let mut rgba = vec![0u8; n * 4];
+                ycbcr_planes_i16_to_xrgba_u8(&y, &cb, &cr, &mut rgba, swap, true);
+                for i in 0..n {
+                    let (r, g, b) = turbo_ref_rgb(y[i] as i32, cb[i] as i32, cr[i] as i32);
+                    let (e0, e2) = if swap { (b, r) } else { (r, b) };
+                    assert_eq!(
+                        [
+                            rgba[i * 4],
+                            rgba[i * 4 + 1],
+                            rgba[i * 4 + 2],
+                            rgba[i * 4 + 3]
+                        ],
+                        [e0, g, e2, 255],
+                        "turbo xrgba(swap={swap}) != turbo tables at px {i} ({perm})"
+                    );
+                }
+            }
+
+            // Family 3: fused box upsample (half-res chroma → 2× RGB).
+            let cw = n.div_ceil(2);
+            let cbh: Vec<i16> = (0..cw).map(|i| ((i * 53 + 200) % 256) as i16).collect();
+            let crh: Vec<i16> = (0..cw).map(|i| ((i * 29 + 7) % 256) as i16).collect();
+            let mut frgb = vec![0u8; n * 3];
+            fused_h2v2_box_ycbcr_to_rgb_u8(&y, &cbh, &crh, &mut frgb, n, true);
+            for px in 0..n {
+                let c = px / 2;
+                let (r, g, b) = turbo_ref_rgb(y[px] as i32, cbh[c] as i32, crh[c] as i32);
+                assert_eq!(
+                    (frgb[px * 3], frgb[px * 3 + 1], frgb[px * 3 + 2]),
+                    (r, g, b),
+                    "turbo fused-box != turbo tables at px {px} ({perm})"
+                );
+            }
+        });
+        eprintln!("turbo converter dispatch parity: {report}");
+        assert!(report.permutations_run >= 2, "expected ≥2 SIMD tiers");
     }
 }

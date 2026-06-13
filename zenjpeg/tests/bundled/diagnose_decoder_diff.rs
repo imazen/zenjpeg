@@ -726,6 +726,7 @@ fn test_simd_color_conversion_in_isolation() {
             &cb_buf[src_off..src_off + w],
             &cr_buf[src_off..src_off + w],
             &mut simd_rgb[dst_off..dst_off + w * 3],
+            false,
         );
     }
 

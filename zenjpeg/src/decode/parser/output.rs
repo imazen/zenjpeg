@@ -537,6 +537,7 @@ impl<'a> JpegParser<'a> {
                         &cb_strip[strip_offset..strip_offset + cols_this_mcu],
                         &cr_strip[strip_offset..strip_offset + cols_this_mcu],
                         &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                        self.idct_method == super::super::IdctMethod::Libjpeg,
                     );
                 }
             }
@@ -911,6 +912,7 @@ impl<'a> JpegParser<'a> {
                                 &ext_cr_a[c_offset..c_offset + c_cols],
                                 &mut dst_bytes[dst_offset..dst_offset + y_cols_this_image * 3],
                                 y_cols_this_image,
+                                self.idct_method == super::super::IdctMethod::Libjpeg,
                             );
                         }
                         DstKind::Rgba | DstKind::Bgra => {
@@ -930,6 +932,7 @@ impl<'a> JpegParser<'a> {
                                 &cr_row[..n],
                                 &mut dst_bytes[dst_offset..dst_offset + n * 4],
                                 swap_rb,
+                                self.idct_method == super::super::IdctMethod::Libjpeg,
                             );
                         }
                     }
@@ -970,6 +973,7 @@ impl<'a> JpegParser<'a> {
                                 &cb_up[chroma_offset..chroma_offset + n],
                                 &cr_up[chroma_offset..chroma_offset + n],
                                 &mut dst_bytes[dst_offset..dst_offset + n * 3],
+                                self.idct_method == super::super::IdctMethod::Libjpeg,
                             );
                         }
                         DstKind::Rgba | DstKind::Bgra => {
@@ -980,6 +984,7 @@ impl<'a> JpegParser<'a> {
                                 &cr_up[chroma_offset..chroma_offset + n],
                                 &mut dst_bytes[dst_offset..dst_offset + n * 4],
                                 swap_rb,
+                                self.idct_method == super::super::IdctMethod::Libjpeg,
                             );
                         }
                     }

@@ -880,6 +880,7 @@ impl<'a> JpegParser<'a> {
                         &cr_strip[strip_offset..strip_offset + cols_this_mcu],
                         &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 4],
                         swap_rb,
+                        self.idct_method == super::super::IdctMethod::Libjpeg,
                     );
                 } else {
                     ycbcr_planes_i16_to_rgb_u8(
@@ -887,6 +888,7 @@ impl<'a> JpegParser<'a> {
                         &cb_strip[strip_offset..strip_offset + cols_this_mcu],
                         &cr_strip[strip_offset..strip_offset + cols_this_mcu],
                         &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                        self.idct_method == super::super::IdctMethod::Libjpeg,
                     );
                 }
             }
@@ -1013,6 +1015,7 @@ impl<'a> JpegParser<'a> {
             restart_interval: self.restart_interval as u32,
             idct_fn,
             is_rgb,
+            turbo_color: self.idct_method == super::super::IdctMethod::Libjpeg,
         };
 
         if bufs.need_fancy {

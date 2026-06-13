@@ -616,6 +616,7 @@ impl<'a> JpegParser<'a> {
                                         &cb_strip[strip_off..strip_off + cols_this],
                                         &cr_strip[strip_off..strip_off + cols_this],
                                         &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
+                                        idct_method == IdctMethod::Libjpeg,
                                     );
                                 }
                             }
@@ -726,6 +727,7 @@ impl<'a> JpegParser<'a> {
                                     &cb_strip[strip_off..strip_off + cols_this],
                                     &cr_strip[strip_off..strip_off + cols_this],
                                     &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
+                                    idct_method == IdctMethod::Libjpeg,
                                 );
                             }
                         }
@@ -912,6 +914,7 @@ impl<'a> JpegParser<'a> {
                             &cr_strip[c_off..],
                             &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
                             cols_this,
+                            idct_method == IdctMethod::Libjpeg,
                         );
                     }
                 };
@@ -1251,6 +1254,7 @@ impl<'a> JpegParser<'a> {
                             &cb_up[c_off..c_off + y_cols_this],
                             &cr_up[c_off..c_off + y_cols_this],
                             &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
+                            idct_method == IdctMethod::Libjpeg,
                         );
                     }
                 };
@@ -1670,6 +1674,7 @@ impl<'a> JpegParser<'a> {
                                 &cb_up[chroma_off..chroma_off + y_cols_this_image],
                                 &cr_up[chroma_off..chroma_off + y_cols_this_image],
                                 &mut rgb_chunk[rgb_off..rgb_off + y_cols_this_image * 3],
+                                idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     };
@@ -2046,6 +2051,7 @@ impl<'a> JpegParser<'a> {
                                 &cb_row[..y_cols_this_image],
                                 &cr_row[..y_cols_this_image],
                                 &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                                idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     }
@@ -2088,6 +2094,7 @@ impl<'a> JpegParser<'a> {
                                 &cb_row[..y_cols_this_image],
                                 &cr_row[..y_cols_this_image],
                                 &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                                idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     }
@@ -2410,6 +2417,7 @@ impl WaveParallelState {
                             &cr_strip[c_off..],
                             &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
                             cols_this,
+                            self.idct_method == IdctMethod::Libjpeg,
                         );
                     }
                 };

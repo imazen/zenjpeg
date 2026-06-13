@@ -157,6 +157,7 @@ impl<'a> JpegParser<'a> {
                                 &cb_strip[strip_offset..strip_offset + cols_this_mcu],
                                 &cr_strip[strip_offset..strip_offset + cols_this_mcu],
                                 &mut rgb_batch[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                                self.idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     }
@@ -504,6 +505,7 @@ impl<'a> JpegParser<'a> {
                                 &ext_cr_a[c_offset..c_offset + c_cols],
                                 &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
                                 y_cols_this_image,
+                                self.idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     } else {
@@ -537,6 +539,7 @@ impl<'a> JpegParser<'a> {
                                 &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
                                 &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
                                 &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                                self.idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     }

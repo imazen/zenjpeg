@@ -6,6 +6,26 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- **`IdctMethod::Libjpeg` is now byte-for-byte identical to mozjpeg/djpeg**
+  (max_diff=0 on decoded RGB). The final residual — YCbCr→RGB — now has a
+  libjpeg-turbo-exact 16-bit converter (`build_ycc_rgb_table` constants,
+  jdcolor.c) selected by `IdctMethod::Libjpeg`, replacing the ±1 from the
+  default zune-style 14-bit math. With the IDCT (islow) and chroma
+  upsampling (turbo bias) already bit-exact, all three stages now match, so
+  `IdctMethod::Libjpeg` + Triangle equals mozjpeg fancy and + box equals
+  mozjpeg box, verified max=0 over sizes×qualities×{4:2:0,4:4:4}
+  (`test_idct_method_libjpeg_fancy_matches_mozjpeg_exact`,
+  `test_idct_method_libjpeg_matches_mozjpeg`, both `__ffi-tests`). The turbo
+  converter is a self-contained magetypes-generic (v3/NEON/WASM/scalar) kernel
+  per output layout (RGB / RGBA-BGRA / fused-box), bit-exact with the turbo
+  tables across all SIMD tiers (`turbo_converters_match_libjpeg_tables`);
+  wired through every decode path (streaming, scanline, coefficient,
+  parallel, fused-parallel) via a `turbo` flag the compiler forces every
+  call site to pass. The **default** path (`IdctMethod::Jpegli`) keeps its
+  hand-tuned AVX-512/AVX2 14-bit converter, byte-identical to before
+  (default suite incl. locked hashes unchanged: 2184 pass).
+
+### Changed
 - **Libjpeg-exact IDCT is now SIMD** (`idct_int_libjpeg_auto`: AVX2
   intrinsics on x86_64 + magetypes v3/neon/wasm128/scalar tiers): same
   Loeffler islow butterfly and descale rounding in i32 lanes, bit-identical

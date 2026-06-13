@@ -1703,6 +1703,7 @@ impl<'a> ScanlineReader<'a> {
                     &cb[crop_x..crop_x + out_width],
                     &cr[crop_x..crop_x + out_width],
                     out_row,
+                    self.strip.idct_method == super::IdctMethod::Libjpeg,
                 );
             }
 
@@ -2171,6 +2172,7 @@ impl<'a> ScanlineReader<'a> {
                         &cr_row[crop_x..crop_x + out_width],
                         &mut out_row[..out_width * 4],
                         swap_rb,
+                        self.strip.idct_method == super::IdctMethod::Libjpeg,
                     );
                 }
             }

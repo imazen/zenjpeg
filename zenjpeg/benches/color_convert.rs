@@ -92,6 +92,7 @@ fn bench_fused_h2v2_box(c: &mut Criterion) {
                     black_box(cr_data),
                     &mut rgb,
                     width,
+                    false,
                 );
                 black_box(&rgb);
             });
