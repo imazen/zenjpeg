@@ -1,0 +1,32 @@
+# h2v2 (4:2:0) fancy upsample A/B — scalar vs magetypes-generic dispatch
+# Hetzner arm-big (aarch64 Neoverse-N1), 2026-06-15T03:53:36Z, zenbench upsample_ab
+# generic load-once rewrite (was 6 gathers/chunk -> regressed -37%; now load colsum once -> +15%)
+# commit: WIP vzolwmzn (h2v2 NEON SIMD)
+
+                     mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar         233.6 ±0.7µs  [233.3–233.8]µs     561M
+  scalar        ██████████████████████████████████████ 561 Mops/s
+  h2v2_256x256  30 rounds × 25 calls
+                 mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar     195.6 ±2.2µs  [194.9–196.4]µs     670M
+  ╰─ dispatch   170.6 ±1.0µs  [-13.2%–-12.4%]     768M
+  dispatch  █████████████████████████████████████████████████████████ 768 Mops/s
+  scalar    ██████████████████████████████████████████████████ 670 Mops/s
+                     mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar         943.7 ±3.2µs  [942.0–945.5]µs     556M
+  scalar        █████████████████████████████████████ 556 Mops/s
+  h2v2_1024x256  30 rounds × 6 calls
+                  mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar     781.2 ±13.0µs  [776.8–785.8]µs     671M
+  ╰─ dispatch    679.8 ±4.8µs  [-13.6%–-12.6%]     771M
+  dispatch  █████████████████████████████████████████████████████████ 771 Mops/s
+  scalar    ██████████████████████████████████████████████████ 671 Mops/s
+                     mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar         941.5 ±4.0µs  [939.9–943.2]µs     557M
+  scalar        █████████████████████████████████████ 557 Mops/s
+  h2v2_4096x64  30 rounds × 6 calls
+                 mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar     775.1 ±9.4µs  [770.8–779.8]µs     676M
+  ╰─ dispatch   673.5 ±3.0µs  [-13.1%–-12.3%]     779M
+  dispatch  █████████████████████████████████████████████████████████ 779 Mops/s
+  scalar    ██████████████████████████████████████████████████ 676 Mops/s

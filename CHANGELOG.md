@@ -31,6 +31,20 @@ All notable changes to zenjpeg are documented here. Earlier history
   (1.77 vs 1.43 Gpx/s, Ryzen 9 7950X) and **+42-46% on aarch64 NEON**
   (≈800 vs ≈550 Mops/s, Hetzner). Decode output unchanged (full suite 2184
   pass). Affects 4:2:2 (`Subsampling::S422`) decodes only.
+- **4:2:0 (h2v2) fancy chroma upsampler is now SIMD on non-x86** — the
+  follow-on to the h2v1 work above, for the most common JPEG subsampling.
+  x86 keeps its hand-tuned AVX2 kernel; non-x86 (NEON/wasm128) was scalar and
+  now uses a `#[magetypes]`-generic interior, byte-for-byte identical to the
+  scalar row (`h2v2_row_generic_matches_scalar_bit_exact`, verified on real
+  aarch64). Measured on Hetzner arm-big (Neoverse-N1,
+  `benchmarks/h2v2_upsample_ab_2026-06-14_arm.txt`): **+15% (≈770 vs 670
+  Mops/s)** across 256²/1024²/4096² tiles. Note: the kernel had to load each
+  column-sum **once** per chunk — the naive form re-gathered the two input
+  planes across the prev/this/next windows (6 scalar-widen gathers/chunk) and
+  was measured **−37% (a regression)** on NEON before the fix; the load-once
+  form is the +15% win. Serves both the default (`Alternating` bias) and
+  libjpeg-compat (`Turbo` bias) fancy 4:2:0 decode paths. Decode output
+  unchanged.
 
 
 ### Fixed

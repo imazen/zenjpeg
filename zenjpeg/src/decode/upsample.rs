@@ -148,7 +148,8 @@ pub fn upsample_h2v2_i16_nearest_strided(
 /// turbo. Selected by [`IdctMethod::Libjpeg`](super::IdctMethod::Libjpeg),
 /// whose contract is libjpeg-turbo-exact decoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum H2v2Bias {
+#[doc(hidden)]
+pub enum H2v2Bias {
     /// Row-alternating bias (default Triangle).
     Alternating {
         /// True on even output rows (nearer chroma row is above).
@@ -580,7 +581,8 @@ pub fn upsample_h2v2_i16_libjpeg_turbo(
 ///
 /// Dispatches to AVX2 SIMD on x86_64 when available, with scalar fallback.
 #[inline]
-pub(super) fn upsample_h2v2_libjpeg_row(
+#[doc(hidden)]
+pub fn upsample_h2v2_libjpeg_row(
     near: &[i16],
     far: &[i16],
     output: &mut [i16],
@@ -588,7 +590,7 @@ pub(super) fn upsample_h2v2_libjpeg_row(
     out_width: usize,
     bias: H2v2Bias,
 ) {
-    // Try AVX2 SIMD path on x86_64
+    // Try AVX2 SIMD path on x86_64 (hand-tuned, beats the generic here).
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
@@ -597,12 +599,131 @@ pub(super) fn upsample_h2v2_libjpeg_row(
         }
     }
 
+    // Non-x86: magetypes-generic (NEON/wasm128). The scalar row does not
+    // autovectorize (0 vector instrs, measured), so the SIMD interior is a
+    // real ARM/wasm win (~+45% NEON, like the h2v1 case). Narrow rows + edges
+    // stay scalar inside the generic.
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        incant!(upsample_h2v2_libjpeg_row_generic(
+            near, far, output, in_width, out_width, bias
+        ));
+        return;
+    }
+    #[cfg(target_arch = "x86_64")]
     upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, bias);
 }
 
+/// Magetypes-generic one-row h2v2 fancy upsampler — bit-identical to
+/// `upsample_h2v2_libjpeg_row_scalar`, interior columns vectorized in i32x8.
+/// Used on non-x86 (NEON/wasm128); x86 uses the hand AVX2 kernel.
+#[magetypes(v3, neon, wasm128, scalar)]
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
+fn upsample_h2v2_libjpeg_row_generic(
+    token: Token,
+    near: &[i16],
+    far: &[i16],
+    output: &mut [i16],
+    in_width: usize,
+    out_width: usize,
+    bias: H2v2Bias,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x8 = GenericI32x8<Token>;
+    if in_width == 1 {
+        let colsum = near[0] as i32 * 3 + far[0] as i32;
+        if out_width > 0 {
+            output[0] = ((colsum * 4 + 8) >> 4) as i16;
+        }
+        if out_width > 1 {
+            output[1] = ((colsum * 4 + bias.single_col_second()) >> 4) as i16;
+        }
+        return;
+    }
+    let (bias_left, bias_right) = bias.pair();
+
+    // First column.
+    let cs0 = near[0] as i32 * 3 + far[0] as i32;
+    let cs1 = near[1] as i32 * 3 + far[1] as i32;
+    output[0] = ((cs0 * 4 + 8) >> 4) as i16;
+    if out_width > 1 {
+        output[1] = ((cs0 * 3 + cs1 + bias_right) >> 4) as i16;
+    }
+
+    // Interior, SIMD in chunks of 8 input positions from x=1.
+    // colsum[i] = near[i]*3 + far[i]; needs i in [x-1 ..= x+8].
+    let three = i32x8::splat(token, 3);
+    let vbl = i32x8::splat(token, bias_left);
+    let vbr = i32x8::splat(token, bias_right);
+    let mut x = 1usize;
+    while x + 9 <= in_width && 2 * x + 15 < out_width {
+        // Load colsum ONCE for the [x-1 ..= x+8] window (10 values), reading
+        // near/far from memory a single time, then build the prev/this/next
+        // vectors from that local array. The previous code re-gathered near
+        // and far 3× (6 scalar-widen gathers/chunk → ~48 element loads); this
+        // is ~20 loads + 3 contiguous reads of an i32 array. (The h2v1 kernel
+        // is cheaper per output — one plane, one window — so its 3-gather form
+        // already beats scalar; h2v2's 2 planes × 3 windows did not.)
+        let cw: [i32; 10] =
+            core::array::from_fn(|i| near[x - 1 + i] as i32 * 3 + far[x - 1 + i] as i32);
+        let prev_cs = i32x8::from_array(token, core::array::from_fn(|i| cw[i]));
+        let this_cs = i32x8::from_array(token, core::array::from_fn(|i| cw[1 + i]));
+        let next_cs = i32x8::from_array(token, core::array::from_fn(|i| cw[2 + i]));
+        let this3 = this_cs * three;
+        let left = (this3 + prev_cs + vbl)
+            .shr_arithmetic_const::<4>()
+            .to_array();
+        let right = (this3 + next_cs + vbr)
+            .shr_arithmetic_const::<4>()
+            .to_array();
+        let mut o = x * 2;
+        for i in 0..8 {
+            output[o] = left[i] as i16;
+            output[o + 1] = right[i] as i16;
+            o += 2;
+        }
+        x += 8;
+    }
+
+    // Scalar interior remainder.
+    let mut last_colsum = if x == 1 {
+        cs0
+    } else {
+        near[x - 1] as i32 * 3 + far[x - 1] as i32
+    };
+    while x < in_width - 1 {
+        let this_colsum = near[x] as i32 * 3 + far[x] as i32;
+        let next_colsum = near[x + 1] as i32 * 3 + far[x + 1] as i32;
+        let lo = x * 2;
+        let ro = lo + 1;
+        if lo < out_width {
+            output[lo] = ((this_colsum * 3 + last_colsum + bias_left) >> 4) as i16;
+        }
+        if ro < out_width {
+            output[ro] = ((this_colsum * 3 + next_colsum + bias_right) >> 4) as i16;
+        }
+        last_colsum = this_colsum;
+        x += 1;
+    }
+
+    // Last column.
+    let last = in_width - 1;
+    let this_colsum = near[last] as i32 * 3 + far[last] as i32;
+    let lo = last * 2;
+    let ro = lo + 1;
+    if lo < out_width {
+        output[lo] = ((this_colsum * 3 + last_colsum + bias_left) >> 4) as i16;
+    }
+    if ro < out_width {
+        output[ro] = ((this_colsum * 4 + bias_right) >> 4) as i16;
+    }
+}
+
 /// Scalar implementation of one output row of fused h2v2 libjpeg-compat upsampling.
+#[doc(hidden)]
 #[inline]
-fn upsample_h2v2_libjpeg_row_scalar(
+pub fn upsample_h2v2_libjpeg_row_scalar(
     near: &[i16],
     far: &[i16],
     output: &mut [i16],
@@ -1690,6 +1811,41 @@ mod tests {
             }
         });
         eprintln!("h2v1 generic vs scalar bit-exact: {report}");
+        assert!(report.permutations_run >= 2, "expected >=2 SIMD tiers");
+    }
+
+    /// The magetypes-generic h2v2 (4:2:0) row must be BYTE-IDENTICAL to the
+    /// scalar row across widths, out-widths, and both bias modes, on every
+    /// SIMD tier. (x86 production uses the hand AVX2 kernel; the generic is
+    /// the non-x86 path — this test exercises it directly via incant!.)
+    #[test]
+    fn h2v2_row_generic_matches_scalar_bit_exact() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            for in_w in [1usize, 2, 7, 9, 10, 11, 16, 17, 31, 64] {
+                let near = gradient_test_data(in_w, 1);
+                let far = extreme_test_data(in_w, 1);
+                for out_w in [in_w * 2, (in_w * 2).saturating_sub(1).max(1)] {
+                    for bias in [
+                        H2v2Bias::Alternating { is_upper: true },
+                        H2v2Bias::Alternating { is_upper: false },
+                        H2v2Bias::Turbo,
+                    ] {
+                        let mut a = vec![0i16; out_w];
+                        let mut b = vec![0i16; out_w];
+                        upsample_h2v2_libjpeg_row_scalar(&near, &far, &mut a, in_w, out_w, bias);
+                        incant!(upsample_h2v2_libjpeg_row_generic(
+                            &near, &far, &mut b, in_w, out_w, bias
+                        ));
+                        assert_eq!(
+                            a, b,
+                            "h2v2 generic != scalar: in_w={in_w} out_w={out_w} bias={bias:?} at {perm}"
+                        );
+                    }
+                }
+            }
+        });
+        eprintln!("h2v2 row generic vs scalar bit-exact: {report}");
         assert!(report.permutations_run >= 2, "expected >=2 SIMD tiers");
     }
 }
