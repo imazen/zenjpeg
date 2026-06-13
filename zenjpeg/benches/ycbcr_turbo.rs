@@ -1,5 +1,6 @@
-//! Turbo (libjpeg-turbo-exact, magetypes-generic) vs default (hand
-//! AVX-512/AVX2, 14-bit) YCbCr→RGB color conversion.
+//! Turbo (libjpeg-turbo-exact 16-bit) vs default (zune-style 14-bit)
+//! YCbCr→RGB. Both run the same `<const TURBO>` AVX-512/AVX2 kernels
+//! (turbo selected by IdctMethod::Libjpeg); this confirms parity.
 //!
 //! The turbo path is selected by `IdctMethod::Libjpeg` for byte-exact
 //! mozjpeg parity; this measures what that exactness costs per pixel
@@ -29,7 +30,7 @@ impl Lcg {
 }
 
 fn planes(n: usize) -> (Vec<i16>, Vec<i16>, Vec<i16>) {
-    let mut rng = Lcg(0x0DDB1A5E_5EED_F00D);
+    let mut rng = Lcg(0x0DDB_1A5E_5EED_F00D);
     let y = (0..n).map(|_| rng.sample()).collect();
     let cb = (0..n).map(|_| rng.sample()).collect();
     let cr = (0..n).map(|_| rng.sample()).collect();

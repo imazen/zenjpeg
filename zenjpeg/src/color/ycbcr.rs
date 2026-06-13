@@ -1047,287 +1047,48 @@ const TURBO_CR_TO_G: i32 = -46802; // -FIX(0.71414)
 const TURBO_CB_TO_G: i32 = -22554; // -FIX(0.34414)
 const TURBO_ROUND: i32 = 32768; // ONE_HALF = 1 << 15
 
-/// Scalar libjpeg-turbo-exact YCbCr→RGB for one pixel.
-///
-/// `cb_c`/`cr_c` are the already-centered chroma values (sample − 128).
-/// Bit-identical to libjpeg-turbo's table converter (proven over the full
-/// 256³ cube by `int_ycbcr_vs_libjpeg_turbo_tables`).
+/// Default-vs-turbo YCbCr→RGB fixed-point constant set, returned as
+/// `(y_coeff, round, cr_to_r, cr_to_g, cb_to_g, cb_to_b, shift)`. `turbo`
+/// selects libjpeg-turbo's 16-bit table constants (byte-exact mozjpeg
+/// parity, IdctMethod::Libjpeg); otherwise the default zune-style 14-bit
+/// set. The scalar fallbacks call this; the SIMD kernels select inline on
+/// their `const TURBO` parameter (so it const-folds — `TURBO == false`
+/// compiles to byte-identical code to the pre-turbo kernels).
 #[inline(always)]
-fn turbo_rgb_pixel(y: i32, cb_c: i32, cr_c: i32) -> (u8, u8, u8) {
-    let ys = y * TURBO_Y_CF + TURBO_ROUND;
-    let r = ((ys + cr_c * TURBO_CR_TO_R) >> 16).clamp(0, 255) as u8;
-    let g = ((ys + cr_c * TURBO_CR_TO_G + cb_c * TURBO_CB_TO_G) >> 16).clamp(0, 255) as u8;
-    let b = ((ys + cb_c * TURBO_CB_TO_B) >> 16).clamp(0, 255) as u8;
+const fn ycc_consts(turbo: bool) -> (i32, i32, i32, i32, i32, i32, u32) {
+    if turbo {
+        (
+            TURBO_Y_CF,
+            TURBO_ROUND,
+            TURBO_CR_TO_R,
+            TURBO_CR_TO_G,
+            TURBO_CB_TO_G,
+            TURBO_CB_TO_B,
+            16,
+        )
+    } else {
+        (
+            Y_CF_INT,
+            YUV_ROUND,
+            CR_TO_R_INT,
+            CR_TO_G_INT,
+            CB_TO_G_INT,
+            CB_TO_B_INT,
+            14,
+        )
+    }
+}
+
+/// Scalar YCbCr→RGB for one pixel (default 14-bit or turbo 16-bit per
+/// `turbo`). `cb_c`/`cr_c` are already centered (sample − 128).
+#[inline(always)]
+fn ycc_rgb_pixel(y: i32, cb_c: i32, cr_c: i32, turbo: bool) -> (u8, u8, u8) {
+    let (yc, rnd, crr, crg, cbg, cbb, sh) = ycc_consts(turbo);
+    let ys = y * yc + rnd;
+    let r = ((ys + cr_c * crr) >> sh).clamp(0, 255) as u8;
+    let g = ((ys + cr_c * crg + cb_c * cbg) >> sh).clamp(0, 255) as u8;
+    let b = ((ys + cb_c * cbb) >> sh).clamp(0, 255) as u8;
     (r, g, b)
-}
-
-/// SIMD libjpeg-turbo-exact YCbCr→RGB for 4 pixels. Returns clamped
-/// [0,255] R/G/B as i32 arrays for the caller to scatter into any layout.
-/// `cb_c`/`cr_c` are already centered (sample − 128). Same integer math as
-/// [`turbo_rgb_pixel`], so every SIMD tier is bit-identical to the scalar
-/// reference and to libjpeg-turbo.
-#[inline(always)]
-fn turbo_rgb4<T: magetypes::simd::backends::I32x4Backend>(
-    token: T,
-    y4: GenericI32x4<T>,
-    cb_c: GenericI32x4<T>,
-    cr_c: GenericI32x4<T>,
-) -> ([i32; 4], [i32; 4], [i32; 4]) {
-    let ys = y4 * GenericI32x4::splat(token, TURBO_Y_CF) + GenericI32x4::splat(token, TURBO_ROUND);
-    let zero = GenericI32x4::zero(token);
-    let max255 = GenericI32x4::splat(token, 255);
-    let r = (ys + cr_c * GenericI32x4::splat(token, TURBO_CR_TO_R))
-        .shr_arithmetic::<16>()
-        .max(zero)
-        .min(max255);
-    let g = (ys
-        + cr_c * GenericI32x4::splat(token, TURBO_CR_TO_G)
-        + cb_c * GenericI32x4::splat(token, TURBO_CB_TO_G))
-    .shr_arithmetic::<16>()
-    .max(zero)
-    .min(max255);
-    let b = (ys + cb_c * GenericI32x4::splat(token, TURBO_CB_TO_B))
-        .shr_arithmetic::<16>()
-        .max(zero)
-        .min(max255);
-    (r.to_array(), g.to_array(), b.to_array())
-}
-
-/// Turbo-exact plane YCbCr→RGB (interleaved 3bpp). magetypes-generic
-/// (v3/NEON/WASM/scalar); selected by the `turbo` arg in
-/// [`ycbcr_planes_i16_to_rgb_u8`].
-#[magetypes(v3, neon, wasm128, scalar)]
-fn ycbcr_planes_i16_to_rgb_u8_turbo_impl(
-    token: Token,
-    y_plane: &[i16],
-    cb_plane: &[i16],
-    cr_plane: &[i16],
-    rgb: &mut [u8],
-) {
-    #[allow(non_camel_case_types)]
-    type i32x4 = GenericI32x4<Token>;
-    let bias = i32x4::splat(token, 128);
-    let len = y_plane.len();
-    let chunks = len / 4;
-    for c in 0..chunks {
-        let b0 = c * 4;
-        let y4 = i32x4::from_array(
-            token,
-            [
-                i32::from(y_plane[b0]),
-                i32::from(y_plane[b0 + 1]),
-                i32::from(y_plane[b0 + 2]),
-                i32::from(y_plane[b0 + 3]),
-            ],
-        );
-        let cb4 = i32x4::from_array(
-            token,
-            [
-                i32::from(cb_plane[b0]),
-                i32::from(cb_plane[b0 + 1]),
-                i32::from(cb_plane[b0 + 2]),
-                i32::from(cb_plane[b0 + 3]),
-            ],
-        ) - bias;
-        let cr4 = i32x4::from_array(
-            token,
-            [
-                i32::from(cr_plane[b0]),
-                i32::from(cr_plane[b0 + 1]),
-                i32::from(cr_plane[b0 + 2]),
-                i32::from(cr_plane[b0 + 3]),
-            ],
-        ) - bias;
-        let (r, g, b) = turbo_rgb4(token, y4, cb4, cr4);
-        for i in 0..4 {
-            let idx = (b0 + i) * 3;
-            rgb[idx] = r[i] as u8;
-            rgb[idx + 1] = g[i] as u8;
-            rgb[idx + 2] = b[i] as u8;
-        }
-    }
-    for i in (chunks * 4)..len {
-        let (r, g, b) = turbo_rgb_pixel(
-            i32::from(y_plane[i]),
-            i32::from(cb_plane[i]) - 128,
-            i32::from(cr_plane[i]) - 128,
-        );
-        let idx = i * 3;
-        rgb[idx] = r;
-        rgb[idx + 1] = g;
-        rgb[idx + 2] = b;
-    }
-}
-
-/// Turbo-exact plane YCbCr→RGBA/BGRA (interleaved 4bpp, A=255).
-/// `swap_rb=true` writes B,G,R,255. Selected by the `turbo` arg in
-/// [`ycbcr_planes_i16_to_xrgba_u8`].
-#[magetypes(v3, neon, wasm128, scalar)]
-fn ycbcr_planes_i16_to_xrgba_u8_turbo_impl(
-    token: Token,
-    y_plane: &[i16],
-    cb_plane: &[i16],
-    cr_plane: &[i16],
-    rgba: &mut [u8],
-    swap_rb: bool,
-) {
-    #[allow(non_camel_case_types)]
-    type i32x4 = GenericI32x4<Token>;
-    let bias = i32x4::splat(token, 128);
-    let len = y_plane.len();
-    let chunks = len / 4;
-    for c in 0..chunks {
-        let b0 = c * 4;
-        let y4 = i32x4::from_array(
-            token,
-            [
-                i32::from(y_plane[b0]),
-                i32::from(y_plane[b0 + 1]),
-                i32::from(y_plane[b0 + 2]),
-                i32::from(y_plane[b0 + 3]),
-            ],
-        );
-        let cb4 = i32x4::from_array(
-            token,
-            [
-                i32::from(cb_plane[b0]),
-                i32::from(cb_plane[b0 + 1]),
-                i32::from(cb_plane[b0 + 2]),
-                i32::from(cb_plane[b0 + 3]),
-            ],
-        ) - bias;
-        let cr4 = i32x4::from_array(
-            token,
-            [
-                i32::from(cr_plane[b0]),
-                i32::from(cr_plane[b0 + 1]),
-                i32::from(cr_plane[b0 + 2]),
-                i32::from(cr_plane[b0 + 3]),
-            ],
-        ) - bias;
-        let (r, g, b) = turbo_rgb4(token, y4, cb4, cr4);
-        for i in 0..4 {
-            let idx = (b0 + i) * 4;
-            if swap_rb {
-                rgba[idx] = b[i] as u8;
-                rgba[idx + 1] = g[i] as u8;
-                rgba[idx + 2] = r[i] as u8;
-            } else {
-                rgba[idx] = r[i] as u8;
-                rgba[idx + 1] = g[i] as u8;
-                rgba[idx + 2] = b[i] as u8;
-            }
-            rgba[idx + 3] = 255;
-        }
-    }
-    for i in (chunks * 4)..len {
-        let (r, g, b) = turbo_rgb_pixel(
-            i32::from(y_plane[i]),
-            i32::from(cb_plane[i]) - 128,
-            i32::from(cr_plane[i]) - 128,
-        );
-        let idx = i * 4;
-        if swap_rb {
-            rgba[idx] = b;
-            rgba[idx + 1] = g;
-            rgba[idx + 2] = r;
-        } else {
-            rgba[idx] = r;
-            rgba[idx + 1] = g;
-            rgba[idx + 2] = b;
-        }
-        rgba[idx + 3] = 255;
-    }
-}
-
-/// Turbo-exact fused box-upsample + YCbCr→RGB (half-res chroma → 3bpp).
-/// Selected by the `turbo` arg in [`fused_h2v2_box_ycbcr_to_rgb_u8`].
-#[magetypes(v3, neon, wasm128, scalar)]
-fn fused_h2v2_box_ycbcr_to_rgb_u8_turbo_impl(
-    token: Token,
-    y_row: &[i16],
-    cb_row: &[i16],
-    cr_row: &[i16],
-    rgb: &mut [u8],
-    width: usize,
-) {
-    #[allow(non_camel_case_types)]
-    type i32x4 = GenericI32x4<Token>;
-    let bias = i32x4::splat(token, 128);
-    let chroma_width = width.div_ceil(2);
-    let safe_chroma = if width >= 8 { (width - 7) / 2 } else { 0 };
-    let chunks = safe_chroma / 4;
-    for chunk in 0..chunks {
-        let cx_base = chunk * 4;
-        let cb4 = i32x4::from_array(
-            token,
-            [
-                i32::from(cb_row[cx_base]),
-                i32::from(cb_row[cx_base + 1]),
-                i32::from(cb_row[cx_base + 2]),
-                i32::from(cb_row[cx_base + 3]),
-            ],
-        ) - bias;
-        let cr4 = i32x4::from_array(
-            token,
-            [
-                i32::from(cr_row[cx_base]),
-                i32::from(cr_row[cx_base + 1]),
-                i32::from(cr_row[cx_base + 2]),
-                i32::from(cr_row[cx_base + 3]),
-            ],
-        ) - bias;
-        let px_base = cx_base * 2;
-        let y_left = i32x4::from_array(
-            token,
-            [
-                i32::from(y_row[px_base]),
-                i32::from(y_row[px_base + 2]),
-                i32::from(y_row[px_base + 4]),
-                i32::from(y_row[px_base + 6]),
-            ],
-        );
-        let (rl, gl, bl) = turbo_rgb4(token, y_left, cb4, cr4);
-        let y_right = i32x4::from_array(
-            token,
-            [
-                i32::from(y_row[px_base + 1]),
-                i32::from(y_row[px_base + 3]),
-                i32::from(y_row[px_base + 5]),
-                i32::from(y_row[px_base + 7]),
-            ],
-        );
-        let (rr, gr, br) = turbo_rgb4(token, y_right, cb4, cr4);
-        for i in 0..4 {
-            let idx = (px_base + i * 2) * 3;
-            rgb[idx] = rl[i] as u8;
-            rgb[idx + 1] = gl[i] as u8;
-            rgb[idx + 2] = bl[i] as u8;
-            rgb[idx + 3] = rr[i] as u8;
-            rgb[idx + 4] = gr[i] as u8;
-            rgb[idx + 5] = br[i] as u8;
-        }
-    }
-    for cx in (chunks * 4)..chroma_width {
-        let cb_c = i32::from(cb_row[cx]) - 128;
-        let cr_c = i32::from(cr_row[cx]) - 128;
-        let px0 = cx * 2;
-        if px0 < width {
-            let (r, g, b) = turbo_rgb_pixel(i32::from(y_row[px0]), cb_c, cr_c);
-            let idx = px0 * 3;
-            rgb[idx] = r;
-            rgb[idx + 1] = g;
-            rgb[idx + 2] = b;
-        }
-        let px1 = cx * 2 + 1;
-        if px1 < width {
-            let (r, g, b) = turbo_rgb_pixel(i32::from(y_row[px1]), cb_c, cr_c);
-            let idx = px1 * 3;
-            rgb[idx] = r;
-            rgb[idx + 1] = g;
-            rgb[idx + 2] = b;
-        }
-    }
 }
 
 /// Fast integer YCbCr to RGB conversion for 16 pixels.
@@ -1709,51 +1470,44 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     debug_assert_eq!(y_plane.len(), cr_plane.len());
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
-    // libjpeg-turbo-exact color (IdctMethod::Libjpeg). magetypes-generic
-    // path; the default below keeps its hand-tuned AVX-512/AVX2 kernels.
-    if turbo {
-        incant!(ycbcr_planes_i16_to_rgb_u8_turbo_impl(
-            y_plane, cb_plane, cr_plane, rgb
-        ));
-        return;
-    }
-
     let len = y_plane.len();
 
-    // Use AVX-512 path when available (16 pixels with wider intermediates, fewer instructions)
+    // `turbo` selects libjpeg-turbo-exact 16-bit color (IdctMethod::Libjpeg)
+    // vs the default zune-style 14-bit. The hand kernels are monomorphized on
+    // it as `const TURBO`, so both modes share the same SIMD interleave and
+    // `turbo == false` const-folds to the original code (byte-identical).
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V4Token::summon() {
-            ycbcr_planes_i16_to_rgb_u8_avx512(token, y_plane, cb_plane, cr_plane, rgb);
+            if turbo {
+                ycbcr_planes_i16_to_rgb_u8_avx512::<true>(token, y_plane, cb_plane, cr_plane, rgb);
+            } else {
+                ycbcr_planes_i16_to_rgb_u8_avx512::<false>(token, y_plane, cb_plane, cr_plane, rgb);
+            }
             return;
         }
-    }
-
-    // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
-    #[cfg(target_arch = "x86_64")]
-    {
         if let Some(token) = archmage::X64V3Token::summon() {
-            ycbcr_planes_i16_to_rgb_u8_avx2(token, y_plane, cb_plane, cr_plane, rgb);
+            if turbo {
+                ycbcr_planes_i16_to_rgb_u8_avx2::<true>(token, y_plane, cb_plane, cr_plane, rgb);
+            } else {
+                ycbcr_planes_i16_to_rgb_u8_avx2::<false>(token, y_plane, cb_plane, cr_plane, rgb);
+            }
             return;
         }
     }
 
-    // Scalar fallback - process directly without temp allocations
+    // Scalar fallback (non-x86, or x86 without AVX2).
     for i in 0..len {
-        let y_val = i32::from(y_plane[i]);
-        let cb_val = i32::from(cb_plane[i]) - 128;
-        let cr_val = i32::from(cr_plane[i]) - 128;
-
-        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-
-        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
-        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
-        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
-
+        let (r, g, b) = ycc_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+            turbo,
+        );
         let idx = i * 3;
-        rgb[idx] = r.clamp(0, 255) as u8;
-        rgb[idx + 1] = g.clamp(0, 255) as u8;
-        rgb[idx + 2] = b.clamp(0, 255) as u8;
+        rgb[idx] = r;
+        rgb[idx + 1] = g;
+        rgb[idx + 2] = b;
     }
 }
 
@@ -1761,7 +1515,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 /// Processes 16 pixels at a time with direct pointer loads.
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn ycbcr_planes_i16_to_rgb_u8_avx2(
+fn ycbcr_planes_i16_to_rgb_u8_avx2<const TURBO: bool>(
     _token: archmage::X64V3Token,
     y_plane: &[i16],
     cb_plane: &[i16],
@@ -1772,14 +1526,27 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
 
     let len = y_plane.len();
 
+    // `TURBO` selects libjpeg-turbo's 16-bit constants + a >>16 descale;
+    // it const-folds, so `TURBO == false` is byte-identical to the 14-bit
+    // original. `srai!` picks the shift the same way.
+    macro_rules! srai {
+        ($x:expr) => {{
+            if TURBO {
+                _mm256_srai_epi32($x, 16)
+            } else {
+                _mm256_srai_epi32($x, 14)
+            }
+        }};
+    }
+
     // Preload constants outside the loop
     let bias = _mm256_set1_epi16(128);
-    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
-    let rounding = _mm256_set1_epi32(YUV_ROUND);
-    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
-    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
-    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
-    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let y_coeff = _mm256_set1_epi32(if TURBO { TURBO_Y_CF } else { Y_CF_INT });
+    let rounding = _mm256_set1_epi32(if TURBO { TURBO_ROUND } else { YUV_ROUND });
+    let cr_to_r = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_R } else { CR_TO_R_INT });
+    let cr_to_g = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_G } else { CR_TO_G_INT });
+    let cb_to_g = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_G } else { CB_TO_G_INT });
+    let cb_to_b = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_B } else { CB_TO_B_INT });
     let zero = _mm256_setzero_si256();
 
     // Shuffle masks for RGB interleaving
@@ -1839,46 +1606,40 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let cr_hi = _mm256_unpackhi_epi16(cr_centered, cr_sign);
 
         // R = (y_scaled + cr * CR_TO_R) >> 14
-        let r_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo, cr_to_r)),
-            14,
-        );
-        let r_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi, cr_to_r)),
-            14,
-        );
+        let r_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cr_lo, cr_to_r)
+        ));
+        let r_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cr_hi, cr_to_r)
+        ));
 
         // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
-        let g_lo = _mm256_srai_epi32(
+        let g_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
             _mm256_add_epi32(
-                y_scaled_lo,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_lo, cr_to_g),
-                    _mm256_mullo_epi32(cb_lo, cb_to_g),
-                ),
+                _mm256_mullo_epi32(cr_lo, cr_to_g),
+                _mm256_mullo_epi32(cb_lo, cb_to_g),
             ),
-            14,
-        );
-        let g_hi = _mm256_srai_epi32(
+        ));
+        let g_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
             _mm256_add_epi32(
-                y_scaled_hi,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_hi, cr_to_g),
-                    _mm256_mullo_epi32(cb_hi, cb_to_g),
-                ),
+                _mm256_mullo_epi32(cr_hi, cr_to_g),
+                _mm256_mullo_epi32(cb_hi, cb_to_g),
             ),
-            14,
-        );
+        ));
 
         // B = (y_scaled + cb * CB_TO_B) >> 14
-        let b_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo, cb_to_b)),
-            14,
-        );
-        let b_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi, cb_to_b)),
-            14,
-        );
+        let b_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cb_lo, cb_to_b)
+        ));
+        let b_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cb_hi, cb_to_b)
+        ));
 
         // Pack i32 -> i16 -> u8
         let r_16 = _mm256_packs_epi32(r_lo, r_hi);
@@ -1913,20 +1674,17 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
     // Handle remainder with scalar
     let remainder_start = len - remainder_len;
     for i in remainder_start..len {
-        let y_val = i32::from(y_plane[i]);
-        let cb_val = i32::from(cb_plane[i]) - 128;
-        let cr_val = i32::from(cr_plane[i]) - 128;
-
-        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-
-        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
-        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
-        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+        let (r, g, b) = ycc_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+            TURBO,
+        );
 
         let idx = i * 3;
-        rgb[idx] = r.clamp(0, 255) as u8;
-        rgb[idx + 1] = g.clamp(0, 255) as u8;
-        rgb[idx + 2] = b.clamp(0, 255) as u8;
+        rgb[idx] = r;
+        rgb[idx + 1] = g;
+        rgb[idx + 2] = b;
     }
 }
 
@@ -1946,34 +1704,32 @@ pub fn ycbcr_planes_i16_to_xrgba_u8(
     debug_assert_eq!(y_plane.len(), cr_plane.len());
     debug_assert_eq!(rgba.len(), y_plane.len() * 4);
 
-    // libjpeg-turbo-exact color (IdctMethod::Libjpeg); default keeps AVX2.
-    if turbo {
-        incant!(ycbcr_planes_i16_to_xrgba_u8_turbo_impl(
-            y_plane, cb_plane, cr_plane, rgba, swap_rb
-        ));
-        return;
-    }
-
+    // `turbo` selects libjpeg-turbo 16-bit color; the avx2 kernel is
+    // monomorphized on it (const-folds, default byte-identical).
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
-            ycbcr_planes_i16_to_xrgba_u8_avx2(token, y_plane, cb_plane, cr_plane, rgba, swap_rb);
+            if turbo {
+                ycbcr_planes_i16_to_xrgba_u8_avx2::<true>(
+                    token, y_plane, cb_plane, cr_plane, rgba, swap_rb,
+                );
+            } else {
+                ycbcr_planes_i16_to_xrgba_u8_avx2::<false>(
+                    token, y_plane, cb_plane, cr_plane, rgba, swap_rb,
+                );
+            }
             return;
         }
     }
 
     let len = y_plane.len();
     for i in 0..len {
-        let y_val = i32::from(y_plane[i]);
-        let cb_val = i32::from(cb_plane[i]) - 128;
-        let cr_val = i32::from(cr_plane[i]) - 128;
-
-        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-        let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
-        let g =
-            ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
-        let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
-
+        let (r, g, b) = ycc_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+            turbo,
+        );
         let idx = i * 4;
         if swap_rb {
             rgba[idx] = b;
@@ -1995,7 +1751,7 @@ pub fn ycbcr_planes_i16_to_xrgba_u8(
 /// unpacks instead of the 3-byte shuffle sequence, which is cheaper for 4bpp.
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn ycbcr_planes_i16_to_xrgba_u8_avx2(
+fn ycbcr_planes_i16_to_xrgba_u8_avx2<const TURBO: bool>(
     _token: archmage::X64V3Token,
     y_plane: &[i16],
     cb_plane: &[i16],
@@ -2005,15 +1761,25 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2(
 ) {
     use core::arch::x86_64::*;
 
+    macro_rules! srai {
+        ($x:expr) => {{
+            if TURBO {
+                _mm256_srai_epi32($x, 16)
+            } else {
+                _mm256_srai_epi32($x, 14)
+            }
+        }};
+    }
+
     let len = y_plane.len();
 
     let bias = _mm256_set1_epi16(128);
-    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
-    let rounding = _mm256_set1_epi32(YUV_ROUND);
-    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
-    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
-    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
-    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let y_coeff = _mm256_set1_epi32(if TURBO { TURBO_Y_CF } else { Y_CF_INT });
+    let rounding = _mm256_set1_epi32(if TURBO { TURBO_ROUND } else { YUV_ROUND });
+    let cr_to_r = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_R } else { CR_TO_R_INT });
+    let cr_to_g = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_G } else { CR_TO_G_INT });
+    let cb_to_g = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_G } else { CB_TO_G_INT });
+    let cb_to_b = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_B } else { CB_TO_B_INT });
     let zero = _mm256_setzero_si256();
     let alpha_sse = _mm_set1_epi8(-1_i8); // 0xFF
 
@@ -2046,42 +1812,36 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2(
         let cr_lo = _mm256_unpacklo_epi16(cr_centered, cr_sign);
         let cr_hi = _mm256_unpackhi_epi16(cr_centered, cr_sign);
 
-        let r_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo, cr_to_r)),
-            14,
-        );
-        let r_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi, cr_to_r)),
-            14,
-        );
-        let g_lo = _mm256_srai_epi32(
+        let r_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cr_lo, cr_to_r)
+        ));
+        let r_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cr_hi, cr_to_r)
+        ));
+        let g_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
             _mm256_add_epi32(
-                y_scaled_lo,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_lo, cr_to_g),
-                    _mm256_mullo_epi32(cb_lo, cb_to_g),
-                ),
+                _mm256_mullo_epi32(cr_lo, cr_to_g),
+                _mm256_mullo_epi32(cb_lo, cb_to_g),
             ),
-            14,
-        );
-        let g_hi = _mm256_srai_epi32(
+        ));
+        let g_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
             _mm256_add_epi32(
-                y_scaled_hi,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_hi, cr_to_g),
-                    _mm256_mullo_epi32(cb_hi, cb_to_g),
-                ),
+                _mm256_mullo_epi32(cr_hi, cr_to_g),
+                _mm256_mullo_epi32(cb_hi, cb_to_g),
             ),
-            14,
-        );
-        let b_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo, cb_to_b)),
-            14,
-        );
-        let b_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi, cb_to_b)),
-            14,
-        );
+        ));
+        let b_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cb_lo, cb_to_b)
+        ));
+        let b_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cb_hi, cb_to_b)
+        ));
 
         // Pack i32 → i16 (signed saturating). Per-lane packs give us:
         //   r_16 lane0 = [R0..R3 (from r_lo lo), R4..R7 (from r_hi lo)]  → [R0..R7]
@@ -2131,14 +1891,12 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2(
     // Scalar remainder.
     let remainder_start = len - remainder_len;
     for i in remainder_start..len {
-        let y_val = i32::from(y_plane[i]);
-        let cb_val = i32::from(cb_plane[i]) - 128;
-        let cr_val = i32::from(cr_plane[i]) - 128;
-        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-        let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
-        let g =
-            ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
-        let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
+        let (r, g, b) = ycc_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+            TURBO,
+        );
         let idx = i * 4;
         if swap_rb {
             rgba[idx] = b;
@@ -2162,7 +1920,7 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2(
 /// - `_mm512_cvtsepi32_epi16` packs cleanly without permute fixup
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn ycbcr_planes_i16_to_rgb_u8_avx512(
+fn ycbcr_planes_i16_to_rgb_u8_avx512<const TURBO: bool>(
     _token: archmage::X64V4Token,
     y_plane: &[i16],
     cb_plane: &[i16],
@@ -2171,16 +1929,26 @@ fn ycbcr_planes_i16_to_rgb_u8_avx512(
 ) {
     use core::arch::x86_64::*;
 
+    macro_rules! srai {
+        ($x:expr) => {{
+            if TURBO {
+                _mm512_srai_epi32($x, 16)
+            } else {
+                _mm512_srai_epi32($x, 14)
+            }
+        }};
+    }
+
     let len = y_plane.len();
     let chunks = len / 16;
 
-    // Preload 512-bit constants
-    let y_coeff = _mm512_set1_epi32(Y_CF_INT);
-    let rounding = _mm512_set1_epi32(YUV_ROUND);
-    let cr_to_r = _mm512_set1_epi32(CR_TO_R_INT);
-    let cr_to_g = _mm512_set1_epi32(CR_TO_G_INT);
-    let cb_to_g = _mm512_set1_epi32(CB_TO_G_INT);
-    let cb_to_b = _mm512_set1_epi32(CB_TO_B_INT);
+    // Preload 512-bit constants (TURBO selects libjpeg 16-bit; const-folds).
+    let y_coeff = _mm512_set1_epi32(if TURBO { TURBO_Y_CF } else { Y_CF_INT });
+    let rounding = _mm512_set1_epi32(if TURBO { TURBO_ROUND } else { YUV_ROUND });
+    let cr_to_r = _mm512_set1_epi32(if TURBO { TURBO_CR_TO_R } else { CR_TO_R_INT });
+    let cr_to_g = _mm512_set1_epi32(if TURBO { TURBO_CR_TO_G } else { CR_TO_G_INT });
+    let cb_to_g = _mm512_set1_epi32(if TURBO { TURBO_CB_TO_G } else { CB_TO_G_INT });
+    let cb_to_b = _mm512_set1_epi32(if TURBO { TURBO_CB_TO_B } else { CB_TO_B_INT });
     let bias_16 = _mm256_set1_epi16(128);
     let zero_256 = _mm256_setzero_si256();
 
@@ -2234,28 +2002,25 @@ fn ycbcr_planes_i16_to_rgb_u8_avx512(
         let y_scaled = _mm512_add_epi32(_mm512_mullo_epi32(y_32, y_coeff), rounding);
 
         // R = (y_scaled + cr * CR_TO_R) >> 14
-        let r_32 = _mm512_srai_epi32(
-            _mm512_add_epi32(y_scaled, _mm512_mullo_epi32(cr_32, cr_to_r)),
-            14,
-        );
+        let r_32 = srai!(_mm512_add_epi32(
+            y_scaled,
+            _mm512_mullo_epi32(cr_32, cr_to_r)
+        ));
 
         // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
-        let g_32 = _mm512_srai_epi32(
+        let g_32 = srai!(_mm512_add_epi32(
+            y_scaled,
             _mm512_add_epi32(
-                y_scaled,
-                _mm512_add_epi32(
-                    _mm512_mullo_epi32(cr_32, cr_to_g),
-                    _mm512_mullo_epi32(cb_32, cb_to_g),
-                ),
+                _mm512_mullo_epi32(cr_32, cr_to_g),
+                _mm512_mullo_epi32(cb_32, cb_to_g),
             ),
-            14,
-        );
+        ));
 
         // B = (y_scaled + cb * CB_TO_B) >> 14
-        let b_32 = _mm512_srai_epi32(
-            _mm512_add_epi32(y_scaled, _mm512_mullo_epi32(cb_32, cb_to_b)),
-            14,
-        );
+        let b_32 = srai!(_mm512_add_epi32(
+            y_scaled,
+            _mm512_mullo_epi32(cb_32, cb_to_b)
+        ));
 
         // Pack i32 → i16 with saturation (512→256, naturally ordered!)
         let r_16 = _mm512_cvtsepi32_epi16(r_32);
@@ -2293,20 +2058,17 @@ fn ycbcr_planes_i16_to_rgb_u8_avx512(
     // Handle remainder with scalar
     let remainder_start = chunks * 16;
     for i in remainder_start..len {
-        let y_val = i32::from(y_plane[i]);
-        let cb_val = i32::from(cb_plane[i]) - 128;
-        let cr_val = i32::from(cr_plane[i]) - 128;
-
-        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-
-        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
-        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
-        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+        let (r, g, b) = ycc_rgb_pixel(
+            i32::from(y_plane[i]),
+            i32::from(cb_plane[i]) - 128,
+            i32::from(cr_plane[i]) - 128,
+            TURBO,
+        );
 
         let idx = i * 3;
-        rgb[idx] = r.clamp(0, 255) as u8;
-        rgb[idx + 1] = g.clamp(0, 255) as u8;
-        rgb[idx + 2] = b.clamp(0, 255) as u8;
+        rgb[idx] = r;
+        rgb[idx + 1] = g;
+        rgb[idx + 2] = b;
     }
 }
 
@@ -2496,531 +2258,56 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
     debug_assert!(cr_row.len() >= (width + 1) / 2);
     debug_assert!(rgb.len() >= width * 3);
 
-    // libjpeg-turbo-exact color (IdctMethod::Libjpeg); default keeps AVX2.
+    // x86: const-generic AVX2 for both modes (turbo const-folds, default
+    // byte-identical). The hand kernel handles the box upsample + convert.
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            if turbo {
+                fused_h2v2_box_ycbcr_to_rgb_u8_avx2::<true>(
+                    token, y_row, cb_row, cr_row, rgb, width,
+                );
+            } else {
+                fused_h2v2_box_ycbcr_to_rgb_u8_avx2::<false>(
+                    token, y_row, cb_row, cr_row, rgb, width,
+                );
+            }
+            return;
+        }
+    }
+
     if turbo {
-        incant!(fused_h2v2_box_ycbcr_to_rgb_u8_turbo_impl(
-            y_row, cb_row, cr_row, rgb, width
-        ));
+        // Non-x86 turbo: scalar box upsample + convert. (Default non-x86 uses
+        // the magetypes generic below; an ARM/WASM turbo SIMD path is a
+        // follow-up — the broader non-x86 plane-converter cliff is tracked
+        // separately.)
+        for px in 0..width {
+            let c = px / 2;
+            let (r, g, b) = ycc_rgb_pixel(
+                i32::from(y_row[px]),
+                i32::from(cb_row[c]) - 128,
+                i32::from(cr_row[c]) - 128,
+                true,
+            );
+            let idx = px * 3;
+            rgb[idx] = r;
+            rgb[idx + 1] = g;
+            rgb[idx + 2] = b;
+        }
         return;
     }
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = archmage::X64V3Token::summon() {
-            fused_h2v2_box_ycbcr_to_rgb_u8_avx2(token, y_row, cb_row, cr_row, rgb, width);
-            return;
-        }
-    }
-
-    // Magetypes generic: process 4 chroma pixels → 8 output pixels per pass
+    // Non-x86 default: magetypes generic (4 chroma px → 8 output px per pass).
     incant!(fused_h2v2_box_ycbcr_to_rgb_u8_generic(
         y_row, cb_row, cr_row, rgb, width
     ));
-}
-
-/// Magetypes-generic fused h-fancy upsample + YCbCr→RGB.
-///
-/// Triangle filter for chroma (scalar, has neighbor dependencies), then
-/// vectorized i32x4 color conversion for batches of 4 output pixels.
-#[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
-fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_generic(
-    token: Token,
-    y_row: &[i16],
-    cb_row: &[i16],
-    cr_row: &[i16],
-    rgb: &mut [u8],
-    width: usize,
-) {
-    #[allow(non_camel_case_types)]
-    type i32x4 = GenericI32x4<Token>;
-
-    let y_coeff = i32x4::splat(token, Y_CF_INT);
-    let rounding = i32x4::splat(token, YUV_ROUND);
-    let zero = i32x4::zero(token);
-    let max255 = i32x4::splat(token, 255);
-
-    let cr_to_r = i32x4::splat(token, CR_TO_R_INT);
-    let cr_to_g = i32x4::splat(token, CR_TO_G_INT);
-    let cb_to_g = i32x4::splat(token, CB_TO_G_INT);
-    let cb_to_b = i32x4::splat(token, CB_TO_B_INT);
-
-    let chroma_width = (width + 1) / 2;
-
-    // Precompute filtered chroma for all pixels (scalar — neighbor dependencies)
-    // Buffer: [cb_left, cr_left, cb_right, cr_right] per chroma pixel, already bias-removed
-    // We accumulate 4 pixel pairs (8 output pixels) then batch the color conversion
-    let mut cb_buf = [0i32; 8]; // left[0..4], right[0..4]
-    let mut cr_buf = [0i32; 8];
-    let mut y_buf = [0i32; 8]; // left[0..4], right[0..4]
-
-    // Each chunk reads y_row[cx*2+1] for cx up to cx_base+3, so needs px_base+7 < width.
-    let safe_chroma = if width >= 8 { (width - 7) / 2 } else { 0 };
-    let chunks = safe_chroma / 4;
-    for chunk in 0..chunks {
-        let cx_base = chunk * 4;
-        // Compute triangle-filtered chroma for 4 chroma pixels
-        for j in 0..4 {
-            let cx = cx_base + j;
-            let curr_cb = i32::from(cb_row[cx]);
-            let curr_cr = i32::from(cr_row[cx]);
-            let left_cb = if cx > 0 {
-                i32::from(cb_row[cx - 1])
-            } else {
-                curr_cb
-            };
-            let left_cr = if cx > 0 {
-                i32::from(cr_row[cx - 1])
-            } else {
-                curr_cr
-            };
-            let right_cb = if cx + 1 < chroma_width {
-                i32::from(cb_row[cx + 1])
-            } else {
-                curr_cb
-            };
-            let right_cr = if cx + 1 < chroma_width {
-                i32::from(cr_row[cx + 1])
-            } else {
-                curr_cr
-            };
-
-            cb_buf[j] = ((3 * curr_cb + left_cb + 2) >> 2) - 128; // left pixel
-            cr_buf[j] = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
-            cb_buf[4 + j] = ((3 * curr_cb + right_cb + 2) >> 2) - 128; // right pixel
-            cr_buf[4 + j] = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
-
-            let px_base = cx * 2;
-            y_buf[j] = i32::from(y_row[px_base]); // left Y
-            y_buf[4 + j] = i32::from(y_row[px_base + 1]); // right Y
-        }
-
-        // Vectorized color conversion: 4 left pixels, then 4 right pixels
-        for half in 0..2u32 {
-            let off = (half * 4) as usize;
-            let cb4 = i32x4::from_array(
-                token,
-                [
-                    cb_buf[off],
-                    cb_buf[off + 1],
-                    cb_buf[off + 2],
-                    cb_buf[off + 3],
-                ],
-            );
-            let cr4 = i32x4::from_array(
-                token,
-                [
-                    cr_buf[off],
-                    cr_buf[off + 1],
-                    cr_buf[off + 2],
-                    cr_buf[off + 3],
-                ],
-            );
-            let y4 = i32x4::from_array(
-                token,
-                [y_buf[off], y_buf[off + 1], y_buf[off + 2], y_buf[off + 3]],
-            );
-
-            let ys = y4 * y_coeff + rounding;
-            let r = (ys + cr4 * cr_to_r)
-                .shr_arithmetic::<14>()
-                .max(zero)
-                .min(max255);
-            let g = (ys + cr4 * cr_to_g + cb4 * cb_to_g)
-                .shr_arithmetic::<14>()
-                .max(zero)
-                .min(max255);
-            let b = (ys + cb4 * cb_to_b)
-                .shr_arithmetic::<14>()
-                .max(zero)
-                .min(max255);
-
-            let ra = r.to_array();
-            let ga = g.to_array();
-            let ba = b.to_array();
-
-            for j in 0..4 {
-                let cx = cx_base + j;
-                let px = cx * 2 + half as usize;
-                if px < width {
-                    let idx = px * 3;
-                    rgb[idx] = ra[j] as u8;
-                    rgb[idx + 1] = ga[j] as u8;
-                    rgb[idx + 2] = ba[j] as u8;
-                }
-            }
-        }
-    }
-
-    // Scalar remainder
-    for cx in (chunks * 4)..chroma_width {
-        let curr_cb = i32::from(cb_row[cx]);
-        let curr_cr = i32::from(cr_row[cx]);
-        let left_cb = if cx > 0 {
-            i32::from(cb_row[cx - 1])
-        } else {
-            curr_cb
-        };
-        let left_cr = if cx > 0 {
-            i32::from(cr_row[cx - 1])
-        } else {
-            curr_cr
-        };
-        let right_cb = if cx + 1 < chroma_width {
-            i32::from(cb_row[cx + 1])
-        } else {
-            curr_cb
-        };
-        let right_cr = if cx + 1 < chroma_width {
-            i32::from(cr_row[cx + 1])
-        } else {
-            curr_cr
-        };
-
-        let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
-        let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
-        let px0 = cx * 2;
-        if px0 < width {
-            let y_val = i32::from(y_row[px0]);
-            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-            let r = (y_scaled + cr_l * CR_TO_R_INT) >> 14;
-            let g = (y_scaled + cr_l * CR_TO_G_INT + cb_l * CB_TO_G_INT) >> 14;
-            let b = (y_scaled + cb_l * CB_TO_B_INT) >> 14;
-            let idx = px0 * 3;
-            rgb[idx] = r.clamp(0, 255) as u8;
-            rgb[idx + 1] = g.clamp(0, 255) as u8;
-            rgb[idx + 2] = b.clamp(0, 255) as u8;
-        }
-        let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
-        let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
-        let px1 = cx * 2 + 1;
-        if px1 < width {
-            let y_val = i32::from(y_row[px1]);
-            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-            let r = (y_scaled + cr_r * CR_TO_R_INT) >> 14;
-            let g = (y_scaled + cr_r * CR_TO_G_INT + cb_r * CB_TO_G_INT) >> 14;
-            let b = (y_scaled + cb_r * CB_TO_B_INT) >> 14;
-            let idx = px1 * 3;
-            rgb[idx] = r.clamp(0, 255) as u8;
-            rgb[idx + 1] = g.clamp(0, 255) as u8;
-            rgb[idx + 2] = b.clamp(0, 255) as u8;
-        }
-    }
-}
-
-/// Fused horizontal-fancy + vertical-box 4:2:0 upsample + YCbCr→RGB.
-///
-/// Vertical: box (duplicate rows). Horizontal: triangle (3:1 bilinear).
-/// This is the hybrid "h-fancy" mode — no vertical context needed, so
-/// each MCU row is independent (trivially parallelizable), but horizontal
-/// chroma transitions are smoothed instead of stairstepped.
-///
-/// Takes half-width chroma rows (already vertically duplicated by caller).
-pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
-    y_row: &[i16],
-    cb_row: &[i16],
-    cr_row: &[i16],
-    rgb: &mut [u8],
-    width: usize,
-) {
-    debug_assert!(y_row.len() >= width);
-    debug_assert!(cb_row.len() >= (width + 1) / 2);
-    debug_assert!(cr_row.len() >= (width + 1) / 2);
-    debug_assert!(rgb.len() >= width * 3);
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = archmage::X64V3Token::summon() {
-            fused_h2v2_hfancy_ycbcr_to_rgb_u8_avx2(token, y_row, cb_row, cr_row, rgb, width);
-            return;
-        }
-    }
-
-    // Magetypes generic: triangle filter on chroma, then i32x4 color conversion
-    incant!(fused_h2v2_hfancy_ycbcr_to_rgb_u8_generic(
-        y_row, cb_row, cr_row, rgb, width
-    ));
-}
-
-/// AVX2 fused h-fancy 4:2:0 upsample + YCbCr→RGB.
-/// Horizontal: triangle filter (3:1 bilinear). Vertical: box (caller duplicates).
-/// Processes 16 output pixels per iteration (8 chroma pixels → 16 output pixels).
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
-fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_avx2(
-    _token: archmage::X64V3Token,
-    y_row: &[i16],
-    cb_row: &[i16],
-    cr_row: &[i16],
-    rgb: &mut [u8],
-    width: usize,
-) {
-    use core::arch::x86_64::*;
-
-    let chroma_width = (width + 1) / 2;
-    let chunks = width / 16; // 16 output pixels = 8 chroma samples per chunk
-
-    // Preload constants
-    let bias = _mm256_set1_epi16(128);
-    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
-    let rounding = _mm256_set1_epi32(YUV_ROUND);
-    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
-    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
-    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
-    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
-    let zero = _mm256_setzero_si256();
-    let three = _mm_set1_epi16(3);
-    let round2 = _mm_set1_epi16(2);
-
-    // RGB interleave masks
-    let sh_r = _mm256_setr_epi8(
-        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14,
-        9, 4, 15, 10, 5,
-    );
-    let sh_g = _mm256_setr_epi8(
-        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
-        14, 9, 4, 15, 10,
-    );
-    let sh_b = _mm256_setr_epi8(
-        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
-        3, 14, 9, 4, 15,
-    );
-    let m0 = _mm256_setr_epi8(
-        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
-        0, 0, -1, 0, 0,
-    );
-    let m1 = _mm256_setr_epi8(
-        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
-        -1, 0, 0, -1, 0,
-    );
-
-    // Track the last chroma value from the previous chunk for left-neighbor lookback
-    let mut prev_cb = cb_row[0]; // Edge replication for first chunk
-    let mut prev_cr = cr_row[0];
-
-    for chunk in 0..chunks {
-        let c_offset = chunk * 8;
-        let y_offset = chunk * 16;
-        let out_offset = chunk * 48;
-
-        // Load 16 Y values
-        let y_vec = safe_simd::_mm256_loadu_si256(
-            <&[i16; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
-        );
-
-        // Load 8 chroma values
-        let cb_curr = safe_simd::_mm_loadu_si128(
-            <&[i16; 8]>::try_from(&cb_row[c_offset..c_offset + 8]).unwrap(),
-        );
-        let cr_curr = safe_simd::_mm_loadu_si128(
-            <&[i16; 8]>::try_from(&cr_row[c_offset..c_offset + 8]).unwrap(),
-        );
-
-        // Create left-neighbor vector: [prev_last, c0, c1, c2, c3, c4, c5, c6]
-        let cb_left = _mm_insert_epi16::<0>(_mm_slli_si128::<2>(cb_curr), prev_cb as i32);
-        let cr_left = _mm_insert_epi16::<0>(_mm_slli_si128::<2>(cr_curr), prev_cr as i32);
-
-        // Create right-neighbor vector: [c1, c2, c3, c4, c5, c6, c7, next_first]
-        let next_cb = if c_offset + 8 < chroma_width {
-            cb_row[c_offset + 8]
-        } else {
-            cb_row[c_offset + 7] // Edge replication
-        };
-        let next_cr = if c_offset + 8 < chroma_width {
-            cr_row[c_offset + 8]
-        } else {
-            cr_row[c_offset + 7]
-        };
-        let cb_right = _mm_insert_epi16::<7>(_mm_srli_si128::<2>(cb_curr), next_cb as i32);
-        let cr_right = _mm_insert_epi16::<7>(_mm_srli_si128::<2>(cr_curr), next_cr as i32);
-
-        // Save last value for next chunk's left neighbor
-        prev_cb = cb_row[c_offset + 7];
-        prev_cr = cr_row[c_offset + 7];
-
-        // Compute bilinear interpolation:
-        // interp_left = (3*curr + left + 2) >> 2  (for even output pixels)
-        // interp_right = (3*curr + right + 2) >> 2 (for odd output pixels)
-        let three_cb = _mm_mullo_epi16(cb_curr, three);
-        let three_cr = _mm_mullo_epi16(cr_curr, three);
-
-        let cb_interp_l =
-            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cb, cb_left), round2));
-        let cr_interp_l =
-            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cr, cr_left), round2));
-        let cb_interp_r =
-            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cb, cb_right), round2));
-        let cr_interp_r =
-            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cr, cr_right), round2));
-
-        // Interleave left and right: [L0, R0, L1, R1, ...] → 16 chroma values
-        let cb_lo = _mm_unpacklo_epi16(cb_interp_l, cb_interp_r);
-        let cb_hi = _mm_unpackhi_epi16(cb_interp_l, cb_interp_r);
-        let cb_vec = _mm256_set_m128i(cb_hi, cb_lo);
-
-        let cr_lo = _mm_unpacklo_epi16(cr_interp_l, cr_interp_r);
-        let cr_hi = _mm_unpackhi_epi16(cr_interp_l, cr_interp_r);
-        let cr_vec = _mm256_set_m128i(cr_hi, cr_lo);
-
-        // Subtract 128 from Cb and Cr
-        let cb_centered = _mm256_sub_epi16(cb_vec, bias);
-        let cr_centered = _mm256_sub_epi16(cr_vec, bias);
-
-        // Zero-extend Y to 32-bit
-        let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
-        let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
-
-        // y_scaled = y * Y_CF + rounding
-        let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
-        let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
-
-        // Sign-extend Cb/Cr to 32-bit
-        let cb_sign = _mm256_srai_epi16(cb_centered, 15);
-        let cr_sign = _mm256_srai_epi16(cr_centered, 15);
-        let cb_lo32 = _mm256_unpacklo_epi16(cb_centered, cb_sign);
-        let cb_hi32 = _mm256_unpackhi_epi16(cb_centered, cb_sign);
-        let cr_lo32 = _mm256_unpacklo_epi16(cr_centered, cr_sign);
-        let cr_hi32 = _mm256_unpackhi_epi16(cr_centered, cr_sign);
-
-        // R = (y_scaled + cr * CR_TO_R) >> 14
-        let r_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo32, cr_to_r)),
-            14,
-        );
-        let r_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi32, cr_to_r)),
-            14,
-        );
-
-        // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
-        let g_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(
-                y_scaled_lo,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_lo32, cr_to_g),
-                    _mm256_mullo_epi32(cb_lo32, cb_to_g),
-                ),
-            ),
-            14,
-        );
-        let g_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(
-                y_scaled_hi,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_hi32, cr_to_g),
-                    _mm256_mullo_epi32(cb_hi32, cb_to_g),
-                ),
-            ),
-            14,
-        );
-
-        // B = (y_scaled + cb * CB_TO_B) >> 14
-        let b_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo32, cb_to_b)),
-            14,
-        );
-        let b_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi32, cb_to_b)),
-            14,
-        );
-
-        // Pack i32 -> i16 -> u8
-        let r_16 = _mm256_packs_epi32(r_lo, r_hi);
-        let g_16 = _mm256_packs_epi32(g_lo, g_hi);
-        let b_16 = _mm256_packs_epi32(b_lo, b_hi);
-
-        let r_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero), 0b11_01_10_00);
-        let g_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero), 0b11_01_10_00);
-        let b_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero), 0b11_01_10_00);
-
-        // Interleave RGB
-        let r0 = _mm256_shuffle_epi8(r_8, sh_r);
-        let g0 = _mm256_shuffle_epi8(g_8, sh_g);
-        let b0 = _mm256_shuffle_epi8(b_8, sh_b);
-
-        let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
-        let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
-        let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
-
-        let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
-        let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
-
-        // Store 48 bytes (16 pixels * 3 channels)
-        safe_simd::_mm256_storeu_si256(
-            <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
-            rgb0,
-        );
-        safe_simd::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[out_offset + 32..out_offset + 48]).unwrap(),
-            _mm256_castsi256_si128(rgb1),
-        );
-    }
-
-    // Handle remainder with scalar
-    let c_remainder_start = chunks * 8;
-    for cx in c_remainder_start..chroma_width {
-        let curr_cb = i32::from(cb_row[cx]);
-        let curr_cr = i32::from(cr_row[cx]);
-
-        let left_cb = if cx > 0 {
-            i32::from(cb_row[cx - 1])
-        } else {
-            curr_cb
-        };
-        let left_cr = if cx > 0 {
-            i32::from(cr_row[cx - 1])
-        } else {
-            curr_cr
-        };
-        let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
-        let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
-
-        let px0 = cx * 2;
-        if px0 < width {
-            let y_val = i32::from(y_row[px0]);
-            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-            let r = (y_scaled + cr_l * CR_TO_R_INT) >> 14;
-            let g = (y_scaled + cr_l * CR_TO_G_INT + cb_l * CB_TO_G_INT) >> 14;
-            let b = (y_scaled + cb_l * CB_TO_B_INT) >> 14;
-            let idx = px0 * 3;
-            rgb[idx] = r.clamp(0, 255) as u8;
-            rgb[idx + 1] = g.clamp(0, 255) as u8;
-            rgb[idx + 2] = b.clamp(0, 255) as u8;
-        }
-
-        let right_cb = if cx + 1 < chroma_width {
-            i32::from(cb_row[cx + 1])
-        } else {
-            curr_cb
-        };
-        let right_cr = if cx + 1 < chroma_width {
-            i32::from(cr_row[cx + 1])
-        } else {
-            curr_cr
-        };
-        let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
-        let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
-
-        let px1 = cx * 2 + 1;
-        if px1 < width {
-            let y_val = i32::from(y_row[px1]);
-            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-            let r = (y_scaled + cr_r * CR_TO_R_INT) >> 14;
-            let g = (y_scaled + cr_r * CR_TO_G_INT + cb_r * CB_TO_G_INT) >> 14;
-            let b = (y_scaled + cb_r * CB_TO_B_INT) >> 14;
-            let idx = px1 * 3;
-            rgb[idx] = r.clamp(0, 255) as u8;
-            rgb[idx + 1] = g.clamp(0, 255) as u8;
-            rgb[idx + 2] = b.clamp(0, 255) as u8;
-        }
-    }
 }
 
 /// AVX2 fused box-filter 4:2:0 upsample + YCbCr→RGB.
 /// Processes 16 output pixels per iteration (8 chroma pixels → 16 output pixels).
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
-fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
+fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2<const TURBO: bool>(
     _token: archmage::X64V3Token,
     y_row: &[i16],
     cb_row: &[i16],
@@ -3030,16 +2317,26 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
 ) {
     use core::arch::x86_64::*;
 
+    macro_rules! srai {
+        ($x:expr) => {{
+            if TURBO {
+                _mm256_srai_epi32($x, 16)
+            } else {
+                _mm256_srai_epi32($x, 14)
+            }
+        }};
+    }
+
     let chunks = width / 16;
 
-    // Preload constants
+    // Preload constants (TURBO selects libjpeg 16-bit; const-folds).
     let bias = _mm256_set1_epi16(128);
-    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
-    let rounding = _mm256_set1_epi32(YUV_ROUND);
-    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
-    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
-    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
-    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let y_coeff = _mm256_set1_epi32(if TURBO { TURBO_Y_CF } else { Y_CF_INT });
+    let rounding = _mm256_set1_epi32(if TURBO { TURBO_ROUND } else { YUV_ROUND });
+    let cr_to_r = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_R } else { CR_TO_R_INT });
+    let cr_to_g = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_G } else { CR_TO_G_INT });
+    let cb_to_g = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_G } else { CB_TO_G_INT });
+    let cb_to_b = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_B } else { CB_TO_B_INT });
     let zero = _mm256_setzero_si256();
 
     // RGB interleave masks (same as existing ycbcr_planes_i16_to_rgb_u8_avx2)
@@ -3113,46 +2410,40 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
         let cr_hi32 = _mm256_unpackhi_epi16(cr_centered, cr_sign);
 
         // R = (y_scaled + cr * CR_TO_R) >> 14
-        let r_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo32, cr_to_r)),
-            14,
-        );
-        let r_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi32, cr_to_r)),
-            14,
-        );
+        let r_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cr_lo32, cr_to_r)
+        ));
+        let r_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cr_hi32, cr_to_r)
+        ));
 
         // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
-        let g_lo = _mm256_srai_epi32(
+        let g_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
             _mm256_add_epi32(
-                y_scaled_lo,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_lo32, cr_to_g),
-                    _mm256_mullo_epi32(cb_lo32, cb_to_g),
-                ),
+                _mm256_mullo_epi32(cr_lo32, cr_to_g),
+                _mm256_mullo_epi32(cb_lo32, cb_to_g),
             ),
-            14,
-        );
-        let g_hi = _mm256_srai_epi32(
+        ));
+        let g_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
             _mm256_add_epi32(
-                y_scaled_hi,
-                _mm256_add_epi32(
-                    _mm256_mullo_epi32(cr_hi32, cr_to_g),
-                    _mm256_mullo_epi32(cb_hi32, cb_to_g),
-                ),
+                _mm256_mullo_epi32(cr_hi32, cr_to_g),
+                _mm256_mullo_epi32(cb_hi32, cb_to_g),
             ),
-            14,
-        );
+        ));
 
         // B = (y_scaled + cb * CB_TO_B) >> 14
-        let b_lo = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo32, cb_to_b)),
-            14,
-        );
-        let b_hi = _mm256_srai_epi32(
-            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi32, cb_to_b)),
-            14,
-        );
+        let b_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cb_lo32, cb_to_b)
+        ));
+        let b_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cb_hi32, cb_to_b)
+        ));
 
         // Pack i32 -> i16 -> u8
         let r_16 = _mm256_packs_epi32(r_lo, r_hi);
@@ -3195,27 +2486,19 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
 
         let px0 = cx * 2;
         if px0 < width {
-            let y_val = i32::from(y_row[px0]);
-            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-            let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
-            let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
-            let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+            let (r, g, b) = ycc_rgb_pixel(i32::from(y_row[px0]), cb_val, cr_val, TURBO);
             let idx = px0 * 3;
-            rgb[idx] = r.clamp(0, 255) as u8;
-            rgb[idx + 1] = g.clamp(0, 255) as u8;
-            rgb[idx + 2] = b.clamp(0, 255) as u8;
+            rgb[idx] = r;
+            rgb[idx + 1] = g;
+            rgb[idx + 2] = b;
         }
         let px1 = cx * 2 + 1;
         if px1 < width {
-            let y_val = i32::from(y_row[px1]);
-            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-            let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
-            let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
-            let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+            let (r, g, b) = ycc_rgb_pixel(i32::from(y_row[px1]), cb_val, cr_val, TURBO);
             let idx = px1 * 3;
-            rgb[idx] = r.clamp(0, 255) as u8;
-            rgb[idx + 1] = g.clamp(0, 255) as u8;
-            rgb[idx + 2] = b.clamp(0, 255) as u8;
+            rgb[idx] = r;
+            rgb[idx + 1] = g;
+            rgb[idx + 2] = b;
         }
     }
 }
@@ -3649,96 +2932,6 @@ mod tests {
                 i,
                 rgb[i * 3 + 2],
                 b_ref
-            );
-        }
-    }
-
-    #[test]
-    fn test_fused_hfancy_avx2_matches_scalar() {
-        // Test that AVX2 h-fancy kernel produces identical output to scalar.
-        // Use widths that exercise: full AVX2 chunks, remainder, edge cases.
-        for width in [16, 32, 48, 64, 100, 128, 255, 256, 300, 512] {
-            let chroma_width = (width + 1) / 2;
-            // Varied chroma values to exercise interpolation
-            let y_row: Vec<i16> = (0..width).map(|i| 16 + (i as i16 * 7) % 220).collect();
-            let cb_row: Vec<i16> = (0..chroma_width)
-                .map(|i| 30 + (i as i16 * 13) % 200)
-                .collect();
-            let cr_row: Vec<i16> = (0..chroma_width)
-                .map(|i| 50 + (i as i16 * 11) % 180)
-                .collect();
-
-            // Scalar reference
-            let mut rgb_scalar = vec![0u8; width * 3];
-            {
-                for cx in 0..chroma_width {
-                    let curr_cb = i32::from(cb_row[cx]);
-                    let curr_cr = i32::from(cr_row[cx]);
-                    let left_cb = if cx > 0 {
-                        i32::from(cb_row[cx - 1])
-                    } else {
-                        curr_cb
-                    };
-                    let left_cr = if cx > 0 {
-                        i32::from(cr_row[cx - 1])
-                    } else {
-                        curr_cr
-                    };
-                    let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
-                    let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
-                    let px0 = cx * 2;
-                    if px0 < width {
-                        let y_val = i32::from(y_row[px0]);
-                        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-                        let r = (y_scaled + cr_l * CR_TO_R_INT) >> 14;
-                        let g = (y_scaled + cr_l * CR_TO_G_INT + cb_l * CB_TO_G_INT) >> 14;
-                        let b = (y_scaled + cb_l * CB_TO_B_INT) >> 14;
-                        let idx = px0 * 3;
-                        rgb_scalar[idx] = r.clamp(0, 255) as u8;
-                        rgb_scalar[idx + 1] = g.clamp(0, 255) as u8;
-                        rgb_scalar[idx + 2] = b.clamp(0, 255) as u8;
-                    }
-                    let right_cb = if cx + 1 < chroma_width {
-                        i32::from(cb_row[cx + 1])
-                    } else {
-                        curr_cb
-                    };
-                    let right_cr = if cx + 1 < chroma_width {
-                        i32::from(cr_row[cx + 1])
-                    } else {
-                        curr_cr
-                    };
-                    let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
-                    let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
-                    let px1 = cx * 2 + 1;
-                    if px1 < width {
-                        let y_val = i32::from(y_row[px1]);
-                        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-                        let r = (y_scaled + cr_r * CR_TO_R_INT) >> 14;
-                        let g = (y_scaled + cr_r * CR_TO_G_INT + cb_r * CB_TO_G_INT) >> 14;
-                        let b = (y_scaled + cb_r * CB_TO_B_INT) >> 14;
-                        let idx = px1 * 3;
-                        rgb_scalar[idx] = r.clamp(0, 255) as u8;
-                        rgb_scalar[idx + 1] = g.clamp(0, 255) as u8;
-                        rgb_scalar[idx + 2] = b.clamp(0, 255) as u8;
-                    }
-                }
-            }
-
-            // Fused function (dispatches to AVX2 on x86_64)
-            let mut rgb_fused = vec![0u8; width * 3];
-            fused_h2v2_hfancy_ycbcr_to_rgb_u8(&y_row, &cb_row, &cr_row, &mut rgb_fused, width);
-
-            assert_eq!(
-                rgb_scalar,
-                rgb_fused,
-                "Mismatch at width={width}: first diff at pixel {}",
-                rgb_scalar
-                    .iter()
-                    .zip(rgb_fused.iter())
-                    .position(|(a, b)| a != b)
-                    .unwrap_or(0)
-                    / 3
             );
         }
     }

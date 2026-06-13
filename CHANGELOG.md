@@ -6,6 +6,23 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- **Turbo YCbCr→RGB converter is now const-generic, not a separate slow
+  kernel** — closes the perf gap from the prior commit. The turbo color
+  path is now `<const TURBO: bool>` monomorphizations of the existing
+  hand-tuned AVX-512/AVX2 kernels (RGB / RGBA-BGRA / fused-box), so it
+  reuses their SIMD pack+interleave; `TURBO == false` const-folds to
+  byte-identical default code. Measured (Ryzen 9 7950X): turbo went from
+  **2.6–4.3× slower** than default to **within ±2% on RGB and ~17% FASTER
+  on BGRA/fused-box** (`benchmarks/ycbcr_turbo_2026-06-13_constgeneric.txt`).
+  The slow magetypes-generic turbo kernels (`turbo_rgb4`, the three
+  `*_turbo_impl`) are deleted; non-x86 turbo uses a turbo-aware scalar
+  fallback (matching the pre-existing non-x86 default, which is also
+  scalar). Dead `fused_h2v2_hfancy_*` converters removed (no production
+  callers). Default (`IdctMethod::Jpegli`) output unchanged (locked hashes
+  pass); turbo still byte-exact with mozjpeg (max_diff=0) and bit-exact
+  across all SIMD tiers.
+
+### Changed
 - **`IdctMethod::Libjpeg` is now byte-for-byte identical to mozjpeg/djpeg**
   (max_diff=0 on decoded RGB). The final residual — YCbCr→RGB — now has a
   libjpeg-turbo-exact 16-bit converter (`build_ycc_rgb_table` constants,

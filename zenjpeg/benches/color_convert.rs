@@ -102,35 +102,6 @@ fn bench_fused_h2v2_box(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_fused_h2v2_hfancy(c: &mut Criterion) {
-    let mut group = c.benchmark_group("fused_h2v2_hfancy_ycbcr_to_rgb");
-
-    for &width in &[256, 1024, 4096] {
-        let (y_data, cb_data_full, cr_data_full) = generate_ycbcr_data(width);
-        let chroma_width = (width + 1) / 2;
-        let cb_data = &cb_data_full[..chroma_width];
-        let cr_data = &cr_data_full[..chroma_width];
-        let pixels = width as u64;
-        group.throughput(Throughput::Elements(pixels));
-
-        group.bench_function(format!("{}px", width), |b| {
-            let mut rgb = vec![0u8; width * 3];
-            b.iter(|| {
-                ycbcr::fused_h2v2_hfancy_ycbcr_to_rgb_u8(
-                    black_box(&y_data),
-                    black_box(cb_data),
-                    black_box(cr_data),
-                    &mut rgb,
-                    width,
-                );
-                black_box(&rgb);
-            });
-        });
-    }
-
-    group.finish();
-}
-
 /// Full decode benchmark — measures end-to-end impact including color conversion.
 fn bench_decode_420(c: &mut Criterion) {
     use enough::Unstoppable;
@@ -174,7 +145,6 @@ criterion_group!(
     benches,
     bench_ycbcr_to_rgb_i16_x16,
     bench_fused_h2v2_box,
-    bench_fused_h2v2_hfancy,
     bench_decode_420,
 );
 criterion_main!(benches);
