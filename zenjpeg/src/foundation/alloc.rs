@@ -25,9 +25,10 @@ pub use crate::foundation::instrumented_vec::{
 /// Slightly under 64K to prevent overflow in 16-bit calculations.
 pub const JPEG_MAX_DIMENSION: u32 = 65500;
 
-/// Default maximum pixels (100 megapixels).
-/// This is a reasonable limit for most applications.
-pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+/// Default maximum pixels (120 megapixels).
+/// Sized to admit common high-resolution still output (e.g. 108 MP phone
+/// cameras) while still bounding decode work for untrusted input.
+pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
 /// Maximum number of progressive scans allowed.
 pub const MAX_SCANS: usize = 256;

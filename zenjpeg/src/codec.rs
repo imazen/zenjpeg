@@ -1315,8 +1315,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 impl JpegDecodeJob {
     /// The inner decode config with this job's resource limits applied —
     /// probes must honor `with_limits` exactly like the decode path does
-    /// (a 108 MP corpus file probes fine under a raised `max_pixels` but the
-    /// inner config's default cap rejected it).
+    /// (a corpus file above the default cap probes fine under a raised `max_pixels`
+    /// but the inner config's default cap rejected it).
     fn limit_adjusted_inner(&self) -> crate::decode::DecodeConfig {
         let mut cfg = self.config.inner.clone();
         if let Some(max) = self.limits.max_pixels {
