@@ -30,27 +30,27 @@ fuzz_target!(|data: &[u8]| {
     let p = probe(data, Wants::ALL);
 
     // In-bounds invariants for every captured range.
-    let check_range = |r: &Option<core::ops::Range<u32>>| {
+    let check_range = |r: Option<&core::ops::Range<u32>>| {
         if let Some(r) = r {
             assert!(r.start <= r.end, "inverted range {r:?}");
             assert!(r.end <= len, "range {r:?} exceeds input len {len}");
         }
     };
-    check_range(&p.icc_profile);
-    check_range(&p.exif);
-    check_range(&p.xmp);
-    check_range(&p.mpf);
-    check_range(&p.iso_gainmap);
-    for r in &p.image_ranges {
-        check_range(r);
+    check_range(p.icc_profile());
+    check_range(p.exif());
+    check_range(p.xmp());
+    check_range(p.mpf());
+    check_range(p.iso_gainmap());
+    for r in p.image_ranges() {
+        check_range(Some(r));
     }
-    for r in &p.extended_xmp {
-        check_range(r);
+    for r in p.extended_xmp() {
+        check_range(Some(r));
     }
 
     // image_ranges must be disjoint and ordered.
     let mut prev_end: Option<u32> = None;
-    for r in p.image_ranges.iter().flatten() {
+    for r in p.image_ranges() {
         if let Some(pe) = prev_end {
             assert!(r.start >= pe, "image ranges out of order");
         }
@@ -58,10 +58,10 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // gainmap_presence must be consistent with the fingerprint bools.
-    let iso = p.iso_gainmap.is_some();
-    let hdrgm = p.has_xmp_hdrgm;
-    let gcontainer = p.has_xmp_gcontainer_gainmap;
-    match p.gainmap_presence {
+    let iso = p.iso_gainmap().is_some();
+    let hdrgm = p.has_xmp_hdrgm();
+    let gcontainer = p.has_xmp_gcontainer_gainmap();
+    match p.gainmap_presence() {
         GainMapPresence::None => {
             assert!(!iso && !hdrgm && !gcontainer, "None presence but signal(s) present");
         }
@@ -82,7 +82,7 @@ fuzz_target!(|data: &[u8]| {
 
     // is_ultrahdr must agree with the full probe's classification.
     let shortcircuit = is_ultrahdr(data);
-    let full_detect = iso || hdrgm || gcontainer || p.mpf.is_some();
+    let full_detect = iso || hdrgm || gcontainer || p.mpf().is_some();
     // Only assert the FALSE case — the short-circuit may return true
     // on inputs where the full probe found fewer than all signals
     // because the short-circuit uses a looser walker that stops early.
