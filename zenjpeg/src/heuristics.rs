@@ -51,20 +51,37 @@ use crate::encoder::EncoderConfig;
 use crate::types::PixelFormat;
 
 // =============================================================================
-// Encode throughput constants (estimated from typical jpegli performance)
+// Encode throughput constants — MEASURED 2026-06-14 (jpeg_probe wall/user,
+// single-thread, ycbcr 4:2:0, progressive default, NO trellis/boundary-rd;
+// 4 classes × 512–2048 px × q{50,85}; benchmarks/jpeg_resource_2026-06-14.tsv).
+// The previous "estimated from jpegli" 8/15/40 were ~4–5× too pessimistic for
+// the common no-trellis case (measured baseline 16.6 / 67.6 / 84.4 MP/s for
+// complex/typical/simple). Trellis and boundary-rd are applied separately as
+// multipliers below — they are the dominant, previously-unmodelled costs.
+// Values are pre-`prog_factor`: the 0.7 progressive factor (kept) recovers
+// the measured progressive-default throughput (e.g. 96 × 0.7 ≈ 67.6 MP/s).
 // =============================================================================
 
-/// Encode throughput in Mpix/s for simple content (solid colors).
-/// JPEG encoding is CPU-bound; simple content has less entropy to process.
-const ENCODE_THROUGHPUT_MAX_MPIXELS: f64 = 40.0;
+/// Encode throughput in Mpix/s for simple content (low entropy).
+const ENCODE_THROUGHPUT_MAX_MPIXELS: f64 = 120.0;
 
 /// Encode throughput in Mpix/s for typical content (photos).
-/// Most real-world images fall into this category.
-const ENCODE_THROUGHPUT_TYP_MPIXELS: f64 = 15.0;
+const ENCODE_THROUGHPUT_TYP_MPIXELS: f64 = 96.0;
 
 /// Encode throughput in Mpix/s for complex content (noise, high-entropy).
-/// High-frequency content requires more AQ computation and Huffman encoding.
-const ENCODE_THROUGHPUT_MIN_MPIXELS: f64 = 8.0;
+const ENCODE_THROUGHPUT_MIN_MPIXELS: f64 = 24.0;
+
+/// Time multipliers for the RD features (measured 2026-06-14, vs the
+/// no-feature baseline). Trellis quantization dominates encode cost (~6.2×
+/// time, ~2× working set); boundary-rd adds ~1.55×. They are NOT
+/// multiplicative — with trellis already running, boundary-rd's extra cost
+/// is mostly absorbed (both-on measured 6.5×, not 9.7×), so the combined
+/// case has its own factor.
+const TRELLIS_TIME_FACTOR: f64 = 6.24;
+const BOUNDARY_RD_TIME_FACTOR: f64 = 1.55;
+const TRELLIS_AND_BRD_TIME_FACTOR: f64 = 6.53;
+/// Trellis ~doubles the encoder working set (6.3 → 10.9 B/px measured).
+const TRELLIS_MEM_FACTOR: f64 = 1.7;
 
 // =============================================================================
 // Decode throughput constants
@@ -195,25 +212,46 @@ pub struct DecodeEstimate {
 pub fn estimate_encode(width: u32, height: u32, config: &EncoderConfig) -> EncodeEstimate {
     let pixels = (width as u64) * (height as u64);
 
-    // Use the encoder's internal memory estimation
+    // The RD features dominate cost and are read from the config:
+    // trellis (always compiled, data-gated) and boundary-rd (feature-gated).
+    let trellis_active = config
+        .trellis
+        .as_ref()
+        .is_some_and(|t| t.is_ac_enabled() || t.is_dc_enabled());
+    #[cfg(feature = "boundary-rd")]
+    let brd_active = matches!(config.boundary_rd_mode, crate::encode::BoundaryRd::On(_));
+    #[cfg(not(feature = "boundary-rd"))]
+    let brd_active = false;
+
+    // Use the encoder's internal memory estimation, scaled up for trellis
+    // (its per-block candidate buffers ~double the working set — measured
+    // 6.3 → 10.9 B/px; the encoder's estimate does not model this).
     let base_memory = config.estimate_memory(width, height) as u64;
+    let mem_feature = if trellis_active {
+        TRELLIS_MEM_FACTOR
+    } else {
+        1.0
+    };
 
-    // Apply content-dependent multipliers
-    let peak_memory_bytes_min = (base_memory as f64 * ENCODE_MEMORY_MIN_MULT) as u64;
-    let peak_memory_bytes = (base_memory as f64 * ENCODE_MEMORY_TYP_MULT) as u64;
-    let peak_memory_bytes_max = (base_memory as f64 * ENCODE_MEMORY_MAX_MULT) as u64;
+    let peak_memory_bytes_min = (base_memory as f64 * ENCODE_MEMORY_MIN_MULT * mem_feature) as u64;
+    let peak_memory_bytes = (base_memory as f64 * ENCODE_MEMORY_TYP_MULT * mem_feature) as u64;
+    let peak_memory_bytes_max = (base_memory as f64 * ENCODE_MEMORY_MAX_MULT * mem_feature) as u64;
 
-    // Time calculation from throughput
-    // time_ms = pixels / (throughput_mpix/s * 1_000_000) * 1000
-    //         = pixels / (throughput_mpix * 1000)
+    // Time calculation from throughput, then the measured RD-feature
+    // multipliers (trellis ≈ 6.2×, boundary-rd ≈ 1.55×, both ≈ 6.5× — NOT
+    // multiplicative; trellis dominates and absorbs most of brd's overhead).
     let pixels_f = pixels as f64;
-
-    // Adjust throughput for progressive mode (slower)
     let prog_factor = if config.is_progressive() { 0.7 } else { 1.0 };
-
-    let time_ms_min = (pixels_f / (ENCODE_THROUGHPUT_MAX_MPIXELS * prog_factor * 1000.0)) as f32;
-    let time_ms = (pixels_f / (ENCODE_THROUGHPUT_TYP_MPIXELS * prog_factor * 1000.0)) as f32;
-    let time_ms_max = (pixels_f / (ENCODE_THROUGHPUT_MIN_MPIXELS * prog_factor * 1000.0)) as f32;
+    let feature_time_factor = match (trellis_active, brd_active) {
+        (true, true) => TRELLIS_AND_BRD_TIME_FACTOR,
+        (true, false) => TRELLIS_TIME_FACTOR,
+        (false, true) => BOUNDARY_RD_TIME_FACTOR,
+        (false, false) => 1.0,
+    };
+    let t = |mpix: f64| (pixels_f * feature_time_factor / (mpix * prog_factor * 1000.0)) as f32;
+    let time_ms_min = t(ENCODE_THROUGHPUT_MAX_MPIXELS);
+    let time_ms = t(ENCODE_THROUGHPUT_TYP_MPIXELS);
+    let time_ms_max = t(ENCODE_THROUGHPUT_MIN_MPIXELS);
 
     // Output estimate: JPEG typically 5-20% of raw size for photos
     // Using ~10% as typical for quality 85
@@ -493,5 +531,43 @@ mod tests {
 
         // Progressive should be slower
         assert!(prog_est.time_ms > base_est.time_ms);
+    }
+
+    /// Trellis is the dominant encode cost (~6.2× time, measured) and also
+    /// raises the estimated working set; the model must reflect both.
+    #[test]
+    fn trellis_dominates_encode_cost() {
+        use crate::encode::trellis::TrellisConfig;
+        let base = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+        let trellis =
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(TrellisConfig::default());
+        let b = estimate_encode(1024, 1024, &base);
+        let t = estimate_encode(1024, 1024, &trellis);
+        let time_ratio = t.time_ms / b.time_ms;
+        assert!(
+            (5.0..8.0).contains(&time_ratio),
+            "trellis time factor should be ~6.2×, got {time_ratio}"
+        );
+        assert!(
+            t.peak_memory_bytes > b.peak_memory_bytes,
+            "trellis raises estimated memory"
+        );
+    }
+
+    /// Boundary-rd adds a measured ~1.55× when trellis is off.
+    #[cfg(feature = "boundary-rd")]
+    #[test]
+    fn boundary_rd_adds_time() {
+        use crate::encode::{BoundaryRd, BoundaryRdConfig};
+        let base = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+        let brd = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .boundary_rd(BoundaryRd::On(BoundaryRdConfig::new()));
+        let b = estimate_encode(1024, 1024, &base).time_ms;
+        let r = estimate_encode(1024, 1024, &brd).time_ms;
+        let ratio = r / b;
+        assert!(
+            (1.3..1.9).contains(&ratio),
+            "boundary-rd factor ~1.55×, got {ratio}"
+        );
     }
 }

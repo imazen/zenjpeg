@@ -6,6 +6,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- **`heuristics::estimate_encode` now models trellis + boundary-rd cost from
+  real measurement** (was guessed jpegli throughput). A new
+  `examples/jpeg_probe` measures the marginal working set (`VmHWM` delta) +
+  wall + user/sys CPU (`/proc/self/stat`, single-thread), swept by
+  `scripts/jpeg_resource_calibrate.py` over 4 classes × 512–2048 px ×
+  q{50,85} × the 4 trellis×boundary-rd combos
+  (`benchmarks/jpeg_resource_2026-06-14.tsv`). Findings: trellis quantization
+  **dominates** encode cost (~6.2× time, ~2× working set), boundary-rd adds
+  ~1.55×, and the two are **not** multiplicative (both-on ≈ 6.5×). The
+  baseline (no-trellis) throughput was also re-centered on measurement
+  (16.6/67.6/84.4 MP/s complex/typical/simple) — the prior 8/15/40 were
+  ~4–5× too pessimistic. The estimate reads `config.trellis` /
+  `config.boundary_rd_mode` and applies the measured multipliers; decode is
+  near-free (~0.01 µs/px). New tests pin the trellis (~6×) and boundary-rd
+  (~1.55×) factors.
 - **4:2:2 (h2v1) fancy chroma upsampler is now SIMD on all arches** — it was
   pure scalar everywhere (confirmed via `cargo asm`: 177 scalar instrs, 0
   vector — LLVM did not autovectorize it). New magetypes-generic interior
