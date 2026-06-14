@@ -56,8 +56,12 @@
 // === Error types ===
 /// Errors that can occur during JPEG decoding.
 pub type DecodeError = crate::error::Error;
-// Keep legacy aliases for backward compatibility
-pub use crate::error::{Error, Result};
+// Keep legacy aliases for backward compatibility.
+// `ErrorKind` is re-exported so callers can pattern-match the inner error
+// (via `err.error()` / `err.kind()`) to map decode failures to HTTP status
+// codes — without it, `ErrorKind` is unnameable outside the crate and the
+// only option is brittle string-matching on `Display`.
+pub use crate::error::{Error, ErrorKind, Result};
 
 // === Main decoder types ===
 pub use crate::decode::{

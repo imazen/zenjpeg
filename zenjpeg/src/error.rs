@@ -160,8 +160,9 @@ pub enum ResourceError {
 /// The specific kind of error that occurred.
 ///
 /// This is the inner error type wrapped by [`Error`] (which is `At<ErrorKind>`).
-/// Use [`Error::error()`](At::error) to access the kind, or pattern-match
-/// after calling [`Error::into_inner()`](At::into_inner).
+/// Use [`At::error()`](whereat::At::error) to borrow the kind, or
+/// [`At::decompose()`](whereat::At::decompose) to take it by value, then
+/// pattern-match (it is `#[non_exhaustive]`, so keep a wildcard arm).
 #[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum ErrorKind {

@@ -5,6 +5,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Added
+- **`zenjpeg::decoder::ErrorKind` is now re-exported** so callers can
+  pattern-match decode failures (via `err.error()` / `err.kind()`) to map them
+  to HTTP status codes. Previously `ErrorKind` lived in a `pub(crate)` module
+  and was unnameable outside the crate, forcing brittle `Display` string
+  matching. Additive, non-breaking. README gains a worked error→HTTP-status
+  example; the `ErrorKind` rustdoc no longer points at the deprecated
+  `At::into_inner()`. Surfaced by a memory-insulated ignorant-agent docs pass.
+
 ### Changed
 - **4:2:2 (h2v1) fancy chroma upsampler is now SIMD on all arches** — it was
   pure scalar everywhere (confirmed via `cargo asm`: 177 scalar instrs, 0

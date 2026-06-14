@@ -206,6 +206,40 @@ Request builder methods: `.icc_profile()`, `.exif()`, `.xmp()`, `.stop()`, `.lim
 | `.max_pixels(n)` | 100M | DoS protection |
 | `.max_memory(n)` | 512 MB | Memory limit |
 
+### Errors (for a server)
+
+`decode` returns `Result<_, zenjpeg::decoder::Error>`, where `Error` is
+`whereat::At<ErrorKind>` — the `At` wrapper records the source location for your
+logs (`format!("{e}")`). Borrow the inner kind with `e.error()` (or own it with
+`e.decompose().0`) and match `ErrorKind` to pick an HTTP status. `ErrorKind` is
+`#[non_exhaustive]`, so keep a wildcard arm:
+
+```rust
+use zenjpeg::decoder::{Decoder, ErrorKind};
+use enough::Unstoppable;
+
+let status = match Decoder::new().decode(&jpeg_bytes, Unstoppable) {
+    Ok(result) => {
+        // u8 output targets: result.into_pixels_u8() -> Option<Vec<u8>>
+        200
+    }
+    Err(e) => match e.error() {
+        ErrorKind::ImageTooLarge { .. }
+        | ErrorKind::AllocationFailed { .. }
+        | ErrorKind::TooManyRows { .. }
+        | ErrorKind::TooManyScans { .. } => 413, // Payload Too Large
+        ErrorKind::UnsupportedFeature { .. }
+        | ErrorKind::UnsupportedPixelFormat { .. }
+        | ErrorKind::UnsupportedOperation(_) => 415, // Unsupported Media Type
+        ErrorKind::Cancelled => 499, // client closed request
+        ErrorKind::InternalError { .. } | ErrorKind::IoError { .. } => 500,
+        // malformed input (InvalidJpegData, TruncatedData, InvalidMarker,
+        // InvalidDimensions, ...) -> 400 Bad Request
+        _ => 400,
+    },
+};
+```
+
 ### Decode Paths
 
 For most web JPEGs, `Decoder::new().decode(&data, stop)` hits the streaming path -- no coefficient storage, one MCU-row pass through entropy/IDCT/color/output. This is the fastest path.
