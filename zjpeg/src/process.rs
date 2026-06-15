@@ -1116,8 +1116,17 @@ fn build_encoder_config(
     // Quant tables override preset's table selection
     if let Some(qt) = args.quant {
         config = config.quant_table_config(match qt {
-            crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli,
-            crate::QuantTablesArg::Mozjpeg => QuantTableConfig::MozjpegRobidoux,
+            // Neutral field values preserve the historical CLI behaviour:
+            // `[1.0, 1.0]` treats both chroma channels like luma, and
+            // `None` scales chroma with the luma quality. The CLI exposes
+            // table *count* via `--chroma-tables` (separate_chroma_tables
+            // below); per-channel chroma scaling is an optimizer-only knob.
+            crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 1.0],
+            },
+            crate::QuantTablesArg::Mozjpeg => QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            },
         });
     }
 
