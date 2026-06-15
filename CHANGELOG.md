@@ -92,6 +92,18 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 
 ### Documentation
+- **h1v2 (4:4:0) upsampler stays scalar on non-x86 — magetypes migration
+  measured and REJECTED.** The natural follow-on after h2v1/h2v2 would be a
+  `#[magetypes]` generic for the 4:4:0 vertical upsampler too, but on real
+  aarch64 (Hetzner arm-big, `benchmarks/h1v2_upsample_ab_2026-06-15_arm.txt`)
+  the scalar loop **autovectorizes to 3.4–4.7 Gops/s**, vs ~1.0 for a
+  hand-written i16x16 generic (−70 to −78%, a large regression). h1v2 is a
+  trivial elementwise map (`(near*3+far+bias)>>2`, no inter-element
+  dependency) that LLVM vectorizes optimally; a hand generic can only match
+  that, never beat it — unlike h2v1/h2v2, whose prev/this/next window
+  dependencies defeat autovec (same "scalar wins on ARM" case as the YCbCr
+  plane converters). Locked in with a code comment at the h1v2 dispatcher to
+  prevent a future "wire-the-generic" regression. x86 keeps its AVX2 kernel.
 - **ARM SIMD audit + real-hardware benchmark** (Hetzner aarch64;
   `benchmarks/arm_simd_audit_2026-06-13.md`): verified every SIMD kernel's
   dispatch and measured NEON-vs-scalar on real silicon. Key finding — the

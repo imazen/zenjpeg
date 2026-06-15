@@ -474,6 +474,17 @@ pub fn upsample_h1v2_i16_libjpeg_strided(
             }
         }
 
+        // Non-x86 (NEON/wasm128): this scalar loop is INTENTIONALLY kept — do
+        // NOT wire a `#[magetypes]` generic here. h1v2 is a trivial elementwise
+        // map (`(near*3+far+bias)>>2`, no inter-element dependency), so LLVM
+        // autovectorizes it optimally: measured on Hetzner arm-big (Neoverse-N1)
+        // at 3.4–4.7 Gops/s, vs ~1.0 Gops/s for a hand-written magetypes i16x16
+        // generic (−70 to −78%). A hand generic can at best MATCH the compiler's
+        // optimal vectorization of a trivial map, never beat it. See
+        // `benchmarks/h1v2_upsample_ab_2026-06-15_arm.txt`. (Contrast h2v1/h2v2,
+        // whose prev/this/next window dependencies defeat autovec — those DO use
+        // magetypes generics on non-x86. The YCbCr plane converters are the same
+        // "scalar autovectorizes, keep it" case.)
         for out_x in 0..out_width {
             let in_x = out_x.min(in_width.saturating_sub(1));
             let near = input[near_row + in_x] as i32;

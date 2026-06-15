@@ -1,0 +1,35 @@
+# h1v2 (4:4:0) vertical upsample A/B — scalar (autovectorized) vs magetypes i16x16 generic
+# Hetzner arm-big (aarch64 Neoverse-N1), 2026-06-15, zenbench upsample_ab
+# FINDING: scalar AUTOVECTORIZES and beats the generic 3.4-4.7x. h1v2 is a trivial
+# elementwise op (no inter-element deps) so LLVM vectorizes it optimally on NEON;
+# a magetypes generic can at best match that. MIGRATION REJECTED — keep scalar on non-x86.
+# (Contrast: h2v1/h2v2 have window deps that defeat autovec, so they DO use generics.)
+
+  h1v2_256x256  30 rounds × 71 calls
+                mean ±mad µs  95% CI vs base       ops/s
+  ├─ scalar     13.8 ±0.2µs  [13.7–13.9]µs        4.74G
+  ╰─ dispatch   64.3 ±0.1µs  [+365.2%–+366.8%]    1.02G
+  scalar    ████████████████████████████████████████████████████████ 4.74 Gops/s
+  dispatch  ████████████ 1.02 Gops/s
+                     mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar         941.0 ±2.6µs  [939.9–942.3]µs     557M
+  ╰─ simd-generic   648.5 ±3.9µs  [-31.3%–-30.9%]     808M
+  simd-generic  █████████████████████████████████████████████████████ 808 Mops/s
+  scalar        █████████████████████████████████████ 557 Mops/s
+  h1v2_1024x256  30 rounds × 19 calls
+                 mean ±mad µs  95% CI vs base       ops/s
+  ├─ scalar      76.5 ±2.6µs  [75.5–77.6]µs        3.43G
+  ╰─ dispatch   255.2 ±1.6µs  [+232.4%–+235.1%]    1.03G
+  scalar    ████████████████████████████████████████████████████████ 3.43 Gops/s
+  dispatch  █████████████████ 1.03 Gops/s
+                     mean ±mad µs  95% CI vs base      ops/s
+  ├─ scalar         942.4 ±2.9µs  [941.0–944.0]µs     556M
+  ╰─ simd-generic   641.8 ±7.8µs  [-32.1%–-31.6%]     817M
+  simd-generic  █████████████████████████████████████████████████████ 817 Mops/s
+  scalar        ████████████████████████████████████ 556 Mops/s
+  h1v2_4096x64  30 rounds × 19 calls
+                 mean ±mad µs  95% CI vs base       ops/s
+  ├─ scalar      73.3 ±2.2µs  [72.7–73.9]µs        3.57G
+  ╰─ dispatch   254.1 ±0.8µs  [+245.5%–+247.4%]    1.03G
+  scalar    ████████████████████████████████████████████████████████ 3.57 Gops/s
+  dispatch  ████████████████ 1.03 Gops/s
