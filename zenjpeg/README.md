@@ -375,8 +375,13 @@ use enough::Unstoppable;
 // Never cancel
 let image = Decoder::new().decode(&jpeg_data, Unstoppable)?;
 
-// Custom cancellation (e.g., user clicked cancel)
-let result = Decoder::new().decode(&jpeg_data, &cancel_token);
+// Real cancellation: `almost_enough::Stopper` is a thread-safe `Stop` token
+// (`cargo add almost-enough`). It is `Clone` — flip it from a watcher thread.
+use almost_enough::Stopper;
+let stop = Stopper::new();
+let watcher = stop.clone();
+std::thread::spawn(move || watcher.cancel()); // e.g. on a deadline or client disconnect
+let image = Decoder::new().decode(&jpeg_data, &stop)?;
 ```
 
 ## Detect API (Encoder Identification)
