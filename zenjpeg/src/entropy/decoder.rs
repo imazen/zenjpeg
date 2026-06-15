@@ -1665,7 +1665,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // Drain any unloaded coded bytes before the marker.
                     // The fast_ac path triggers fewer refills than the standard
                     // Huffman path, so position may lag behind consumed data.
-                    while self.reader.marker_found().is_none() {
+                    // Stop once real data is exhausted: past EOF, `refill()` keeps
+                    // claiming synthetic zero bits (overread), so
+                    // `bits_available() >= 32` stays true and `marker_found()`
+                    // never fires on a truncated / marker-less scan — an infinite
+                    // loop (a small progressive JPEG with a restart interval but a
+                    // missing RST hung the decoder, fuzz zenpipe#47). When
+                    // exhausted, `read_restart_marker` below reports the missing
+                    // marker cleanly.
+                    while self.reader.marker_found().is_none() && !self.reader.is_exhausted() {
                         let _ = self.reader.refill();
                         if self.reader.bits_available() >= 32 {
                             self.reader.skip_bits_fast(32);
@@ -2065,8 +2073,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             for block_x in 0..blocks_h {
                 // Restart marker handling
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                    // Drain any unloaded coded bytes before the marker.
-                    while self.reader.marker_found().is_none() {
+                    // Drain any unloaded coded bytes before the marker. Stop once
+                    // real data is exhausted: past EOF, `refill()` keeps claiming
+                    // synthetic zero bits (overread), so `bits_available() >= 32`
+                    // stays true and `marker_found()` never fires on a truncated /
+                    // marker-less scan — an infinite loop (a tiny progressive JPEG
+                    // with a restart interval but no RST hung the decoder, fuzz
+                    // zenpipe#47). When exhausted, `read_restart_marker` below
+                    // reports the missing marker cleanly.
+                    while self.reader.marker_found().is_none() && !self.reader.is_exhausted() {
                         let _ = self.reader.refill();
                         if self.reader.bits_available() >= 32 {
                             self.reader.skip_bits_fast(32);

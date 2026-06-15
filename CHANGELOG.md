@@ -5,6 +5,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- **Progressive decode infinite loop (DoS) on a marker-less restart drain (fuzz
+  zenpipe#47).** A small progressive JPEG with a restart interval but a missing
+  RST marker spun forever in the AC-scan restart-drain loop: past EOF,
+  `BitReader::refill()` keeps claiming synthetic zero bits (overread), so
+  `bits_available() >= 32` stays true while `marker_found()` never fires, and
+  `while self.reader.marker_found().is_none() { … }` never terminates. Both the
+  first-scan (`decode_ac_first_scan_tracked`) and refine-scan
+  (`decode_ac_refine_scan_tracked`) drains now also break on
+  `is_exhausted()`; `read_restart_marker` then reports the missing marker
+  cleanly. Found via the fuzz farm (`fuzz_job_decode` → zencodecs → zenjpeg),
+  symbolized with `perf`. Regression:
+  `tests/progressive_drain_hang_regression.rs` +
+  `fuzz/regression/timeout-progressive-restart-drain-hang`.
+
 ### Changed
 - **`heuristics::estimate_encode` now models trellis + boundary-rd cost from
   real measurement** (was guessed jpegli throughput). A new
