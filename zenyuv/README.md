@@ -10,14 +10,78 @@ use zenyuv::{YuvContext, Range, Matrix};
 let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
 
 // Encode: RGB -> YCbCr 4:2:0
-let rgb = vec![128u8; 640 * 480 * 3];
-let mut y  = vec![0u8; 640 * 480];
-let mut cb = vec![0u8; 320 * 240];
-let mut cr = vec![0u8; 320 * 240];
+let rgb = vec![128u8; 640 * 480 * 3]; // packed R,G,B (see "Pixel layout" below)
+let mut y  = vec![0u8; 640 * 480];        // Y  = width * height
+let mut cb = vec![0u8; 320 * 240];        // Cb = ceil(width/2) * ceil(height/2)
+let mut cr = vec![0u8; 320 * 240];        // Cr = ceil(width/2) * ceil(height/2)
 ctx.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480);
 ```
 
 `YuvContext` is reusable across frames. Internal buffers are lazy-allocated on first use -- plain u8 box-average encode allocates nothing.
+
+## Pixel layout: input is packed **R, G, B** (3 bytes per pixel, tightly packed)
+
+The `&[u8]` passed to every encode method is interpreted as **R first, then G, then B** -- byte `i*3+0` is red, `i*3+1` is green, `i*3+2` is blue. There is no BGR variant: passing BGR data produces a swapped-but-silent result (Cb/Cr inverted), not an error. If your source is BGR(A), swizzle to RGB before calling. Both the AVX2 fast path and the scalar/NEON/WASM paths use the identical R,G,B order, so the channel mapping is the same on every CPU.
+
+**Buffers are tightly packed -- there is no stride parameter.** Each input row is exactly `width * 3` bytes and each output plane row is exactly its plane-width bytes, with no inter-row padding. If you have strided/padded rows (SIMD-aligned buffers, `imgref::ImgRef` with a stride, sub-region crops), pack each row into a contiguous buffer before calling, or call once per contiguous row. A native strided entry point is not part of the current API.
+
+## API
+
+All public conversion is done through methods on `YuvContext` (no free functions are exported). Every method returns `()` and **panics** (via `assert!` on buffer length) if any output plane is too small for the given dimensions -- see "Buffer sizes & return contract" below. There is no `Result`-returning variant.
+
+### Encode methods (RGB -> YCbCr)
+
+| Method | Subsampling | Output type | Notes |
+|--------|-------------|-------------|-------|
+| `encode_444_u8` | 4:4:4 | `u8` | Full-resolution Cb/Cr |
+| `encode_420_u8` | 4:2:0 | `u8` | Box-average chroma |
+| `encode_420_f32` | 4:2:0 | `f32` | u8 values widened to `f32` (0.0..=255.0); for zenjpeg's DCT pipeline |
+| `encode_420_y_only_u8` | 4:2:0 | `u8` | Y plane only; caller supplies chroma elsewhere |
+| `encode_sharp_420_u8` | 4:2:0 | `u8` | Sharp YUV (see below); takes `&SharpYuvConfig` |
+| `encode_sharp_420_f32` | 4:2:0 | `f32` | Sharp YUV, `f32` output; takes `&SharpYuvConfig` |
+
+There is currently **no 4:2:2 encode** and **no 4:4:4 `f32` encode** -- only the rows above exist. (4:2:2 and 4:0:0 exist on the decode side; see "Decode".)
+
+The `sharp` module additionally exposes the underlying Sharp YUV free functions for callers that manage their own workspace or pre-seed chroma: `sharp::rgb_to_yuv420_sharp`, `sharp::refine_chroma_420_u8`, `sharp::refine_chroma_420_u8_with_workspace`, `sharp::refine_y_420_u8`, and `sharp::rgb_to_yuv420_sharp_with_workspace` / `sharp::rgb_to_yuv420_sharp_f32`. These take the same packed-RGB input and the same panic-on-undersized-buffer contract.
+
+### Buffer sizes & return contract
+
+For an image of `width × height`, with `cw = ceil(width/2)` and `ch = ceil(height/2)`:
+
+| Plane | 4:4:4 size | 4:2:0 size |
+|-------|------------|------------|
+| `rgb` (input) | `width * height * 3` | `width * height * 3` |
+| `y` | `width * height` | `width * height` |
+| `cb` | `width * height` | `cw * ch` |
+| `cr` | `width * height` | `cw * ch` |
+
+- Methods take `width` and `height` explicitly; buffer lengths are validated with `assert!(buf.len() >= required)`. **Undersized buffers panic; they do not return an error.** Over-sized buffers are fine (only the leading `required` bytes are written).
+- **Odd dimensions round up** for chroma: a 5-wide image has `cw = 3` chroma columns; a 5-tall image has `ch = 3` chroma rows. Size your `cb`/`cr` planes with `ceil`, not integer-truncating division, or you will panic on odd-dimension images.
+- These are not streaming APIs -- one call converts the whole image (or the whole strip) you pass in.
+
+## Output range and neutral chroma
+
+The `Range` argument fixes the numeric range of the YCbCr output (useful for validating results):
+
+| `Range` | Y range | Cb/Cr range | Neutral (achromatic) Cb/Cr |
+|---------|---------|-------------|----------------------------|
+| `Range::Full` (JFIF) | `0..=255` | `0..=255` | `128` |
+| `Range::Limited` (studio/VP8) | `16..=235` | `16..=240` | `128` |
+
+A solid gray RGB input encodes to a flat Cb = Cr = 128 in both ranges; only the Y level and the Cb/Cr excursion scale differ. (This is why a grey-128 example can't reveal channel order -- R, G, and B are equal, so a channel swap is invisible.)
+
+## Required arguments: `Range` and `Matrix` are not optional
+
+`YuvContext::new(range, matrix)` takes both as **required enum arguments** -- there is no "default colorspace." This is deliberate: silently guessing the matrix (BT.601 vs 709 vs 2020) or the range (full vs limited) is exactly how YUV pipelines produce washed-out or color-shifted output. You choose explicitly:
+
+- `Matrix` -- `Bt601` (SD video, JFIF JPEG), `Bt709` (HD), `Bt2020` (UHD/HDR), plus `WebpEncoder` (libwebp's empirical `kWebpMatrix`, limited-range only; pair it with `Range::Limited` for byte-identical WebP Y). `Matrix` is `#[non_exhaustive]`.
+- `Range` -- `Full` or `Limited`, as above.
+
+JPEG always uses `Matrix::Bt601`; WebP's VP8 uses `Range::Limited`. Pick the pair your container demands.
+
+## Decode (YCbCr -> RGB)
+
+Decode kernels (4:4:4, 4:2:0 nearest + bilinear, 4:2:2, and 4:0:0/grayscale) exist in the source and write packed **R, G, B** output (same byte order as the encode input). **They are not part of the public 0.1.x API yet** -- the inverse path is on the Phase 3 roadmap and the functions are currently crate-internal. If you need YCbCr -> RGB today, use the `yuv` crate; this section will list the public decode entry points once they land. The relevant internal names (for tracking) are `yuv444_to_rgb`, `yuv420_to_rgb`, `yuv420_to_rgb_bilinear`, `yuv422_to_rgb`, and `yuv400_to_rgb` (each with a `_with(range, matrix)` variant).
 
 ## Performance
 
@@ -57,7 +121,7 @@ use zenyuv::{YuvContext, Range, Matrix, SharpYuvConfig};
 let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
 let config = SharpYuvConfig::default(); // 2 Newton iterations, Y refinement on
 
-let rgb = vec![128u8; 640 * 480 * 3];
+let rgb = vec![128u8; 640 * 480 * 3]; // packed R,G,B
 let mut y  = vec![0u8; 640 * 480];
 let mut cb = vec![0u8; 320 * 240];
 let mut cr = vec![0u8; 320 * 240];
@@ -78,7 +142,9 @@ After the chroma iteration, a Y refinement pass (`SharpYuvConfig::refine_y`, on 
 | Full range | yes | yes | yes |
 | Limited range | yes | yes | yes |
 | u8 output | yes | yes | yes |
-| f32 output | yes | yes | yes |
+| f32 output | no | yes | yes |
+
+Per-cell: `u8` output is available for 4:4:4, 4:2:0, and 4:2:0 Sharp. `f32` output is available for **4:2:0 and 4:2:0 Sharp only** (no 4:4:4 `f32` method). 4:2:2 and 4:0:0 are decode-only (not yet public; see "Decode").
 
 ## Platform Support
 
@@ -100,7 +166,7 @@ zenyuv is `#![no_std]` with `alloc`. The `std` feature (enabled by default) adds
 zenyuv = { version = "0.1", default-features = false }
 ```
 
-Core encode/decode with u8 buffers requires zero heap allocation. The f32 output paths and Sharp YUV lazy-allocate internal workspace on first use.
+Core encode with u8 buffers requires zero heap allocation. The f32 output paths and Sharp YUV lazy-allocate internal workspace on first use.
 
 ## License
 
