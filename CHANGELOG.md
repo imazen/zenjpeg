@@ -6,6 +6,26 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- **docs(readme): unify `Unstoppable` import path + quality arg type, name
+  `Strictness`, add end-to-end decode→encode example — fixes first-try compile
+  gaps found by insulated-developer test.** An external-developer usability test
+  (given only the README, no source) found the README would not compile first
+  try: it mixed `use enough::Unstoppable` (an undocumented direct dep) with the
+  dependency-free `zenjpeg::encoder::Unstoppable` re-export; mixed int and float
+  quality args (`ycbcr(85, …)` vs `ycbcr(85.0, …)`); named `.strictness(Balanced)`
+  without ever naming/importing the `Strictness` type; imported `TargetColorSpace`
+  from the crate-private `zenjpeg::color::icc` path; and had no single
+  decode→re-encode example. Now: all snippets use `zenjpeg::encoder::Unstoppable`
+  (the only path reachable for both decode and encode); all quality args are float;
+  `Strictness` (`zenjpeg::decoder::Strictness`) and `Limits`
+  (`zenjpeg::encoder::Limits`, with a real `.limits(Limits)` call) are named and
+  imported; `TargetColorSpace` uses the public `zenjpeg::decoder` re-export; and a
+  copy-pasteable "decode → re-encode at quality 80, with limits + cancellation"
+  example sits at the top. The `Stop`-trait cancellation snippet now shows the real
+  `check() -> Result<(), StopReason>` signature and adds `enough = "0.4"` for that
+  one case. Filed an API-ergonomics issue: `Unstoppable`/`Stop` are not re-exported
+  from `zenjpeg::decoder` (or `zenjpeg::ultrahdr`), so decode-only users must reach
+  into the `encoder` module — a footgun a docs pass can only paper over.
 - **Progressive decode infinite loop (DoS) on a marker-less restart drain (fuzz
   zenpipe#47).** A small progressive JPEG with a restart interval but a missing
   RST marker spun forever in the AC-scan restart-drain loop: past EOF,
