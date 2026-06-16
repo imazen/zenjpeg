@@ -1822,7 +1822,21 @@ mod tests {
             }
         });
         eprintln!("h2v1 generic vs scalar bit-exact: {report}");
-        assert!(report.permutations_run >= 2, "expected >=2 SIMD tiers");
+        // The bit-exact assert above is the real check and runs on every tier.
+        // The tier-count guard only catches "SIMD silently degraded to scalar"
+        // on hosts that HAVE a vector tier: this kernel's vector tier is v3
+        // (x86_64) / neon (aarch64). On i686 (target_arch="x86") archmage's v3
+        // token is x86_64-gated, so only the scalar tier runs (1 permutation).
+        let min_tiers = if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
+            2
+        } else {
+            1
+        };
+        assert!(
+            report.permutations_run >= min_tiers,
+            "expected >={min_tiers} SIMD tiers, ran {}",
+            report.permutations_run
+        );
     }
 
     /// The magetypes-generic h2v2 (4:2:0) row must be BYTE-IDENTICAL to the
@@ -1857,6 +1871,19 @@ mod tests {
             }
         });
         eprintln!("h2v2 row generic vs scalar bit-exact: {report}");
-        assert!(report.permutations_run >= 2, "expected >=2 SIMD tiers");
+        // See h2v1_generic_matches_scalar_bit_exact: i686 has only the scalar
+        // tier for this magetypes set (v3 is x86_64-gated), so require >=2
+        // tiers only where a vector tier exists. The bit-exact assert above
+        // runs on every tier, including the scalar-only i686 path.
+        let min_tiers = if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
+            2
+        } else {
+            1
+        };
+        assert!(
+            report.permutations_run >= min_tiers,
+            "expected >={min_tiers} SIMD tiers, ran {}",
+            report.permutations_run
+        );
     }
 }

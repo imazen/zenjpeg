@@ -15,5 +15,5 @@ const REPRO: &[u8] = include_bytes!("../fuzz/regression/timeout-progressive-rest
 #[test]
 fn progressive_restart_drain_does_not_hang_47() {
     // Must return promptly instead of spinning forever.
-    let _ = zenjpeg::decode::DecodeConfig::new().decode(REPRO, &enough::Unstoppable);
+    let _ = zenjpeg::decode::DecodeConfig::new().decode(REPRO, enough::Unstoppable);
 }
