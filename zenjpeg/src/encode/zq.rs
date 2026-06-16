@@ -888,11 +888,12 @@ fn measure(
     use zensim::{DiffmapWeighting, RgbSlice};
     let dec = crate::decode::Decoder::new()
         .decode(jpeg, Unstoppable)
-        .map_err(|e| {
-            crate::error::Error::invalid_config(alloc::format!(
-                "decode for measurement failed: {e}"
-            ))
-        })?;
+        // `decode` returns the crate's own `Error`, a newtype over `At<ErrorKind>`
+        // that already carries a trace from the decode site. Extend that trace with
+        // this caller's location instead of stringifying it into a fresh
+        // `invalid_config` (which would discard the original trace and ErrorKind).
+        // (Closure form so `Error::at`'s `#[track_caller]` records this line.)
+        .map_err(|e| e.at())?;
     let pixels = dec.into_pixels_u8().ok_or_else(|| {
         crate::error::Error::invalid_config("decoder returned non-u8 pixels".into())
     })?;
