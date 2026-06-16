@@ -879,7 +879,7 @@ pub struct DecodeConfig {
     /// (default), no color conversion is performed.
     pub correct_color: Option<TargetColorSpace>,
     /// Maximum pixels allowed (for DoS protection).
-    /// Default is 100 megapixels. Set to 0 for unlimited.
+    /// Default is 120 megapixels (admits common ~108 MP camera photos). Set to 0 for unlimited.
     /// Use `max_pixels()` method to set.
     pub(crate) max_pixels: u64,
     /// Maximum total memory for allocations (for DoS protection).

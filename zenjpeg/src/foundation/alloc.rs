@@ -25,9 +25,9 @@ pub use crate::foundation::instrumented_vec::{
 /// Slightly under 64K to prevent overflow in 16-bit calculations.
 pub const JPEG_MAX_DIMENSION: u32 = 65500;
 
-/// Default maximum pixels (100 megapixels).
-/// This is a reasonable limit for most applications.
-pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+/// Default maximum pixels (120 megapixels).
+/// This is a reasonable limit for most applications (admits common ~108 MP camera photos).
+pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
 /// Maximum number of progressive scans allowed.
 pub const MAX_SCANS: usize = 256;
@@ -796,7 +796,7 @@ mod tests {
         assert!(validate_dimensions(70000, 100, DEFAULT_MAX_PIXELS).is_err());
 
         // Exceeds max_pixels
-        assert!(validate_dimensions(20000, 20000, 100_000_000).is_err()); // 400M > 100M
+        assert!(validate_dimensions(20000, 20000, 120_000_000).is_err()); // 400M > 120M
     }
 
     #[test]

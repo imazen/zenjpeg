@@ -5,6 +5,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- **Default max-pixels limit raised 100 MP → 120 MP** (`DEFAULT_MAX_PIXELS` in
+  `foundation/alloc.rs`). 108 MP phone-camera photos are common and were rejected
+  by the old 100 MP cap; 120 MP admits them with headroom. Non-breaking: a looser
+  default limit. Callers that set an explicit `max_pixels(...)` are unaffected.
+  Updated the decoder/`Limits` default docs and README examples to match.
+
 ### Fixed
 - **docs(readme): unify `Unstoppable` import path + quality arg type, name
   `Strictness`, add end-to-end decode→encode example — fixes first-try compile

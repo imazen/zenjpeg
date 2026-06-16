@@ -601,7 +601,7 @@ impl Dimensions {
 /// use zenjpeg::encoder::Limits;
 ///
 /// let limits = Limits::default()
-///     .max_pixels(100_000_000)       // 100 megapixels
+///     .max_pixels(120_000_000)       // 120 megapixels (admits common ~108 MP camera photos)
 ///     .max_memory(512 * 1024 * 1024) // 512 MB
 ///     .max_output(50 * 1024 * 1024); // 50 MB output
 /// ```
