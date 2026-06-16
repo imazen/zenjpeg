@@ -248,7 +248,7 @@ where `Limits` is `zenjpeg::encoder::Limits` built via
 | `.crop(region)` | none | Pixel-level crop (IDCT skipped outside region) |
 | `.num_threads(n)` | `0` (auto) | `1` forces sequential |
 | `.strictness(Strictness)` | `Balanced` | `Strictness::{Strict, Balanced, Lenient, Permissive}` (type at `zenjpeg::decoder::Strictness`) |
-| `.max_pixels(u64)` | 100M | DoS protection |
+| `.max_pixels(u64)` | 120M | DoS protection |
 | `.max_memory(u64)` | 512 MB | Memory limit |
 
 `Strictness` is `zenjpeg::decoder::Strictness`; `.max_pixels` / `.max_memory` take a

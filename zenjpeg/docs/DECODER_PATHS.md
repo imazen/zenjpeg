@@ -153,7 +153,7 @@ Entropy decode runs for full image (DC predictor chain), but IDCT only runs for 
 | `.crop(CropRegion)` | none | Pixel-level crop of output |
 | `.num_threads(usize)` | `0` (auto) | `1` disables parallel |
 | `.strictness(Strictness)` | `Balanced` | Error tolerance for malformed JPEGs |
-| `.max_pixels(u64)` | 256M | Resource limit |
+| `.max_pixels(u64)` | 120M | Resource limit |
 | `.block_smoothing(bool)` | `false` | Progressive rendering smoothing (no effect on final output) |
 
 ### Entry points
