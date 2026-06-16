@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgRefMut;
+use whereat::ResultAtExt;
 use zenresize::{PixelDescriptor, StreamingResize};
 
 use crate::decode::{ChromaUpsampling, DecodeConfig, JpegInfo};
@@ -121,17 +122,16 @@ fn decode_resize_encode(
 
         let available = resizer
             .push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32)
-            .map_err(|e| {
-                crate::error::Error::new(crate::error::ErrorKind::InternalError {
-                    reason: match e.error() {
-                        zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
-                        zenresize::StreamingError::InputTooShort => "resize: input row too short",
-                        zenresize::StreamingError::RingBufferOverflow => {
-                            "resize: ring buffer overflow"
-                        }
-                        _ => "resize: unknown streaming error",
-                    },
-                })
+            // `push_rows` returns `At<StreamingError>`; map the inner variant to our
+            // `ErrorKind` with `map_err_at` so the resize-call trace is carried through
+            // (the trailing `?` then wraps the resulting `At<ErrorKind>` into `Error`).
+            .map_err_at(|inner| crate::error::ErrorKind::InternalError {
+                reason: match inner {
+                    zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
+                    zenresize::StreamingError::InputTooShort => "resize: input row too short",
+                    zenresize::StreamingError::RingBufferOverflow => "resize: ring buffer overflow",
+                    _ => "resize: unknown streaming error",
+                },
             })?;
         drain_resizer(&mut resizer, available, &mut encoder, stop)?;
     }
@@ -203,17 +203,16 @@ pub(crate) fn resize_simple(
 
         let available = resizer
             .push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32)
-            .map_err(|e| {
-                crate::error::Error::new(crate::error::ErrorKind::InternalError {
-                    reason: match e.error() {
-                        zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
-                        zenresize::StreamingError::InputTooShort => "resize: input row too short",
-                        zenresize::StreamingError::RingBufferOverflow => {
-                            "resize: ring buffer overflow"
-                        }
-                        _ => "resize: unknown streaming error",
-                    },
-                })
+            // `push_rows` returns `At<StreamingError>`; map the inner variant to our
+            // `ErrorKind` with `map_err_at` so the resize-call trace is carried through
+            // (the trailing `?` then wraps the resulting `At<ErrorKind>` into `Error`).
+            .map_err_at(|inner| crate::error::ErrorKind::InternalError {
+                reason: match inner {
+                    zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
+                    zenresize::StreamingError::InputTooShort => "resize: input row too short",
+                    zenresize::StreamingError::RingBufferOverflow => "resize: ring buffer overflow",
+                    _ => "resize: unknown streaming error",
+                },
             })?;
         drain_resizer(&mut resizer, available, &mut encoder, stop)?;
     }
