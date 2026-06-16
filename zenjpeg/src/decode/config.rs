@@ -149,6 +149,10 @@ pub enum IdctMethod {
     /// (`test_idct_method_libjpeg_fancy_matches_mozjpeg_exact`). Pair with
     /// [`ChromaUpsampling::Triangle`] for the full byte-exact pipeline; ~3%
     /// slower to decode than the default [`Jpegli`](Self::Jpegli) IDCT.
+    /// Honored identically (byte-for-byte) on every u8 decode path — streaming
+    /// `decode()`, `scanline_reader()`, and the parallel path — across all
+    /// subsampling modes and baseline/progressive (see
+    /// `tests/libjpeg_idct_all_paths_parity.rs`).
     Libjpeg,
 }
 

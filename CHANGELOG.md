@@ -12,6 +12,24 @@ All notable changes to zenjpeg are documented here. Earlier history
   default limit. Callers that set an explicit `max_pixels(...)` are unaffected.
   Updated the decoder/`Limits` default docs and README examples to match.
 
+### Tests
+- **All decode paths verified byte-identical under `IdctMethod::Libjpeg`.** New
+  `tests/libjpeg_idct_all_paths_parity.rs` asserts that `decode()` (streaming),
+  `scanline_reader()` (pull-based), and the multi-threaded fused-parallel path
+  produce **byte-for-byte identical** u8 RGB under `IdctMethod::Libjpeg`, across
+  4:2:0 / 4:2:2 / 4:4:0 / 4:4:4 × baseline/progressive × MCU-aligned and
+  non-aligned sizes. Previously only 4:2:0 baseline `decode()` vs
+  `scanline_reader()` was covered; this widens the lock to the full matrix, so a
+  caller gets the libjpeg-turbo-exact reconstruction regardless of which path the
+  decoder auto-selects. Under `--features __ffi-tests` it additionally asserts
+  every path is byte-identical to **real libjpeg-turbo** (`mozjpeg-sys`) across
+  4:2:2 / 4:4:0 / 4:4:4 too — extending the prior 4:2:0-only FFI exactness check
+  to every subsampling on every path (verified `max_diff == 0` throughout).
+  (The f32-output path routes the same unclamped libjpeg islow IDCT but in f32
+  precision, so it is intentionally not byte-exact with the u8 paths — guarded
+  loosely. The `force_f32_idct` transform path and Knusperli deblocking use the
+  f32 IDCT by design and are out of scope.)
+
 ### Fixed
 - **docs(readme): unify `Unstoppable` import path + quality arg type, name
   `Strictness`, add end-to-end decode→encode example — fixes first-try compile
