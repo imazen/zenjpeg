@@ -145,11 +145,11 @@ zenjpeg = { version = "0.6", features = ["moxcms"] }
 
 | Method | Input Type | Use Case |
 |--------|------------|----------|
-| `encode_from_bytes(w, h, layout)` | `&[u8]` | Raw byte buffers |
-| `encode_from_rgb::<P>(w, h)` | `rgb` crate types | `RGB<u8>`, `RGBA<f32>`, etc. |
-| `encode_from_ycbcr_planar(w, h)` | `YCbCrPlanes` | Video pipeline output |
+| `encode_from_bytes(w: u32, h: u32, layout)` | `&[u8]` | Raw byte buffers |
+| `encode_from_rgb::<P>(w: u32, h: u32)` | `rgb` crate types | `RGB<u8>`, `RGBA<f32>`, etc. |
+| `encode_from_ycbcr_planar(w: u32, h: u32)` | `YCbCrPlanes` | Video pipeline output |
 
-All three return a streaming `Encoder`. Push rows with `push_packed()`, finish with `finish()`. One-shot convenience: `config.request().encode(&pixels, w, h)`.
+Width and height are `u32` (pixels) on every entry point. All three return a streaming `Encoder`. Push rows with `push_packed()`, finish with `finish()`. One-shot convenience: `config.request().encode(&pixels, w, h)`.
 
 ### Builder Methods
 
