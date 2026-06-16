@@ -21,7 +21,7 @@ fn transcode(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::err
     // pass any `&impl zenjpeg::encoder::Stop` (e.g. a shared atomic flag) instead
     // to support user-initiated cancellation.
     let decoded = Decoder::new()
-        .max_pixels(100_000_000) // reject decompression bombs (100 MP)
+        .max_pixels(120_000_000) // reject decompression bombs (120 MP, admits ~108 MP camera photos)
         .max_memory(512 * 1024 * 1024) // cap allocation at 512 MB
         .decode(&jpeg_bytes, Unstoppable)?;
 
@@ -43,7 +43,7 @@ fn transcode(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::err
 decoder accepts, so a single import covers both the decode and encode calls. To
 set all limits in one value (and reuse them via the request builder), use
 [`Limits`](#per-image-metadata-three-layer-pattern):
-`zenjpeg::encoder::Limits::default().max_pixels(100_000_000).max_memory(512 * 1024 * 1024)`.
+`zenjpeg::encoder::Limits::default().max_pixels(120_000_000).max_memory(512 * 1024 * 1024)`.
 
 ## Quick Start
 
@@ -260,7 +260,7 @@ use zenjpeg::encoder::Unstoppable;
 
 let result = Decoder::new()
     .strictness(Strictness::Strict)   // reject any spec violation or truncation
-    .max_pixels(100_000_000)          // 100 MP cap
+    .max_pixels(120_000_000)          // 120 MP cap (admits ~108 MP camera photos)
     .max_memory(512 * 1024 * 1024)    // 512 MB cap
     .decode(&jpeg_bytes, Unstoppable)?;
 ```

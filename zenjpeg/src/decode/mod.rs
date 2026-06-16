@@ -355,7 +355,7 @@ impl DecodeConfig {
 
     /// Sets the maximum number of pixels allowed (for DoS protection).
     ///
-    /// Default is 100 megapixels. Set to 0 for unlimited.
+    /// Default is 120 megapixels (admits common ~108 MP camera photos). Set to 0 for unlimited.
     #[must_use]
     pub fn max_pixels(mut self, pixels: u64) -> Self {
         self.max_pixels = pixels;
