@@ -4,6 +4,47 @@ A pure Rust JPEG encoder and decoder. Heavily inspired by jpegli and mozjpeg, wi
 
 > **Note:** This crate was previously published as `jpegli-rs`. If migrating, update imports from `use jpegli::` to `use zenjpeg::`.
 
+## End-to-End: decode → re-encode (server-side, with limits + cancellation)
+
+Read a JPEG, decode it under a pixel/memory limit and a cancellation token, then
+re-encode the RGB pixels at quality 80. Every type is imported with its real path.
+
+```rust
+use std::fs;
+use zenjpeg::decoder::Decoder;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
+
+fn transcode(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let jpeg_bytes = fs::read(input_path)?;
+
+    // Decode with DoS limits + a stop token. `Unstoppable` never cancels;
+    // pass any `&impl zenjpeg::encoder::Stop` (e.g. a shared atomic flag) instead
+    // to support user-initiated cancellation.
+    let decoded = Decoder::new()
+        .max_pixels(100_000_000) // reject decompression bombs (100 MP)
+        .max_memory(512 * 1024 * 1024) // cap allocation at 512 MB
+        .decode(&jpeg_bytes, Unstoppable)?;
+
+    let (width, height) = decoded.dimensions();
+    let rgb: &[u8] = decoded.pixels_u8().expect("u8 output (default OutputTarget::Srgb8)");
+
+    // Re-encode at quality 80.0, 4:2:0 chroma.
+    let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(rgb, Unstoppable)?;
+    let out: Vec<u8> = enc.finish()?;
+
+    fs::write(output_path, &out)?;
+    Ok(())
+}
+```
+
+`Unstoppable` is re-exported from `zenjpeg::encoder` and is the same type the
+decoder accepts, so a single import covers both the decode and encode calls. To
+set all limits in one value (and reuse them via the request builder), use
+[`Limits`](#per-image-metadata-three-layer-pattern):
+`zenjpeg::encoder::Limits::default().max_pixels(100_000_000).max_memory(512 * 1024 * 1024)`.
+
 ## Quick Start
 
 ### Encode
@@ -11,7 +52,7 @@ A pure Rust JPEG encoder and decoder. Heavily inspired by jpegli and mozjpeg, wi
 ```rust
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
 enc.push_packed(&rgb_bytes, Unstoppable)?;
 let jpeg_bytes: Vec<u8> = enc.finish()?;
@@ -21,7 +62,7 @@ let jpeg_bytes: Vec<u8> = enc.finish()?;
 
 ```rust
 use zenjpeg::decoder::Decoder;
-use enough::Unstoppable;
+use zenjpeg::encoder::Unstoppable;
 
 let result = Decoder::new().decode(&jpeg_bytes, Unstoppable)?;
 let rgb_pixels: &[u8] = result.pixels_u8().expect("u8 output");
@@ -127,7 +168,7 @@ All three return a streaming `Encoder`. Push rows with `push_packed()`, finish w
 use zenjpeg::encoder::{EncoderConfig, Quality, ChromaSubsampling};
 
 // Simple quality scale (0-100)
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 
 // Target a specific metric
 let config = EncoderConfig::ycbcr(Quality::ApproxMozjpeg(80), ChromaSubsampling::Quarter);
@@ -142,7 +183,7 @@ let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(1.0), ChromaSubsamp
 **Hybrid trellis (`auto_optimize(true)`):** combines jpegli AQ with mozjpeg trellis. Best quality/size tradeoff. +1.5 SSIMULACRA2 points vs default at matched file size.
 
 ```rust
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
     .auto_optimize(true); // requires trellis feature
 ```
 
@@ -153,26 +194,30 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 For encoding multiple images with the same config but different metadata:
 
 ```rust
-use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Limits, Unstoppable};
 
 // Layer 1: Reusable config
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
     .progressive(true);
 
 // Layer 2: Per-image request (metadata, limits, stop token)
 let jpeg = config.request()
     .icc_profile(&srgb_icc_bytes)
+    .limits(Limits::default().max_output(20 * 1024 * 1024)) // cap encoded size at 20 MB
     .encode(&pixels, 1920, 1080)?;
 
 // Layer 3: Streaming execution
 let mut encoder = config.request()
     .icc_profile(&p3_icc_bytes)
     .encode_from_rgb::<rgb::RGB<u8>>(1920, 1080)?;
-encoder.push_packed(&pixels, enough::Unstoppable)?;
+encoder.push_packed(&pixels, Unstoppable)?;
 let jpeg = encoder.finish()?;
 ```
 
-Request builder methods: `.icc_profile()`, `.exif()`, `.xmp()`, `.stop()`, `.limits()`.
+Request builder methods (on `config.request()`): `.icc_profile(&[u8])`,
+`.exif(impl Into<Exif>)`, `.xmp(&[u8])`, `.stop(&dyn Stop)`, and `.limits(Limits)` —
+where `Limits` is `zenjpeg::encoder::Limits` built via
+`Limits::default().max_pixels(n).max_memory(n).max_output(n)`.
 
 ### Pixel Layouts
 
@@ -202,9 +247,23 @@ Request builder methods: `.icc_profile()`, `.exif()`, `.xmp()`, `.stop()`, `.lim
 | `.transform(t)` | none | Lossless rotation/flip during decode |
 | `.crop(region)` | none | Pixel-level crop (IDCT skipped outside region) |
 | `.num_threads(n)` | `0` (auto) | `1` forces sequential |
-| `.strictness(level)` | `Balanced` | `Strict`, `Balanced`, `Lenient`, `Permissive` |
-| `.max_pixels(n)` | 100M | DoS protection |
-| `.max_memory(n)` | 512 MB | Memory limit |
+| `.strictness(Strictness)` | `Balanced` | `Strictness::{Strict, Balanced, Lenient, Permissive}` (type at `zenjpeg::decoder::Strictness`) |
+| `.max_pixels(u64)` | 100M | DoS protection |
+| `.max_memory(u64)` | 512 MB | Memory limit |
+
+`Strictness` is `zenjpeg::decoder::Strictness`; `.max_pixels` / `.max_memory` take a
+`u64`. Example:
+
+```rust
+use zenjpeg::decoder::{Decoder, Strictness};
+use zenjpeg::encoder::Unstoppable;
+
+let result = Decoder::new()
+    .strictness(Strictness::Strict)   // reject any spec violation or truncation
+    .max_pixels(100_000_000)          // 100 MP cap
+    .max_memory(512 * 1024 * 1024)    // 512 MB cap
+    .decode(&jpeg_bytes, Unstoppable)?;
+```
 
 ### Decode Paths
 
@@ -241,10 +300,11 @@ JPEG's 8x8 block structure creates visible grid artifacts at low quality. The de
 
 ```rust
 use zenjpeg::decoder::{Decoder, DeblockMode};
+use zenjpeg::encoder::Unstoppable;
 
 let result = Decoder::new()
     .deblock(DeblockMode::Auto)
-    .decode(&jpeg_data, enough::Unstoppable)?;
+    .decode(&jpeg_data, Unstoppable)?;
 ```
 
 | DeblockMode | Quality gain (zensim vs original) | Speed | Streaming? |
@@ -262,11 +322,12 @@ All modes work with both `decode()` and `scanline_reader()`. When `scanline_read
 Requires the `moxcms` feature (pure Rust). Converts the embedded ICC profile to the target color space during decode.
 
 ```rust
-use zenjpeg::color::icc::TargetColorSpace;
+use zenjpeg::decoder::{Decoder, TargetColorSpace};
+use zenjpeg::encoder::Unstoppable;
 
 let img = Decoder::new()
     .correct_color(Some(TargetColorSpace::Srgb))
-    .decode(&jpeg_data, enough::Unstoppable)?;
+    .decode(&jpeg_data, Unstoppable)?;
 ```
 
 Default is `None` -- no color conversion. Pixels are returned in the JPEG's native color space.
@@ -277,15 +338,16 @@ Rotate, flip, and transpose by manipulating DCT coefficients directly. No decode
 
 ```rust
 use zenjpeg::lossless::{transform, apply_exif_orientation, LosslessTransform, TransformConfig};
+use zenjpeg::encoder::Unstoppable;
 
 // Rotate 90 degrees losslessly
 let rotated = transform(&jpeg_data, &TransformConfig {
     transform: LosslessTransform::Rotate90,
     ..Default::default()
-}, enough::Unstoppable)?;
+}, Unstoppable)?;
 
 // Auto-correct EXIF orientation
-let oriented = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
+let oriented = apply_exif_orientation(&jpeg_data, Unstoppable)?;
 ```
 
 All 8 D4 dihedral group elements: `None`, `FlipHorizontal`, `FlipVertical`, `Transpose`, `Rotate90`, `Rotate180`, `Rotate270`, `Transverse`.
@@ -297,8 +359,11 @@ UltraHDR embeds a gain map inside a standard JPEG so HDR-capable displays get HD
 #### Encode
 
 ```rust
-use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
-use zenjpeg::ultrahdr::{encode_ultrahdr, GainMapConfig, ToneMapConfig, UhdrRawImage};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Unstoppable};
+use zenjpeg::ultrahdr::{
+    encode_ultrahdr, GainMapConfig, ToneMapConfig, UhdrColorGamut, UhdrColorTransfer,
+    UhdrPixelFormat, UhdrRawImage,
+};
 
 // Your HDR pixels (linear RGB float, any gamut)
 let hdr = UhdrRawImage::from_f32_rgb(
@@ -314,7 +379,7 @@ let ultrahdr_jpeg = encode_ultrahdr(
     &ToneMapConfig::default(),   // SDR tonemapping parameters
     &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
     75.0,                        // gain map JPEG quality
-    enough::Unstoppable,
+    Unstoppable,
 )?;
 // ultrahdr_jpeg is a standard JPEG — works everywhere, HDR on supported displays
 ```
@@ -354,7 +419,10 @@ Memory stays bounded regardless of image size — ~500KB peak for SDR-only, ~1MB
 #### Detection
 
 ```rust
-let decoded = Decoder::new().decode(&jpeg_data, enough::Unstoppable)?;
+use zenjpeg::decoder::Decoder;
+use zenjpeg::encoder::Unstoppable;
+
+let decoded = Decoder::new().decode(&jpeg_data, Unstoppable)?;
 if let Some(extras) = decoded.extras() {
     if extras.is_ultrahdr() {
         let (metadata, _) = extras.ultrahdr_metadata().unwrap().unwrap();
@@ -367,15 +435,49 @@ Non-UltraHDR JPEGs decode normally — the feature adds zero overhead when no ga
 
 ### Cooperative Cancellation
 
-Both encoder and decoder accept `Stop` tokens for graceful shutdown:
+Both encoder and decoder accept a `Stop` token for graceful shutdown. `Unstoppable`
+and the `Stop` trait are both re-exported from `zenjpeg::encoder` (backed by the
+`enough` crate) — you do **not** need to depend on `enough` directly. The same
+`Unstoppable` value works for every decode and encode call.
+
+The no-cancel case needs nothing beyond zenjpeg:
 
 ```rust
-use enough::Unstoppable;
+use zenjpeg::decoder::Decoder;
+use zenjpeg::encoder::Unstoppable; // re-export; no direct `enough` dep needed
 
-// Never cancel
 let image = Decoder::new().decode(&jpeg_data, Unstoppable)?;
+```
 
-// Custom cancellation (e.g., user clicked cancel)
+For real cancellation, implement the `Stop` trait on your own type (an `AtomicBool`
+flag is the usual choice). The trait's one required method is
+`check(&self) -> Result<(), StopReason>`; `StopReason` lives in the `enough` crate,
+so this case needs `enough` as a direct dependency:
+
+```toml
+[dependencies]
+zenjpeg = "0.8"
+enough = "0.4"
+```
+
+```rust
+use std::sync::atomic::{AtomicBool, Ordering};
+use enough::{Stop, StopReason};
+use zenjpeg::decoder::Decoder;
+
+struct CancelFlag(AtomicBool);
+impl Stop for CancelFlag {
+    fn check(&self) -> Result<(), StopReason> {
+        if self.0.load(Ordering::Relaxed) {
+            Err(StopReason::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+let cancel_token = CancelFlag(AtomicBool::new(false));
+// ... a watchdog thread can flip the flag: cancel_token.0.store(true, Ordering::Relaxed);
 let result = Decoder::new().decode(&jpeg_data, &cancel_token);
 ```
 
