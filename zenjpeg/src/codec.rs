@@ -596,6 +596,18 @@ impl JpegEncoder {
             {
                 req = req.xmp(xmp);
             }
+
+            // HDR content-light-level (`meta.content_light_level` — CTA-861.3
+            // MaxCLL/MaxFALL) and mastering display (`meta.mastering_display` —
+            // SMPTE ST 2086) have NO native JPEG marker and no standard
+            // JPEG/XMP schema, so they are intentionally not emitted here — a
+            // documented format limitation, not a silent give-up. The HDR
+            // *peak* is not lost for true-HDR output: `ultrahdr::encode` carries
+            // it as the gain-map headroom (`alternate_hdr_headroom`, measured
+            // from the actual content ≈ `log2(MaxCLL / 203-nit diffuse white)`),
+            // so no forwarded MaxCLL is needed. MaxFALL and the mastering volume
+            // have no carrier in JPEG or UltraHDR and are dropped.
+            let _ = (&meta.content_light_level, &meta.mastering_display);
         }
         if let Some(ref stop) = self.stop {
             req = req.stop(stop);
