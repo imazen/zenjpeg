@@ -222,7 +222,7 @@ jobs:
             brew install jpeg-turbo
             echo "$(brew --prefix jpeg-turbo)/bin" >> "$GITHUB_PATH"
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            choco install libjpeg-turbo --yes --no-progress
+            choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums
             echo "C:\\libjpeg-turbo64\\bin" >> "$GITHUB_PATH"
           fi
           cmake --version
