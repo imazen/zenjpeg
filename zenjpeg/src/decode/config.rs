@@ -99,14 +99,16 @@ pub enum ChromaUpsampling {
     /// Both schemes are equally accurate vs the exact filter (max err 0.5,
     /// ~zero bias).
     ///
-    /// With the default [`IdctMethod::Jpegli`] IDCT, matches libjpeg-turbo/mozjpeg
-    /// within max_diff <= 3. With [`IdctMethod::Libjpeg`] the h2v2 upsampler
-    /// switches to turbo's fixed biases (bit-exact with turbo), so decoded
-    /// RGB matches within max_diff <= 1 — the residual is YCbCr→RGB rounding
-    /// (ours is zune-style 14-bit; turbo uses 16-bit tables — R identical,
-    /// G/B differ on ~0.1–0.2% of inputs).
-    /// The Libjpeg IDCT is SIMD (guarded, bit-exact with its scalar kernel)
-    /// and runs within ~20% of the Jpegli kernel per block.
+    /// With the default [`IdctMethod::Jpegli`] IDCT, decoded RGB matches
+    /// libjpeg-turbo/mozjpeg within max_diff <= 3 (the IDCT precision differs).
+    /// With [`IdctMethod::Libjpeg`] all three stages switch to turbo's — the
+    /// islow IDCT, the h2v2 fixed upsampling biases, AND the 16-bit YCbCr→RGB
+    /// tables — so decoded RGB is BYTE-FOR-BYTE identical to mozjpeg/djpeg
+    /// (max_diff == 0), verified over sizes × qualities × 4:2:0 by
+    /// `test_idct_method_libjpeg_fancy_matches_mozjpeg_exact` (`__ffi-tests`).
+    /// The Libjpeg islow IDCT is SIMD (guarded, bit-exact with its scalar
+    /// kernel) and costs ~3% of decode wall time vs the default Jpegli IDCT
+    /// (`benches/decode_zenbench.rs`).
     #[default]
     Triangle,
 }
@@ -140,9 +142,13 @@ pub enum IdctMethod {
     /// Uses the Loeffler, Ligtenberg, Moschytz algorithm with 13-bit
     /// fixed-point constants, matching libjpeg-turbo's `jpeg_idct_islow`.
     /// Also selects libjpeg-turbo's fixed h2v2 fancy-upsampling rounding
-    /// biases (see [`ChromaUpsampling::Triangle`]), making the IDCT and
-    /// upsampling stages bit-exact with mozjpeg/djpeg — decoded RGB matches
-    /// within max_diff <= 1 (the residual is YCbCr→RGB table rounding).
+    /// biases (see [`ChromaUpsampling::Triangle`]) and its 16-bit YCbCr→RGB
+    /// tables, so all three decode stages are bit-exact with mozjpeg/djpeg:
+    /// decoded RGB is byte-for-byte identical (max_diff == 0), verified
+    /// against libjpeg-turbo by the `__ffi-tests` parity tests
+    /// (`test_idct_method_libjpeg_fancy_matches_mozjpeg_exact`). Pair with
+    /// [`ChromaUpsampling::Triangle`] for the full byte-exact pipeline; ~3%
+    /// slower to decode than the default [`Jpegli`](Self::Jpegli) IDCT.
     Libjpeg,
 }
 
