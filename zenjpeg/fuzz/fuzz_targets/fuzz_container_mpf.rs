@@ -47,9 +47,13 @@ fuzz_target!(|data: &[u8]| {
     if data.len() >= 8 {
         let primary = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
         let gainmap = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
-        // Cap sizes so u32 arithmetic stays sane.
-        let primary = primary.min(1_000_000);
-        let gainmap = gainmap.min(1_000_000);
+        // Clamp into [1, 1_000_000]: the parser intentionally treats a size-0
+        // first entry as "not a real entry" (the issue #148 foreign-file resync
+        // heuristic), so create_mpf_header(0, ..) is not round-trippable by
+        // contract — feeding 0 made the roundtrip `.expect()` panic (harness
+        // noise, not a library bug). Match the mpf.rs proptests' `1..` floor.
+        let primary = primary.clamp(1, 1_000_000);
+        let gainmap = gainmap.clamp(1, 1_000_000);
         let built = create_mpf_header(primary, gainmap, None);
         // Strip APP2 marker + length + MPF\0 (4 + 4 = 8 bytes).
         let tiff_start = 8;
