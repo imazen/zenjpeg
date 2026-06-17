@@ -58,6 +58,11 @@
 pub type DecodeError = crate::error::Error;
 // Keep legacy aliases for backward compatibility
 pub use crate::error::{Error, Result};
+// `ErrorKind` is the inner kind returned by [`Error::kind()`]. Re-exported here
+// so downstream callers (e.g. servers classifying decode failures into
+// 400/413/500) can name and `match` the variants. `#[non_exhaustive]`, so
+// adding variants later stays non-breaking.
+pub use crate::error::ErrorKind;
 
 // === Main decoder types ===
 pub use crate::decode::{

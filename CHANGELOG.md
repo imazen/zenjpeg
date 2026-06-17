@@ -5,6 +5,25 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Added
+- **`ErrorKind` is now public, re-exported as `zenjpeg::decoder::ErrorKind` and
+  `zenjpeg::encoder::ErrorKind`** (closes #155). The decode/encode error is
+  `Error(pub At<ErrorKind>)` with `.kind() -> &ErrorKind`, but `ErrorKind` lived
+  in the `pub(crate) error` module and was re-exported through zero public paths,
+  so a caller could invoke `.kind()` yet could not *name* any variant to `match`
+  on it — error classification (e.g. 413 too-large / 400 corrupt / 500 OOM)
+  collapsed to `to_string().contains(...)` substring matching. `ErrorKind` is
+  `#[non_exhaustive]`, so this re-export is additive and future variants stay
+  non-breaking. New `tests/error_kind_public.rs` matches `.kind()` against named
+  variants through the public path.
+### Fixed
+- **Crate-root rustdoc decoder example now compiles and runs** (closes #155, item
+  2). The top-of-page `lib.rs` decoder snippet showed a stale 1-arg
+  `Decoder::new().decode(&jpeg_data)?` plus `image.pixels() -> &[u8]`; the real
+  signature is `.decode(data, stop)` returning a `DecodeResult` whose bytes come
+  from `.pixels_u8()`. Replaced the `rust,ignore` block with a real, compiling
+  doctest (encode a tiny image, decode it round-trip) and added a second doctest
+  showing `match err.kind() { ErrorKind::… }` for error classification.
 ### Changed
 - **Default max-pixels limit raised 100 MP → 120 MP** (`DEFAULT_MAX_PIXELS` in
   `foundation/alloc.rs`). 108 MP phone-camera photos are common and were rejected

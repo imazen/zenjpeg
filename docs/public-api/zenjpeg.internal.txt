@@ -10,15 +10,15 @@
 ## summary
 #
 #   pub modules                                84
-#   pub types (struct/enum/trait/alias)       297
+#   pub types (struct/enum/trait/alias)       298
 #   pub consts/statics                        316
 #   pub macros                                  1
-#   free functions                            370
-#   inherent methods                         1182
-#   struct fields                             748
-#   enum variants                             490
+#   free functions                            376
+#   inherent methods                         1186
+#   struct fields                             751
+#   enum variants                             492
 #   re-exports                                 25
-#   trait roster entries (type × trait)       640
+#   trait roster entries (type × trait)       646
 #   auto-trait-complete types                 131
 #   auto-trait exceptions                       7
 #
@@ -26,13 +26,13 @@
 #   (root)                           78
 #   alloc                             1
 #   analyze                           8
-#   color                           118
+#   color                           117
 #   container                         8
-#   decode                          429
-#   decoder                          53
+#   decode                          444
+#   decoder                          54
 #   detect                           40
 #   encode                         1451
-#   encoder                         131
+#   encoder                         132
 #   entropy                         100
 #   foundation                      342
 #   heuristics                        3
@@ -46,7 +46,7 @@
 #   types                           140
 #   ultrahdr                         12
 
-## items (3335 lines)
+## items (3351 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -399,6 +399,7 @@ pub enum decode::OwnedDecodedPixels
 pub enum decode::SegmentType [also: encode::extras]
 pub enum decode::StandardProfile
 pub enum decode::Strictness
+pub enum decode::upsample::H2v2Bias
 pub enum detect::content::ContentType
 pub enum detect::content::DeblockAction
 pub enum encode::Exif [also: encode::exif]
@@ -481,8 +482,7 @@ pub fn color::ycbcr::cmyk_to_rgb(u8, u8, u8, u8) -> (u8, u8, u8)
 pub fn color::ycbcr::convert_rgb_to_ycbcr_buffer(&mut [u8])
 pub fn color::ycbcr::convert_ycbcr_to_rgb_buffer(&mut [u8])
 pub fn color::ycbcr::extract_channel(&[u8], types::PixelFormat, usize) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8(&[i16], &[i16], &[i16], &mut [u8], usize)
-pub fn color::ycbcr::fused_h2v2_hfancy_ycbcr_to_rgb_u8(&[i16], &[i16], &[i16], &mut [u8], usize)
+pub fn color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8(&[i16], &[i16], &[i16], &mut [u8], usize, bool)
 pub fn color::ycbcr::rgb_to_cmyk(u8, u8, u8) -> (u8, u8, u8, u8)
 pub fn color::ycbcr::rgb_to_ycbcr(u8, u8, u8) -> (u8, u8, u8)
 pub fn color::ycbcr::rgb_to_ycbcr_planes(&[u8], usize, usize) -> encoder::Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>
@@ -490,8 +490,8 @@ pub fn color::ycbcr::ycbcr_planes_to_rgb(&[u8], &[u8], &[u8], usize, usize) -> e
 pub fn color::ycbcr::ycbcr_to_rgb_i16_x16(&[i16; 16], &[i16; 16], &[i16; 16], &mut [u8], &mut usize)
 pub fn color::ycbcr_planes_f32_to_rgb_f32(&[f32], &[f32], &[f32], &mut [f32]) [also: color::ycbcr]
 pub fn color::ycbcr_planes_f32_to_rgb_u8(&[f32], &[f32], &[f32], &mut [u8]) [also: color::ycbcr]
-pub fn color::ycbcr_planes_i16_to_rgb_u8(&[i16], &[i16], &[i16], &mut [u8]) [also: color::ycbcr]
-pub fn color::ycbcr_planes_i16_to_xrgba_u8(&[i16], &[i16], &[i16], &mut [u8], bool) [also: color::ycbcr]
+pub fn color::ycbcr_planes_i16_to_rgb_u8(&[i16], &[i16], &[i16], &mut [u8], bool) [also: color::ycbcr]
+pub fn color::ycbcr_planes_i16_to_xrgba_u8(&[i16], &[i16], &[i16], &mut [u8], bool, bool) [also: color::ycbcr]
 pub fn color::ycbcr_to_rgb(u8, u8, u8) -> (u8, u8, u8) [also: color::ycbcr]
 pub fn color::ycbcr_to_rgb_f32(f32, f32, f32) -> (f32, f32, f32) [also: color::ycbcr]
 pub fn color::ycck_planes_to_cmyk_u8(&[f32], &[f32], &[f32], &[f32], &mut [u8]) [also: color::ycbcr]
@@ -555,6 +555,8 @@ pub fn decode::idct_int::idct_int_avx2_raw(archmage::tokens::generated::x86::X64
 pub fn decode::idct_int::idct_int_dc_only(i32, &mut [i16], usize)
 pub fn decode::idct_int::idct_int_dc_only_unclamped(i32, &mut [i16], usize)
 pub fn decode::idct_int::idct_int_libjpeg(&mut [i32; 64], &mut [i16], usize)
+pub fn decode::idct_int::idct_int_libjpeg_auto(&mut [i32; 64], &mut [i16], usize)
+pub fn decode::idct_int::idct_int_libjpeg_auto_unclamped(&mut [i32; 64], &mut [i16], usize)
 pub fn decode::idct_int::idct_int_libjpeg_unclamped(&mut [i32; 64], &mut [i16], usize)
 pub fn decode::idct_int::idct_int_tiered(&mut [i32; 64], &mut [i16], usize, u8)
 pub fn decode::idct_int::idct_int_tiered_libjpeg(&mut [i32; 64], &mut [i16], usize, u8)
@@ -562,18 +564,27 @@ pub fn decode::idct_int::idct_int_tiered_libjpeg_unclamped(&mut [i32; 64], &mut 
 pub fn decode::idct_int::idct_int_tiered_unclamped(&mut [i32; 64], &mut [i16], usize, u8)
 pub fn decode::idct_int::is_dc_only_int(&[i32; 64]) -> bool
 pub fn decode::idct_int::pixels_i16_to_f32_centered(&[i16; 64]) -> [f32; 64]
+pub fn decode::upsample::H2v2Bias::assert_fields_are_eq(&self)
+pub fn decode::upsample::H2v2Bias::clone(&self) -> decode::upsample::H2v2Bias
+pub fn decode::upsample::H2v2Bias::eq(&self, &decode::upsample::H2v2Bias) -> bool
+pub fn decode::upsample::H2v2Bias::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::upsample::upsample_h1v2_i16_libjpeg(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h1v2_i16_libjpeg_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h1v2_i16_nearest(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h1v2_i16_nearest_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h2v1_i16_libjpeg(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h2v1_i16_libjpeg_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
+pub fn decode::upsample::upsample_h2v1_i16_libjpeg_strided_scalar(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h2v1_i16_nearest(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h2v1_i16_nearest_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_libjpeg(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_libjpeg_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
+pub fn decode::upsample::upsample_h2v2_i16_libjpeg_strided_turbo(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
+pub fn decode::upsample::upsample_h2v2_i16_libjpeg_turbo(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_nearest(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_nearest_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
+pub fn decode::upsample::upsample_h2v2_libjpeg_row(&[i16], &[i16], &mut [i16], usize, usize, decode::upsample::H2v2Bias)
+pub fn decode::upsample::upsample_h2v2_libjpeg_row_scalar(&[i16], &[i16], &mut [i16], usize, usize, decode::upsample::H2v2Bias)
 pub fn decode::upsample::upsample_libjpeg_f32(&[f32], usize, usize, usize, usize, usize, usize) -> alloc::vec::Vec<f32>
 pub fn decode::upsample::upsample_nearest_f32(&[f32], usize, usize, &mut [f32], usize, usize, usize, usize)
 pub fn decoder::ChromaUpsampling::assert_fields_are_eq(&self)
@@ -2435,6 +2446,9 @@ pub decode::UltraHdrReaderConfig::display_boost: f32
 pub decode::UltraHdrReaderConfig::memory_strategy: ultrahdr::GainMapMemory
 pub decode::UltraHdrReaderConfig::mode: ultrahdr::UltraHdrMode
 pub decode::UltraHdrReaderConfig::preserve_metadata: bool
+pub decode::upsample::H2v2Bias::Alternating
+pub decode::upsample::H2v2Bias::Alternating::is_upper: bool
+pub decode::upsample::H2v2Bias::Turbo
 pub decoder::AdobeInfo::color_transform: encode::extras::AdobeColorTransform
 pub decoder::DecodeConfig::correct_color: core::option::Option<color::icc::TargetColorSpace>
 pub decoder::DecodeConfig::output_format: core::option::Option<types::PixelFormat>
@@ -2443,6 +2457,7 @@ pub decoder::DecodeResult::format: types::PixelFormat
 pub decoder::DecodedCoefficients::components: alloc::vec::Vec<decode::ComponentCoefficients>
 pub decoder::DecodedImage::format: types::PixelFormat
 pub decoder::DecodedImageF32::format: types::PixelFormat
+pub decoder::ErrorKind::UnsupportedPixelFormat::format: types::PixelFormat
 pub decoder::JfifInfo::density_units: encode::extras::DensityUnits
 pub decoder::JpegInfo::color_space: types::ColorSpace
 pub decoder::JpegInfo::dimensions: types::Dimensions
@@ -3098,6 +3113,7 @@ pub encoder::EncodePlan::scan_mode: encode::encoder_types::ProgressiveScanMode
 pub encoder::EncodePlan::sof: encode::plan::SofMarker
 pub encoder::EncodePlan::table_family: encode::encoder_types::QuantTableConfig
 pub encoder::EncodePlan::trellis: core::option::Option<encode::trellis::compat::TrellisConfig>
+pub encoder::ErrorKind::UnsupportedPixelFormat::format: types::PixelFormat
 pub encoder::Exif::Fields(encode::exif::ExifFields)
 pub encoder::ExpertConfig::downsampling_method: encode::encoder_types::DownsamplingMethod
 pub encoder::ExpertConfig::quality: encode::encoder_types::Quality
@@ -3384,7 +3400,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (196 types)
+## trait impls (197 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3405,6 +3421,7 @@ decode::JbrdScanInfo: Clone, Debug, Default
 decode::OrientationHint: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, TrivialClone
 decode::OwnedDecodedPixels: Clone, Debug
 decode::ParallelStrategy: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+decode::upsample::H2v2Bias: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 decoder::ChromaUpsampling: TrivialClone
 decoder::CropRegion: TrivialClone
 decoder::DeblockMode: TrivialClone

@@ -143,6 +143,10 @@ pub type EncodeError = crate::error::Error;
 pub type EncodeResult<T> = core::result::Result<T, EncodeError>;
 // Keep legacy aliases for backward compatibility
 pub use crate::error::{Error, Result};
+// `ErrorKind` is the inner kind returned by [`Error::kind()`] — re-exported so
+// callers can name and `match` the variants. `#[non_exhaustive]`, so adding
+// variants later stays non-breaking.
+pub use crate::error::ErrorKind;
 
 // === Main encoder types (from encode root modules) ===
 pub use crate::encode::Stop;
