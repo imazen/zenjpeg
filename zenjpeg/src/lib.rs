@@ -103,11 +103,47 @@
 //! The decoder is in prerelease (always compiled; the API will have
 //! breaking changes).
 //!
-//! ```rust,ignore
-//! use zenjpeg::decoder::{Decoder, DecodedImage};
+//! ```rust
+//! use zenjpeg::decoder::Decoder;
+//! use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
 //!
-//! let image = Decoder::new().decode(&jpeg_data)?;
-//! let pixels: &[u8] = image.pixels();
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! // (Make a tiny JPEG to decode.)
+//! let pixels = [128u8; 16 * 16 * 3];
+//! let mut enc = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
+//!     .encode_from_bytes(16, 16, PixelLayout::Rgb8Srgb)?;
+//! enc.push_packed(&pixels, Unstoppable)?;
+//! let jpeg_data: Vec<u8> = enc.finish()?;
+//!
+//! // Decode with DoS limits + a stop token. `Unstoppable` never cancels;
+//! // pass any `&impl zenjpeg::encoder::Stop` for user-initiated cancellation.
+//! let decoded = Decoder::new()
+//!     .max_pixels(120_000_000) // reject decompression bombs
+//!     .decode(&jpeg_data, Unstoppable)?;
+//!
+//! let (width, height) = decoded.dimensions();
+//! let rgb: &[u8] = decoded.pixels_u8().expect("u8 output (default OutputTarget::Srgb8)");
+//! assert_eq!((width, height), (16, 16));
+//! assert_eq!(rgb.len(), 16 * 16 * 3);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Decode failures carry a [`decoder::ErrorKind`] you can `match` to classify
+//! them (e.g. for HTTP status mapping in a server):
+//!
+//! ```rust
+//! use zenjpeg::decoder::{Decoder, ErrorKind};
+//! use zenjpeg::encoder::Unstoppable;
+//!
+//! let not_a_jpeg = [0u8; 8];
+//! if let Err(e) = Decoder::new().decode(&not_a_jpeg, Unstoppable) {
+//!     match e.kind() {
+//!         ErrorKind::ImageTooLarge { .. } => { /* 413 Payload Too Large */ }
+//!         ErrorKind::AllocationFailed { .. } => { /* 500 Internal Server Error */ }
+//!         _ => { /* 400 Bad Request — corrupt / unsupported input */ }
+//!     }
+//! }
 //! ```
 //!
 //! ## Feature Flags
