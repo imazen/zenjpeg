@@ -208,7 +208,7 @@ calibration error.
 ## 6. Tri-metric cross-check (zensim vs butteraugli vs cvvdp)
 
 Both headline decisions re-run under all three metrics on 378 variants
-(GPU, `zen-metrics`). **No decision flips.** Notable divergences:
+(GPU, `zenmetrics`). **No decision flips.** Notable divergences:
 - cvvdp is the most permissive of flat AQ (rates its cost ≈ 0 vs zensim's
   −0.23) — the production AQ gate is conservative under cvvdp.
 - zensim over-weights Preserve vs Tuned relative to cvvdp (89 % vs 72 %

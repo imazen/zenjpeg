@@ -64,4 +64,4 @@ Workstreams currently active:
 | File | Source command | Notes |
 |---|---|---|
 | `aq_direction_10refs_2026-05-28.tsv` | `cargo run --example aq_direction` | flat vs busy AQ targeting, zensim only. 10 refs × 3 src-q × 3 tgt × 4 variants. Flat-targeting 2–13× more byte-efficient at every source quality. Backs `docs/AQ_DIRECTION.md`. |
-| `tri_metric_crosscheck_6refs_2026-05-28.tsv` | `cargo run --example tri_metric_gen` + `zen-metrics batch` (butteraugli-gpu, cvvdp, zensim-gpu) | 378 rows: both experiments scored under all 3 metrics. No decision flips. Backs `docs/TRI_METRIC_CROSSCHECK.md`. Columns: ref source_q target_q experiment variant size_ratio zensim butter_pnorm3 cvvdp. |
+| `tri_metric_crosscheck_6refs_2026-05-28.tsv` | `cargo run --example tri_metric_gen` + `zenmetrics batch` (butteraugli-gpu, cvvdp, zensim-gpu) | 378 rows: both experiments scored under all 3 metrics. No decision flips. Backs `docs/TRI_METRIC_CROSSCHECK.md`. Columns: ref source_q target_q experiment variant size_ratio zensim butter_pnorm3 cvvdp. |

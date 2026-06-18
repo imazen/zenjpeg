@@ -13,7 +13,7 @@ metrics.** There is one quantitative divergence worth recording (below).
 
 `examples/tri_metric_gen.rs` emits the variant JPEGs for both experiments
 (6 CID22 references × 3 source qualities {90,75,60} × 3 targets {70,60,50}),
-then `zen-metrics batch` scores every variant under each metric with a
+then `zenmetrics batch` scores every variant under each metric with a
 single shared decode per metric:
 
 - `butteraugli_pnorm3_gpu` — lower = better (distance; libjxl 3-norm)

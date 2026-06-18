@@ -518,13 +518,13 @@ cell lists on every box.
 ways, and choosing the wrong one re-creates the "100k AVIF encodes
 never finish" problem:
 
-1. **Chunk mode** (`zen-metrics sweep --codec zenjpeg --plan …`): the
+1. **Chunk mode** (`zenmetrics sweep --codec zenjpeg --plan …`): the
    executor expands at run time; the unit of retry is (image × whole
    plan). Right for GPU-metric fleet runs that complete in one pass.
-2. **Job-system mode** (zen-job-core ledger): cells become per-cell
-   content-addressed `DesiredJob`s at **declare time** (`zen-metrics
+2. **Job-system mode** (zenfleet-core ledger): cells become per-cell
+   content-addressed `DesiredJob`s at **declare time** (`zenmetrics
    sweep --plan … --dry-run --emit-cells` →
-   `zen_jobctl::declare_encodes`), and completion is `declare → gap →
+   `zenfleet_ctl::declare_encodes`), and completion is `declare → gap →
    run → re-reconcile` against the Parquet ledger. Declaring is
    idempotent (same plan ⇒ same `JobId`s), so a sweep that dies at any
    point converges across any number of partial passes — chunk
@@ -536,7 +536,7 @@ Identity is the same in both: `{"cell","fp","plan"}` in the
 `knob_tuple_json` column / `JobKind::Encode.knobs`. A codec that ships
 the planner shape (pattern 7 included) gets both models for free; the
 knob-vocabulary translation layer in
-`zen-metrics-cli/src/sweep/encode.rs` remains only for axes the planner
+`zenmetrics-cli/src/sweep/encode.rs` remains only for axes the planner
 doesn't own. One seam to respect: ledger `CellId.q` is `i64`, so
 job-system paths require integer q-grids — reject fractional grids at
 emit time, never truncate.

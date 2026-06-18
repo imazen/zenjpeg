@@ -58,7 +58,7 @@ Originals must be PNG (the script converts to PPM for turbo/mozjpeg).
 
 ## Stages (what the script does)
 
-0. **Prereqs**: checks `zen-metrics` (GPU build), `cjpegli`; extracts the
+0. **Prereqs**: checks `zenmetrics` (GPU build), `cjpegli`; extracts the
    pinned encoders from `ati-mozjpeg` / `ati-turbo` docker images via
    tar-stream (WSL docker bind-mount / `docker cp` of `/tmp` is
    unreliable — the tar stream is the robust path).
@@ -116,8 +116,8 @@ storage with a `.pointer.md`.
 
 - Pinned encoders make the source corpus deterministic. Re-extract from
   the same docker tags (turbo 3.1.0, mozjpeg 4.1.5) to reproduce exactly.
-- `zen-metrics` GPU scoring is deterministic per build; record the
-  `zen-metrics` git commit in the benchmark `.meta`.
+- `zenmetrics` GPU scoring is deterministic per build; record the
+  `zenmetrics` git commit in the benchmark `.meta`.
 - The fitter (`fit_per_encoder.py`) is pure (median over cells) — same
   TSVs in → byte-identical tables out (verified round-trip 2026-05-28).
 - Date stamps and `Math.random`-style nondeterminism are absent; the
