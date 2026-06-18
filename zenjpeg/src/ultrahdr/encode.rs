@@ -46,7 +46,7 @@ pub fn encode_ultrahdr(
     stop.check()?;
 
     let (gainmap, metadata) =
-        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_jpegli_error)?;
+        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_zenjpeg_error)?;
     stop.check()?;
 
     encode_with_gainmap(
@@ -72,11 +72,11 @@ pub fn encode_ultrahdr_with_tonemapper(
     gainmap_quality: f32,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
-    let sdr = tonemapper.apply(hdr).map_err(ultrahdr_to_jpegli_error)?;
+    let sdr = tonemapper.apply(hdr).map_err(ultrahdr_to_zenjpeg_error)?;
     stop.check()?;
 
     let (gainmap, metadata) =
-        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_jpegli_error)?;
+        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_zenjpeg_error)?;
     stop.check()?;
 
     encode_with_gainmap(
@@ -106,7 +106,7 @@ pub fn create_gainmap_computer(
         hdr_gamut,
         ColorPrimaries::Bt709,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Encode an HDR image as Ultra HDR JPEG using a caller-supplied tone curve.
@@ -200,7 +200,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
         hdr_gamut,
         TransferFunction::Linear,
     )
-    .map_err(ultrahdr_to_jpegli_error)?;
+    .map_err(ultrahdr_to_zenjpeg_error)?;
 
     let w = width as usize;
     let scale = gainmap_config.scale_factor.max(1) as u32;
@@ -208,7 +208,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
     let gm_height = height.div_ceil(scale);
     let gm_w = gm_width as usize;
 
-    let mut gainmap = GainMap::new(gm_width, gm_height).map_err(ultrahdr_to_jpegli_error)?;
+    let mut gainmap = GainMap::new(gm_width, gm_height).map_err(ultrahdr_to_zenjpeg_error)?;
 
     let mut hdr_row = vec![0.0_f32; w * 4];
     let mut sdr_row = vec![0.0_f32; w * 4];
@@ -498,7 +498,7 @@ fn linear_f32_to_srgb_rgba8(sdr_linear: &PixelBuffer) -> Result<PixelBuffer> {
         sdr_linear.descriptor().primaries,
         TransferFunction::Srgb,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Encode SDR image with pre-computed gain map.
@@ -563,7 +563,7 @@ pub fn encode_with_gainmap_format(
 /// Tonemap HDR to a Bt709/Srgb `PixelBuffer`. Centralizes the conversion to
 /// the pattern ultrahdr-rs uses (`tonemap_image_to_srgb8` + `pixel_buffer_from_vec`).
 fn tonemap_to_pixel_buffer(hdr: &PixelBuffer, target_gamut: ColorPrimaries) -> Result<PixelBuffer> {
-    let bytes = tonemap_image_to_srgb8(hdr, target_gamut).map_err(ultrahdr_to_jpegli_error)?;
+    let bytes = tonemap_image_to_srgb8(hdr, target_gamut).map_err(ultrahdr_to_zenjpeg_error)?;
     pixel_buffer_from_vec(
         bytes,
         hdr.width(),
@@ -572,7 +572,7 @@ fn tonemap_to_pixel_buffer(hdr: &PixelBuffer, target_gamut: ColorPrimaries) -> R
         target_gamut,
         TransferFunction::Srgb,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Build the gain-map secondary's metadata APP markers (XMP APP1 and/or
@@ -669,7 +669,10 @@ fn encode_sdr_base(
     encoder.finish()
 }
 
-/// Convert ultrahdr_core::Error to jpegli Error.
-fn ultrahdr_to_jpegli_error(e: ultrahdr_core::Error) -> Error {
+/// Convert an ultrahdr_core error to a zenjpeg Error.
+///
+/// Generic over `Display` so it accepts both bare `ultrahdr_core::Error` and
+/// the `At<Error>` location wrapper (ultrahdr-core #31).
+fn ultrahdr_to_zenjpeg_error(e: impl core::fmt::Display) -> Error {
     Error::decode_error(e.to_string())
 }

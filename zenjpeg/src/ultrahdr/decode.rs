@@ -64,12 +64,12 @@ impl UltraHdrExtras for DecodedExtras {
         if let Some(gainmap_jpeg) = self.gainmap()
             && let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg)
         {
-            return Some(parse_xmp(&gm_xmp).map_err(xmp_to_jpegli_error));
+            return Some(parse_xmp(&gm_xmp).map_err(xmp_to_zenjpeg_error));
         }
 
         // Fall back to primary XMP even if values are all-default
         let xmp = self.xmp()?;
-        Some(parse_xmp(xmp).map_err(xmp_to_jpegli_error))
+        Some(parse_xmp(xmp).map_err(xmp_to_zenjpeg_error))
     }
 
     fn decode_gainmap(&self) -> Option<Result<GainMap>> {
@@ -148,7 +148,7 @@ pub fn create_hdr_reconstructor(
         display_boost,
         ColorGamut::Bt709,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Extract an adaptive tonemapper from an UltraHDR image.
@@ -248,7 +248,7 @@ pub fn decode_ultrahdr_hdr(
         format,
         Unstoppable,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Convert a [`crate::decode::DecodeResult`] to a `PixelBuffer` with sRGB
@@ -282,7 +282,7 @@ fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result
         ColorPrimaries::Bt709,
         TransferFunction::Srgb,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Pad packed RGB bytes to RGBA8 with `A=0xFF`. Done in-place via Vec growth.
@@ -384,13 +384,17 @@ fn extract_xmp_from_jpeg(jpeg: &[u8]) -> Option<String> {
     String::from_utf8(xmp_bytes.to_vec()).ok()
 }
 
-/// Convert ultrahdr_core::Error to jpegli Error.
-fn ultrahdr_to_jpegli_error(e: ultrahdr_core::Error) -> Error {
+/// Convert an ultrahdr_core error to a zenjpeg Error.
+///
+/// Generic over `Display` so it accepts both bare `ultrahdr_core::Error` and
+/// the `At<Error>` location wrapper (ultrahdr-core #31) — zenjpeg stays
+/// compatible across the ultrahdr-core error-type change without pinning.
+fn ultrahdr_to_zenjpeg_error(e: impl core::fmt::Display) -> Error {
     Error::decode_error(e.to_string())
 }
 
-/// Convert XMP parse errors (from `crate::container::xmp::parse_xmp`) to jpegli Error.
-fn xmp_to_jpegli_error(e: crate::container::xmp::XmpError) -> Error {
+/// Convert XMP parse errors (from `crate::container::xmp::parse_xmp`) to a zenjpeg Error.
+fn xmp_to_zenjpeg_error(e: crate::container::xmp::XmpError) -> Error {
     Error::decode_error(e.to_string())
 }
 
