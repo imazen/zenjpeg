@@ -449,6 +449,10 @@ required-features = ["boundary-rd"]
 name = "boundary_rd_callgrind"
 required-features = ["boundary-rd"]
 
+[[example]]
+name = "jpeg_probe"
+required-features = ["boundary-rd"]
+
 # v0.3 picker held-out A/B harness (loads .bin externally; lives in
 # dev/ so the file isn't shipped as part of the public examples dir).
 # See dev/picker_v0_3_holdout_ab.rs for the full methodology block.
