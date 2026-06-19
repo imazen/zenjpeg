@@ -494,6 +494,70 @@ field-by-field profile diff is available, *enumerate the delta set
 first* instead of bisecting from memory (the e8→e9 diff dump turned
 an open-ended hunt into seven candidates).
 
+## The trained-model & compute-budget patterns (2026-06-19)
+
+Two capabilities the picker pipeline needs *from* the planner, added
+across the codecs 2026-06-19: dense isolated data for trained scalar
+heads, and a compute-resource constraint so a sweep (or a picker's
+candidate set) can be bounded by CPU budget.
+
+### 17. A `scalar_dense` preset for trained scalar heads
+
+`rd_core`/`modes_full` map the RD front and mode *interactions* — right
+for benchmarks and anchor tables, wrong for training a **scalar head**
+(a per-knob continuous regression: `chroma_scale`, trellis λ, AQ
+coupling, SNS/filter strength, VAQ, `k_ac_quant`, dithering, effort).
+A regression needs many distinct values of ONE knob with the others
+held still, densely enough to fit a curve (≥ 8 points) — not the 1–2
+probes a main-effects benchmark carries, and not buried inside a
+cartesian explosion where the single-axis signal is swamped.
+
+`SweepAxes::scalar_dense()` pins every categorical axis to its default
+and populates each continuous axis with a dense ladder. Paired with
+`SweepBuilder::with_max_deviations(1)` (keep the default cell + every
+single-axis probe, drop all interaction combos) and
+`QualityGrid::TrainingDense`, the plan is *one isolated ladder per knob
+across quality* — exactly the `knob × quality → outcome` table a scalar
+head fits, with no blow-up. The project guide's "Dense sampling for
+trained models" discipline lives here: dimension- and quality-dense,
+isolated, no silent thinning. `with_max_deviations(N)` is the general
+lever — `N ≥ 2` reintroduces interactions when a head needs crossed
+features.
+
+The dense ladder still rides every earlier pattern: no-op spellings
+(`chroma_scale(1.0)`, `coupling(0)`, `Effort` aliasing a named preset)
+are omitted/aliased so the origin isn't double-encoded (pattern 4), and
+ladder values carry the same measured-envelope provenance as the
+curated steps.
+
+### 18. A `compute_tier` ordinal + `with_compute_limit` constraint
+
+"Best params under a compute budget" is a first-class query — the user
+asks the JXL sweep to go dense on `e4,e5` while staying off the
+minutes-per-MP tiers; a picker bounds its candidates to "fast" the way
+zenavif's `auto_tune` already bounds its speed range. The planner
+answers it with two additive pieces:
+
+- `compute_tier(&Config) -> u8` — an **ordinal** cost proxy (`0` =
+  cheapest), NOT a calibrated ms estimate. For effort-dialed codecs
+  (png/jxl/gif) the tier IS the effort/method/speed level, so "`e ≤ 5`"
+  is literally `with_compute_limit(5)`. For codecs with no single dial
+  (jpeg/webp/avif) it sums the cost-dominant passes (trellis/RDOQ, scan
+  search, AQ, sharp-YUV/pre-blur) — documented per codec, *compared not
+  read absolutely*.
+- `SweepBuilder::with_compute_limit(max_tier)` — drop cells above the
+  tier, **reported** in `SweepPlan::compute_tier_skipped` (pattern 5's
+  no-silent-caps rule, now covering the compute constraint too). It
+  composes with `with_budget` (compute filter first, then the budget
+  ladder reduces the survivors) and `with_max_deviations`.
+
+Effort/method/speed is therefore a **dense axis** in the dense presets
+(JXL `e3..e7` stepped by 1, not 2–3 sampled points) AND the carrier of
+the compute tier — the same knob a trained head conditions on to pick
+within budget. Per-cell effort/tier must reach the executor's row (knob
+tuple / feature row) so the head can train on it and the fleet can
+constrain by it.
+
 ## Where each piece lives
 
 Four layers, one compact deterministic spec flowing down. Getting a
@@ -625,10 +689,18 @@ Each step gates the next; the test named with it is the exit criterion.
    jobexec resolution via your parser. Both models or document why not
    (zenmetrics CLAUDE.md guard). *Gate: the e2e test — declare item →
    jobexec stdin → valid bytes; tampered fp → loud failure.*
+9. **Trained-model & compute-budget surface** (patterns 17–18) —
+   `scalar_dense()` + `with_max_deviations()`, `compute_tier()` +
+   `with_compute_limit()`, and a *dense* effort/method/speed axis in the
+   dense preset. *Gate: scalar_dense is isolated (all cells ≤ 1
+   deviation) and dense (≥ 8 points per continuous axis); compute limit
+   drops-and-reports; tiers monotone in cost.*
 
-Steps 1–7 live in the codec repo; step 8 is one PR in zenmetrics once
-patterns 4/5/7 exist, because the executor only needs `plan()`,
-`fingerprint()`, and `config_from_cell_id()`.
+Steps 1–7 and 9 live in the codec repo; step 8 is one PR in zenmetrics
+once patterns 4/5/7 exist, because the executor only needs `plan()`,
+`fingerprint()`, and `config_from_cell_id()` (step 9 adds the optional
+`scalar_dense()` / `compute_tier()` / `with_compute_limit()` /
+`with_max_deviations()` surface the executor forwards).
 
 Wrapper codecs (engine behind a crate boundary) take patterns 8–13
 alongside steps 1–4; format encoders (your bitstream, others' decoders)

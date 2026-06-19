@@ -338,6 +338,66 @@ impl SweepAxes {
         axes.moz_chroma_deltas = vec![-10, -20];
         axes
     }
+
+    /// Dense single-axis ladders over the CONTINUOUS knobs, every
+    /// categorical axis pinned to its production default. Paired with
+    /// [`SweepBuilder::with_max_deviations`]`(1)` and
+    /// [`QualityGrid::TrainingDense`] this yields clean, *isolated*
+    /// per-axis response curves — the data a trained **scalar head** (a
+    /// per-knob continuous regression in the picker pipeline) needs to
+    /// fit `knob_value × quality → outcome`. Unlike
+    /// [`modes_full`](Self::modes_full) (which crosses every mode to map
+    /// interactions and explodes combinatorially), this preset samples
+    /// each continuous axis *densely enough to fit a curve* (≥ 8 points)
+    /// while leaving the others at default, so a `with_max_deviations(1)`
+    /// plan is one isolated ladder per knob — not a cartesian blow-up.
+    ///
+    /// Continuous axes covered (measured envelopes per the module
+    /// provenance table): trellis λ₁ (10 pts 12.5–17.0), AQ-coupling
+    /// scale (10 pts −8..+8, every step clamped ±1.0 like the curated
+    /// steps), jpegli chroma-distance scale (7 pts 0.25–5.0 excluding the
+    /// 1.0 origin), pre-blur σ (6 pts 0.0–1.0). No-op spellings
+    /// (`chroma_scale(1.0)`, `coupling(0)`) are omitted so the ladders
+    /// never double-encode the default cell, and any that slipped through
+    /// would fingerprint-alias it anyway.
+    #[must_use]
+    pub fn scalar_dense() -> Self {
+        // Coefficient-opt axis: no-trellis default, then the λ₁ ladder,
+        // then the symmetric AQ-coupling-scale ladder. Each entry is a
+        // single deviation on this one axis.
+        let mut coeff_opt: Vec<Option<TrellisConfig>> = vec![None];
+        for &l in &[
+            12.5_f32, 13.0, 13.5, 14.0, 14.5, 15.0, 15.5, 16.0, 16.5, 17.0,
+        ] {
+            coeff_opt.push(Some(trellis_lambda(l)));
+        }
+        for &s in &[-8.0_f32, -6.0, -4.0, -2.0, -1.0, 1.0, 2.0, 4.0, 6.0, 8.0] {
+            coeff_opt.push(Some(trellis_coupled(s)));
+        }
+        // Family axis: default jpegli (== chroma_scale 1.0), then the
+        // dense chroma-distance-scale ladder (1.0 excluded — it aliases
+        // the default).
+        let mut families = vec![QuantTableConfig::default()];
+        for &s in &[0.25_f32, 0.5, 0.75, 1.5, 2.0, 3.0, 5.0] {
+            families.push(QuantTableConfig::jpegli_chroma_scale(s));
+        }
+        Self {
+            families,
+            coeff_opt,
+            scans: vec![ProgressiveScanMode::Smallest],
+            color_modes: vec![ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::Quarter,
+            }],
+            aq: vec![true],
+            deringing: vec![true],
+            downsampling: vec![DownsamplingMethod::Box],
+            allow_16bit: vec![false],
+            pre_blur: vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            moz_chroma_deltas: vec![],
+            #[cfg(feature = "boundary-rd")]
+            boundary_rd: vec![super::encoder_config::BoundaryRd::Off],
+        }
+    }
 }
 
 // ============================================================================
@@ -431,6 +491,11 @@ pub struct SweepPlan {
     /// Stratum ids rejected by `EncoderConfig::validate()` (e.g. XYB ×
     /// YCbCr-only table families).
     pub invalid_skipped: Vec<String>,
+    /// Cell ids dropped because their [`compute_tier`] exceeded the
+    /// [`SweepBuilder::with_compute_limit`] budget — the explicit
+    /// no-silent-caps report for the compute constraint (empty when no
+    /// limit was set).
+    pub compute_tier_skipped: Vec<String>,
     /// Mode axes collapsed to fit the budget — the explicit
     /// no-silent-caps report.
     pub dropped: Vec<DroppedAxis>,
@@ -454,6 +519,57 @@ impl SweepPlan {
 }
 
 // ============================================================================
+// Compute-resource tier
+// ============================================================================
+
+/// Coarse compute-cost tier of a config (`0` = cheapest). Higher tiers
+/// run more encoder passes or wider searches and cost more CPU per
+/// encode. Used by [`SweepBuilder::with_compute_limit`] to keep a sweep
+/// inside a compute budget, and made public so the fleet harness and
+/// pickers can bound their candidate set the same way zenavif's
+/// `auto_tune` bounds its speed range. It is an **ordinal proxy**, not a
+/// calibrated millisecond estimate — compare tiers, don't read absolute
+/// cost into them.
+///
+/// JPEG has no single effort dial, so the tier sums the cost-dominant
+/// knobs (per the encoder profiling in the project guide: trellis/RDOQ,
+/// scan search, AQ, and the iterative sharp-YUV / pre-blur preprocessing
+/// passes):
+///
+/// - trellis / RDOQ coefficient search: **+2** (a full extra
+///   optimization pass over every block)
+/// - scan SEARCH modes — `ProgressiveSearch` / `SmallestSearch` try many
+///   scan scripts: **+2**; the `Smallest` entropy-stage minimizer: **+1**
+/// - adaptive quantization: **+1**
+/// - iterative sharp-YUV (`GammaAwareIterative`) downsampling: **+1**
+/// - pre-encode Gaussian blur: **+1**
+#[must_use]
+pub fn compute_tier(config: &EncoderConfig) -> u8 {
+    let mut tier = 0u8;
+    if config.get_trellis().is_some() {
+        tier += 2;
+    }
+    tier += match config.get_scan_mode() {
+        ProgressiveScanMode::ProgressiveSearch | ProgressiveScanMode::SmallestSearch => 2,
+        ProgressiveScanMode::Smallest => 1,
+        _ => 0,
+    };
+    if config.is_aq_enabled() {
+        tier += 1;
+    }
+    if matches!(
+        config.downsampling_method,
+        DownsamplingMethod::GammaAwareIterative
+    ) {
+        tier += 1;
+    }
+    if config.pre_blur > 0.0 {
+        tier += 1;
+    }
+    tier
+}
+
+// ============================================================================
 // Builder
 // ============================================================================
 
@@ -464,6 +580,8 @@ pub struct SweepBuilder {
     axes: SweepAxes,
     grid: QualityGrid,
     budget: Option<usize>,
+    compute_limit: Option<u8>,
+    max_deviations: Option<u8>,
 }
 
 impl SweepBuilder {
@@ -474,6 +592,8 @@ impl SweepBuilder {
             axes,
             grid,
             budget: None,
+            compute_limit: None,
+            max_deviations: None,
         }
     }
 
@@ -489,6 +609,63 @@ impl SweepBuilder {
         self
     }
 
+    /// Constrain the plan to cells whose [`compute_tier`] is `<= max_tier`,
+    /// dropping the more expensive cells (recorded in
+    /// [`SweepPlan::compute_tier_skipped`], never silently). This is the
+    /// compute-resource constraint: a fleet with a tight CPU budget, or a
+    /// picker bounding its search to "fast" configs, asks for the cheap
+    /// end of the knob space. Composes with [`with_budget`](Self::with_budget)
+    /// (the compute filter is applied first, then the budget ladder
+    /// reduces whatever remains).
+    #[must_use]
+    pub fn with_compute_limit(mut self, max_tier: u8) -> Self {
+        self.compute_limit = Some(max_tier);
+        self
+    }
+
+    /// Keep only cells within `max_deviations` axes of the default
+    /// stratum. `1` = main-effects only (the all-defaults cell plus every
+    /// single-axis probe, no interaction combos) — the isolated-axis
+    /// regime a trained **scalar head** trains on. Pair with
+    /// [`SweepAxes::scalar_dense`] for dense per-knob response curves
+    /// without the cartesian blow-up of the full cross.
+    #[must_use]
+    pub fn with_max_deviations(mut self, max_deviations: u8) -> Self {
+        self.max_deviations = Some(max_deviations);
+        self
+    }
+
+    /// Cross + apply the user constraints (compute-tier limit, then
+    /// deviation scope). Returns `(cells, invalid_skipped,
+    /// duplicates_merged, compute_tier_skipped)`.
+    fn build_cells(
+        &self,
+        axes: &SweepAxes,
+        q_points: &[f32],
+    ) -> (Vec<SweepCell>, Vec<String>, usize, Vec<String>) {
+        let (mut cells, invalid_skipped, duplicates_merged) = cross(axes, q_points);
+        let mut compute_tier_skipped = Vec::new();
+        if let Some(max_tier) = self.compute_limit {
+            cells.retain(|c| {
+                if compute_tier(&c.config) <= max_tier {
+                    true
+                } else {
+                    compute_tier_skipped.push(c.id.clone());
+                    false
+                }
+            });
+        }
+        if let Some(max_dev) = self.max_deviations {
+            cells.retain(|c| c.deviations <= max_dev);
+        }
+        (
+            cells,
+            invalid_skipped,
+            duplicates_merged,
+            compute_tier_skipped,
+        )
+    }
+
     /// Build the plan.
     #[must_use]
     pub fn plan(&self) -> SweepPlan {
@@ -499,7 +676,8 @@ impl SweepBuilder {
         let mut over_budget = false;
 
         loop {
-            let (cells, invalid_skipped, duplicates_merged) = cross(&axes, &q_points);
+            let (cells, invalid_skipped, duplicates_merged, compute_tier_skipped) =
+                self.build_cells(&axes, &q_points);
 
             let within = match self.budget {
                 None => true,
@@ -509,6 +687,7 @@ impl SweepBuilder {
                 return SweepPlan {
                     cells,
                     invalid_skipped,
+                    compute_tier_skipped,
                     dropped,
                     duplicates_merged,
                     q_coarsenings,
@@ -537,10 +716,12 @@ impl SweepBuilder {
 
             // Nothing left to reduce: report rather than sample.
             over_budget = true;
-            let (cells, invalid_skipped, duplicates_merged) = cross(&axes, &q_points);
+            let (cells, invalid_skipped, duplicates_merged, compute_tier_skipped) =
+                self.build_cells(&axes, &q_points);
             return SweepPlan {
                 cells,
                 invalid_skipped,
+                compute_tier_skipped,
                 dropped,
                 duplicates_merged,
                 q_coarsenings,
@@ -1415,6 +1596,72 @@ mod tests {
                 .scans
                 .contains(&ProgressiveScanMode::Baseline),
             "baseline must stay reachable for the tiny-size bucket"
+        );
+    }
+
+    #[test]
+    fn scalar_dense_is_isolated_and_dense() {
+        let plan = SweepBuilder::new(SweepAxes::scalar_dense(), QualityGrid::Explicit(vec![50.0]))
+            .with_max_deviations(1)
+            .plan();
+        // Isolation: nothing beyond a single-axis deviation survives, so
+        // every probe is a clean per-knob response point.
+        assert!(
+            plan.cells.iter().all(|c| c.deviations <= 1),
+            "scalar_dense + max_deviations(1) must be main-effects only"
+        );
+        // Density: the continuous ladders give many isolated probes
+        // (≥ 8 per the trained-scalar-head requirement), not 1–2.
+        let probes = plan.cells.iter().filter(|c| c.deviations == 1).count();
+        assert!(
+            probes >= 24,
+            "scalar_dense too sparse for a scalar head: {probes}"
+        );
+        // The λ₁ ladder alone must contribute ≥ 8 distinct values.
+        let mut lambdas: Vec<u32> = plan
+            .cells
+            .iter()
+            .filter_map(|c| c.config.get_trellis())
+            .filter(|t| t.aq_coupling.scale == 0.0)
+            .map(|t| t.lambda_log_scale1.to_bits())
+            .collect();
+        lambdas.sort_unstable();
+        lambdas.dedup();
+        assert!(lambdas.len() >= 8, "λ₁ ladder not dense: {}", lambdas.len());
+    }
+
+    #[test]
+    fn compute_tier_orders_cost() {
+        let cheap = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .scan_mode(ProgressiveScanMode::Baseline)
+            .aq_enabled(false);
+        let pricey = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .trellis(TrellisConfig::default())
+            .scan_mode(ProgressiveScanMode::ProgressiveSearch)
+            .aq_enabled(true);
+        assert_eq!(compute_tier(&cheap), 0, "baseline+no-aq is the cheap floor");
+        assert!(
+            compute_tier(&cheap) < compute_tier(&pricey),
+            "trellis + scan-search + AQ must cost more"
+        );
+    }
+
+    #[test]
+    fn with_compute_limit_drops_expensive_and_reports() {
+        let unlimited =
+            SweepBuilder::new(SweepAxes::modes_full(), QualityGrid::Explicit(vec![75.0])).plan();
+        let limited = SweepBuilder::new(SweepAxes::modes_full(), QualityGrid::Explicit(vec![75.0]))
+            .with_compute_limit(2)
+            .plan();
+        assert!(!limited.cells.is_empty(), "tier ≤ 2 cells must survive");
+        assert!(
+            limited.cells.len() < unlimited.cells.len(),
+            "compute limit must drop the expensive (trellis/search) cells"
+        );
+        assert!(limited.cells.iter().all(|c| compute_tier(&c.config) <= 2));
+        assert!(
+            !limited.compute_tier_skipped.is_empty(),
+            "dropped cells must be reported, never silently capped"
         );
     }
 

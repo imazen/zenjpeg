@@ -16,6 +16,17 @@ All notable changes to zenjpeg are documented here. Earlier history
   `#[non_exhaustive]`, so this re-export is additive and future variants stay
   non-breaking. New `tests/error_kind_public.rs` matches `.kind()` against named
   variants through the public path.
+- **Sweep generator: `scalar_dense` preset + compute-resource constraint**
+  (`encode::sweep`, `__expert`; VARIANT_GENERATION.md patterns 17–18).
+  `SweepAxes::scalar_dense()` emits dense, isolated single-axis ladders over the
+  continuous knobs (trellis λ₁, AQ-coupling scale, jpegli chroma-distance scale,
+  pre-blur σ) — the data a trained *scalar head* (per-knob continuous regression)
+  needs; pair with new `SweepBuilder::with_max_deviations(1)` (main-effects only)
+  and `QualityGrid::TrainingDense` for clean per-knob response curves without a
+  cartesian blow-up. New `compute_tier(&EncoderConfig) -> u8` (ordinal cost proxy)
+  + `SweepBuilder::with_compute_limit(max_tier)` bound a sweep by compute budget,
+  with dropped cells reported in `SweepPlan::compute_tier_skipped` (no silent
+  caps). All additive, behind `__expert`.
 ### Fixed
 - **Crate-root rustdoc decoder example now compiles and runs** (closes #155, item
   2). The top-of-page `lib.rs` decoder snippet showed a stale 1-arg
