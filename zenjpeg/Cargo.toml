@@ -103,6 +103,10 @@ zensim = { workspace = true, optional = true }
 # held-out A/B harness. Path-only because the v3 schema lives on the
 # sibling `../zenanalyze/zenpredict` and isn't published yet.
 zenpredict = { path = "../../zenanalyze/zenpredict", optional = true }
+# zenanalyze-api: the frozen 1.0 feature contract. Optional, enabled by
+# `__picker-research`, so the picker can reuse a shared feature `Offer`. Git-rev
+# (workspace dep) — see the workspace Cargo.toml note.
+zenanalyze-api = { workspace = true, optional = true }
 
 [dev-dependencies]
 wide = { workspace = true }
@@ -242,7 +246,7 @@ __wasm-simd = []
 # bounds + NaN/inf guard) and the bake's safety/fallback sections. The wire
 # format always parses those sections; this only exposes the Rust API. Lean
 # `predict`/`argmin_masked`-only consumers leave it off.
-__picker-research = ["dep:zenpredict", "zenpredict/advanced", "zenanalyze/hdr"]
+__picker-research = ["dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is

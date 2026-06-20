@@ -71,6 +71,13 @@ zenyuv = { path = "zenyuv" }
 # pulls zenjpeg as a path-dep resolves zenanalyze from the same git rev,
 # so no sibling checkout is required.
 zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "13d40c3be60e" }
+# zenanalyze-api: the frozen 1.0, zero-dep feature contract (Request/Offer). The
+# picker (behind `__picker-research`) uses it to reuse a shared feature `Offer`
+# instead of re-analyzing. A LATER rev than `zenanalyze` above because the crate
+# was introduced after 13d40c3 — Cargo checks out the repo at both revs; the
+# zero-dep contract crate doesn't perturb the graph. Pin the SAME rev across all
+# codecs so the frozen 1.0 type unifies in a multi-codec build.
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "47b4d0f5f1abfff45a152e9a9f4de82fffd5afa6" }
 
 # Testing
 approx = "0.5"

@@ -278,6 +278,53 @@ pub(crate) fn pick_config_from_packed(
     Ok(run_model(&x))
 }
 
+/// Predict the RD-optimal config from a shared [`zenanalyze_api::Offer`] — the
+/// version-unifying, cross-codec reuse path.
+///
+/// Like [`pick_config_from_packed`], but the features arrive keyed by NAME
+/// through the frozen `zenanalyze_api` contract instead of `(u16, f32)` stable
+/// ids. A caller (orchestrator) runs ONE analysis pass, offers it to every codec,
+/// and each reuses it iff the offer's reuse key matches its baked model — same
+/// analyzer `major.minor`, `feature_defs_version`, and analysis `config_hash`
+/// (gamma vs linear-light). On any mismatch (incompatible version/config, or a
+/// feature this picker needs that the offer doesn't carry) this returns `None`,
+/// so the caller falls back to its own pass via [`pick_config`] or its heuristic.
+/// A non-finite target or a bake/predict failure also yields `None`, matching
+/// [`pick_config`].
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn pick_config_from_offer(
+    offer: &zenanalyze_api::Offer<'_>,
+    target_zensim_a: f32,
+) -> Option<PickedConfig> {
+    // Same forward-compat seam as pick_config: resolve by name, None if a needed
+    // feature was removed from this build.
+    let features = resolve_features()?;
+    // The picker's features in training order, as the canonical zenanalyze names
+    // (`AnalysisFeature::name()` == the offer's names) — the cross-version key.
+    let names: Vec<&str> = features.iter().map(|f| f.name()).collect();
+    let model = Model::from_bytes(PICKER_BAKE).ok()?;
+    let request = zenanalyze_api::Request::new(
+        &names,
+        model.analyzer_version().unwrap_or(""),
+        model.feature_defs_version().unwrap_or(0),
+        model.feature_config_hash().unwrap_or(0),
+    );
+    // Reuse only if the key matches AND every needed name is present; else None.
+    let feat_values = offer.reuse_for(&request)?;
+    // Assemble the 109-input vector — reused feature values (degenerate-guarded
+    // identically to build_inputs_from_results) + the target dial.
+    let mut x = [0.0f32; N_INPUTS];
+    for (i, &v) in feat_values.iter().enumerate().take(N_FEATURES) {
+        x[i] = if v.is_finite() { v } else { 0.0 };
+    }
+    x[N_FEATURES] = if target_zensim_a.is_finite() {
+        (target_zensim_a / 100.0).clamp(0.0, 1.0)
+    } else {
+        return None;
+    };
+    run_model(&x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,6 +501,52 @@ mod tests {
         assert_eq!(
             from_packed, fresh,
             "packed pick must match fresh-analysis pick"
+        );
+    }
+
+    #[test]
+    fn offer_path_matches_fresh_and_declines_on_config_mismatch() {
+        // The zenanalyze-api Offer path: an orchestrator-built offer (this
+        // picker's feature names + values at the model's reuse key) yields the
+        // SAME pick as fresh analysis; a reuse-key mismatch (e.g. a linear-light
+        // offer vs this gamma model) declines → None so the caller own-passes.
+        let (w, h) = (256u32, 256);
+        let rgb: Vec<u8> = (0..(w * h * 3))
+            .map(|i| (i.wrapping_mul(7) % 251) as u8)
+            .collect();
+        let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
+        let results = zenanalyze::analyze_features_rgb8(&rgb, w, h, &query);
+
+        let features = resolve_features().expect("features resolve");
+        let names: Vec<&str> = features.iter().map(|f| f.name()).collect();
+        let values: Vec<f32> = features.iter().map(|f| feat_f32(&results, *f)).collect();
+        let model = Model::from_bytes(PICKER_BAKE).expect("bake loads");
+
+        // Matching reuse key → reuse → identical pick.
+        let offer = zenanalyze_api::Offer::new(
+            &names,
+            &values,
+            model.analyzer_version().unwrap_or(""),
+            model.feature_defs_version().unwrap_or(0),
+            model.feature_config_hash().unwrap_or(0),
+        );
+        assert_eq!(
+            pick_config_from_offer(&offer, 70.0),
+            pick_config(&rgb, w, h, 70.0),
+            "offer reuse must match fresh-analysis pick"
+        );
+
+        // config_hash mismatch → decline reuse → None.
+        let mismatched = zenanalyze_api::Offer::new(
+            &names,
+            &values,
+            model.analyzer_version().unwrap_or(""),
+            model.feature_defs_version().unwrap_or(0),
+            model.feature_config_hash().unwrap_or(0) ^ 0xDEAD,
+        );
+        assert!(
+            pick_config_from_offer(&mismatched, 70.0).is_none(),
+            "config-hash mismatch must decline reuse"
         );
     }
 }
