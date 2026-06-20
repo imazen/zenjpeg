@@ -1,0 +1,33 @@
+# vCPU resource sweep — zenjpeg (peak mem / peak heap / wall vs THREAD COUNT)
+date: 2026-06-20
+host: lilith
+cpu: AMD Ryzen 9 7950X 16-Core Processor
+ram: 59 GiB
+base_commit: 9fbbff7e (origin/main)
+jj_change: pryvkousmuky
+bin: zenjpeg/target/release/examples/jpeg_probe  (built --features parallel,boundary-rd)
+source: raw RGB8 from the downscale-only Lanczos ladder (/tmp/jpeg_vcpu_imgs/{256,1024,2048}.rgb, from a 4032x3024 photo)
+grid: sizes {256,1024,2048}^2 × quality {50,85} (baseline 4:2:0, trellis OFF, brd OFF) × threads {1,2,4,8,16,28}
+threading: zenjpeg encoder has NO per-call thread knob; the only parallelism is strip DCT over the GLOBAL rayon pool — threads set via RAYON_NUM_THREADS per process. (the 'effort' column holds JPEG quality; path='lossy'.)
+measure: ONE PROCESS PER CELL, run-heavy (cgroup MemoryMax 24G), SERIAL, GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072.
+  - clean run (6 thread points): VmHWM delta (marginal WS, input excluded — read before baseline) + VmHWM peak (whole-proc peak RSS) + wall/user/sys + est_* (heuristics::estimate_encode, thread-independent) in-row.
+  - heaptrack run (threads {1,8,28}): allocator PEAK_HEAP + peak RSS.
+reproducer:
+  cargo build --release -p zenjpeg --features parallel,boundary-rd --example jpeg_probe
+  # raw: for n in 256 1024 2048; do convert ladder/${n}.png -depth 8 RGB:/tmp/jpeg_vcpu_imgs/${n}.rgb; done
+  run-heavy --mem 24G -- bash zenjpeg/scripts/vcpu_resource_sweep.sh zenjpeg/target/release/examples/jpeg_probe /tmp/jpeg_vcpu_imgs zenjpeg/benchmarks/vcpu_resource_sweep_2026-06-20.tsv
+  python3 zenjpeg/scripts/vcpu_resource_fit.py zenjpeg/benchmarks/vcpu_resource_sweep_2026-06-20.tsv
+columns: codec content_class src width height pixels path effort(=quality) threads est_min_kb est_typ_kb est_max_kb est_time_ms meas_peak_heap_kb meas_peak_rss_kb meas_vmhwm_kb meas_delta_kb meas_wall_ms meas_user_ms meas_sys_ms bytes ok
+
+# --- FINDINGS (vCPU axis) ---
+# TIME: zenjpeg one-shot encode_bytes does NOT parallelise — wall speedup is ~1.00x at EVERY
+#   thread count and size (measured 0.91-1.25x = pure noise). The parallel strip-DCT path is not
+#   engaged by the one-shot encode (AQ + entropy are serial and dominate). So wall(N) ≈ wall(1);
+#   the estimate_encode time MUST NOT be divided by thread count (would be ~28x optimistic at 28T).
+# MEMORY: thread-INVARIANT (γ ≈ 0, peak grows ≤1-4% over 1->28T) — consistent with serial encode,
+#   no per-thread buffers. peak HEAP ≈ peak RSS (30.8 vs 31.5 MB at 2048^2 q50), both flat across threads.
+# EST vs MEASURED: estimate_encode targets the MARGINAL working set — est_max (e.g. 18 MB @ 2048^2)
+#   covers the measured marginal delta (16.5 MB) but is BELOW whole-process peak RSS (31.5 MB), which
+#   adds the input buffer (12 MB) + binary floor a deployment must also budget. At ≤256^2 the model's
+#   fixed overhead makes working_pred incoherent (negative) — intercept dominates. (zenjpeg mem
+#   multipliers were flagged GUESSED in the inventory; this single-photo run is consistent with that.)

@@ -9,10 +9,18 @@
 //! Input is raw packed RGB8 bytes (the harness writes `PIL.tobytes()`), so
 //! the probe needs no PNG/image dependency.
 //!
+//! For the vCPU sweep, set `RAYON_NUM_THREADS=N` in the environment and build
+//! with `--features parallel,boundary-rd`: zenjpeg's strip DCT parallelises
+//! over the GLOBAL rayon pool (the encoder has no per-call thread knob), so
+//! the env var is the thread control. The probe reads it only to LABEL the row
+//! (`threads=`); the est_* columns are `heuristics::estimate_encode` (thread-
+//! independent) for prediction-vs-measurement in one record.
+//!
 //! Usage:
 //!   jpeg_probe <raw_rgb> <w> <h> encode <quality> <trellis 0|1> <brd 0|1> <out.jpg>
 //!   jpeg_probe <raw_rgb> <w> <h> decode <quality> <trellis 0|1> <brd 0|1> <in.jpg>
-//! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n>`
+//! Prints (encode): `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> \
+//!   bytes=<n> threads=<n> est_min_kb=<n> est_typ_kb=<n> est_max_kb=<n> est_time_ms=<f>`
 
 use std::fs;
 use std::time::Instant;
@@ -86,6 +94,20 @@ fn main() {
             cfg.boundary_rd(BoundaryRd::Off)
         };
 
+        // Thread count is the global rayon pool size (RAYON_NUM_THREADS); the
+        // encoder has no per-call knob, so we read it only to label the row.
+        let threads: usize = std::env::var("RAYON_NUM_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let est = zenjpeg::heuristics::estimate_encode(w, h, &cfg);
+        let (est_min, est_typ, est_max, est_t) = (
+            est.peak_memory_bytes_min / 1024,
+            est.peak_memory_bytes / 1024,
+            est.peak_memory_bytes_max / 1024,
+            est.time_ms,
+        );
+
         let (b0, t0) = (vmhwm_kb(), Instant::now());
         let (cu0, cs0) = cpu_ticks();
         let jpeg = cfg
@@ -96,13 +118,19 @@ fn main() {
         let peak = vmhwm_kb();
         fs::write(outp, &jpeg).expect("write jpg");
         println!(
-            "delta_kb={} peak_kb={} wall_ms={:.1} user_ms={:.1} sys_ms={:.1} bytes={}",
+            "delta_kb={} peak_kb={} wall_ms={:.1} user_ms={:.1} sys_ms={:.1} bytes={} \
+             threads={} est_min_kb={} est_typ_kb={} est_max_kb={} est_time_ms={:.1}",
             peak.saturating_sub(b0),
             peak,
             wall.as_secs_f64() * 1000.0,
             (cu1 - cu0) as f64 * TICK_MS,
             (cs1 - cs0) as f64 * TICK_MS,
-            jpeg.len()
+            jpeg.len(),
+            threads,
+            est_min,
+            est_typ,
+            est_max,
+            est_t,
         );
     } else {
         let data = fs::read(outp).expect("read jpg");
