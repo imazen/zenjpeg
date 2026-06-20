@@ -5,7 +5,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Drop when zencodec 0.1.24 publishes. -->
+- Remove the workspace-root `[patch.crates-io] zencodec = { git, rev = "0f71295" }`
+  and lower the `zencodec` workspace dependency req from `0.1.24` back to a
+  published version. The patch pins zencodec to the unreleased `estimate` API
+  (the `zencodec::estimate` resource-estimation module).
+
 ### Added
+- **vCPU-aware resource estimation via zencodec's unified `estimate` API.**
+  `JpegEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
+  overrides the `zencodec::EncoderConfig` default, delegating to the calibrated
+  `heuristics::estimate_encode` and folding in available cores via
+  `ResourceEstimate::at_cores`. `heuristics::encode_threading_info()` now returns
+  the shared `zencodec::estimate::ThreadingInformation` (`SERIAL` — the one-shot
+  zenjpeg encode does not parallelise); the short-lived local `ThreadingInfo`
+  copy and `estimate_encode_threaded` are removed.
 - **`ErrorKind` is now public, re-exported as `zenjpeg::decoder::ErrorKind` and
   `zenjpeg::encoder::ErrorKind`** (closes #155). The decode/encode error is
   `Error(pub At<ErrorKind>)` with `.kind() -> &ErrorKind`, but `ErrorKind` lived

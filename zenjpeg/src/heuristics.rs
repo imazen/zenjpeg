@@ -274,80 +274,20 @@ pub fn estimate_encode(width: u32, height: u32, config: &EncoderConfig) -> Encod
     }
 }
 
-/// How an encode scales across CPU cores (measured, single-photo sparse fit,
-/// `benchmarks/vcpu_resource_sweep_2026-06-20.tsv`). The one-shot zenjpeg
-/// encode is effectively SERIAL — AQ and entropy coding dominate and don't
-/// parallelise, and the strip-DCT path is not engaged by `encode_bytes`
-/// (measured ~1.0× wall at every thread count). So `time_ms` must NOT be
-/// divided by core count. Use [`estimate_encode_threaded`] for the uniform
-/// cross-codec entry point (it leaves time/peak unchanged here).
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub struct ThreadingInfo {
-    /// Whether the encode uses more than one core at all (false for zenjpeg).
-    pub parallel: bool,
-    /// Threads beyond this yield no further speedup. 1 = serial.
-    pub max_useful_threads: u32,
-    /// Amdahl parallel fraction `p`; peak speedup is `1/(1-p)`. 0 = serial.
-    pub parallel_fraction: f32,
-    /// Extra peak working-set per added worker thread, bytes (0 — serial).
-    pub mem_bytes_per_thread: u64,
-}
-
-impl ThreadingInfo {
-    /// Threads that actually do work given `cores` available.
-    #[must_use]
-    pub fn effective_threads(&self, cores: usize) -> u64 {
-        (cores.max(1) as u64).min(self.max_useful_threads.max(1) as u64)
-    }
-    /// Achieved wall-time speedup at `cores` (Amdahl, clamped). 1.0 = serial.
-    #[must_use]
-    pub fn speedup(&self, cores: usize) -> f32 {
-        let n = self.effective_threads(cores);
-        if !self.parallel || n <= 1 {
-            return 1.0;
-        }
-        let p = self.parallel_fraction as f64;
-        (1.0 / ((1.0 - p) + p / n as f64)) as f32
-    }
-}
-
-/// Threading characterisation for a zenjpeg encode: serial (the one-shot
-/// encode does not parallelise — measured ~1.0× at all thread counts).
+/// Threading characterisation for a zenjpeg encode, as the shared
+/// [`zencodec::estimate::ThreadingInformation`]. The one-shot zenjpeg encode is
+/// effectively SERIAL — AQ and entropy coding dominate and don't parallelise,
+/// and the strip-DCT path is not engaged by `encode_bytes` (measured ~1.0× wall
+/// at every thread count, `benchmarks/vcpu_resource_sweep_2026-06-20.tsv`). So
+/// `time_ms` is NOT divided by core count.
+///
+/// Feed the result to
+/// [`ResourceEstimate::at_cores`](zencodec::estimate::ResourceEstimate::at_cores),
+/// or call [`JpegEncoderConfig::estimate_encode_resources`](crate::codec::JpegEncoderConfig)
+/// for the full (core-adjusted, but serial here) estimate.
 #[must_use]
-pub fn encode_threading_info() -> ThreadingInfo {
-    ThreadingInfo {
-        parallel: false,
-        max_useful_threads: 1,
-        parallel_fraction: 0.0,
-        mem_bytes_per_thread: 0,
-    }
-}
-
-/// [`estimate_encode`] adjusted for `cores` available CPU cores. zenjpeg
-/// encode is serial, so this leaves `time_ms*` and the peaks unchanged; it
-/// exists as the uniform cross-codec entry point. Inspect
-/// [`encode_threading_info`] to see that `parallel == false`.
-#[must_use]
-pub fn estimate_encode_threaded(
-    width: u32,
-    height: u32,
-    config: &EncoderConfig,
-    cores: usize,
-) -> EncodeEstimate {
-    let mut e = estimate_encode(width, height, config);
-    let ti = encode_threading_info();
-    let sp = ti.speedup(cores) as f64;
-    e.time_ms_min = (e.time_ms_min as f64 / sp) as f32;
-    e.time_ms = (e.time_ms as f64 / sp) as f32;
-    e.time_ms_max = (e.time_ms_max as f64 / sp) as f32;
-    let extra = ti
-        .mem_bytes_per_thread
-        .saturating_mul(ti.effective_threads(cores).saturating_sub(1));
-    e.peak_memory_bytes_min = e.peak_memory_bytes_min.saturating_add(extra);
-    e.peak_memory_bytes = e.peak_memory_bytes.saturating_add(extra);
-    e.peak_memory_bytes_max = e.peak_memory_bytes_max.saturating_add(extra);
-    e
+pub fn encode_threading_info() -> zencodec::estimate::ThreadingInformation {
+    zencodec::estimate::ThreadingInformation::SERIAL
 }
 
 /// Estimate resources for encoding with a guaranteed memory ceiling.

@@ -355,6 +355,20 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         Some(self.effort)
     }
 
+    fn estimate_encode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::ResourceEstimate;
+        let e = crate::heuristics::estimate_encode(image.width(), image.height(), self.inner());
+        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms)
+            .with_peak_range(e.peak_memory_bytes_min, e.peak_memory_bytes_max)
+            .with_output_bytes(e.output_bytes)
+            .with_threading(crate::heuristics::encode_threading_info())
+            .at_cores(compute.cores())
+    }
+
     fn job(self) -> Self::Job {
         JpegEncodeJob {
             config: self,
