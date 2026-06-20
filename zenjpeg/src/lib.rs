@@ -332,20 +332,11 @@ pub mod profile;
 #[cfg(feature = "recompress")]
 pub mod recompress;
 
-// Image content analysis for `EncoderConfig::adaptive`.
-//
-// Internal by default — the analyzer output and tier helpers are
-// pub(crate); the public surface is the `EncoderConfig::adaptive`
-// constructor in `encode::adaptive`.
-//
-// Exposed as `pub` via `__test-utils` so coefficient's parity
-// harness can drive `analyze::analyze_rgb8` directly. Don't rely on
-// this surface from a normal consumer.
-#[cfg(feature = "__test-utils")]
-#[doc(hidden)]
-pub mod analyze;
-#[cfg(not(feature = "__test-utils"))]
-pub(crate) mod analyze;
+// Image content analysis for `EncoderConfig::adaptive` lives in `zenanalyze`
+// directly — the former `zenjpeg::analyze` re-export shim was removed so this
+// codec no longer leaks version-specific `zenanalyze` types through its surface.
+// Internal callers (`encode::adaptive`) use `zenanalyze::*`; the public surface
+// is the `EncoderConfig::adaptive` constructor in `encode::adaptive`.
 
 // zencodec trait implementations
 #[cfg(feature = "zencodec")]

@@ -40,9 +40,8 @@
 //! permission — its ICC-profile overhead (~2 KB) becomes a meaningful
 //! fraction of the file at thumbnail sizes.
 
-use crate::analyze::{
-    AnalysisFeature, AnalysisQuery, AnalysisResults, FeatureSet, analyze_features,
-};
+use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, AnalysisResults, FeatureSet};
+use zenanalyze::analyze_features;
 
 /// Features the adaptive selector consults. Compose other codecs'
 /// preset `FeatureSet`s with this via `FeatureSet::union` if
