@@ -5,13 +5,6 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
-### QUEUED BREAKING CHANGES
-<!-- Drop when zencodec 0.1.24 publishes. -->
-- Remove the workspace-root `[patch.crates-io] zencodec = { git, rev = "0f71295" }`
-  and lower the `zencodec` workspace dependency req from `0.1.24` back to a
-  published version. The patch pins zencodec to the unreleased `estimate` API
-  (the `zencodec::estimate` resource-estimation module).
-
 ### Added
 - **vCPU-aware resource estimation via zencodec's unified `estimate` API.**
   `JpegEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
@@ -51,6 +44,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   doctest (encode a tiny image, decode it round-trip) and added a second doctest
   showing `match err.kind() { ErrorKind::… }` for error classification.
 ### Changed
+- **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
+  git-rev patch.** Removed the workspace-root `[patch.crates-io] zencodec = { git,
+  rev = "0f71295" }` now that `zencodec 0.1.24` is on crates.io. Updated the
+  `estimate_encode_resources` mapping for the refined `ResourceEstimate`:
+  `new(peak, wall_ms: u64)` (was `f32`), `with_peak_max(max)` (the `min` arg is
+  gone), and dropped the removed `with_output_bytes`.
 - **Default max-pixels limit raised 100 MP → 120 MP** (`DEFAULT_MAX_PIXELS` in
   `foundation/alloc.rs`). 108 MP phone-camera photos are common and were rejected
   by the old 100 MP cap; 120 MP admits them with headroom. Non-breaking: a looser
