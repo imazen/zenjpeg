@@ -13,7 +13,7 @@
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit_pref};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
@@ -146,10 +146,15 @@ pub(super) struct StreamingBuffers {
 
 impl StreamingBuffers {
     /// Allocate every buffer needed for streaming decode.
+    ///
+    /// `alloc_pref` is the per-site fallibility preference: the per-MCU-row
+    /// strip / upsample scratch defaults infallible (bounded by the row width),
+    /// the full-image output buffer defaults fallible.
     pub(super) fn allocate(
         geom: &StreamingGeometry,
         chroma_upsampling: ChromaUpsampling,
         streaming_output_format: Option<PixelFormat>,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         // Fancy h2v2 needs double-buffered Y and chroma strips (1-row lag for context)
         let need_fancy = !geom.is_grayscale
@@ -157,9 +162,10 @@ impl StreamingBuffers {
             && !matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor);
 
         let y_strip_size = geom.y_strip_width * geom.y_strip_height;
-        let y_strip_a: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Y strip A")?;
+        let y_strip_a: Vec<i16> =
+            try_alloc_maybeuninit_pref(alloc_pref, false, y_strip_size, "Y strip A")?;
         let y_strip_b: Vec<i16> = if need_fancy {
-            try_alloc_maybeuninit(y_strip_size, "Y strip B")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, y_strip_size, "Y strip B")?
         } else {
             Vec::new()
         };
@@ -177,22 +183,22 @@ impl StreamingBuffers {
         };
 
         let cb_a: Vec<i16> = if c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cb strip A")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, c_buf_size, "Cb strip A")?
         } else {
             Vec::new()
         };
         let cr_a: Vec<i16> = if c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cr strip A")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, c_buf_size, "Cr strip A")?
         } else {
             Vec::new()
         };
         let cb_b: Vec<i16> = if need_fancy && c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cb strip B")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, c_buf_size, "Cb strip B")?
         } else {
             Vec::new()
         };
         let cr_b: Vec<i16> = if need_fancy && c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cr strip B")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, c_buf_size, "Cr strip B")?
         } else {
             Vec::new()
         };
@@ -210,12 +216,12 @@ impl StreamingBuffers {
             0
         };
         let cb_up: Vec<i16> = if up_size > 0 {
-            try_alloc_maybeuninit(up_size, "Cb upsampled")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, up_size, "Cb upsampled")?
         } else {
             Vec::new()
         };
         let cr_up: Vec<i16> = if up_size > 0 {
-            try_alloc_maybeuninit(up_size, "Cr upsampled")?
+            try_alloc_maybeuninit_pref(alloc_pref, false, up_size, "Cr upsampled")?
         } else {
             Vec::new()
         };
@@ -232,9 +238,11 @@ impl StreamingBuffers {
             }
         };
 
+        // Full-image output buffer sized from the (untrusted) SOF dimensions →
+        // default fallible.
         let rgb_size =
             checked_size_2d(geom.width, geom.height).and_then(|s| checked_size_2d(s, out_bpp))?;
-        let rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "output buffer")?;
+        let rgb: Vec<u8> = try_alloc_maybeuninit_pref(alloc_pref, true, rgb_size, "output buffer")?;
 
         Ok(Self {
             y_strip_a,

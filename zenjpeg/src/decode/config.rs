@@ -933,6 +933,17 @@ pub struct DecodeConfig {
     /// coefficient decode path (no streaming) since deblocking needs access
     /// to quantization tables and/or raw DCT coefficients.
     pub(crate) deblock_mode: DeblockMode,
+
+    /// Caller preference for allocation fallibility, applied per call site.
+    ///
+    /// Internal carrier (`pub(crate)`): the zencodec decode path sets it from
+    /// [`ResourceLimits::prefer_fallible_allocations`](zencodec::ResourceLimits::prefer_fallible_allocations)
+    /// in `codec::build_decode_config`; the direct [`DecodeConfig`] API leaves
+    /// it [`CodecDefault`](zencodec::AllocPreference::CodecDefault), so each
+    /// decode allocation site keeps its own default (big untrusted output /
+    /// coefficient buffers fallible, small bounded MCU scratch infallible).
+    /// See [`crate::foundation::alloc`].
+    pub(crate) alloc_pref: zencodec::AllocPreference,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -954,6 +965,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("parallel_strategy", &self.parallel_strategy)
             .field("idct_method", &self.idct_method)
             .field("deblock_mode", &self.deblock_mode)
+            .field("alloc_pref", &self.alloc_pref)
             .finish()
     }
 }
@@ -978,6 +990,7 @@ impl Default for DecodeConfig {
             parallel_strategy: ParallelStrategy::default(),
             idct_method: None,
             deblock_mode: DeblockMode::default(),
+            alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
 }

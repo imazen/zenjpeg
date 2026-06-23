@@ -629,6 +629,18 @@ impl DecodeConfig {
         self
     }
 
+    /// Sets the per-site allocation-fallibility preference (internal).
+    ///
+    /// Threaded from `ResourceLimits::prefer_fallible_allocations` at the
+    /// zencodec decode boundary (`codec::build_decode_config`). `CodecDefault`
+    /// (the default) keeps each allocation site's own default; `Fallible` /
+    /// `Infallible` force one path everywhere. See [`crate::foundation::alloc`].
+    #[must_use]
+    pub(crate) fn alloc_pref(mut self, pref: zencodec::AllocPreference) -> Self {
+        self.alloc_pref = pref;
+        self
+    }
+
     /// Sets the parallel decode strategy.
     ///
     /// Controls how restart segments are mapped to rayon tasks during parallel
@@ -651,8 +663,13 @@ impl DecodeConfig {
             .xmp(true)
             .icc(IccPreserve::All);
 
-        let mut parser =
-            JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            Some(&preserve),
+            self.strictness,
+            self.alloc_pref,
+        )?;
         parser.read_header()?;
 
         // Reject height=0 (DNL mode) since read_info cannot resolve it
@@ -750,7 +767,13 @@ impl DecodeConfig {
             return self.scanline_reader_with_transform(data);
         }
 
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
         parser.read_header()?;
 
         // Knusperli needs full coefficient access. When requested (explicitly or
@@ -944,6 +967,7 @@ impl DecodeConfig {
                         self.effective_idct_method(),
                         self.output_target,
                         self.deblock_mode,
+                        self.alloc_pref,
                     )?;
                     reader.attach_wave_state(wave_state);
                     self.apply_crop(&mut reader, width, height, mcu_height)?;
@@ -958,6 +982,7 @@ impl DecodeConfig {
             self.effective_idct_method(),
             self.output_target,
             self.deblock_mode,
+            self.alloc_pref,
         )?;
         self.apply_crop(&mut reader, width, height, mcu_height)?;
         Ok(reader)
@@ -1023,8 +1048,13 @@ impl DecodeConfig {
             let needs_coefficient_deblock = match self.deblock_mode {
                 DeblockMode::Knusperli => true,
                 DeblockMode::Auto => {
-                    let mut peek =
-                        JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
+                    let mut peek = JpegParser::with_strictness(
+                        &vec,
+                        self.max_pixels,
+                        None,
+                        self.strictness,
+                        self.alloc_pref,
+                    )?;
                     peek.read_header()?;
                     let dc_quant = peek
                         .quant_tables
@@ -1041,8 +1071,13 @@ impl DecodeConfig {
         }
 
         let parse_result = {
-            let mut parser =
-                JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
+            let mut parser = JpegParser::with_strictness(
+                &vec,
+                self.max_pixels,
+                None,
+                self.strictness,
+                self.alloc_pref,
+            )?;
             parser.read_header()?;
 
             if parser.height == 0 {
@@ -1252,6 +1287,7 @@ impl DecodeConfig {
                             self.effective_idct_method(),
                             self.output_target,
                             self.deblock_mode,
+                            self.alloc_pref,
                         )?;
                         reader.attach_wave_state(wave_state);
                         self.apply_crop(&mut reader, width, height, mcu_height)?;
@@ -1266,6 +1302,7 @@ impl DecodeConfig {
                     self.effective_idct_method(),
                     self.output_target,
                     self.deblock_mode,
+                    self.alloc_pref,
                 )?;
                 self.apply_crop(&mut reader, width, height, mcu_height)?;
                 Ok(reader)
@@ -1278,7 +1315,13 @@ impl DecodeConfig {
     /// scanline transform paths, matching the historical behavior of using
     /// the pre-transform sampling factors.
     fn source_mcu_height(&self, data: &[u8]) -> Result<usize> {
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
         parser.read_header()?;
         let max_v_samp = parser.components[..parser.num_components as usize]
             .iter()
@@ -1685,8 +1728,13 @@ impl DecodeConfig {
             return self.decode_upright_then_orient(data, effective_transform, stop);
         }
 
-        let mut parser =
-            JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            Some(&preserve),
+            self.strictness,
+            self.alloc_pref,
+        )?;
 
         // Streaming decode produces RGB u8 directly — disable it when the output
         // needs coefficients (f32, u16, precise, dequant_bias, non-RGB formats,
@@ -2060,8 +2108,13 @@ impl DecodeConfig {
             && self.output_target == OutputTarget::Srgb8;
 
         if direct_eligible {
-            let mut parser =
-                parser::JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+            let mut parser = parser::JpegParser::with_strictness(
+                data,
+                self.max_pixels,
+                None,
+                self.strictness,
+                self.alloc_pref,
+            )?;
             parser.read_header()?;
             let is_xyb = parser.info().is_xyb;
 
@@ -2131,8 +2184,13 @@ impl DecodeConfig {
             return Err(Error::internal("color source can't stream to Gray"));
         }
 
-        let mut parser =
-            parser::JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        let mut parser = parser::JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
         parser.read_header()?;
         parser.chroma_upsampling = self.chroma_upsampling;
         parser.apply_idct_method(self.effective_idct_method());
@@ -2337,7 +2395,13 @@ impl DecodeConfig {
     ///
     /// For analysis of large images, consider streaming APIs.
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
         // Disable streaming - we need coefficients stored
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
@@ -2384,7 +2448,13 @@ impl DecodeConfig {
         data: &[u8],
         stop: impl Stop,
     ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.enable_jbrd_tracking();
         parser.decode(&stop)?;
@@ -2423,6 +2493,7 @@ impl DecodeConfig {
             self.max_pixels,
             Some(&self.preserve),
             self.strictness,
+            self.alloc_pref,
         )?;
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
@@ -2475,7 +2546,13 @@ impl DecodeConfig {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
@@ -2600,6 +2677,7 @@ impl DecodeConfig {
             self.max_pixels,
             Some(&self.preserve),
             self.strictness,
+            self.alloc_pref,
         )?;
         parser.read_header()?;
 

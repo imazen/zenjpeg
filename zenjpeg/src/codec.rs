@@ -1133,6 +1133,32 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         &JPEG_DECODE_CAPS
     }
 
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        // Mirror the codec's `estimate_encode_resources` shape, sourcing the
+        // peak (output buffer + MCU strips, plus full-frame coeff storage for
+        // progressive/subsampled) and wall time from `heuristics::estimate_decode`.
+        // Decode is serial by default (the `parallel` fast paths are opt-in via
+        // restart segments); report SERIAL and let `at_cores` scale time.
+        //
+        // `estimate_decode` keys the output-buffer size off a `PixelFormat`, so
+        // map the negotiated descriptor's bytes-per-pixel to the closest format.
+        let format = match image.descriptor().bytes_per_pixel() {
+            1 => PixelFormat::Gray,
+            4 => PixelFormat::Rgba,
+            _ => PixelFormat::Rgb,
+        };
+        let e = crate::heuristics::estimate_decode(image.width(), image.height(), format);
+        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
+            .with_peak_max(e.peak_memory_bytes_max)
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn job<'a>(self) -> Self::Job<'a> {
         JpegDecodeJob {
             config: self,
@@ -1853,6 +1879,11 @@ fn build_decode_config(
     policy: Option<&zencodec::decode::DecodePolicy>,
 ) -> crate::decode::DecodeConfig {
     let mut cfg = inner.clone();
+    // Per-site allocation-fallibility preference travels with the rest of the
+    // resource governance: big untrusted output/coefficient buffers stay
+    // fallible by default, small bounded MCU scratch stays infallible, and an
+    // explicit Fallible/Infallible here overrides every site.
+    cfg = cfg.alloc_pref(limits.prefer_fallible_allocations);
     if let Some(max) = limits.max_pixels {
         cfg = cfg.max_pixels(max);
     }
@@ -3992,5 +4023,110 @@ mod push_decode_stride_tests {
             "{diffs}/{} bytes differ between push_decode and buffered",
             buffered.len()
         );
+    }
+
+    /// Decoding with `AllocPreference::Fallible` (the `try_reserve` path) and
+    /// `AllocPreference::Infallible` (the `vec!` path) must produce
+    /// byte-identical pixels to the default (`CodecDefault`) decode, across
+    /// baseline 4:2:0, baseline 4:4:4, and progressive — exercising the strip,
+    /// output, and coefficient-storage allocation sites under each mode.
+    #[test]
+    fn fallible_alloc_decode_matches_default() {
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::{AllocPreference, ResourceLimits};
+
+        let (w, h) = (64usize, 48usize);
+
+        // A noise-ish RGB image (not a smooth gradient — those degenerate the
+        // DCT coefficients per project policy).
+        let pixels: Vec<rgb::RGB8> = (0..w * h)
+            .map(|i| {
+                rgb::RGB8::new(
+                    (i.wrapping_mul(97) % 251) as u8,
+                    (i.wrapping_mul(53) % 253) as u8,
+                    (i.wrapping_mul(29) % 249) as u8,
+                )
+            })
+            .collect();
+
+        // Decode `jpeg` under the given AllocPreference; return the contiguous
+        // decoded bytes.
+        let decode_bytes = |jpeg: &[u8], pref: Option<AllocPreference>| -> Vec<u8> {
+            let job = JpegDecoderConfig::new().job();
+            let job = match pref {
+                Some(p) => {
+                    job.with_limits(ResourceLimits::none().with_prefer_fallible_allocations(p))
+                }
+                None => job,
+            };
+            let out = job
+                .decoder(Cow::Borrowed(jpeg), &[])
+                .unwrap()
+                .decode()
+                .unwrap();
+            let ps = out.pixels();
+            (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect()
+        };
+
+        let assert_all_modes_agree = |jpeg: &[u8], label: &str| {
+            let default = decode_bytes(jpeg, None); // CodecDefault
+            let fallible = decode_bytes(jpeg, Some(AllocPreference::Fallible));
+            let infallible = decode_bytes(jpeg, Some(AllocPreference::Infallible));
+            assert_eq!(
+                default, fallible,
+                "{label}: Fallible decode must be byte-identical to the default"
+            );
+            assert_eq!(
+                default, infallible,
+                "{label}: Infallible decode must be byte-identical to the default"
+            );
+        };
+
+        // (1) Baseline 4:2:0 — fused/streaming path + chroma upsample strips.
+        let jpeg_420 = crate::encoder::EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .encode(&pixels, w as u32, h as u32)
+            .unwrap();
+        assert_all_modes_agree(&jpeg_420, "baseline 4:2:0");
+
+        // (2) Baseline 4:4:4 — no chroma subsampling.
+        let jpeg_444 = crate::encoder::EncoderConfig::ycbcr(85, ChromaSubsampling::None)
+            .encode(&pixels, w as u32, h as u32)
+            .unwrap();
+        assert_all_modes_agree(&jpeg_444, "baseline 4:4:4");
+
+        // (3) Progressive — exercises the full-frame coefficient-storage sites.
+        let jpeg_prog = crate::encoder::EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .progressive(crate::encode::ProgressiveScanMode::Progressive)
+            .encode(&pixels, w as u32, h as u32)
+            .unwrap();
+        assert_all_modes_agree(&jpeg_prog, "progressive 4:2:0");
+    }
+
+    /// `estimate_decode_resources` returns a non-trivial, scaling estimate
+    /// (peak ≥ output buffer, larger image ⇒ larger peak + wall time).
+    #[test]
+    fn estimate_decode_resources_is_reasonable() {
+        use zencodec::decode::DecoderConfig as _;
+        use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
+
+        let compute = ComputeEnvironment::new();
+        let small = ImageCharacteristics::new(256, 256, PixelDescriptor::RGB8_SRGB);
+        let large = ImageCharacteristics::new(2048, 2048, PixelDescriptor::RGB8_SRGB);
+
+        let cfg = JpegDecoderConfig::new();
+        let es = cfg.estimate_decode_resources(&small, &compute);
+        let el = cfg.estimate_decode_resources(&large, &compute);
+
+        let es_peak = es.peak_memory_bytes_est().expect("small peak estimate");
+        let el_peak = el.peak_memory_bytes_est().expect("large peak estimate");
+
+        // Peak must cover at least the output buffer (W*H*3).
+        assert!(
+            es_peak >= 256 * 256 * 3,
+            "peak {es_peak} below output buffer for 256²"
+        );
+        // Larger image ⇒ strictly larger peak and wall time.
+        assert!(el_peak > es_peak);
+        assert!(el.wall_ms().unwrap_or(0) >= es.wall_ms().unwrap_or(0));
     }
 }

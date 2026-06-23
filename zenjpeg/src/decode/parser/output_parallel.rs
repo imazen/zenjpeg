@@ -22,7 +22,7 @@ use crate::decode::upsample::{
 };
 use crate::decode::{ChromaUpsampling, IdctMethod};
 use crate::error::{Error, Result};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit_pref};
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use rayon::prelude::*;
 
@@ -81,8 +81,11 @@ impl<'a> JpegParser<'a> {
                 .ok_or_else(|| Error::internal("missing Cr quant table"))?,
         ];
 
+        // Full-image output buffer sized from the (untrusted) SOF dimensions →
+        // default fallible.
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "RGB output buffer")?;
 
         let is_rgb = self.is_rgb_jpeg();
         let rgb_row_stride = width * 3;
@@ -265,8 +268,11 @@ impl<'a> JpegParser<'a> {
             upsample_h2v2_i16_nearest // placeholder for fused path
         };
 
+        // Full-image output buffer sized from the (untrusted) SOF dimensions →
+        // default fallible.
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "RGB output buffer")?;
 
         let rgb_row_stride = width * 3;
         let mcu_row_rgb_bytes = mcu_height * rgb_row_stride;

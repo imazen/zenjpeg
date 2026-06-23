@@ -23,7 +23,7 @@
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_bytes};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_bytes_pref};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
@@ -507,7 +507,8 @@ impl<'a> JpegParser<'a> {
 
         // Allocate RGB output
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_zeroed_bytes(rgb_size, "fused 444 RGB output")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_zeroed_bytes_pref(self.alloc_pref, true, rgb_size, "fused 444 RGB output")?;
 
         // Compute bytes per pixel row for RGB
         let rgb_row_bytes = width * 3;
@@ -846,7 +847,8 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_zeroed_bytes(rgb_size, "fused box RGB output")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_zeroed_bytes_pref(self.alloc_pref, true, rgb_size, "fused box RGB output")?;
 
         let rgb_row_bytes = width * 3;
         let mcu_rows_per_ri = ri / mcu_cols;
@@ -1165,7 +1167,8 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_zeroed_bytes(rgb_size, "fused h2v1 RGB output")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_zeroed_bytes_pref(self.alloc_pref, true, rgb_size, "fused h2v1 RGB output")?;
 
         let rgb_row_bytes = width * 3;
         let mcu_rows_per_ri = ri / mcu_cols;
@@ -1527,7 +1530,8 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_zeroed_bytes(rgb_size, "fused fancy RGB output")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_zeroed_bytes_pref(self.alloc_pref, true, rgb_size, "fused fancy RGB output")?;
 
         let rgb_row_bytes = width * 3;
         let mcu_rows_per_ri = ri / mcu_cols;

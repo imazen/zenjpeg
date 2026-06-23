@@ -11,7 +11,7 @@
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks_pref};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::Component;
@@ -552,7 +552,11 @@ impl<'a> JpegParser<'a> {
             let padded_blocks_h = geom.mcu_cols * h_samp;
             let padded_blocks_v = geom.mcu_rows * v_samp;
             let num_blocks = checked_size_2d(padded_blocks_h, padded_blocks_v)?;
-            self.coeffs.push(try_alloc_dct_blocks(
+            // Full-frame coefficient storage sized from the (untrusted) SOF
+            // dimensions → default fallible.
+            self.coeffs.push(try_alloc_dct_blocks_pref(
+                self.alloc_pref,
+                true,
                 num_blocks,
                 "allocating DCT coefficients",
             )?);
@@ -560,9 +564,11 @@ impl<'a> JpegParser<'a> {
             // done. Default to 64 (full IDCT) — tiered IDCT is mainly for
             // baseline. Use fallible allocation so an OOM here cannot panic
             // after the parallel try_alloc_dct_blocks above succeeded with
-            // lazy-committed pages.
+            // lazy-committed pages. Same untrusted size → default fallible.
             self.coeff_counts
-                .push(crate::foundation::alloc::try_alloc_filled(
+                .push(crate::foundation::alloc::try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     64u8,
                     "allocating progressive coefficient counts",
@@ -570,7 +576,9 @@ impl<'a> JpegParser<'a> {
             // Nonzero bitmap: all zeros initially (no coefficients placed yet).
             // Use fallible allocation for the same reason.
             self.nonzero_bitmaps
-                .push(crate::foundation::alloc::try_alloc_filled(
+                .push(crate::foundation::alloc::try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     0u64,
                     "allocating progressive nonzero bitmaps",

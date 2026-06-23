@@ -7,7 +7,9 @@
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit};
+use crate::foundation::alloc::{
+    checked_size_2d, try_alloc_dct_blocks_pref, try_alloc_maybeuninit_pref,
+};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
@@ -222,7 +224,11 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs.push(try_alloc_dct_blocks(
+                // Full-frame DCT coefficient storage is sized from the
+                // (untrusted) SOF dimensions → default fallible.
+                self.coeffs.push(try_alloc_dct_blocks_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
@@ -231,9 +237,12 @@ impl<'a> JpegParser<'a> {
                 // that an OOM on this allocation surfaces as Error::AllocationFailed
                 // — without this, a successful try_alloc_dct_blocks (which on Linux
                 // can succeed with lazy-committed zero pages) followed by an
-                // infallible vec! could panic on physical commit.
+                // infallible vec! could panic on physical commit. Same untrusted
+                // size as the coefficient blocks → default fallible.
                 self.coeff_counts
-                    .push(crate::foundation::alloc::try_alloc_filled(
+                    .push(crate::foundation::alloc::try_alloc_filled_pref(
+                        self.alloc_pref,
+                        true,
                         num_blocks,
                         64u8,
                         "allocating coefficient counts",
@@ -723,12 +732,16 @@ impl<'a> JpegParser<'a> {
             decoder.set_ac_table(ac_idx, ac_table_ref);
         }
 
-        // Allocate strip buffers for one MCU row (8 rows of pixels)
-        // Note: All elements are written by IDCT before color conversion reads them
+        // Allocate strip buffers for one MCU row (8 rows of pixels).
+        // Note: All elements are written by IDCT before color conversion reads them.
+        // Bounded by the row width × 8 → default infallible (fast single calloc).
         let strip_size = strip_width * 8;
-        let mut y_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Y strip buffer")?;
-        let mut cb_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cb strip buffer")?;
-        let mut cr_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cr strip buffer")?;
+        let mut y_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Y strip buffer")?;
+        let mut cb_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cb strip buffer")?;
+        let mut cr_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cr strip buffer")?;
 
         // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted.
         let (out_bpp, out_4bpp, swap_rb) = match self.streaming_output_format {
@@ -737,9 +750,11 @@ impl<'a> JpegParser<'a> {
             _ => (3, false, false),
         };
 
-        // Allocate output buffer (3bpp RGB or 4bpp BGRA/RGBA)
+        // Allocate output buffer (3bpp RGB or 4bpp BGRA/RGBA). Sized from the
+        // (untrusted) SOF dimensions → default fallible.
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "output buffer")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "output buffer")?;
 
         let mut mcu_count = 0u32;
         let restart_interval = self.restart_interval as u32;
@@ -977,6 +992,7 @@ impl<'a> JpegParser<'a> {
             &geom,
             self.chroma_upsampling,
             self.streaming_output_format,
+            self.alloc_pref,
         )?;
 
         // ---- Phase 4: kernel selection ----

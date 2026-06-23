@@ -6,6 +6,26 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Added
+- **`AllocPreference` honored per decode allocation site + `estimate_decode_resources`.**
+  The zencodec decode boundary now threads
+  `ResourceLimits::prefer_fallible_allocations` (a 3-mode `AllocPreference`:
+  `CodecDefault` / `Fallible` / `Infallible`) into the internal decode config and
+  down to every untrusted decode allocation. `foundation::alloc` gains
+  `resolve_fallible(pref, site_default)` plus runtime-flag `*_pref` variants of
+  the existing fallible helpers. Per-site defaults: big untrusted-sized buffers
+  (full output pixel buffer, full-frame DCT-coefficient storage, full-image
+  accumulators) default to the fallible `try_reserve` path (graceful
+  `Error::AllocationFailed` on a malicious SOF); small bounded MCU strip / chroma
+  upsample / context-row scratch defaults to the fast infallible `vec!` path. An
+  explicit `Fallible` / `Infallible` overrides every site; `CodecDefault` (the
+  default, and the direct non-zencodec `DecodeConfig` API) keeps each site's
+  default, so behaviour is unchanged unless a caller opts in. Also adds
+  `JpegDecoderConfig::estimate_decode_resources(&ImageCharacteristics,
+  &ComputeEnvironment)`, overriding the `zencodec::DecoderConfig` default by
+  delegating to the existing `heuristics::estimate_decode` (peak = output buffer
+  + MCU strips, plus full-frame coeff storage for progressive/subsampled; SERIAL,
+  `at_cores`-scaled). New decode byte-identity tests across baseline 4:2:0 /
+  4:4:4 / progressive under all three modes, plus `alloc_util`-level helper tests.
 - **vCPU-aware resource estimation via zencodec's unified `estimate` API.**
   `JpegEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
   overrides the `zencodec::EncoderConfig` default, delegating to the calibrated

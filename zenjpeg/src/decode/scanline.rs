@@ -193,6 +193,7 @@ impl<'a> ScanlineReader<'a> {
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
         deblock_mode: DeblockMode,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let data_cow = Cow::Borrowed(scan.data);
         Self::from_scan_data_cow(
@@ -202,6 +203,7 @@ impl<'a> ScanlineReader<'a> {
             idct_method,
             output_target,
             deblock_mode,
+            alloc_pref,
         )
     }
 
@@ -217,6 +219,7 @@ impl<'a> ScanlineReader<'a> {
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
         deblock_mode: DeblockMode,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
             data: _,
@@ -244,6 +247,7 @@ impl<'a> ScanlineReader<'a> {
             chroma_upsampling,
             idct_method,
             output_target,
+            alloc_pref,
         )?;
 
         // Resolve deblock mode: Auto/AutoStreamable select Boundary4Tap in streaming.

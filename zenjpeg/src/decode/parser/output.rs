@@ -39,7 +39,7 @@ use crate::color::{
 use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{
-    checked_size_2d, try_alloc_maybeuninit, try_alloc_zeroed, try_alloc_zeroed_f32,
+    checked_size_2d, try_alloc_maybeuninit_pref, try_alloc_zeroed_f32_pref, try_alloc_zeroed_pref,
 };
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
@@ -97,6 +97,7 @@ fn reformat_rgb_output(
     format: PixelFormat,
     width: usize,
     height: usize,
+    alloc_pref: zencodec::AllocPreference,
 ) -> Result<Vec<u8>> {
     match format {
         PixelFormat::Rgb => Ok(rgb),
@@ -105,14 +106,18 @@ fn reformat_rgb_output(
             Ok(rgb)
         }
         PixelFormat::Rgba => {
+            // Full-image output buffer → default fallible.
             let dst_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
-            let mut dst = try_alloc_zeroed(dst_size, "RGBA reformat output")?;
+            let mut dst =
+                try_alloc_zeroed_pref(alloc_pref, true, dst_size, "RGBA reformat output")?;
             rgb_u8_to_rgba_u8(&rgb, &mut dst);
             Ok(dst)
         }
         PixelFormat::Bgra | PixelFormat::Bgrx => {
+            // Full-image output buffer → default fallible.
             let dst_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
-            let mut dst = try_alloc_zeroed(dst_size, "BGRA reformat output")?;
+            let mut dst =
+                try_alloc_zeroed_pref(alloc_pref, true, dst_size, "BGRA reformat output")?;
             rgb_u8_to_bgra_u8(&rgb, &mut dst);
             Ok(dst)
         }
@@ -130,6 +135,7 @@ fn expand_gray_u8_to_format(
     format: PixelFormat,
     width: usize,
     height: usize,
+    alloc_pref: zencodec::AllocPreference,
 ) -> Result<Vec<u8>> {
     let npixels = checked_size_2d(width, height)?;
     if gray.len() < npixels {
@@ -138,8 +144,9 @@ fn expand_gray_u8_to_format(
     match format {
         PixelFormat::Rgb | PixelFormat::Bgr => {
             // Channel order is irrelevant — all three bytes are the gray sample.
+            // Full-image output buffer → default fallible.
             let out_size = checked_size_2d(npixels, 3)?;
-            let mut out = try_alloc_zeroed(out_size, "gray->RGB expand")?;
+            let mut out = try_alloc_zeroed_pref(alloc_pref, true, out_size, "gray->RGB expand")?;
             for i in 0..npixels {
                 let g = gray[i];
                 let d = i * 3;
@@ -150,8 +157,9 @@ fn expand_gray_u8_to_format(
             Ok(out)
         }
         PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
+            // Full-image output buffer → default fallible.
             let out_size = checked_size_2d(npixels, 4)?;
-            let mut out = try_alloc_zeroed(out_size, "gray->RGBA expand")?;
+            let mut out = try_alloc_zeroed_pref(alloc_pref, true, out_size, "gray->RGBA expand")?;
             for i in 0..npixels {
                 let g = gray[i];
                 let d = i * 4;
@@ -465,16 +473,22 @@ impl<'a> JpegParser<'a> {
         let strip_width = comp_infos[0].comp_width;
         let strip_size = strip_width * strip_height;
 
-        // Allocate strip buffers - values will be fully overwritten by IDCT
-        // Note: Strips are fully written by IDCT before color conversion reads them
-        let mut y_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Y strip buffer")?;
-        let mut cb_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cb strip buffer")?;
-        let mut cr_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cr strip buffer")?;
+        // Allocate strip buffers - values will be fully overwritten by IDCT.
+        // Note: Strips are fully written by IDCT before color conversion reads
+        // them. Bounded by the row width × strip height → default infallible.
+        let mut y_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Y strip buffer")?;
+        let mut cb_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cb strip buffer")?;
+        let mut cr_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cr strip buffer")?;
 
-        // Allocate output RGB buffer
+        // Allocate output RGB buffer. Sized from the (untrusted) SOF
+        // dimensions → default fallible.
         // Note: All pixels are written by color conversion before the buffer is returned
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        let mut rgb: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "RGB output buffer")?;
 
         // Process MCU row by row
         // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
@@ -563,7 +577,8 @@ impl<'a> JpegParser<'a> {
         let width = self.width as usize;
         let height = self.height as usize;
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut dst: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        let mut dst: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "RGB output buffer")?;
         self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, FastDst::Rgb(&mut dst))?;
         Ok(dst)
     }
@@ -698,27 +713,45 @@ impl<'a> JpegParser<'a> {
         let ext_height = c_strip_height + 2;
         let ext_size = ext_height * c_strip_width;
 
-        // Double buffers: ext_a is the current strip, ext_b holds the next
-        let mut ext_cb_a: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cb ext_a buffer")?;
-        let mut ext_cb_b: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cb ext_b buffer")?;
-        let mut ext_cr_a: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cr ext_a buffer")?;
-        let mut ext_cr_b: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cr ext_b buffer")?;
+        // Double buffers: ext_a is the current strip, ext_b holds the next.
+        // Bounded by the chroma strip width × height → default infallible.
+        let mut ext_cb_a: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cb ext_a buffer")?;
+        let mut ext_cb_b: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cb ext_b buffer")?;
+        let mut ext_cr_a: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cr ext_a buffer")?;
+        let mut ext_cr_b: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cr ext_b buffer")?;
 
-        // Upsampled output for one extended strip (used per MCU row)
+        // Upsampled output for one extended strip (used per MCU row). Bounded by
+        // the row width × strip height → default infallible.
         let upsample_out_height = ext_height * v_ratio;
         let upsample_out_size = upsample_out_height * y_strip_width;
         let mut cb_up: Vec<i16> = if needs_full_upsample {
-            try_alloc_maybeuninit(upsample_out_size, "Cb upsample buffer")?
+            try_alloc_maybeuninit_pref(
+                self.alloc_pref,
+                false,
+                upsample_out_size,
+                "Cb upsample buffer",
+            )?
         } else {
             Vec::new()
         };
         let mut cr_up: Vec<i16> = if needs_full_upsample {
-            try_alloc_maybeuninit(upsample_out_size, "Cr upsample buffer")?
+            try_alloc_maybeuninit_pref(
+                self.alloc_pref,
+                false,
+                upsample_out_size,
+                "Cr upsample buffer",
+            )?
         } else {
             Vec::new()
         };
 
-        let mut y_strip: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
+        // One MCU row of Y → bounded by the row width × strip height → infallible.
+        let mut y_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, y_strip_size, "Y strip buffer")?;
         // Sample the variant tag and bpp once; later we re-borrow dst mutably
         // each MCU row iteration.
         #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1089,7 +1122,13 @@ impl<'a> JpegParser<'a> {
         let mut comp_planes_f32 = Vec::with_capacity(num_components);
         for info in &comp_infos {
             let size = checked_size_2d(info.comp_width, info.comp_height)?;
-            comp_planes_f32.push(try_alloc_zeroed_f32(size, "f32 component plane")?);
+            // Full-image per-component f32 plane → default fallible.
+            comp_planes_f32.push(try_alloc_zeroed_f32_pref(
+                self.alloc_pref,
+                true,
+                size,
+                "f32 component plane",
+            )?);
         }
 
         Ok((
@@ -1289,8 +1328,13 @@ impl<'a> JpegParser<'a> {
                         scale_y,
                     ),
                     super::super::ChromaUpsampling::NearestNeighbor => {
-                        let mut upsampled =
-                            try_alloc_zeroed_f32(output_size, "f32 nearest upsample plane")?;
+                        // Full-image upsampled f32 plane → default fallible.
+                        let mut upsampled = try_alloc_zeroed_f32_pref(
+                            self.alloc_pref,
+                            true,
+                            output_size,
+                            "f32 nearest upsample plane",
+                        )?;
                         upsample_nearest_f32(
                             comp_plane,
                             info.comp_width,
@@ -1307,7 +1351,12 @@ impl<'a> JpegParser<'a> {
             } else {
                 let comp_plane = &comp_planes_f32[comp_idx];
                 // Full resolution — clip to image dimensions
-                let mut plane = try_alloc_zeroed_f32(output_size, "f32 full-res output plane")?;
+                let mut plane = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    output_size,
+                    "f32 full-res output plane",
+                )?;
                 for py in 0..height {
                     let src = &comp_plane[py * info.comp_width..py * info.comp_width + width];
                     let dst = &mut plane[py * width..py * width + width];
@@ -1375,7 +1424,7 @@ impl<'a> JpegParser<'a> {
         {
             use super::super::fused_parallel::FusedResult;
             let FusedResult(rgb) = fused;
-            return reformat_rgb_output(rgb, format, width, height);
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
         }
 
         if self.coeffs.is_empty() {
@@ -1389,7 +1438,7 @@ impl<'a> JpegParser<'a> {
             && self.can_use_fast_i16_path(format, is_xyb)
             && let Some(rgb) = self.to_pixels_fast_i16_parallel(chroma_upsampling)?
         {
-            return reformat_rgb_output(rgb, format, width, height);
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
         }
         #[cfg(feature = "parallel")]
         if self.num_threads != 1
@@ -1397,20 +1446,20 @@ impl<'a> JpegParser<'a> {
             && self.can_use_fast_i16_subsampled(format, is_xyb)
             && let Some(rgb) = self.to_pixels_fast_i16_subsampled_parallel(chroma_upsampling)?
         {
-            return reformat_rgb_output(rgb, format, width, height);
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
         }
 
         // Try fast integer path for non-XYB 4:4:4 images
         // (dequant_bias requires f32 path for fractional bias application)
         if !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
             let rgb = self.to_pixels_fast_i16(chroma_upsampling)?;
-            return reformat_rgb_output(rgb, format, width, height);
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
         }
 
         // Try fast integer path for subsampled images (4:2:0, 4:2:2, 4:4:0)
         if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
             let rgb = self.to_pixels_fast_i16_subsampled(chroma_upsampling)?;
-            return reformat_rgb_output(rgb, format, width, height);
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
         }
 
         let num_components = self.num_components as usize;
@@ -1567,7 +1616,13 @@ impl<'a> JpegParser<'a> {
         // grayscale). Expand 1bpp → the requested RGB-family format here
         // instead of honoring a hint the streaming path never applied.
         if self.num_components == 1 {
-            return Ok(Some(expand_gray_u8_to_format(&buf, format, width, height)?));
+            return Ok(Some(expand_gray_u8_to_format(
+                &buf,
+                format,
+                width,
+                height,
+                self.alloc_pref,
+            )?));
         }
 
         let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
@@ -1585,7 +1640,13 @@ impl<'a> JpegParser<'a> {
         );
         if !streaming_4bpp {
             // 3bpp RGB → target format — use existing reformat (swap / pad).
-            return Ok(Some(reformat_rgb_output(buf, format, width, height)?));
+            return Ok(Some(reformat_rgb_output(
+                buf,
+                format,
+                width,
+                height,
+                self.alloc_pref,
+            )?));
         }
 
         // 4bpp streaming → different target: allocate + reformat.
@@ -1596,7 +1657,12 @@ impl<'a> JpegParser<'a> {
                     && format == PixelFormat::Rgb)
                     || (streaming_fmt == PixelFormat::Rgba && format == PixelFormat::Bgr);
                 let out_size = checked_size_2d(npixels, 3)?;
-                let mut out = try_alloc_zeroed(out_size, "streaming 4bpp->RGB reformat")?;
+                let mut out = try_alloc_zeroed_pref(
+                    self.alloc_pref,
+                    true,
+                    out_size,
+                    "streaming 4bpp->RGB reformat",
+                )?;
                 for i in 0..npixels {
                     let s = i * 4;
                     let d = i * 3;
@@ -1615,7 +1681,12 @@ impl<'a> JpegParser<'a> {
             PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
                 // 4bpp → different 4bpp: swap R and B.
                 let out_size = checked_size_2d(npixels, 4)?;
-                let mut out = try_alloc_zeroed(out_size, "streaming 4bpp->4bpp swap")?;
+                let mut out = try_alloc_zeroed_pref(
+                    self.alloc_pref,
+                    true,
+                    out_size,
+                    "streaming 4bpp->4bpp swap",
+                )?;
                 for i in 0..npixels {
                     let s = i * 4;
                     out[s] = buf[s + 2];
@@ -1649,24 +1720,30 @@ impl<'a> JpegParser<'a> {
         let output_size = checked_size_2d(width, height)?;
         match (self.num_components, format) {
             (1, PixelFormat::Gray) => {
-                let mut output = try_alloc_zeroed(output_size, "grayscale u8 output")?;
+                let mut output = try_alloc_zeroed_pref(
+                    self.alloc_pref,
+                    true,
+                    output_size,
+                    "grayscale u8 output",
+                )?;
                 gray_f32_to_gray_u8(&planes_f32[0], &mut output);
                 Ok(output)
             }
             (1, f) if is_rgb_family_u8(f) => {
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed(rgb_size, "gray->RGB u8 output")?;
+                let mut rgb =
+                    try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "gray->RGB u8 output")?;
                 gray_f32_to_rgb_u8(&planes_f32[0], &mut rgb);
-                reformat_rgb_output(rgb, f, width, height)
+                reformat_rgb_output(rgb, f, width, height, self.alloc_pref)
             }
             (3, f) if is_rgb_family_u8(f) => {
                 let rgb = self.three_chan_planes_to_rgb_u8(is_xyb, planes_f32, output_size)?;
-                reformat_rgb_output(rgb, f, width, height)
+                reformat_rgb_output(rgb, f, width, height, self.alloc_pref)
             }
             (4, f) if is_rgb_family_u8(f) => {
                 let rgb = self.four_chan_planes_to_rgb_u8(planes_f32, width, height)?;
-                reformat_rgb_output(rgb, f, width, height)
+                reformat_rgb_output(rgb, f, width, height, self.alloc_pref)
             }
             (4, PixelFormat::Cmyk) => self.four_chan_planes_to_cmyk_u8(planes_f32, width, height),
             _ => Err(Error::unsupported_feature("unsupported color conversion")),
@@ -1681,7 +1758,8 @@ impl<'a> JpegParser<'a> {
         output_size: usize,
     ) -> Result<Vec<u8>> {
         let rgb_size = checked_size_2d(output_size, 3)?;
-        let mut rgb = try_alloc_zeroed(rgb_size, "3-channel RGB u8 output")?;
+        let mut rgb =
+            try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "3-channel RGB u8 output")?;
 
         if is_xyb {
             // XYB mode: run the inverse XYB → sRGB transform in-decoder
@@ -1720,7 +1798,8 @@ impl<'a> JpegParser<'a> {
         height: usize,
     ) -> Result<Vec<u8>> {
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb = try_alloc_zeroed(rgb_size, "CMYK/YCCK->RGB u8 output")?;
+        let mut rgb =
+            try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "CMYK/YCCK->RGB u8 output")?;
         match self.adobe_transform {
             Some(AdobeColorTransform::Ycck) => {
                 ycck_planes_to_rgb_u8(
@@ -1752,7 +1831,8 @@ impl<'a> JpegParser<'a> {
         height: usize,
     ) -> Result<Vec<u8>> {
         let cmyk_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
-        let mut cmyk_out = try_alloc_zeroed(cmyk_size, "CMYK u8 output")?;
+        let mut cmyk_out =
+            try_alloc_zeroed_pref(self.alloc_pref, true, cmyk_size, "CMYK u8 output")?;
         match self.adobe_transform {
             Some(AdobeColorTransform::Ycck) => {
                 ycck_planes_to_cmyk_u8(
@@ -1823,7 +1903,7 @@ impl<'a> JpegParser<'a> {
             // Grayscale streaming always emits 1bpp (see `to_pixels`). Expand
             // into the requested RGB-family format directly into `dst`.
             if self.num_components == 1 {
-                let rgb = expand_gray_u8_to_format(&buf, format, width, height)?;
+                let rgb = expand_gray_u8_to_format(&buf, format, width, height, self.alloc_pref)?;
                 let bytes = rgb.len().min(dst.len());
                 dst[..bytes].copy_from_slice(&rgb[..bytes]);
                 return Ok(bytes);
@@ -2072,21 +2152,36 @@ impl<'a> JpegParser<'a> {
 
         match (self.num_components, format) {
             (1, PixelFormat::Gray) => {
-                let mut output = try_alloc_zeroed_f32(output_size, "gray f32 output")?;
+                let mut output = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    output_size,
+                    "gray f32 output",
+                )?;
                 gray_f32_to_gray_f32(&planes_f32[0], &mut output);
                 Ok(output)
             }
             (1, PixelFormat::Rgb) => {
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed_f32(rgb_size, "gray->RGB f32 output")?;
+                let mut rgb = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    rgb_size,
+                    "gray->RGB f32 output",
+                )?;
                 gray_f32_to_rgb_f32(&planes_f32[0], &mut rgb);
                 Ok(rgb)
             }
             (3, PixelFormat::Rgb) => {
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed_f32(rgb_size, "3-channel RGB f32 output")?;
+                let mut rgb = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    rgb_size,
+                    "3-channel RGB f32 output",
+                )?;
 
                 if is_xyb {
                     // XYB mode: run the inverse XYB → sRGB transform in-decoder

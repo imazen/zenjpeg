@@ -185,6 +185,14 @@ pub(super) struct JpegParser<'a> {
     /// Strictness level for error handling
     pub(super) strictness: Strictness,
 
+    /// Per-site allocation-fallibility preference (set from `DecodeConfig`).
+    ///
+    /// `CodecDefault` (the construction default) keeps each allocation site's
+    /// own default: big untrusted output / coefficient buffers fallible, small
+    /// bounded MCU strip scratch infallible. `Fallible` / `Infallible` force
+    /// one path everywhere. See [`crate::foundation::alloc`].
+    pub(super) alloc_pref: zencodec::AllocPreference,
+
     /// Force f32 IDCT path (set by dimension-swapping transforms for exact results).
     pub(super) force_f32_idct: bool,
 
@@ -227,21 +235,32 @@ pub(super) struct JpegParser<'a> {
 
 impl<'a> JpegParser<'a> {
     /// Create a new parser with optional extras preservation.
+    ///
+    /// `alloc_pref` defaults to [`CodecDefault`](zencodec::AllocPreference::CodecDefault),
+    /// preserving each allocation site's own fallibility default.
     #[allow(dead_code)] // May be used by tests or future code
     pub(super) fn new(
         data: &'a [u8],
         max_pixels: u64,
         preserve_config: Option<&PreserveConfig>,
     ) -> Result<Self> {
-        Self::with_strictness(data, max_pixels, preserve_config, Strictness::default())
+        Self::with_strictness(
+            data,
+            max_pixels,
+            preserve_config,
+            Strictness::default(),
+            zencodec::AllocPreference::CodecDefault,
+        )
     }
 
-    /// Create a new parser with explicit strictness level.
+    /// Create a new parser with explicit strictness level and allocation
+    /// preference.
     pub(super) fn with_strictness(
         data: &'a [u8],
         max_pixels: u64,
         preserve_config: Option<&PreserveConfig>,
         strictness: Strictness,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         // Check for SOI
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
@@ -289,6 +308,7 @@ impl<'a> JpegParser<'a> {
             mpf_header_pos: 0,
             adobe_transform: None,
             strictness,
+            alloc_pref,
             num_threads: 0,
             #[cfg(feature = "parallel")]
             parallel_strategy: super::config::ParallelStrategy::default(),

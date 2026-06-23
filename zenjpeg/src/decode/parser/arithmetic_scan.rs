@@ -5,7 +5,7 @@
 use crate::decode::config::{DecodeWarning, Strictness};
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_filled};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks_pref, try_alloc_filled_pref};
 use enough::Stop;
 
 use super::JpegParser;
@@ -48,16 +48,24 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs.push(try_alloc_dct_blocks(
+                // Full-frame coefficient storage sized from the (untrusted) SOF
+                // dimensions → default fallible.
+                self.coeffs.push(try_alloc_dct_blocks_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                self.coeff_counts.push(try_alloc_filled(
+                self.coeff_counts.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     64u8,
                     "allocating coefficient counts",
                 )?);
-                self.nonzero_bitmaps.push(try_alloc_filled(
+                self.nonzero_bitmaps.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     0u64,
                     "allocating nonzero bitmaps",
@@ -192,16 +200,24 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs.push(try_alloc_dct_blocks(
+                // Full-frame coefficient storage sized from the (untrusted) SOF
+                // dimensions → default fallible.
+                self.coeffs.push(try_alloc_dct_blocks_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                self.coeff_counts.push(try_alloc_filled(
+                self.coeff_counts.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     64u8,
                     "allocating coefficient counts",
                 )?);
-                self.nonzero_bitmaps.push(try_alloc_filled(
+                self.nonzero_bitmaps.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     0u64,
                     "allocating nonzero bitmaps",

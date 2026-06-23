@@ -579,6 +579,156 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
     Ok(v)
 }
 
+// ============================================================================
+// Per-site AllocPreference policy (3-mode override)
+// ============================================================================
+//
+// A JPEG decode mixes two allocation regimes:
+//
+// * **Big, untrusted-sized buffers** (the full output pixel buffer, the
+//   progressive/full-frame coefficient storage) default to the *fallible*
+//   `try_reserve` path — a malicious SOF can demand gigabytes, so we want a
+//   graceful [`Error::AllocationFailed`] rather than an abort.
+// * **Small, bounded scratch** (one MCU strip of `i16`, one upsampled chroma
+//   row) defaults to the *infallible* `vec!` path — a single `calloc` is
+//   faster and the size is bounded by the image width × 8, not unbounded.
+//
+// [`AllocPreference`](zencodec::AllocPreference) is a **3-mode, per-site
+// override** of that default: `Fallible` / `Infallible` force one path
+// everywhere; `CodecDefault` (and any future `#[non_exhaustive]` variant)
+// keeps each site's own default. The `*_pref` helpers below take the caller's
+// preference *and* the site default and resolve them together; the existing
+// non-`_pref` helpers keep the always-fallible behaviour for callers that do
+// not thread a preference.
+
+/// Resolve the 3-mode [`AllocPreference`](zencodec::AllocPreference) against
+/// THIS site's default fallibility.
+///
+/// * [`Fallible`](zencodec::AllocPreference::Fallible) → always `true`.
+/// * [`Infallible`](zencodec::AllocPreference::Infallible) → always `false`.
+/// * [`CodecDefault`](zencodec::AllocPreference::CodecDefault) (and any future
+///   `#[non_exhaustive]` variant) → the site default, unchanged.
+#[inline]
+#[must_use]
+pub fn resolve_fallible(pref: zencodec::AllocPreference, site_default_fallible: bool) -> bool {
+    match pref {
+        zencodec::AllocPreference::Fallible => true,
+        zencodec::AllocPreference::Infallible => false,
+        _ => site_default_fallible,
+    }
+}
+
+/// [`try_alloc_maybeuninit`] honoring a per-site [`AllocPreference`].
+///
+/// `pref` is the caller's preference; `site_default_fallible` is this site's
+/// default when `pref` is `CodecDefault`. When resolved fallible this is exactly
+/// [`try_alloc_maybeuninit`]; when resolved infallible it is `vec![T::default();
+/// count]` (a single `calloc` for zero-`Default` types, aborting on OOM).
+#[inline]
+pub fn try_alloc_maybeuninit_pref<T: Default + Clone>(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<T>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_maybeuninit(count, context)
+    } else {
+        Ok(vec![T::default(); count])
+    }
+}
+
+/// [`try_alloc_zeroed_bytes`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_zeroed_bytes`]; when
+/// resolved infallible it is `vec![0u8; count]` (a single `calloc`).
+#[inline]
+pub fn try_alloc_zeroed_bytes_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<u8>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_zeroed_bytes(count, context)
+    } else {
+        Ok(vec![0u8; count])
+    }
+}
+
+/// [`try_alloc_zeroed`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_zeroed`]; when resolved
+/// infallible it is `vec![0u8; count]` (a single `calloc`).
+#[inline]
+pub fn try_alloc_zeroed_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<u8>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_zeroed(count, context)
+    } else {
+        Ok(vec![0u8; count])
+    }
+}
+
+/// [`try_alloc_zeroed_f32`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_zeroed_f32`]; when
+/// resolved infallible it is `vec![0.0f32; count]` (a single `calloc`).
+#[inline]
+pub fn try_alloc_zeroed_f32_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<f32>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_zeroed_f32(count, context)
+    } else {
+        Ok(vec![0.0f32; count])
+    }
+}
+
+/// [`try_alloc_dct_blocks`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_dct_blocks`]; when
+/// resolved infallible it is `vec![[0i16; 64]; count]`.
+#[inline]
+pub fn try_alloc_dct_blocks_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<[i16; 64]>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_dct_blocks(count, context)
+    } else {
+        Ok(vec![[0i16; 64]; count])
+    }
+}
+
+/// [`try_alloc_filled`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_filled`]; when resolved
+/// infallible it is `vec![value; count]`.
+#[inline]
+pub fn try_alloc_filled_pref<T: Clone>(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    value: T,
+    context: &'static str,
+) -> Result<Vec<T>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_filled(count, value, context)
+    } else {
+        Ok(vec![value; count])
+    }
+}
+
 /// Allocate a `Vec<T>` of zero-initialized elements using fallible
 /// allocation.
 ///
@@ -953,5 +1103,101 @@ mod tests {
         let summary = stats.summary();
         assert!(summary.contains("2 allocations"));
         assert!(summary.contains("MB")); // Total should be in MB
+    }
+
+    // ── AllocPreference (3-mode per-site override) ──────────────────────────
+
+    use crate::error::ErrorKind;
+    use zencodec::AllocPreference;
+
+    #[test]
+    fn codec_default_keeps_site_default_true() {
+        // Big-buffer site (default fallible): CodecDefault stays fallible.
+        assert!(resolve_fallible(AllocPreference::CodecDefault, true));
+    }
+
+    #[test]
+    fn codec_default_keeps_site_default_false() {
+        // Small-scratch site (default infallible): CodecDefault stays infallible.
+        assert!(!resolve_fallible(AllocPreference::CodecDefault, false));
+    }
+
+    #[test]
+    fn explicit_fallible_overrides_any_site_default() {
+        assert!(resolve_fallible(AllocPreference::Fallible, false));
+        assert!(resolve_fallible(AllocPreference::Fallible, true));
+    }
+
+    #[test]
+    fn explicit_infallible_overrides_any_site_default() {
+        assert!(!resolve_fallible(AllocPreference::Infallible, true));
+        assert!(!resolve_fallible(AllocPreference::Infallible, false));
+    }
+
+    #[test]
+    fn alloc_zeroed_bytes_pref_all_modes_equal_bytes() {
+        let a =
+            try_alloc_zeroed_bytes_pref(AllocPreference::CodecDefault, true, 4096, "t").unwrap();
+        let b = try_alloc_zeroed_bytes_pref(AllocPreference::Infallible, true, 4096, "t").unwrap();
+        let c = try_alloc_zeroed_bytes_pref(AllocPreference::Fallible, false, 4096, "t").unwrap();
+        assert_eq!(a.len(), 4096);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn alloc_maybeuninit_pref_all_modes_equal_bytes() {
+        let a: Vec<i16> =
+            try_alloc_maybeuninit_pref(AllocPreference::CodecDefault, true, 1024, "t").unwrap();
+        let b: Vec<i16> =
+            try_alloc_maybeuninit_pref(AllocPreference::Infallible, false, 1024, "t").unwrap();
+        let c: Vec<i16> =
+            try_alloc_maybeuninit_pref(AllocPreference::Fallible, true, 1024, "t").unwrap();
+        assert_eq!(a.len(), 1024);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn alloc_dct_blocks_pref_all_modes_equal() {
+        let a = try_alloc_dct_blocks_pref(AllocPreference::CodecDefault, true, 16, "t").unwrap();
+        let b = try_alloc_dct_blocks_pref(AllocPreference::Infallible, true, 16, "t").unwrap();
+        let c = try_alloc_dct_blocks_pref(AllocPreference::Fallible, false, 16, "t").unwrap();
+        assert_eq!(a.len(), 16);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|blk| blk.iter().all(|&v| v == 0)));
+    }
+
+    #[test]
+    fn alloc_filled_pref_all_modes_equal() {
+        let a: Vec<u8> =
+            try_alloc_filled_pref(AllocPreference::CodecDefault, true, 64, 7u8, "t").unwrap();
+        let b: Vec<u8> =
+            try_alloc_filled_pref(AllocPreference::Infallible, true, 64, 7u8, "t").unwrap();
+        let c: Vec<u8> =
+            try_alloc_filled_pref(AllocPreference::Fallible, false, 64, 7u8, "t").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 7));
+    }
+
+    #[test]
+    fn alloc_pref_fallible_oom_returns_err() {
+        // Request an impossibly large allocation; the fallible path must
+        // return Err (mapped to AllocationFailed) rather than abort.
+        let r: Result<Vec<u8>> =
+            try_alloc_zeroed_bytes_pref(AllocPreference::Fallible, true, usize::MAX / 2, "oom");
+        assert!(r.is_err());
+        assert!(matches!(
+            r.unwrap_err().kind(),
+            ErrorKind::AllocationFailed { .. }
+        ));
+
+        let r2: Result<Vec<i16>> =
+            try_alloc_maybeuninit_pref(AllocPreference::Fallible, true, usize::MAX / 4, "oom");
+        assert!(r2.is_err());
     }
 }

@@ -19,7 +19,7 @@ use super::upsample::{
     upsample_h2v2_i16_nearest_strided, upsample_h2v2_libjpeg_row,
 };
 use crate::error::Result;
-use crate::foundation::alloc::try_alloc_maybeuninit;
+use crate::foundation::alloc::try_alloc_maybeuninit_pref;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::Subsampling;
@@ -139,6 +139,11 @@ impl StripProcessor {
     }
 
     /// Create a new strip processor with allocated buffers.
+    ///
+    /// `alloc_pref` is the per-site fallibility preference. Every buffer here is
+    /// a per-MCU-row strip / upsample / context-row scratch, bounded by the row
+    /// width × strip height — so all default infallible (a single `calloc`);
+    /// an explicit `Fallible` can still force the `try_reserve` path.
     pub fn new(
         width: u32,
         num_components: u8,
@@ -147,6 +152,7 @@ impl StripProcessor {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
         output_target: OutputTarget,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
@@ -219,15 +225,26 @@ impl StripProcessor {
         let chroma_strip_height = if is_grayscale { 0 } else { chroma_v * 8 };
         let chroma_strip_size = chroma_strip_stride * chroma_strip_height;
 
-        // Allocate strip buffers
-        let y_strip = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
+        // Allocate strip buffers (per-MCU-row scratch → default infallible).
+        let y_strip =
+            try_alloc_maybeuninit_pref(alloc_pref, false, y_strip_size, "Y strip buffer")?;
 
         let (cb_strip, cr_strip) = if is_grayscale {
             (Vec::new(), Vec::new())
         } else {
             (
-                try_alloc_maybeuninit(chroma_strip_size, "Cb strip buffer")?,
-                try_alloc_maybeuninit(chroma_strip_size, "Cr strip buffer")?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    chroma_strip_size,
+                    "Cb strip buffer",
+                )?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    chroma_strip_size,
+                    "Cr strip buffer",
+                )?,
             )
         };
 
@@ -236,8 +253,18 @@ impl StripProcessor {
         let (cb_upsampled, cr_upsampled) = if !is_grayscale && subsampling != Subsampling::S444 {
             let upsampled_size = strip_stride * mcu_height;
             (
-                try_alloc_maybeuninit(upsampled_size, "Cb upsampled buffer")?,
-                try_alloc_maybeuninit(upsampled_size, "Cr upsampled buffer")?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    upsampled_size,
+                    "Cb upsampled buffer",
+                )?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    upsampled_size,
+                    "Cr upsampled buffer",
+                )?,
             )
         } else {
             (Vec::new(), Vec::new())
@@ -247,10 +274,30 @@ impl StripProcessor {
         let (prev_cb_row, prev_cr_row, next_cb_row, next_cr_row) =
             if !is_grayscale && needs_vertical_upsample {
                 (
-                    try_alloc_maybeuninit(chroma_strip_stride, "prev Cb context row")?,
-                    try_alloc_maybeuninit(chroma_strip_stride, "prev Cr context row")?,
-                    try_alloc_maybeuninit(chroma_strip_stride, "next Cb context row")?,
-                    try_alloc_maybeuninit(chroma_strip_stride, "next Cr context row")?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "prev Cb context row",
+                    )?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "prev Cr context row",
+                    )?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "next Cb context row",
+                    )?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "next Cr context row",
+                    )?,
                 )
             } else {
                 (Vec::new(), Vec::new(), Vec::new(), Vec::new())
@@ -260,9 +307,9 @@ impl StripProcessor {
         let (deferred_y_row, deferred_cb_row, deferred_cr_row) =
             if !is_grayscale && needs_vertical_upsample {
                 (
-                    try_alloc_maybeuninit(strip_stride, "deferred Y row")?,
-                    try_alloc_maybeuninit(strip_stride, "deferred Cb row")?,
-                    try_alloc_maybeuninit(strip_stride, "deferred Cr row")?,
+                    try_alloc_maybeuninit_pref(alloc_pref, false, strip_stride, "deferred Y row")?,
+                    try_alloc_maybeuninit_pref(alloc_pref, false, strip_stride, "deferred Cb row")?,
+                    try_alloc_maybeuninit_pref(alloc_pref, false, strip_stride, "deferred Cr row")?,
                 )
             } else {
                 (Vec::new(), Vec::new(), Vec::new())
