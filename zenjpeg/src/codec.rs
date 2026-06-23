@@ -423,8 +423,13 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::ResourceEstimate;
         let e = crate::heuristics::estimate_encode(image.width(), image.height(), self.inner());
-        ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
-            .with_peak_max(e.peak_memory_bytes_max)
+        // `heuristics::estimate_encode` models the encoder's working set (calibrated
+        // as VmHWM marginal, i.e. above the held input). The zencodec convention
+        // (`ResourceEstimate::conservative`) is total peak = input buffer (held by the
+        // caller throughout the encode) + working, so add the caller's input buffer.
+        let input = image.input_bytes();
+        ResourceEstimate::new(e.peak_memory_bytes.saturating_add(input), e.time_ms as u64)
+            .with_peak_max(e.peak_memory_bytes_max.saturating_add(input))
             .with_threading(crate::heuristics::encode_threading_info())
             .at_cores(compute.cores())
     }
