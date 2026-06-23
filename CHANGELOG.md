@@ -44,6 +44,19 @@ All notable changes to zenjpeg are documented here. Earlier history
   doctest (encode a tiny image, decode it round-trip) and added a second doctest
   showing `match err.kind() { ErrorKind::… }` for error classification.
 ### Changed
+- **BREAKING: `ErrorKind::Cancelled` now carries the `enough::StopReason`**
+  (`Cancelled(enough::StopReason)`, was a unit variant) (8a03cb65). The wrapped
+  reason distinguishes an explicit cancel (`StopReason::Cancelled`) from a
+  timeout (`StopReason::TimedOut`); `Display` delegates to it via
+  `#[error("{0}")]`. `From<enough::StopReason>` for both `Error` and `ErrorKind`
+  now preserves the reason instead of discarding it; `Error::cancelled()` keeps
+  its no-arg form (defaults to `StopReason::Cancelled`), so existing call sites
+  are unchanged. Match arms on the unit `ErrorKind::Cancelled` must become
+  `ErrorKind::Cancelled(_)`. The literal
+  `#[error(transparent)] Cancelled(#[from] enough::StopReason)` form isn't used
+  because `enough::StopReason` (0.4.4) does not implement `core::error::Error`
+  (required by thiserror's `#[from]`/`transparent` for `source()` forwarding);
+  the hand-written `From` impls supply the same `?` ergonomics.
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
   git-rev patch.** Removed the workspace-root `[patch.crates-io] zencodec = { git,
   rev = "0f71295" }` now that `zencodec 0.1.24` is on crates.io. Updated the
