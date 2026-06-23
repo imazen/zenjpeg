@@ -346,6 +346,67 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         Some(self.generic_quality_input.unwrap_or(self.quality))
     }
 
+    /// Honor a [`Fidelity`](zencodec::encode::Fidelity) target as natively as
+    /// JPEG allows. zenjpeg has **no lossless codestream**, but it *does* honor
+    /// all three lossy targets natively: a SSIMULACRA2 score, a butteraugli
+    /// max-norm distance, and its own jpegli quality dial.
+    ///
+    /// - `Lossless` → JPEG cannot be exact; best-effort highest quality
+    ///   (`ApproxJpegli(100)`). `resolved_target_fidelity` reports the lossy
+    ///   quality, never `Lossless`.
+    /// - `Lossy(CodecSpecificQuality(q))` → the raw jpegli quality dial
+    ///   (`Quality::ApproxJpegli`), bypassing the generic calibration.
+    /// - `Lossy(ApproxSsim2(s))` → native `Quality::ApproxSsim2` (single-pass
+    ///   SSIM2-calibrated).
+    /// - `Lossy(ApproxButteraugli(d))` → native `Quality::ApproxButteraugli`
+    ///   (single-pass jpegli-distance encode).
+    fn with_fidelity(mut self, fidelity: zencodec::encode::Fidelity) -> Self {
+        use zencodec::encode::{Fidelity, LossyTarget};
+        match fidelity {
+            Fidelity::Lossless => {
+                self.quality = 100.0;
+                self.generic_quality_input = None;
+                self.inner = self.inner.quality(Quality::ApproxJpegli(100.0));
+            }
+            Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q)) => {
+                self.quality = q;
+                self.generic_quality_input = Some(q);
+                self.inner = self.inner.quality(Quality::ApproxJpegli(q));
+            }
+            Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => {
+                self.quality = s;
+                self.generic_quality_input = Some(s);
+                self.inner = self.inner.quality(Quality::ApproxSsim2(s));
+            }
+            Fidelity::Lossy(LossyTarget::ApproxButteraugli(d)) => {
+                self.generic_quality_input = None;
+                self.inner = self.inner.quality(Quality::ApproxButteraugli(d));
+            }
+            // `Fidelity` / `LossyTarget` are `#[non_exhaustive]`: a future lossy
+            // target falls back to the jpegli quality dial at a sane default.
+            _ => {
+                self.quality = 85.0;
+                self.generic_quality_input = None;
+                self.inner = self.inner.quality(Quality::ApproxJpegli(85.0));
+            }
+        }
+        self
+    }
+
+    /// Report the native target the inner config will actually encode to. JPEG
+    /// is never lossless, so this always returns a `Lossy` fidelity — read back
+    /// from the inner [`Quality`], so a metric target round-trips as itself.
+    fn resolved_target_fidelity(&self) -> Option<zencodec::encode::Fidelity> {
+        use zencodec::encode::Fidelity;
+        Some(match self.inner.get_quality() {
+            Quality::ApproxSsim2(s) => Fidelity::ssim2(s),
+            Quality::ApproxButteraugli(d) => Fidelity::butteraugli(d),
+            Quality::ApproxJpegli(q) => Fidelity::codec_quality(q),
+            // Mozjpeg / Zq / future variants → report on the codec quality scale.
+            other => Fidelity::codec_quality(other.to_internal()),
+        })
+    }
+
     fn with_generic_effort(mut self, effort: i32) -> Self {
         self.effort = effort.clamp(0, 2);
         self
@@ -3277,6 +3338,44 @@ mod tests {
         assert!(caps.enforces_max_memory());
         assert!(caps.quality_range().is_some());
         assert!(caps.effort_range().is_some());
+    }
+
+    #[test]
+    fn fidelity_native_targets_roundtrip() {
+        use zencodec::encode::{EncoderConfig, Fidelity};
+
+        // JPEG honors all three lossy targets natively, so each round-trips
+        // through `resolved_target_fidelity` as itself.
+        let ssim2 = JpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(90.0));
+        assert_eq!(
+            ssim2.resolved_target_fidelity(),
+            Some(Fidelity::ssim2(90.0))
+        );
+
+        let butter = JpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(1.5));
+        assert_eq!(
+            butter.resolved_target_fidelity(),
+            Some(Fidelity::butteraugli(1.5))
+        );
+
+        let cq = JpegEncoderConfig::new().with_fidelity(Fidelity::codec_quality(70.0));
+        assert_eq!(
+            cq.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(70.0))
+        );
+    }
+
+    #[test]
+    fn fidelity_lossless_is_best_effort_not_lossless() {
+        use zencodec::encode::{EncoderConfig, Fidelity};
+
+        // JPEG has no lossless codestream: a lossless request resolves to the
+        // top of the quality dial and is reported as lossy, never `Lossless`.
+        let cfg = JpegEncoderConfig::new().with_fidelity(Fidelity::Lossless);
+        let resolved = cfg.resolved_target_fidelity();
+        assert_eq!(resolved, Some(Fidelity::codec_quality(100.0)));
+        assert!(!resolved.unwrap().is_lossless());
+        assert!(!JpegEncoderConfig::capabilities().lossless());
     }
 
     #[test]
