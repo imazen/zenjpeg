@@ -635,6 +635,10 @@ impl DecodeConfig {
     /// zencodec decode boundary (`codec::build_decode_config`). `CodecDefault`
     /// (the default) keeps each allocation site's own default; `Fallible` /
     /// `Infallible` force one path everywhere. See [`crate::foundation::alloc`].
+    // Only wired from the zencodec decode boundary (`codec::build_decode_config`);
+    // without that feature the builder has no caller and the field stays at its
+    // `CodecDefault`.
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
     #[must_use]
     pub(crate) fn alloc_pref(mut self, pref: zencodec::AllocPreference) -> Self {
         self.alloc_pref = pref;

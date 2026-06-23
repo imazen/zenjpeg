@@ -1186,18 +1186,38 @@ mod tests {
 
     #[test]
     fn alloc_pref_fallible_oom_returns_err() {
-        // Request an impossibly large allocation; the fallible path must
-        // return Err (mapped to AllocationFailed) rather than abort.
+        // The fallible path must return Err (not abort) for an impossible size.
+        // `usize::MAX` exceeds `isize::MAX`, so the size-overflow guard rejects
+        // it gracefully on every target. (The largest *allocatable* size,
+        // `isize::MAX` ≈ 2 GiB, can actually succeed on 32-bit, so this size
+        // exercises the guard rather than the allocator.)
         let r: Result<Vec<u8>> =
-            try_alloc_zeroed_bytes_pref(AllocPreference::Fallible, true, usize::MAX / 2, "oom");
-        assert!(r.is_err());
+            try_alloc_zeroed_bytes_pref(AllocPreference::Fallible, true, usize::MAX, "oom");
         assert!(matches!(
             r.unwrap_err().kind(),
-            ErrorKind::AllocationFailed { .. }
+            ErrorKind::SizeOverflow { .. }
         ));
 
+        // The allocation-failure path needs a *valid* layout the host cannot
+        // satisfy; that is only reliably unsatisfiable on 64-bit (on 32-bit
+        // `isize::MAX` ≈ 2 GiB is allocatable, so the assertion would be flaky —
+        // which is exactly the bug this guards against).
+        #[cfg(target_pointer_width = "64")]
+        {
+            let r: Result<Vec<u8>> = try_alloc_zeroed_bytes_pref(
+                AllocPreference::Fallible,
+                true,
+                isize::MAX as usize,
+                "oom",
+            );
+            assert!(matches!(
+                r.unwrap_err().kind(),
+                ErrorKind::AllocationFailed { .. }
+            ));
+        }
+
         let r2: Result<Vec<i16>> =
-            try_alloc_maybeuninit_pref(AllocPreference::Fallible, true, usize::MAX / 4, "oom");
+            try_alloc_maybeuninit_pref(AllocPreference::Fallible, true, usize::MAX, "oom");
         assert!(r2.is_err());
     }
 }
