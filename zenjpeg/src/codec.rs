@@ -4205,7 +4205,7 @@ mod push_decode_stride_tests {
     /// (peak ≥ output buffer, larger image ⇒ larger peak + wall time).
     #[test]
     fn estimate_decode_resources_is_reasonable() {
-        use zencodec::decode::DecoderConfig as _;
+        use zencodec::decode::DecoderConfig;
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
 
         let compute = ComputeEnvironment::new();
@@ -4213,8 +4213,10 @@ mod push_decode_stride_tests {
         let large = ImageCharacteristics::new(2048, 2048, PixelDescriptor::RGB8_SRGB);
 
         let cfg = JpegDecoderConfig::new();
-        let es = cfg.estimate_decode_resources(&small, &compute);
-        let el = cfg.estimate_decode_resources(&large, &compute);
+        // Qualify the trait: zencodec 0.1.25's blanket `DynDecoderConfig` also
+        // exposes `estimate_decode_resources`, so a bare method call is ambiguous.
+        let es = DecoderConfig::estimate_decode_resources(&cfg, &small, &compute);
+        let el = DecoderConfig::estimate_decode_resources(&cfg, &large, &compute);
 
         let es_peak = es.peak_memory_bytes_est().expect("small peak estimate");
         let el_peak = el.peak_memory_bytes_est().expect("large peak estimate");
