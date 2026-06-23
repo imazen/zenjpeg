@@ -207,9 +207,19 @@ pub enum ErrorKind {
     /// Internal error (should not happen in correct usage).
     #[error("internal error: {reason}")]
     InternalError { reason: &'static str },
-    /// Operation was cancelled via Stop trait.
-    #[error("operation cancelled")]
-    Cancelled,
+    /// Operation was stopped via the [`Stop`](enough::Stop) trait — either
+    /// explicitly cancelled or timed out. The wrapped
+    /// [`StopReason`](enough::StopReason) carries which.
+    ///
+    /// Note: this is the hand-written equivalent of thiserror's
+    /// `#[error(transparent)] Cancelled(#[from] enough::StopReason)`. The
+    /// literal `transparent`/`#[from]` form can't be used because
+    /// `enough::StopReason` does not implement `core::error::Error` (so it
+    /// can't act as an error `source`). `#[error("{0}")]` delegates `Display`
+    /// to the reason, and the `From<StopReason>` impls below supply the
+    /// `#[from]` ergonomics.
+    #[error("{0}")]
+    Cancelled(enough::StopReason),
 
     // === Decoder-specific: Datastream errors ===
     /// Invalid JPEG data (corrupted or not a JPEG).
@@ -499,10 +509,15 @@ impl Error {
         Self::new(ErrorKind::InternalError { reason })
     }
 
-    /// Create a cancelled error.
+    /// Create a cancelled error with reason
+    /// [`StopReason::Cancelled`](enough::StopReason::Cancelled).
+    ///
+    /// To preserve a different [`StopReason`](enough::StopReason) (e.g. a
+    /// timeout), convert it directly with `?` or `.into()` — see the
+    /// `From<enough::StopReason>` impl.
     #[track_caller]
     pub fn cancelled() -> Self {
-        Self::new(ErrorKind::Cancelled)
+        Self::new(ErrorKind::Cancelled(enough::StopReason::Cancelled))
     }
 
     // ========================================================================
@@ -654,10 +669,19 @@ impl From<ResourceError> for Error {
     }
 }
 
+/// Mirrors the `From` impl that thiserror's `#[from]` would generate for the
+/// [`ErrorKind::Cancelled`] variant. (Hand-written because `enough::StopReason`
+/// does not implement `core::error::Error`; see the variant docs.)
+impl From<enough::StopReason> for ErrorKind {
+    fn from(reason: enough::StopReason) -> Self {
+        ErrorKind::Cancelled(reason)
+    }
+}
+
 impl From<enough::StopReason> for Error {
     #[track_caller]
-    fn from(_: enough::StopReason) -> Self {
-        Self::cancelled()
+    fn from(reason: enough::StopReason) -> Self {
+        Self::new(ErrorKind::Cancelled(reason))
     }
 }
 
@@ -821,7 +845,7 @@ mod tests {
     fn test_error_kind_is_error_trait() {
         // ErrorKind implements core::error::Error via thiserror
         fn assert_error<E: core::error::Error>(_: &E) {}
-        let kind = ErrorKind::Cancelled;
+        let kind = ErrorKind::Cancelled(enough::StopReason::Cancelled);
         assert_error(&kind);
     }
 
@@ -830,13 +854,38 @@ mod tests {
         let err = Error::cancelled();
         let at: At<ErrorKind> = err.into();
         let err2: Error = at.into();
-        assert_eq!(err2.kind(), &ErrorKind::Cancelled);
+        assert_eq!(
+            err2.kind(),
+            &ErrorKind::Cancelled(enough::StopReason::Cancelled)
+        );
+    }
+
+    #[test]
+    fn cancelled_preserves_stop_reason() {
+        use enough::StopReason;
+
+        // `?`/`.into()` on a StopReason carries the reason into the error
+        // (the #[from] ergonomics), instead of collapsing to a unit variant.
+        let err: Error = StopReason::TimedOut.into();
+        assert_eq!(err.kind(), &ErrorKind::Cancelled(StopReason::TimedOut));
+        let err2: Error = StopReason::Cancelled.into();
+        assert_eq!(err2.kind(), &ErrorKind::Cancelled(StopReason::Cancelled));
+
+        // Display delegates to the reason (the #[error("{0}")] behavior).
+        assert_eq!(err.kind().to_string(), "operation timed out");
+        assert_eq!(err2.kind().to_string(), "operation cancelled");
+
+        // ErrorKind::from(reason) mirrors what thiserror's #[from] would emit.
+        assert_eq!(
+            ErrorKind::from(StopReason::TimedOut),
+            ErrorKind::Cancelled(StopReason::TimedOut)
+        );
     }
 
     #[test]
     fn test_result_at_ext() {
         fn inner() -> core::result::Result<(), At<ErrorKind>> {
-            Err(at!(ErrorKind::Cancelled))
+            Err(at!(ErrorKind::Cancelled(enough::StopReason::Cancelled)))
         }
 
         fn outer() -> core::result::Result<(), At<ErrorKind>> {
