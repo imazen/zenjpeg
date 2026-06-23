@@ -103,12 +103,17 @@ const DECODE_THROUGHPUT_MIN_MPIXELS: f64 = 40.0;
 /// Memory multiplier for simple content (min).
 const ENCODE_MEMORY_MIN_MULT: f64 = 0.9;
 
-/// Memory multiplier for typical content.
-const ENCODE_MEMORY_TYP_MULT: f64 = 1.0;
+/// Measured fixed encode overhead the structural estimate misses (heaptrack +
+/// VmHWM, 2026-06-23, `benchmarks/zenjpeg_encode_mem_2026-06-23.tsv`): AQ + Huffman
+/// scratch, color-convert buffers, output-buffer base. ~size-independent; it
+/// dominates the working set only for small images (the structural estimate
+/// under-predicts 256² 4:4:4 by ~2.6× without it).
+const ENCODE_FIXED_OVERHEAD_BYTES: u64 = 1_500_000;
 
-/// Memory multiplier for complex content (max).
-/// Token buffers grow with entropy.
-const ENCODE_MEMORY_MAX_MULT: f64 = 1.3;
+/// Measured slope correction: the VmHWM-marginal per-pixel slope runs ~10% above
+/// the structural `estimate_memory()` slope (e.g. 4:2:0 measured 3.85 vs structural
+/// ~3.4 B/px). Keeps the typical estimate conservative (never under at ≥1 MP).
+const ENCODE_SLOPE_CORRECTION: f64 = 1.10;
 
 /// Decode memory varies little with content type.
 const DECODE_MEMORY_MIN_MULT: f64 = 1.0;
@@ -223,10 +228,19 @@ pub fn estimate_encode(width: u32, height: u32, config: &EncoderConfig) -> Encod
     #[cfg(not(feature = "boundary-rd"))]
     let brd_active = false;
 
-    // Use the encoder's internal memory estimation, scaled up for trellis
-    // (its per-block candidate buffers ~double the working set — measured
-    // 6.3 → 10.9 B/px; the encoder's estimate does not model this).
+    // Heaptrack/VmHWM-calibrated (2026-06-23, benchmarks/zenjpeg_encode_mem_2026-06-23.tsv).
+    // The structural estimate_memory()/_ceiling() carry the right per-mode slope
+    // (4:4:4 ~7, 4:2:2 ~4.9, 4:2:0 ~3.85 B/px) but miss ~1.5 MB of fixed encode
+    // overhead (AQ + Huffman scratch, color-convert buffers, output base) — they
+    // under-predict small images ~2.6× while staying accurate at ≥1 MP. Add the
+    // measured fixed floor + slope correction. Encode memory is effort-INDEPENDENT
+    // (baseline / progressive / auto_optimize measured identical — auto_optimize's
+    // hybrid-trellis per-block buffers are negligible vs the full-image working set);
+    // the trellis multiplier below still applies to *explicit* `.trellis()` configs.
+    // est ≈ touched RSS (VmHWM marginal); max ≈ requested heap (heaptrack peak),
+    // both within ~5% across 256²..4096² for 4:4:4 / 4:2:2 / 4:2:0.
     let base_memory = config.estimate_memory(width, height) as u64;
+    let ceil_memory = config.estimate_memory_ceiling(width, height) as u64;
     let mem_feature = if trellis_active {
         TRELLIS_MEM_FACTOR
     } else {
@@ -234,8 +248,10 @@ pub fn estimate_encode(width: u32, height: u32, config: &EncoderConfig) -> Encod
     };
 
     let peak_memory_bytes_min = (base_memory as f64 * ENCODE_MEMORY_MIN_MULT * mem_feature) as u64;
-    let peak_memory_bytes = (base_memory as f64 * ENCODE_MEMORY_TYP_MULT * mem_feature) as u64;
-    let peak_memory_bytes_max = (base_memory as f64 * ENCODE_MEMORY_MAX_MULT * mem_feature) as u64;
+    let peak_memory_bytes = ENCODE_FIXED_OVERHEAD_BYTES
+        + (base_memory as f64 * ENCODE_SLOPE_CORRECTION * mem_feature) as u64;
+    let peak_memory_bytes_max =
+        ENCODE_FIXED_OVERHEAD_BYTES + (ceil_memory as f64 * mem_feature) as u64;
 
     // Time calculation from throughput, then the measured RD-feature
     // multipliers (trellis ≈ 6.2×, boundary-rd ≈ 1.55×, both ≈ 6.5× — NOT
@@ -316,8 +332,11 @@ pub fn encode_threading_info() -> zencodec::estimate::ThreadingInformation {
 pub fn estimate_encode_ceiling(width: u32, height: u32, config: &EncoderConfig) -> EncodeEstimate {
     let mut est = estimate_encode(width, height, config);
 
-    // Override with the guaranteed ceiling from the encoder
-    let ceiling = config.estimate_memory_ceiling(width, height) as u64;
+    // Override with the guaranteed ceiling. estimate_encode already folds the
+    // measured fixed overhead + trellis multiplier into peak_memory_bytes_max
+    // (= ENCODE_FIXED_OVERHEAD_BYTES + estimate_memory_ceiling × mem_feature), so
+    // reuse it — keeps the ceiling ≥ the typical estimate and trellis-aware.
+    let ceiling = est.peak_memory_bytes_max;
     est.peak_memory_bytes_min = ceiling;
     est.peak_memory_bytes = ceiling;
     est.peak_memory_bytes_max = ceiling;
@@ -477,10 +496,14 @@ mod tests {
     #[test]
     fn encode_estimate_scales_with_size() {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
-        let small = estimate_encode(256, 256, &config);
-        let large = estimate_encode(512, 512, &config);
+        // Encode memory has a measured ~1.5 MB fixed floor (heaptrack/VmHWM,
+        // 2026-06-23), so the 256²→512² ratio is intercept-dominated (~1.7×).
+        // Pixel-scaling dominates only at ≥1 MP, where 4× pixels gives ~3.4×
+        // memory (heaptrack-confirmed) — test scaling there. Threshold unchanged.
+        let small = estimate_encode(1024, 1024, &config);
+        let large = estimate_encode(2048, 2048, &config);
 
-        // 4x pixels should give roughly 4x memory
+        // 4x pixels should give roughly 4x memory (in the pixel-dominated regime)
         let ratio = large.peak_memory_bytes as f64 / small.peak_memory_bytes as f64;
         assert!(ratio > 2.5 && ratio < 6.0, "Ratio was {}", ratio);
     }
