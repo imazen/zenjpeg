@@ -110,10 +110,12 @@ const ENCODE_MEMORY_MIN_MULT: f64 = 0.9;
 /// under-predicts 256² 4:4:4 by ~2.6× without it).
 const ENCODE_FIXED_OVERHEAD_BYTES: u64 = 1_500_000;
 
-/// Measured slope correction: the VmHWM-marginal per-pixel slope runs ~10% above
-/// the structural `estimate_memory()` slope (e.g. 4:2:0 measured 3.85 vs structural
-/// ~3.4 B/px). Keeps the typical estimate conservative (never under at ≥1 MP).
-const ENCODE_SLOPE_CORRECTION: f64 = 1.10;
+/// Headroom the conservative MAX adds over the (ceiling-based) est. Gating is on the est
+/// `peak_memory_bytes`, so the est must be a safe upper bound: it uses
+/// `estimate_memory_ceiling()`, which tracks the concave 1-4MP working-set hump and clears
+/// every measured cell — unlike `estimate_memory()`, which under-fits the mid by ~6% (and
+/// would need a >1.25× bump to cover, exceeding the ceiling and breaking est ≤ max).
+const ENCODE_MAX_MARGIN: f64 = 1.3;
 
 /// Decode memory varies little with content type.
 const DECODE_MEMORY_MIN_MULT: f64 = 1.0;
@@ -237,8 +239,11 @@ pub fn estimate_encode(width: u32, height: u32, config: &EncoderConfig) -> Encod
     // (baseline / progressive / auto_optimize measured identical — auto_optimize's
     // hybrid-trellis per-block buffers are negligible vs the full-image working set);
     // the trellis multiplier below still applies to *explicit* `.trellis()` configs.
-    // est ≈ touched RSS (VmHWM marginal); max ≈ requested heap (heaptrack peak),
-    // both within ~5% across 256²..4096² for 4:4:4 / 4:2:2 / 4:2:0.
+    // est = the SAFE-UPPER-BOUND gating value (admission gates on est, not max): it uses
+    // estimate_memory_ceiling() so it clears the concave 1-4MP hump (estimate_memory() alone
+    // under-fits the mid by ~6% — which would admit a job that then OOMs). max adds
+    // ENCODE_MAX_MARGIN headroom. est covers every measured cell (+4..+14% at 1-16MP, looser
+    // at tiny sizes — harmless, cheap to over-reserve).
     let base_memory = config.estimate_memory(width, height) as u64;
     let ceil_memory = config.estimate_memory_ceiling(width, height) as u64;
     let mem_feature = if trellis_active {
@@ -248,10 +253,9 @@ pub fn estimate_encode(width: u32, height: u32, config: &EncoderConfig) -> Encod
     };
 
     let peak_memory_bytes_min = (base_memory as f64 * ENCODE_MEMORY_MIN_MULT * mem_feature) as u64;
-    let peak_memory_bytes = ENCODE_FIXED_OVERHEAD_BYTES
-        + (base_memory as f64 * ENCODE_SLOPE_CORRECTION * mem_feature) as u64;
+    let peak_memory_bytes = ENCODE_FIXED_OVERHEAD_BYTES + (ceil_memory as f64 * mem_feature) as u64;
     let peak_memory_bytes_max =
-        ENCODE_FIXED_OVERHEAD_BYTES + (ceil_memory as f64 * mem_feature) as u64;
+        ENCODE_FIXED_OVERHEAD_BYTES + (ceil_memory as f64 * ENCODE_MAX_MARGIN * mem_feature) as u64;
 
     // Time calculation from throughput, then the measured RD-feature
     // multipliers (trellis ≈ 6.2×, boundary-rd ≈ 1.55×, both ≈ 6.5× — NOT
