@@ -62,6 +62,11 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_cicp(false)
     .with_stop(true)
     .with_lossy(true)
+    // Gain-map (UltraHDR) embedding only exists with the `ultrahdr` feature;
+    // advertise the capability to match, so the checked
+    // `EncoderConfig::job_with_gain_map_pixels` accepts JPEG exactly when it can
+    // actually embed a gain map (and errors otherwise instead of silently dropping).
+    .with_gain_map(cfg!(feature = "ultrahdr"))
     .with_push_rows(true)
     .with_encode_from(true)
     .with_native_gray(true)
@@ -442,6 +447,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
             limits: ResourceLimits::none(),
             policy: None,
             image_size: None,
+            gain_map: None,
         }
     }
 }
@@ -461,6 +467,8 @@ pub struct JpegEncodeJob {
     /// Image dimensions, set via `with_canvas_size`. When known, enables true
     /// streaming in `push_rows` → `finish` (no full-image accumulation).
     image_size: Option<(u32, u32)>,
+    /// Attached gain map (UltraHDR / ISO 21496-1), embedded at encode time.
+    gain_map: Option<zencodec::gainmap::DecodedGainMap>,
 }
 
 impl zencodec::encode::EncodeJob for JpegEncodeJob {
@@ -493,6 +501,22 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
+    // Only the `ultrahdr` build can embed a gain map; without it, inherit the trait's
+    // default (reject) so a caller gets a loud error, not a silent drop.
+    #[cfg(feature = "ultrahdr")]
+    fn with_gain_map_pixels(
+        mut self,
+        gain_map: zencodec::gainmap::DecodedGainMap,
+    ) -> Result<Self, Self::Error> {
+        if !matches!(gain_map.channels(), 1 | 3) {
+            return Err(Error::invalid_color_format(
+                "gain map must have 1 or 3 channels",
+            ));
+        }
+        self.gain_map = Some(gain_map);
+        Ok(self)
+    }
+
     fn encoder(self) -> Result<JpegEncoder, Self::Error> {
         #[allow(unused_mut)]
         let mut cfg = self.config.effective_config();
@@ -520,6 +544,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             accumulator: None,
             streaming_enc: None,
             image_size: self.image_size,
+            gain_map: self.gain_map,
         })
     }
 
@@ -548,6 +573,8 @@ pub struct JpegEncoder {
     streaming_enc: Option<crate::encode::byte_encoders::BytesEncoder>,
     /// Image dimensions from `with_canvas_size`.
     image_size: Option<(u32, u32)>,
+    /// Attached gain map (UltraHDR / ISO 21496-1), embedded at encode time.
+    gain_map: Option<zencodec::gainmap::DecodedGainMap>,
 }
 
 /// Internal buffer for accumulating pushed rows.
@@ -749,6 +776,48 @@ impl JpegEncoder {
     }
 }
 
+/// UltraHDR encode path: base SDR pixels + an attached gain map → gain-map JPEG.
+#[cfg(feature = "ultrahdr")]
+impl JpegEncoder {
+    fn encode_ultrahdr_with_gain_map(
+        self,
+        pixels: PixelSlice<'_>,
+    ) -> Result<EncodeOutput, Error> {
+        let dgm = self
+            .gain_map
+            .as_ref()
+            .expect("encode_ultrahdr_with_gain_map called without a gain map");
+        let width = pixels.width();
+        let height = pixels.rows();
+        let sdr = PixelBuffer::from_vec(
+            pixels.contiguous_bytes().to_vec(),
+            width,
+            height,
+            pixels.descriptor(),
+        )
+        .map_err(|_| Error::internal("gain-map base pixel buffer creation failed"))?;
+        // The gain-map image is a control signal, encoded as-is (no color transform).
+        let gainmap = ultrahdr_core::GainMap {
+            width: dgm.pixels.width(),
+            height: dgm.pixels.height(),
+            // Buffer-derived (DecodedGainMap::channels) so the 1-vs-3 decision
+            // can't desync from the pixels actually present.
+            channels: dgm.channels(),
+            data: dgm.pixels.as_slice().contiguous_bytes().to_vec(),
+        };
+        let bytes = crate::ultrahdr::encode_with_gainmap(
+            &sdr,
+            &gainmap,
+            &dgm.metadata.params,
+            &self.effective_config,
+            75.0,
+            self.stop_ref(),
+        )
+        .map_err(|e| Error::icc_error(alloc::format!("UltraHDR encode failed: {e}")))?;
+        Ok(EncodeOutput::new(bytes, ImageFormat::Jpeg))
+    }
+}
+
 impl zencodec::encode::Encoder for JpegEncoder {
     type Error = Error;
 
@@ -761,6 +830,10 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
+        #[cfg(feature = "ultrahdr")]
+        if self.gain_map.is_some() {
+            return self.encode_ultrahdr_with_gain_map(pixels);
+        }
         let layout = descriptor_to_layout(pixels.descriptor())?;
         let width = pixels.width();
         let height = pixels.rows();
