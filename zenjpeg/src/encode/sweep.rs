@@ -777,7 +777,13 @@ fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
         .or_else(|| collapse("aq", &mut axes.aq, 1))
         .or_else(|| collapse_boundary(axes))
         .or_else(|| collapse("scans", &mut axes.scans, 1))
-        .or_else(|| collapse("color_modes", &mut axes.color_modes, 2))
+        // color_modes is a MANDATORY axis (color mode + subsampling) — NEVER
+        // budget-shed. Pre-2026-06-27 this collapsed to floor=2, keeping only
+        // {420,444} and silently dropping the late-appended 4:2:2 + XYB, so a
+        // budgeted modes_full produced YCbCr-only data and the picker could never
+        // pick XYB. If the mandatory color cross exceeds the budget, plan()'s loop
+        // reports over_budget rather than dropping it. See the zenmetrics
+        // docs/MANDATORY_SWEEP_AXES.md contract.
         .or_else(|| collapse("coeff_opt", &mut axes.coeff_opt, 3))
         // Last resort before q-coarsening: shed the scalar-step family
         // variants, never the 4 core families (which sit first).
@@ -2003,6 +2009,38 @@ mod tests {
         for d in &plan.dropped {
             assert!(!d.dropped.is_empty(), "drop report must list values");
         }
+    }
+
+    #[test]
+    fn budget_never_sheds_mandatory_color_modes() {
+        // Color mode + subsampling are MANDATORY (zenmetrics docs/MANDATORY_SWEEP_AXES.md).
+        // Pre-2026-06-27 a budgeted modes_full collapsed color_modes to {420,444},
+        // silently dropping 4:2:2 + XYB and crippling the picker. Lock that shut.
+        let axes = SweepAxes::modes_full();
+        assert!(
+            axes.color_modes.len() >= 4,
+            "modes_full must declare >=4 color/subsampling modes incl XYB"
+        );
+        // Aggressive budget — forces the ladder to shed every OPTIONAL axis.
+        let unbudgeted = SweepBuilder::new(axes.clone(), QualityGrid::Explicit(vec![50.0])).plan();
+        let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![50.0]))
+            .with_budget((unbudgeted.cells.len() / 16).max(1))
+            .plan();
+        // color_modes must NEVER be in the dropped manifest, at any budget.
+        assert!(
+            !plan.dropped.iter().any(|d| d.axis == "color_modes"),
+            "color_modes is mandatory; must never be shed. dropped: {:?}",
+            plan.dropped.iter().map(|d| d.axis).collect::<Vec<_>>()
+        );
+        // The XYB color path and 4:2:2 subsampling must both survive the budget.
+        assert!(
+            plan.cells.iter().any(|c| c.id.contains("xybBq")),
+            "XYB must survive a budgeted modes_full"
+        );
+        assert!(
+            plan.cells.iter().any(|c| c.id.contains("422")),
+            "4:2:2 must survive a budgeted modes_full"
+        );
     }
 
     #[test]
