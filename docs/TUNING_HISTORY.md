@@ -867,3 +867,47 @@ zenjpeg-specific codegen multiplier; each AVX2 kernel is ~2.0–2.7 k IR lines.
   (of 19.9 s graph-wide) frontend half; not on by default.
 - Non-default features (`parallel`, `boundary-rd`, `ultrahdr`, `target-zq`) are
   already off in the measured build — enabling them forks more codegen paths.
+
+### Downstream-consumer build cost (what a dependent crate pays)
+
+A consumer compiles zenjpeg + its **transitive normal deps** once (dev-deps —
+criterion/proptest/zune-jpeg/mozjpeg — are NOT paid downstream). `default = []`,
+but the **non-optional** dep list is the floor and it is heavy.
+
+Measured cold, `cargo build --release --no-default-features -p zenjpeg` (= the
+default consumer graph), rustc 1.96.0, commit f2e0b4f3:
+**60 compile units, 14.8 s wall (-j8), 33.6 s CPU-time (17.9 frontend + 15.7
+codegen).** 43 unique crates. On a 2-vCPU CI runner expect ~25–33 s wall (less
+parallelism; the proc-macro base serializes the early graph).
+
+Heaviest units: zenjpeg 7.8, zenpixels-convert 3.56, magetypes 2.44, zenanalyze
+2.44, zerocopy 2.34, linear-srgb 2.31, wide 1.69, garb 1.47, zencodec 1.30,
+syn 1.21, zenyuv 1.15.
+
+**Two non-optional subtrees dominate removable cost (~33% of CPU-time) for
+features a plain encode/decode consumer doesn't use:**
+- `zenanalyze` (git) → `zenpixels-convert`: **~6.0 s** (2.44 + 3.56). Pulled
+  unconditionally for `EncoderConfig::adaptive` content analysis. Gating it
+  behind an `adaptive` feature removes ~18% of the build **and** un-blocks
+  publishing (see below).
+- `ultrahdr-core` → `half` → `zerocopy`/`zerocopy-derive` + `wide` → `safe_arch`:
+  **~5 s** (2.34 + 1.69 + 0.64 + half/safe_arch). `ultrahdr-core` is non-optional
+  for container/MPF types; its in-source comment claims "no new transitive deps"
+  but the tree disproves it — `half`'s f16 drags in `zerocopy` (the single
+  heaviest dep at 2.34 s). Gating behind `ultrahdr` removes ~15%.
+
+**Publish gate (CRITICAL for downstream): newer zenjpeg is unpublishable.**
+crates.io has **0.8.4** (21 non-optional deps, no zenanalyze/zenpixels-convert —
+leaner but frozen). Local is **0.8.7**. `cargo publish` of 0.8.x fails because
+`zenanalyze = { git, rev }` (non-optional, **no version**) — crates.io forbids
+git deps. `zensim` (git, no version) blocks the `target-zq`/`recompress-iqa`
+features too. So `cargo add zenjpeg` consumers are stuck on 0.8.4; only git/path
+consumers (imazen ecosystem) get 0.8.7 — and pay a git fetch of imazen/zenanalyze
++ imazen/ultrahdr at first build on top of the 60-unit compile.
+
+**Downstream levers, ranked:** (1) make `zenanalyze` optional → −6 s **and**
+restores publishability; (2) make `ultrahdr-core`/`half` optional → −5 s, drops
+`zerocopy`; (3) publish `zenanalyze`/`zensim` with versions so 0.8.5+ can ship;
+(4) the proc-macro base (`syn` 1.21 + `proc-macro2`/`quote` + 8 derive macros) is
+a ~3–4 s mostly-unavoidable serial floor — but `zerocopy-derive` is only there via
+lever #2's `half` path.
