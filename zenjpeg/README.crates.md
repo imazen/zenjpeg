@@ -21,33 +21,9 @@ no C dependencies.
 zenjpeg = "0.8"
 ```
 
-The one-shot path needs nothing but `zenjpeg`: encode tightly-packed RGB8 bytes
-to a JPEG at a quality level, and decode any JPEG back to RGB8 + dimensions, each
-in a single call.
-
-```rust
-use zenjpeg::{encode_rgb8_quality, decode_rgb8};
-
-// A 16×16 RGB image, tightly packed (width * height * 3 bytes).
-let (width, height) = (16u32, 16u32);
-let rgb: Vec<u8> = (0..width * height)
-    .flat_map(|i| { let v = (i % 256) as u8; [v, 255 - v, 128] })
-    .collect();
-
-// Encode to a baseline JPEG at quality 85 (0–100, higher = better).
-let jpeg = encode_rgb8_quality(&rgb, width, height, 85)?;
-
-// Decode any JPEG back to tightly-packed RGB8 + dimensions.
-let (pixels, w, h) = decode_rgb8(&jpeg)?;
-
-assert_eq!((w, h), (width, height));
-assert_eq!(pixels.len(), (width * height * 3) as usize); // JPEG is lossy — sizes match, bytes approximate
-```
-
-`encode_rgb8_quality` encodes standard YCbCr 4:2:0; `decode_rgb8` normalizes
-grayscale, YCbCr and CMYK sources to 8-bit RGB. For chroma-subsampling control,
-XYB color, progressive scans, embedded ICC/EXIF/XMP, resource limits, or
-cooperative cancellation, drop down to the builder API below.
+Encode with the `EncoderConfig` builder and decode with `Decoder`. The builder
+covers chroma subsampling, XYB color, progressive scans, embedded ICC/EXIF/XMP,
+resource limits, and cooperative cancellation.
 
 ### Encode (builder)
 

@@ -9,14 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **One-shot crate-root convenience functions** — `zenjpeg::encode_rgb8_quality(rgb, width, height, quality)`
-  encodes tightly-packed sRGB RGB8 to a baseline YCbCr 4:2:0 JPEG in one call,
-  and `zenjpeg::decode_rgb8(jpeg) -> (Vec<u8>, u32, u32)` decodes any JPEG
-  (grayscale / YCbCr / CMYK) to tightly-packed RGB8 + dimensions. Purely
-  additive thin wrappers over `EncoderConfig::encode_bytes` / `Decoder` with
-  overflow-safe (`checked_mul`, i686-safe) length validation; the builder API
-  stays the power path. Lead the README Quick Start.
-
 - **BQuarter-aware XYB subsampling pick in `EncoderConfig::adaptive`** — when
   the adaptive oracle chooses XYB, it now picks Full vs BQuarter from
   zenanalyze's `xyb_bquarter_chroma_loss` (id 139, the per-color-sensitivity-
