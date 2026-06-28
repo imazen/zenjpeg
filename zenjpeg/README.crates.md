@@ -1,4 +1,6 @@
-# zenjpeg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenjpeg/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenjpeg?style=flat-square)](https://crates.io/crates/zenjpeg) [![lib.rs](https://img.shields.io/crates/v/zenjpeg?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenjpeg) [![docs.rs](https://img.shields.io/docsrs/zenjpeg?style=flat-square)](https://docs.rs/zenjpeg) [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenjpeg?style=flat-square)](#license)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# zenjpeg
 
 zenjpeg is a pure-Rust JPEG encoder and decoder with perceptual optimization. It
 began as a port of Google's [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
@@ -568,40 +570,6 @@ target (**no** `-C target-cpu=native`). Full methodology, competitor versions,
 and pinned-commit reproduction:
 **[benchmarks/README.md](https://github.com/imazen/zenjpeg/blob/main/benchmarks/README.md)**.
 
-<!-- crates.io:skip-start -->
-### Encode
-
-Tested on CID22 corpus (337 real photos), size-matched comparison against mozjpeg (Ryzen 9 7950X):
-
-| Mode | vs mozjpeg | Win rate |
-|------|-----------|----------|
-| `auto_optimize(true)` (trellis) | +0.64 zensim, -0.36 butteraugli | 81% |
-| Default (no trellis) | +0.07 zensim, -0.36 butteraugli | -- |
-
-Progressive produces ~3% smaller files at the same quality, takes ~2x longer to encode.
-
-### Decode
-
-Baseline 4:2:0 throughput (zenbench, 10 CID22 photos, Ryzen 9 7950X):
-
-| Decoder | Throughput | vs libjpeg-turbo |
-|---------|-----------|-----------------|
-| libjpeg-turbo/mozjpeg (C+NASM) | 78.1 MiB/s | -- |
-| zenjpeg default (Triangle) | 73.8 MiB/s | 0.94x |
-| zenjpeg NearestNeighbor | 80.4 MiB/s | 1.03x |
-
-6% slower than C+NASM on baseline with the default Triangle upsampling (libjpeg-turbo compatible rounding). NearestNeighbor (box filter) matches or beats C. On progressive JPEGs, zenjpeg is **1.35x faster** (46 vs 34 MiB/s) due to the fused single-pass architecture.
-
-Parallel decode (baseline with DRI, `--features parallel`):
-
-| Size | libjpeg-turbo | zenjpeg parallel | ratio |
-|------|--------------|-----------------|-------|
-| 1024 | 3.86ms | 1.56ms | **0.40x** |
-| 2048 | 15.8ms | 3.05ms | **0.19x** |
-| 4096 | 65.3ms | 8.74ms | **0.13x** |
-
-Parallel activates automatically with DRI and 1024+ MCU blocks. Use `num_threads(1)` to force sequential.
-<!-- crates.io:skip-end -->
 
 ## Known Limitations
 

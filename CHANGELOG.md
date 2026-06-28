@@ -5,6 +5,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Docs
+- README overhauled and split into a GitHub `README.md` (full badge row) and a generated badge-free `README.crates.md` for crates.io (the crate `readme` field now points at it); corrected the feature table (the `decoder`/`trellis` flags are documented as always-compiled no-ops), refreshed the crosslink footer, and added `benchmarks/README.md` reproduction methodology.
+
 ### Added
 - **`AllocPreference` honored per decode allocation site + `estimate_decode_resources`.**
   The zencodec decode boundary now threads
