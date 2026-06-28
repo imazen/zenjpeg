@@ -12,7 +12,7 @@
 #   pub modules                                 4
 #   pub types (struct/enum/trait/alias)        52
 #   pub consts/statics                          4
-#   free functions                             32
+#   free functions                             33
 #   inherent methods                          108
 #   struct fields                              70
 #   enum variants                              78
@@ -22,14 +22,14 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           37
+#   (root)                           38
 #   decoder                           3
 #   encoder                          40
 #   layout                           67
 #   recompress                      154
 #   ultrahdr                         72
 
-## items (373 lines)
+## items (374 lines)
 
 pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<decoder::TargetColorSpace>) -> Self
 pub fn decoder::DecodeConfig::ultrahdr_reader<'a>(&self, &'a [u8], ultrahdr::UltraHdrReaderConfig) -> encoder::Result<ultrahdr::UltraHdrReader<'a>>
@@ -402,6 +402,7 @@ pub fn JpegEncoderConfig::with_sharp_yuv(self, bool) -> Self
 pub fn JpegEncoderConfig::with_subsampling(self, encoder::ChromaSubsampling) -> Self
 pub fn JpegEncoderConfig::ycbcr(f32, encoder::ChromaSubsampling) -> Self
 pub struct JpegStreamingDecoder<'a>
+pub fn encode(zenpixels::buffer::PixelSlice<'_>, u8) -> encoder::Result<alloc::vec::Vec<u8>>
 pub type JpegDecoding = JpegDecoderConfig
 pub type JpegEncoding = JpegEncoderConfig
 

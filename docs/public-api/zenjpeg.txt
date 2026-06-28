@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1629 lines (supported surface) | zenjpeg.features.txt 427 added (features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3560 lines (839 hidden + 7238 excluded-feature)
+# files: zenjpeg.txt 1630 lines (supported surface) | zenjpeg.features.txt 428 added (features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3560 lines (839 hidden + 7238 excluded-feature)
 
 ## summary
 #
@@ -14,7 +14,7 @@
 #   pub types (struct/enum/trait/alias)       143
 #   pub consts/statics                         94
 #   pub macros                                  2
-#   free functions                             60
+#   free functions                             61
 #   inherent methods                          494
 #   struct fields                             360
 #   enum variants                             381
@@ -24,7 +24,7 @@
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
-#   (root)                           67
+#   (root)                           68
 #   blur                              1
 #   container                       276
 #   deblock                          16
@@ -35,7 +35,7 @@
 #   lossless                         42
 #   profile                           7
 
-## items (1497 lines)
+## items (1498 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -1534,6 +1534,7 @@ pub fn profile::ProfileStats::record(&'static str, core::time::Duration)
 pub fn profile::ProfileStats::reset()
 pub macro profile_block!
 pub macro profile_scope!
+pub fn decode_rgb8(&[u8]) -> encoder::Result<(alloc::vec::Vec<u8>, u32, u32)>
 
 ## trait impls (118 types)
 
