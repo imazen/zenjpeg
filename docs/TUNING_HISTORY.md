@@ -932,3 +932,35 @@ restores publishability; (2) make `ultrahdr-core`/`half` optional → −5 s, dr
 (4) the proc-macro base (`syn` 1.21 + `proc-macro2`/`quote` + 8 derive macros) is
 a ~3–4 s mostly-unavoidable serial floor — but `zerocopy-derive` is only there via
 lever #2's `half` path.
+
+### Why `garb` is codegen-bound (~1.5 s in-graph for a swizzle crate)
+
+Looks surprising — `garb` is "just" RGB↔BGRA byte swizzles — but it's **not** generic
+bloat. Isolated measurements (garb 0.2.8, rustc 1.96):
+
+| garb feature set | total | frontend | codegen | note |
+|---|---|---|---|---|
+| `default,std` (inherent) | 0.76 s | 0.19 | 0.57 (75%) | the floor |
+| `experimental,rgb,imgref` | 1.17 s | 0.54 | 0.63 | +0.41 s, mostly frontend |
+| in zenjpeg graph | ~1.5 s | — | — | + rgb monomorph + load |
+
+`llvm-lines`: **only 11,808 IR lines / 314 fn copies — tiny.** 255 of 277 functions
+are single-copy (count==1), so monomorphization is NOT the cause. The cost is
+**function count, not IR size:** garb has **164 `#[arcane]`** (`#[target_feature]`)
+functions — 112 in `bytes/avx2.rs` — and a `#[target_feature]` boundary is a hard
+optimization unit LLVM can't inline across, so each AVX2 kernel is optimized in
+isolation. The top 11 IR offenders are all single-copy AVX2 swizzle kernels:
+`rgb_to_abgr_row_v3`, `rgb_to_argb/bgra/rgba_row_v3`, `argb_to_bgr/rgb_row_v3`,
+`bgra_to_rgb_row_v3`, `gray_alpha_to_4bpp_*_v3`… i.e. a **combinatorial expansion of
+every (src-format → dst-format) pair × the v3/AVX2 tier**. avx2 kernels = 5,049 IR
+(43% of garb's total). (neon's 45 + wasm's 72 `#[arcane]` are `cfg(target_arch)`-
+stripped on x86_64, so they cost frontend parse only, not codegen.)
+
+This is the same "LLVM-bound on monomorph/fn count, not IR bytes" signature as
+zenjpeg's own SIMD kernels — inherent to the write-one-kernel-per-tier archmage
+pattern. **The "unexpected" extra ~0.4 s in zenjpeg's graph is feature
+unification:** `zenanalyze` + `zenpixels-convert` force garb's `experimental` (+
+`rgb` + `imgref`) on (paste!-generated APIs + extra generic surface). garb itself
+has no lever short of fewer format-pairs; the only downstream win is dropping
+`experimental` if a consumer doesn't need it — and lever #1 (gate `zenanalyze`)
+removes garb from the default graph entirely along with its forced features.
