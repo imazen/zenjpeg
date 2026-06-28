@@ -1004,3 +1004,33 @@ gray `gray_to_rgb/rgba`, `gray_to_gray_alpha`, `gray_alpha_to_gray/rgb/rgba`,
 `rgb_to_gray_bt709`, `rgba_to_gray_bt709`; depth `convert_{u8,u16,f32}_to_{u16,f32,u8}`;
 alpha `premultiply_alpha_rgba_u8_copy`, `(un)premultiply_alpha_f32_copy`;
 deinterleave `rgb24_chunk8_to_planes_tokenless_v3`. **No bgr/argb/abgr.**
+
+#### What garb's `experimental` feature actually gates, and who uses it (2026-06-28)
+
+`experimental` (force-enabled by zenanalyze + zenpixels-convert) is a **coarse
+umbrella** over 6 sub-areas. Two are load-bearing, four are dead weight:
+
+| experimental sub-area | size | used by |
+|---|---|---|
+| `deinterleave` module (RGB24→planar) | 1674 lines, 15 SIMD | **zenanalyze** (`rgb24_chunk8_to_planes_scalar` ×3, `…_tokenless_v3`) + **zpc** (`…_tokenless_v3`) |
+| `experimental_api` block (mod.rs 799–1571) | 773 lines | **zpc only** — depth `convert_{u8,u16,f32}_to_{…}` (6) + alpha `premultiply_alpha_*`/`unpremultiply_*` (3) |
+| `packed` (RGB565 / RGBA4444) | 642 lines | **nobody** |
+| `packed_1010102` (10-bit RGB) | 776 lines | **nobody** |
+| `experimental_imgref` (imgref.rs block) | gated block | **nobody** |
+| `experimental_typed` (typed_rgb.rs block) | gated block | **nobody** |
+
+So `experimental` is **not** optional bloat that could be dropped — it gates the
+`deinterleave` module (RGB→planar, exactly what JPEG encode needs) and the
+depth-convert + alpha-premultiply API zpc relies on. But because the flag is
+coarse, turning it on to get `deinterleave` *also* drags in **~1,400 lines of
+unused packed-format code** (`packed.rs` 642 + `packed_1010102.rs` 776) plus the
+experimental imgref/typed blocks, and runs `paste!` expansion for the unused
+typed/imgref paths.
+
+**Refined garb recommendation:** the win isn't "drop experimental" (it's needed),
+it's **split it** — separate `deinterleave`, `depth-convert`/`alpha`,
+`packed`, `packed-1010102`, `imgref-experimental`, `typed-experimental` features.
+Then zenjpeg's graph enables only `deinterleave` + `depth-convert`/`alpha` and
+skips ~1,400 lines of packed-format code that nothing in the graph calls. This is
+a bigger and cleaner cut than the bgr/argb/abgr gate above, since the unused
+packed modules are entire files, not scattered kernels.
