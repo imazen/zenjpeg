@@ -805,3 +805,65 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
 - **1-pixel partial MCU edge** - `fast_yuv.rs`, `streaming.rs`: Added edge replication for width = 1 (mod 8)
 
 - **HF modulation index wrap** - `quant/aq/simd.rs`: Added bounds check for rightmost partial blocks
+
+## Compile-Time Profile (2026-06-28, rustc 1.96.0 stable, commit 7afedf4c)
+
+Measured cold, lib-only, default features: `run-heavy --jobs 8 -- cargo build
+--release --timings -p zenjpeg`. Frontend/codegen split read from the `sections`
+field of the `cargo-timings` HTML; monomorphization from `cargo llvm-lines
+--release -p zenjpeg --lib`.
+
+**zenjpeg is genuinely fast to compile in absolute terms** — 15.9 s cold for the
+whole dep graph (60 units), peak RSS 0.92 GiB. The interesting part is the *shape*.
+
+**Per-unit (top), with frontend/codegen split:**
+
+| unit | total | frontend | codegen | codegen% |
+|------|-------|----------|---------|----------|
+| **zenjpeg** | 8.21 s | 3.89 | 4.32 | **52%** |
+| zenpixels-convert | 3.60 | 1.06 | 2.54 | 70% |
+| zerocopy | 2.70 | 2.61 | 0.09 | 3% |
+| magetypes | 2.66 | 2.58 | 0.08 | 3% |
+| zenanalyze | 2.53 | 0.61 | 1.92 | 75% |
+| linear-srgb | 2.38 | 0.50 | 1.88 | 78% |
+| wide | 1.84 | 1.45 | 0.39 | 21% |
+| syn | 1.38 | 1.18 | 0.20 | 14% |
+
+Across all 60 units: frontend 19.9 s + codegen 16.5 s of CPU-time (codegen 45%).
+zenjpeg itself is **codegen-bound (52%)** — atypical for a Rust library (a
+pure-logic crate is usually ~95% frontend). The SIMD-monomorphization +
+array-generic shape is what pushes work into LLVM. Note the proc-macro/trait-def
+deps (zerocopy, magetypes, syn) are ~100% *frontend* — their codegen cost is paid
+later, inside zenjpeg, when the generics are instantiated.
+
+**Monomorphization (`llvm-lines`): 504,370 IR lines / 5,586 fn copies.**
+
+| category | IR lines | share |
+|----------|----------|-------|
+| all `zenjpeg::*` | 332,232 | 66% |
+| stdlib generic monomorph (core/alloc) | 148,581 | 29% |
+| └ SIMD kernels (`__arcane_*_avx2`, `_simd`) | 50,840 | 10% |
+| └ const match-tables (`huffman::builtin_tables::*`) | 25,498 | 5% |
+| └ Display/Debug `::fmt` impls | 16,712 | 3% |
+
+Highest-*copies* offenders are stdlib generics driven by `[T; N]` array code
+(8×8 block buffers) and Vec/iterators across many element types:
+`core::array::try_from_fn_erased` 71 copies / 9,203 lines, `try_from_fn` 71,
+`Vec::drop` 64, `map_fold` closure 52, `Vec::push_mut` 47. zenjpeg's *own* big-IR
+functions are mostly single-copy (SIMD kernels + Huffman tables) — large but not
+multiplied.
+
+**SIMD-macro exposure (lib):** 55 `#[magetypes]` (all `(v3, neon, wasm128,
+scalar)` = 4 tiers each; on x86_64 only v3+scalar reach codegen, neon/wasm are
+cfg-stripped), 49 `#[arcane]`, 28 `#[rite]`, 71 `incant!`. This is the
+zenjpeg-specific codegen multiplier; each AVX2 kernel is ~2.0–2.7 k IR lines.
+
+**Levers (measured + per `~/work/claudehints/topics/rust-defaults.md`):**
+- `[profile.release] incremental = true` — biggest dev-iteration win for warm
+  rebuilds of zenjpeg (stable since 1.94). Only helps crates you edit.
+- lld is already the default linker (x86_64 Linux, since 1.90) — linking is ~free.
+- Cranelift (nightly) would **not** help — it falls back to LLVM for SIMD intrinsics.
+- Parallel frontend (`-Z threads`, still nightly in 2026) would attack the 3.89 s
+  (of 19.9 s graph-wide) frontend half; not on by default.
+- Non-default features (`parallel`, `boundary-rd`, `ultrahdr`, `target-zq`) are
+  already off in the measured build — enabling them forks more codegen paths.
