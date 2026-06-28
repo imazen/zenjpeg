@@ -40,7 +40,9 @@ fn status_kb(field: &str) -> u64 {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 7 {
-        eprintln!("usage: mem_probe_encode <rgb8.bin> <w> <h> <444|422|420|gray> <effort 0|1|2> <quality>");
+        eprintln!(
+            "usage: mem_probe_encode <rgb8.bin> <w> <h> <444|422|420|gray> <effort 0|1|2> <quality>"
+        );
         std::process::exit(2);
     }
     let path = &a[1];
