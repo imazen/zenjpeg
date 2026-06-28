@@ -18,24 +18,36 @@
 //! | `DecodeJob<'a>` | [`JpegDecodeJob`] |
 //! | `Decode` | [`JpegDecoder`] |
 //! | `StreamingDecode` | [`JpegStreamingDecoder`] |
-//! | `AnimationFrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
+//! | `AnimationFrameDecode` | `Unsupported<At<CodecError>>` (JPEG has no animation) |
+//!
+//! # Error envelope (Pattern B)
+//!
+//! Every trait impl below uses `type Error = At<zencodec::CodecError>` — the
+//! shared envelope — so a generic consumer recovers the
+//! [`ErrorCategory`](zencodec::ErrorCategory) and codec name even after the
+//! concrete error is erased to `BoxedError` through `Dyn*` dispatch. The native
+//! [`Error`]/[`ErrorKind`] remain the detail + category source, bridged into the
+//! envelope by `From<Error>`/`From<ErrorKind> for At<CodecError>` (see
+//! `crate::error`); `?` and `.into()` carry codec internals across the boundary
+//! unchanged.
 
 extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use rgb::{Gray, Rgb};
+use whereat::At;
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{
-    ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation,
+    CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation,
 };
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
 use crate::encode::exif::Exif;
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 use crate::types::PixelFormat;
 
 // ── Backwards compat aliases ─────────────────────────────────────────────────
@@ -205,7 +217,12 @@ impl JpegEncoderConfig {
     }
 
     /// Convenience: encode pixels with this config via the type-erased path.
-    pub fn encode(&self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
+    ///
+    /// Returns the shared [`At<CodecError>`] envelope (the same `type Error` the
+    /// zencodec trait path uses), so the category + codec name survive type
+    /// erasure; recover the native [`Error`] detail via
+    /// [`CodecError::detail`](zencodec::CodecError::detail) when needed.
+    pub fn encode(&self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
         use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
         self.clone().job().encoder()?.encode(pixels)
     }
@@ -301,7 +318,7 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
 }
 
 impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
-    type Error = Error;
+    type Error = At<CodecError>;
     type Job = JpegEncodeJob;
 
     fn format() -> ImageFormat {
@@ -464,7 +481,7 @@ pub struct JpegEncodeJob {
 }
 
 impl zencodec::encode::EncodeJob for JpegEncodeJob {
-    type Error = Error;
+    type Error = At<CodecError>;
     type Enc = JpegEncoder;
     type AnimationFrameEnc = ();
 
@@ -524,7 +541,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     }
 
     fn animation_frame_encoder(self) -> Result<Self::AnimationFrameEnc, Self::Error> {
-        Err(UnsupportedOperation::AnimationEncode.into())
+        Err(ErrorKind::UnsupportedOperation(UnsupportedOperation::AnimationEncode).into())
     }
 }
 
@@ -750,22 +767,23 @@ impl JpegEncoder {
 }
 
 impl zencodec::encode::Encoder for JpegEncoder {
-    type Error = Error;
+    type Error = At<CodecError>;
 
     fn reject(op: UnsupportedOperation) -> Self::Error {
-        Error::from(op)
+        ErrorKind::UnsupportedOperation(op).into()
     }
 
     fn preferred_strip_height(&self) -> u32 {
         16
     }
 
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Self::Error> {
         let layout = descriptor_to_layout(pixels.descriptor())?;
         let width = pixels.width();
         let height = pixels.rows();
         let data = pixels.contiguous_bytes();
         self.encode_bytes_inner(&data, width, height, layout)
+            .map_err(Into::into)
     }
 
     fn encode_srgba8(
@@ -775,7 +793,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         width: u32,
         height: u32,
         stride_pixels: u32,
-    ) -> Result<EncodeOutput, Error> {
+    ) -> Result<EncodeOutput, Self::Error> {
         if make_opaque {
             for chunk in data.chunks_exact_mut(4) {
                 chunk[3] = 255;
@@ -793,7 +811,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
     }
 
-    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Error> {
+    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Self::Error> {
         let desc = rows.descriptor();
         let layout = descriptor_to_layout(desc)?;
 
@@ -854,7 +872,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 if acc.width != width || acc.descriptor != desc {
                     return Err(Error::unsupported_feature(
                         "push_rows: width or format changed between calls",
-                    ));
+                    )
+                    .into());
                 }
                 acc.data.extend_from_slice(&data);
                 acc.total_rows += rows.rows();
@@ -863,7 +882,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<EncodeOutput, Error> {
+    fn finish(mut self) -> Result<EncodeOutput, Self::Error> {
         // Streaming path: finish the native encoder directly.
         if let Some(enc) = self.streaming_enc.take() {
             let output = enc.finish()?;
@@ -876,13 +895,13 @@ impl zencodec::encode::Encoder for JpegEncoder {
             .accumulator
             .take()
             .ok_or_else(|| Error::unsupported_feature("finish() called without any push_rows()"))?;
-        self.encode_accumulated(acc)
+        self.encode_accumulated(acc).map_err(Into::into)
     }
 
     fn encode_from(
         self,
         source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
-    ) -> Result<EncodeOutput, Error> {
+    ) -> Result<EncodeOutput, Self::Error> {
         use zenpixels::PixelSliceMut;
 
         let (img_w, img_h) = self.image_size.ok_or_else(|| {
@@ -1143,19 +1162,22 @@ impl JpegDecoderConfig {
     }
 
     /// Convenience: probe image header with this config.
-    pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Error> {
+    ///
+    /// Returns the shared [`At<CodecError>`] envelope (the zencodec trait path's
+    /// `type Error`) so category + codec name survive type erasure.
+    pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
         self.clone().job().probe(data)
     }
 
     /// Convenience: probe full image metadata (may be expensive).
-    pub fn probe_full_metadata(&self, data: &[u8]) -> Result<ImageInfo, Error> {
+    pub fn probe_full_metadata(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
         self.clone().job().probe_full(data)
     }
 
     /// Convenience: decode image with this config.
-    pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
+    pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<CodecError>> {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         self.clone()
             .job()
@@ -1184,7 +1206,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 ];
 
 impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
-    type Error = Error;
+    type Error = At<CodecError>;
     type Job<'a> = JpegDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -1260,10 +1282,10 @@ pub struct JpegDecodeJob {
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
-    type Error = Error;
+    type Error = At<CodecError>;
     type Dec = JpegDecoder<'a>;
     type StreamDec = JpegStreamingDecoder<'a>;
-    type AnimationFrameDec = Unsupported<Error>;
+    type AnimationFrameDec = Unsupported<At<CodecError>>;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -1425,7 +1447,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> Result<Self::AnimationFrameDec, Self::Error> {
-        Err(UnsupportedOperation::AnimationDecode.into())
+        Err(ErrorKind::UnsupportedOperation(UnsupportedOperation::AnimationDecode).into())
     }
 }
 
@@ -1485,7 +1507,7 @@ fn push_decoder_native<'a>(
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
-) -> Result<OutputInfo, Error> {
+) -> Result<OutputInfo, At<CodecError>> {
     use imgref::ImgRefMut;
     use zenpixels::{ChannelLayout, ChannelType};
 
@@ -1587,9 +1609,11 @@ fn push_decoder_native<'a>(
 
     while !reader.is_finished() {
         // Check cooperative cancellation before decoding each MCU-row strip.
+        // `StopReason` is not a `core::error::Error`, so route it through the
+        // native `Error` (→ `ErrorKind::Cancelled`) before the envelope bridge.
         if let Some(ref stop) = job.stop {
             use enough::Stop;
-            stop.check()?;
+            stop.check().map_err(Error::from)?;
         }
 
         let remaining = height - y as usize;
@@ -1652,7 +1676,8 @@ fn push_decoder_native<'a>(
             _ => {
                 return Err(Error::unsupported_feature(
                     "unsupported pixel format for push_decoder",
-                ));
+                )
+                .into());
             }
         };
 
@@ -1720,7 +1745,7 @@ fn push_decoder_direct<'a>(
     descriptor: PixelDescriptor,
     format: PixelFormat,
     header: &crate::decode::JpegInfo,
-) -> Result<OutputInfo, Error> {
+) -> Result<OutputInfo, At<CodecError>> {
     use enough::Unstoppable;
 
     let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
@@ -1887,7 +1912,7 @@ fn push_decoder_via_full_decode<'a>(
     job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
-) -> Result<OutputInfo, Error> {
+) -> Result<OutputInfo, At<CodecError>> {
     use zencodec::decode::{Decode as _, DecodeJob as _};
 
     let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
@@ -1895,10 +1920,8 @@ fn push_decoder_via_full_decode<'a>(
     // Build a decoder from the same config and hand it the data. This path
     // runs the full CMYK-aware decode (Decode::decode below overrides
     // output_format to PixelFormat::Cmyk when cmyk_handling is Passthrough
-    // and the JPEG is 4-component).
-    let decoder = job
-        .decoder(data, &[])
-        .map_err(|_| Error::internal("push-decoder fallback: decoder creation failed"))?;
+    // and the JPEG is 4-component). Both calls already return the envelope.
+    let decoder = job.decoder(data, &[])?;
     let output = decoder.decode()?;
     let info = output.info().clone();
     let pixels = output.pixels();
@@ -2060,9 +2083,9 @@ pub struct JpegDecoder<'a> {
 }
 
 impl zencodec::decode::Decode for JpegDecoder<'_> {
-    type Error = Error;
+    type Error = At<CodecError>;
 
-    fn decode(self) -> Result<DecodeOutput, Error> {
+    fn decode(self) -> Result<DecodeOutput, Self::Error> {
         {
             use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
@@ -2086,7 +2109,9 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                             .and_then(|i| i.xmp)
                             .is_some_and(|x| x.contains("hdrgm:"));
                         if has_gain_map_xmp {
-                            return self.decode_reconstruct_hdr(target_headroom);
+                            return self
+                                .decode_reconstruct_hdr(target_headroom)
+                                .map_err(Into::into);
                         }
                         // No gain map: the base image IS the image.
                     }
@@ -2095,13 +2120,14 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         let _ = target_headroom;
                         return Err(Error::unsupported_feature(
                             "GainMapRender::ReconstructHdr requires the `ultrahdr` feature",
-                        ));
+                        )
+                        .into());
                     }
                 }
                 _ => {
-                    return Err(Error::unsupported_feature(
-                        "unrecognized GainMapRender mode",
-                    ));
+                    return Err(
+                        Error::unsupported_feature("unrecognized GainMapRender mode").into(),
+                    );
                 }
             }
 
@@ -2131,9 +2157,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             // Previously three separate read_info() calls.
             let header = cfg.read_info(&data)?;
 
-            // Dimension limits
+            // Dimension limits. `check_dimensions` yields a `LimitExceeded`
+            // (foreign — no envelope bridge), so map through the native `Error`.
             if limits.max_width.is_some() || limits.max_height.is_some() {
-                limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
+                limits
+                    .check_dimensions(header.dimensions.width, header.dimensions.height)
+                    .map_err(Error::from)?;
             }
 
             // Progressive policy
@@ -2147,7 +2176,8 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             {
                 return Err(Error::unsupported_feature(
                     "progressive JPEG rejected by decode policy",
-                ));
+                )
+                .into());
             }
 
             // Passthrough CMYK handling
@@ -2302,7 +2332,8 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             if matches!(self.gain_map_render, zencodec::GainMapRender::Components) {
                 return Err(Error::unsupported_feature(
                     "GainMapRender::Components requires the `ultrahdr` feature",
-                ));
+                )
+                .into());
             }
 
             if let Some(extras) = jpeg_extras {
@@ -2570,17 +2601,20 @@ pub struct JpegStreamingDecoder<'a> {
 }
 
 impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
-    type Error = Error;
+    type Error = At<CodecError>;
 
-    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Error> {
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
         {
             use imgref::ImgRefMut;
             use zenpixels::{ChannelLayout, ChannelType};
 
-            // Check cooperative cancellation before doing work.
+            // Check cooperative cancellation before doing work. `StopReason` is
+            // not a `core::error::Error`, so route it through the native `Error`
+            // (→ `ErrorKind::Cancelled`, which categorizes as Cancelled/TimedOut)
+            // before the bridge lifts it into the envelope.
             if let Some(ref stop) = self.stop {
                 use enough::Stop;
-                stop.check()?;
+                stop.check().map_err(Error::from)?;
             }
 
             if self.reader.is_finished() {
@@ -2652,7 +2686,8 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                 _ => {
                     return Err(Error::unsupported_feature(
                         "unsupported pixel format for streaming decode",
-                    ));
+                    )
+                    .into());
                 }
             };
 
@@ -4234,5 +4269,92 @@ mod push_decode_stride_tests {
         // Larger image ⇒ strictly larger peak and wall time.
         assert!(el_peak > es_peak);
         assert!(el.wall_ms().unwrap_or(0) >= es.wall_ms().unwrap_or(0));
+    }
+}
+
+#[cfg(test)]
+mod pattern_b_envelope_tests {
+    //! Pattern B forcing tests: the `At<CodecError>` envelope must carry the
+    //! category + codec name across `Dyn*` type erasure. Under Pattern A
+    //! (`type Error = Error`) the erased `BoxedError` is a plain `dyn Error` with
+    //! no `CategorizedError` vtable, so both recoveries return `None`; the
+    //! envelope is exactly what flips them to `Some`.
+    use super::*;
+    use zencodec::decode::DynDecoderConfig;
+    use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+
+    /// SOI + SOF0 declaring **zero** components: passes the SOI gate, then fails
+    /// structurally inside the frame-header parse
+    /// (`invalid_jpeg_data("number of components is zero")` →
+    /// [`ErrorCategory::MalformedImage`]). Long enough to reach the structural
+    /// error rather than a truncation/EOF path — a REAL category, not a
+    /// stand-in.
+    const MALFORMED_JPEG: &[u8] = &[
+        0xFF, 0xD8, // SOI
+        0xFF, 0xC0, // SOF0
+        0x00, 0x08, // segment length = 8
+        0x08, // sample precision = 8
+        0x00, 0x10, // height = 16
+        0x00, 0x10, // width = 16
+        0x00, // component count = 0  ← malformed
+    ];
+
+    /// THE forcing test. Drive zenjpeg through `&dyn DynDecoderConfig` (the
+    /// codec-agnostic dyn path), let the concrete `At<CodecError>` erase to
+    /// `BoxedError` (`Box<dyn Error + Send + Sync>`), and confirm BOTH the
+    /// category and the codec name still come back.
+    #[test]
+    fn dyn_decode_envelope_recovers_category_and_codec() {
+        let cfg = JpegDecoderConfig::new();
+        let dyn_cfg: &dyn DynDecoderConfig = &cfg;
+        let erased = dyn_cfg
+            .dyn_job()
+            .probe(MALFORMED_JPEG)
+            .expect_err("a malformed JPEG must fail to probe");
+
+        // `error_category()` / `codec_error()` downcast the erased boxed error
+        // back to the concrete `At<CodecError>` — possible only because the
+        // trait boundary returns the envelope (Pattern B).
+        assert_eq!(
+            erased.error_category(),
+            Some(ErrorCategory::MalformedImage),
+            "category must survive Dyn* type erasure"
+        );
+        assert_eq!(
+            erased.codec_error().and_then(CodecError::codec),
+            Some("zenjpeg"),
+            "codec name must survive Dyn* type erasure"
+        );
+    }
+
+    /// The same recovery on the typed convenience method, which now returns the
+    /// envelope directly (no erasure needed — reads category/codec off the
+    /// inner [`CodecError`]).
+    #[test]
+    fn typed_probe_header_carries_envelope() {
+        let err = JpegDecoderConfig::new()
+            .probe_header(MALFORMED_JPEG)
+            .expect_err("malformed JPEG must fail");
+        assert_eq!(err.error().category(), ErrorCategory::MalformedImage);
+        assert_eq!(err.error().codec(), Some("zenjpeg"));
+    }
+
+    /// A decode through the dyn path erases the same way: the envelope is
+    /// recovered from the `into_decoder(...).decode()` boxed error too.
+    #[test]
+    fn dyn_decode_decode_path_carries_envelope() {
+        use std::borrow::Cow;
+        let cfg = JpegDecoderConfig::new();
+        let dyn_cfg: &dyn DynDecoderConfig = &cfg;
+        let erased = dyn_cfg
+            .dyn_job()
+            .into_decoder(Cow::Borrowed(MALFORMED_JPEG), &[])
+            .and_then(|dec| dec.decode())
+            .expect_err("a malformed JPEG must fail to decode");
+        assert_eq!(erased.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            erased.codec_error().and_then(CodecError::codec),
+            Some("zenjpeg")
+        );
     }
 }

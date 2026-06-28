@@ -5,6 +5,24 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- **zencodec trait impls now return the `At<zencodec::CodecError>` envelope
+  (Pattern B).** The `EncoderConfig` / `EncodeJob` / `Encoder` / `DecoderConfig` /
+  `DecodeJob` / `Decode` / `StreamingDecode` impls in `crate::codec` (and the
+  delegating `JpegEncoderConfig::encode` / `JpegDecoderConfig::{decode,
+  probe_header, probe_full_metadata}` convenience methods) switch their
+  `type Error` from `crate::error::Error` to `At<CodecError>`. This makes the
+  coarse `ErrorCategory` **and** the codec name (`Some("zenjpeg")`) recoverable by
+  a generic consumer *through `Dyn*` dispatch*: once the concrete error is erased
+  to `zencodec::decode::BoxedError`, `CodecErrorExt::error_category()` /
+  `codec_error()` downcast it back to the envelope (under the prior Pattern A
+  `type Error = Error`, the erased `dyn Error` carried no `CategorizedError`
+  vtable, so both returned `None`). The native `crate::error::Error`
+  (`Error(At<ErrorKind>)`) is unchanged and remains the rich error for direct
+  (non-`zencodec`) callers; it is now the envelope's `detail` + category source,
+  bridged by `From<Error>` / `From<ErrorKind> for At<CodecError>`. Builds on the
+  #103 `CategorizedError` adoption below.
+
 ### Docs
 - README overhauled and split into a GitHub `README.md` (full badge row) and a generated badge-free `README.crates.md` for crates.io (the crate `readme` field now points at it); corrected the feature table (the `decoder`/`trellis` flags are documented as always-compiled no-ops), refreshed the crosslink footer, and added `benchmarks/README.md` reproduction methodology.
 

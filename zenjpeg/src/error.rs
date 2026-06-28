@@ -864,6 +864,49 @@ impl zencodec::CategorizedError for Error {
 }
 
 // ============================================================================
+// CodecError envelope bridges (Pattern B) — the zencodec trait boundary
+// ============================================================================
+//
+// zenjpeg's zencodec trait impls (`crate::codec`) use the shared envelope
+// `At<zencodec::CodecError>` as their `type Error`, so a generic consumer
+// recovers the [`category`](zencodec::CategorizedError::category) **and** the
+// codec name through `Dyn*` dispatch — where the concrete error is erased to a
+// boxed `dyn Error` (zencodec's `BoxedError`) and only the envelope is
+// recoverable (via `CodecErrorExt::codec_error`). The native [`Error`] /
+// [`ErrorKind`] stay the detail + category source; these two `From` impls let
+// the adapter return the envelope through `?` / `.into()` with no rewrite of the
+// fallible internals.
+//
+// `CodecError::of` reads the category + codec name from the value's
+// [`CategorizedError`] impl and keeps the `whereat` trace on the *outside*
+// (`At<CodecError>`). The orphan rule permits these (the local `Error` /
+// `ErrorKind` appears in the trait reference) but forbids `From<At<ErrorKind>>`
+// (both `At<_>` types are foreign), so an already-located `At<ErrorKind>` is
+// converted at the call site with `.map_err(zencodec::CodecError::of)` instead.
+
+impl From<Error> for At<zencodec::CodecError> {
+    /// Wrap the already-located [`Error`] (`Error(At<ErrorKind>)`) as the shared
+    /// envelope, preserving its existing `whereat` trace and reading category +
+    /// codec name from the inner [`ErrorKind`].
+    #[inline]
+    fn from(err: Error) -> Self {
+        zencodec::CodecError::of(err.into_inner())
+    }
+}
+
+impl From<ErrorKind> for At<zencodec::CodecError> {
+    /// Locate a bare [`ErrorKind`] (`start_at`) and wrap it as the envelope — for
+    /// the adapter's reject stubs / API guards that build an `ErrorKind`
+    /// directly rather than going through a located [`Error`].
+    #[track_caller]
+    #[inline]
+    fn from(kind: ErrorKind) -> Self {
+        use whereat::ErrorAtExt;
+        zencodec::CodecError::of(kind.start_at())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
