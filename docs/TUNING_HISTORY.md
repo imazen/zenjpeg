@@ -901,14 +901,21 @@ features a plain encode/decode consumer doesn't use:**
   Since zenjpeg already takes ultrahdr-core with `default-features = false`,
   bumping the pin removes all five crates from the default graph — verified by
   resolution: **43 → 37 crates, ~5.4 s CPU (~16%) gone**, zerocopy being the win.
-  **But it is NOT a clean pin bump yet:** ultrahdr-core 0.6 requires the
-  unpublished `zenpixels-convert 0.2.15` → `zenpixels 0.2.16`, which
-  version-diamonds against the pinned `zenanalyze 13d40c3` (still on
-  `zenpixels 0.2.14`) — `RowConverter::new` gets two incompatible
-  `PixelDescriptor` types (E0308 in zenanalyze `row_stream.rs:112`). Landing the
-  saving needs a **coordinated bump of the whole pixel stack** (zenpixels +
-  zenpixels-convert + zenanalyze + zencodec to the 0.2.16 line), not just
-  zenjpeg's ultrahdr-core rev.
+  **Confirmed by a clean build (rc=0):** ultrahdr-core 0.6 requires the
+  unpublished `zenpixels-convert 0.2.15` → `zenpixels 0.2.16`. Bumping only the
+  ultrahdr-core rev diamonds against the stale pinned `zenanalyze 13d40c3` (still
+  on `zenpixels 0.2.14`) — `RowConverter::new` gets two incompatible
+  `PixelDescriptor` types (E0308, zenanalyze `row_stream.rs:112`). The fix is the
+  documented local-dev pattern: `[patch]` the **whole zen pixel stack** to local
+  sibling folders (zenpixels + zenpixels-convert + zencodec + zenanalyze +
+  ultrahdr-core), which unifies everything on local `zenpixels 0.2.16`. With that,
+  the default graph builds cleanly with all five crates gone (43 → 37). The
+  ~5.4 s figure is the removed subtree measured in the consistent crates.io
+  baseline; a *full-build total* from the local-patched tree is not comparable
+  (local pixel-stack source is heavier than the published crates and the run had
+  higher load). **Landing for downstream** still needs a coordinated *published*
+  bump of the pixel stack (absolute-path patches can't be committed — CI breaks);
+  or do lever #1 (gate `zenanalyze`) first, which removes the diamond's source.
 
 **Publish gate (CRITICAL for downstream): newer zenjpeg is unpublishable.**
 crates.io has **0.8.4** (21 non-optional deps, no zenanalyze/zenpixels-convert —
