@@ -964,3 +964,43 @@ unification:** `zenanalyze` + `zenpixels-convert` force garb's `experimental` (+
 has no lever short of fewer format-pairs; the only downstream win is dropping
 `experimental` if a consumer doesn't need it — and lever #1 (gate `zenanalyze`)
 removes garb from the default graph entirely along with its forced features.
+
+#### garb format-gate inventory (2026-06-28): bgr/argb/abgr are dead weight
+
+garb's kernels are concrete `pub fn`s, so they codegen into garb's rlib whether
+or not anyone calls them — only a `#[cfg(feature)]` gate *in garb* removes them.
+So: which formats does zenjpeg's whole graph actually use? Inventoried every
+`garb::` call across all three direct consumers (garb 0.2.8, zenpixels-convert
+0.2.14, zenanalyze 13d40c3, zenjpeg `src/`):
+
+| garb format | fns (all tiers) | used in zenjpeg graph? | by whom |
+|---|---|---|---|
+| rgb / rgba | — | **yes** (heavy) | all three |
+| bgra | — | **yes** (`rgb_to_bgra`, `bgra_to_rgb`, `rgba_to_bgra`) | zenjpeg + zpc + zenanalyze |
+| gray / gray_alpha | 128 | **yes** (8 fns) | zenpixels-convert |
+| **bgr** (3-byte) | 66 | **NO — zero calls** | — |
+| **argb** | 77 | **NO — zero calls** | — |
+| **abgr** | 41 | **NO — zero calls** | — |
+
+`bgr`+`argb`+`abgr` = **165 of garb's 812 fns (~20%)** with **zero callers** in
+the entire zenjpeg dependency graph. On x86_64 that's ~18 AVX2 kernels
+(`swap_bgr`/`copy_swap_bgr`/`argb_to_bgr` + `rgb_to_argb`/`rgb_to_abgr`/
+`argb_to_rgb`, each ×impl/row/strided) + their scalar twins + dispatch wrappers
+= ~10–15 % of garb's codegen (~0.06–0.10 s). Small absolute, but pure dead code,
+and the cleanest part of garb to gate — and it'd help *every* garb consumer.
+
+**Recommendation:** add `bgr` / `argb` / `abgr` cargo features to garb (one
+`extended-formats` umbrella is fine), default-ON for back-compat, and have
+zen consumers take garb with `default-features = false` + only the formats they
+use (mirrors how garb already gates `rgb` / `imgref`). **Grayscale is NOT
+gateable here** — `gray`/`gray_alpha` (128 fns) is load-bearing: zenpixels-convert
+calls 8 gray conversions (`gray_to_rgb/rgba`, `gray_alpha_to_*`, `*_to_gray_bt709`)
+and grayscale-JPEG decode needs the gray→rgb expansion. garb *could* expose a
+`gray` feature for other consumers, but in this graph it stays on.
+
+Full zenpixels-convert → garb surface (the requested inventory): conversions
+`rgba_to_rgb`, `rgb_to_bgra`, `bgra_to_rgb`, `rgb_to_rgba`, `rgba_to_bgra`(+`_inplace_strided`);
+gray `gray_to_rgb/rgba`, `gray_to_gray_alpha`, `gray_alpha_to_gray/rgb/rgba`,
+`rgb_to_gray_bt709`, `rgba_to_gray_bt709`; depth `convert_{u8,u16,f32}_to_{u16,f32,u8}`;
+alpha `premultiply_alpha_rgba_u8_copy`, `(un)premultiply_alpha_f32_copy`;
+deinterleave `rgb24_chunk8_to_planes_tokenless_v3`. **No bgr/argb/abgr.**
