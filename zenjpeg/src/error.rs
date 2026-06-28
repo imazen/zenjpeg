@@ -759,6 +759,111 @@ impl From<crate::foundation::aligned_alloc::AllocError> for Error {
 }
 
 // ============================================================================
+// CategorizedError - coarse, codec-agnostic classification (zencodec #103)
+// ============================================================================
+
+/// Map each [`ErrorKind`] variant to exactly one [`zencodec::ErrorCategory`].
+///
+/// This is the codec-agnostic routing axis: a consumer (an HTTP layer, a retry
+/// policy, a logger) reads [`category()`](zencodec::CategorizedError::category)
+/// without naming any zenjpeg type. The match is exhaustive — `ErrorKind` is
+/// `#[non_exhaustive]` to *callers*, but within this crate a new variant must be
+/// categorized here or the build fails, so the mapping stays total.
+impl zencodec::CategorizedError for ErrorKind {
+    fn codec_name(&self) -> Option<&'static str> {
+        Some("zenjpeg")
+    }
+
+    fn category(&self) -> zencodec::ErrorCategory {
+        use zencodec::ErrorCategory as C;
+        use zencodec::LimitKind as L;
+        match self {
+            // === Caller-supplied parameters / configuration ===
+            // Dimensions (zero or out of range), the colour-format combo, and the
+            // encoder dials are caller inputs, not image-data faults.
+            Self::InvalidDimensions { .. }
+            | Self::InvalidColorFormat { .. }
+            | Self::InvalidQuality { .. }
+            | Self::InvalidScanScript(_)
+            | Self::InvalidConfig(_) => C::InvalidParameters,
+
+            // === Caller pixel-buffer geometry ===
+            // Wrong byte count, or a stride narrower than the row — a buffer
+            // layout fault, distinct from a bad config knob.
+            Self::InvalidBufferSize { .. } | Self::StrideTooSmall { .. } => C::InvalidBuffer,
+
+            // === Pixel-format negotiation found no acceptable format ===
+            Self::UnsupportedPixelFormat { .. } => C::UnsupportedPixelFormat,
+
+            // === A valid JPEG feature this codec doesn't implement ===
+            // (arithmetic coding, 12-bit samples, …). The variant's primary
+            // meaning; a few encoder-side API guards reuse this constructor too
+            // (documented at those call sites).
+            Self::UnsupportedFeature { .. } => C::UnsupportedImageFeature,
+
+            // === Memory / size acquisition failures ===
+            // A real allocation failure is OOM. A size-calculation overflow means
+            // the requested buffer cannot be represented at all — an
+            // allocation-infeasibility, so it joins OOM (mirrors zenpng's
+            // overflow → OutOfMemory convention) rather than claiming "internal
+            // bug" or borrowing an ill-fitting LimitKind.
+            Self::AllocationFailed { .. } | Self::SizeOverflow { .. } => C::OutOfMemory,
+
+            // === A configured ResourceLimits cap was exceeded ===
+            Self::ImageTooLarge { .. } => C::LimitsExceeded(L::Pixels),
+
+            // === I/O / output-sink failure ===
+            Self::IoError { .. } => C::Io(zencodec::CodecIoKind::opaque()),
+
+            // === Colour management required ===
+            // The sole erroring ICC path is "an ICC must be synthesized for the
+            // source CICP but cannot be" — a CMS transform the codec will not
+            // perform itself.
+            Self::IccError(_) => C::CmsRequired,
+
+            // === Malformed / corrupt bitstream content ===
+            Self::InvalidJpegData { .. }
+            | Self::InvalidMarker { .. }
+            | Self::InvalidHuffmanTable { .. }
+            | Self::InvalidQuantTable { .. }
+            | Self::DecodeError(_)
+            // No LimitKind covers "progressive scans"; an over-the-cap scan count
+            // is pathological bitstream structure → reject as malformed.
+            | Self::TooManyScans { .. } => C::MalformedImage,
+
+            // === Truncated input ===
+            Self::TruncatedData { .. } => C::UnexpectedEof,
+
+            // === Caller API-protocol violation (wrong sequence / row count) ===
+            Self::TooManyRows { .. } | Self::IncompleteImage { .. } => C::InvalidState,
+
+            // === Internal invariant / bug ===
+            Self::InternalError { .. } => C::Internal,
+
+            // === Delegate to the wrapped zencodec cause types ===
+            // Each carries its own `CategorizedError` impl: `StopReason` splits
+            // cancelled vs timed-out, `UnsupportedOperation` splits pixel-format
+            // vs operation gaps.
+            Self::Cancelled(reason) => reason.category(),
+            Self::UnsupportedOperation(op) => op.category(),
+        }
+    }
+}
+
+/// The public [`Error`] newtype delegates to its [`ErrorKind`]. Consumers holding
+/// an `At<ErrorKind>` (via [`Error::into_inner`]) get the same classification for
+/// free through zencodec's blanket `impl CategorizedError for At<E>`.
+impl zencodec::CategorizedError for Error {
+    fn codec_name(&self) -> Option<&'static str> {
+        Some("zenjpeg")
+    }
+
+    fn category(&self) -> zencodec::ErrorCategory {
+        self.kind().category()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -902,5 +1007,94 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err: Error = io_err.into();
         assert!(matches!(err.kind(), ErrorKind::IoError { .. }));
+    }
+
+    #[test]
+    fn categorized_error_codec_name() {
+        use zencodec::CategorizedError;
+        let err = Error::invalid_jpeg_data("bad SOI");
+        assert_eq!(err.codec_name(), Some("zenjpeg"));
+        assert_eq!(err.kind().codec_name(), Some("zenjpeg"));
+    }
+
+    #[test]
+    fn categorized_error_category_mapping() {
+        use enough::StopReason;
+        use zencodec::{CategorizedError, ErrorCategory as C, LimitKind};
+
+        // Spot-check every branch of the mapping, including the delegating arms.
+        let cases: &[(Error, C)] = &[
+            // Caller parameters / config.
+            (
+                Error::invalid_dimensions(0, 10, "zero width"),
+                C::InvalidParameters,
+            ),
+            (
+                Error::invalid_color_format("rgb+cmyk"),
+                C::InvalidParameters,
+            ),
+            (
+                Error::invalid_quality(200.0, "0..100"),
+                C::InvalidParameters,
+            ),
+            (
+                Error::invalid_scan_script("bad".into()),
+                C::InvalidParameters,
+            ),
+            (Error::invalid_config("bad".into()), C::InvalidParameters),
+            // Pixel-buffer geometry.
+            (Error::invalid_buffer_size(100, 50), C::InvalidBuffer),
+            (Error::stride_too_small(64, 16), C::InvalidBuffer),
+            // Unsupported feature / format.
+            (
+                Error::unsupported_feature("arithmetic coding"),
+                C::UnsupportedImageFeature,
+            ),
+            (
+                Error::unsupported_pixel_format(crate::types::PixelFormat::Rgb),
+                C::UnsupportedPixelFormat,
+            ),
+            // Memory / size.
+            (Error::allocation_failed(1 << 20, "buf"), C::OutOfMemory),
+            (Error::size_overflow("w*h*bpp"), C::OutOfMemory),
+            (
+                Error::image_too_large(1_000_000, 100),
+                C::LimitsExceeded(LimitKind::Pixels),
+            ),
+            // I/O.
+            (
+                Error::io_error("disk".into()),
+                C::Io(zencodec::CodecIoKind::opaque()),
+            ),
+            // Colour management.
+            (Error::icc_error("cannot synthesize".into()), C::CmsRequired),
+            // Malformed bitstream.
+            (Error::invalid_jpeg_data("not a jpeg"), C::MalformedImage),
+            (Error::invalid_marker(0xFF, "scan"), C::MalformedImage),
+            (Error::invalid_huffman_table(0, "bad"), C::MalformedImage),
+            (Error::invalid_quant_table(0, "bad"), C::MalformedImage),
+            (Error::decode_error("boom".into()), C::MalformedImage),
+            (Error::too_many_scans(9999, 100), C::MalformedImage),
+            // Truncation.
+            (Error::truncated_data("scan body"), C::UnexpectedEof),
+            // API-protocol state.
+            (Error::too_many_rows(10, 12), C::InvalidState),
+            (Error::incomplete_image(10, 5), C::InvalidState),
+            // Internal.
+            (Error::internal("invariant"), C::Internal),
+            // Delegated cause types.
+            (Error::cancelled(), C::Cancelled),
+            (Error::from(StopReason::TimedOut), C::TimedOut),
+            (
+                Error::from(zencodec::UnsupportedOperation::AnimationEncode),
+                C::UnsupportedOperation,
+            ),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(err.category(), *expected, "category mismatch for {err:?}");
+            // The located wrapper classifies identically via the blanket At impl.
+            assert_eq!(err.inner().category(), *expected);
+        }
     }
 }
