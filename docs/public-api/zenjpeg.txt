@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1628 lines (supported surface) | zenjpeg.features.txt 427 added (features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (848 hidden + 7222 excluded-feature)
+# files: zenjpeg.txt 1631 lines (supported surface) | zenjpeg.features.txt 427 added (features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3560 lines (839 hidden + 7238 excluded-feature)
 
 ## summary
 #
@@ -14,28 +14,28 @@
 #   pub types (struct/enum/trait/alias)       143
 #   pub consts/statics                         94
 #   pub macros                                  2
-#   free functions                             59
+#   free functions                             62
 #   inherent methods                          494
 #   struct fields                             360
 #   enum variants                             381
 #   re-exports                                  2
-#   trait roster entries (type × trait)       477
+#   trait roster entries (type × trait)       478
 #   auto-trait-complete types                 103
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
-#   (root)                           67
+#   (root)                           69
 #   blur                              1
 #   container                       276
 #   deblock                          16
 #   decoder                         547
 #   detect                           56
 #   encoder                         517
-#   heuristics                       23
+#   heuristics                       24
 #   lossless                         42
 #   profile                           7
 
-## items (1496 lines)
+## items (1499 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -362,7 +362,7 @@ pub decoder::DepthSource::MpfDisparity
 pub decoder::ErrorKind::AllocationFailed
 pub decoder::ErrorKind::AllocationFailed::bytes: usize
 pub decoder::ErrorKind::AllocationFailed::context: &'static str
-pub decoder::ErrorKind::Cancelled
+pub decoder::ErrorKind::Cancelled(enough::reason::StopReason)
 pub decoder::ErrorKind::DecodeError(alloc::string::String)
 pub decoder::ErrorKind::IccError(alloc::string::String)
 pub decoder::ErrorKind::ImageTooLarge
@@ -991,7 +991,7 @@ pub const fn encoder::DownsamplingMethod::uses_gamma_aware(self) -> bool
 pub encoder::ErrorKind::AllocationFailed
 pub encoder::ErrorKind::AllocationFailed::bytes: usize
 pub encoder::ErrorKind::AllocationFailed::context: &'static str
-pub encoder::ErrorKind::Cancelled
+pub encoder::ErrorKind::Cancelled(enough::reason::StopReason)
 pub encoder::ErrorKind::DecodeError(alloc::string::String)
 pub encoder::ErrorKind::IccError(alloc::string::String)
 pub encoder::ErrorKind::ImageTooLarge
@@ -1476,6 +1476,7 @@ pub heuristics::EncodeEstimate::peak_memory_bytes_min: u64
 pub heuristics::EncodeEstimate::time_ms: f32
 pub heuristics::EncodeEstimate::time_ms_max: f32
 pub heuristics::EncodeEstimate::time_ms_min: f32
+pub fn heuristics::encode_threading_info() -> zencodec::estimate::ThreadingInformation
 pub fn heuristics::estimate_decode(u32, u32, decoder::PixelFormat) -> heuristics::DecodeEstimate
 pub fn heuristics::estimate_decode_streaming(u32, u32) -> heuristics::DecodeEstimate
 pub fn heuristics::estimate_encode(u32, u32, &encoder::EncoderConfig) -> heuristics::EncodeEstimate
@@ -1533,6 +1534,8 @@ pub fn profile::ProfileStats::record(&'static str, core::time::Duration)
 pub fn profile::ProfileStats::reset()
 pub macro profile_block!
 pub macro profile_scope!
+pub fn decode_rgb8(&[u8]) -> encoder::Result<(alloc::vec::Vec<u8>, u32, u32)>
+pub fn encode_rgb8_quality(&[u8], u32, u32, u8) -> encoder::Result<alloc::vec::Vec<u8>>
 
 ## trait impls (118 types)
 
@@ -1611,7 +1614,7 @@ encoder::EncodePlan: Clone, Debug, Display
 encoder::EncodeStats: Clone, Debug, Default
 encoder::EncoderConfig: Clone, Debug
 encoder::Error: Debug, Display, Error, From<encoder::ErrorKind>, From<enough::reason::StopReason>, From<std::io::error::Error>, From<whereat::at::At<encoder::ErrorKind>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, PartialEq
-encoder::ErrorKind: Clone, Debug, Display, Error, PartialEq
+encoder::ErrorKind: Clone, Debug, Display, Error, From<enough::reason::StopReason>, PartialEq
 encoder::Exif: Clone, Debug, From<encoder::ExifFields>
 encoder::ExifFields: Clone, Debug, Default
 encoder::ExpertConfig: Clone, Debug

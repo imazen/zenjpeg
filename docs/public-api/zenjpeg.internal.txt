@@ -9,32 +9,31 @@
 
 ## summary
 #
-#   pub modules                                84
+#   pub modules                                83
 #   pub types (struct/enum/trait/alias)       298
 #   pub consts/statics                        316
 #   pub macros                                  1
-#   free functions                            376
-#   inherent methods                         1186
-#   struct fields                             751
+#   free functions                            384
+#   inherent methods                         1189
+#   struct fields                             753
 #   enum variants                             492
-#   re-exports                                 25
+#   re-exports                                 17
 #   trait roster entries (type × trait)       646
 #   auto-trait-complete types                 131
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           78
+#   (root)                           77
 #   alloc                             1
-#   analyze                           8
 #   color                           117
 #   container                         8
 #   decode                          444
 #   decoder                          54
 #   detect                           40
-#   encode                         1451
-#   encoder                         132
+#   encode                         1456
+#   encoder                         133
 #   entropy                         100
-#   foundation                      342
+#   foundation                      349
 #   heuristics                        3
 #   huffman                         337
 #   layout                            3
@@ -46,7 +45,7 @@
 #   types                           140
 #   ultrahdr                         12
 
-## items (3351 lines)
+## items (3355 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -1112,16 +1111,20 @@ pub fn encode::sweep::SweepAxes::clone(&self) -> encode::sweep::SweepAxes
 pub fn encode::sweep::SweepAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::SweepAxes::modes_full() -> Self
 pub fn encode::sweep::SweepAxes::rd_core() -> Self
+pub fn encode::sweep::SweepAxes::scalar_dense() -> Self
 pub fn encode::sweep::SweepBuilder::clone(&self) -> encode::sweep::SweepBuilder
 pub fn encode::sweep::SweepBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::SweepBuilder::new(encode::sweep::SweepAxes, encode::sweep::QualityGrid) -> Self
 pub fn encode::sweep::SweepBuilder::plan(&self) -> encode::sweep::SweepPlan
 pub fn encode::sweep::SweepBuilder::with_budget(self, usize) -> Self
+pub fn encode::sweep::SweepBuilder::with_compute_limit(self, u8) -> Self
+pub fn encode::sweep::SweepBuilder::with_max_deviations(self, u8) -> Self
 pub fn encode::sweep::SweepCell::clone(&self) -> encode::sweep::SweepCell
 pub fn encode::sweep::SweepCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::SweepPlan::clone(&self) -> encode::sweep::SweepPlan
 pub fn encode::sweep::SweepPlan::encodes(&self, usize, usize) -> usize
 pub fn encode::sweep::SweepPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encode::sweep::compute_tier(&encode::encoder_config::EncoderConfig) -> u8
 pub fn encode::sweep::config_from_cell_id(&str, f32) -> core::result::Result<encode::encoder_config::EncoderConfig, alloc::string::String>
 pub fn encode::sweep::fingerprint(&encode::encoder_config::EncoderConfig) -> u64
 pub fn encode::sweep::trellis_auto_shape() -> encode::trellis::compat::TrellisConfig
@@ -1387,16 +1390,23 @@ pub fn foundation::alloc::ProfiledVecExt::new_profiled(&'static str) -> Self
 pub fn foundation::alloc::ProfiledVecExt::with_capacity_profiled(usize, &'static str) -> Self
 pub fn foundation::alloc::checked_size(usize, usize, usize) -> encoder::Result<usize>
 pub fn foundation::alloc::checked_size_2d(usize, usize) -> encoder::Result<usize>
+pub fn foundation::alloc::resolve_fallible(zencodec::limits::AllocPreference, bool) -> bool
 pub fn foundation::alloc::try_alloc_dct_blocks(usize, &'static str) -> encoder::Result<alloc::vec::Vec<[i16; 64]>>
+pub fn foundation::alloc::try_alloc_dct_blocks_pref(zencodec::limits::AllocPreference, bool, usize, &'static str) -> encoder::Result<alloc::vec::Vec<[i16; 64]>>
 pub fn foundation::alloc::try_alloc_dct_blocks_tracked(usize, &'static str, &mut foundation::alloc::EncodeStats) -> encoder::Result<alloc::vec::Vec<[i16; 64]>>
 pub fn foundation::alloc::try_alloc_filled<T: core::clone::Clone>(usize, T, &'static str) -> encoder::Result<alloc::vec::Vec<T>>
+pub fn foundation::alloc::try_alloc_filled_pref<T: core::clone::Clone>(zencodec::limits::AllocPreference, bool, usize, T, &'static str) -> encoder::Result<alloc::vec::Vec<T>>
 pub fn foundation::alloc::try_alloc_maybeuninit<T: core::default::Default + core::clone::Clone>(usize, &'static str) -> encoder::Result<alloc::vec::Vec<T>>
+pub fn foundation::alloc::try_alloc_maybeuninit_pref<T: core::default::Default + core::clone::Clone>(zencodec::limits::AllocPreference, bool, usize, &'static str) -> encoder::Result<alloc::vec::Vec<T>>
 pub fn foundation::alloc::try_alloc_vec<T: core::default::Default + core::clone::Clone>(usize, &'static str) -> encoder::Result<alloc::vec::Vec<T>>
 pub fn foundation::alloc::try_alloc_vec_tracked<T: core::default::Default + core::clone::Clone>(usize, &'static str, &mut foundation::alloc::EncodeStats) -> encoder::Result<alloc::vec::Vec<T>>
 pub fn foundation::alloc::try_alloc_zeroed(usize, &'static str) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn foundation::alloc::try_alloc_zeroed_bytes(usize, &'static str) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn foundation::alloc::try_alloc_zeroed_bytes_pref(zencodec::limits::AllocPreference, bool, usize, &'static str) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn foundation::alloc::try_alloc_zeroed_f32(usize, &'static str) -> encoder::Result<alloc::vec::Vec<f32>>
+pub fn foundation::alloc::try_alloc_zeroed_f32_pref(zencodec::limits::AllocPreference, bool, usize, &'static str) -> encoder::Result<alloc::vec::Vec<f32>>
 pub fn foundation::alloc::try_alloc_zeroed_f32_tracked(usize, &'static str, &mut foundation::alloc::EncodeStats) -> encoder::Result<alloc::vec::Vec<f32>>
+pub fn foundation::alloc::try_alloc_zeroed_pref(zencodec::limits::AllocPreference, bool, usize, &'static str) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn foundation::alloc::try_bgr_to_rgb(&[u8], &'static str) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn foundation::alloc::try_bgra_to_rgb(&[u8], &'static str) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn foundation::alloc::try_clone_slice<T: core::clone::Clone>(&[T], &'static str) -> encoder::Result<alloc::vec::Vec<T>>
@@ -1936,7 +1946,6 @@ pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer
 pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub macro skip_if_missing!
-pub mod analyze
 pub mod color
 pub mod color::fast_yuv
 pub mod color::icc
@@ -2131,14 +2140,6 @@ pub type foundation::alloc::ProfiledVec<T> = foundation::instrumented_vec::Instr
 pub type foundation::instrumented_vec::InstrumentedVec<T>::Target = alloc::vec::Vec<T>
 pub type types::Coeff = i16
 pub type types::CoeffBlock = [types::Coeff; 64]
-pub use analyze::AnalysisFeature
-pub use analyze::AnalysisQuery
-pub use analyze::AnalysisResults
-pub use analyze::FeatureSet
-pub use analyze::FeatureValue
-pub use analyze::ImageGeometry
-pub use analyze::analyze_features
-pub use analyze::analyze_features_rgb8
 pub use decode::Stop
 pub use encode::Stop
 pub use encode::mage_simd::Desktop64
@@ -2961,6 +2962,7 @@ pub encode::sweep::SweepCell::fingerprint: u64
 pub encode::sweep::SweepCell::id: alloc::string::String
 pub encode::sweep::SweepCell::quality: f32
 pub encode::sweep::SweepPlan::cells: alloc::vec::Vec<encode::sweep::SweepCell>
+pub encode::sweep::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
 pub encode::sweep::SweepPlan::dropped: alloc::vec::Vec<encode::sweep::DroppedAxis>
 pub encode::sweep::SweepPlan::duplicates_merged: usize
 pub encode::sweep::SweepPlan::invalid_skipped: alloc::vec::Vec<alloc::string::String>
@@ -3164,6 +3166,7 @@ pub encoder::SweepCell::fingerprint: u64
 pub encoder::SweepCell::id: alloc::string::String
 pub encoder::SweepCell::quality: f32
 pub encoder::SweepPlan::cells: alloc::vec::Vec<encode::sweep::SweepCell>
+pub encoder::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
 pub encoder::SweepPlan::dropped: alloc::vec::Vec<encode::sweep::DroppedAxis>
 pub encoder::SweepPlan::duplicates_merged: usize
 pub encoder::SweepPlan::invalid_skipped: alloc::vec::Vec<alloc::string::String>
