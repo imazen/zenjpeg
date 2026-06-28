@@ -891,10 +891,24 @@ features a plain encode/decode consumer doesn't use:**
   behind an `adaptive` feature removes ~18% of the build **and** un-blocks
   publishing (see below).
 - `ultrahdr-core` → `half` → `zerocopy`/`zerocopy-derive` + `wide` → `safe_arch`:
-  **~5 s** (2.34 + 1.69 + 0.64 + half/safe_arch). `ultrahdr-core` is non-optional
-  for container/MPF types; its in-source comment claims "no new transitive deps"
-  but the tree disproves it — `half`'s f16 drags in `zerocopy` (the single
-  heaviest dep at 2.34 s). Gating behind `ultrahdr` removes ~15%.
+  **~5.4 s** (zerocopy 2.34 + wide 1.69 + zerocopy-derive 0.64 + safe_arch 0.40
+  + half 0.30). `ultrahdr-core` 0.5 (pinned rev 3ac20f99) is non-optional for
+  container/MPF types and pulled `half` unconditionally; `half`'s f16 drags in
+  `zerocopy` (the single heaviest leaf dep at 2.34 s).
+
+  **Fixed upstream (2026-06-28): ultrahdr-core 0.6 (imazen/ultrahdr `708d68a`)
+  gates f16/`half` behind an opt-in `f16` feature and drops the `wide` dep.**
+  Since zenjpeg already takes ultrahdr-core with `default-features = false`,
+  bumping the pin removes all five crates from the default graph — verified by
+  resolution: **43 → 37 crates, ~5.4 s CPU (~16%) gone**, zerocopy being the win.
+  **But it is NOT a clean pin bump yet:** ultrahdr-core 0.6 requires the
+  unpublished `zenpixels-convert 0.2.15` → `zenpixels 0.2.16`, which
+  version-diamonds against the pinned `zenanalyze 13d40c3` (still on
+  `zenpixels 0.2.14`) — `RowConverter::new` gets two incompatible
+  `PixelDescriptor` types (E0308 in zenanalyze `row_stream.rs:112`). Landing the
+  saving needs a **coordinated bump of the whole pixel stack** (zenpixels +
+  zenpixels-convert + zenanalyze + zencodec to the 0.2.16 line), not just
+  zenjpeg's ultrahdr-core rev.
 
 **Publish gate (CRITICAL for downstream): newer zenjpeg is unpublishable.**
 crates.io has **0.8.4** (21 non-optional deps, no zenanalyze/zenpixels-convert —
