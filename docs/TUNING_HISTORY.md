@@ -1034,3 +1034,18 @@ Then zenjpeg's graph enables only `deinterleave` + `depth-convert`/`alpha` and
 skips ~1,400 lines of packed-format code that nothing in the graph calls. This is
 a bigger and cleaner cut than the bgr/argb/abgr gate above, since the unused
 packed modules are entire files, not scattered kernels.
+
+**Why `deinterleave.rs` is 1,674 lines (and what's actually used):** the headline
+overstates compile cost — **504 lines (30%) are `#[cfg(test)]`** (line 1170+, not
+compiled downstream) + ~280 comment/doc. The ~1,170 production lines are **46
+functions = a full RGB↔planar matrix**: dtype {rgb24-u8, rgb48-u16, rgb-f32,
+rgba-f32} × direction {forward to_planes (26), reverse planes→rgb (12)} × chunk
+{4, 8, 16} × tier {scalar, v3, v3_autovec, tokenless_v3}. zenjpeg's whole graph
+calls **only `rgb24_chunk8_to_planes_{scalar,tokenless_v3}` — 2 of 46** — so all
+rgb48/u16, all f32 (rgb & rgba), all reverse-direction, and the chunk4/chunk16
+variants are unused. The module is big because it's comprehensive (every dtype ×
+direction × granularity); the graph touches only the u8-RGB24-chunk8-forward
+corner. A `deinterleave` split could go finer still (per-dtype), but the module is
+mostly scalar f32 loops (only 15 SIMD attrs total), so the codegen cost of the
+unused remainder is modest — the test/doc share is the bigger reason "1,674" looks
+alarming.
