@@ -1049,3 +1049,82 @@ corner. A `deinterleave` split could go finer still (per-dtype), but the module 
 mostly scalar f32 loops (only 15 SIMD attrs total), so the codegen cost of the
 unused remainder is modest — the test/doc share is the bigger reason "1,674" looks
 alarming.
+
+#### garb ablation study: measured build+link deltas (2026-06-30)
+
+Set up an isolated ablation worktree (`~/work/zen/garb-ablation`, a plain-git copy
+of published garb 0.2.8, NOT the real imazen/garb repo — no other-repo rule
+violated) + a separate consumer probe crate (`~/work/zen/garb-ablation-consumer`,
+depends on it via `path`, zero other deps) to get real numbers instead of
+theorizing further. Methodology: `cargo build --release --timings`, min-of-3,
+warm dependency cache (only garb's own unit re-measured per step) — same harness
+as the compile-time profile above. One methodology bug caught and fixed along
+the way: an in-crate `examples/` target silently pulled garb's own dev-deps
+(criterion, zenbench) because the vendored `Cargo.toml` (`autoexamples = false`)
+initially made the example invisible to cargo, and a naive full-`cargo clean`
+before/after each variant repaid the entire proc-macro dependency chain every
+time, swamping the signal — moved to a warm-cache delta against a separate probe
+crate instead.
+
+**Cumulative ablation (garb's own compile unit, graph's actual feature set: `std,experimental,rgb,imgref`):**
+
+| step | change | time | Δ |
+|---|---|---|---|
+| A0 | `default,std` only (no experimental) | 0.74 s | — |
+| A0′ | **+ graph config** (what zenjpeg's build actually resolves) | **1.18 s** | baseline |
+| M1 | − `packed` + `packed_1010102` mods (unused, whole files) | 1.08 s | −0.10 s |
+| M2 | − `experimental_imgref` + `experimental_typed` blocks (unused) | 1.02 s | −0.06 s |
+| M3 | deinterleave → rgb24-chunk8-forward only (drop rgb48/f32/reverse/chunk4/16) | 0.97 s | −0.05 s |
+| **M1+M2+M3 total** | | **0.97 s** | **−0.21 s (−18%)** |
+
+All three cuts landed almost entirely in **frontend** (0.55→0.37 s), barely
+touching codegen (0.63→0.60 s) — confirms the earlier claim that ablating unused
+*surface area* mainly saves parse/typecheck, not LLVM work.
+
+**M4 attempted and abandoned: bgr/argb/abgr removal is NOT a clean ablation.**
+Unlike M1–M3, these kernels are woven through garb's dispatch layers — tier impl
+(avx2/scalar/neon/wasm) → row/strided wrappers → public `rgb_to_argb`-style
+functions → re-exports referenced from `imgref.rs`/`typed_rgb.rs`. Removing the
+concrete functions cascaded through 3 more rounds of dangling-reference errors
+across files before being reverted as out of scope for a worktree-copy ablation.
+**This is itself the finding for garb's maintainer:** the format-pair kernels
+need a real `#[cfg(feature)]` gate authored *in garb* (as recommended above), not
+a mechanical deletion — the dispatch web has no clean seam today.
+
+**Codegen floor characterization (opt-level/cgu sweep on the M1+M2+M3 tree):**
+
+| config | time | frontend | codegen |
+|---|---|---|---|
+| opt=3, cgu=16 (release default) | 0.97 s | 0.37 s | 0.60 s |
+| opt=2 | 0.88 s | 0.39 s | 0.49 s |
+| opt=1 | 0.71 s | 0.35 s | 0.36 s |
+| **opt=0** | **0.40 s** | 0.35 s | **0.05 s** |
+| opt=3, cgu=1 | 1.97 s | 0.40 s | 1.57 s (single CGU serializes) |
+| opt=3, cgu=256 | 1.02 s | 0.40 s | 0.62 s (no better than 16) |
+
+**The remaining codegen (0.60 s at opt=3) is dominated by optimization work on
+the AVX2 kernels, not IR volume** — consistent with the earlier finding that
+garb's cost is *function count* (164 non-inlinable `#[target_feature]` fns), not
+monomorphization. `cgu=16` (cargo's release default) is already near-optimal;
+`cgu=1` is dramatically worse (single-threaded LLVM), `cgu=256` gives nothing
+back. Dropping to opt=1 recovers a further ~0.26 s but changes the actual AVX2
+codegen quality shipped in the rlib — **not a free lever for a SIMD-perf library.**
+
+**Link cost: negligible, confirmed by direct measurement.** Isolated consumer
+probe (garb + tiny `main.rs`, zero other deps), warm-cache delta: BIN
+(garb-recompile + link) = 1.04 s vs LIB-only (garb's own unit, same source) =
+0.95 s → **link + trivial-binary compile ≈ 0.09 s.** Link is not the bottleneck
+anywhere in this picture. A fully-cold build (deps + garb + bin + link from
+`cargo clean`) = 3.55 s, but that mostly pays the **shared proc-macro/SIMD-macro
+chain** (archmage-macros, syn, magetypes, etc.) once — that cost is amortized
+across every crate in a project using archmage, not garb-specific.
+
+**Bottom line vs the "third of a second" target:** cleanly-ablatable dead code
+(M1–M3, mechanical and safe) buys **1.18 → 0.97 s (−18%)**. Reaching ~0.33 s
+from there requires one of: (a) a real bgr/argb/abgr feature gate authored in
+garb (blocked on the dispatch-web refactor identified by the abandoned M4), (b)
+dropping optimization level for garb specifically (opt=1 → 0.71 s, opt=0 →
+0.40 s — a real runtime-perf tradeoff, not free), or (c) restructuring the
+100+ target-feature-gated AVX2 kernels to fewer, more generic dispatch points
+(an architectural change, not a config knob). None of these are available as a
+zenjpeg-side fix — they're all `imazen/garb` engineering work.
