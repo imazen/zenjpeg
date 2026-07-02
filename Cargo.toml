@@ -206,3 +206,6 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 # ultrahdr-core 0.5.0 on crates.io predates full_reconstruction_boost (the
 # canonical ReconstructHdr boost route, heic#20). Drop on next publish.
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "3ac20f99d45e985e09f274fc07181b238385e703" }
+# TEMP: until zencodec 0.1.26 ships (PR #103 — CategorizedError taxonomy).
+# Drop and bump the workspace dep to the released version at landing time.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "cancellation-classification-99" }

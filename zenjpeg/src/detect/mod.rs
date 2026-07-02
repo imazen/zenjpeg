@@ -101,6 +101,27 @@ impl core::fmt::Display for ProbeError {
 
 impl std::error::Error for ProbeError {}
 
+/// Codec-agnostic classification of [`probe`] failures (zencodec #103). Mirrors
+/// the encode/decode taxonomy so a consumer routing on category sees probe and
+/// full-decode failures the same way.
+impl zencodec::CategorizedError for ProbeError {
+    fn codec_name(&self) -> Option<&'static str> {
+        Some("zenjpeg")
+    }
+
+    fn category(&self) -> zencodec::ErrorCategory {
+        use zencodec::ErrorCategory as C;
+        match self {
+            // Not enough bytes yet, or header cut short → need more input.
+            Self::TooShort | Self::Truncated => C::UnexpectedEof,
+            // No SOI marker: this isn't a JPEG at all → the format isn't handled.
+            Self::NotJpeg => C::UnsupportedImageType,
+            // Has SOI but no DQT before the scan → structurally broken JPEG.
+            Self::NoQuantTables => C::MalformedImage,
+        }
+    }
+}
+
 /// Probe a JPEG from its raw bytes.
 ///
 /// Reads only headers (~500 bytes), no entropy decoding.
@@ -632,5 +653,15 @@ mod tests {
         data.extend_from_slice(&[0xFF, MARKER_EOI]);
 
         data
+    }
+
+    #[test]
+    fn probe_error_category_mapping() {
+        use zencodec::{CategorizedError, ErrorCategory as C};
+        assert_eq!(ProbeError::TooShort.codec_name(), Some("zenjpeg"));
+        assert_eq!(ProbeError::TooShort.category(), C::UnexpectedEof);
+        assert_eq!(ProbeError::Truncated.category(), C::UnexpectedEof);
+        assert_eq!(ProbeError::NotJpeg.category(), C::UnsupportedImageType);
+        assert_eq!(ProbeError::NoQuantTables.category(), C::MalformedImage);
     }
 }

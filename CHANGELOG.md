@@ -5,10 +5,48 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- **zencodec trait impls now return the `At<zencodec::CodecError>` envelope
+  (Pattern B).** The `EncoderConfig` / `EncodeJob` / `Encoder` / `DecoderConfig` /
+  `DecodeJob` / `Decode` / `StreamingDecode` impls in `crate::codec` (and the
+  delegating `JpegEncoderConfig::encode` / `JpegDecoderConfig::{decode,
+  probe_header, probe_full_metadata}` convenience methods) switch their
+  `type Error` from `crate::error::Error` to `At<CodecError>`. This makes the
+  coarse `ErrorCategory` **and** the codec name (`Some("zenjpeg")`) recoverable by
+  a generic consumer *through `Dyn*` dispatch*: once the concrete error is erased
+  to `zencodec::decode::BoxedError`, `CodecErrorExt::error_category()` /
+  `codec_error()` downcast it back to the envelope (under the prior Pattern A
+  `type Error = Error`, the erased `dyn Error` carried no `CategorizedError`
+  vtable, so both returned `None`). The native `crate::error::Error`
+  (`Error(At<ErrorKind>)`) is unchanged and remains the rich error for direct
+  (non-`zencodec`) callers; it is now the envelope's `detail` + category source,
+  bridged by `From<Error>` / `From<ErrorKind> for At<CodecError>`. Builds on the
+  #103 `CategorizedError` adoption below.
+
 ### Docs
 - README overhauled and split into a GitHub `README.md` (full badge row) and a generated badge-free `README.crates.md` for crates.io (the crate `readme` field now points at it); corrected the feature table (the `decoder`/`trellis` flags are documented as always-compiled no-ops), refreshed the crosslink footer, and added `benchmarks/README.md` reproduction methodology.
 
 ### Added
+- **`zencodec::CategorizedError` implemented for the public error type** (zencodec
+  #103 taxonomy adoption). `crate::error::Error` and its inner `ErrorKind` — the
+  type behind `zenjpeg::decoder::Error` / `encoder::Error` / `DecodeError` /
+  `EncodeError` and the `zencodec` `EncoderConfig`/`DecoderConfig` adapter's
+  `type Error` — now report `codec_name() -> Some("zenjpeg")` and a **total**
+  `category() -> ErrorCategory` mapping every variant: malformed bitstream →
+  `MalformedImage`, truncation → `UnexpectedEof`, unsupported JPEG feature →
+  `UnsupportedImageFeature`, pixel-format negotiation → `UnsupportedPixelFormat`,
+  caller dials/config → `InvalidParameters`, buffer geometry → `InvalidBuffer`,
+  push/finish sequencing → `InvalidState`, ICC-synthesis failure → `CmsRequired`,
+  pixel-limit → `LimitsExceeded(Pixels)`, alloc / size-overflow → `OutOfMemory`,
+  I/O → `Io`; the `Cancelled(StopReason)` and `UnsupportedOperation` arms delegate
+  to the wrapped zencodec cause types. `recompress::Error` (feature `recompress`)
+  is categorized too. Codec-agnostic consumers can now route zenjpeg failures
+  (HTTP status, retry policy, logging) without naming a zenjpeg type. The match is
+  exhaustive, so a future `ErrorKind` variant must be categorized or the build
+  fails. **TEMP dev patch:** the workspace `Cargo.toml` pins `zencodec` to the
+  `cancellation-classification-99` git branch (PR #103) until `zencodec 0.1.26`
+  ships this API — revert the `[patch.crates-io]` entry and bump the dep at
+  landing.
 - **`AllocPreference` honored per decode allocation site + `estimate_decode_resources`.**
   The zencodec decode boundary now threads
   `ResourceLimits::prefer_fallible_allocations` (a 3-mode `AllocPreference`:
@@ -67,6 +105,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   doctest (encode a tiny image, decode it round-trip) and added a second doctest
   showing `match err.kind() { ErrorKind::… }` for error classification.
 ### Changed
+- **Located public errors: no reshape needed for the #103 guidance.** zenjpeg's
+  encode/decode error is already `Error(pub At<ErrorKind>)` carrying a `whereat`
+  location trace, with crate info registered via `whereat::define_at_crate_info!`
+  and `#[track_caller]` constructors capturing the origin. The `CategorizedError`
+  adoption above is therefore purely additive (classification only) — **not** a
+  breaking error-type or signature change. (The one error type still without a
+  trace is the feature-gated `recompress::Error`, a plain enum; making it located
+  would be a separate, isolated change.)
 - **BREAKING: `ErrorKind::Cancelled` now carries the `enough::StopReason`**
   (`Cancelled(enough::StopReason)`, was a unit variant) (8a03cb65). The wrapped
   reason distinguishes an explicit cancel (`StopReason::Cancelled`) from a
