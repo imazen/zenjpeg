@@ -228,9 +228,14 @@ impl JpegEncoderConfig {
     }
 
     /// Apply effort level, returning a modified config.
+    ///
+    /// Clamps `self.effort` into zenjpeg's real 0..=2 tiers at the point of
+    /// use: `0` = `JpegliBaseline`, `2` = `HybridMaxCompression`, anything
+    /// else (including the default `1` and any out-of-range value accepted
+    /// by [`with_generic_effort`](Self::with_generic_effort)) = `HybridProgressive`.
     fn effective_config(&self) -> EncoderConfig {
         use crate::encode::encoder_types::OptimizationPreset;
-        let preset = match self.effort {
+        let preset = match self.effort.clamp(0, 2) {
             0 => OptimizationPreset::JpegliBaseline,
             2 => OptimizationPreset::HybridMaxCompression,
             _ => OptimizationPreset::HybridProgressive,
@@ -424,8 +429,20 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         })
     }
 
+    /// Set the generic-effort accept signal.
+    ///
+    /// zenjpeg supports exactly three real effort tiers, mapped at
+    /// point-of-use in [`effective_config`](Self::effective_config): `0` =
+    /// `JpegliBaseline` (fastest), `1` = `HybridProgressive` (default), `2` =
+    /// `HybridMaxCompression` (slowest/smallest). Out-of-tier values (e.g.
+    /// `99`) are accepted and clamped into `HybridProgressive` at encode
+    /// time, but the raw value passed here is stored verbatim and echoed
+    /// back by [`generic_effort`](Self::generic_effort) — fleet
+    /// accept-signal callers that set-then-get to confirm the config
+    /// accepted their input must see their own value back, not a silently
+    /// clamped one.
     fn with_generic_effort(mut self, effort: i32) -> Self {
-        self.effort = effort.clamp(0, 2);
+        self.effort = effort;
         self
     }
 
@@ -721,7 +738,11 @@ impl JpegEncoder {
         })?;
         let estimated_mem = width as u64 * height as u64 * layout.bytes_per_pixel() as u64;
         self.limits.check_memory(estimated_mem).map_err(|_| {
-            Error::allocation_failed(estimated_mem as usize, "memory limit exceeded")
+            Error::resource_limit_exceeded(
+                zencodec::LimitKind::Memory,
+                estimated_mem,
+                self.limits.max_memory_bytes.unwrap_or(0),
+            )
         })?;
         Ok(())
     }
@@ -731,7 +752,11 @@ impl JpegEncoder {
         self.limits
             .check_output_size(output.len() as u64)
             .map_err(|_| {
-                Error::allocation_failed(output.len(), "output exceeds max_output_bytes limit")
+                Error::resource_limit_exceeded(
+                    zencodec::LimitKind::OutputSize,
+                    output.len() as u64,
+                    self.limits.max_output_bytes.unwrap_or(0),
+                )
             })?;
         Ok(())
     }
@@ -870,7 +895,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
             }
             Some(acc) => {
                 if acc.width != width || acc.descriptor != desc {
-                    return Err(Error::unsupported_feature(
+                    return Err(Error::invalid_state(
                         "push_rows: width or format changed between calls",
                     )
                     .into());
@@ -894,7 +919,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         let acc = self
             .accumulator
             .take()
-            .ok_or_else(|| Error::unsupported_feature("finish() called without any push_rows()"))?;
+            .ok_or_else(|| Error::invalid_state("finish() called without any push_rows()"))?;
         self.encode_accumulated(acc).map_err(Into::into)
     }
 
@@ -1472,7 +1497,11 @@ impl JpegDecodeJob {
         self.limits
             .check_input_size(data.len() as u64)
             .map_err(|_| {
-                Error::allocation_failed(data.len(), "input exceeds max_input_bytes limit")
+                Error::resource_limit_exceeded(
+                    zencodec::LimitKind::InputSize,
+                    data.len() as u64,
+                    self.limits.max_input_bytes.unwrap_or(0),
+                )
             })?;
         Ok(())
     }
@@ -1487,7 +1516,7 @@ impl JpegDecodeJob {
                 crate::types::JpegMode::Progressive | crate::types::JpegMode::ArithmeticProgressive
             );
             if is_progressive && !policy.resolve_progressive(true) {
-                return Err(Error::unsupported_feature(
+                return Err(Error::policy_rejected(
                     "progressive JPEG rejected by decode policy",
                 ));
             }
@@ -1674,7 +1703,7 @@ fn push_decoder_native<'a>(
                 reader.read_rows_rgba_f32(f_out)?
             }
             _ => {
-                return Err(Error::unsupported_feature(
+                return Err(Error::unsupported_pixel_descriptor(
                     "unsupported pixel format for push_decoder",
                 )
                 .into());
@@ -2174,10 +2203,9 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 && is_progressive
                 && !policy.resolve_progressive(true)
             {
-                return Err(Error::unsupported_feature(
-                    "progressive JPEG rejected by decode policy",
-                )
-                .into());
+                return Err(
+                    Error::policy_rejected("progressive JPEG rejected by decode policy").into(),
+                );
             }
 
             // Passthrough CMYK handling
@@ -2348,9 +2376,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 * output.pixels().width() as u64
                 * output.pixels().descriptor().bytes_per_pixel() as u64;
             self.limits.check_output_size(output_bytes).map_err(|_| {
-                Error::allocation_failed(
-                    output_bytes as usize,
-                    "decoded output exceeds max_output_bytes limit",
+                Error::resource_limit_exceeded(
+                    zencodec::LimitKind::OutputSize,
+                    output_bytes,
+                    self.limits.max_output_bytes.unwrap_or(0),
                 )
             })?;
 
@@ -2494,9 +2523,10 @@ impl JpegDecoder<'_> {
             * output.pixels().width() as u64
             * output.pixels().descriptor().bytes_per_pixel() as u64;
         limits.check_output_size(output_bytes).map_err(|_| {
-            Error::allocation_failed(
-                output_bytes as usize,
-                "decoded output exceeds max_output_bytes limit",
+            Error::resource_limit_exceeded(
+                zencodec::LimitKind::OutputSize,
+                output_bytes,
+                limits.max_output_bytes.unwrap_or(0),
             )
         })?;
 
@@ -2983,9 +3013,16 @@ mod tests {
         let enc = enc.with_generic_effort(2); // Max
         assert_eq!(enc.generic_effort(), Some(2));
 
-        // Effort clamped to range
+        // Fleet accept-signal round-trip: `generic_effort()` must echo back
+        // exactly what was set, even out-of-tier — clamping only applies at
+        // point-of-use in `effective_config()`, not to the stored/reported
+        // value. (Was: incorrectly clamped to `Some(2)` here, which broke
+        // callers relying on set-then-get to confirm accepted input.)
         let enc = enc.with_generic_effort(99);
-        assert_eq!(enc.generic_effort(), Some(2));
+        assert_eq!(enc.generic_effort(), Some(99));
+
+        let enc = enc.with_generic_effort(-7);
+        assert_eq!(enc.generic_effort(), Some(-7));
     }
 
     #[test]

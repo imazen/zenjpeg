@@ -273,6 +273,49 @@ pub enum ErrorKind {
     /// Unsupported codec operation.
     #[error("unsupported operation: {0}")]
     UnsupportedOperation(zencodec::UnsupportedOperation),
+
+    // === Taxonomy refinements (caterr Pattern-B follow-up, zencodec #103) ===
+    // These four variants correct category mis-mappings the initial adoption
+    // reused from the closest existing constructor (`allocation_failed` /
+    // `unsupported_feature`) rather than adding new variants. `ErrorKind` is
+    // `#[non_exhaustive]`, so adding variants here is additive — it does not
+    // change the shape of any existing variant.
+    /// A configured [`ResourceLimits`](zencodec::ResourceLimits) cap was
+    /// hit — as opposed to an actual allocation failure
+    /// ([`AllocationFailed`](Self::AllocationFailed)). Carries the zencodec
+    /// [`LimitKind`](zencodec::LimitKind) so [`category()`](
+    /// zencodec::CategorizedError::category) reports
+    /// `ErrorCategory::LimitsExceeded(kind)` for whichever cap (memory,
+    /// output bytes, input bytes, …) was configured and exceeded.
+    #[error("resource limit exceeded ({kind:?}): {actual} exceeds configured limit of {limit}")]
+    ResourceLimitExceeded {
+        kind: zencodec::LimitKind,
+        actual: u64,
+        limit: u64,
+    },
+    /// The request was valid and understood, but a configured policy
+    /// declined it — e.g. [`JpegDecoderConfig`](crate::JpegDecoderConfig)'s
+    /// progressive-JPEG policy rejecting a progressive image. Neither
+    /// malformed input nor a missing feature: maps to
+    /// `ErrorCategory::PolicyRejected`.
+    #[error("rejected by policy: {reason}")]
+    PolicyRejected { reason: &'static str },
+    /// The operation was invoked in an invalid state or out of sequence by
+    /// the caller — e.g. `push_rows` changing width/format mid-stream, or
+    /// `finish()` called without any prior `push_rows()`. An API-protocol
+    /// violation, not bad image data or an unimplemented feature: maps to
+    /// `ErrorCategory::InvalidState`.
+    #[error("invalid state: {reason}")]
+    InvalidState { reason: &'static str },
+    /// Pixel-format negotiation on the decode side found no acceptable
+    /// [`zenpixels::PixelDescriptor`] channel-type/layout combination.
+    /// Distinct from [`UnsupportedPixelFormat`](Self::UnsupportedPixelFormat)
+    /// (which carries a [`crate::types::PixelFormat`]) because the decode
+    /// push path negotiates raw `(ChannelType, ChannelLayout)` pairs that
+    /// don't all map onto that enum; both variants share
+    /// `ErrorCategory::UnsupportedPixelFormat`.
+    #[error("unsupported pixel format: {reason}")]
+    UnsupportedPixelDescriptor { reason: &'static str },
 }
 
 impl ErrorKind {
@@ -605,6 +648,47 @@ impl Error {
     pub fn incomplete_image(height: u32, pushed: u32) -> Self {
         Self::new(ErrorKind::IncompleteImage { height, pushed })
     }
+
+    // ========================================================================
+    // Convenience constructors - Taxonomy refinements (caterr Pattern-B follow-up)
+    // ========================================================================
+
+    /// Create a resource-limit-exceeded error for a configured
+    /// [`zencodec::ResourceLimits`] cap (memory, output bytes, input bytes,
+    /// …) — distinct from an actual allocation failure
+    /// ([`Error::allocation_failed`]).
+    #[track_caller]
+    pub fn resource_limit_exceeded(kind: zencodec::LimitKind, actual: u64, limit: u64) -> Self {
+        Self::new(ErrorKind::ResourceLimitExceeded {
+            kind,
+            actual,
+            limit,
+        })
+    }
+
+    /// Create a policy-rejected error: the request was valid and understood,
+    /// but a configured policy declined it (e.g. progressive JPEG rejected
+    /// by decode policy).
+    #[track_caller]
+    pub fn policy_rejected(reason: &'static str) -> Self {
+        Self::new(ErrorKind::PolicyRejected { reason })
+    }
+
+    /// Create an invalid-state error: the caller invoked an operation out of
+    /// sequence (e.g. `finish()` without `push_rows()`, or changing
+    /// width/format mid-stream).
+    #[track_caller]
+    pub fn invalid_state(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidState { reason })
+    }
+
+    /// Create an unsupported-pixel-descriptor error: decode-side pixel
+    /// format negotiation found no acceptable
+    /// `(ChannelType, ChannelLayout)` combination.
+    #[track_caller]
+    pub fn unsupported_pixel_descriptor(reason: &'static str) -> Self {
+        Self::new(ErrorKind::UnsupportedPixelDescriptor { reason })
+    }
 }
 
 // ============================================================================
@@ -689,6 +773,9 @@ impl From<zencodec::LimitExceeded> for Error {
     #[track_caller]
     fn from(err: zencodec::LimitExceeded) -> Self {
         use zencodec::LimitExceeded;
+        // `.kind()` only borrows, so it's available for the arms below even
+        // though the subsequent `match err` consumes `err` by value.
+        let kind = err.kind();
         match err {
             LimitExceeded::Width { actual, .. } => {
                 Self::invalid_dimensions(actual, 0, "width exceeds limit")
@@ -697,14 +784,22 @@ impl From<zencodec::LimitExceeded> for Error {
                 Self::invalid_dimensions(0, actual, "height exceeds limit")
             }
             LimitExceeded::Pixels { actual, max } => Self::image_too_large(actual, max),
-            LimitExceeded::Memory { actual, max } => Self::new(ErrorKind::AllocationFailed {
-                bytes: actual as usize,
-                context: if max > 0 {
-                    "memory limit exceeded"
-                } else {
-                    "allocation failed"
-                },
-            }),
+            // Memory/InputSize/OutputSize/Duration/TotalPixels are all
+            // configured `ResourceLimits` caps, not allocation failures
+            // (`Memory`, previously) or malformed bitstream content (the
+            // rest, previously caught by the `decode_error` fallback below).
+            // Route them all through the shared `LimitsExceeded(LimitKind)`
+            // category using the exceeded kind from `err.kind()`.
+            LimitExceeded::Memory { actual, max }
+            | LimitExceeded::InputSize { actual, max }
+            | LimitExceeded::OutputSize { actual, max }
+            | LimitExceeded::Duration { actual, max }
+            | LimitExceeded::TotalPixels { actual, max } => {
+                Self::resource_limit_exceeded(kind, actual, max)
+            }
+            LimitExceeded::Frames { actual, max } => {
+                Self::resource_limit_exceeded(kind, actual as u64, max as u64)
+            }
             _ => Self::decode_error(format!("{err}")),
         }
     }
@@ -846,6 +941,18 @@ impl zencodec::CategorizedError for ErrorKind {
             // vs operation gaps.
             Self::Cancelled(reason) => reason.category(),
             Self::UnsupportedOperation(op) => op.category(),
+
+            // === Taxonomy refinements (caterr Pattern-B follow-up) ===
+            // A configured cap, not an actual allocation failure — carries
+            // which cap via the embedded `LimitKind`.
+            Self::ResourceLimitExceeded { kind, .. } => C::LimitsExceeded(*kind),
+            // Understood-and-declined by policy, not malformed or unsupported.
+            Self::PolicyRejected { .. } => C::PolicyRejected,
+            // Caller-side API-protocol violation, not bad image data.
+            Self::InvalidState { .. } => C::InvalidState,
+            // Decode-side descriptor negotiation failure — same category as
+            // `UnsupportedPixelFormat` above, different payload shape.
+            Self::UnsupportedPixelDescriptor { .. } => C::UnsupportedPixelFormat,
         }
     }
 }
