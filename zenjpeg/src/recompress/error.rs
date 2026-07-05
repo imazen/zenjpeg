@@ -10,7 +10,11 @@ pub enum Error {
     #[error("target_zensim_a {0} is out of range [0, 100]")]
     TargetOutOfRange(f32),
 
-    /// JPEG header parse / probe failed.
+    /// JPEG header parse / probe failed on structurally-broken input (has a
+    /// SOI but is otherwise malformed, e.g. missing quant tables). Truncated
+    /// / too-short input uses [`ProbeTruncated`](Self::ProbeTruncated)
+    /// instead, which categorizes as `UnexpectedEof` rather than
+    /// `MalformedImage`.
     #[error("failed to probe source JPEG: {0}")]
     Probe(String),
 
@@ -19,7 +23,9 @@ pub enum Error {
     #[error("unsupported source JPEG: {0}")]
     Unsupported(&'static str),
 
-    /// zenjpeg encode/decode reported an internal error.
+    /// zenjpeg encode/decode reported an internal error whose category could
+    /// not be determined (legacy flattened path; prefer
+    /// [`ZenjpegCategorized`](Self::ZenjpegCategorized) at new call sites).
     #[error("zenjpeg I/O error: {0}")]
     Zenjpeg(String),
 
@@ -31,23 +37,53 @@ pub enum Error {
     /// disagreed with what its calibration predicted.
     #[error("internal: {0}")]
     Internal(&'static str),
+
+    /// JPEG header parse / probe failed because the input ended before a
+    /// complete header could be read (too short, or truncated mid-header).
+    /// Distinct from [`Probe`](Self::Probe): categorizes as `UnexpectedEof`
+    /// (caller can retry with more data) rather than `MalformedImage`.
+    #[error("failed to probe source JPEG (truncated): {0}")]
+    ProbeTruncated(String),
+
+    /// A downstream zenjpeg encode/decode failure whose original
+    /// [`zencodec::ErrorCategory`] is preserved (as opposed to
+    /// [`Zenjpeg`](Self::Zenjpeg), which flattens to `Internal`). Used at
+    /// call sites where the underlying `crate::error::Error` implements
+    /// [`zencodec::CategorizedError`] and the category is captured before
+    /// the typed cause is formatted away to a `String`.
+    #[error("zenjpeg error: {message}")]
+    ZenjpegCategorized {
+        message: String,
+        category: zencodec::ErrorCategory,
+    },
 }
 
 // `crate::error` is private but the same type is re-exported from
 // `crate::encoder::Error` (and `crate::decoder::Error`). Hook into
 // that re-export.
+//
+// Captures `e.category()` (via `crate::error::Error`'s `CategorizedError`
+// impl) before formatting `e` away to a `String`, so the original category
+// survives instead of collapsing to `Internal`.
 impl From<crate::encoder::Error> for Error {
     fn from(e: crate::encoder::Error) -> Self {
-        Error::Zenjpeg(format!("{e}"))
+        use zencodec::CategorizedError;
+        let category = e.category();
+        Error::ZenjpegCategorized {
+            message: format!("{e}"),
+            category,
+        }
     }
 }
 
 /// Codec-agnostic classification of recompression failures (zencodec #103).
 ///
-/// The downstream-tool arms (`Zenjpeg` / `Zensim`) flatten their typed cause to
-/// a `String`, so the underlying category can't be delegated; they report as
+/// The legacy `Zenjpeg` / `Zensim` arms flatten their typed cause to a
+/// `String` with no category alongside it, so they report as
 /// [`Internal`](zencodec::ErrorCategory::Internal) — a failure inside the
 /// recompress pipeline, not attributable to the caller's request.
+/// `ZenjpegCategorized` avoids that by carrying the category captured before
+/// flattening (see its `From<crate::encoder::Error>` construction site).
 impl zencodec::CategorizedError for Error {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenjpeg")
@@ -58,13 +94,19 @@ impl zencodec::CategorizedError for Error {
         match self {
             // Caller asked for a target outside [0, 100].
             Self::TargetOutOfRange(_) => C::InvalidParameters,
-            // Probing the source JPEG header failed → unreadable / bad input.
+            // Probing the source JPEG header failed on structurally-broken
+            // (but not truncated) input → unreadable / bad input.
             Self::Probe(_) => C::MalformedImage,
+            // Probing hit EOF before a complete header — caller can retry
+            // with more data, distinct from malformed content.
+            Self::ProbeTruncated(_) => C::UnexpectedEof,
             // The source uses a JPEG feature the recompressor doesn't handle.
             Self::Unsupported(_) => C::UnsupportedImageFeature,
-            // Downstream zenjpeg / zensim failures (typed cause flattened to a
-            // String) and broken internal invariants are all internal faults.
+            // Legacy flattened downstream zenjpeg / zensim failures and
+            // broken internal invariants are all internal faults.
             Self::Zenjpeg(_) | Self::Zensim(_) | Self::Internal(_) => C::Internal,
+            // Category preserved from the original typed cause.
+            Self::ZenjpegCategorized { category, .. } => *category,
         }
     }
 }
@@ -83,11 +125,34 @@ mod tests {
         );
         assert_eq!(Error::Probe("eof".into()).category(), C::MalformedImage);
         assert_eq!(
+            Error::ProbeTruncated("too short".into()).category(),
+            C::UnexpectedEof
+        );
+        assert_eq!(
             Error::Unsupported("12-bit").category(),
             C::UnsupportedImageFeature
         );
         assert_eq!(Error::Zenjpeg("io".into()).category(), C::Internal);
         assert_eq!(Error::Zensim("score".into()).category(), C::Internal);
         assert_eq!(Error::Internal("invariant").category(), C::Internal);
+        assert_eq!(
+            Error::ZenjpegCategorized {
+                message: "malformed".into(),
+                category: C::MalformedImage,
+            }
+            .category(),
+            C::MalformedImage
+        );
+    }
+
+    /// `From<crate::encoder::Error>` must preserve the source error's
+    /// category instead of collapsing every zenjpeg encode/decode failure to
+    /// `Internal` (the bug this variant fixes).
+    #[test]
+    fn from_encoder_error_preserves_category() {
+        let encoder_err = crate::error::Error::invalid_jpeg_data("bad SOI");
+        let recompress_err: Error = encoder_err.into();
+        assert_eq!(recompress_err.category(), C::MalformedImage);
+        assert!(matches!(recompress_err, Error::ZenjpegCategorized { .. }));
     }
 }

@@ -43,8 +43,18 @@ impl SourceAnalysis {
 
 /// Run header-only analysis on `jpeg_bytes`.
 pub fn analyze_source(jpeg_bytes: &[u8]) -> Result<SourceAnalysis, Error> {
-    let probe: JpegProbe =
-        crate::detect::probe(jpeg_bytes).map_err(|e| Error::Probe(format!("{e}")))?;
+    let probe: JpegProbe = crate::detect::probe(jpeg_bytes).map_err(|e| {
+        use crate::detect::ProbeError;
+        // Thread the concrete `ProbeError` kind through before flattening to
+        // a `String`: `TooShort`/`Truncated` mean "not enough bytes yet" (the
+        // caller can retry with more data), which is a different failure
+        // mode from a structurally malformed header (`NotJpeg` /
+        // `NoQuantTables`) — see `Error::category()`.
+        match e {
+            ProbeError::TooShort | ProbeError::Truncated => Error::ProbeTruncated(format!("{e}")),
+            _ => Error::Probe(format!("{e}")),
+        }
+    })?;
 
     // We allow YCbCr (3) and grayscale (1). CMYK is parked behind a future
     // unsupported branch until we calibrate its strategy parameters.

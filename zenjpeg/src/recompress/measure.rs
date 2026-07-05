@@ -65,10 +65,17 @@ struct DecodedRgb8 {
 }
 
 fn decode_rgb8(jpeg: &[u8]) -> Result<DecodedRgb8, Error> {
+    use zencodec::CategorizedError;
     let cfg = DecodeConfig::new().output_target(OutputTarget::Srgb8);
-    let decoded = cfg
-        .decode(jpeg, Unstoppable)
-        .map_err(|e| Error::Zenjpeg(format!("decode for scoring: {e}")))?;
+    let decoded = cfg.decode(jpeg, Unstoppable).map_err(|e| {
+        // Capture the decode error's real category before flattening it to a
+        // `String` — avoids collapsing every decode failure to `Internal`.
+        let category = e.category();
+        Error::ZenjpegCategorized {
+            message: format!("decode for scoring: {e}"),
+            category,
+        }
+    })?;
     let pixels = decoded
         .pixels_u8()
         .ok_or(Error::Internal("decoded u8 pixels missing"))?
