@@ -598,11 +598,19 @@ impl SweepBuilder {
     }
 
     /// Cap the number of (deduplicated) cells. The reduction ladder:
-    /// collapse mode axes lowest-tier-first (pre_blur, allow_16bit,
-    /// downsampling, deringing, aq, then extra scans, extra color
-    /// modes, extra coeff-opt points), then coarsen the quality grid
-    /// (uniformly, endpoints kept, ≥ 11 points). Families are never
-    /// dropped. Every reduction is recorded.
+    /// collapse mode axes lowest-tier-first (moz_chroma_deltas, pre_blur,
+    /// allow_16bit, downsampling, deringing, aq, boundary_rd, extra scans,
+    /// extra coeff-opt points, then extra families down to the 4 core
+    /// ones), then coarsen the quality grid (uniformly, endpoints kept, ≥ 11
+    /// points). Every reduction is recorded.
+    ///
+    /// `color_modes` (color mode + subsampling) is a **mandatory** axis and
+    /// is never shed by this ladder — it is the one axis the picker cannot
+    /// train without. If the mandatory `color_modes` × quality cross alone
+    /// exceeds `max_cells`, the cap is best-effort: [`plan()`](Self::plan)
+    /// samples the full mandatory cross anyway and reports
+    /// [`SweepPlan::over_budget`] rather than silently dropping color modes
+    /// to fit.
     #[must_use]
     pub fn with_budget(mut self, max_cells: usize) -> Self {
         self.budget = Some(max_cells);
