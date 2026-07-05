@@ -1043,6 +1043,38 @@ impl std::fmt::Display for PngLoadError {
 
 impl std::error::Error for PngLoadError {}
 
+/// Write an 8-bit RGB PNG (the save-side companion of [`load_png`]) —
+/// for handing decoded pixels to external scorers that only read PNG.
+pub fn save_png(path: &std::path::Path, img: RgbImageRef<'_>) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let file = std::fs::File::create(path)?;
+    let mut enc = png::Encoder::new(
+        std::io::BufWriter::new(file),
+        img.width() as u32,
+        img.height() as u32,
+    );
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc
+        .write_header()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let mut stream = writer
+        .stream_writer()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    // Row by row to handle stride.
+    for row in img.rows() {
+        use rgb::ComponentBytes;
+        stream.write_all(row.as_bytes())?;
+    }
+    stream
+        .finish()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    writer
+        .finish()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok(())
+}
+
 /// Write a PPM file from an RGB image (for C++ tool interop).
 pub fn write_ppm(path: &std::path::Path, img: RgbImageRef<'_>) -> std::io::Result<()> {
     use std::io::Write;

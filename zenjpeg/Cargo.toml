@@ -427,6 +427,10 @@ name = "sweep_validate"
 required-features = ["__expert"]
 
 [[example]]
+name = "sweep_cell"
+required-features = ["__expert"]
+
+[[example]]
 name = "zq_calibrate"
 required-features = ["target-zq"]
 
