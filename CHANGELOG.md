@@ -5,6 +5,88 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES (Pattern-B error envelope)
+
+- **BREAKING:** the `zencodec::encode::EncoderConfig` / `EncodeJob` / `Encoder` /
+  `zencodec::decode::DecoderConfig` / `DecodeJob` / `Decode` / `StreamingDecode`
+  trait impls in `crate::codec` switch `type Error` from `crate::error::Error`
+  to `whereat::At<zencodec::CodecError>` (a548bb98, "Pattern B"). Any downstream
+  code naming the associated `Error` type directly (rather than going through
+  `?`/`.into()` or the codec-agnostic `CategorizedError` trait) must update to
+  the new envelope type.
+- **BREAKING:** the 4 delegating convenience methods built on those trait impls
+  change return type accordingly: `JpegEncoderConfig::encode` and
+  `JpegDecoderConfig::{decode, probe_header, probe_full_metadata}` now return
+  `Result<_, At<CodecError>>` instead of `Result<_, crate::error::Error>`.
+  Recover the native `Error` detail via `CodecError::detail`
+  (`zencodec::CodecError`) when needed.
+- Landed on `main` in a548bb98 without an accompanying version bump, so `main`
+  could otherwise publish this break as a patch release. **Defensive pre-bump:**
+  crate version advanced 0.8.7 → 0.9.0 (b03e7253, Cargo.toml only — not a
+  publish/tag/release; those still need the owner's explicit go-ahead) so a
+  future `cargo publish` from `main` reflects the break in its version number.
+  `cargo semver-checks` itself cannot currently run against this crate (see
+  below) — the break was confirmed by direct inspection of the trait `type
+  Error` and convenience-method return-type changes in a548bb98.
+  - **Known limitation:** `cargo semver-checks check-release -p zenjpeg` fails
+    to even build the "current" side — it extracts the crate standalone
+    (`cargo add --path`), which loses the workspace's `[patch.crates-io]`
+    override that currently supplies the unreleased `zencodec`
+    `CategorizedError`/`ErrorCategory`/`LimitKind`/`CodecError` API this crate's
+    error taxonomy depends on. This is a pre-existing condition of the Pattern-B
+    work (a548bb98), not something introduced by the fixes in this entry;
+    `semver-checks` will work again once zencodec 0.1.26 actually publishes and
+    the `[patch.crates-io]` entry is dropped.
+
+### Fixed (caterr Pattern-B follow-up bugs)
+
+- `JpegEncoderConfig::generic_effort()` echoed the *clamped* effort value
+  instead of what was actually passed to
+  `with_generic_effort()`, breaking the fleet accept-signal idiom
+  (set-then-get to confirm accepted input). The raw value is now stored
+  verbatim and echoed back by the getter; the 0..=2 tier clamp is applied
+  only at point-of-use in `effective_config()`. Round-trip test extended to
+  cover out-of-tier inputs (99, -7). (d0c6366c)
+- Error-category reclassifications in `crate::codec` and `crate::error`
+  (additive — `ErrorKind`/`recompress::Error` are `#[non_exhaustive]`, no
+  variant renamed or removed):
+  - Configured `ResourceLimits` cap hits (`max_memory_bytes`,
+    `max_output_bytes`, `max_input_bytes`, encode- and decode-side) no longer
+    route through `AllocationFailed`/`OutOfMemory` — they use the new
+    `ErrorKind::ResourceLimitExceeded { kind: zencodec::LimitKind, .. }`,
+    categorizing as `ErrorCategory::LimitsExceeded(kind)`. Also fixed the
+    equivalent bug in `From<zencodec::LimitExceeded> for Error`'s `Memory`
+    arm and its `InputSize`/`OutputSize`/`Duration`/`TotalPixels` arms (the
+    latter previously fell through to `decode_error` → `MalformedImage`).
+  - `check_progressive_policy`'s decode-policy rejection (and its inlined
+    duplicate) no longer report `UnsupportedFeature`/`UnsupportedImageFeature`
+    — they use the new `ErrorKind::PolicyRejected`, categorizing as
+    `ErrorCategory::PolicyRejected` (the request was understood and declined,
+    not malformed or unimplemented).
+  - `push_rows`'s width/format-mid-stream-change guard and `finish()`-without-
+    `push_rows()` now use the new `ErrorKind::InvalidState` (category
+    `InvalidState`) instead of `UnsupportedFeature` — these are caller
+    API-protocol violations, not missing codec features.
+  - `push_decoder`'s pixel-descriptor-negotiation-failed fallback arm now
+    uses the new `ErrorKind::UnsupportedPixelDescriptor` (category
+    `UnsupportedPixelFormat`) instead of `UnsupportedFeature`.
+  - One existing test (`codec::tests::effort_levels`) pinned the old clamped-
+    echo behavior and was updated together with its fix, per commit message.
+  (d0c6366c)
+- `recompress::error::Error` no longer flattens the typed cause to a `String`
+  before categorizing: `detect::ProbeError::{TooShort,Truncated}` now produce
+  the new `Error::ProbeTruncated` (category `UnexpectedEof`) instead of
+  `Error::Probe` (`MalformedImage`); `From<crate::encoder::Error>` and the
+  decode-for-scoring call site in `measure.rs` now capture the source error's
+  real `zencodec::ErrorCategory` via the new `Error::ZenjpegCategorized`
+  variant instead of collapsing every zenjpeg encode/decode failure to
+  `Internal`. (96553711)
+- Stale rustdoc on `SweepBuilder::with_budget`: dropped "extra color modes"
+  from the shed-ladder description (color mode + subsampling is a mandatory
+  axis, never shed by the ladder) and documented that the budget is
+  best-effort — `SweepPlan::over_budget` is reported rather than the mandatory
+  cross being silently dropped to fit. (866602c5)
+
 ### Changed
 - **zencodec trait impls now return the `At<zencodec::CodecError>` envelope
   (Pattern B).** The `EncoderConfig` / `EncodeJob` / `Encoder` / `DecoderConfig` /
