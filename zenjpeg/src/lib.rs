@@ -359,3 +359,116 @@ pub use codec::{
 // zennode pipeline node definitions (EncodeJpeg, DecodeJpeg)
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
+
+// ============================================================================
+// One-shot convenience functions (crate root)
+// ============================================================================
+//
+// Purely-additive free helpers that do the core job — pixels → JPEG and JPEG →
+// RGB8 — in a single call with sane defaults, for callers who haven't read the
+// builder docs. The encode input is a self-describing [`zenpixels::PixelSlice`]
+// (format + dimensions + row stride ride with the pixels), so there is no
+// redundant `width`/`height` to keep in sync and no buffer-length mismatch to
+// guard against. Reach for the streaming builder API ([`encoder::EncoderConfig`]
+// / [`decoder::Decoder`]) when you need chroma-subsampling control, XYB color,
+// progressive scans, embedded ICC/EXIF/XMP, resource limits, or cooperative
+// cancellation.
+
+/// Encode a [`zenpixels::PixelSlice`] to a baseline JPEG in one call.
+///
+/// The slice is self-describing: it carries the pixel format (RGB8, RGBA8,
+/// grayscale, 16-bit, f32, …), the dimensions, and the row stride, so there is
+/// no separate `width`/`height` argument to keep in sync and no buffer-length
+/// mismatch to guard against — strided slices are handled directly. `quality`
+/// is `0..=100` (higher = better; `85` is a good web default). Encodes standard
+/// YCbCr with 4:2:0 chroma — the most widely compatible JPEG configuration.
+///
+/// Requires the `zencodec` feature (the typed [`zenpixels`] encode path). For
+/// 4:4:4 / 4:2:2 chroma, XYB color, progressive scans, embedded ICC/EXIF/XMP,
+/// or cooperative cancellation, use the [`encoder::EncoderConfig`] builder.
+///
+/// # Errors
+/// Returns an error if the slice's pixel format is not one the encoder
+/// supports, plus any encode error bubbled up from the underlying pipeline.
+///
+/// ```
+/// use zenjpeg::{decode_rgb8, encode};
+/// use zenpixels::{PixelDescriptor, PixelSlice};
+///
+/// // A 16×16 RGB image — dims + stride + format ride with the pixels.
+/// let (width, height) = (16u32, 16u32);
+/// let rgb: Vec<u8> = (0..width * height)
+///     .flat_map(|i| { let v = (i % 256) as u8; [v, 255 - v, 128] })
+///     .collect();
+/// let img = PixelSlice::new(&rgb, width, height, width as usize * 3, PixelDescriptor::RGB8_SRGB)?;
+///
+/// // Encode to a baseline JPEG at quality 85 — no separate width/height args.
+/// let jpeg = encode(img, 85)?;
+///
+/// // Decode any JPEG back to tightly-packed RGB8 + dimensions.
+/// let (pixels, w, h) = decode_rgb8(&jpeg)?;
+///
+/// assert_eq!((w, h), (width, height));
+/// assert_eq!(pixels.len(), (width * height * 3) as usize); // JPEG is lossy — sizes match, bytes approximate
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[cfg(feature = "zencodec")]
+pub fn encode(img: zenpixels::PixelSlice<'_>, quality: u8) -> crate::error::Result<Vec<u8>> {
+    // `JpegEncoderConfig::ycbcr(..).encode(slice)` runs the default config → job
+    // → encode path: it pulls RGB8 rows from the (possibly strided) slice via
+    // `zenpixels-convert` and feeds the streaming encoder. 4:2:0 chroma matches
+    // the most widely compatible JPEG configuration.
+    let output = crate::codec::JpegEncoderConfig::ycbcr(
+        f32::from(quality),
+        crate::encoder::ChromaSubsampling::Quarter,
+    )
+    .encode(img)?;
+    Ok(output.into_vec())
+}
+
+/// Decode a JPEG (any color space) to tightly-packed 8-bit RGB in one call.
+///
+/// Returns `(rgb, width, height)` where `rgb` is exactly `width * height * 3`
+/// bytes (`R, G, B` per pixel, no stride padding, sRGB). Grayscale, YCbCr and
+/// CMYK / YCCK sources are all normalized to 8-bit RGB.
+///
+/// For f32 / linear-light output, resource limits (decompression-bomb
+/// protection), strictness control, preserved metadata, or cooperative
+/// cancellation, use the [`decoder::Decoder`] builder.
+///
+/// # Errors
+/// Returns an error if `jpeg` is not a valid / supported JPEG, or a resource
+/// limit is exceeded.
+///
+/// ```
+/// use zenjpeg::decode_rgb8;
+/// use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+///
+/// // A 16×16 RGB image, tightly packed (width * height * 3 bytes).
+/// let (width, height) = (16u32, 16u32);
+/// let rgb: Vec<u8> = (0..width * height)
+///     .flat_map(|i| { let v = (i % 256) as u8; [v, 255 - v, 128] })
+///     .collect();
+///
+/// // Encode a baseline JPEG via the builder, then round-trip it back to RGB8.
+/// let jpeg = EncoderConfig::ycbcr(85u8, ChromaSubsampling::Quarter)
+///     .encode_bytes(&rgb, width, height, PixelLayout::Rgb8Srgb)?;
+/// let (pixels, w, h) = decode_rgb8(&jpeg)?;
+///
+/// assert_eq!((w, h), (width, height));
+/// assert_eq!(pixels.len(), (width * height * 3) as usize); // JPEG is lossy — sizes match, bytes approximate
+/// # Ok::<(), zenjpeg::encoder::EncodeError>(())
+/// ```
+pub fn decode_rgb8(jpeg: &[u8]) -> crate::error::Result<(Vec<u8>, u32, u32)> {
+    // `PixelFormat::Rgb` makes the decoder emit 3-channel RGB for every input
+    // (grayscale is expanded, CMYK/YCCK is converted); the default
+    // `OutputTarget::Srgb8` keeps it u8.
+    let decoded = crate::decoder::Decoder::new()
+        .output_format(crate::types::PixelFormat::Rgb)
+        .decode(jpeg, enough::Unstoppable)?;
+    let (width, height) = decoded.dimensions();
+    let rgb = decoded
+        .into_pixels_u8()
+        .ok_or_else(|| crate::error::Error::internal("decode produced no u8 pixels"))?;
+    Ok((rgb, width, height))
+}

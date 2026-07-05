@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One-shot crate-root convenience functions** — `zenjpeg::encode(img: zenpixels::PixelSlice, quality)`
+  encodes a self-describing pixel slice to a baseline YCbCr 4:2:0 JPEG in one
+  call (format + dimensions + row stride ride with the pixels — no redundant
+  `width`/`height`, no buffer-length mismatch to guard against; requires the
+  `zencodec` feature), and `zenjpeg::decode_rgb8(jpeg) -> (Vec<u8>, u32, u32)`
+  decodes any JPEG (grayscale / YCbCr / CMYK) to tightly-packed RGB8 +
+  dimensions. Purely additive wrappers over the `JpegEncoderConfig` encode path
+  / `Decoder`; the builder API stays the power path. Mirrors zenresize / zenpng.
+
 - **BQuarter-aware XYB subsampling pick in `EncoderConfig::adaptive`** — when
   the adaptive oracle chooses XYB, it now picks Full vs BQuarter from
   zenanalyze's `xyb_bquarter_chroma_loss` (id 139, the per-color-sensitivity-

@@ -16,12 +16,41 @@ no C dependencies.
 
 ```toml
 [dependencies]
-zenjpeg = "0.8"
+zenjpeg = { version = "0.8", features = ["zencodec"] }
 ```
 
-Encode with the `EncoderConfig` builder and decode with `Decoder`. The builder
-covers chroma subsampling, XYB color, progressive scans, embedded ICC/EXIF/XMP,
-resource limits, and cooperative cancellation.
+The one-shot path encodes a self-describing `zenpixels::PixelSlice` to a JPEG at
+a quality level, and decodes any JPEG back to RGB8 + dimensions, each in a single
+call. The slice carries the pixel format, dimensions, and row stride, so the
+dimensions ride *with* the pixels — there is no separate width/height to keep in
+sync and no buffer-length mismatch to guard against.
+
+```rust
+use zenjpeg::{decode_rgb8, encode};
+use zenpixels::{PixelDescriptor, PixelSlice};
+
+// A 16×16 RGB image — dims + stride + format ride with the pixels.
+let (width, height) = (16u32, 16u32);
+let rgb: Vec<u8> = (0..width * height)
+    .flat_map(|i| { let v = (i % 256) as u8; [v, 255 - v, 128] })
+    .collect();
+let img = PixelSlice::new(&rgb, width, height, width as usize * 3, PixelDescriptor::RGB8_SRGB)?;
+
+// Encode to a baseline JPEG at quality 85 — no separate width/height arguments.
+let jpeg = encode(img, 85)?;
+
+// Decode any JPEG back to tightly-packed RGB8 + dimensions.
+let (pixels, w, h) = decode_rgb8(&jpeg)?;
+
+assert_eq!((w, h), (width, height));
+assert_eq!(pixels.len(), (width * height * 3) as usize); // JPEG is lossy — sizes match, bytes approximate
+```
+
+`encode` takes a self-describing `zenpixels::PixelSlice` (needs the `zencodec`
+feature) and encodes standard YCbCr 4:2:0; `decode_rgb8` normalizes grayscale,
+YCbCr and CMYK sources to 8-bit RGB. For chroma-subsampling control, XYB color,
+progressive scans, embedded ICC/EXIF/XMP, resource limits, or cooperative
+cancellation, drop down to the builder API below.
 
 ### Encode (builder)
 
