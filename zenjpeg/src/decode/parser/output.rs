@@ -361,7 +361,7 @@ impl<'a> JpegParser<'a> {
             self.components[1].id,
             self.components[2].id,
         ];
-        ids == [b'R', b'G', b'B']
+        ids == *b"RGB"
     }
 
     /// Check if we can use the fast i16 path for 4:4:4 images.
