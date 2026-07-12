@@ -106,6 +106,8 @@ mod decode_callback;
 mod decode_external;
 #[path = "bundled/decode_perf_locked.rs"]
 mod decode_perf_locked;
+#[path = "bundled/decode_truncation_series.rs"]
+mod decode_truncation_series;
 #[path = "bundled/decode_xyb_failures.rs"]
 mod decode_xyb_failures;
 #[path = "bundled/decoder_consistency.rs"]

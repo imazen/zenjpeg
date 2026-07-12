@@ -109,6 +109,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 - README overhauled and split into a GitHub `README.md` (full badge row) and a generated badge-free `README.crates.md` for crates.io (the crate `readme` field now points at it); corrected the feature table (the `decoder`/`trellis` flags are documented as always-compiled no-ops), refreshed the crosslink footer, and added `benchmarks/README.md` reproduction methodology.
 
 ### Added
+- **Conformance test: `check_decode_truncation_series` (zencodec-testkit)** — the
+  truncation/EOF half of the codec error-taxonomy check (zencodec PR #112). Feeds a
+  valid JPEG, truncates it at a deterministic prefix series, and asserts every
+  dyn-erased decode categorizes as incomplete input (never panic/OOM/Internal).
+  Wired as `bundled/decode_truncation_series.rs` under the `zencodec` feature; the
+  `[patch.crates-io] zencodec` + `zencodec-testkit` dev-dep both pin rev `c3220d51`.
 - **`zencodec::CategorizedError` implemented for the public error type** (zencodec
   #103 taxonomy adoption). `crate::error::Error` and its inner `ErrorKind` — the
   type behind `zenjpeg::decoder::Error` / `encoder::Error` / `DecodeError` /

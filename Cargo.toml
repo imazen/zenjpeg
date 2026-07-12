@@ -208,4 +208,10 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "3ac20f99d45e985e09f274fc07181b238385e703" }
 # TEMP: until zencodec 0.1.26 ships (PR #103 — CategorizedError taxonomy).
 # Drop and bump the workspace dep to the released version at landing time.
-zencodec = { git = "https://github.com/imazen/zencodec", branch = "cancellation-classification-99" }
+# Pinned to rev c3220d51 (zencodec main): carries the merged #99 error taxonomy
+# AND the zencodec-testkit `check_decode_truncation_series` conformance check
+# (PR #112). The zencodec-testkit dev-dep in zenjpeg/Cargo.toml is pinned to the
+# SAME rev so both resolve to one unified zencodec (testkit's `path = ".."` dep
+# lands on this exact checkout). Drop for the crates.io version once zencodec
+# 0.1.26 + testkit publish.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
