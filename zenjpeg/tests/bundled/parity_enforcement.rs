@@ -235,8 +235,7 @@ fn test_parity_flower_q90() {
     let result = match test_image(&png_path, "flower", 90, BASELINE.flower_q90_diff_pct) {
         Some(r) => r,
         None => {
-            println!("Skipping: flower test image or C++ cjpegli not available");
-            return;
+            panic!("missing test prerequisite: flower test image or C++ cjpegli not available");
         }
     };
 
@@ -259,16 +258,14 @@ fn test_parity_cid22_large() {
     let png_path = match fetch_corpus_image("1459534.png") {
         Some(p) => p,
         None => {
-            println!("Skipping: 1459534.png not available");
-            return;
+            panic!("missing test prerequisite: 1459534.png not available (corpus fetch failed)");
         }
     };
 
     let result = match test_image(&png_path, "cid22_large", 90, BASELINE.cid22_large_diff_pct) {
         Some(r) => r,
         None => {
-            println!("Skipping: C++ cjpegli not available");
-            return;
+            panic!("missing test prerequisite: C++ cjpegli not available");
         }
     };
 
@@ -291,8 +288,7 @@ fn test_parity_cid22_medium_large() {
     let png_path = match fetch_corpus_image("2504911.png") {
         Some(p) => p,
         None => {
-            println!("Skipping: 2504911.png not available");
-            return;
+            panic!("missing test prerequisite: 2504911.png not available (corpus fetch failed)");
         }
     };
 
@@ -304,8 +300,7 @@ fn test_parity_cid22_medium_large() {
     ) {
         Some(r) => r,
         None => {
-            println!("Skipping: C++ cjpegli not available");
-            return;
+            panic!("missing test prerequisite: C++ cjpegli not available");
         }
     };
 
@@ -328,8 +323,7 @@ fn test_parity_cid22_medium() {
     let png_path = match fetch_corpus_image("3616956.png") {
         Some(p) => p,
         None => {
-            println!("Skipping: 3616956.png not available");
-            return;
+            panic!("missing test prerequisite: 3616956.png not available (corpus fetch failed)");
         }
     };
 
@@ -341,8 +335,7 @@ fn test_parity_cid22_medium() {
     ) {
         Some(r) => r,
         None => {
-            println!("Skipping: C++ cjpegli not available");
-            return;
+            panic!("missing test prerequisite: C++ cjpegli not available");
         }
     };
 
@@ -365,16 +358,16 @@ fn test_parity_cid22_small() {
     let png_path = match fetch_corpus_image("nicubunu_Game_baddie_Policeman.png") {
         Some(p) => p,
         None => {
-            println!("Skipping: nicubunu_Game_baddie_Policeman.png not available");
-            return;
+            panic!(
+                "missing test prerequisite: nicubunu_Game_baddie_Policeman.png not available (corpus fetch failed)"
+            );
         }
     };
 
     let result = match test_image(&png_path, "cid22_small", 90, BASELINE.cid22_small_diff_pct) {
         Some(r) => r,
         None => {
-            println!("Skipping: C++ cjpegli not available");
-            return;
+            panic!("missing test prerequisite: C++ cjpegli not available");
         }
     };
 

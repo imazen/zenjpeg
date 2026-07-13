@@ -70,8 +70,7 @@ fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
 fn test_roundtrip_flower_small() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
-        eprintln!("Skipping test: test image not found. Set JPEGLI_TESTDATA env var.");
-        return;
+        panic!("missing test prerequisite: test image not found - set JPEGLI_TESTDATA");
     }
 
     let (original_rgb, width, height) = load_png(&path).expect("Failed to load test image");

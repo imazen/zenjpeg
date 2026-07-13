@@ -49,17 +49,16 @@ fn test_q100_rust_vs_cpp() {
     let cjpegli_path = match find_cjpegli() {
         Some(p) => p,
         None => {
-            println!("Skipping: cjpegli not found");
-            return;
+            panic!("missing test prerequisite: cjpegli not found - set CJPEGLI_PATH");
         }
     };
 
     // Use a small test image for speed
     let test_img = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
-    if !test_img.exists() {
-        println!("Skipping: test image not found. Set JPEGLI_TESTDATA env var.");
-        return;
-    }
+    assert!(
+        test_img.exists(),
+        "missing test prerequisite: {test_img:?} not found - set JPEGLI_TESTDATA"
+    );
     let test_img = test_img.to_str().unwrap();
 
     // Load PNG

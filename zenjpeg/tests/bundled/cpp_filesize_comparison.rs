@@ -107,8 +107,10 @@ fn test_filesize_comparison_synthetic() {
             let cpp_jpeg = match encode_cpp(&ppm_path, quality) {
                 Some(j) => j,
                 None => {
-                    println!("Skipping {} Q{}: C++ not available", name, quality);
-                    continue;
+                    panic!(
+                        "missing test prerequisite: C++ cjpegli not available ({} Q{})",
+                        name, quality
+                    );
                 }
             };
 
@@ -156,10 +158,10 @@ fn test_filesize_comparison_synthetic() {
 #[test]
 fn test_filesize_comparison_photo() {
     let png_path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
-    if !png_path.exists() {
-        println!("Skipping: test image not found. Set JPEGLI_TESTDATA env var.");
-        return;
-    }
+    assert!(
+        png_path.exists(),
+        "missing test prerequisite: {png_path:?} not found - set JPEGLI_TESTDATA"
+    );
 
     // Load PNG
     let img = zenjpeg_bench_utils::load_png(&png_path).expect("Failed to load PNG");
@@ -177,8 +179,7 @@ fn test_filesize_comparison_photo() {
         let cpp_jpeg = match encode_cpp(ppm_path, quality) {
             Some(j) => j,
             None => {
-                println!("Skipping Q{}: C++ not available", quality);
-                continue;
+                panic!("missing test prerequisite: C++ cjpegli not available (Q{quality})");
             }
         };
 

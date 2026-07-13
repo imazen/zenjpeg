@@ -382,10 +382,11 @@ fn test_junk_before_rst_marker() {
 fn test_rst_resync_output_quality() {
     let jpeg = make_large_dri_jpeg();
     let markers = find_rst_markers(&jpeg);
-    if markers.len() < 4 {
-        eprintln!("skipping: need at least 4 RST markers");
-        return;
-    }
+    assert!(
+        markers.len() >= 4,
+        "self-generated JPEG must contain at least 4 RST markers (got {})",
+        markers.len()
+    );
 
     // Decode reference
     let decoder = Decoder::new();

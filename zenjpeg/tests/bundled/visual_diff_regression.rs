@@ -751,18 +751,17 @@ fn test_idct_method_libjpeg_compat_matches_mozjpeg() {
 /// The waterhouse painting has large smooth sky/water gradients that are sensitive
 /// to decoder precision differences.
 #[test]
+#[ignore = "requires codec-corpus"]
 fn test_waterhouse_banding() {
     let corpus = zenjpeg_bench_utils::codec_corpus_dir();
     let Some(corpus) = corpus else {
-        println!("SKIP: codec-corpus not found");
-        return;
+        panic!("missing test prerequisite: codec-corpus not found");
     };
     let path = corpus.join("imageflow/test_inputs/waterhouse.jpg");
     let jpeg = match std::fs::read(&path) {
         Ok(d) => d,
         Err(e) => {
-            println!("SKIP: {}: {e}", path.display());
-            return;
+            panic!("missing test prerequisite: {}: {e}", path.display());
         }
     };
 

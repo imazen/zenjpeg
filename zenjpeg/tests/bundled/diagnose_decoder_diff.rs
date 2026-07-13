@@ -1298,6 +1298,7 @@ fn test_decode_scanline_consistency() {
 /// This was the original bug: scanline reader produced max=113 error for all-1x2 sampling
 /// because StripProcessor classified it as S440 with undersized chroma buffers.
 #[test]
+#[ignore = "requires jpegli testdata"]
 fn regression_444_1x2_scanline_accuracy() {
     use imgref::ImgRefMut;
 
@@ -1306,8 +1307,7 @@ fn regression_444_1x2_scanline_accuracy() {
     let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(_) => {
-            eprintln!("SKIP: test image not found");
-            return;
+            panic!("missing test prerequisite: test image not found (jpegli testdata)");
         }
     };
 
@@ -1348,6 +1348,7 @@ fn regression_444_1x2_scanline_accuracy() {
 /// Test the native i16 YCbCr output path for non-standard sampling.
 /// Verifies that chroma planes have correct dimensions and plausible values.
 #[test]
+#[ignore = "requires jpegli testdata"]
 fn test_nonstandard_sampling_ycbcr_i16() {
     let base = zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower");
 
@@ -1359,8 +1360,7 @@ fn test_nonstandard_sampling_ycbcr_i16() {
     let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(_) => {
-            eprintln!("SKIP: 444_1x2 not found");
-            return;
+            panic!("missing test prerequisite: 444_1x2 test image not found");
         }
     };
 

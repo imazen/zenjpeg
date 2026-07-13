@@ -107,18 +107,19 @@ fn test_file(path: &Path) -> ExtractionResult {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn icc_extraction_all_levels_imageflow_corpus() {
     let cache = Path::new(IMAGEFLOW_CACHE);
-    if !cache.exists() {
-        eprintln!("SKIP: imageflow cache not found at {IMAGEFLOW_CACHE}");
-        return;
-    }
+    assert!(
+        cache.exists(),
+        "missing test prerequisite: imageflow cache not found at {IMAGEFLOW_CACHE}"
+    );
 
     let jpegs = find_jpegs(cache);
-    if jpegs.is_empty() {
-        eprintln!("SKIP: no JPEG files found in {IMAGEFLOW_CACHE}");
-        return;
-    }
+    assert!(
+        !jpegs.is_empty(),
+        "missing test prerequisite: no JPEG files found in {IMAGEFLOW_CACHE}"
+    );
 
     // Filter to only ICC-containing files
     let icc_jpegs: Vec<_> = jpegs
@@ -243,10 +244,10 @@ mod known_profiles {
 
     fn test_wide_gamut_subdir(subdir: &str) {
         let dir = wide_gamut_dir().join(subdir);
-        if !dir.exists() {
-            eprintln!("SKIP: {subdir} directory not found");
-            return;
-        }
+        assert!(
+            dir.exists(),
+            "missing test prerequisite: {subdir} directory not found"
+        );
         let jpegs = find_jpegs(&dir);
         assert!(!jpegs.is_empty(), "no JPEGs found in {subdir}");
 
@@ -292,48 +293,55 @@ mod known_profiles {
     }
 
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn adobe_rgb() {
         test_wide_gamut_subdir("adobe-rgb");
     }
 
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn display_p3() {
         test_wide_gamut_subdir("display-p3");
     }
 
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn prophoto_rgb() {
         test_wide_gamut_subdir("prophoto-rgb");
     }
 
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn rec2020_pq() {
         test_wide_gamut_subdir("rec-2020-pq");
     }
 
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn gray_gamma_22() {
         test_wide_gamut_subdir("gray-gamma-22");
     }
 
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn srgb_reference() {
         test_wide_gamut_subdir("srgb-reference");
     }
 
     /// Test the repro-icc files from real bug reports.
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn repro_icc_bug_reports() {
         let dir = Path::new(IMAGEFLOW_CACHE).join("repro-icc");
-        if !dir.exists() {
-            eprintln!("SKIP: repro-icc directory not found");
-            return;
-        }
+        assert!(
+            dir.exists(),
+            "missing test prerequisite: repro-icc directory not found"
+        );
         let jpegs = find_jpegs(&dir);
-        if jpegs.is_empty() {
-            eprintln!("SKIP: no JPEGs in repro-icc");
-            return;
-        }
+        assert!(
+            !jpegs.is_empty(),
+            "missing test prerequisite: no JPEGs in repro-icc"
+        );
 
         for path in &jpegs {
             let data = std::fs::read(path).unwrap();
@@ -359,6 +367,7 @@ mod known_profiles {
 
     /// Test miscellaneous ICC-tagged files (CMYK, orientation, etc.)
     #[test]
+    #[ignore = "requires local imageflow image cache"]
     fn misc_icc_files() {
         let paths = [
             "orientation/Landscape_1.jpg",
@@ -369,10 +378,10 @@ mod known_profiles {
 
         for rel in paths {
             let path = Path::new(IMAGEFLOW_CACHE).join(rel);
-            if !path.exists() {
-                eprintln!("SKIP: {rel} not found");
-                continue;
-            }
+            assert!(
+                path.exists(),
+                "missing test prerequisite: {rel} not found in imageflow cache"
+            );
             let data = std::fs::read(&path).unwrap();
 
             let icc = extract_icc_profile(&data);

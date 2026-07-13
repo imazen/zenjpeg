@@ -244,16 +244,14 @@ fn test_strip_edge_real_images() {
     let cjpegli = match cjpegli_path() {
         Some(p) => p,
         None => {
-            eprintln!("Skipping: cjpegli not found");
-            return;
+            panic!("missing test prerequisite: cjpegli not found - set CJPEGLI_PATH");
         }
     };
 
     let corpus_path = match find_corpus_path() {
         Some(p) => p,
         None => {
-            eprintln!("Skipping: corpus not found");
-            return;
+            panic!("missing test prerequisite: corpus not found - set CORPUS_DIR");
         }
     };
 
@@ -265,10 +263,10 @@ fn test_strip_edge_real_images() {
         .take(5)
         .collect();
 
-    if images.is_empty() {
-        eprintln!("Skipping: no PNG images in corpus");
-        return;
-    }
+    assert!(
+        !images.is_empty(),
+        "missing test prerequisite: no PNG images in corpus"
+    );
 
     println!("\n=== REAL IMAGE EDGE HANDLING TEST ===");
     println!("Corpus: {:?}", corpus_path);
@@ -508,8 +506,7 @@ fn test_strip_edge_synthetic_quick() {
     let cjpegli = match cjpegli_path() {
         Some(p) => p,
         None => {
-            eprintln!("Skipping: cjpegli not found");
-            return;
+            panic!("missing test prerequisite: cjpegli not found - set CJPEGLI_PATH");
         }
     };
 

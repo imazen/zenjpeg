@@ -53,8 +53,7 @@ fn test_cpp_quality_comparison() {
     let cjpegli_path = match zenjpeg::test_utils::find_cjpegli() {
         Some(p) => p,
         None => {
-            println!("Skipping: cjpegli not found. Set CJPEGLI_PATH env var.");
-            return;
+            panic!("missing test prerequisite: cjpegli not found - set CJPEGLI_PATH");
         }
     };
 

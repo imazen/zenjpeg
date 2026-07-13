@@ -26,10 +26,10 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 fn compare_rust_cpp_420() {
     let png_path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
 
-    if !png_path.exists() {
-        println!("Skipping: test image not found. Set JPEGLI_TESTDATA env var.");
-        return;
-    }
+    assert!(
+        png_path.exists(),
+        "missing test prerequisite: {png_path:?} not found - set JPEGLI_TESTDATA"
+    );
 
     let (pixels, width, height) = load_png(&png_path).expect("load PNG");
     println!("Image: {}x{}", width, height);
@@ -44,8 +44,7 @@ fn compare_rust_cpp_420() {
     let cjpegli = match zenjpeg::test_utils::find_cjpegli() {
         Some(p) => p,
         None => {
-            println!("Skipping C++ comparison: cjpegli not found. Set CJPEGLI_PATH env var.");
-            return;
+            panic!("missing test prerequisite: cjpegli not found - set CJPEGLI_PATH");
         }
     };
 
