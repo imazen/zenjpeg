@@ -619,7 +619,14 @@ fn wrap_app2(body: &[u8]) -> Vec<u8> {
 /// Inject a complete JPEG marker segment after SOI.
 fn inject_marker_after_soi(jpeg: &[u8], marker: &[u8]) -> Result<Vec<u8>> {
     if jpeg.len() < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
-        return Err(Error::unsupported_feature("gain map JPEG missing SOI"));
+        // `jpeg` here is always our own freshly-`encode_gainmap_jpeg`-produced
+        // buffer (see the sole call site), never caller-supplied — a missing
+        // SOI means this encoder's own output is broken, an internal
+        // invariant violation, not an unsupported feature (caterr Pattern-B
+        // follow-up finding #1 investigation).
+        return Err(Error::internal(
+            "gain map JPEG missing SOI (internal encoder invariant)",
+        ));
     }
     let mut result = Vec::with_capacity(jpeg.len() + marker.len());
     result.extend_from_slice(&jpeg[..2]); // SOI

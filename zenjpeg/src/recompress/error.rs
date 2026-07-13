@@ -90,21 +90,24 @@ impl zencodec::CategorizedError for Error {
     }
 
     fn category(&self) -> zencodec::ErrorCategory {
-        use zencodec::ErrorCategory as C;
+        use zencodec::{
+            ErrorCategory as C, ImageError as Img, InternalKind as Int, InvalidKind as Inv,
+            RequestError as Req, UnsupportedImageKind as UImg,
+        };
         match self {
             // Caller asked for a target outside [0, 100].
-            Self::TargetOutOfRange(_) => C::InvalidParameters,
+            Self::TargetOutOfRange(_) => C::Request(Req::Invalid(Inv::Parameters)),
             // Probing the source JPEG header failed on structurally-broken
             // (but not truncated) input → unreadable / bad input.
-            Self::Probe(_) => C::MalformedImage,
+            Self::Probe(_) => C::Image(Img::Malformed),
             // Probing hit EOF before a complete header — caller can retry
             // with more data, distinct from malformed content.
-            Self::ProbeTruncated(_) => C::UnexpectedEof,
+            Self::ProbeTruncated(_) => C::Image(Img::UnexpectedEof),
             // The source uses a JPEG feature the recompressor doesn't handle.
-            Self::Unsupported(_) => C::UnsupportedImageFeature,
+            Self::Unsupported(_) => C::Image(Img::Unsupported(UImg::Feature)),
             // Legacy flattened downstream zenjpeg / zensim failures and
             // broken internal invariants are all internal faults.
-            Self::Zenjpeg(_) | Self::Zensim(_) | Self::Internal(_) => C::Internal,
+            Self::Zenjpeg(_) | Self::Zensim(_) | Self::Internal(_) => C::Internal(Int::Bug),
             // Category preserved from the original typed cause.
             Self::ZenjpegCategorized { category, .. } => *category,
         }
@@ -118,30 +121,46 @@ mod tests {
 
     #[test]
     fn category_mapping() {
+        use zencodec::{
+            ImageError as Img, InternalKind as Int, InvalidKind as Inv, RequestError as Req,
+            UnsupportedImageKind as UImg,
+        };
         assert_eq!(Error::TargetOutOfRange(101.0).codec_name(), Some("zenjpeg"));
         assert_eq!(
             Error::TargetOutOfRange(101.0).category(),
-            C::InvalidParameters
+            C::Request(Req::Invalid(Inv::Parameters))
         );
-        assert_eq!(Error::Probe("eof".into()).category(), C::MalformedImage);
+        assert_eq!(
+            Error::Probe("eof".into()).category(),
+            C::Image(Img::Malformed)
+        );
         assert_eq!(
             Error::ProbeTruncated("too short".into()).category(),
-            C::UnexpectedEof
+            C::Image(Img::UnexpectedEof)
         );
         assert_eq!(
             Error::Unsupported("12-bit").category(),
-            C::UnsupportedImageFeature
+            C::Image(Img::Unsupported(UImg::Feature))
         );
-        assert_eq!(Error::Zenjpeg("io".into()).category(), C::Internal);
-        assert_eq!(Error::Zensim("score".into()).category(), C::Internal);
-        assert_eq!(Error::Internal("invariant").category(), C::Internal);
+        assert_eq!(
+            Error::Zenjpeg("io".into()).category(),
+            C::Internal(Int::Bug)
+        );
+        assert_eq!(
+            Error::Zensim("score".into()).category(),
+            C::Internal(Int::Bug)
+        );
+        assert_eq!(
+            Error::Internal("invariant").category(),
+            C::Internal(Int::Bug)
+        );
         assert_eq!(
             Error::ZenjpegCategorized {
                 message: "malformed".into(),
-                category: C::MalformedImage,
+                category: C::Image(Img::Malformed),
             }
             .category(),
-            C::MalformedImage
+            C::Image(Img::Malformed)
         );
     }
 
@@ -150,9 +169,10 @@ mod tests {
     /// `Internal` (the bug this variant fixes).
     #[test]
     fn from_encoder_error_preserves_category() {
+        use zencodec::ImageError as Img;
         let encoder_err = crate::error::Error::invalid_jpeg_data("bad SOI");
         let recompress_err: Error = encoder_err.into();
-        assert_eq!(recompress_err.category(), C::MalformedImage);
+        assert_eq!(recompress_err.category(), C::Image(Img::Malformed));
         assert!(matches!(recompress_err, Error::ZenjpegCategorized { .. }));
     }
 }

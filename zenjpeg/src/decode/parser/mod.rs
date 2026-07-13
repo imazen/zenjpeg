@@ -262,9 +262,12 @@ impl<'a> JpegParser<'a> {
         strictness: Strictness,
         alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
-        // Check for SOI
+        // Check for SOI. Missing SOI means this isn't a JPEG at all, distinct
+        // from a JPEG that starts correctly but is malformed further in —
+        // mirrors `crate::detect::ProbeError::NotJpeg` (caterr Pattern-B
+        // follow-up finding #2).
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
-            return Err(Error::invalid_jpeg_data("missing SOI marker"));
+            return Err(Error::not_a_jpeg_file());
         }
 
         // Extract ICC profile from raw data upfront

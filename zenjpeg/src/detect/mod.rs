@@ -110,14 +110,14 @@ impl zencodec::CategorizedError for ProbeError {
     }
 
     fn category(&self) -> zencodec::ErrorCategory {
-        use zencodec::ErrorCategory as C;
+        use zencodec::{ErrorCategory as C, ImageError as Img, UnsupportedImageKind as UImg};
         match self {
             // Not enough bytes yet, or header cut short → need more input.
-            Self::TooShort | Self::Truncated => C::UnexpectedEof,
+            Self::TooShort | Self::Truncated => C::Image(Img::UnexpectedEof),
             // No SOI marker: this isn't a JPEG at all → the format isn't handled.
-            Self::NotJpeg => C::UnsupportedImageType,
+            Self::NotJpeg => C::Image(Img::Unsupported(UImg::Type)),
             // Has SOI but no DQT before the scan → structurally broken JPEG.
-            Self::NoQuantTables => C::MalformedImage,
+            Self::NoQuantTables => C::Image(Img::Malformed),
         }
     }
 }
@@ -657,11 +657,25 @@ mod tests {
 
     #[test]
     fn probe_error_category_mapping() {
-        use zencodec::{CategorizedError, ErrorCategory as C};
+        use zencodec::{
+            CategorizedError, ErrorCategory as C, ImageError as Img, UnsupportedImageKind as UImg,
+        };
         assert_eq!(ProbeError::TooShort.codec_name(), Some("zenjpeg"));
-        assert_eq!(ProbeError::TooShort.category(), C::UnexpectedEof);
-        assert_eq!(ProbeError::Truncated.category(), C::UnexpectedEof);
-        assert_eq!(ProbeError::NotJpeg.category(), C::UnsupportedImageType);
-        assert_eq!(ProbeError::NoQuantTables.category(), C::MalformedImage);
+        assert_eq!(
+            ProbeError::TooShort.category(),
+            C::Image(Img::UnexpectedEof)
+        );
+        assert_eq!(
+            ProbeError::Truncated.category(),
+            C::Image(Img::UnexpectedEof)
+        );
+        assert_eq!(
+            ProbeError::NotJpeg.category(),
+            C::Image(Img::Unsupported(UImg::Type))
+        );
+        assert_eq!(
+            ProbeError::NoQuantTables.category(),
+            C::Image(Img::Malformed)
+        );
     }
 }

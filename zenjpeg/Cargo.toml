@@ -127,12 +127,12 @@ zune-core = "0.5.1"
 codec-corpus = "1.1.0"
 tempfile = "3"
 # zencodec conformance harness (unpublished companion crate). Pinned to the
-# SAME git rev as the workspace `[patch.crates-io] zencodec` (c3220d51) so both
+# SAME git rev as the workspace `[patch.crates-io] zencodec` (2427387f) so both
 # resolve to one unified zencodec — testkit's `zencodec = { path = ".." }`
 # lands on the same checkout. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 # Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
 
 
 # WASM testing dependencies (browser + Node.js)

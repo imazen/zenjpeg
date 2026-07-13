@@ -929,8 +929,11 @@ impl zencodec::encode::Encoder for JpegEncoder {
     ) -> Result<EncodeOutput, Self::Error> {
         use zenpixels::PixelSliceMut;
 
+        // Invoked out of sequence (canvas size must be set before pulling rows)
+        // — an API-protocol violation, not an unsupported feature (caterr
+        // Pattern-B follow-up finding #1 investigation).
         let (img_w, img_h) = self.image_size.ok_or_else(|| {
-            Error::unsupported_feature(
+            Error::invalid_state(
                 "encode_from requires with_canvas_size (dimensions must be known upfront)",
             )
         })?;
@@ -966,11 +969,16 @@ impl zencodec::encode::Encoder for JpegEncoder {
             let rows_wanted = strip_h.min(img_h - y);
             let slice_size = rows_wanted as usize * stride;
 
+            // `buf`/`stride`/`rows_wanted` are all computed just above from our
+            // own `strip_h`/`bpp`/`img_w` arithmetic, not caller-supplied — a
+            // failure here means that internal sizing is inconsistent, i.e. a
+            // bug in this function, not an unsupported feature (caterr
+            // Pattern-B follow-up finding #1 investigation).
             let mut pixel_buf =
                 PixelSliceMut::new(&mut buf[..slice_size], img_w, rows_wanted, stride, desc)
                     .map_err(|e| {
                         let _ = e;
-                        Error::unsupported_feature("encode_from buffer")
+                        Error::internal("encode_from: internal pixel buffer construction failed")
                     })?;
 
             let rows_provided = source(y, pixel_buf.sub_rows_mut(0, rows_wanted));
@@ -1042,9 +1050,11 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
         (ChannelType::F32, ChannelLayout::Gray, TransferFunction::Linear) => {
             Ok(PixelLayout::GrayF32Linear)
         }
-        _ => Err(Error::unsupported_feature(
-            "unsupported pixel format for JPEG encoding",
-        )),
+        // A caller-requested pixel format/descriptor this codec doesn't
+        // negotiate — the dedicated `UnsupportedOperation::PixelFormat` axis,
+        // not the generic string-payload `unsupported_feature` (caterr
+        // Pattern-B follow-up finding #1 investigation).
+        _ => Err(zencodec::UnsupportedOperation::PixelFormat.into()),
     }
 }
 
@@ -2714,10 +2724,15 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     self.reader.read_rows_rgba_f32(f_out)?
                 }
                 _ => {
-                    return Err(Error::unsupported_feature(
-                        "unsupported pixel format for streaming decode",
-                    )
-                    .into());
+                    // A caller-requested pixel format/descriptor this codec
+                    // doesn't negotiate — the dedicated
+                    // `UnsupportedOperation::PixelFormat` axis, not the
+                    // generic string-payload `unsupported_feature` (caterr
+                    // Pattern-B follow-up finding #1 investigation). Two
+                    // explicit hops: `UnsupportedOperation` → `Error` (via
+                    // `From<zencodec::UnsupportedOperation>`) → `At<CodecError>`
+                    // (via `From<Error>`) — `Into` doesn't chain transitively.
+                    return Err(Error::from(zencodec::UnsupportedOperation::PixelFormat).into());
                 }
             };
 
@@ -4318,14 +4333,14 @@ mod pattern_b_envelope_tests {
     //! envelope is exactly what flips them to `Some`.
     use super::*;
     use zencodec::decode::DynDecoderConfig;
-    use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+    use zencodec::{CodecError, CodecErrorExt, ErrorCategory, ImageError};
 
     /// SOI + SOF0 declaring **zero** components: passes the SOI gate, then fails
     /// structurally inside the frame-header parse
     /// (`invalid_jpeg_data("number of components is zero")` →
-    /// [`ErrorCategory::MalformedImage`]). Long enough to reach the structural
-    /// error rather than a truncation/EOF path — a REAL category, not a
-    /// stand-in.
+    /// [`ErrorCategory::Image(ImageError::Malformed)`]). Long enough to reach
+    /// the structural error rather than a truncation/EOF path — a REAL
+    /// category, not a stand-in.
     const MALFORMED_JPEG: &[u8] = &[
         0xFF, 0xD8, // SOI
         0xFF, 0xC0, // SOF0
@@ -4354,7 +4369,7 @@ mod pattern_b_envelope_tests {
         // trait boundary returns the envelope (Pattern B).
         assert_eq!(
             erased.error_category(),
-            Some(ErrorCategory::MalformedImage),
+            Some(ErrorCategory::Image(ImageError::Malformed)),
             "category must survive Dyn* type erasure"
         );
         assert_eq!(
@@ -4372,7 +4387,10 @@ mod pattern_b_envelope_tests {
         let err = JpegDecoderConfig::new()
             .probe_header(MALFORMED_JPEG)
             .expect_err("malformed JPEG must fail");
-        assert_eq!(err.error().category(), ErrorCategory::MalformedImage);
+        assert_eq!(
+            err.error().category(),
+            ErrorCategory::Image(ImageError::Malformed)
+        );
         assert_eq!(err.error().codec(), Some("zenjpeg"));
     }
 
@@ -4388,7 +4406,10 @@ mod pattern_b_envelope_tests {
             .into_decoder(Cow::Borrowed(MALFORMED_JPEG), &[])
             .and_then(|dec| dec.decode())
             .expect_err("a malformed JPEG must fail to decode");
-        assert_eq!(erased.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            erased.error_category(),
+            Some(ErrorCategory::Image(ImageError::Malformed))
+        );
         assert_eq!(
             erased.codec_error().and_then(CodecError::codec),
             Some("zenjpeg")

@@ -225,6 +225,18 @@ pub enum ErrorKind {
     /// Invalid JPEG data (corrupted or not a JPEG).
     #[error("invalid JPEG data: {reason}")]
     InvalidJpegData { reason: &'static str },
+    /// Data does not begin with a JPEG SOI marker (`0xFF 0xD8`) — this isn't a
+    /// JPEG file at all, as opposed to a JPEG that starts correctly but has
+    /// corrupted/malformed structure further in
+    /// ([`InvalidJpegData`](Self::InvalidJpegData)). Distinguishing this case
+    /// lets [`category()`](zencodec::CategorizedError::category) report
+    /// `ErrorCategory::Image(ImageError::Unsupported(UnsupportedImageKind::Type))`
+    /// instead of `Malformed` — mirrors
+    /// [`crate::detect::ProbeError::NotJpeg`], which makes the same
+    /// distinction on the lightweight header-probe path (caterr Pattern-B
+    /// follow-up finding #2).
+    #[error("not a JPEG file: missing SOI marker")]
+    NotAJpegFile,
     /// Input data is truncated or corrupted.
     #[error("truncated data while {context}")]
     TruncatedData { context: &'static str },
@@ -573,6 +585,14 @@ impl Error {
         Self::new(ErrorKind::InvalidJpegData { reason })
     }
 
+    /// Create a "missing SOI marker, not a JPEG file" error — distinct from
+    /// [`Error::invalid_jpeg_data`] (a JPEG that starts correctly but is
+    /// malformed further in).
+    #[track_caller]
+    pub fn not_a_jpeg_file() -> Self {
+        Self::new(ErrorKind::NotAJpegFile)
+    }
+
     /// Create a truncated data error.
     #[track_caller]
     pub fn truncated_data(context: &'static str) -> Self {
@@ -857,6 +877,67 @@ impl From<crate::foundation::aligned_alloc::AllocError> for Error {
 // CategorizedError - coarse, codec-agnostic classification (zencodec #103)
 // ============================================================================
 
+/// Call sites for [`ErrorKind::UnsupportedFeature`] fall into two origins that
+/// [`category()`](zencodec::CategorizedError::category) must not conflate
+/// (caterr Pattern-B follow-up, finding #1): a genuine gap in this codec's
+/// JPEG *bitstream* support (arithmetic coding, DNL, extended precision,
+/// non-standard block sizes, …) is `Image`-origin — a different codec build
+/// might still choke on the same bytes, and the caller can't fix it by
+/// changing parameters. A specific zenjpeg *entry point*'s narrower contract
+/// (scanline-reader component-count limits, `decode_rows()` dtype
+/// restriction, an encoder config combination, a `GainMapRender` mode needing
+/// a cargo feature, a color-conversion path that doesn't cover this
+/// destination format, …) is `Request`-origin — the caller CAN get a
+/// different result by calling a different method or changing config.
+///
+/// `UnsupportedFeature` is a single flat `&'static str`-payload variant used
+/// at ~40 call sites, so the split can't dispatch on a typed sub-enum — there
+/// is no `zencodec::UnsupportedOperation` variant matching most of these
+/// zenjpeg-specific messages (that enum is closed to a handful of
+/// cross-codec operations: row/pull/animation encode-decode, pixel format,
+/// multi-image, gain-map encode). Call sites with a clean match against one of
+/// those DO use it directly (see `descriptor_to_layout`'s
+/// `UnsupportedOperation::PixelFormat` in `codec.rs`) rather than going
+/// through this string classifier.
+///
+/// Instead this matches on stable identifying substrings of the `&'static
+/// str` literals already at each call site. **If you add a new
+/// `Error::unsupported_feature(...)` call site, or materially reword an
+/// existing message, add/update its marker here** — an unmatched
+/// Request-origin message silently falls through to `Image`, which is a
+/// wrong-but-safe default (still correctly in the "client-supplied-data
+/// fault" bucket, just the wrong sub-kind) rather than a compile error.
+fn unsupported_feature_is_request_origin(feature: &str) -> bool {
+    const REQUEST_ORIGIN_MARKERS: &[&str] = &[
+        // Encoder config-combination restrictions.
+        "requires optimized Huffman tables",
+        "restart segments",
+        "gamma-aware chroma",
+        "XYB mode only supports",
+        "YCbCr input not supported for XYB mode",
+        // GainMapRender operation mode (cargo feature gate, unrecognized mode,
+        // or a specific render mode unsatisfiable for this call).
+        "GainMapRender",
+        "ReconstructHdr requested",
+        // A specific decode/encode entry point's narrower format/component
+        // contract (as opposed to a bitstream-level cap like ">4 components").
+        "scanline reader requires",
+        "unsupported chroma subsampling for streaming decode",
+        "unsupported color conversion",
+        "unsupported grayscale",
+        "YCbCr planes require",
+        "YCbCr output not available for XYB images",
+        "YCbCr output requires",
+        "multi-channel gain maps",
+        "SDR PixelBuffer must be",
+        "decode_rows() only supports",
+        "decode_rows_f32() only supports",
+        "ultrahdr reader only supports baseline JPEG",
+        "ultrahdr reader requires",
+    ];
+    REQUEST_ORIGIN_MARKERS.iter().any(|m| feature.contains(m))
+}
+
 /// Map each [`ErrorKind`] variant to exactly one [`zencodec::ErrorCategory`].
 ///
 /// This is the codec-agnostic routing axis: a consumer (an HTTP layer, a retry
@@ -871,7 +952,15 @@ impl zencodec::CategorizedError for ErrorKind {
 
     fn category(&self) -> zencodec::ErrorCategory {
         use zencodec::ErrorCategory as C;
+        use zencodec::ImageError as Img;
+        use zencodec::InternalKind as Int;
+        use zencodec::InvalidKind as Inv;
         use zencodec::LimitKind as L;
+        use zencodec::PolicyKind as Pol;
+        use zencodec::RequestError as Req;
+        use zencodec::ResourceError as Res;
+        use zencodec::UnsupportedImageKind as UImg;
+        use zencodec::UnsupportedOperation as Op;
         match self {
             // === Caller-supplied parameters / configuration ===
             // Dimensions (zero or out of range), the colour-format combo, and the
@@ -880,32 +969,54 @@ impl zencodec::CategorizedError for ErrorKind {
             | Self::InvalidColorFormat { .. }
             | Self::InvalidQuality { .. }
             | Self::InvalidScanScript(_)
-            | Self::InvalidConfig(_) => C::InvalidParameters,
+            | Self::InvalidConfig(_) => C::Request(Req::Invalid(Inv::Parameters)),
 
             // === Caller pixel-buffer geometry ===
             // Wrong byte count, or a stride narrower than the row — a buffer
             // layout fault, distinct from a bad config knob.
-            Self::InvalidBufferSize { .. } | Self::StrideTooSmall { .. } => C::InvalidBuffer,
+            Self::InvalidBufferSize { .. } | Self::StrideTooSmall { .. } => {
+                C::Request(Req::Invalid(Inv::Buffer))
+            }
 
             // === Pixel-format negotiation found no acceptable format ===
-            Self::UnsupportedPixelFormat { .. } => C::UnsupportedPixelFormat,
+            // `PixelFormat` is a `zencodec::UnsupportedOperation` variant, not
+            // its own top-level category, in the new taxonomy — it joins the
+            // same Request-origin "unsupported operation" axis as
+            // `UnsupportedOperation` below.
+            Self::UnsupportedPixelFormat { .. } => C::Request(Req::Unsupported(Op::PixelFormat)),
 
-            // === A valid JPEG feature this codec doesn't implement ===
-            // (arithmetic coding, 12-bit samples, …). The variant's primary
-            // meaning; a few encoder-side API guards reuse this constructor too
-            // (documented at those call sites).
-            Self::UnsupportedFeature { .. } => C::UnsupportedImageFeature,
+            // === A valid JPEG feature this codec doesn't implement, OR a
+            // caller/API-entry-point-specific restriction === (caterr
+            // Pattern-B follow-up finding #1: these were conflated under one
+            // flat variant; see `unsupported_feature_is_request_origin` for
+            // the origin split.)
+            Self::UnsupportedFeature { feature } => {
+                if unsupported_feature_is_request_origin(feature) {
+                    C::Request(Req::Invalid(Inv::Parameters))
+                } else {
+                    C::Image(Img::Unsupported(UImg::Feature))
+                }
+            }
 
             // === Memory / size acquisition failures ===
             // A real allocation failure is OOM. A size-calculation overflow means
-            // the requested buffer cannot be represented at all — an
-            // allocation-infeasibility, so it joins OOM (mirrors zenpng's
-            // overflow → OutOfMemory convention) rather than claiming "internal
-            // bug" or borrowing an ill-fitting LimitKind.
-            Self::AllocationFailed { .. } | Self::SizeOverflow { .. } => C::OutOfMemory,
+            // the requested buffer cannot be represented at all. The
+            // `try_alloc_*` / `checked_size*` helpers in `foundation::alloc`
+            // are shared by both encode (caller-declared dimensions) and
+            // decode (image-declared dimensions) call sites with no reliable
+            // per-call-site provenance in the flat `context: &'static str`
+            // payload — auditing which of ~20 generic helper call sites is
+            // encode- vs decode-driven would be a separate, much larger sweep.
+            // So — mirroring zenpng's overflow → OutOfMemory convention, and
+            // per this task's finding #4 — both stay merged under the
+            // Resource axis rather than guessing a split; the caller-visible
+            // remedy (smaller input / more memory) is identical either way.
+            Self::AllocationFailed { .. } | Self::SizeOverflow { .. } => {
+                C::Resource(Res::OutOfMemory)
+            }
 
             // === A configured ResourceLimits cap was exceeded ===
-            Self::ImageTooLarge { .. } => C::LimitsExceeded(L::Pixels),
+            Self::ImageTooLarge { .. } => C::Resource(Res::Limits(L::Pixels)),
 
             // === I/O / output-sink failure ===
             Self::IoError { .. } => C::Io(zencodec::CodecIoKind::opaque()),
@@ -914,26 +1025,41 @@ impl zencodec::CategorizedError for ErrorKind {
             // The sole erroring ICC path is "an ICC must be synthesized for the
             // source CICP but cannot be" — a CMS transform the codec will not
             // perform itself.
-            Self::IccError(_) => C::CmsRequired,
+            Self::IccError(_) => C::Request(Req::CmsRequired),
+
+            // === Not a JPEG at all (no SOI) === (caterr Pattern-B follow-up
+            // finding #2.) Distinct from bitstream corruption further in —
+            // mirrors `crate::detect::ProbeError::NotJpeg`, which previously
+            // made this same distinction only on the lightweight header-probe
+            // path, never on the main decode path.
+            Self::NotAJpegFile => C::Image(Img::Unsupported(UImg::Type)),
 
             // === Malformed / corrupt bitstream content ===
             Self::InvalidJpegData { .. }
             | Self::InvalidMarker { .. }
             | Self::InvalidHuffmanTable { .. }
             | Self::InvalidQuantTable { .. }
-            | Self::DecodeError(_)
-            // No LimitKind covers "progressive scans"; an over-the-cap scan count
-            // is pathological bitstream structure → reject as malformed.
-            | Self::TooManyScans { .. } => C::MalformedImage,
+            | Self::DecodeError(_) => C::Image(Img::Malformed),
+
+            // === Structural per-image cap on progressive scan count ===
+            // (caterr Pattern-B follow-up finding #3.) A `LimitKind::Scans`
+            // cap: an anti-DoS ceiling on decode work, not bitstream
+            // corruption — the scans themselves are well-formed, there are
+            // just pathologically many of them.
+            Self::TooManyScans { .. } => C::Resource(Res::Limits(L::Scans)),
 
             // === Truncated input ===
-            Self::TruncatedData { .. } => C::UnexpectedEof,
+            Self::TruncatedData { .. } => C::Image(Img::UnexpectedEof),
 
             // === Caller API-protocol violation (wrong sequence / row count) ===
-            Self::TooManyRows { .. } | Self::IncompleteImage { .. } => C::InvalidState,
+            Self::TooManyRows { .. } | Self::IncompleteImage { .. } => {
+                C::Request(Req::Invalid(Inv::State))
+            }
 
             // === Internal invariant / bug ===
-            Self::InternalError { .. } => C::Internal,
+            // A broken invariant in zenjpeg's own logic — always a code
+            // defect, never attributable to the caller's request or the image.
+            Self::InternalError { .. } => C::Internal(Int::Bug),
 
             // === Delegate to the wrapped zencodec cause types ===
             // Each carries its own `CategorizedError` impl: `StopReason` splits
@@ -945,14 +1071,22 @@ impl zencodec::CategorizedError for ErrorKind {
             // === Taxonomy refinements (caterr Pattern-B follow-up) ===
             // A configured cap, not an actual allocation failure — carries
             // which cap via the embedded `LimitKind`.
-            Self::ResourceLimitExceeded { kind, .. } => C::LimitsExceeded(*kind),
+            Self::ResourceLimitExceeded { kind, .. } => C::Resource(Res::Limits(*kind)),
             // Understood-and-declined by policy, not malformed or unsupported.
-            Self::PolicyRejected { .. } => C::PolicyRejected,
+            // `PolicyRejected` doesn't carry which policy (Decode vs Encode) at
+            // the type level; every current call site (`codec.rs`, progressive
+            // JPEG rejected by `DecodePolicy`) is decode-side, so this maps to
+            // `Policy(Decode)`. If an encode-side `EncodePolicy` rejection is
+            // added later, give it its own variant/payload rather than
+            // guessing here.
+            Self::PolicyRejected { .. } => C::Policy(Pol::Decode),
             // Caller-side API-protocol violation, not bad image data.
-            Self::InvalidState { .. } => C::InvalidState,
-            // Decode-side descriptor negotiation failure — same category as
-            // `UnsupportedPixelFormat` above, different payload shape.
-            Self::UnsupportedPixelDescriptor { .. } => C::UnsupportedPixelFormat,
+            Self::InvalidState { .. } => C::Request(Req::Invalid(Inv::State)),
+            // Decode-side descriptor negotiation failure — same operation axis
+            // as `UnsupportedPixelFormat` above, different payload shape.
+            Self::UnsupportedPixelDescriptor { .. } => {
+                C::Request(Req::Unsupported(Op::PixelFormat))
+            }
         }
     }
 }
@@ -1170,46 +1304,75 @@ mod tests {
     #[test]
     fn categorized_error_category_mapping() {
         use enough::StopReason;
-        use zencodec::{CategorizedError, ErrorCategory as C, LimitKind};
+        use zencodec::{
+            CategorizedError, ErrorCategory as C, ImageError as Img, InternalKind as Int,
+            InvalidKind as Inv, LimitKind, PolicyKind as Pol, RequestError as Req,
+            ResourceError as Res, UnsupportedImageKind as UImg, UnsupportedOperation as Op,
+        };
 
         // Spot-check every branch of the mapping, including the delegating arms.
         let cases: &[(Error, C)] = &[
             // Caller parameters / config.
             (
                 Error::invalid_dimensions(0, 10, "zero width"),
-                C::InvalidParameters,
+                C::Request(Req::Invalid(Inv::Parameters)),
             ),
             (
                 Error::invalid_color_format("rgb+cmyk"),
-                C::InvalidParameters,
+                C::Request(Req::Invalid(Inv::Parameters)),
             ),
             (
                 Error::invalid_quality(200.0, "0..100"),
-                C::InvalidParameters,
+                C::Request(Req::Invalid(Inv::Parameters)),
             ),
             (
                 Error::invalid_scan_script("bad".into()),
-                C::InvalidParameters,
+                C::Request(Req::Invalid(Inv::Parameters)),
             ),
-            (Error::invalid_config("bad".into()), C::InvalidParameters),
+            (
+                Error::invalid_config("bad".into()),
+                C::Request(Req::Invalid(Inv::Parameters)),
+            ),
             // Pixel-buffer geometry.
-            (Error::invalid_buffer_size(100, 50), C::InvalidBuffer),
-            (Error::stride_too_small(64, 16), C::InvalidBuffer),
-            // Unsupported feature / format.
+            (
+                Error::invalid_buffer_size(100, 50),
+                C::Request(Req::Invalid(Inv::Buffer)),
+            ),
+            (
+                Error::stride_too_small(64, 16),
+                C::Request(Req::Invalid(Inv::Buffer)),
+            ),
+            // Unsupported feature / format: image-bitstream-origin (stays
+            // Image) vs invocation-origin (splits to Request) — caterr
+            // Pattern-B follow-up finding #1.
             (
                 Error::unsupported_feature("arithmetic coding"),
-                C::UnsupportedImageFeature,
+                C::Image(Img::Unsupported(UImg::Feature)),
+            ),
+            (
+                Error::unsupported_feature("YCbCr output not available for XYB images"),
+                C::Request(Req::Invalid(Inv::Parameters)),
             ),
             (
                 Error::unsupported_pixel_format(crate::types::PixelFormat::Rgb),
-                C::UnsupportedPixelFormat,
+                C::Request(Req::Unsupported(Op::PixelFormat)),
             ),
-            // Memory / size.
-            (Error::allocation_failed(1 << 20, "buf"), C::OutOfMemory),
-            (Error::size_overflow("w*h*bpp"), C::OutOfMemory),
+            (
+                Error::unsupported_pixel_descriptor("no acceptable channel layout"),
+                C::Request(Req::Unsupported(Op::PixelFormat)),
+            ),
+            // Memory / size — judged to stay merged (finding #4).
+            (
+                Error::allocation_failed(1 << 20, "buf"),
+                C::Resource(Res::OutOfMemory),
+            ),
+            (
+                Error::size_overflow("w*h*bpp"),
+                C::Resource(Res::OutOfMemory),
+            ),
             (
                 Error::image_too_large(1_000_000, 100),
-                C::LimitsExceeded(LimitKind::Pixels),
+                C::Resource(Res::Limits(LimitKind::Pixels)),
             ),
             // I/O.
             (
@@ -1217,27 +1380,76 @@ mod tests {
                 C::Io(zencodec::CodecIoKind::opaque()),
             ),
             // Colour management.
-            (Error::icc_error("cannot synthesize".into()), C::CmsRequired),
+            (
+                Error::icc_error("cannot synthesize".into()),
+                C::Request(Req::CmsRequired),
+            ),
+            // Not a JPEG at all vs malformed further in — finding #2.
+            (
+                Error::not_a_jpeg_file(),
+                C::Image(Img::Unsupported(UImg::Type)),
+            ),
             // Malformed bitstream.
-            (Error::invalid_jpeg_data("not a jpeg"), C::MalformedImage),
-            (Error::invalid_marker(0xFF, "scan"), C::MalformedImage),
-            (Error::invalid_huffman_table(0, "bad"), C::MalformedImage),
-            (Error::invalid_quant_table(0, "bad"), C::MalformedImage),
-            (Error::decode_error("boom".into()), C::MalformedImage),
-            (Error::too_many_scans(9999, 100), C::MalformedImage),
+            (
+                Error::invalid_jpeg_data("bad SOF"),
+                C::Image(Img::Malformed),
+            ),
+            (
+                Error::invalid_marker(0xFF, "scan"),
+                C::Image(Img::Malformed),
+            ),
+            (
+                Error::invalid_huffman_table(0, "bad"),
+                C::Image(Img::Malformed),
+            ),
+            (
+                Error::invalid_quant_table(0, "bad"),
+                C::Image(Img::Malformed),
+            ),
+            (Error::decode_error("boom".into()), C::Image(Img::Malformed)),
+            // Structural scan-count ceiling, not malformed content — finding #3.
+            (
+                Error::too_many_scans(9999, 100),
+                C::Resource(Res::Limits(LimitKind::Scans)),
+            ),
             // Truncation.
-            (Error::truncated_data("scan body"), C::UnexpectedEof),
+            (
+                Error::truncated_data("scan body"),
+                C::Image(Img::UnexpectedEof),
+            ),
             // API-protocol state.
-            (Error::too_many_rows(10, 12), C::InvalidState),
-            (Error::incomplete_image(10, 5), C::InvalidState),
+            (
+                Error::too_many_rows(10, 12),
+                C::Request(Req::Invalid(Inv::State)),
+            ),
+            (
+                Error::incomplete_image(10, 5),
+                C::Request(Req::Invalid(Inv::State)),
+            ),
             // Internal.
-            (Error::internal("invariant"), C::Internal),
+            (Error::internal("invariant"), C::Internal(Int::Bug)),
+            // Taxonomy refinements (caterr Pattern-B follow-up).
+            (
+                Error::resource_limit_exceeded(zencodec::LimitKind::Memory, 100, 50),
+                C::Resource(Res::Limits(LimitKind::Memory)),
+            ),
+            (
+                Error::policy_rejected("progressive JPEG rejected by decode policy"),
+                C::Policy(Pol::Decode),
+            ),
+            (
+                Error::invalid_state("finish() called without any push_rows()"),
+                C::Request(Req::Invalid(Inv::State)),
+            ),
             // Delegated cause types.
-            (Error::cancelled(), C::Cancelled),
-            (Error::from(StopReason::TimedOut), C::TimedOut),
+            (Error::cancelled(), C::Lifecycle(StopReason::Cancelled)),
+            (
+                Error::from(StopReason::TimedOut),
+                C::Lifecycle(StopReason::TimedOut),
+            ),
             (
                 Error::from(zencodec::UnsupportedOperation::AnimationEncode),
-                C::UnsupportedOperation,
+                C::Request(Req::Unsupported(Op::AnimationEncode)),
             ),
         ];
 
@@ -1245,6 +1457,62 @@ mod tests {
             assert_eq!(err.category(), *expected, "category mismatch for {err:?}");
             // The located wrapper classifies identically via the blanket At impl.
             assert_eq!(err.inner().category(), *expected);
+        }
+    }
+
+    /// Origin split within the single flat `UnsupportedFeature` variant
+    /// (caterr Pattern-B follow-up finding #1) — every currently-known
+    /// invocation-origin message must classify as `Request`, and a
+    /// representative bitstream-feature-gap message must stay `Image`. This
+    /// locks in `unsupported_feature_is_request_origin`'s marker list against
+    /// silent drift if a call site's message text changes.
+    #[test]
+    fn unsupported_feature_request_origin_markers() {
+        let request_origin_examples = [
+            "Progressive mode requires optimized Huffman tables",
+            "Smallest scan selection requires optimized Huffman tables",
+            "fused parallel encode needs \u{2265}2 restart segments",
+            "only RGB/RGBA supported for gamma-aware chroma",
+            "XYB mode only supports RGB/RGBA pixel formats",
+            "YCbCr input not supported for XYB mode",
+            "GainMapRender::ReconstructHdr requires the `ultrahdr` feature",
+            "unrecognized GainMapRender mode",
+            "ReconstructHdr requested but the XMP has no gain map",
+            "scanline reader requires 1 or 3 components in scan",
+            "unsupported chroma subsampling for streaming decode",
+            "unsupported color conversion",
+            "unsupported grayscale \u{2192} color conversion",
+            "YCbCr planes require 3-component image",
+            "YCbCr output not available for XYB images",
+            "YCbCr output requires 3-component image",
+            "encode_ultrahdr_with_curve does not support multi-channel gain maps",
+            "SDR PixelBuffer must be Rgba8 or Rgb8 for UltraHDR encoding",
+            "decode_rows() only supports u8 formats",
+            "decode_rows_f32() only supports f32 formats",
+            "ultrahdr reader only supports baseline JPEG",
+            "ultrahdr reader requires 3-component YCbCr image",
+        ];
+        for msg in request_origin_examples {
+            assert!(
+                unsupported_feature_is_request_origin(msg),
+                "expected Request-origin classification for {msg:?}"
+            );
+        }
+
+        let image_origin_examples = [
+            "arithmetic coding",
+            "12-bit precision JPEG (Extended Sequential) is not yet supported.",
+            "lossless JPEG (SOF3) is not supported",
+            "more than 4 components",
+            "DNL mode (height=0 in SOF) not supported for streaming decode",
+            "This JPEG uses non-standard DCT block sizes (DQT table is not 64 entries)",
+            "decode_ultrahdr: decoder produced no u8 pixels",
+        ];
+        for msg in image_origin_examples {
+            assert!(
+                !unsupported_feature_is_request_origin(msg),
+                "expected Image-origin classification for {msg:?}"
+            );
         }
     }
 }
