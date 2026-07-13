@@ -926,7 +926,11 @@ mod pipeline_tests {
 
         // Use several image sizes and quality levels to maximize the chance of
         // triggering all 256 AC symbols in the frequency count.
-        for &(w, h, q) in &[(128u32, 128u32, 75u8), (256u32, 256u32, 50u8), (64u32, 64u32, 30u8)] {
+        for &(w, h, q) in &[
+            (128u32, 128u32, 75u8),
+            (256u32, 256u32, 50u8),
+            (64u32, 64u32, 30u8),
+        ] {
             let jpeg = create_noisy_jpeg(w, h, q);
 
             for xform in [

@@ -145,7 +145,10 @@ pub(super) fn encode_from_coefficients(
             let mut ac_freq = [0u64; 256];
             count_frequencies(&cb_blocks, &mut dc_freq, &mut ac_freq);
             count_frequencies(&cr_blocks, &mut dc_freq, &mut ac_freq);
-            (build_huffman_table(&dc_freq)?, build_huffman_table(&ac_freq)?)
+            (
+                build_huffman_table(&dc_freq)?,
+                build_huffman_table(&ac_freq)?,
+            )
         } else {
             (
                 HuffmanEncodeTable::std_dc_chrominance().clone(),
