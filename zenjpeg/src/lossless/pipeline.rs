@@ -16,6 +16,22 @@ use crate::foundation::consts::{
 use crate::huffman::encode::{HuffmanEncodeTable, build_code_lengths, lengths_to_bits_values};
 use enough::Stop;
 
+/// Build a [`HuffmanEncodeTable`] from a 256-entry frequency array.
+///
+/// Appends the pseudo-symbol 256 (with frequency 1) before calling
+/// `build_code_lengths`, ensuring the resulting Kraft sum is strictly less
+/// than 2^16. Without this, tables built from exactly-fitting symbol sets
+/// produce Kraft sum == 2^16, which is rejected as a "Bad Huffman Table" by
+/// many decoders (e.g. zune-jpeg).
+fn build_huffman_table(freq: &[u64; 256]) -> Result<HuffmanEncodeTable> {
+    let mut freqs = alloc::vec::Vec::with_capacity(257);
+    freqs.extend_from_slice(freq);
+    freqs.push(1); // pseudo-symbol 256 ensures Kraft sum < 2^16
+    let depths = build_code_lengths(&freqs, 16);
+    let (bits, vals) = lengths_to_bits_values(&depths[..256]);
+    HuffmanEncodeTable::from_bits_values(&bits, &vals)
+}
+
 use super::coeff_transform::{
     LosslessTransform, TransformConfig, TransformedCoefficients, transform_coefficients,
 };
@@ -129,14 +145,7 @@ pub(super) fn encode_from_coefficients(
             let mut ac_freq = [0u64; 256];
             count_frequencies(&cb_blocks, &mut dc_freq, &mut ac_freq);
             count_frequencies(&cr_blocks, &mut dc_freq, &mut ac_freq);
-            let dc_lengths = build_code_lengths(&dc_freq, 16);
-            let ac_lengths = build_code_lengths(&ac_freq, 16);
-            let (dc_bits, dc_vals) = lengths_to_bits_values(&dc_lengths);
-            let (ac_bits, ac_vals) = lengths_to_bits_values(&ac_lengths);
-            (
-                HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_vals)?,
-                HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_vals)?,
-            )
+            (build_huffman_table(&dc_freq)?, build_huffman_table(&ac_freq)?)
         } else {
             (
                 HuffmanEncodeTable::std_dc_chrominance().clone(),
@@ -361,22 +370,13 @@ fn build_tables_with_restart(
     }
 
     // Build tables from frequencies
-    let dc_luma_lengths = build_code_lengths(&dc_luma_freq, 16);
-    let ac_luma_lengths = build_code_lengths(&ac_luma_freq, 16);
-    let (dc_luma_bits, dc_luma_vals) = lengths_to_bits_values(&dc_luma_lengths);
-    let (ac_luma_bits, ac_luma_vals) = lengths_to_bits_values(&ac_luma_lengths);
-
-    let dc_luma_table = HuffmanEncodeTable::from_bits_values(&dc_luma_bits, &dc_luma_vals)?;
-    let ac_luma_table = HuffmanEncodeTable::from_bits_values(&ac_luma_bits, &ac_luma_vals)?;
+    let dc_luma_table = build_huffman_table(&dc_luma_freq)?;
+    let ac_luma_table = build_huffman_table(&ac_luma_freq)?;
 
     let (dc_chroma_table, ac_chroma_table) = if is_color {
-        let dc_lengths = build_code_lengths(&dc_chroma_freq, 16);
-        let ac_lengths = build_code_lengths(&ac_chroma_freq, 16);
-        let (dc_bits, dc_vals) = lengths_to_bits_values(&dc_lengths);
-        let (ac_bits, ac_vals) = lengths_to_bits_values(&ac_lengths);
         (
-            HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_vals)?,
-            HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_vals)?,
+            build_huffman_table(&dc_chroma_freq)?,
+            build_huffman_table(&ac_chroma_freq)?,
         )
     } else {
         (
@@ -401,14 +401,9 @@ pub(super) fn build_tables_from_blocks(
     let mut ac_freq = [0u64; 256];
     count_frequencies(blocks, &mut dc_freq, &mut ac_freq);
 
-    let dc_lengths = build_code_lengths(&dc_freq, 16);
-    let ac_lengths = build_code_lengths(&ac_freq, 16);
-    let (dc_bits, dc_vals) = lengths_to_bits_values(&dc_lengths);
-    let (ac_bits, ac_vals) = lengths_to_bits_values(&ac_lengths);
-
     Ok((
-        HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_vals)?,
-        HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_vals)?,
+        build_huffman_table(&dc_freq)?,
+        build_huffman_table(&ac_freq)?,
     ))
 }
 

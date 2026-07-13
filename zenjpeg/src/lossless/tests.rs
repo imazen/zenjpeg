@@ -886,6 +886,74 @@ mod pipeline_tests {
             );
         }
     }
+
+    /// Create a noisy JPEG whose AC coefficient distribution exercises many of the
+    /// 256 possible Huffman symbols, ensuring the Huffman tables have a Kraft sum
+    /// strictly less than 2^16 (the pseudo-symbol fix for issue #183).
+    fn create_noisy_jpeg(width: u32, height: u32, quality: u8) -> Vec<u8> {
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+        // Use a deterministic pseudo-random pattern with many distinct pixel values
+        // so that DCT produces a wide spread of AC coefficients.
+        let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+        let mut state: u32 = 0x12345678;
+        for _ in 0..height {
+            for _ in 0..width {
+                // LCG PRNG
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixels.push((state >> 24) as u8);
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixels.push((state >> 24) as u8);
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixels.push((state >> 24) as u8);
+            }
+        }
+
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    /// Regression test for issue #183: lossless transforms produced invalid Huffman
+    /// tables when the symbol frequency set filled all 256 slots (Kraft sum == 2^16).
+    /// The fix appends pseudo-symbol 256 (freq=1) so the sum is strictly < 2^16.
+    #[test]
+    fn test_huffman_tables_valid_on_noisy_image() {
+        let decoder = DecodeConfig::new();
+
+        // Use several image sizes and quality levels to maximize the chance of
+        // triggering all 256 AC symbols in the frequency count.
+        for &(w, h, q) in &[(128u32, 128u32, 75u8), (256u32, 256u32, 50u8), (64u32, 64u32, 30u8)] {
+            let jpeg = create_noisy_jpeg(w, h, q);
+
+            for xform in [
+                LosslessTransform::None,
+                LosslessTransform::FlipHorizontal,
+                LosslessTransform::Rotate90,
+            ] {
+                let result = transform(
+                    &jpeg,
+                    &TransformConfig {
+                        transform: xform,
+                        edge_handling: EdgeHandling::TrimPartialBlocks,
+                    },
+                    Unstoppable,
+                )
+                .unwrap();
+
+                let decoded = decoder.decode(&result, Unstoppable);
+                assert!(
+                    decoded.is_ok(),
+                    "noisy image {w}x{h} q={q} transform {:?}: expected valid JPEG but got: {:?}",
+                    xform,
+                    decoded.err()
+                );
+            }
+        }
+    }
 }
 
 mod coefficient_roundtrip_tests {
