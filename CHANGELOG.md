@@ -38,6 +38,20 @@ All notable changes to zenjpeg are documented here. Earlier history
     `semver-checks` will work again once zencodec 0.1.26 actually publishes and
     the `[patch.crates-io]` entry is dropped.
 
+### Added
+
+- **RGB passthrough encoding — `EncoderConfig::rgb(quality)` / `ColorMode::Rgb`
+  (issue #185).** Stores channels verbatim as JPEG components R, G, B at 4:4:4
+  with no RGB→YCbCr transform, signaled via component IDs 'R','G','B' plus an
+  Adobe APP14 marker with transform=0 (libjpeg `JCS_RGB` convention; no JFIF).
+  For channel-packed data (e.g. fluorescence microscopy) where cross-channel
+  bleed from a color transform is unacceptable. Matches C++ jpegli's non-XYB
+  `JCS_RGB` behavior: one shared Annex-K-luma quant table with linear
+  `DistanceToLinearQuality` scaling, flat 0.5 zero-bias, AQ on the G channel,
+  one shared optimized Huffman pair; baseline SOF0 and progressive SOF2 both
+  supported. 8-bit RGB-family input layouts only. Decodes correctly in
+  zenjpeg, libjpeg-family, jpeg-decoder, and zune-jpeg. (f87c722f)
+
 ### Fixed (caterr Pattern-B follow-up bugs)
 
 - **Adopted zencodec's origin-first two-level `ErrorCategory` reshape**

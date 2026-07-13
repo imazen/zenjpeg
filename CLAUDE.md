@@ -960,6 +960,25 @@ sensitivity tables, and preset baselines.
    - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
    - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
+8. **SUSPECTED: XYB bottom-partial-strip vertical padding uses the wrong
+   stride (2026-07-13, found during issue #185 work, NOT verified)** —
+   `pad_strips_vertically` (`encode/strip/convert.rs`) replicates cb/cr
+   rows at packed `width` stride ("still in packed layout at this
+   point"), but under XYB `convert_strip_to_xyb` has ALREADY rearranged
+   `cb_strip` (perceptual-Y plane) to PADDED stride before
+   `process_strip` calls the vertical pad. When `width % 8 != 0` AND the
+   bottom strip is partial (`height % strip_height != 0`), the
+   replicated rows land at wrong offsets, so bottom-edge Y blocks DCT
+   over garbage padding. Additionally the B plane (`cr_down`) is
+   downsampled from only `actual_strip_height` rows inside the
+   converter and may leave stale rows for the bottom B blocks. RGB
+   passthrough mode (f87c722f) handles its own padded-layout case in
+   `pad_strips_vertically`; the XYB path was deliberately left
+   untouched. To verify: XYB encode at e.g. 130×67 with noise content,
+   compare bottom-edge block error against interior (or against C++
+   jpegli). If real, fixing it will change locked XYB hashes — needs
+   its own commit with evidence.
+
 ~~7. **XYB encoder's linear-input paths (`Rgb16Linear`, `RgbF32Linear`)
    produce pixel-broken JPEGs (2026-04-23)**~~ — **FIXED (2026-04-23,
    commits 28658af6 + 9e2348fe).** The linear-input branch in

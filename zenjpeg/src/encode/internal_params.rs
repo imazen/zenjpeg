@@ -37,11 +37,12 @@ use super::trellis::TrellisConfig;
 
 /// Color-path selection for [`InternalParams::color_path`].
 ///
-/// Mirrors [`EncoderConfig`]'s three constructors (`ycbcr` / `xyb` /
-/// `grayscale`) as a single tagged enum so picker integrations can
-/// emit one uniform field for codec color routing. `#[non_exhaustive]`
-/// because additional color paths (e.g., a future high-bit-depth route)
-/// may land here without bumping the major version.
+/// Mirrors [`EncoderConfig`]'s constructors (`ycbcr` / `xyb` /
+/// `grayscale` / `rgb`) as a single tagged enum so picker integrations
+/// can emit one uniform field for codec color routing.
+/// `#[non_exhaustive]` because additional color paths (e.g., a future
+/// high-bit-depth route) may land here without bumping the major
+/// version.
 ///
 /// [`EncoderConfig`]: super::encoder_config::EncoderConfig
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +61,9 @@ pub enum ColorPath {
     },
     /// Single-channel grayscale.
     Grayscale,
+    /// RGB passthrough — channels stored without color transformation
+    /// (issue #185). Always 4:4:4.
+    Rgb,
 }
 
 /// Bundle of advanced encoder tuning knobs. Expert-only.
@@ -256,6 +260,7 @@ impl EncoderConfig {
                     })
                 }
                 ColorPath::Grayscale => self.color_mode(super::encoder_types::ColorMode::Grayscale),
+                ColorPath::Rgb => self.color_mode(super::encoder_types::ColorMode::Rgb),
             };
         }
         if let Some(qs) = params.quant_source {

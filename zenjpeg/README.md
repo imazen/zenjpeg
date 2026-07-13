@@ -158,6 +158,7 @@ zenjpeg = { version = "0.8", features = ["moxcms"] }
 | `EncoderConfig::ycbcr(q, sub)` | Standard JPEG (most compatible) |
 | `EncoderConfig::xyb(q, b_sub)` | XYB perceptual color (better quality, needs `moxcms` to decode) |
 | `EncoderConfig::grayscale(q)` | Single-channel |
+| `EncoderConfig::rgb(q)` | No color transform — channels stored verbatim as R, G, B at 4:4:4 (Adobe APP14 transform=0). For channel-packed data (e.g. microscopy stains); larger files than YCbCr on photos |
 
 Quality accepts a plain number (`85` or `85.0`, the 0–100 scale) or a `Quality`
 variant (see [Quality Options](#quality-options)).
