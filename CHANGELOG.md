@@ -40,6 +40,60 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed (caterr Pattern-B follow-up bugs)
 
+- **Adopted zencodec's origin-first two-level `ErrorCategory` reshape**
+  (imazen/zencodec#116, branch `caterr-reshape`; `[patch.crates-io] zencodec`
+  bumped rev `c3220d51` → `2427387f`, CI green, not yet merged/published).
+  The flat 17-variant `ErrorCategory` is now
+  `Image(ImageError)` / `Request(RequestError)` / `Resource(ResourceError)` /
+  `Policy(PolicyKind)` / `Lifecycle(StopReason)` / `Io(CodecIoKind)` /
+  `Internal(InternalKind)`, each with its own sub-kind (e.g. the old
+  `MalformedImage` is now `Image(ImageError::Malformed)`,
+  `UnsupportedImageFeature` is `Image(ImageError::Unsupported(
+  UnsupportedImageKind::Feature))`). All four `CategorizedError::category()`
+  maps (`crate::error::ErrorKind`, `detect::ProbeError`,
+  `recompress::error::Error`, plus the delegating `crate::error::Error`) were
+  rewritten to the new shape. Additive/non-breaking — `ErrorCategory` and its
+  sub-enums are `#[non_exhaustive]`; no zenjpeg public variant renamed or
+  removed. (583b8003)
+- Four categorization gaps closed during the rev-bump audit (all additive,
+  same commit 583b8003):
+  - **Split `ErrorKind::UnsupportedFeature{feature}` by origin.** This single
+    flat variant conflated genuine JPEG-bitstream feature gaps (arithmetic
+    coding, DNL, 12-bit precision, non-standard block sizes — stays
+    `Image(Unsupported(Feature))`) with caller/API-entry-point-specific
+    restrictions (~30 messages: scanline-reader component limits, encoder
+    config combinations, `GainMapRender` modes, `decode_rows()`/
+    `decode_rows_f32()` dtype mismatches — now
+    `Request(Invalid(Parameters))`) via a new
+    `unsupported_feature_is_request_origin()` substring classifier (no
+    `zencodec::UnsupportedOperation` variant fits most of these
+    zenjpeg-specific messages; that enum is closed to a handful of
+    cross-codec operations). Four call sites were migrated to more precise
+    existing constructors instead of the classifier: `descriptor_to_layout`'s
+    and the streaming-decode fallback's pixel-format mismatches now
+    construct `zencodec::UnsupportedOperation::PixelFormat` directly;
+    `encode_from`'s missing-`with_canvas_size` guard now uses
+    `Error::invalid_state`; `encode_from`'s internal pixel-buffer
+    construction and the gain-map JPEG SOI invariant check (both operate on
+    values this crate itself just computed/encoded, never caller input) now
+    use `Error::internal`.
+  - **Added `ErrorKind::NotAJpegFile`**, distinct from `InvalidJpegData` —
+    the main decoder's SOI check (`decode/parser/mod.rs`) now reports
+    `Image(Unsupported(Type))` for missing-SOI input instead of
+    `Image(Malformed)`, mirroring `detect::ProbeError::NotJpeg` (which
+    already made this distinction, but only on the lightweight header-probe
+    path, never on the main decode path).
+  - **`TooManyScans` now routes to `Resource(Limits(LimitKind::Scans))`**
+    (the new structural-cap `LimitKind` variant) instead of
+    `Image(Malformed)` — an anti-DoS ceiling on well-formed scan count, not
+    bitstream corruption.
+  - **Judged `AllocationFailed`/`SizeOverflow` to stay merged** under
+    `Resource(OutOfMemory)`: the shared `foundation::alloc` helpers (~20
+    call sites) are invoked from both encode- (caller-declared dimensions)
+    and decode- (image-declared dimensions) driven sizes with no reliable
+    per-call-site provenance in the flat `context: &'static str` payload;
+    mirrors zenpng's existing overflow → `OutOfMemory` convention.
+
 - `JpegEncoderConfig::generic_effort()` echoed the *clamped* effort value
   instead of what was actually passed to
   `with_generic_effort()`, breaking the fleet accept-signal idiom
