@@ -960,7 +960,18 @@ sensitivity tables, and preset baselines.
    - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
    - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
-8. **CONFIRMED: XYB bottom-partial-strip vertical padding uses the wrong
+~~8.~~ **FIXED (2026-07-13, commit 0064e34a):** XYB bottom-partial-strip
+   vertical padding stride (issue #186). `pad_strips_vertically` now
+   replicates cb_strip at padded stride under XYB, and
+   `convert_strip_to_xyb` vertically pads the B plane (cr_down) below
+   `b_height`. Stripe-probe ratio 1.152 → 1.000 at 130×67 XYB-Full;
+   regression test `tests/bundled/xyb_edge_padding.rs` (fails at 1.152
+   on pre-fix code). Locked frymire hashes unchanged — the padding
+   branch fires there (bottom strip actual=1) but frymire's bottom row
+   is its uniform white border, so shifted replicas were byte-identical.
+   Original analysis below for reference:
+
+   **CONFIRMED: XYB bottom-partial-strip vertical padding uses the wrong
    stride (2026-07-13, found+verified during issue #185 work)** —
    `pad_strips_vertically` (`encode/strip/convert.rs`) replicates cb/cr
    rows at packed `width` stride ("still in packed layout at this

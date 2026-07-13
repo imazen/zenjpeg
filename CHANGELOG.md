@@ -52,6 +52,17 @@ All notable changes to zenjpeg are documented here. Earlier history
   supported. 8-bit RGB-family input layouts only. Decodes correctly in
   zenjpeg, libjpeg-family, jpeg-decoder, and zune-jpeg. (f87c722f)
 
+### Fixed
+
+- **XYB bottom-partial-strip vertical padding used the wrong stride (issue
+  #186).** When `width % 8 != 0` and the bottom strip was partial, the
+  perceptual-Y plane's pad rows were replicated at packed stride into a
+  padded-layout buffer (phase-shifted padding, corrupted last-row tail), and
+  the B plane kept the previous strip's stale rows. Bottom-edge error on a
+  vertical-stripe probe: XYB-Full 130×67 last-band/interior ratio 1.15 → 1.00.
+  Locked frymire hashes unaffected (its bottom row is a uniform border).
+  Regression test: `tests/bundled/xyb_edge_padding.rs`. (0064e34a)
+
 ### Fixed (caterr Pattern-B follow-up bugs)
 
 - **Adopted zencodec's origin-first two-level `ErrorCategory` reshape**
