@@ -757,6 +757,21 @@ impl StripProcessor {
         // Rearrange and pad cr_down (B channel) using XYB-specific function
         self.pad_b_down_strip(b_height, b_width);
 
+        // Vertically pad the B plane for partial bottom strips (issue
+        // #186): rows b_height..b_strip_height would otherwise keep the
+        // previous strip's stale rows, which the bottom B blocks then DCT
+        // over. pad_b_down_strip has already rearranged rows 0..b_height
+        // to padded layout, so replicate full padded rows.
+        let b_target = self.layout.b_strip_height;
+        if b_height > 0 && b_height < b_target {
+            let padded_b_width = self.layout.padded_b_width;
+            let src = (b_height - 1) * padded_b_width;
+            for row in b_height..b_target {
+                let dst = row * padded_b_width;
+                self.cr_down.copy_within(src..src + padded_b_width, dst);
+            }
+        }
+
         // For Y component (cb_strip): rearrange to padded layout directly
         // We'll use cb_strip as the source for DCT in XYB mode
         if padded_width > width {
@@ -964,6 +979,20 @@ impl StripProcessor {
                     self.cb_strip
                         .copy_within(src_start..src_start + padded_width, dst);
                     self.cr_strip
+                        .copy_within(src_start..src_start + padded_width, dst);
+                }
+            } else if self.layout.use_xyb {
+                // XYB (issue #186): convert_strip_to_xyb has already
+                // rearranged cb_strip (the perceptual-Y plane) to PADDED
+                // layout, so replicate full padded rows — the old packed
+                // `width`-stride replication landed at shifted offsets,
+                // corrupting the tail of the last real row and filling the
+                // pad rows with phase-shifted data. cr_strip is post-convert
+                // scratch under XYB (B already lives in cr_down, vertically
+                // padded inside the converter) — nothing to pad.
+                for row in actual_height..target_height {
+                    let dst = row * padded_width;
+                    self.cb_strip
                         .copy_within(src_start..src_start + padded_width, dst);
                 }
             } else {

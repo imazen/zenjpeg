@@ -258,6 +258,8 @@ mod wasm_simd;
 mod windows_encoder_detection;
 #[path = "bundled/xyb_cpp_comparison.rs"]
 mod xyb_cpp_comparison;
+#[path = "bundled/xyb_edge_padding.rs"]
+mod xyb_edge_padding;
 #[path = "bundled/xyb_encoding_basic.rs"]
 mod xyb_encoding_basic;
 #[path = "bundled/xyb_linear_cpp_parity.rs"]
