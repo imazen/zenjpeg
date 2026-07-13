@@ -582,6 +582,10 @@ impl ExpertConfig {
             ColorMode::YCbCr { subsampling } => EncoderConfig::ycbcr(self.quality, subsampling),
             ColorMode::Xyb { subsampling } => EncoderConfig::xyb(self.quality, subsampling),
             ColorMode::Grayscale => EncoderConfig::grayscale(self.quality),
+            // RGB passthrough ignores custom quant tables — the table
+            // resolution path always uses the single shared std-luma
+            // table (see plan::resolve_quant_tables).
+            ColorMode::Rgb => EncoderConfig::rgb(self.quality),
         };
 
         // Package tables as Custom to bypass default table generation.

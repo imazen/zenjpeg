@@ -477,6 +477,13 @@ pub struct StripProcessor {
     pub(super) pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
     pub(super) chroma_downsampling: DownsamplingMethod,
+    /// RGB passthrough mode (issue #185): channels stored verbatim as
+    /// components R, G, B with no color transform. Geometry is plain
+    /// S444 (`layout.use_xyb == false`), but all three planes live in
+    /// the padded-stride strip buffers like XYB, AQ reads the G plane
+    /// (component 1, matching C++ jpegli's `y_channel` for `JCS_RGB`),
+    /// and deringing is skipped (luma-calibrated preprocessor).
+    pub(super) use_rgb: bool,
 
     // === Reusable strip buffers (f32) ===
     /// Y channel strip buffer
@@ -606,6 +613,7 @@ impl StripProcessor {
             0,
             false,
             crate::encode::encoder_types::XybSubsampling::BQuarter,
+            false, // use_rgb
             quant,
             true, // aq_enabled
         )
@@ -625,6 +633,7 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
+        use_rgb: bool,
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
@@ -637,6 +646,7 @@ impl StripProcessor {
             _restart_interval,
             use_xyb,
             xyb_subsampling,
+            use_rgb,
             quant,
             aq_enabled,
             false,
@@ -655,6 +665,7 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
+        use_rgb: bool,
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
@@ -667,6 +678,7 @@ impl StripProcessor {
             _restart_interval,
             use_xyb,
             xyb_subsampling,
+            use_rgb,
             quant,
             aq_enabled,
             true,
@@ -682,6 +694,7 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
+        use_rgb: bool,
         quant: QuantContext,
         aq_enabled: bool,
         streaming_through: bool,
@@ -712,6 +725,7 @@ impl StripProcessor {
             layout,
             pixel_format,
             chroma_downsampling,
+            use_rgb,
 
             // Strip buffers (sized for PADDED width for edge handling parity)
             y_strip: try_alloc_zeroed_f32_tracked(
@@ -1021,7 +1035,7 @@ impl StripProcessor {
     /// C++ jpegli uses `y_channel = (jpeg_color_space == JCS_RGB) ? 1 : 0`.
     #[allow(dead_code)] // XYB encoding path (not yet integrated into streaming)
     fn aq_input_strip(&self) -> &[f32] {
-        if self.layout.use_xyb {
+        if self.layout.use_xyb || self.use_rgb {
             &self.cb_strip
         } else {
             &self.y_strip
@@ -1043,6 +1057,14 @@ impl StripProcessor {
         if self.layout.use_xyb {
             self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
             return Ok(true); // XYB handles B downsampling internally
+        }
+
+        if self.use_rgb {
+            // RGB passthrough (issue #185): deinterleave channels verbatim
+            // into all three strip buffers at padded stride. No color
+            // transform, no downsample stage (always 4:4:4).
+            self.convert_strip_to_rgb_passthrough(rgb_strip, actual_strip_height)?;
+            return Ok(true);
         }
 
         // YCbCr mode: choose optimal path based on subsampling
@@ -1122,6 +1144,14 @@ impl StripProcessor {
             ));
         }
 
+        // RGB passthrough stores untransformed channels; pre-converted
+        // YCbCr input contradicts the mode.
+        if self.use_rgb {
+            return Err(crate::error::Error::unsupported_feature(
+                "YCbCr input not supported for RGB passthrough mode",
+            ));
+        }
+
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Copy YCbCr data to strip buffers with level shift
@@ -1169,6 +1199,14 @@ impl StripProcessor {
             ));
         }
 
+        // RGB passthrough stores untransformed channels; pre-converted
+        // YCbCr input contradicts the mode.
+        if self.use_rgb {
+            return Err(crate::error::Error::unsupported_feature(
+                "YCbCr input not supported for RGB passthrough mode",
+            ));
+        }
+
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Copy Y with level shift, copy chroma directly to downsampled buffers
@@ -1201,8 +1239,10 @@ impl StripProcessor {
     ) -> Result<usize> {
         // Process AQ and check if previous iMCU strengths are ready.
         // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
+        // (perceptual Y) and RGB passthrough (G, matching C++ jpegli's
+        // `y_channel = 1` for JCS_RGB).
         // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
-        let aq_input = if self.layout.use_xyb {
+        let aq_input = if self.layout.use_xyb || self.use_rgb {
             &self.cb_strip
         } else {
             &self.y_strip
@@ -1295,7 +1335,10 @@ impl StripProcessor {
         //               So deringing is skipped on this loop under XYB and
         //               applied to the cb_strip (Y-perceptual-luma) loop
         //               below instead.
-        let apply_deringing_here = self.deringing && !self.layout.use_xyb;
+        //   RGB mode:   channels are untransformed data with no luma plane,
+        //               so deringing is skipped entirely (C++ jpegli has no
+        //               deringing preprocessor at all).
+        let apply_deringing_here = self.deringing && !self.layout.use_xyb && !self.use_rgb;
         #[cfg(feature = "parallel")]
         {
             let deringing = if apply_deringing_here {
@@ -1416,6 +1459,48 @@ impl StripProcessor {
                         self.pending.cr[pending_idx][cr_start + cr_idx] =
                             forward_dct_dispatch(simd_token, &cr_block);
                         cr_idx += 1;
+                    }
+                }
+            } else if self.use_rgb {
+                // RGB passthrough: G and B are full-resolution planes in
+                // cb_strip/cr_strip (padded stride, same geometry as the R
+                // plane in y_strip). No deringing — the channels are
+                // untransformed data with no luma plane.
+                let y_size = strip_height * padded_width;
+                let plane_blocks_total = actual_strip_blocks_h * blocks_w;
+
+                let cb_start = self.pending.cb[pending_idx].len();
+                self.pending.cb[pending_idx]
+                    .resize(cb_start + plane_blocks_total, Block8x8f::default());
+                let cr_start = self.pending.cr[pending_idx].len();
+                self.pending.cr[pending_idx]
+                    .resize(cr_start + plane_blocks_total, Block8x8f::default());
+
+                let mut idx = 0;
+                for local_by in 0..strip_blocks_h {
+                    let global_by = start_block_y + local_by;
+                    if global_by >= (height + 7) / 8 {
+                        break;
+                    }
+                    for bx in 0..blocks_w {
+                        let g_block = extract_block_from_strip_wide(
+                            &self.cb_strip[..y_size],
+                            bx,
+                            local_by,
+                            padded_width,
+                        );
+                        self.pending.cb[pending_idx][cb_start + idx] =
+                            forward_dct_dispatch(simd_token, &g_block);
+
+                        let b_block = extract_block_from_strip_wide(
+                            &self.cr_strip[..y_size],
+                            bx,
+                            local_by,
+                            padded_width,
+                        );
+                        self.pending.cr[pending_idx][cr_start + idx] =
+                            forward_dct_dispatch(simd_token, &b_block);
+                        idx += 1;
                     }
                 }
             } else {

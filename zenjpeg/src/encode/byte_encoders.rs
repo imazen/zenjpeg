@@ -137,6 +137,7 @@ impl BytesEncoder {
             super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
         // Progressive mode: restart markers provide no benefit (progressive
@@ -191,6 +192,9 @@ impl BytesEncoder {
 
         if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
             builder = builder.use_xyb(true).xyb_subsampling(subsampling);
+        }
+        if matches!(config.color_mode, super::encoder_types::ColorMode::Rgb) {
+            builder = builder.use_rgb(true);
         }
 
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)

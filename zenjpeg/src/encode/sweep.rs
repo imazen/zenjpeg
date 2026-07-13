@@ -832,6 +832,7 @@ impl Stratum<'_> {
             ColorMode::YCbCr { subsampling } => EncoderConfig::ycbcr(q, subsampling),
             ColorMode::Xyb { subsampling } => EncoderConfig::xyb(q, subsampling),
             ColorMode::Grayscale => EncoderConfig::grayscale(q),
+            ColorMode::Rgb => EncoderConfig::rgb(q),
         };
         let family = match (self.family, self.moz_cq_delta) {
             (
@@ -948,6 +949,7 @@ impl Stratum<'_> {
                 super::encoder_types::XybSubsampling::Full => "xybFull",
             },
             ColorMode::Grayscale => "gray",
+            ColorMode::Rgb => "rgb",
         };
         let mut s = format!("{fam}_{co}_{sc}_{col}");
         if !self.aq {
@@ -1423,11 +1425,13 @@ pub fn fingerprint(config: &EncoderConfig) -> u64 {
         }
         ColorMode::Xyb { .. } => (true, false),
         ColorMode::Grayscale => (false, false),
+        ColorMode::Rgb => (false, false),
     };
     let resolved = resolve_quant_tables(TableResolveInputs {
         quality: config.get_quality(),
         table_config: config.get_quant_table_config(),
         use_xyb,
+        use_rgb: matches!(config.get_color_mode(), ColorMode::Rgb),
         is_420,
         allow_16bit: config.is_allow_16bit_quant_tables(),
     });
@@ -1530,6 +1534,7 @@ pub fn fingerprint(config: &EncoderConfig) -> u64 {
             super::encoder_types::XybSubsampling::BQuarter => 11,
         },
         ColorMode::Grayscale => 20,
+        ColorMode::Rgb => 30,
     });
     h.u8(u8::from(config.is_aq_enabled()));
     h.u8(u8::from(config.deringing));

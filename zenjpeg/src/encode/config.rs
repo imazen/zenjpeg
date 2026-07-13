@@ -56,6 +56,11 @@ pub struct ComputedConfig {
     pub use_xyb: bool,
     /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
     pub xyb_subsampling: super::encoder_types::XybSubsampling,
+    /// RGB passthrough mode (issue #185): store channels without color
+    /// transformation. Always 4:4:4; headers signal RGB via component
+    /// IDs 'R','G','B' plus Adobe APP14 transform=0. Mutually exclusive
+    /// with `use_xyb`.
+    pub use_rgb: bool,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
     /// Enable parallel encoding (requires `parallel` feature)
@@ -277,6 +282,7 @@ impl Default for ComputedConfig {
             subsampling: Subsampling::S444,
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
+            use_rgb: false,
             restart_interval: 0,
             #[cfg(feature = "parallel")]
             parallel: false,

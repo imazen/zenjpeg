@@ -358,6 +358,22 @@ impl ZeroBiasParams {
         Self { mul, offset }
     }
 
+    /// Zero-bias parameters for RGB passthrough mode (no color transform).
+    ///
+    /// Matches C++ jpegli's `InitQuantizer` defaults when adaptive
+    /// quantization is enabled and `jpeg_color_space != JCS_YCbCr`:
+    /// flat 0.5 multiplier and offset for AC coefficients, 0 for DC.
+    /// The distance-blended YCbCr tables are luma/chroma-calibrated and
+    /// deliberately not applied to untransformed channel data.
+    #[must_use]
+    pub fn for_rgb() -> Self {
+        let mut mul = [0.5f32; DCT_BLOCK_SIZE];
+        let mut offset = [0.5f32; DCT_BLOCK_SIZE];
+        mul[0] = 0.0;
+        offset[0] = 0.0;
+        Self { mul, offset }
+    }
+
     /// Compute zero-bias parameters for non-adaptive quantization (simpler default).
     ///
     /// For YCbCr, applies only the offsets without the multiplier blending.
@@ -800,6 +816,47 @@ fn generate_standard_quant_table(
         let q = (base_val * scale).round();
         // Store unclamped value - create_quant_table will handle clamping and precision
         values[i] = q as u16;
+    }
+
+    create_quant_table(values, allow_16bit)
+}
+
+/// Maps butteraugli distance to a linear quality scale factor.
+///
+/// Port of C++ jpegli's `DistanceToLinearQuality` (quant.cc). Used for
+/// colorspaces that take the std-table path (`JCS_RGB`, CMYK, unknown),
+/// where quant values scale linearly instead of via the per-frequency
+/// non-linear `distance_to_scale`.
+#[must_use]
+pub fn distance_to_linear_quality(distance: f32) -> f32 {
+    if distance <= 0.1 {
+        1.0
+    } else if distance <= 4.6 {
+        (200.0 / 9.0) * (distance - 0.1)
+    } else if distance <= 6.4 {
+        5000.0 / (100.0 - (distance - 0.1) / 0.09)
+    } else if distance < 25.0 {
+        530000.0 / (3450.0 - 300.0 * ((848.0 * distance - 5330.0) / 120.0).sqrt())
+    } else {
+        5000.0
+    }
+}
+
+/// Generates the shared quantization table for RGB passthrough mode.
+///
+/// Matches C++ jpegli's `SetQuantMatrices` for non-XYB `JCS_RGB`: the
+/// ITU-T T.81 Annex K luminance base matrix scaled linearly by
+/// `0.01 * distance_to_linear_quality(distance)`. All three components
+/// reference this single table (quant_tbl_no = 0), so no chroma table
+/// is generated.
+#[must_use]
+pub fn generate_rgb_quant_table(distance: f32, allow_16bit: bool) -> QuantTable {
+    let scale = 0.01 * distance_to_linear_quality(distance);
+    let base = &BASE_QUANT_MATRIX_STD[..DCT_BLOCK_SIZE];
+
+    let mut values = [0u16; DCT_BLOCK_SIZE];
+    for (i, &base_val) in base.iter().enumerate() {
+        values[i] = (base_val * scale).round() as u16;
     }
 
     create_quant_table(values, allow_16bit)

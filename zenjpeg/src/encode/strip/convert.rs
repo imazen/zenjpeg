@@ -776,6 +776,62 @@ impl StripProcessor {
         Ok(())
     }
 
+    /// Deinterleaves RGB input verbatim into the three strip buffers for
+    /// RGB passthrough mode (issue #185).
+    ///
+    /// No color transform: R→y_strip, G→cb_strip, B→cr_strip, all at
+    /// **padded** stride with right-edge replication (the same layout the
+    /// XYB converter leaves its planes in), so AQ can read the G plane and
+    /// the DCT stage extracts all three planes with `padded_width` directly.
+    /// Values are the raw 0..255 samples as f32 — the DCT applies the
+    /// level shift, exactly as in the YCbCr path.
+    pub(super) fn convert_strip_to_rgb_passthrough(
+        &mut self,
+        rgb_strip: &[u8],
+        strip_height: usize,
+    ) -> Result<()> {
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
+        let bpp = self.pixel_format.bytes_per_pixel();
+
+        // Channel order within each pixel: (r, g, b) byte offsets.
+        let (r_off, g_off, b_off) = match self.pixel_format {
+            PixelFormat::Rgb | PixelFormat::Rgba => (0usize, 1usize, 2usize),
+            PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => (2, 1, 0),
+            _ => {
+                return Err(crate::error::Error::unsupported_feature(
+                    "RGB passthrough mode requires an 8-bit RGB-family pixel format",
+                ));
+            }
+        };
+
+        for row in 0..strip_height {
+            let dst_start = row * padded_width;
+            let row_byte_start = row * width * bpp;
+
+            for x in 0..width {
+                let src = row_byte_start + x * bpp;
+                self.y_strip[dst_start + x] = rgb_strip[src + r_off] as f32;
+                self.cb_strip[dst_start + x] = rgb_strip[src + g_off] as f32;
+                self.cr_strip[dst_start + x] = rgb_strip[src + b_off] as f32;
+            }
+
+            // Right-edge replicate each plane to the padded width
+            if width < padded_width {
+                let r_edge = self.y_strip[dst_start + width - 1];
+                let g_edge = self.cb_strip[dst_start + width - 1];
+                let b_edge = self.cr_strip[dst_start + width - 1];
+                for x in width..padded_width {
+                    self.y_strip[dst_start + x] = r_edge;
+                    self.cb_strip[dst_start + x] = g_edge;
+                    self.cr_strip[dst_start + x] = b_edge;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Converts RGB strip to YCbCr using gamma-aware chroma downsampling.
     ///
     /// This computes Y at full resolution and Cb/Cr directly at the downsampled
@@ -900,14 +956,26 @@ impl StripProcessor {
         }
 
         if is_color {
-            // For cb_strip/cr_strip (if they're in padded layout)
-            // Note: these are still in packed layout at this point
-            let width = self.layout.width;
-            let last_src = last_row * width;
-            for row in actual_height..target_height {
-                let dst = row * width;
-                self.cb_strip.copy_within(last_src..last_src + width, dst);
-                self.cr_strip.copy_within(last_src..last_src + width, dst);
+            if self.use_rgb {
+                // RGB passthrough: the converter leaves all three planes in
+                // padded layout, so replicate full padded rows.
+                for row in actual_height..target_height {
+                    let dst = row * padded_width;
+                    self.cb_strip
+                        .copy_within(src_start..src_start + padded_width, dst);
+                    self.cr_strip
+                        .copy_within(src_start..src_start + padded_width, dst);
+                }
+            } else {
+                // For cb_strip/cr_strip (if they're in padded layout)
+                // Note: these are still in packed layout at this point
+                let width = self.layout.width;
+                let last_src = last_row * width;
+                for row in actual_height..target_height {
+                    let dst = row * width;
+                    self.cb_strip.copy_within(last_src..last_src + width, dst);
+                    self.cr_strip.copy_within(last_src..last_src + width, dst);
+                }
             }
         }
     }

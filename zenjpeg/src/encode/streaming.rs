@@ -189,6 +189,31 @@ impl StreamingEncoder {
             ));
         }
 
+        if builder.use_rgb {
+            if builder.use_xyb {
+                return Err(Error::invalid_config(
+                    "RGB passthrough mode and XYB mode are mutually exclusive".into(),
+                ));
+            }
+            if builder.subsampling != Subsampling::S444 {
+                return Err(Error::invalid_config(
+                    "RGB passthrough mode requires 4:4:4 (no chroma subsampling)".into(),
+                ));
+            }
+            match builder.pixel_format {
+                crate::types::PixelFormat::Rgb
+                | crate::types::PixelFormat::Rgba
+                | crate::types::PixelFormat::Bgr
+                | crate::types::PixelFormat::Bgra
+                | crate::types::PixelFormat::Bgrx => {}
+                _ => {
+                    return Err(Error::unsupported_feature(
+                        "RGB passthrough mode requires an 8-bit RGB-family pixel format",
+                    ));
+                }
+            }
+        }
+
         // Generate quantization tables and zero-bias params. Shared with
         // `EncoderConfig::resolve_plan` (encode::plan::resolve_quant_tables)
         // so introspection can never drift from the encoder.
@@ -197,6 +222,7 @@ impl StreamingEncoder {
             quality: builder.quality,
             table_config: &builder.quant_table_config,
             use_xyb: builder.use_xyb,
+            use_rgb: builder.use_rgb,
             is_420,
             allow_16bit: builder.allow_16bit_quant_tables,
         });
@@ -217,7 +243,8 @@ impl StreamingEncoder {
         // so StripProcessor can allocate minimal block storage.
         let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
             && builder.mode != JpegMode::Progressive
-            && !builder.use_xyb;
+            && !builder.use_xyb
+            && !builder.use_rgb;
 
         // Create strip processor with quant tables provided at construction.
         // In streaming-through mode, only allocate one strip of block storage.
@@ -231,6 +258,7 @@ impl StreamingEncoder {
                 builder.restart_interval,
                 builder.use_xyb,
                 builder.xyb_subsampling,
+                builder.use_rgb,
                 quant_ctx,
                 builder.aq_enabled,
             )?
@@ -244,6 +272,7 @@ impl StreamingEncoder {
                 builder.restart_interval,
                 builder.use_xyb,
                 builder.xyb_subsampling,
+                builder.use_rgb,
                 quant_ctx,
                 builder.aq_enabled,
             )?
@@ -303,6 +332,7 @@ impl StreamingEncoder {
             restart_interval: builder.restart_interval,
             use_xyb: builder.use_xyb,
             xyb_subsampling: builder.xyb_subsampling,
+            use_rgb: builder.use_rgb,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
             trellis: builder.trellis,
@@ -1236,8 +1266,11 @@ impl StreamingEncoder {
     ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
         use super::encoder_types::TinyFileMode;
         // Tiny shared tables need optimized Huffman and are not defined
-        // for the XYB serialization path.
-        let tiny_possible = !config.use_xyb && matches!(config.huffman, HuffmanStrategy::Optimize);
+        // for the XYB/RGB serialization paths (both already use a single
+        // shared table pair, so there is nothing for tiny mode to merge).
+        let tiny_possible = !config.use_xyb
+            && !config.use_rgb
+            && matches!(config.huffman, HuffmanStrategy::Optimize);
         // Grayscale tiny mode is a DOMINANCE case, not a trial case:
         // with a single component there is no shared-table cost to
         // weigh — it is pure header pruning (~208 B), smaller at every
@@ -1375,6 +1408,7 @@ impl StreamingEncoder {
         // pixel-count activation heuristic with the exact answer; skipped
         // only when structurally ineligible (XYB) or explicitly Off.
         let tiny_eligible = !config.use_xyb
+            && !config.use_rgb
             && !matches!(
                 config.tiny_file_mode,
                 super::encoder_types::TinyFileMode::Off
@@ -1440,6 +1474,8 @@ impl StreamingEncoder {
                 output,
                 collect_frequencies,
             )?
+        } else if config.use_rgb {
+            Self::encode_sequential_rgb(config, y_quant, strip_output, output)?
         } else {
             Self::encode_sequential_ycbcr(
                 config,
@@ -1601,6 +1637,100 @@ impl StreamingEncoder {
                     &tables.ac_luma,
                 )?
             };
+            Ok((scan_data, None))
+        }
+    }
+
+    /// Encodes sequential JPEG in RGB passthrough mode (issue #185).
+    ///
+    /// Mirrors C++ jpegli's non-XYB `JCS_RGB` serialization: component IDs
+    /// 'R','G','B' at 1×1 sampling, a single shared quantization table
+    /// (slot 0) and a single shared Huffman pair (slot 0), plus an Adobe
+    /// APP14 marker with transform=0 (libjpeg also writes one for
+    /// `JCS_RGB`; jpegli relies on component IDs alone). The 1+1+1 MCU
+    /// layout is identical to XYB-Full, so the XYB-Full table builders
+    /// and entropy encoder are reused directly.
+    ///
+    /// RGB mode never collects Huffman symbol frequencies (like XYB).
+    fn encode_sequential_rgb(
+        config: &ComputedConfig,
+        quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
+        config.write_header(output)?;
+        config.write_app14_adobe(output, 0)?;
+        config.write_quant_tables_rgb(output, quant)?;
+
+        // SOF1 only when the shared table needs 16-bit precision. Unlike
+        // XYB there is no forced SOF1: passthrough DC stays in baseline
+        // category range.
+        let is_extended = quant.precision > 0;
+        config.write_frame_header_rgb(output, is_extended)?;
+
+        if matches!(config.huffman, HuffmanStrategy::Optimize) {
+            let (dc_table, ac_table, _f) = config.build_optimized_tables_xyb_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+            )?;
+
+            config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            let scan_data = config.encode_with_tables_xyb_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &dc_table,
+                &ac_table,
+            )?;
+            Ok((scan_data, None))
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            // Custom tables: like XYB, dc_luma/ac_luma serve as the shared pair.
+            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            let scan_data = config.encode_with_tables_xyb_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            Ok((scan_data, None))
+        } else {
+            // Fixed: general-purpose trained tables; the luma pair is shared.
+            let tables = crate::huffman::builtin_tables::select_tables(
+                &config.quality,
+                false,
+                config.subsampling,
+            );
+            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            let scan_data = config.encode_with_tables_xyb_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
             Ok((scan_data, None))
         }
     }

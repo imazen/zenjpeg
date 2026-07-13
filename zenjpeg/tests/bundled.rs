@@ -220,6 +220,8 @@ mod quality_regression;
 mod quant_16bit_comparison;
 #[path = "bundled/quant_config_effects.rs"]
 mod quant_config_effects;
+#[path = "bundled/rgb_mode.rs"]
+mod rgb_mode;
 #[path = "bundled/roundtrip_corpus.rs"]
 mod roundtrip_corpus;
 #[path = "bundled/roundtrip_quality.rs"]

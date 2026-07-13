@@ -80,6 +80,10 @@ pub(crate) struct TableResolveInputs<'a> {
     pub quality: Quality,
     pub table_config: &'a QuantTableConfig,
     pub use_xyb: bool,
+    /// RGB passthrough mode (issue #185): a single shared std-luma table
+    /// scaled linearly, ignoring the table family entirely (mirrors C++
+    /// jpegli, where non-XYB `JCS_RGB` always takes the std-table path).
+    pub use_rgb: bool,
     pub is_420: bool,
     pub allow_16bit: bool,
 }
@@ -110,9 +114,29 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
         quality,
         table_config,
         use_xyb,
+        use_rgb,
         is_420,
         allow_16bit,
     } = inputs;
+
+    // RGB passthrough (issue #185): one std Annex-K luma table shared by
+    // all three components, linear scaling, flat 0.5 zero-bias — the
+    // exact C++ jpegli behavior for non-XYB `JCS_RGB`. The table family
+    // and chroma distance scales don't participate.
+    if use_rgb {
+        let distance = quality.to_distance();
+        let table = quant::generate_rgb_quant_table(distance, allow_16bit);
+        return ResolvedTables {
+            quant: (table.clone(), table.clone(), table),
+            zero_bias: (
+                ZeroBiasParams::for_rgb(),
+                ZeroBiasParams::for_rgb(),
+                ZeroBiasParams::for_rgb(),
+            ),
+            distances: [distance; 3],
+            quality_drives_tables: true,
+        };
+    }
 
     let rq = resolve_quality(quality, table_config, use_xyb);
     let distance = quality.to_distance();
@@ -465,13 +489,16 @@ impl EncoderConfig {
             ColorMode::YCbCr { subsampling } => (false, subsampling.into()),
             ColorMode::Xyb { .. } => (true, Subsampling::S444),
             ColorMode::Grayscale => (false, Subsampling::S444),
+            ColorMode::Rgb => (false, Subsampling::S444),
         };
+        let use_rgb = matches!(self.color_mode, ColorMode::Rgb);
         let is_420 = subsampling == Subsampling::S420;
 
         let resolved = resolve_quant_tables(TableResolveInputs {
             quality: self.quality,
             table_config: &self.quant_table_config,
             use_xyb,
+            use_rgb,
             is_420,
             allow_16bit: self.allow_16bit_quant_tables,
         });
@@ -503,6 +530,7 @@ impl EncoderConfig {
         // possible (non-XYB explicit-Baseline with optimized Huffman).
         // Smallest's sequential candidates trial tiny tables at emission.
         let tiny_possible = !use_xyb
+            && !use_rgb
             && matches!(self.scan_mode, ProgressiveScanMode::Baseline)
             && matches!(self.huffman, HuffmanStrategy::Optimize);
         let tiny_file_active = tiny_possible && matches!(self.tiny_file_mode, TinyFileMode::Force);
@@ -695,6 +723,7 @@ mod tests {
             quality: crate::encode::encoder_types::Quality::ApproxJpegli(75.0),
             table_config: &QuantTableConfig::default(),
             use_xyb: false,
+            use_rgb: false,
             is_420: true,
             allow_16bit: false,
         });
@@ -715,6 +744,7 @@ mod tests {
             quality: crate::encode::encoder_types::Quality::ApproxJpegli(75.0),
             table_config: &QuantTableConfig::default(),
             use_xyb: false,
+            use_rgb: false,
             is_420: true,
             allow_16bit: false,
         });
@@ -724,6 +754,7 @@ mod tests {
                 chroma_distance_scales: [1.0, 3.0],
             },
             use_xyb: false,
+            use_rgb: false,
             is_420: true,
             allow_16bit: false,
         });

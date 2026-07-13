@@ -595,6 +595,45 @@ impl EncoderConfig {
         }
     }
 
+    /// Create an RGB passthrough encoder configuration (no color transform).
+    ///
+    /// Channels are stored verbatim as JPEG components R, G, B — no
+    /// RGB→YCbCr matrix and no chroma subsampling (always 4:4:4), so the
+    /// only loss is DCT quantization per channel. The file signals RGB via
+    /// component IDs 'R','G','B' and an Adobe APP14 marker with
+    /// transform=0; libjpeg-family decoders (and zenjpeg's own decoder)
+    /// return the channels unmixed.
+    ///
+    /// Use this for images whose channels carry independent information
+    /// (e.g. fluorescence microscopy stains packed into R/G/B), where
+    /// cross-channel artifacts from a color transform are unacceptable.
+    /// For natural photos, [`ycbcr`](Self::ycbcr) compresses substantially
+    /// better at the same quality.
+    ///
+    /// Matches C++ jpegli / libjpeg `JCS_RGB` behavior: a single shared
+    /// quantization table (ITU-T T.81 Annex K luminance, linearly scaled
+    /// from `quality`) and a single shared Huffman table pair for all
+    /// three components. Adaptive quantization uses the G channel as the
+    /// luma proxy (as jpegli does); deringing does not apply.
+    ///
+    /// Requires an 8-bit RGB-family input layout (RGB, RGBA, BGR, BGRA,
+    /// BGRX — alpha/padding bytes are ignored).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::encoder::EncoderConfig;
+    ///
+    /// let config = EncoderConfig::rgb(90);
+    /// ```
+    #[must_use]
+    pub fn rgb(quality: impl Into<Quality>) -> Self {
+        Self {
+            quality: quality.into(),
+            color_mode: ColorMode::Rgb,
+            ..Self::default_internal()
+        }
+    }
+
     /// Create a YCbCr encoder with effort-based defaults.
     ///
     /// Combines quality, subsampling, and an [`Effort`] level into a single call.
@@ -1773,6 +1812,7 @@ impl EncoderConfig {
             ColorMode::YCbCr { subsampling } => subsampling.into(),
             ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             ColorMode::Grayscale => crate::types::Subsampling::S444,
+            ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
         StreamingEncoder::new(width, height)
@@ -1812,6 +1852,7 @@ impl EncoderConfig {
             ColorMode::YCbCr { subsampling } => subsampling.into(),
             ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             ColorMode::Grayscale => crate::types::Subsampling::S444,
+            ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
         StreamingEncoder::new(width, height)

@@ -671,6 +671,7 @@ pub(crate) fn run_iteration_loop(
     //   XYB Full            → v_samp = 1
     //   XYB BQuarter        → v_samp = 2  (B is 2×2 downsampled, max v_samp=2)
     //   Grayscale           → v_samp = 1
+    //   RGB passthrough     → v_samp = 1  (always 4:4:4)
     let v_samp = match pass_config.color_mode {
         crate::encode::ColorMode::YCbCr { subsampling } => {
             subsampling.v_samp_factor_luma() as usize
@@ -680,6 +681,7 @@ pub(crate) fn run_iteration_loop(
             crate::encode::XybSubsampling::Full => 1,
         },
         crate::encode::ColorMode::Grayscale => 1,
+        crate::encode::ColorMode::Rgb => 1,
     };
 
     // Build the source PrecomputedReference for zensim. RGB8 sRGB and

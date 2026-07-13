@@ -34,6 +34,10 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) use_xyb: bool,
     /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
     pub(crate) xyb_subsampling: super::encoder_types::XybSubsampling,
+    /// RGB passthrough mode (issue #185): no color transform, 4:4:4,
+    /// component IDs 'R','G','B' + Adobe APP14 transform=0. Mutually
+    /// exclusive with `use_xyb`.
+    pub(crate) use_rgb: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -84,6 +88,7 @@ impl StreamingEncoderBuilder {
             restart_interval: 0,
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
+            use_rgb: false,
             deringing: true,
             aq_enabled: true,
             // Boundary-RD defaults to `None` (feature off). When the public
@@ -213,6 +218,18 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn xyb_subsampling(mut self, sub: super::encoder_types::XybSubsampling) -> Self {
         self.xyb_subsampling = sub;
+        self
+    }
+
+    /// Enables RGB passthrough encoding (no color transformation).
+    ///
+    /// Channels are stored verbatim as JPEG components R, G, B at 4:4:4,
+    /// signaled via component IDs 'R','G','B' and an Adobe APP14 marker
+    /// with transform=0 (issue #185). Mutually exclusive with `use_xyb`;
+    /// requires `Subsampling::S444` and an 8-bit RGB-family pixel format.
+    #[must_use]
+    pub(crate) fn use_rgb(mut self, enable: bool) -> Self {
+        self.use_rgb = enable;
         self
     }
 

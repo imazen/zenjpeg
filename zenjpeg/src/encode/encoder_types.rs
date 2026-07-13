@@ -288,6 +288,17 @@ pub enum ColorMode {
 
     /// Single-channel grayscale.
     Grayscale,
+
+    /// RGB stored without color transformation (issue #185).
+    ///
+    /// Channels pass through to JPEG components R, G, B verbatim (only
+    /// DCT quantization is lossy) — no RGB→YCbCr matrix, no chroma
+    /// subsampling (always 4:4:4). Signaled with component IDs
+    /// 'R','G','B' and an Adobe APP14 marker with transform=0, matching
+    /// libjpeg's `JCS_RGB`. For channel-packed data (e.g. microscopy
+    /// stains) where cross-channel bleed from a color transform is
+    /// unacceptable.
+    Rgb,
 }
 
 impl Default for ColorMode {

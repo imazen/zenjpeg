@@ -372,7 +372,7 @@ impl ComputedConfig {
         let is_color = !self.pixel_format.is_grayscale();
         let num_components = if is_color { 3 } else { 1 };
 
-        if self.scan_strategy == ScanStrategy::Search && !self.use_xyb {
+        if self.scan_strategy == ScanStrategy::Search && !self.use_xyb && !self.use_rgb {
             // Generate multiple candidate scan scripts and trial-encode each.
             // The frequency estimator can't accurately compare scripts with
             // different numbers of scans (Huffman clustering effects), so we
@@ -538,6 +538,14 @@ impl ComputedConfig {
             self.write_icc_profile(output, &XYB_ICC_PROFILE)?;
             self.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
             self.write_frame_header_xyb_progressive(output)?;
+        } else if self.use_rgb {
+            // RGB passthrough (issue #185): Adobe APP14 transform=0, one
+            // shared quant table, component IDs 'R','G','B'. No ICC — the
+            // samples are untransformed channel data.
+            self.write_header(output)?;
+            self.write_app14_adobe(output, 0)?;
+            self.write_quant_tables_rgb(output, y_quant)?;
+            self.write_frame_header_rgb(output, false)?; // Progressive → SOF2
         } else {
             // YCbCr mode: use standard headers
             self.write_header(output)?;
