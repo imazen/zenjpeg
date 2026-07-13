@@ -1,4 +1,6 @@
-//! Umbrella binary bundling 118 integration tests into one compile unit.
+//! Umbrella binary bundling the `bundled/` integration tests into one
+//! compile unit (one `#[path]` mod per file — count them, don't trust a
+//! hardcoded number here; a stale "118" survived long past 124 files).
 //!
 //! Each bundled file keeps its own `#![cfg(...)]` inner attrs; when a
 //! feature is off, the module body becomes empty. Files carry their own

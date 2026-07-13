@@ -1,5 +1,11 @@
 # AQ SIMD Investigation: Closing the C++ Performance Gap
 
+> **Historical record (2026-01/02).** The `archmage-simd` cargo feature
+> referenced throughout no longer exists — archmage/magetypes SIMD became
+> a mandatory dependency (always compiled; there is no toggle). Numbers
+> here predate that change and later tuning; consult `docs/TUNING_HISTORY.md`
+> and the repo-root `CLAUDE.md` for current performance state.
+
 ## Executive Summary
 
 **Problem:** Rust zenjpeg AQ functions consume 24% of encode time vs C++ jpegli's 8% (3x relative overhead).

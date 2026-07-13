@@ -1,4 +1,8 @@
-
+> **Historical record.** The `archmage-simd` feature named below was
+> removed — archmage SIMD is always compiled now. Current platform
+> coverage is enforced by `.github/workflows/ci.yml` (including
+> windows-11-arm, macos-26-intel, and i686 via cross); treat that file
+> as the source of truth.
 
 ## Cross-Platform Build Status
 

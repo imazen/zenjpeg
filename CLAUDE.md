@@ -564,61 +564,15 @@ per-wave parallelism, but uses streaming API (rows on demand) with bounded memor
 ### Dequantization Bias (2026-02-06)
 
 `Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases
-(Price & Rabbani 2000). Computes per-coefficient biases from DCT statistics
-and applies them during f32 dequantization. Bypasses fast i16 IDCT path.
-Default: off.
+(Price & Rabbani 2000) during f32 dequantization (bypasses the fast i16 IDCT
+path). Default: off. Key findings (full sweep tables migrated to
+`docs/TUNING_HISTORY.md`, 2026-07-13):
 
-**Frymire quality sweep** (1118x1105 photograph, baseline 4:2:0, commit 86e3bef):
-
-| Q | bytes | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp | maxdif |
-|---|-------|---------|----------|---------|-----------|----------|----------|--------|
-| 10 | 116K | 5.25 | 1.88 | 1.99 | 5.25 | -3.37 | -0.11 | 1 |
-| 20 | 171K | 21.35 | 18.54 | 18.61 | 21.35 | -2.82 | -0.07 | 1 |
-| 30 | 219K | 30.59 | 28.57 | 28.59 | 30.59 | -2.03 | -0.03 | 1 |
-| 40 | 243K | 34.21 | 32.37 | 32.44 | 34.21 | -1.84 | -0.07 | 1 |
-| 50 | 271K | 37.28 | 35.95 | 36.01 | 37.28 | -1.32 | -0.06 | 1 |
-| 60 | 309K | 41.07 | 40.07 | 40.10 | 41.07 | -0.99 | -0.03 | 1 |
-| 70 | 362K | 45.00 | 44.24 | 44.31 | 45.00 | -0.76 | -0.07 | 1 |
-| 80 | 438K | 48.72 | 48.25 | 48.32 | 48.72 | -0.47 | -0.07 | 1 |
-| 85 | 494K | 50.45 | 50.18 | 50.21 | 50.45 | -0.27 | -0.03 | 1 |
-| 90 | 583K | 51.94 | 51.81 | 51.83 | 51.94 | -0.14 | -0.02 | 1 |
-| 95 | 742K | 53.28 | 53.25 | 53.27 | 53.28 | -0.03 | -0.02 | 1 |
-| 97 | 848K | 53.71 | 53.68 | 53.73 | 53.71 | -0.03 | -0.05 | 1 |
-| 99 | 1034K | 54.00 | 54.03 | 54.07 | 54.00 | +0.03 | -0.05 | 1 |
-
-**CID22 mean** (10 images, 512px, baseline 4:2:0):
-
-| Q | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp |
-|---|---------|----------|---------|-----------|----------|----------|
-| 50 | 65.23 | 65.03 | 65.07 | 65.23 | -0.21 | -0.05 |
-| 75 | 75.05 | 75.19 | 75.24 | 75.05 | +0.14 | -0.06 |
-| 85 | 79.85 | 80.17 | 80.22 | 79.85 | +0.33 | -0.04 |
-| 95 | 86.65 | 87.05 | 87.11 | 86.65 | +0.39 | -0.06 |
-
-- `bias-zen`: SSIM2 pt gain over default (positive = better)
-- `bias-cpp`: SSIM2 pt gap vs C++ jpegli (negative = C++ better)
-- `maxdif`: max pixel diff between zen+bias and cjpegli
-
-**Pairwise SSIMULACRA2** (between decoders, Q85, 6 CID22 images):
-
-| | zenjpeg | zen+bias | cjpegli | zune-jpeg |
-|---|---------|----------|---------|-----------|
-| zenjpeg | - | 91.39 | 91.42 | 100.00 |
-| zen+bias | | - | 94.31 | 91.23 |
-| cjpegli | | | - | 91.26 |
-
-**Key findings:**
-- zenjpeg default == zune-jpeg (identical output, both integer IDCT)
-- zen+bias↔cjpegli similarity: 94.31 vs default↔cjpegli 91.42 (3 pts closer)
-- Max pixel diff between zen+bias and cjpegli: always 1 (IDCT rounding only)
-- **Image-dependent quality tradeoff**: on CID22 (small, diverse), bias helps
-  +0.14 to +0.39 at Q75+. On frymire (large photograph), default integer IDCT
-  wins by 0.03-3.37 pts across all qualities. Bias only breaks even at Q99.
-- C++ jpegli shows the same pattern: also behind integer IDCT on frymire.
-  The f32 IDCT + bias path and integer IDCT path have different rounding
-  characteristics; which wins depends on image content.
-- bias-cpp gap is consistently tiny (0.02-0.11 pts), confirming zen+bias
-  closely matches C++ jpegli decoder behavior regardless of image.
+- Image-dependent tradeoff: helps +0.14..+0.39 SSIM2 on CID22 at Q75+,
+  but the default integer IDCT wins on frymire at all qualities below Q99.
+- zen+bias tracks C++ jpegli's decoder closely everywhere (gap 0.02-0.11
+  SSIM2 pts; max pixel diff vs cjpegli always 1).
+- Pairwise similarity at Q85: zen+bias<->cjpegli 94.31 vs default<->cjpegli 91.42.
 
 Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored`
 
@@ -668,194 +622,18 @@ Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison --featu
 
 ## Failed Explorations
 
-### Parallel AQ (2026-01-17)
+Measured dead ends — DO NOT RE-ATTEMPT without reading the full write-ups,
+migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
-**Attempted:** Parallelize `per_block_modulations_row` using rayon.
-
-**Why it failed:**
-- Per-block AQ computation takes ~0.2 microseconds
-- Far too small for rayon thread pool overhead to be worthwhile
-- 4K benchmark with threshold=256: **5x slower** than sequential
-- Even 8K (33M pixels, 518K blocks) wouldn't benefit
-
-**Analysis:**
-- AQ takes 26% of 8K encode time, but only ~15% is parallelizable
-- `pre_erosion_row` (6%) has row-to-row accumulation dependency
-- `fuzzy_erosion` (5%) needs 3x3 neighborhood lookahead
-- Max theoretical speedup with 4 threads: ~10% overall
-- After rayon overhead: ~6% realistic gain - not worth complexity
-
-**Conclusion:** The SIMD-optimized sequential path is already efficient. Thread-level parallelism would need coarser granularity (e.g., multiple iMCU rows buffered) to overcome overhead, which conflicts with the streaming architecture.
-
-### Fuzzy Erosion SIMD (2026-01-21)
-
-**Attempted:** SIMD-optimize `compute_fuzzy_erosion_row_into` with archmage.
-
-**Approaches tried:**
-1. **Archmage with helper functions**: Created `mage_compute_fuzzy_erosion_row` with separate
-   `weighted_4_smallest`, `gather_3x3_clamped`, `gather_3x3_interior` helpers.
-   Result: **3x slower** (67ms vs 53ms) - `#[arcane]` prevents inlining, causing YMM register
-   spills at every function call boundary.
-
-2. **Massive inlined function**: ~350 lines with all 4 corners fully unrolled, no helper calls.
-   Result: **Still slower** (68ms vs 53ms) - instruction cache pressure from code bloat.
-
-**Root cause analysis:**
-- The algorithm requires finding 4 smallest from 9 values with index tracking
-- Scalar partial sort: `find min → replace with MAX → repeat 4×`
-- This creates unpredictable branch patterns that SIMD doesn't help
-- Code bloat from unrolling hurts icache more than SIMD helps
-
-**What would actually help:**
-- True SIMD sorting network (e.g., bitonic sort for 16 elements)
-- Would need to process multiple blocks in parallel, not just vectorize one block
-- Complexity not justified for ~5% of encode time
-
-**Files:** `zenjpeg/src/quant/aq/simd.rs:1377` (massive version, unused),
-`zenjpeg/src/quant/aq/streaming.rs:631` (original scalar, in use)
-
-### AVX-512 Dual-Block DCT (2026-01-21)
-
-**Attempted:** Process two 8x8 blocks simultaneously using AVX-512 (512-bit = 16 floats = 2 blocks).
-
-**Implementation:** Pack two blocks into ZMM registers [A_row_i, B_row_i], do DCT butterflies
-with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
-
-**Benchmark results:**
-- AVX2 single-block: 41.19M blocks/sec
-- AVX-512 dual-block: 17.58M blocks/sec (2.3x **slower**)
-
-**Why it failed:**
-1. **8x8 blocks fit AVX2 perfectly** - 8 floats = 256 bits, no wasted register space
-2. **Transpose cannot be done natively in AVX-512** - `_mm512_unpacklo_ps` operates on 128-bit
-   lanes, mixing data between blocks A and B
-3. **Extract/insert workaround is expensive** - each transpose requires:
-   - 8 `_mm512_extractf32x8_ps` to split ZMM→YMM
-   - 48 AVX2 operations (two 8x8 transposes)
-   - 16 `_mm512_insertf32x8` to recombine YMM→ZMM
-4. **Two transposes per DCT** = 64 extra extract/insert operations
-5. **AVX-512 frequency throttling** on some CPUs adds further penalty
-
-**Conclusion:** AVX-512 benefits require naturally 16-wide workloads. 8x8 DCT is inherently
-8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
-
-**Files:** `zenjpeg/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
-
-### Linear Iteration for AC Refinement (2026-02-14)
-
-**Attempted:** Replace bitmap-accelerated inner scan loop in `decode_ac_refine` with linear
-iteration (k from ss to se), matching zune-jpeg's approach. Goal was to eliminate the
-`num_zeros_to_skip < zero_gap` branch that caused 1.08M mispredicts (25.5% of ALL mispredicts).
-
-**Results:** WORSE. Instructions 449M → 469M (+4.4%), mispredicts 4.24M → 7.75M (+83%).
-
-**Why it failed:** Linear iteration visits EVERY position from k to se (~49 positions per block
-for band [15,63]), while bitmap visits only nonzero positions (~5-10). Even though individual
-branches are more predictable (`coeffs[k] != 0` is 90% false for sparse blocks), the total
-branch count is much higher: 49 × ~2.5 branches = ~123 per block vs bitmap's 10 × ~7 = ~70.
-The unconditional refinement bit reads in the nonzero case happen the same number of times,
-but the zero-position checking adds massive overhead for sparse progressive blocks.
-
-**Conclusion:** Bitmap is fundamentally better for sparse coefficient data. The O(nonzero)
-iteration count dominates the per-iteration branch cost.
-
-### Unchecked Bit Reads for AC Refinement (2026-02-14)
-
-**Attempted:** Add `read_bit_unchecked()` (no refill check) with `ensure_n_bits()` pre-fill
-before bitmap loops. Save ~2 instructions per bit read by eliminating the `bits_in_buffer == 0`
-check in the hot loop.
-
-**Results:** Breaks restart marker handling. 5 test failures including "expected 0xFF for restart
-marker" and "invalid Huffman code".
-
-**Why it failed:** Near restart markers, `refill()` returns fewer bits than requested and sets
-`marker_found`. The checked `read_bit_refine()` calls `refill()` when buffer empties, which
-re-adds zero padding. Unchecked reads consume past the marker boundary. Even with
-`saturating_sub` to prevent u8 underflow, the consumed bits corrupt the position for
-subsequent Huffman decodes. Safe handling requires tracking available bits vs needed bits per
-loop iteration, which adds complexity matching the cost of the original check.
-
-**Conclusion:** The 2-instruction saving per bit read isn't worth the marker boundary complexity.
-
-### Pre-refill AC First Scan (2026-02-15)
-
-**Attempted:** Apply the same `ensure_bits()` + `peek_top(9)` pre-refill pattern (from AC
-refine commit 43b24d6) to `decode_ac_first_scan`.
-
-**Results:** Callgrind showed +11% regression (34.8M → 38.6M instructions). AC refine scan
-(unchanged code) also regressed +6.4% (162.7M → 173.1M) due to code layout changes from
-recompilation. Function is only 2.43% of total — even a 20% improvement saves <0.5%.
-
-**Conclusion:** Not worth pursuing. The function is too small a fraction of total decode
-time. Code layout effects from the change outweigh the algorithmic improvement.
-
-### Conditional read_bit_fast in AC Refinement (2026-02-15)
-
-**Attempted:** Add `read_bit_fast()` (no refill check) to bitstream.rs. Use `fast_bits`
-boolean in AC refine to choose between `read_bit_fast()` and `read_bit_refine()` per
-refinement bit read, based on whether `ensure_bits()` succeeded.
-
-**Results:** All tests passed but callgrind showed 162.7M → 218.7M (+56M, +34%).
-
-**Why it failed:** The per-read `if fast_bits { read_bit_fast() } else { read_bit_refine() }`
-branch costs ~2 instructions — exactly the same as the refill check it replaces. Net effect
-is zero benefit with added code complexity. The branch predictor handles the refill check
-(`bits_in_buffer == 0` is rarely true) just as well as the `fast_bits` check.
-
-**Conclusion:** Cannot eliminate per-bit overhead through branching. Would need fundamentally
-different approach (e.g., reading multiple refinement bits in one operation).
-
-### Branchy Coefficient Update in AC Refinement (2026-02-15)
-
-**Attempted:** Replace branchless `c.wrapping_add((bit as i16) * not_set * sign * bit_val)`
-with branchy `if bit != 0 && (c & bit_val) == 0 { if c > 0 { +bit_val } else { -bit_val } }`.
-
-**Results:** Callgrind AC refine dropped from 225.2M to 184.5M (-18.1%). But wall-clock
-was 5-21% WORSE across all sizes.
-
-**Why it failed:** The `bit != 0` and `c > 0` branches are poorly predicted — coefficient
-signs and refinement bits are effectively random. Each misprediction costs ~15 cycles but
-counts as only 1 instruction in callgrind. The branchless version has more instructions but
-is fully predictable (no branches = no mispredictions). Branch misprediction overhead
-dominates instruction-count savings.
-
-**Conclusion:** Callgrind instruction count can be misleading when branch prediction matters.
-Branchless is correct for this hot path despite higher instruction count.
-
-### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
-
-**Problem:** Original decoder returned `([i16; 64], u8)` by value, copying 128 bytes per block.
-Smart zeroing alone didn't help because copy dominated memory bandwidth.
-
-**Solution:** Zero-copy `decode_block_into` API where caller provides reusable buffer:
-```rust
-fn decode_block_into(
-    &mut self,
-    coeffs: &mut [i16; 64],      // Caller-provided buffer
-    prev_coeff_count: u8,        // Zeroing hint from previous block
-    component: usize,
-    dc_table_idx: usize,
-    ac_table_idx: usize,
-) -> ScanResult<u8>              // Returns new coeff count
-```
-
-**Key insight:** Reusable buffers accumulate state from ALL previous blocks, not just the
-immediately previous one. If block N-2 wrote to position X, block N-1 didn't, and block N
-doesn't either, position X still has stale data. Fix: track MAXIMUM coefficient count since
-last restart marker, not just previous block's count.
-
-**Implementation:**
-- `entropy/decoder.rs`: Added `decode_block_into` with smart zeroing
-- `decode/parser.rs`: Added `prev_coeff_counts: [u8; 4]` per-component tracking
-- `decode/scanline.rs`: Added `coeffs_buf` reusable buffer and max-tracking
-
-**Results (2026-01-22):**
-- 512x512: ~5% improvement
-- 2048x2048: 6.5% improvement (17.9ms vs 19.2ms)
-
-Memory bandwidth reduction per block:
-- Before: 128 bytes zeroing + 128 bytes copy = 256 bytes
-- After: ~20 bytes targeted zeroing + 0 bytes copy = ~20 bytes
+- **Parallel AQ (2026-01-17):** rayon per-block AQ = 5x SLOWER at 4K; max realistic gain ~6% — not worth it.
+- **Fuzzy erosion SIMD (2026-01-21):** archmage helpers 3x slower (register spills); fully-inlined variant still slower (icache bloat).
+- **AVX-512 dual-block DCT (2026-01-21):** 2.3x SLOWER — 8x8 DCT is inherently 8-wide; transpose can't cross 128-bit lanes cheaply. AVX2 is optimal.
+- **Linear iteration for AC refinement (2026-02-14):** +4.4% instructions, +83% mispredicts vs the nonzero-bitmap loop.
+- **Unchecked bit reads in AC refinement (2026-02-14):** breaks restart-marker boundary handling; safe handling costs as much as the check.
+- **Pre-refill AC first scan (2026-02-15):** +11% callgrind regression; the function is only 2.43% of decode.
+- **Conditional read_bit_fast in AC refinement (2026-02-15):** the per-read mode branch costs exactly what the refill check costs — zero net.
+- **Branchy coefficient update in AC refinement (2026-02-15):** -18% instructions but 5-21% WORSE wall-clock — coefficient signs are unpredictable; branchless wins. (Callgrind counts mislead when prediction dominates.)
+- **Decoder zero-copy architecture (2026-01-22): IMPLEMENTED** — `decode_block_into` with caller buffer + max-coeff-count-since-restart zeroing; 5-6.5% wall-clock win. Key insight: reusable buffers accumulate stale state from ALL prior blocks, so track the maximum coefficient count since the last restart, not just the previous block's.
 
 ## Investigation Notes
 
@@ -1015,104 +793,22 @@ sensitivity tables, and preset baselines.
 
 ### Fixed / Resolved Bugs (historical reference)
 
-- **XYB linear-input encoder path saturated to white (FIXED 2026-04-23, commit 9e2348fe)** -
-  `EncoderConfig::xyb` + `PixelLayout::RgbF32Linear` or `PixelLayout::Rgb16Linear`
-  produced JPEGs that decoded to solid white. The scalar linear-input branch in
-  `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which returns
-  UN-scaled XYB for a 0-255-range input) and then multiplied by 255.0 again,
-  while the parallel sRGB-input SIMD branch correctly applied
-  `scale_xyb(x,y,b) = ((x+offset)*scale)` before the ×255.0 JPEG-range step.
-  Fix: linear branch now calls `linear_rgb_to_xyb(r,g,b)` on 0..1 RGB, then
-  `scale_xyb()`, then ×255.0 — same pipeline as the sRGB path. Sibling
-  `Rgb8Srgb` path unchanged; locked hashes unaffected.
-  - Tests: `xyb_linear_matches_srgb_solid_red` et al. in `xyb_roundtrip.rs`.
+One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
-- **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
-  `try_fused_parallel_decode()` didn't check `decode_mode`, so it took the fused parallel
-  path (decodes directly to u8 pixels, no coefficient storage) even when
-  `DecodeMode::Coefficient` was set. This caused "no decoded data" InternalError for
-  `OutputTarget::SrgbF32`, `dequant_bias(true)`, lossless transforms, and Knusperli deblock
-  — any path needing coefficient access. Only triggered with `--features parallel` on images
-  with DRI (restart markers). Fix: return `Ok(false)` from `try_fused_parallel_decode` when
-  `decode_mode == Coefficient`. (`fused_parallel.rs:92`)
-
-- **Progressive decoder truncation near restart markers (FIXED 2026-03-09, commit 08ef601)** -
-  Fused `decode_ac_first_scan` and `decode_ac_refine_scan` lacked a bit-by-bit Huffman
-  fallback when `peek_bits_refill(16)` failed near restart marker boundaries. When a Huffman
-  code > 9 bits occurred in the last 2-3 blocks before a restart marker (0xFF 0xDn), the
-  16-bit peek failed because the marker interrupted bitstream refill. The function incorrectly
-  treated this as scan truncation, zeroing all remaining AC coefficients. The standard
-  `decode_huffman_symbol_lenient` had this fallback but the fused functions did not.
-  Triggered at Q91-Q93 (where AC table had codes > 9 bits) with DRI=216 on 576x576 images.
-  Fix: added bit-by-bit Huffman decode fallback matching the standard function.
-  - Found during investigation of Known Bug #1 (catastrophic auto_optimize quality).
-  - Test: `cargo test --release -p zenjpeg --test quality_regression --features decoder -- diagnostic_coefficient_comparison --nocapture --ignored`
-
-- **Parallel feature skipping deringing (FIXED 2026-03-09)** - `parallel_dct_plane` in
-  `encode/parallel.rs` did `extract_block → forward_dct` without applying deringing, while
-  the sequential path in `strip/mod.rs:1027-1029` applied `preprocess_deringing_block` before
-  DCT. This caused `locked_values` test failures with `--features parallel` — not
-  non-determinism, but a deterministic quality regression (deringing silently skipped).
-  Fix: pass `deringing: Option<u16>` (dc_quant when enabled) through `parallel_dct_y_blocks`
-  into both parallel and sequential DCT plane functions. Deringing is block-local (no
-  cross-block dependencies), so it parallelizes trivially.
-
-- **zune-jpeg progressive decode issue (STALE, was Bug #5)** - Originally reported that
-  zune-jpeg decoded zenjpeg progressive output as grayscale. Investigation (2026-03-09)
-  found 70+ progressive encoding tests pass with zune-jpeg. The AC refinement trailing
-  ZRL fix (commit d355648) likely resolved the underlying scan structure issue. The only
-  remaining trace is a skip in `chroma_upsample_regression.rs:1038`. Note: zune-jpeg 0.5.12
-  still has a separate bug silently skipping AC refinement with DRI (max_diff=224).
-
-- **Grayscale scanline reader panic (FIXED 2026-02-06, commit be24fac)** - Streaming scanline
-  reader methods panicked on grayscale images. Fixed by handling 1-component images.
-
-- **XYB 4:2:0 encoder producing undecodable JPEGs (FIXED 2026-03-04, commit b0cafce)** -
-  Frequency counter clamped DC categories to 11 (`.min(11)`) but encoder wrote unclamped
-  categories. XYB produces DC differences > ±2047 at low quality (categories 12+). Huffman
-  table lacked codes for those categories, writing (code=0, len=0) → corrupted bitstream.
-  Fix: remove `.min(11)` from `collect_block_frequencies_simd`. Previously-encoded files
-  in `testdata/decode_failures/` remain permanently corrupted — tests converted to verify
-  graceful rejection (assert decode error, not success).
-  - Test: `cargo test --release -p zenjpeg --test xyb_roundtrip --features decoder`
-  - Test: `cargo test --release -p zenjpeg --test decode_xyb_failures`
-
-- **CMYK scanline transform panic (FIXED 2026-03-04, commit bde9f48)** -
-  `scanline_reader_with_transform()` had no CMYK check. Non-dimension-swapping transforms
-  (e.g., FlipHorizontal) fell through to `from_coefficients()` → `StripProcessor` with
-  `[u8; 3]` arrays → index-out-of-bounds at `h_samp[3]`. Fix: route CMYK to buffered
-  decode fallback, matching `scanline_reader()`.
-  - Test: `cargo test --release -p zenjpeg --test cmyk_transform --features decoder`
-
-- **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
-  `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
-  writes "jxl " for ALL ICC profiles (including standard sRGB), not just XYB ones. This caused
-  every cjpegli JPEG with an ICC profile to be misidentified as XYB, bypassing the fast i16
-  decode path and falling through to the f32 XYB→RGB conversion — producing completely wrong
-  colors (max_diff=252). Fix: replace "jxl " CMM check with exact-match against the known
-  720-byte XYB ICC profile, falling back to "XYB" text search in the profile description.
-  Also affected baseline streaming and fused parallel paths (would have returned "no decoded
-  data" error for cjpegli images).
-
-- **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
-  Bilinear chroma upsampler used edge replication at MCU row bottom boundaries (max ~43
-  pixel error for streaming, ~57 for coefficient/transform path). Fix: mirror the existing
-  top-boundary fixup for the bottom edge. Coefficient path peeks ahead by IDCT'ing the first
-  chroma block row of the next MCU. Streaming path pre-decodes the next MCU row and serves
-  corrected chroma through deferred buffers. Boundary max diff now ≤4 (IDCT rounding only).
-
-- **Scanline h2v2 boundary fixup buffer overflow (FIXED 2026-02-09, commit 8f1295f)** -
-  `fixup_h2v2_row0()` used hardcoded `[i16; 4096]` stack buffers, panicking on any 4:2:0
-  image wider than 8192px (chroma width > 4096). Fix: borrow disjoint struct fields directly
-  instead of copying to temp buffers. Closes #1.
-- **Progressive MCU-padded storage (FIXED 2026-02-09, commit 29d6d81)** - Progressive decoder
-  allocated coefficients with component-based counts (ceil(scaled_w/8)) but output path reads
-  with MCU-padded stride (mcu_cols * h_samp). For 4:2:0 with non-MCU-aligned width, caused
-  1-block-per-row shift accumulating to max_diff=255. Affected ~20/543 web corpus files.
-- **Progressive interleaved DC scan padding (FIXED 2026-02-09, commit 759a4a7)** - Skipping
-  entropy data for out-of-bounds MCU padding blocks desynchronized Huffman decoder. Caused
-  "invalid Huffman code" parse errors on 80/543 progressive 4:2:0 files.
-- See `docs/TUNING_HISTORY.md` for older fixed bugs.
+- XYB linear-input encoder paths saturated to white — FIXED 2026-04-23 (28658af6 + 9e2348fe).
+- Fused parallel decode bypassed coefficient storage (`DecodeMode::Coefficient`) — FIXED 2026-03-31 (c9b47ec1).
+- Progressive decoder truncation near restart markers (missing bit-by-bit Huffman fallback) — FIXED 2026-03-09 (08ef601).
+- `--features parallel` silently skipped deringing — FIXED 2026-03-09.
+- zune-jpeg "decodes our progressive as grayscale" report — STALE; separate zune 0.5.12 bug (skips AC refinement with DRI) remains upstream.
+- Grayscale scanline reader panic — FIXED 2026-02-06 (be24fac).
+- XYB 4:2:0 undecodable JPEGs (DC category clamped in frequency counter but not encoder) — FIXED 2026-03-04 (b0cafce).
+- CMYK scanline transform panic — FIXED 2026-03-04 (bde9f48).
+- False XYB ICC detection for cjpegli JPEGs (matched "jxl " CMM instead of the exact XYB profile) — FIXED 2026-02-14 (744d38a).
+- 4:2:0 scanline chroma upsampling at MCU bottom boundaries — FIXED 2026-02-09 (bd0f8d7).
+- Scanline h2v2 boundary fixup buffer overflow (>8192px wide) — FIXED 2026-02-09 (8f1295f, closes #1).
+- Progressive MCU-padded storage stride mismatch — FIXED 2026-02-09 (29d6d81).
+- Progressive interleaved DC scan padding desync — FIXED 2026-02-09 (759a4a7).
+- Older fixed bugs: `docs/TUNING_HISTORY.md`.
 
 ## Planned Features / TODO
 
