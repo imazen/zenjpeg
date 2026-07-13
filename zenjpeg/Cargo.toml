@@ -132,7 +132,7 @@ tempfile = "3"
 # lands on the same checkout. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 # Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
 
 
 # WASM testing dependencies (browser + Node.js)

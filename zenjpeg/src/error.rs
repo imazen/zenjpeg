@@ -1442,10 +1442,10 @@ mod tests {
                 C::Request(Req::Invalid(Inv::State)),
             ),
             // Delegated cause types.
-            (Error::cancelled(), C::Lifecycle(StopReason::Cancelled)),
+            (Error::cancelled(), C::Stopped(StopReason::Cancelled)),
             (
                 Error::from(StopReason::TimedOut),
-                C::Lifecycle(StopReason::TimedOut),
+                C::Stopped(StopReason::TimedOut),
             ),
             (
                 Error::from(zencodec::UnsupportedOperation::AnimationEncode),
