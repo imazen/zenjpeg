@@ -29,6 +29,13 @@
 //! - `docs/ADAPTIVE_QUANTIZATION.md` for detailed analysis
 //! - `tests/aq_locked_tests.rs` for invariant tests
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use std::f32::consts::PI;
 
 use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed};

@@ -6,6 +6,13 @@
 //! - Quality parameter handling (traditional and butteraugli distance)
 //! - Adaptive quantization support
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 // Adaptive quantization submodule
 pub mod aq;
 
@@ -1004,34 +1011,6 @@ pub fn quantize_block_with_zero_bias_simd(
     result
 }
 
-/// Alternative: compare with simple quantization
-pub fn quantize_block_compare(
-    coeffs: &[f32; DCT_BLOCK_SIZE],
-    quant: &[u16; DCT_BLOCK_SIZE],
-    zero_bias: &ZeroBiasParams,
-    aq_strength: f32,
-) -> ([i16; DCT_BLOCK_SIZE], usize) {
-    let mut result = [0i16; DCT_BLOCK_SIZE];
-    let mut zeros_from_bias = 0usize;
-    for k in 0..DCT_BLOCK_SIZE {
-        let q = quant[k] as f32;
-        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
-        let qval = coeffs[k] * 8.0 / q;
-        let simple_result = qval.round() as i16;
-        let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
-
-        if qval.abs() >= threshold {
-            result[k] = simple_result;
-        } else {
-            // Would have been non-zero without zero-biasing
-            if simple_result != 0 {
-                zeros_from_bias += 1;
-            }
-        }
-    }
-    (result, zeros_from_bias)
-}
-
 /// Dequantizes a block of coefficients to i32 for integer IDCT.
 ///
 /// This is the fast path for standard (non-XYB) JPEG decoding.
@@ -1045,38 +1024,6 @@ pub fn dequantize_block_i32(
     for k in 0..DCT_BLOCK_SIZE {
         result[k] = quantized[k] as i32 * quant[k] as i32;
     }
-    result
-}
-
-/// Partial dequantize + unzigzag: only processes the first `coeff_count` zigzag
-/// positions. Remaining positions are zero. For typical Q85 photos, most blocks
-/// have 10-15 non-zero coefficients, saving 75-85% of multiply work.
-///
-/// Uses natural-order iteration with sequential writes for cache efficiency.
-/// Coefficients beyond coeff_count are zero in the input (guaranteed by
-/// entropy decoder), so multiplying them by quant produces zero — same result
-/// as partial iteration without the zeroing overhead.
-#[inline(always)]
-pub fn dequantize_unzigzag_i32_partial(
-    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
-    quant_natural: &[u16; DCT_BLOCK_SIZE],
-    _coeff_count: u8,
-) -> [i32; DCT_BLOCK_SIZE] {
-    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
-
-    // Iterate in natural (raster) order: sequential writes to result,
-    // sequential reads from quant_natural, gathered reads from zigzag_coeffs.
-    // Every position is written so zeroing is redundant, but the compiler
-    // may not eliminate it without MaybeUninit (which requires unsafe).
-    let mut result = [0i32; DCT_BLOCK_SIZE];
-    for natural_idx in 0..DCT_BLOCK_SIZE {
-        // Mask with 63 to prove zigzag_idx < 64 to the compiler,
-        // eliminating bounds checks. All JPEG_ZIGZAG_ORDER values are 0-63
-        // so the mask is a no-op for correctness.
-        let zigzag_idx = (JPEG_ZIGZAG_ORDER[natural_idx] & 63) as usize;
-        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
-    }
-
     result
 }
 

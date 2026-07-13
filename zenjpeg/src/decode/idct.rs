@@ -8,6 +8,13 @@
 //! - **archmage path** (x86_64): AVX2+FMA via `archmage_idct::mage_inverse_dct_8x8`
 //! - **generic path** (fallback): Portable SIMD via magetypes generics with multi-tier dispatch
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;

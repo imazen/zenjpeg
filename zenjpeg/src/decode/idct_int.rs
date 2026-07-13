@@ -16,6 +16,13 @@
 //! - x86_64 AVX2: generic 1.64x faster than scalar
 //! - aarch64 NEON: generic 1.11x faster than scalar
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use archmage::prelude::*;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
 

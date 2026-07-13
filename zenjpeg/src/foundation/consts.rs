@@ -3,6 +3,13 @@
 //! This module contains all the fundamental constants used in JPEG encoding/decoding,
 //! including zigzag order tables, quantization matrices, and XYB color space parameters.
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 /// DCT block dimension (8x8)
 pub const DCT_SIZE: usize = 8;
 
