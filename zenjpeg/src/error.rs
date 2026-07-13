@@ -297,8 +297,8 @@ pub enum ErrorKind {
     /// ([`AllocationFailed`](Self::AllocationFailed)). Carries the zencodec
     /// [`LimitKind`](zencodec::LimitKind) so [`category()`](
     /// zencodec::CategorizedError::category) reports
-    /// `ErrorCategory::LimitsExceeded(kind)` for whichever cap (memory,
-    /// output bytes, input bytes, …) was configured and exceeded.
+    /// `ErrorCategory::Resource(ResourceError::Limits(kind))` for whichever
+    /// cap (memory, output bytes, input bytes, …) was configured and exceeded.
     #[error("resource limit exceeded ({kind:?}): {actual} exceeds configured limit of {limit}")]
     ResourceLimitExceeded {
         kind: zencodec::LimitKind,
@@ -309,7 +309,7 @@ pub enum ErrorKind {
     /// declined it — e.g. [`JpegDecoderConfig`](crate::JpegDecoderConfig)'s
     /// progressive-JPEG policy rejecting a progressive image. Neither
     /// malformed input nor a missing feature: maps to
-    /// `ErrorCategory::PolicyRejected`.
+    /// `ErrorCategory::Policy(PolicyKind::Decode)`.
     #[error("rejected by policy: {reason}")]
     PolicyRejected { reason: &'static str },
     /// The operation was invoked in an invalid state or out of sequence by
