@@ -28,7 +28,7 @@ use super::streaming::*;
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
+mod api_tests {
     use super::*;
     use alloc::borrow::Cow;
     use imgref::{Img, ImgExt};

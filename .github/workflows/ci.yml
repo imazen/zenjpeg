@@ -222,7 +222,14 @@ jobs:
             brew install jpeg-turbo
             echo "$(brew --prefix jpeg-turbo)/bin" >> "$GITHUB_PATH"
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums
+            # choco's community feed 503s intermittently; retry, then FAIL
+            # LOUDLY if djpeg still isn't installed — a silent miss surfaces
+            # later as baffling "program not found" test failures.
+            for i in 1 2 3; do
+              choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums && break
+              echo "choco attempt $i failed; retrying in 20s" && sleep 20
+            done
+            test -x "/c/libjpeg-turbo64/bin/djpeg.exe" || { echo "::error::libjpeg-turbo install failed (djpeg missing)"; exit 1; }
             echo "C:\\libjpeg-turbo64\\bin" >> "$GITHUB_PATH"
           fi
           cmake --version
@@ -419,22 +426,12 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenflate.git
           git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
-      - name: Strip non-CI workspace members and deps
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed \
-            -e '/zenresize.*workspace/d' \
-            -e '/zennode.*path/d' \
-            -e 's/^layout = .*/layout = []/' \
-            -e 's/^zennode = .*/zennode = []/' \
-            -e 's/, features = \["cjpegli-ffi"\]//' \
-            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
-
+      # No manifest stripping here: apidoc/ is its own standalone workspace
+      # that builds zenjpeg as a path dependency with its REAL manifest —
+      # stripping (blanking the layout feature) made rustdoc --all-features
+      # fail on the zenresize import and desynced the surface from the
+      # committed snapshots.
+      #
       # Fails when docs/public-api/ snapshots don't match the current
       # public surface — API growth must be a reviewed, committed change
       # (regenerate with `just api-doc`).
