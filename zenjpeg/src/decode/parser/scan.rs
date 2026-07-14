@@ -16,8 +16,8 @@ use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::JpegMode;
 use enough::Stop;
 
+use super::super::DecodeWarning;
 use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
-use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
 use super::baseline_streaming;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
@@ -68,7 +68,7 @@ impl<'a> JpegParser<'a> {
 
         let mut scan_components = Vec::with_capacity(num_components as usize);
 
-        let permissive = self.strictness == Strictness::Permissive;
+        let permissive = self.strictness.is_permissive();
 
         for _ in 0..num_components {
             let component_id = self.read_u8()?;
@@ -255,16 +255,13 @@ impl<'a> JpegParser<'a> {
         let mut decoder = EntropyDecoder::new(scan_data);
 
         // Enable lenient/permissive error recovery
-        if matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        ) {
+        if self.strictness.lenient_entropy_recovery() {
             decoder.set_lenient(true);
         }
         // Enable RST resync for all non-Strict modes. Zero overhead on valid
         // input (only gates error-path recovery). On mismatch, resync_to_restart()
         // scans forward for the next RST marker and continues decoding.
-        if self.strictness != Strictness::Strict {
+        if self.strictness.recovers_data_errors() {
             decoder.set_permissive_rst(true);
         }
 
@@ -441,7 +438,7 @@ impl<'a> JpegParser<'a> {
                                 // - Balanced/Lenient: speculatively decode, fill with zeros if missing
                                 //   (matches mozjpeg: missing padding blocks produce zero-filled output)
 
-                                if self.strictness == Strictness::Strict {
+                                if self.strictness.is_strict() {
                                     // Strict: require padding blocks, propagate errors
                                     let count = match decoder.decode_block_into(
                                         &mut self.coeffs[info.comp_idx][block_idx],
@@ -688,16 +685,13 @@ impl<'a> JpegParser<'a> {
         let mut decoder = EntropyDecoder::new(scan_data);
 
         // Enable lenient/permissive error recovery
-        if matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        ) {
+        if self.strictness.lenient_entropy_recovery() {
             decoder.set_lenient(true);
         }
         // Enable RST resync for all non-Strict modes. Zero overhead on valid
         // input (only gates error-path recovery). On mismatch, resync_to_restart()
         // scans forward for the next RST marker and continues decoding.
-        if self.strictness != Strictness::Strict {
+        if self.strictness.recovers_data_errors() {
             decoder.set_permissive_rst(true);
         }
 

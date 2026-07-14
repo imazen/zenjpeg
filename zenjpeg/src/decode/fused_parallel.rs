@@ -33,7 +33,7 @@ use super::rst_scan::compute_segments;
 /// Max chroma strip width for stack-allocated scratch in triangle upsampling.
 /// Covers images up to 8192px wide (chroma width 4096 at 4:2:0).
 const MAX_UPSAMPLE_SCRATCH: usize = 4096;
-use super::{ChromaUpsampling, DecodeWarning, IdctMethod, Strictness};
+use super::{ChromaUpsampling, DecodeWarning, IdctMethod};
 
 use super::parser::JpegParser;
 
@@ -479,12 +479,9 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        );
-        let permissive_rst = self.strictness != Strictness::Strict;
-        let strict = self.strictness == Strictness::Strict;
+        let lenient = self.strictness.lenient_entropy_recovery();
+        let permissive_rst = self.strictness.recovers_data_errors();
+        let strict = self.strictness.is_strict();
 
         // Pre-compute per-component actual block counts for padding detection.
         // 4:4:4: all components have h_samp=1, v_samp=1, so actual_blocks = ceil(dim/8).
@@ -815,12 +812,9 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        );
-        let permissive_rst = self.strictness != Strictness::Strict;
-        let strict = self.strictness == Strictness::Strict;
+        let lenient = self.strictness.lenient_entropy_recovery();
+        let permissive_rst = self.strictness.recovers_data_errors();
+        let strict = self.strictness.is_strict();
 
         // Component info for sub-block iteration
         let comp_h_samps: Vec<usize> = (0..3)
@@ -1136,12 +1130,9 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        );
-        let permissive_rst = self.strictness != Strictness::Strict;
-        let strict = self.strictness == Strictness::Strict;
+        let lenient = self.strictness.lenient_entropy_recovery();
+        let permissive_rst = self.strictness.recovers_data_errors();
+        let strict = self.strictness.is_strict();
 
         let comp_h_samps: Vec<usize> = (0..3)
             .map(|ci| self.components[ci].h_samp_factor as usize)
@@ -1497,12 +1488,9 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        );
-        let permissive_rst = self.strictness != Strictness::Strict;
-        let strict = self.strictness == Strictness::Strict;
+        let lenient = self.strictness.lenient_entropy_recovery();
+        let permissive_rst = self.strictness.recovers_data_errors();
+        let strict = self.strictness.is_strict();
         let max_h_samp = _max_h_samp;
         let max_v_samp = _max_v_samp;
 
@@ -1619,15 +1607,13 @@ impl<'a> JpegParser<'a> {
 
                 // Edge-replicate horizontal padding columns in extended chroma buffers.
                 let fixup_h_padding = |buf: &mut [i16]| {
-                    if !has_h_padding {
-                        return;
-                    }
-                    for row in 0..ext_height {
-                        let row_off = row * c_strip_width;
-                        let last_val = buf[row_off + downsampled_w - 1];
-                        for col in downsampled_w..c_strip_width {
-                            buf[row_off + col] = last_val;
-                        }
+                    if has_h_padding {
+                        super::parser::output_helpers::edge_replicate_h_padding(
+                            buf,
+                            downsampled_w,
+                            c_strip_width,
+                            ext_height,
+                        );
                     }
                 };
 
@@ -2278,8 +2264,8 @@ impl WaveParallelState {
             strictness,
             super::Strictness::Lenient | super::Strictness::Permissive
         );
-        let permissive_rst = strictness != super::Strictness::Strict;
-        let strict = strictness == super::Strictness::Strict;
+        let permissive_rst = strictness.recovers_data_errors();
+        let strict = strictness.is_strict();
 
         let num_segments = seg_starts.len();
 

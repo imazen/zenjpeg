@@ -26,8 +26,8 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit_pref};
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use rayon::prelude::*;
 
-use super::output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 use crate::decode::parser::JpegParser;
+use crate::decode::parser::output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 
 /// Minimum MCU rows to justify parallel overhead.
 const MIN_MCU_ROWS_PARALLEL: usize = 8;

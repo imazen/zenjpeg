@@ -16,7 +16,7 @@ use crate::foundation::consts::{
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
 
-use super::super::{DecodeWarning, Strictness};
+use super::super::DecodeWarning;
 use super::JpegParser;
 
 /// Marker parsing methods for JpegParser.
@@ -88,7 +88,7 @@ impl<'a> JpegParser<'a> {
     /// invalid values, etc.), we skip it and continue to the next marker.
     /// This mimics libjpeg-turbo's tolerance of fuzz-mutated files.
     fn parse_header_marker(&mut self, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
-        if self.strictness != Strictness::Permissive {
+        if !self.strictness.is_permissive() {
             return f(self);
         }
         // Save position so we can recover on error
@@ -267,7 +267,7 @@ impl<'a> JpegParser<'a> {
             // Read values in zigzag order (as stored in JPEG)
             let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
-            let strict = self.strictness == Strictness::Strict;
+            let strict = self.strictness.is_strict();
             let mut had_zero = false;
 
             if precision == 0 {
@@ -477,7 +477,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn parse_dnl(&mut self) -> Result<()> {
         let length = self.read_u16()?;
         if length != 4 {
-            if self.strictness == Strictness::Permissive {
+            if self.strictness.is_permissive() {
                 // Skip malformed DNL marker using declared length
                 if length >= 2 {
                     self.position += (length as usize).saturating_sub(2);
@@ -510,7 +510,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn skip_segment(&mut self) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
-            if self.strictness == Strictness::Permissive {
+            if self.strictness.is_permissive() {
                 self.warn(DecodeWarning::MalformedSegmentSkipped)?;
                 return Ok(());
             }
@@ -528,7 +528,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn process_app_or_com(&mut self, marker: u8) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
-            if self.strictness == Strictness::Permissive {
+            if self.strictness.is_permissive() {
                 self.warn(DecodeWarning::MalformedSegmentSkipped)?;
                 return Ok(());
             }

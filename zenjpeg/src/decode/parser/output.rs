@@ -14,9 +14,6 @@
 //! - `to_pixels_f32`: f32 output normalized to [0.0, 1.0]
 //! - `to_ycbcr_planes_f32`: Raw YCbCr planes for custom processing
 
-#[path = "output_helpers.rs"]
-mod output_helpers;
-
 #[cfg(feature = "parallel")]
 #[path = "output_parallel.rs"]
 mod output_parallel;
@@ -48,8 +45,8 @@ use crate::quant::{
 use crate::types::PixelFormat;
 use enough::Stop;
 
+use super::output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 use super::{CompInfo, JpegParser};
-use output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 
 /// Output spec for the fast i16 paths' caller-provided destination buffer.
 #[allow(dead_code)] // variants chosen at the call site
@@ -853,16 +850,13 @@ impl<'a> JpegParser<'a> {
         let downsampled_w = (width + h_ratio - 1) / h_ratio;
         let has_h_padding = downsampled_w < c_strip_width;
         let fixup_h_padding = |buf: &mut [i16]| {
-            if !has_h_padding {
-                return;
-            }
-            let total_rows = ext_height;
-            for row in 0..total_rows {
-                let row_off = row * c_strip_width;
-                let last_val = buf[row_off + downsampled_w - 1];
-                for col in downsampled_w..c_strip_width {
-                    buf[row_off + col] = last_val;
-                }
+            if has_h_padding {
+                super::output_helpers::edge_replicate_h_padding(
+                    buf,
+                    downsampled_w,
+                    c_strip_width,
+                    ext_height,
+                );
             }
         };
 

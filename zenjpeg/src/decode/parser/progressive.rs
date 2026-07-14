@@ -136,10 +136,10 @@ fn install_progressive_huffman_tables<'t>(
 
 /// Apply lenient/permissive flags onto the entropy decoder.
 fn configure_decoder_strictness(decoder: &mut EntropyDecoder<'_, '_>, strictness: Strictness) {
-    if matches!(strictness, Strictness::Lenient | Strictness::Permissive) {
+    if strictness.lenient_entropy_recovery() {
         decoder.set_lenient(true);
     }
-    if strictness != Strictness::Strict {
+    if strictness.recovers_data_errors() {
         decoder.set_permissive_rst(true);
     }
 }

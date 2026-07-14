@@ -2,7 +2,7 @@
 //!
 //! This module handles decoding of arithmetic-coded JPEG scans (SOF9/SOF10).
 
-use crate::decode::config::{DecodeWarning, Strictness};
+use crate::decode::config::DecodeWarning;
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks_pref, try_alloc_filled_pref};
@@ -86,7 +86,7 @@ impl<'a> JpegParser<'a> {
         }
 
         // Match libjpeg-turbo: overflow conditions are warnings, not errors
-        decoder.set_lenient(self.strictness != Strictness::Strict);
+        decoder.set_lenient(self.strictness.recovers_data_errors());
 
         // Reset decoder for this scan
         decoder.reset_for_scan();
@@ -238,7 +238,7 @@ impl<'a> JpegParser<'a> {
         }
 
         // Match libjpeg-turbo: overflow conditions are warnings, not errors
-        decoder.set_lenient(self.strictness != Strictness::Strict);
+        decoder.set_lenient(self.strictness.recovers_data_errors());
 
         // Reset for scan (clears stats appropriate for this scan type)
         decoder.reset_for_scan();

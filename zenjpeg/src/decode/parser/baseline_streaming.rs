@@ -19,7 +19,7 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 
 use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
-use super::super::{ChromaUpsampling, DecodeWarning, IdctMethod, Strictness};
+use super::super::{ChromaUpsampling, DecodeWarning, IdctMethod};
 use super::JpegParser;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
 use crate::types::PixelFormat;
@@ -277,16 +277,13 @@ pub(super) fn setup_entropy_decoder<'p, 'a: 'p>(
 ) -> EntropyDecoder<'p, 'p> {
     let scan_data = &parser.data[parser.position..];
     let mut decoder = EntropyDecoder::new(scan_data);
-    if matches!(
-        parser.strictness,
-        Strictness::Lenient | Strictness::Permissive
-    ) {
+    if parser.strictness.lenient_entropy_recovery() {
         decoder.set_lenient(true);
     }
     // Enable RST resync for all non-Strict modes. Zero overhead on valid
     // input (only gates error-path recovery). On mismatch, resync_to_restart()
     // scans forward for the next RST marker and continues decoding.
-    if parser.strictness != Strictness::Strict {
+    if parser.strictness.recovers_data_errors() {
         decoder.set_permissive_rst(true);
     }
     for (_comp_idx, dc_table, ac_table) in scan_components {
@@ -586,24 +583,7 @@ pub(super) fn output_mcu_row(
     }
 }
 
-/// Edge-replicate horizontal padding columns in an extended chroma buffer.
-///
-/// libjpeg-turbo's upsampler uses downsampled_width, not the MCU-padded
-/// width. Replicate the last real column over padding columns so our
-/// upsampler (which uses c_strip_width) doesn't interpolate with padding.
-#[inline]
-fn fixup_h_padding(buf: &mut [i16], downsampled_w: usize, c_strip_width: usize, total_rows: usize) {
-    if downsampled_w >= c_strip_width {
-        return;
-    }
-    for row in 0..total_rows {
-        let row_off = row * c_strip_width;
-        let last_val = buf[row_off + downsampled_w - 1];
-        for col in downsampled_w..c_strip_width {
-            buf[row_off + col] = last_val;
-        }
-    }
-}
+use super::output_helpers::edge_replicate_h_padding as fixup_h_padding;
 
 /// Inputs to the fancy h2v2 + simple decode loops that don't change
 /// across MCU rows. Bundled to keep helper signatures readable.

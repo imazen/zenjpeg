@@ -364,6 +364,36 @@ pub enum Strictness {
     Permissive,
 }
 
+impl Strictness {
+    /// Strict mode: every recoverable data error is fatal.
+    #[inline]
+    pub(crate) fn is_strict(self) -> bool {
+        self == Self::Strict
+    }
+
+    /// Recover from data errors instead of failing — truncated scan data
+    /// (zero fill), DNL/SOF height conflicts, missing DHT (K.3 fallback),
+    /// zero quant values (clamp to 1). All levels except Strict.
+    #[inline]
+    pub(crate) fn recovers_data_errors(self) -> bool {
+        self != Self::Strict
+    }
+
+    /// Lenient and Permissive: enable the entropy decoder's lenient
+    /// recovery and warn (rather than error) on bad restart counts.
+    #[inline]
+    pub(crate) fn lenient_entropy_recovery(self) -> bool {
+        matches!(self, Self::Lenient | Self::Permissive)
+    }
+
+    /// Permissive only: skip malformed header segments, resync
+    /// out-of-sequence restart markers, clamp bad Huffman table indices.
+    #[inline]
+    pub(crate) fn is_permissive(self) -> bool {
+        self == Self::Permissive
+    }
+}
+
 /// Issues discovered during JPEG decoding.
 ///
 /// In [`Strictness::Strict`] mode, any issue triggers an immediate error

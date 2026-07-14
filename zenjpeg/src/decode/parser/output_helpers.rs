@@ -148,3 +148,32 @@ pub(super) fn idct_chroma_into_ext(
         }
     }
 }
+
+/// Edge-replicate horizontal padding columns in a chroma strip.
+///
+/// libjpeg-turbo's upsampler uses `downsampled_width`, not the MCU-padded
+/// width. Replicate the last real column over the padding columns so
+/// upsamplers that walk the full `stride` don't interpolate with
+/// IDCT-rounded padding data. No-op when there is no horizontal padding.
+///
+/// Shared by the baseline-streaming, buffered-output, and fused-parallel
+/// decode paths (issue #186 review follow-up: this logic used to be
+/// hand-rolled in each).
+#[inline]
+pub(crate) fn edge_replicate_h_padding(
+    buf: &mut [i16],
+    downsampled_w: usize,
+    stride: usize,
+    total_rows: usize,
+) {
+    if downsampled_w >= stride {
+        return;
+    }
+    for row in 0..total_rows {
+        let row_off = row * stride;
+        let last_val = buf[row_off + downsampled_w - 1];
+        for col in downsampled_w..stride {
+            buf[row_off + col] = last_val;
+        }
+    }
+}

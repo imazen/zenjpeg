@@ -13,6 +13,7 @@ mod arithmetic_scan;
 mod baseline_streaming;
 mod markers;
 mod output;
+pub(crate) mod output_helpers;
 mod progressive;
 mod scan;
 
@@ -330,7 +331,7 @@ impl<'a> JpegParser<'a> {
     /// Display message. In Balanced/Lenient, it's collected for later retrieval.
     /// Duplicate warnings are suppressed.
     pub(super) fn warn(&mut self, warning: DecodeWarning) -> Result<()> {
-        if self.strictness == Strictness::Strict {
+        if self.strictness.is_strict() {
             return Err(Error::invalid_jpeg_data(match &warning {
                 DecodeWarning::MissingHuffmanTables => {
                     "missing Huffman table (DHT not defined before scan)"
@@ -718,7 +719,7 @@ impl<'a> JpegParser<'a> {
                     // scan as end-of-image. This handles missing EOI, truncated
                     // progressive scans, and files cut off between scans.
                     // Matches libjpeg-turbo behavior (JWRN_HIT_MARKER + partial output).
-                    if self.strictness != Strictness::Strict
+                    if self.strictness.recovers_data_errors()
                         && scans_decoded > 0
                         && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                     {
@@ -747,7 +748,7 @@ impl<'a> JpegParser<'a> {
                         Err(e) => {
                             // In Balanced/Lenient mode, truncation during a scan
                             // is recoverable if we have partial data.
-                            if self.strictness != Strictness::Strict
+                            if self.strictness.recovers_data_errors()
                                 && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                             {
                                 self.warnings.push(DecodeWarning::TruncatedScan {
