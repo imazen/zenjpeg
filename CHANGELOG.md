@@ -36,8 +36,10 @@ All notable changes to zenjpeg are documented here. Earlier history
     error taxonomy depends on. This is a pre-existing condition of the Pattern-B
     work (a548bb98), not something introduced by the fixes in this entry.
     **Update:** `zencodec` 0.1.26 published, but the `[patch.crates-io]` entry
-    is not fully droppable — see the "zencodec 0.1.26" entry below. This
-    limitation persists until `zencodec-testkit` itself publishes to crates.io.
+    was not immediately droppable — see the "zencodec 0.1.26" entry below.
+    **Update 2:** `zencodec-testkit` 0.1.0 is now published and the
+    `[patch.crates-io] zencodec` entry is dropped, removing this blocker
+    (semver-checks not yet re-run — verify before the next release).
 
 ### Changed
 
@@ -58,6 +60,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   `zencodec-testkit` dev-dep now pin the same `v0.1.26` tag so the graph
   unifies on one `zencodec` again. Drop the patch for good once
   `zencodec-testkit` publishes.
+- **deps: `zencodec-testkit` 0.1.0 published — `[patch.crates-io] zencodec`
+  retired** (follow-up to the entry above, 8ce6af00). The testkit dev-dep is
+  now the plain crates.io `"0.1.0"` (its `zencodec ^0.1.26` requirement
+  resolves from the registry, so the graph unifies on one `zencodec` with no
+  patch), and the workspace `[patch.crates-io] zencodec` tag-pin is removed.
+  Only the pre-existing `ultrahdr-core` patch remains.
 
 ### Removed
 

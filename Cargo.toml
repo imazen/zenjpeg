@@ -206,12 +206,3 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 # ultrahdr-core 0.5.0 on crates.io predates full_reconstruction_boost (the
 # canonical ReconstructHdr boost route, heic#20). Drop on next publish.
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "3ac20f99d45e985e09f274fc07181b238385e703" }
-# zencodec-testkit is unpublished (path-deps zencodec internally); unify the
-# graph on the content-identical released tag until the testkit ships on
-# crates.io. `v0.1.26` == commit 998edf5f, byte-identical to the published
-# 0.1.26 crate — this is not a version lag, just a source-unification pin.
-# The zencodec-testkit dev-dep in zenjpeg/Cargo.toml is pinned to the SAME
-# tag so both resolve to one unified zencodec (testkit's `zencodec = { path
-# = ".." }` lands on this exact checkout). Drop once zencodec-testkit itself
-# publishes to crates.io.
-zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
