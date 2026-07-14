@@ -493,6 +493,41 @@ pub struct StripProcessor {
     pub(super) use_rgb: bool,
 
     // === Reusable strip buffers (f32) ===
+    //
+    // BUFFER LAYOUT INVARIANTS (issue #186 class of bugs — read this
+    // before touching any padding/conversion code).
+    //
+    // The five buffers change MEANING and STRIDE depending on color mode
+    // and pipeline stage. "padded" = rows at `layout.padded_width` (or the
+    // buffer's own padded chroma width) with right-edge replication;
+    // "packed" = rows at `layout.width` (resp. `c_width`), no padding.
+    // Vertical padding (`pad_strips_vertically`) MUST use the stride the
+    // buffer is in at that moment — getting this wrong was issue #186.
+    //
+    // State immediately AFTER `color_convert_strip` (and therefore at
+    // `pad_strips_vertically` and AQ time):
+    //
+    // | mode            | y_strip     | cb_strip     | cr_strip     | cb_down       | cr_down          |
+    // |-----------------|-------------|--------------|--------------|---------------|------------------|
+    // | YCbCr (std)     | Y, padded   | Cb, packed   | Cr, packed   | (later)       | (later)          |
+    // | YCbCr gamma-awr | Y, padded   | unused       | unused       | Cb, padded-c  | Cr, padded-c     |
+    // | YCbCr fused 420 | Y, padded   | unused       | unused       | Cb, padded-c  | Cr, padded-c     |
+    // | XYB             | X, padded   | Y', padded   | scratch      | unused        | B, padded-b (*)  |
+    // | RGB passthrough | R, padded   | G, padded    | B, padded    | unused        | unused           |
+    // | Grayscale       | Y, padded   | unused       | unused       | unused        | unused           |
+    //
+    // (*) XYB B: BQuarter = 2x2-downsampled at b-geometry; Full =
+    //     full-res (mem::swap from cr_strip). Vertically padded inside
+    //     `convert_strip_to_xyb` for partial bottom strips.
+    //
+    // For the standard YCbCr path, `downsample_chroma_strip` later
+    // consumes the packed cb/cr strips (AFTER vertical padding) and
+    // produces padded-c `cb_down`/`cr_down` for the DCT stage. The DCT
+    // stage reads: y_strip (padded) always; cb_strip/cr_strip (padded)
+    // under XYB/RGB; cb_down/cr_down (padded-c / padded-b) otherwise.
+    //
+    // AQ reads the "luma role" plane: y_strip for YCbCr/gray, cb_strip
+    // for XYB (perceptual Y) and RGB (G channel) — always padded stride.
     /// Y channel strip buffer
     pub(super) y_strip: Vec<f32>,
     /// Cb channel strip buffer (full res before downsample)
@@ -1254,6 +1289,15 @@ impl StripProcessor {
         } else {
             &self.y_strip
         };
+        // Invariant (see buffer-layout table above): the AQ input plane is
+        // in PADDED layout for every mode by this point.
+        debug_assert!(
+            aq_input.len() >= actual_strip_height * self.layout.padded_width,
+            "AQ input plane smaller than padded strip: {} < {}x{}",
+            aq_input.len(),
+            actual_strip_height,
+            self.layout.padded_width
+        );
         let aq_count = self.aq_state.process_y_strip_into(
             aq_input,
             strip_y,

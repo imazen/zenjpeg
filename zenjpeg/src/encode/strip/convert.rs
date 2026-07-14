@@ -971,6 +971,15 @@ impl StripProcessor {
         }
 
         if is_color {
+            // Invariant (issue #186): the stride used below MUST match the
+            // layout each buffer is in at this stage — see the buffer-layout
+            // table in strip/mod.rs. cb/cr are PADDED under RGB and XYB
+            // (rearranged by their converters), PACKED under standard YCbCr.
+            debug_assert!(
+                self.cb_strip.len() >= target_height * padded_width
+                    && self.cr_strip.len() >= target_height * padded_width,
+                "cb/cr strip buffers smaller than padded strip"
+            );
             if self.use_rgb {
                 // RGB passthrough: the converter leaves all three planes in
                 // padded layout, so replicate full padded rows.
