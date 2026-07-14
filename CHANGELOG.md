@@ -34,9 +34,30 @@ All notable changes to zenjpeg are documented here. Earlier history
     override that currently supplies the unreleased `zencodec`
     `CategorizedError`/`ErrorCategory`/`LimitKind`/`CodecError` API this crate's
     error taxonomy depends on. This is a pre-existing condition of the Pattern-B
-    work (a548bb98), not something introduced by the fixes in this entry;
-    `semver-checks` will work again once zencodec 0.1.26 actually publishes and
-    the `[patch.crates-io]` entry is dropped.
+    work (a548bb98), not something introduced by the fixes in this entry.
+    **Update:** `zencodec` 0.1.26 published, but the `[patch.crates-io]` entry
+    is not fully droppable — see the "zencodec 0.1.26" entry below. This
+    limitation persists until `zencodec-testkit` itself publishes to crates.io.
+
+### Changed
+
+- **deps: `zencodec` 0.1.25 (pre-release git pin) → 0.1.26 (released).** The
+  workspace `zencodec` dep is now `{ version = "0.1.26" }` against the real
+  crates.io release. The `[patch.crates-io] zencodec` entry is *retargeted*,
+  not dropped: it now points at git tag `v0.1.26` (commit `998edf5f`, content-
+  identical to the published crate) instead of the old pre-release rev.
+  `zencodec-testkit` (in `zenjpeg/Cargo.toml`) is unpublished and path-deps
+  `zencodec` internally (`{ path = "..", version = "0.1.21" }`); dropping the
+  patch entirely splits the graph into two non-unified `zencodec` instances
+  (registry 0.1.26 vs. the testkit checkout's path copy), which fails to
+  compile every conformance test that passes zenjpeg's own types into
+  `zencodec_testkit`'s generically-bound checks (`E0277`, "perhaps two
+  different versions of crate `zencodec` are being used?" — confirmed via
+  `cargo update -p zencodec` producing two `[[package]]` entries in
+  `Cargo.lock` before this fix). Both the workspace patch and the
+  `zencodec-testkit` dev-dep now pin the same `v0.1.26` tag so the graph
+  unifies on one `zencodec` again. Drop the patch for good once
+  `zencodec-testkit` publishes.
 
 ### Removed
 

@@ -114,7 +114,7 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { version = "0.1.25" }
+zencodec = { version = "0.1.26" }
 zenpixels = { version = "0.2.11", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = "0.2.13", default-features = false }
 garb = { version = "0.2.6", default-features = false }
@@ -206,15 +206,12 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 # ultrahdr-core 0.5.0 on crates.io predates full_reconstruction_boost (the
 # canonical ReconstructHdr boost route, heic#20). Drop on next publish.
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "3ac20f99d45e985e09f274fc07181b238385e703" }
-# TEMP: until zencodec 0.1.26 ships (PR #116 — ErrorCategory two-level
-# origin-first reshape, supersedes the earlier PR #103 flat taxonomy).
-# Drop and bump the workspace dep to the released version at landing time.
-# Pinned to rev 2427387f (zencodec branch caterr-reshape, CI green, not yet
-# merged): carries the Image/Request/Resource/Policy/Lifecycle/Io/Internal
-# two-level ErrorCategory reshape AND the zencodec-testkit
-# `check_decode_truncation_series` conformance check (PR #112, carried
-# forward). The zencodec-testkit dev-dep in zenjpeg/Cargo.toml is pinned to
-# the SAME rev so both resolve to one unified zencodec (testkit's
-# `path = ".."` dep lands on this exact checkout). Drop for the crates.io
-# version once zencodec 0.1.26 + testkit publish.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
+# zencodec-testkit is unpublished (path-deps zencodec internally); unify the
+# graph on the content-identical released tag until the testkit ships on
+# crates.io. `v0.1.26` == commit 998edf5f, byte-identical to the published
+# 0.1.26 crate — this is not a version lag, just a source-unification pin.
+# The zencodec-testkit dev-dep in zenjpeg/Cargo.toml is pinned to the SAME
+# tag so both resolve to one unified zencodec (testkit's `zencodec = { path
+# = ".." }` lands on this exact checkout). Drop once zencodec-testkit itself
+# publishes to crates.io.
+zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
