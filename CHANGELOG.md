@@ -43,6 +43,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **build: unreliable C++ jpegli compilation no longer breaks the Rust test
+  suite.** The `jpegli-internals-sys` build script previously aborted the whole
+  workspace build whenever the C++ jpegli toolchain failed — a flaky/absent
+  compiler, a missing system header, or the submodule on the wrong branch —
+  because `cc`'s `.compile()` calls `process::exit(1)` and `cmake`'s `.build()`
+  panics. It now uses `cc::Build::try_compile` and wraps the `cmake` step in
+  `catch_unwind`, so ANY C++ build failure degrades to an empty crate (the
+  `missing_jpegli_cpp` cfg) with a clear `cargo:warning` instead of a hard
+  failure; `cargo test` still builds and runs the full Rust suite. Set
+  `ZENJPEG_SKIP_CPP=1` to skip the C++ build intentionally. `zenjpeg-bench-utils`
+  degrades in lockstep by reading the sys crate's new `available` build metadata
+  (`DEP_JPEGLI_INTERNALS_FFI_AVAILABLE`), so its `cjpegli-ffi` helpers surface a
+  runtime error rather than a compile failure. Only the `--features __ffi-tests`
+  C++-parity tests are disabled when C++ is unavailable; the happy path
+  (C++ present + healthy toolchain) is byte-for-byte unchanged.
+
 - **deps: `zencodec` 0.1.25 (pre-release git pin) → 0.1.26 (released).** The
   workspace `zencodec` dep is now `{ version = "0.1.26" }` against the real
   crates.io release. The `[patch.crates-io] zencodec` entry is *retargeted*,

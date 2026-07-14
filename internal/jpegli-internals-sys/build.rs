@@ -31,56 +31,114 @@ fn main() {
         "cargo:rerun-if-changed={}",
         jpegli_root.join("CMakeLists.txt").display()
     );
+    println!("cargo:rerun-if-env-changed=ZENJPEG_SKIP_CPP");
 
-    // When the jpegli-cpp submodule is absent, compile this crate EMPTY
-    // instead of failing the whole workspace build: every zenjpeg consumer
-    // of these bindings is behind `--features __ffi-tests`, so a bare clone
-    // can still run the full default test suite (see src/lib.rs).
+    // Reasons to skip the C++ build and compile this crate EMPTY. Every
+    // zenjpeg consumer of these bindings is behind `--features __ffi-tests`
+    // (or the `cjpegli-ffi` bench-utils feature, which degrades in lockstep
+    // via the `available` metadata below), so the Rust test suite still
+    // builds and runs — only the C++-parity tests surface a runtime error
+    // via the `missing_jpegli_cpp` cfg instead of a compile failure.
+    //
+    //   1. `ZENJPEG_SKIP_CPP` set — explicit opt-out for a flaky or absent
+    //      toolchain (`ZENJPEG_SKIP_CPP=1 cargo test` always builds).
+    //   2. the jpegli-cpp submodule is absent (bare clone).
+    if env::var_os("ZENJPEG_SKIP_CPP").is_some() {
+        degrade("ZENJPEG_SKIP_CPP is set");
+        return;
+    }
     if !jpegli_root.join("CMakeLists.txt").exists() {
-        println!(
-            "cargo:warning=jpegli-cpp submodule not found at {:?} — building empty \
-             jpegli-internals-sys (C++ parity tests need: git submodule update --init --recursive)",
-            jpegli_root
-        );
-        println!("cargo:rustc-cfg=missing_jpegli_cpp");
+        degrade(&format!(
+            "jpegli-cpp submodule not found at {jpegli_root:?} \
+             (init with: git submodule update --init --recursive)"
+        ));
         return;
     }
 
     let butteraugli_enabled = env::var("CARGO_FEATURE_BUTTERAUGLI").is_ok();
 
+    // Attempt the full C++ build. cmake failures panic (caught here); the cc
+    // wrapper compiles use `try_compile` and return `Err`. ANY failure — a
+    // broken or missing toolchain, a transient compiler crash, a missing
+    // system header — degrades to the empty crate instead of failing the
+    // whole workspace build, so `cargo test` keeps working when C++
+    // compilation is unreliable.
+    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        build_cpp(
+            &manifest_dir,
+            &jpegli_root,
+            &out_dir,
+            &target,
+            &host,
+            butteraugli_enabled,
+        )
+    }));
+    match attempt {
+        // C++ available: dependents (zenjpeg-bench-utils) read this metadata
+        // to enable their own FFI code in lockstep — see that crate's
+        // build.rs, which keys off `DEP_JPEGLI_INTERNALS_FFI_AVAILABLE`.
+        Ok(Ok(())) => println!("cargo:available=1"),
+        Ok(Err(e)) => degrade(&format!("C++ jpegli compile failed: {e}")),
+        Err(_) => degrade("C++ jpegli build panicked (cmake/toolchain failure)"),
+    }
+}
+
+/// Compile this crate EMPTY (the `missing_jpegli_cpp` cfg) and tell direct
+/// dependents that C++ is unavailable (`available=0`), so the Rust test
+/// suite still builds. `reason` explains why in the cargo warning.
+fn degrade(reason: &str) {
+    println!(
+        "cargo:warning=jpegli-internals-sys: {reason} — building EMPTY crate so the \
+         Rust test suite still builds. C++-parity tests (--features __ffi-tests) are \
+         disabled until a working C++ toolchain + jpegli-cpp submodule are present."
+    );
+    println!("cargo:rustc-cfg=missing_jpegli_cpp");
+    println!("cargo:available=0");
+}
+
+/// The full C++ build + link. Returns `Err` on a cc-wrapper compile failure;
+/// cmake failures panic inside `build_with_cmake` and are caught by the
+/// caller's `catch_unwind`. Either way the caller degrades gracefully.
+fn build_cpp(
+    manifest_dir: &Path,
+    jpegli_root: &Path,
+    out_dir: &Path,
+    target: &str,
+    host: &str,
+    butteraugli_enabled: bool,
+) -> Result<(), String> {
     // Try to find a pre-built library first (for faster iteration during development)
-    let prebuilt = find_prebuilt_library(&jpegli_root, butteraugli_enabled);
+    let prebuilt = find_prebuilt_library(jpegli_root, butteraugli_enabled);
 
     let build_dir = if let Some(prebuilt_dir) = prebuilt {
-        println!(
-            "cargo:warning=Using pre-built jpegli from {:?}",
-            prebuilt_dir
-        );
+        println!("cargo:warning=Using pre-built jpegli from {prebuilt_dir:?}");
         prebuilt_dir
     } else {
-        // Build using cmake
-        build_with_cmake(&jpegli_root, &out_dir, &target, &host, butteraugli_enabled)
+        // Build using cmake (panics on failure — caught by the caller)
+        build_with_cmake(jpegli_root, out_dir, target, host, butteraugli_enabled)
     };
 
     // Build and link the C wrapper for butteraugli if enabled
     if butteraugli_enabled {
-        build_butteraugli_wrapper(&manifest_dir, &jpegli_root, &build_dir, &target);
+        build_butteraugli_wrapper(manifest_dir, jpegli_root, &build_dir, target)?;
     }
 
     // Build the jpegli test FFI wrapper (for fast math, AQ functions)
-    build_jpegli_test_ffi(&jpegli_root, &build_dir, &target);
+    build_jpegli_test_ffi(jpegli_root, &build_dir, target)?;
 
     // Link the libraries
-    link_libraries(&build_dir, &target, butteraugli_enabled);
+    link_libraries(&build_dir, target, butteraugli_enabled);
+    Ok(())
 }
 
-/// Build the butteraugli C wrapper using cc crate
+/// Build the butteraugli C wrapper using cc crate. Returns `Err` (rather than
+/// `process::exit`) on compile failure so the caller can degrade gracefully.
 fn build_butteraugli_wrapper(
     manifest_dir: &Path,
     jpegli_root: &Path,
     build_dir: &Path,
     target: &str,
-) {
+) -> Result<(), String> {
     println!("cargo:rerun-if-changed=cpp/butteraugli_c.cc");
     println!("cargo:rerun-if-changed=cpp/butteraugli_c.h");
 
@@ -111,42 +169,35 @@ fn build_butteraugli_wrapper(
         build.flag("-Wno-unused-parameter");
     }
 
-    build.compile("butteraugli_c");
+    // try_compile returns Err instead of process::exit(1) on failure.
+    build
+        .try_compile("butteraugli_c")
+        .map_err(|e| format!("butteraugli_c wrapper: {e}"))
 }
 
-/// Build the jpegli test FFI wrapper (fast math, AQ functions)
-fn build_jpegli_test_ffi(jpegli_root: &Path, build_dir: &Path, target: &str) {
+/// Build the jpegli test FFI wrapper (fast math, AQ functions). Returns `Err`
+/// (rather than `panic`/`process::exit`) on a missing source or compile
+/// failure so the caller can degrade to an empty crate.
+fn build_jpegli_test_ffi(jpegli_root: &Path, build_dir: &Path, target: &str) -> Result<(), String> {
     let ffi_source = jpegli_root.join("lib/extras/jpegli_test_ffi.cc");
 
-    // The FFI source MUST exist - it's required for parity testing.
-    // If missing, the jpegli-cpp submodule is likely on the wrong branch.
+    // The FFI source is required for parity testing. If missing, the
+    // jpegli-cpp submodule is on the wrong branch — degrade rather than block
+    // the whole test build (the warning tells the user how to fix it).
     if !ffi_source.exists() {
-        panic!(
-            "\n\n\
-            ========================================================================\n\
-            ERROR: jpegli_test_ffi.cc not found at {:?}\n\
-            \n\
-            The jpegli-cpp submodule appears to be on the wrong branch.\n\
-            \n\
-            Fix with:\n\
-            \n\
-            cd internal/jpegli-cpp && git checkout instrumented\n\
-            \n\
-            Or reinitialize the submodule:\n\
-            \n\
-            git submodule update --init --remote internal/jpegli-cpp\n\
-            ========================================================================\n\n",
-            ffi_source
-        );
+        return Err(format!(
+            "jpegli_test_ffi.cc not found at {ffi_source:?} — the jpegli-cpp submodule \
+             is on the wrong branch (fix: cd internal/jpegli-cpp && git checkout instrumented, \
+             or git submodule update --init --remote internal/jpegli-cpp)"
+        ));
     }
 
     // Also check for the header
     let ffi_header = jpegli_root.join("lib/extras/jpegli_test_ffi.h");
     if !ffi_header.exists() {
-        panic!(
-            "ERROR: jpegli_test_ffi.h not found at {:?}. Submodule may be corrupted.",
-            ffi_header
-        );
+        return Err(format!(
+            "jpegli_test_ffi.h not found at {ffi_header:?} (submodule may be corrupted)"
+        ));
     }
 
     println!("cargo:rerun-if-changed={}", ffi_source.display());
@@ -189,7 +240,10 @@ fn build_jpegli_test_ffi(jpegli_root: &Path, build_dir: &Path, target: &str) {
         build.flag_if_supported("-Werror=infinite-recursion");
     }
 
-    build.compile("jpegli_test_ffi");
+    // try_compile returns Err instead of process::exit(1) on failure.
+    build
+        .try_compile("jpegli_test_ffi")
+        .map_err(|e| format!("jpegli_test_ffi wrapper: {e}"))
 }
 
 /// Find a pre-built library in common locations
