@@ -1609,6 +1609,31 @@ impl<'a> ScanlineReader<'a> {
         }
     }
 
+    /// Shared geometry + bounds check for the buffered (progressive) serve
+    /// path. Every interleaved-format `read_rows_*` method that serves from
+    /// `buffered_rgb` computed the same source-row stride and validated the
+    /// same buffer-size bound before its format-specific copy loop; this is
+    /// the single copy. Returns `(bpp, src_row_bytes, crop_y)`.
+    ///
+    /// `#[inline]` and progressive-only, so it lowers to the same code the
+    /// open-coded prologue did and never touches the streaming hot path.
+    #[inline]
+    fn buffered_geometry(
+        &self,
+        buffer_len: usize,
+        out_height: usize,
+    ) -> Result<(usize, usize, usize)> {
+        let bpp = if self.num_components == 1 { 1 } else { 3 };
+        let src_row_bytes = self.width as usize * bpp;
+        let crop_y = self.crop.map_or(0, |c| c.y as usize);
+        if (crop_y + out_height) * src_row_bytes > buffer_len {
+            return Err(Error::internal(
+                "buffered RGB data too small for image dimensions",
+            ));
+        }
+        Ok((bpp, src_row_bytes, crop_y))
+    }
+
     /// Read rows into an RGB8 buffer.
     ///
     /// Returns the number of rows actually written (may be less than requested
@@ -1633,18 +1658,8 @@ impl<'a> ScanlineReader<'a> {
 
         // Buffered mode: serve from pre-decoded buffer (progressive JPEGs)
         if let Some(ref buffer) = self.buffered_rgb {
+            let (bpp, src_row_bytes, crop_y) = self.buffered_geometry(buffer.len(), out_height)?;
             let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
 
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
@@ -1931,18 +1946,8 @@ impl<'a> ScanlineReader<'a> {
 
         // Buffered mode: serve from pre-decoded RGB buffer with R/B swap
         if let Some(ref buffer) = self.buffered_rgb {
+            let (bpp, src_row_bytes, crop_y) = self.buffered_geometry(buffer.len(), out_height)?;
             let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
 
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
@@ -2071,18 +2076,8 @@ impl<'a> ScanlineReader<'a> {
 
         // Buffered mode: serve from pre-decoded RGB buffer
         if let Some(ref buffer) = self.buffered_rgb {
+            let (bpp, src_row_bytes, crop_y) = self.buffered_geometry(buffer.len(), out_height)?;
             let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
 
             // Access the underlying buffer directly instead of using
             // output.rows_mut() which requires stride * height bytes.
@@ -2209,19 +2204,8 @@ impl<'a> ScanlineReader<'a> {
 
         // Buffered mode: serve from pre-decoded RGB buffer, convert to linear f32
         if let Some(ref buffer) = self.buffered_rgb {
+            let (bpp, src_row_bytes, crop_y) = self.buffered_geometry(buffer.len(), out_height)?;
             let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            // Bounds check: ensure buffer is large enough for all rows we might read
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
 
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;

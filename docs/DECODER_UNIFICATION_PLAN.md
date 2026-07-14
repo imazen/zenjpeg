@@ -1,16 +1,35 @@
 # Decoder Unification Plan
 
-> **Status (corrected 2026-07-13): Phase 1 done; core unification DEFERRED —
-> decision tracked in issue #187.**
+> **Status (2026-07-14): Phase 1 done; buffered-fork surface reduced; full
+> `CoeffSource` unification DEFERRED as scoped future work — decision in
+> issue #187.**
 > What landed: streaming single-pass decode for all baseline subsampling
 > modes, arithmetic JPEG support, strip-stride SIMD alignment, and the
-> 2-tier IDCT dispatch (a 4x4 tier was implemented then removed).
-> What did NOT land: the central `CoeffSource` abstraction and the removal
-> of `buffered_rgb` — `ScanlineReader` still forks buffered/streaming at
-> ~9 sites, and the borrowed/owned entry points still assemble separately
-> (their routing POLICY was unified 2026-07-13 into
-> `DecodeConfig::classify_scanline_route`, review R6). The header
-> previously said "largely completed", which overstated this.
+> 2-tier IDCT dispatch (a 4x4 tier was implemented then removed). Review R6
+> (2026-07-13) unified the borrowed/owned routing POLICY into
+> `DecodeConfig::classify_scanline_route`. On 2026-07-14 the shared
+> geometry + buffer-bounds-check prologue that every interleaved-format
+> `read_rows_*` buffered branch duplicated was extracted into
+> `ScanlineReader::buffered_geometry` (verified byte-identical +
+> callgrind-neutral), shrinking the fork's duplicated surface.
+>
+> **The #187 decision — land the safe reductions, defer (do NOT permanently
+> shelve) the full `CoeffSource`:** the central abstraction that would
+> delete `buffered_rgb` outright is NOT a "cost-free dedup". `buffered_rgb`
+> exists because progressive JPEGs are fundamentally un-streamable — a
+> progressive scan refines coefficients across the *whole* image before any
+> pixel is final, so `new_buffered` decodes the entire image up front (it
+> even holds a `StripProcessor::new_dummy`, i.e. no live strip pipeline).
+> Unifying the two paths the naive way (make baseline buffer too) would
+> regress the streaming hot path — unacceptable. The *correct* unification
+> is coefficient-centric (store coefficients for the buffered case and run
+> the same strip→row pipeline on demand); it is genuinely feasible
+> perf-neutrally because the streaming hot path is untouched, and it would
+> ALSO fix the buffered-mode correctness gaps below. But it is a large,
+> correctness-sensitive rewrite of the progressive read path that must be
+> done incrementally with byte-identity + callgrind gates at each step —
+> not squeezed into an unrelated session. It is therefore deferred as its
+> own focused effort, kept open in #187, not permanently shelved.
 
 ## Problem Statement
 
