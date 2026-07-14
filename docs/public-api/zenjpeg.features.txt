@@ -1,5 +1,5 @@
 # zenjpeg public API — additions from non-default features
-# features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec
+# features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -14,10 +14,10 @@
 #   pub consts/statics                          4
 #   free functions                             32
 #   inherent methods                          108
-#   struct fields                              70
-#   enum variants                              78
+#   struct fields                              72
+#   enum variants                              80
 #   re-exports                                 25
-#   trait roster entries (type × trait)       171
+#   trait roster entries (type × trait)       172
 #   auto-trait-complete types                  39
 #   auto-trait exceptions                       7
 #
@@ -26,10 +26,10 @@
 #   decoder                           3
 #   encoder                          40
 #   layout                           67
-#   recompress                      154
+#   recompress                      158
 #   ultrahdr                         72
 
-## items (373 lines)
+## items (377 lines)
 
 pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<decoder::TargetColorSpace>) -> Self
 pub fn decoder::DecodeConfig::ultrahdr_reader<'a>(&self, &'a [u8], ultrahdr::UltraHdrReaderConfig) -> encoder::Result<ultrahdr::UltraHdrReader<'a>>
@@ -263,9 +263,13 @@ pub fn recompress::Confidence::target_shift(self) -> f32
 #[non_exhaustive] pub enum recompress::Error
 pub recompress::Error::Internal(&'static str)
 pub recompress::Error::Probe(alloc::string::String)
+pub recompress::Error::ProbeTruncated(alloc::string::String)
 pub recompress::Error::TargetOutOfRange(f32)
 pub recompress::Error::Unsupported(&'static str)
 pub recompress::Error::Zenjpeg(alloc::string::String)
+pub recompress::Error::ZenjpegCategorized
+pub recompress::Error::ZenjpegCategorized::category: zencodec::error::ErrorCategory
+pub recompress::Error::ZenjpegCategorized::message: alloc::string::String
 pub recompress::Error::Zensim(alloc::string::String)
 #[non_exhaustive] pub enum recompress::LosslessReason
 pub recompress::LosslessReason::RecompressionWouldInflateAtTarget
@@ -379,18 +383,18 @@ pub struct JpegDecoder<'a>
 pub struct JpegDecoderConfig
 pub fn JpegDecoderConfig::cmyk_handling(self, CmykHandling) -> Self
 pub fn JpegDecoderConfig::deblock(self, decoder::DeblockMode) -> Self
-pub fn JpegDecoderConfig::decode(&self, &[u8]) -> core::result::Result<zencodec::output::DecodeOutput, encoder::Error>
+pub fn JpegDecoderConfig::decode(&self, &[u8]) -> core::result::Result<zencodec::output::DecodeOutput, whereat::at::At<zencodec::error::CodecError>>
 pub fn JpegDecoderConfig::inner(&self) -> &decoder::DecodeConfig
 pub fn JpegDecoderConfig::inner_mut(&mut self) -> &mut decoder::DecodeConfig
 pub fn JpegDecoderConfig::is_cmyk_handling(&self) -> CmykHandling
 pub fn JpegDecoderConfig::job_static(self) -> JpegDecodeJob
 pub fn JpegDecoderConfig::new() -> Self
-pub fn JpegDecoderConfig::probe_full_metadata(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, encoder::Error>
-pub fn JpegDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, encoder::Error>
+pub fn JpegDecoderConfig::probe_full_metadata(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, whereat::at::At<zencodec::error::CodecError>>
+pub fn JpegDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, whereat::at::At<zencodec::error::CodecError>>
 pub struct JpegEncodeJob
 pub struct JpegEncoder
 pub struct JpegEncoderConfig
-pub fn JpegEncoderConfig::encode(&self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zencodec::output::EncodeOutput, encoder::Error>
+pub fn JpegEncoderConfig::encode(&self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zencodec::output::EncodeOutput, whereat::at::At<zencodec::error::CodecError>>
 pub fn JpegEncoderConfig::from_preset(&str, f32) -> core::option::Option<Self>
 pub fn JpegEncoderConfig::grayscale(f32) -> Self
 pub fn JpegEncoderConfig::inner(&self) -> &encoder::EncoderConfig
@@ -429,7 +433,7 @@ layout::LayoutConfig: Clone
 layout::Rotation: Clone, Copy, Debug, Eq, PartialEq
 recompress::Budget: Clone, Copy, Debug, Default, Eq, PartialEq
 recompress::Confidence: Clone, Copy, Debug, PartialEq
-recompress::Error: Debug, Display, Error, From<encoder::Error>
+recompress::Error: Debug, Display, Error, From<encoder::Error>, zencodec::error::CategorizedError
 recompress::LosslessReason: Clone, Copy, Debug, Eq, Hash, PartialEq
 recompress::NoOpReason: Clone, Copy, Debug, Eq, Hash, PartialEq
 recompress::RecompressOptions: Clone, Debug, Default

@@ -9,7 +9,7 @@
 //! - jpeg-decoder (pure Rust reference)
 //! - libjpeg-turbo via djpeg CLI (C reference)
 //!
-//! Run with: cargo test --release --features decoder -p zenjpeg --test decode_accuracy_corpus -- --nocapture --ignored
+//! Run with: cargo test --release -p zenjpeg --test decode_accuracy_corpus -- --nocapture --ignored
 
 use dssim_core::Dssim;
 use enough::Unstoppable;

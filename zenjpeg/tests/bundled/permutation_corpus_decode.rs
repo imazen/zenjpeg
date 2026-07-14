@@ -12,7 +12,7 @@
 //! using any criteria (worst-max-diff, worst-category, expected failures, etc).
 //!
 //! Run (after generating corpus):
-//!   cargo test --release -p zenjpeg --features decoder \
+//!   cargo test --release -p zenjpeg \
 //!     --test permutation_corpus_decode \
 //!     -- --nocapture --ignored
 //!

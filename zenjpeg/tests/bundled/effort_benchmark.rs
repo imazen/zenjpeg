@@ -7,7 +7,7 @@
 //! Run:
 //! ```bash
 //! cargo test --release -p zenjpeg --test effort_benchmark \
-//!     --features "trellis decoder" -- --nocapture --ignored
+//!      -- --nocapture --ignored
 //! ```
 
 use enough::Unstoppable;

@@ -39,7 +39,7 @@
 //! Run:
 //! ```bash
 //! cargo test --release -p zenjpeg --test photo_corpus_zensim \
-//!     --features "trellis decoder" -- --nocapture --ignored
+//!      -- --nocapture --ignored
 //! ```
 
 use enough::Unstoppable;

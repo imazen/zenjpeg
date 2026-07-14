@@ -8,7 +8,7 @@
 //! 2. Mid-level: `Decoder::read_info()` — parser pipeline
 //! 3. High-level: `JpegDecoderConfig::probe_header()` — zencodec trait (what imageflow uses)
 //!
-//! Run: cargo test --release -p zenjpeg --test icc_corpus_extraction --features "decoder,zencodec" -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test icc_corpus_extraction --features zencodec -- --nocapture
 
 use std::path::{Path, PathBuf};
 

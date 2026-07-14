@@ -1102,10 +1102,10 @@ fn build_encoder_config(
         match args.trellis {
             TrellisArg::Off => {}
             TrellisArg::On => {
-                #[cfg(feature = "trellis")]
-                {
-                    config = config.trellis(true);
-                }
+                // Was cfg-gated on a `trellis` feature zjpeg never declared,
+                // making `--trellis on` a silent no-op; trellis is always
+                // compiled in zenjpeg now.
+                config = config.trellis(zenjpeg::encoder::TrellisConfig::default());
             }
             TrellisArg::Hybrid => {
                 config = config.auto_optimize(true);
@@ -1153,7 +1153,7 @@ fn build_encoder_config(
     let apply_icc_strips_icc = args.apply_icc.is_some();
 
     if let Some(extras) = extras {
-        let (mut strip_exif, mut strip_icc, mut strip_xmp, strip_gainmaps) = args.strip_mask();
+        let (strip_exif, mut strip_icc, strip_xmp, strip_gainmaps) = args.strip_mask();
         if apply_icc_strips_icc {
             strip_icc = true;
         }

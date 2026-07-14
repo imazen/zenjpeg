@@ -38,6 +38,17 @@ All notable changes to zenjpeg are documented here. Earlier history
     `semver-checks` will work again once zencodec 0.1.26 actually publishes and
     the `[patch.crates-io]` entry is dropped.
 
+### Removed
+
+- **The deprecated no-op feature flags `decoder`, `trellis`, and `cms`**
+  (breaking for manifests that still name them; ships with the 0.9.0 break
+  already queued above). All three had zero `cfg` sites — the decoder and
+  trellis are always compiled, and icc-db synthesis rides `zencodec`.
+  All run-command references in test/example doc comments were scrubbed.
+- The stale root `CONTEXT-HANDOFF.md` (wide→magetypes migration notes from
+  March; the migration landed long ago and is recorded in
+  `docs/TUNING_HISTORY.md`).
+
 ### Added
 
 - **RGB passthrough encoding — `EncoderConfig::rgb(quality)` / `ColorMode::Rgb`
@@ -54,6 +65,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`zjpeg --trellis on` was a silent no-op.** The CLI's trellis arm was
+  cfg-gated on a `trellis` feature the zjpeg crate never declared, so the
+  code never compiled (and had bit-rotted against the current API). Exposed
+  by the no-op-feature removal; now enables `TrellisConfig::default()`.
+- **`YCbCrPlanarEncoder` silently ignored a configured trellis** — its
+  builder bridge simply never forwarded `config.trellis`. Fixed as a side
+  effect of deduplicating the two encoder builder bridges (review R6).
 - **XYB bottom-partial-strip vertical padding used the wrong stride (issue
   #186).** When `width % 8 != 0` and the bottom strip was partial, the
   perceptual-Y plane's pad rows were replicated at packed stride into a

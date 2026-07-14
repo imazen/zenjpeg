@@ -140,7 +140,7 @@ const HASH_PROG_2048: u64 = 0x54e96d7d25d89b9b;
 // =============================================================================
 
 #[test]
-#[ignore] // Run with: cargo test --release --features decoder --test decode_perf_locked -- --ignored --nocapture
+#[ignore] // Run with: cargo test --release --test decode_perf_locked -- --ignored --nocapture
 fn test_decode_perf_baseline_2048() {
     let jpeg = create_test_jpeg(2048, 2048, false);
     eprintln!("Baseline 2048x2048 JPEG: {} bytes", jpeg.len());

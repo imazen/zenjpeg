@@ -10,7 +10,7 @@
 //!
 //! Run:
 //! ```sh
-//! cargo run --release --features decoder,parallel -p zenjpeg --example latency_bench
+//! cargo run --release --features parallel -p zenjpeg --example latency_bench
 //! ```
 
 use enough::Unstoppable;

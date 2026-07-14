@@ -2,9 +2,9 @@
 //! Takes a pre-existing JPEG file and decodes it N times.
 //!
 //! Usage:
-//!   cargo build --release --example profile_decode_only --features decoder
+//!   cargo build --release --example profile_decode_only
 //!   # Generate test JPEG first:
-//!   cargo run --release --example profile_decode_only --features decoder -- generate 1024
+//!   cargo run --release --example profile_decode_only -- generate 1024
 //!   # Then profile decode only:
 //!   valgrind --tool=callgrind ./target/release/examples/profile_decode_only decode /tmp/zenjpeg_profile_1024x1024.jpg 1
 

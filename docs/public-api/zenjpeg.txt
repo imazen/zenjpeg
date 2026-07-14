@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1629 lines (supported surface) | zenjpeg.features.txt 427 added (features: boundary-rd,cms,decoder,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,trellis,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3560 lines (839 hidden + 7238 excluded-feature)
+# files: zenjpeg.txt 1664 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3535 lines (842 hidden + 7212 excluded-feature)
 
 ## summary
 #
@@ -15,11 +15,11 @@
 #   pub consts/statics                         94
 #   pub macros                                  2
 #   free functions                             60
-#   inherent methods                          494
-#   struct fields                             360
-#   enum variants                             381
+#   inherent methods                          505
+#   struct fields                             372
+#   enum variants                             392
 #   re-exports                                  2
-#   trait roster entries (type × trait)       478
+#   trait roster entries (type × trait)       483
 #   auto-trait-complete types                 103
 #   auto-trait exceptions                      13
 #
@@ -28,14 +28,14 @@
 #   blur                              1
 #   container                       276
 #   deblock                          16
-#   decoder                         547
+#   decoder                         558
 #   detect                           56
-#   encoder                         517
+#   encoder                         540
 #   heuristics                       24
 #   lossless                         42
 #   profile                           7
 
-## items (1497 lines)
+## items (1531 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -398,8 +398,17 @@ pub decoder::ErrorKind::InvalidQuantTable
 pub decoder::ErrorKind::InvalidQuantTable::reason: &'static str
 pub decoder::ErrorKind::InvalidQuantTable::table_idx: u8
 pub decoder::ErrorKind::InvalidScanScript(alloc::string::String)
+pub decoder::ErrorKind::InvalidState
+pub decoder::ErrorKind::InvalidState::reason: &'static str
 pub decoder::ErrorKind::IoError
 pub decoder::ErrorKind::IoError::reason: alloc::string::String
+pub decoder::ErrorKind::NotAJpegFile
+pub decoder::ErrorKind::PolicyRejected
+pub decoder::ErrorKind::PolicyRejected::reason: &'static str
+pub decoder::ErrorKind::ResourceLimitExceeded
+pub decoder::ErrorKind::ResourceLimitExceeded::actual: u64
+pub decoder::ErrorKind::ResourceLimitExceeded::kind: zencodec::limits::LimitKind
+pub decoder::ErrorKind::ResourceLimitExceeded::limit: u64
 pub decoder::ErrorKind::SizeOverflow
 pub decoder::ErrorKind::SizeOverflow::context: &'static str
 pub decoder::ErrorKind::StrideTooSmall
@@ -416,6 +425,8 @@ pub decoder::ErrorKind::TruncatedData::context: &'static str
 pub decoder::ErrorKind::UnsupportedFeature
 pub decoder::ErrorKind::UnsupportedFeature::feature: &'static str
 pub decoder::ErrorKind::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub decoder::ErrorKind::UnsupportedPixelDescriptor
+pub decoder::ErrorKind::UnsupportedPixelDescriptor::reason: &'static str
 pub decoder::ErrorKind::UnsupportedPixelFormat
 pub decoder::ErrorKind::UnsupportedPixelFormat::format: decoder::PixelFormat
 pub fn encoder::ErrorKind::as_argument_error(&self) -> core::option::Option<error::ArgumentError>
@@ -754,16 +765,21 @@ pub fn encoder::Error::invalid_marker(u8, &'static str) -> Self
 pub fn encoder::Error::invalid_quality(f32, &'static str) -> Self
 pub fn encoder::Error::invalid_quant_table(u8, &'static str) -> Self
 pub fn encoder::Error::invalid_scan_script(alloc::string::String) -> Self
+pub fn encoder::Error::invalid_state(&'static str) -> Self
 pub fn encoder::Error::io_error(alloc::string::String) -> Self
 pub fn encoder::Error::kind(&self) -> &encoder::ErrorKind
 pub fn encoder::Error::new(encoder::ErrorKind) -> Self
 pub const fn encoder::Error::new_untraced(encoder::ErrorKind) -> Self [also: (root)]
+pub fn encoder::Error::not_a_jpeg_file() -> Self
+pub fn encoder::Error::policy_rejected(&'static str) -> Self
+pub fn encoder::Error::resource_limit_exceeded(zencodec::limits::LimitKind, u64, u64) -> Self
 pub fn encoder::Error::size_overflow(&'static str) -> Self
 pub fn encoder::Error::stride_too_small(u32, usize) -> Self
 pub fn encoder::Error::too_many_rows(u32, u32) -> Self
 pub fn encoder::Error::too_many_scans(usize, usize) -> Self
 pub fn encoder::Error::truncated_data(&'static str) -> Self
 pub fn encoder::Error::unsupported_feature(&'static str) -> Self
+pub fn encoder::Error::unsupported_pixel_descriptor(&'static str) -> Self
 pub fn encoder::Error::unsupported_pixel_format(decoder::PixelFormat) -> Self
 pub struct decoder::GDepthMetadata
 pub decoder::GDepthMetadata::far: f32
@@ -979,6 +995,7 @@ pub const fn encoder::ChromaSubsampling::v_factor(&self) -> u8
 pub const fn encoder::ChromaSubsampling::v_samp_factor_luma(self) -> u8
 #[non_exhaustive] pub enum encoder::ColorMode
 pub encoder::ColorMode::Grayscale
+pub encoder::ColorMode::Rgb
 pub encoder::ColorMode::Xyb
 pub encoder::ColorMode::Xyb::subsampling: encoder::XybSubsampling
 pub encoder::ColorMode::YCbCr
@@ -1027,8 +1044,17 @@ pub encoder::ErrorKind::InvalidQuantTable
 pub encoder::ErrorKind::InvalidQuantTable::reason: &'static str
 pub encoder::ErrorKind::InvalidQuantTable::table_idx: u8
 pub encoder::ErrorKind::InvalidScanScript(alloc::string::String)
+pub encoder::ErrorKind::InvalidState
+pub encoder::ErrorKind::InvalidState::reason: &'static str
 pub encoder::ErrorKind::IoError
 pub encoder::ErrorKind::IoError::reason: alloc::string::String
+pub encoder::ErrorKind::NotAJpegFile
+pub encoder::ErrorKind::PolicyRejected
+pub encoder::ErrorKind::PolicyRejected::reason: &'static str
+pub encoder::ErrorKind::ResourceLimitExceeded
+pub encoder::ErrorKind::ResourceLimitExceeded::actual: u64
+pub encoder::ErrorKind::ResourceLimitExceeded::kind: zencodec::limits::LimitKind
+pub encoder::ErrorKind::ResourceLimitExceeded::limit: u64
 pub encoder::ErrorKind::SizeOverflow
 pub encoder::ErrorKind::SizeOverflow::context: &'static str
 pub encoder::ErrorKind::StrideTooSmall
@@ -1045,6 +1071,8 @@ pub encoder::ErrorKind::TruncatedData::context: &'static str
 pub encoder::ErrorKind::UnsupportedFeature
 pub encoder::ErrorKind::UnsupportedFeature::feature: &'static str
 pub encoder::ErrorKind::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub encoder::ErrorKind::UnsupportedPixelDescriptor
+pub encoder::ErrorKind::UnsupportedPixelDescriptor::reason: &'static str
 pub encoder::ErrorKind::UnsupportedPixelFormat
 pub encoder::ErrorKind::UnsupportedPixelFormat::format: decoder::PixelFormat
 pub fn encoder::ErrorKind::as_argument_error(&self) -> core::option::Option<error::ArgumentError>
@@ -1297,6 +1325,7 @@ pub fn encoder::EncoderConfig::quant_source(self, encode::encoder_types::QuantTa
 pub fn encoder::EncoderConfig::quant_table_config(self, encoder::QuantTableConfig) -> Self
 pub fn encoder::EncoderConfig::request(&self) -> encoder::EncodeRequest<'_>
 pub fn encoder::EncoderConfig::restart_mcu_rows(self, u16) -> Self
+pub fn encoder::EncoderConfig::rgb(impl core::convert::Into<encoder::Quality>) -> Self
 pub fn encoder::EncoderConfig::separate_chroma_tables(self, bool) -> Self
 pub fn encoder::EncoderConfig::sharp_yuv(self, bool) -> Self
 pub fn encoder::EncoderConfig::tables(self, alloc::boxed::Box<encode::tuning::EncodingTables>) -> Self
@@ -1329,15 +1358,20 @@ pub fn encoder::Error::invalid_marker(u8, &'static str) -> Self
 pub fn encoder::Error::invalid_quality(f32, &'static str) -> Self
 pub fn encoder::Error::invalid_quant_table(u8, &'static str) -> Self
 pub fn encoder::Error::invalid_scan_script(alloc::string::String) -> Self
+pub fn encoder::Error::invalid_state(&'static str) -> Self
 pub fn encoder::Error::io_error(alloc::string::String) -> Self
 pub fn encoder::Error::kind(&self) -> &encoder::ErrorKind
 pub fn encoder::Error::new(encoder::ErrorKind) -> Self
+pub fn encoder::Error::not_a_jpeg_file() -> Self
+pub fn encoder::Error::policy_rejected(&'static str) -> Self
+pub fn encoder::Error::resource_limit_exceeded(zencodec::limits::LimitKind, u64, u64) -> Self
 pub fn encoder::Error::size_overflow(&'static str) -> Self
 pub fn encoder::Error::stride_too_small(u32, usize) -> Self
 pub fn encoder::Error::too_many_rows(u32, u32) -> Self
 pub fn encoder::Error::too_many_scans(usize, usize) -> Self
 pub fn encoder::Error::truncated_data(&'static str) -> Self
 pub fn encoder::Error::unsupported_feature(&'static str) -> Self
+pub fn encoder::Error::unsupported_pixel_descriptor(&'static str) -> Self
 pub fn encoder::Error::unsupported_pixel_format(decoder::PixelFormat) -> Self
 pub struct encoder::ExifFields
 pub fn encoder::ExifFields::copyright(self, impl core::convert::Into<alloc::string::String>) -> Self
@@ -1535,7 +1569,7 @@ pub fn profile::ProfileStats::reset()
 pub macro profile_block!
 pub macro profile_scope!
 
-## trait impls (118 types)
+## trait impls (119 types)
 
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
@@ -1599,7 +1633,7 @@ detect::Confidence: Clone, Copy, Debug, Eq, Hash, PartialEq
 detect::DqtTable: Clone, Debug
 detect::EncoderFamily: Clone, Copy, Debug, Eq, Hash, PartialEq
 detect::JpegProbe: Clone, Debug, zencodec::detect::SourceEncodingDetails
-detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq
+detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq, zencodec::error::CategorizedError
 detect::QualityEstimate: Clone, Debug
 detect::QualityScale: Clone, Copy, Debug, Eq, Hash, PartialEq
 detect::ReencodeError: Clone, Debug, Display, Error
@@ -1611,8 +1645,8 @@ encoder::DownsamplingMethod: Clone, Copy, Debug, Default, Eq, PartialEq
 encoder::EncodePlan: Clone, Debug, Display
 encoder::EncodeStats: Clone, Debug, Default
 encoder::EncoderConfig: Clone, Debug
-encoder::Error: Debug, Display, Error, From<encoder::ErrorKind>, From<enough::reason::StopReason>, From<std::io::error::Error>, From<whereat::at::At<encoder::ErrorKind>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, PartialEq
-encoder::ErrorKind: Clone, Debug, Display, Error, From<enough::reason::StopReason>, PartialEq
+encoder::Error: Debug, Display, Error, From<encoder::ErrorKind>, From<enough::reason::StopReason>, From<std::io::error::Error>, From<whereat::at::At<encoder::ErrorKind>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, PartialEq, zencodec::error::CategorizedError
+encoder::ErrorKind: Clone, Debug, Display, Error, From<enough::reason::StopReason>, PartialEq, zencodec::error::CategorizedError
 encoder::Exif: Clone, Debug, From<encoder::ExifFields>
 encoder::ExifFields: Clone, Debug, Default
 encoder::ExpertConfig: Clone, Debug
@@ -1655,6 +1689,7 @@ rgb::formats::rgba::Rgba<f32>: encoder::Pixel
 rgb::formats::rgba::Rgba<u16>: encoder::Pixel
 rgb::formats::rgba::Rgba<u8>: encoder::Pixel
 whereat::at::At<encoder::ErrorKind>: From<encoder::Error>
+whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder::ErrorKind>
 
 ## auto traits
 

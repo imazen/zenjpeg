@@ -11,7 +11,7 @@
 //! - Encoder regressions that silently degrade output quality
 //! - Quality non-monotonicity (higher Q producing worse output)
 //!
-//! Run: cargo test --release -p zenjpeg --test quality_regression --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test quality_regression -- --nocapture
 
 use enough::Unstoppable;
 use std::path::{Path, PathBuf};

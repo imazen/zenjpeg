@@ -6,7 +6,7 @@
 //! Triangle upsampling with default Jpegli IDCT: max_diff <= 3.
 //! Triangle upsampling with IdctMethod::Libjpeg: max_diff <= 1.
 //!
-//! Run: cargo test --release -p zenjpeg --test issue7_repro --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test issue7_repro -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::color::icc::TargetColorSpace;

@@ -11,7 +11,7 @@
 //!   4. The coefficient data returned alongside the metadata is identical
 //!      to what the legacy entry point returns — no encoding drift.
 //!
-//! Run: `cargo test --release --test jbrd_metadata_api --features decoder`
+//! Run: `cargo test --release --test jbrd_metadata_api`
 
 use enough::Unstoppable;
 use zenjpeg::decode::Decoder;

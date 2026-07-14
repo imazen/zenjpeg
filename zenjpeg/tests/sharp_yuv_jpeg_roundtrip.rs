@@ -1,7 +1,7 @@
 //! Compare chroma methods through the full JPEG pipeline:
 //! encode RGB → JPEG Q85 4:2:0 → decode → compare to original.
 //!
-//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_jpeg_roundtrip --features decoder -- --nocapture`
+//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_jpeg_roundtrip -- --nocapture`
 
 mod tests {
     use enough::Unstoppable;

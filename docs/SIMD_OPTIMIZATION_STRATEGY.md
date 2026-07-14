@@ -168,7 +168,7 @@ cargo test --release -p zenjpeg
 
 # Parity with C++
 cargo test --release -p zenjpeg --features ffi-tests --test cpp_parity_locked
-cargo run --release --features cms --example cpp_parity_matrix
+cargo run --release --features moxcms --example cpp_parity_matrix
 
 # Performance (Rust-only, for optimization tracking)
 RUSTFLAGS="-C target-cpu=native" cargo run --release --example comprehensive_bench

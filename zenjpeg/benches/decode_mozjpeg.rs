@@ -5,7 +5,7 @@
 //!
 //! Run with:
 //! ```sh
-//! cargo bench -p zenjpeg --bench decode_mozjpeg --features decoder
+//! cargo bench -p zenjpeg --bench decode_mozjpeg
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

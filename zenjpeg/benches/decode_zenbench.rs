@@ -5,7 +5,7 @@
 //!
 //! Run:
 //! ```bash
-//! cargo bench -p zenjpeg --bench decode_zenbench --features "trellis decoder"
+//! cargo bench -p zenjpeg --bench decode_zenbench
 //! ```
 
 use enough::Unstoppable;

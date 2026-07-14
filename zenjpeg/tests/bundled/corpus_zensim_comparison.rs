@@ -6,7 +6,7 @@
 //! This catches perceptual regressions that pixel-level max_diff misses
 //! (e.g., systematic color shifts in wide-gamut images).
 //!
-//! Run: cargo test --release -p zenjpeg --test corpus_zensim_comparison --features "decoder,cms" -- --nocapture --ignored
+//! Run: cargo test --release -p zenjpeg --test corpus_zensim_comparison -- --nocapture --ignored
 
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};

@@ -11,7 +11,7 @@
 use anyhow::Result;
 use std::str::FromStr;
 
-use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, Strictness, TargetColorSpace};
+use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, TargetColorSpace};
 
 /// Quality target band as `MIN..MAX` (inclusive on both ends).
 ///

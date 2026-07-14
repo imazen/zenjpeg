@@ -10,7 +10,7 @@
 //! respects `EncoderConfig.restart_interval` and that the decoder produces
 //! output within tolerance of the same image encoded *without* restart markers.
 //!
-//! Run: `cargo test --release --test restart_markers --features decoder`
+//! Run: `cargo test --release --test restart_markers`
 
 use enough::Unstoppable;
 use zenjpeg::decode::Decoder;

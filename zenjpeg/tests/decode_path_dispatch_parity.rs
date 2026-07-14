@@ -9,7 +9,7 @@
 //! - Different decode paths (streaming, scanline, coefficient) diverge
 //! - Boundary fixup is inconsistent with the main upsampler
 //!
-//! Run: cargo test --release -p zenjpeg --test decode_path_dispatch_parity --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test decode_path_dispatch_parity -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::decode::{ChromaUpsampling, Decoder, OutputTarget};

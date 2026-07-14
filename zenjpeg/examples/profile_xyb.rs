@@ -1,7 +1,7 @@
 //! Tiny driver for callgrind/flamegraph profiling of XYB encode.
 //!
 //! Usage:
-//!   cargo build --release -p zenjpeg --example profile_xyb --features trellis
+//!   cargo build --release -p zenjpeg --example profile_xyb
 //!   valgrind --tool=callgrind --collect-systime=yes \
 //!     target/release/examples/profile_xyb xyb-full progressive 1024 200
 //!

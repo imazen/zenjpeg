@@ -1,6 +1,6 @@
 //! Sweep sharp YUV iteration count on real images.
 //!
-//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_sweep --features decoder -- --nocapture --ignored`
+//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_sweep -- --nocapture --ignored`
 
 #[test]
 #[ignore] // takes ~10s

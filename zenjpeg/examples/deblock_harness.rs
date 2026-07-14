@@ -9,19 +9,19 @@
 //! Usage:
 //! ```bash
 //! # Generate cached encoded JPEGs (first run)
-//! cargo run --release -p zenjpeg --example deblock_harness --features decoder -- --generate
+//! cargo run --release -p zenjpeg --example deblock_harness -- --generate
 //!
 //! # Measure baseline (no deblocking)
-//! cargo run --release -p zenjpeg --example deblock_harness --features decoder -- --measure
+//! cargo run --release -p zenjpeg --example deblock_harness -- --measure
 //!
 //! # Both in one shot
-//! cargo run --release -p zenjpeg --example deblock_harness --features decoder
+//! cargo run --release -p zenjpeg --example deblock_harness
 //!
 //! # Limit to N images for quick testing
-//! cargo run --release -p zenjpeg --example deblock_harness --features decoder -- --images 3
+//! cargo run --release -p zenjpeg --example deblock_harness -- --images 3
 //!
 //! # Use specific corpus
-//! cargo run --release -p zenjpeg --example deblock_harness --features decoder -- --corpus cid22
+//! cargo run --release -p zenjpeg --example deblock_harness -- --corpus cid22
 //! ```
 
 use rayon::prelude::*;

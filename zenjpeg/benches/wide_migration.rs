@@ -6,17 +6,17 @@
 //!
 //! Run:
 //! ```bash
-//! cargo bench -p zenjpeg --bench wide_migration --features "decoder,trellis"
+//! cargo bench -p zenjpeg --bench wide_migration --features "trellis"
 //! ```
 //!
 //! Save baseline:
 //! ```bash
-//! cargo bench -p zenjpeg --bench wide_migration --features "decoder,trellis" -- --save-baseline=pre-migration
+//! cargo bench -p zenjpeg --bench wide_migration --features "trellis" -- --save-baseline=pre-migration
 //! ```
 //!
 //! Compare after migration:
 //! ```bash
-//! cargo bench -p zenjpeg --bench wide_migration --features "decoder,trellis" -- --baseline=pre-migration
+//! cargo bench -p zenjpeg --bench wide_migration --features "trellis" -- --baseline=pre-migration
 //! ```
 
 use enough::Unstoppable;

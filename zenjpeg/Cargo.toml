@@ -186,18 +186,8 @@ image = "0.25"
 
 [features]
 default = []
-# DEPRECATED no-op: the decoder is always compiled. The flag gated encoder
-# features that need decode roundtrips (target-zq's re-decode loop,
-# boundary-rd's candidate IDCTs, recompress) and split the build for no
-# real size win. Kept as an empty feature so existing
-# `features = ["decoder"]` lines keep resolving.
-decoder = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
-# DEPRECATED no-op: trellis quantization is now always compiled in (data-gated
-# at runtime, off by default). Kept as an empty feature so existing
-# `--features trellis` invocations keep working.
-trellis = []
 # Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time
 # overhead when `BoundaryRd::On` is used (default remains `BoundaryRd::Off` which
 # keeps the module out of the hot path). Even with this feature enabled, the
@@ -275,9 +265,6 @@ ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zento
 # anywhere in a build graph flipped the capability on regardless of zenjpeg's
 # flag.
 zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]
-# DEPRECATED no-op: icc-db synthesis is always enabled with `zencodec` (see
-# above). Kept so downstream `features = ["cms"]` lines keep resolving.
-cms = []
 # Target-perceptual-quality (`Quality::Zq` / `Quality::ZqExplicit`) closed-loop
 # encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
 # score target (issue #113). Pulls in `decoder` (for re-decoding each pass)

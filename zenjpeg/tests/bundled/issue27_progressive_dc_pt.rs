@@ -4,7 +4,7 @@
 //! subsequent refining scan, the decoded coefficients must be left-shifted by Al
 //! before dequantization and IDCT.
 //!
-//! Run: cargo test --release -p zenjpeg --test issue27_progressive_dc_pt --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test issue27_progressive_dc_pt -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::decoder::{Decoder, PixelFormat};

@@ -10,7 +10,7 @@
 //!
 //! Run:
 //! ```sh
-//! cargo bench -p zenjpeg --bench huffman_decode --features decoder
+//! cargo bench -p zenjpeg --bench huffman_decode
 //! ```
 
 use enough::Unstoppable;

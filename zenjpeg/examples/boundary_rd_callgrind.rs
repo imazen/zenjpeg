@@ -1,7 +1,7 @@
 //! Minimal binary for callgrind analysis of boundary_rd.
 //!
 //! Usage:
-//!   cargo build --release -p zenjpeg --features trellis --example boundary_rd_callgrind
+//!   cargo build --release -p zenjpeg --example boundary_rd_callgrind
 //!   valgrind --tool=callgrind --callgrind-out-file=/tmp/cg_off.out \
 //!     ./target/release/examples/boundary_rd_callgrind off <image.png> [iters]
 //!   valgrind --tool=callgrind --callgrind-out-file=/tmp/cg_on.out \

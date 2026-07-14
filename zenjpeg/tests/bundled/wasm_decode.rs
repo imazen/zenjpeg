@@ -8,8 +8,8 @@
 //! grayscale image that triggers the crash in browser WASM environments.
 //!
 //! Run with:
-//!   wasm-pack test --node --features decoder
-//!   wasm-pack test --headless --chrome --features decoder
+//!   wasm-pack test --node
+//!   wasm-pack test --headless --chrome
 //!
 //! NOTE: Node.js WASM may pass while browser WASM crashes - this is the bug.
 

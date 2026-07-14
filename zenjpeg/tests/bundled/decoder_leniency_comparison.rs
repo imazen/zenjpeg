@@ -2,7 +2,7 @@
 //!
 //! Tests zenjpeg, zune-jpeg, and jpeg-decoder against the conformance corpus.
 //!
-//! Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- --nocapture --ignored
+//! Run with: cargo test --release -p zenjpeg --test decoder_leniency_comparison -- --nocapture --ignored
 
 use enough::Unstoppable;
 use std::fs;
@@ -279,7 +279,7 @@ fn compare_decoder_leniency() {
 
 /// Show specific error messages for truncated files in each mode.
 ///
-/// Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- truncated_error_detail --nocapture --ignored
+/// Run with: cargo test --release -p zenjpeg --test decoder_leniency_comparison -- truncated_error_detail --nocapture --ignored
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn truncated_error_detail() {
@@ -365,7 +365,7 @@ fn decode_djpeg(data: &[u8]) -> Result<(), String> {
 /// Comprehensive strictness comparison across all three zenjpeg modes, libjpeg-turbo,
 /// and Rust decoders. Tests valid, invalid, and non-conformant JPEG files.
 ///
-/// Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- compare_strictness --nocapture --ignored
+/// Run with: cargo test --release -p zenjpeg --test decoder_leniency_comparison -- compare_strictness --nocapture --ignored
 #[test]
 #[ignore = "requires codec-corpus (network on first run)"]
 fn compare_strictness_vs_libjpeg_turbo() {

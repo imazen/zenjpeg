@@ -5,7 +5,7 @@
 //! zenjpeg (Triangle / fancy) and zune-jpeg, comparing pixel values row-by-row
 //! to detect systematic differences at MCU boundaries (stripes).
 //!
-//! Run: cargo test --release -p zenjpeg --test chroma_upsample_regression --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test chroma_upsample_regression -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;

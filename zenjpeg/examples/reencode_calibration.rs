@@ -12,16 +12,16 @@
 //! Usage:
 //! ```bash
 //! # Default: gb82 corpus, 10 images
-//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis
+//! cargo run --release -p zenjpeg --example reencode_calibration
 //!
 //! # Smoke test
-//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis -- --images 2
+//! cargo run --release -p zenjpeg --example reencode_calibration -- --images 2
 //!
 //! # With resize experiments
-//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis -- --resize
+//! cargo run --release -p zenjpeg --example reencode_calibration -- --resize
 //!
 //! # Full sweep (more quality levels + 4:4:4 sources for turbo/mozjpeg)
-//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis -- --full-sweep
+//! cargo run --release -p zenjpeg --example reencode_calibration -- --full-sweep
 //! ```
 
 use enough::Unstoppable;

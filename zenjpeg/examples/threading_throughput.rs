@@ -12,7 +12,7 @@
 //!
 //! Run with:
 //! ```sh
-//! cargo run --release --features decoder,parallel -p zenjpeg --example threading_throughput
+//! cargo run --release --features parallel -p zenjpeg --example threading_throughput
 //! ```
 
 use enough::Unstoppable;

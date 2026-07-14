@@ -9,43 +9,42 @@
 
 ## summary
 #
-#   pub modules                                83
-#   pub types (struct/enum/trait/alias)       298
+#   pub modules                                82
+#   pub types (struct/enum/trait/alias)       296
 #   pub consts/statics                        316
-#   pub macros                                  1
-#   free functions                            384
-#   inherent methods                         1189
-#   struct fields                             753
-#   enum variants                             492
+#   free functions                            354
+#   inherent methods                         1191
+#   struct fields                             754
+#   enum variants                             498
 #   re-exports                                 17
 #   trait roster entries (type × trait)       646
 #   auto-trait-complete types                 131
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           77
+#   (root)                           76
 #   alloc                             1
 #   color                           117
 #   container                         8
 #   decode                          444
 #   decoder                          54
 #   detect                           40
-#   encode                         1456
-#   encoder                         133
+#   encode                         1463
+#   encoder                         134
 #   entropy                         100
 #   foundation                      349
 #   heuristics                        3
-#   huffman                         337
+#   huffman                         306
 #   layout                            3
 #   lossless                          4
-#   quant                           137
+#   quant                           138
 #   recompress                       12
 #   rgb                              11
 #   test_utils                       95
-#   types                           140
+#   types                           138
 #   ultrahdr                         12
 
-## items (3355 lines)
+## items (3330 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -791,6 +790,7 @@ pub fn encode::encoder_config::EncoderConfig::quant_table_config(self, encode::e
 pub fn encode::encoder_config::EncoderConfig::request(&self) -> encode::request::EncodeRequest<'_>
 pub fn encode::encoder_config::EncoderConfig::resolve_plan(&self, u32, u32) -> encode::plan::EncodePlan
 pub fn encode::encoder_config::EncoderConfig::restart_mcu_rows(self, u16) -> Self
+pub fn encode::encoder_config::EncoderConfig::rgb(impl core::convert::Into<encode::encoder_types::Quality>) -> Self
 pub fn encode::encoder_config::EncoderConfig::scan_mode(self, encode::encoder_types::ProgressiveScanMode) -> Self
 pub fn encode::encoder_config::EncoderConfig::scan_strategy(self, encode::encoder_types::ScanStrategy) -> Self
 pub fn encode::encoder_config::EncoderConfig::separate_chroma_tables(self, bool) -> Self
@@ -1098,8 +1098,8 @@ pub fn encode::strip::StripProcessor::simd_token(&self) -> core::option::Option<
 pub fn encode::strip::StripProcessor::strip_height(&self) -> usize
 pub fn encode::strip::StripProcessor::subsampling(&self) -> types::Subsampling
 pub fn encode::strip::StripProcessor::take_blocks(&mut self) -> encode::strip::StripProcessorOutput
-pub fn encode::strip::StripProcessor::with_xyb(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, encode::strip::QuantContext, bool) -> encoder::Result<Self>
-pub fn encode::strip::StripProcessor::with_xyb_streaming(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, encode::strip::QuantContext, bool) -> encoder::Result<Self>
+pub fn encode::strip::StripProcessor::with_xyb(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
+pub fn encode::strip::StripProcessor::with_xyb_streaming(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
 pub fn encode::strip::StripProcessor::y_blocks(&self) -> &[[i16; 64]]
 pub fn encode::strip::StripProcessorOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::DroppedAxis::clone(&self) -> encode::sweep::DroppedAxis
@@ -1655,36 +1655,6 @@ pub fn huffman::optimize::tokens::TokenBuffer::iter(&self) -> impl core::iter::t
 pub fn huffman::optimize::tokens::TokenBuffer::len(&self) -> usize
 pub fn huffman::optimize::tokens::TokenBuffer::new(usize) -> Self
 pub fn huffman::optimize::tokens::TokenBuffer::push(&mut self, huffman::optimize::tokens::Token)
-pub fn huffman::trained::trained_tables_q0() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q10() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q100() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q15() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q20() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q25() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q30() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q35() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q40() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q45() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q5() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q50() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q55() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q60() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q65() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q70() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q75() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q80() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q85() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q89() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q90() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q91() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q92() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q93() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q94() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q95() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q96() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q97() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q98() -> huffman::optimize::frequency::HuffmanTableSet
-pub fn huffman::trained::trained_tables_q99() -> huffman::optimize::frequency::HuffmanTableSet
 pub fn huffman::types::CodeLengths::as_slice(&self) -> &[u8; 256]
 pub fn huffman::types::CodeLengths::clone(&self) -> huffman::types::CodeLengths
 pub fn huffman::types::CodeLengths::default() -> Self
@@ -1735,6 +1705,7 @@ pub fn quant::ZeroBiasParams::apply(&self, f32, usize, f32) -> f32
 pub fn quant::ZeroBiasParams::clone(&self) -> quant::ZeroBiasParams
 pub fn quant::ZeroBiasParams::default() -> Self
 pub fn quant::ZeroBiasParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn quant::ZeroBiasParams::for_rgb() -> Self
 pub fn quant::ZeroBiasParams::for_xyb(f32, usize) -> Self
 pub fn quant::ZeroBiasParams::for_xyb_flat() -> Self
 pub fn quant::ZeroBiasParams::for_ycbcr(f32, usize) -> Self
@@ -1785,11 +1756,12 @@ pub fn quant::dequantize_block(&[i16; 64], &[u16; 64]) -> [f32; 64]
 pub fn quant::dequantize_block_i32(&[i16; 64], &[u16; 64]) -> [i32; 64]
 pub fn quant::dequantize_block_with_bias(&[i16; 64], &[u16; 64], &[f32; 64]) -> [f32; 64]
 pub fn quant::dequantize_unzigzag_i32_into_partial(&[i16; 64], &[u16; 64], &mut [i32; 64], u8)
-pub fn quant::dequantize_unzigzag_i32_partial(&[i16; 64], &[u16; 64], u8) -> [i32; 64]
+pub fn quant::distance_to_linear_quality(f32) -> f32
 pub fn quant::distance_to_scale(f32, usize) -> f32
 pub fn quant::generate_quant_table(encode::encoder_types::Quality, usize, types::ColorSpace, bool, bool) -> types::QuantTable
 pub fn quant::generate_quant_table_ex(encode::encoder_types::Quality, usize, types::ColorSpace, bool, bool, bool) -> types::QuantTable
 pub fn quant::generate_quant_table_with_distance(f32, usize, types::ColorSpace, bool, bool, bool) -> types::QuantTable
+pub fn quant::generate_rgb_quant_table(f32, bool) -> types::QuantTable
 pub fn quant::generate_standard_jpeg_table(f32, bool) -> types::QuantTable
 pub fn quant::generate_standard_jpeg_table_ex(f32, bool, bool) -> types::QuantTable
 pub fn quant::quality_conversion::QualityComparisonMetric::assert_fields_are_eq(&self)
@@ -1807,7 +1779,6 @@ pub fn quant::quant_table_to_distance_component(&types::QuantTable, usize, bool)
 pub fn quant::quant_vals_to_distance(&types::QuantTable, &types::QuantTable, &types::QuantTable, bool) -> f32
 pub fn quant::quantize(f32, u16) -> i16
 pub fn quant::quantize_block(&[f32; 64], &[u16; 64]) -> [i16; 64]
-pub fn quant::quantize_block_compare(&[f32; 64], &[u16; 64], &quant::ZeroBiasParams, f32) -> ([i16; 64], usize)
 pub fn quant::quantize_block_with_zero_bias(&[f32; 64], &[u16; 64], &quant::ZeroBiasParams, f32) -> [i16; 64]
 pub fn quant::quantize_block_with_zero_bias_simd(&[f32; 64], &[u16; 64], &quant::ZeroBiasParams, f32) -> [i16; 64]
 pub fn quant::scale_to_distance(f32, usize) -> f32
@@ -1945,7 +1916,6 @@ pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&z
 pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub macro skip_if_missing!
 pub mod color
 pub mod color::fast_yuv
 pub mod color::icc
@@ -2018,7 +1988,6 @@ pub mod huffman::optimize::cluster
 pub mod huffman::optimize::frequency
 pub mod huffman::optimize::progressive
 pub mod huffman::optimize::tokens
-pub mod huffman::trained
 pub mod huffman::types
 pub mod quant
 pub mod quant::aq
@@ -2138,8 +2107,6 @@ pub type foundation::aligned_alloc::Align32 = aligned_vec::ConstAlign<32>
 pub type foundation::aligned_alloc::AlignedVec<T> = aligned_vec::AVec<T, foundation::aligned_alloc::Align32>
 pub type foundation::alloc::ProfiledVec<T> = foundation::instrumented_vec::InstrumentedVec<T> [also: foundation::instrumented_vec]
 pub type foundation::instrumented_vec::InstrumentedVec<T>::Target = alloc::vec::Vec<T>
-pub type types::Coeff = i16
-pub type types::CoeffBlock = [types::Coeff; 64]
 pub use decode::Stop
 pub use encode::Stop
 pub use encode::mage_simd::Desktop64
@@ -2495,11 +2462,13 @@ pub encode::ChromaSubsampling::HalfVertical
 pub encode::ChromaSubsampling::None
 pub encode::ChromaSubsampling::Quarter
 pub encode::ColorMode::Grayscale
+pub encode::ColorMode::Rgb
 pub encode::ColorMode::Xyb
 pub encode::ColorMode::Xyb::subsampling: encode::encoder_types::XybSubsampling
 pub encode::ColorMode::YCbCr
 pub encode::ColorMode::YCbCr::subsampling: encode::encoder_types::ChromaSubsampling
 pub encode::ColorPath::Grayscale
+pub encode::ColorPath::Rgb
 pub encode::ColorPath::Xyb
 pub encode::ColorPath::Xyb::b_subsampling: encode::encoder_types::XybSubsampling
 pub encode::ColorPath::Ycbcr
@@ -2701,6 +2670,7 @@ pub encode::config::ComputedConfig::smallest_seq_restart_interval: u16
 pub encode::config::ComputedConfig::subsampling: types::Subsampling
 pub encode::config::ComputedConfig::tiny_file_mode: encode::encoder_types::TinyFileMode
 pub encode::config::ComputedConfig::trellis: core::option::Option<encode::trellis::compat::TrellisConfig>
+pub encode::config::ComputedConfig::use_rgb: bool
 pub encode::config::ComputedConfig::use_xyb: bool
 pub encode::config::ComputedConfig::width: u32
 pub encode::config::ComputedConfig::xyb_subsampling: encode::encoder_types::XybSubsampling
@@ -2713,6 +2683,7 @@ pub encode::encoder_types::ChromaSubsampling::HalfVertical
 pub encode::encoder_types::ChromaSubsampling::None
 pub encode::encoder_types::ChromaSubsampling::Quarter
 pub encode::encoder_types::ColorMode::Grayscale
+pub encode::encoder_types::ColorMode::Rgb
 pub encode::encoder_types::ColorMode::Xyb
 pub encode::encoder_types::ColorMode::Xyb::subsampling: encode::encoder_types::XybSubsampling
 pub encode::encoder_types::ColorMode::YCbCr
@@ -2860,6 +2831,7 @@ pub encode::extras::SegmentType::Unknown
 pub encode::extras::SegmentType::Xmp
 pub encode::extras::SegmentType::XmpExtended
 pub encode::internal_params::ColorPath::Grayscale
+pub encode::internal_params::ColorPath::Rgb
 pub encode::internal_params::ColorPath::Xyb
 pub encode::internal_params::ColorPath::Xyb::b_subsampling: encode::encoder_types::XybSubsampling
 pub encode::internal_params::ColorPath::Ycbcr
@@ -3046,6 +3018,7 @@ pub encode::v2::ChromaSubsampling::HalfVertical
 pub encode::v2::ChromaSubsampling::None
 pub encode::v2::ChromaSubsampling::Quarter
 pub encode::v2::ColorMode::Grayscale
+pub encode::v2::ColorMode::Rgb
 pub encode::v2::ColorMode::Xyb
 pub encode::v2::ColorMode::Xyb::subsampling: encode::encoder_types::XybSubsampling
 pub encode::v2::ColorMode::YCbCr
@@ -3102,6 +3075,7 @@ pub encoder::BoundaryRd::On(encode::encoder_config::BoundaryRdConfig)
 pub encoder::ColorMode::Xyb::subsampling: encode::encoder_types::XybSubsampling
 pub encoder::ColorMode::YCbCr::subsampling: encode::encoder_types::ChromaSubsampling
 pub encoder::ColorPath::Grayscale
+pub encoder::ColorPath::Rgb
 pub encoder::ColorPath::Xyb
 pub encoder::ColorPath::Xyb::b_subsampling: encode::encoder_types::XybSubsampling
 pub encoder::ColorPath::Ycbcr

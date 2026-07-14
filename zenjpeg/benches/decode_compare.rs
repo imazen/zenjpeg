@@ -8,7 +8,7 @@
 //!
 //! Run with:
 //! ```sh
-//! cargo bench -p zenjpeg --bench decode_compare --features decoder
+//! cargo bench -p zenjpeg --bench decode_compare
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

@@ -574,7 +574,7 @@ path). Default: off. Key findings (full sweep tables migrated to
   SSIM2 pts; max pixel diff vs cjpegli always 1).
 - Pairwise similarity at Q85: zen+bias<->cjpegli 94.31 vs default<->cjpegli 91.42.
 
-Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored`
+Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison -- --nocapture --ignored`
 
 ### Remaining Bottlenecks
 
@@ -618,7 +618,7 @@ Remaining 17-file gap vs libjpeg-turbo: all 613-byte fuzz-mutated files needing
 scan-level longjmp recovery (diminishing returns). Non-conformant acceptance
 matches libjpeg-turbo exactly (14/20).
 
-Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison --features decoder -- compare_strictness --nocapture --ignored`
+Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison -- compare_strictness --nocapture --ignored`
 
 ## Failed Explorations
 
@@ -1323,7 +1323,7 @@ with GPU-backed metrics behind this flag.
 
 **Decoder:** The decoder API is in prerelease (always compiled — the old
 `decoder` flag is a no-op). API will have breaking changes. Historical
-`--features decoder` invocations in this file still work (no-op).
+`` invocations in this file still work (no-op).
 
 **SIMD:** archmage + magetypes are mandatory dependencies (token-based safe intrinsics).
 `wide` crate provides portable fallback. On x86_64, archmage dispatches to AVX2/FMA/AVX-512

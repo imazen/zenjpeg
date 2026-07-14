@@ -5,7 +5,7 @@
 //! Uses zensim-regress to produce side-by-side comparison montages (Expected | Actual | Diff)
 //! saved to /mnt/v/output/zenjpeg/visual_diffs/. Each decode path is tested independently.
 //!
-//! Run: cargo test --release -p zenjpeg --test visual_diff_regression --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test visual_diff_regression -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;

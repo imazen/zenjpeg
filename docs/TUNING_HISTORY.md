@@ -1199,7 +1199,7 @@ Default: off.
 - bias-cpp gap is consistently tiny (0.02-0.11 pts), confirming zen+bias
   closely matches C++ jpegli decoder behavior regardless of image.
 
-Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored`
+Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison -- --nocapture --ignored`
 
 
 ## Failed Explorations
@@ -1427,7 +1427,7 @@ Memory bandwidth reduction per block:
   Triggered at Q91-Q93 (where AC table had codes > 9 bits) with DRI=216 on 576x576 images.
   Fix: added bit-by-bit Huffman decode fallback matching the standard function.
   - Found during investigation of Known Bug #1 (catastrophic auto_optimize quality).
-  - Test: `cargo test --release -p zenjpeg --test quality_regression --features decoder -- diagnostic_coefficient_comparison --nocapture --ignored`
+  - Test: `cargo test --release -p zenjpeg --test quality_regression -- diagnostic_coefficient_comparison --nocapture --ignored`
 
 - **Parallel feature skipping deringing (FIXED 2026-03-09)** - `parallel_dct_plane` in
   `encode/parallel.rs` did `extract_block → forward_dct` without applying deringing, while
@@ -1455,7 +1455,7 @@ Memory bandwidth reduction per block:
   Fix: remove `.min(11)` from `collect_block_frequencies_simd`. Previously-encoded files
   in `testdata/decode_failures/` remain permanently corrupted — tests converted to verify
   graceful rejection (assert decode error, not success).
-  - Test: `cargo test --release -p zenjpeg --test xyb_roundtrip --features decoder`
+  - Test: `cargo test --release -p zenjpeg --test xyb_roundtrip`
   - Test: `cargo test --release -p zenjpeg --test decode_xyb_failures`
 
 - **CMYK scanline transform panic (FIXED 2026-03-04, commit bde9f48)** -
@@ -1463,7 +1463,7 @@ Memory bandwidth reduction per block:
   (e.g., FlipHorizontal) fell through to `from_coefficients()` → `StripProcessor` with
   `[u8; 3]` arrays → index-out-of-bounds at `h_samp[3]`. Fix: route CMYK to buffered
   decode fallback, matching `scanline_reader()`.
-  - Test: `cargo test --release -p zenjpeg --test cmyk_transform --features decoder`
+  - Test: `cargo test --release -p zenjpeg --test cmyk_transform`
 
 - **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
   `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
