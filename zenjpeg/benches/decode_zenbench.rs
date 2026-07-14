@@ -3,6 +3,11 @@
 //! Uses zenbench for interleaved measurement with paired statistics.
 //! Tests all major decode paths on CID22 corpus images.
 //!
+//! Every group carries at least one stable reference lane (mozjpeg C, and
+//! zune-jpeg where a second anchor helps). zenbench interleaves lanes within
+//! a run, so the zen/reference throughput *ratio* is robust to ambient load —
+//! that ratio, not raw MiB/s, is what an A/B across two builds compares.
+//!
 //! Run:
 //! ```bash
 //! cargo bench -p zenjpeg --bench decode_zenbench
@@ -277,6 +282,25 @@ fn bench_decode(suite: &mut Suite) {
     suite.group("deblock_baseline_4:2:0_Q20", |g| {
         g.throughput(Throughput::Bytes(total_lowq_bytes as u64));
 
+        // Reference lanes: stable C / Rust decoders so zen/moz and zen/zune
+        // ratios stay load-robust (deblock modes are zenjpeg-only, but the
+        // references anchor the ratio against ambient noise).
+        g.bench("libjpeg-turbo/mozjpeg (C ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q20);
+                }
+            })
+        });
+
+        g.bench("zune-jpeg (ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_zune(&img.baseline_q20);
+                }
+            })
+        });
+
         g.bench("zenjpeg Off (no deblock)", |b| {
             let dec = Decoder::new();
             b.iter(|| {
@@ -319,6 +343,16 @@ fn bench_decode(suite: &mut Suite) {
     suite.group("scanline_baseline_4:2:0_Q85", |g| {
         g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
 
+        // Reference lane: full C decode of the same images anchors the
+        // scanline-path ratios against ambient load.
+        g.bench("libjpeg-turbo/mozjpeg (C ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q85);
+                }
+            })
+        });
+
         g.bench("zenjpeg scanline Off", |b| {
             b.iter(|| {
                 for img in get_images() {
@@ -351,6 +385,23 @@ fn bench_decode(suite: &mut Suite) {
 
     suite.group("dequant_bias_baseline_Q85", |g| {
         g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
+
+        // Reference lanes anchor the bias-on/off ratios against ambient load.
+        g.bench("libjpeg-turbo/mozjpeg (C ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q85);
+                }
+            })
+        });
+
+        g.bench("zune-jpeg (ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_zune(&img.baseline_q85);
+                }
+            })
+        });
 
         g.bench("zenjpeg default (no bias)", |b| {
             let dec = Decoder::new();

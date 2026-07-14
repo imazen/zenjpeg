@@ -1,5 +1,9 @@
 //! Full-pipeline encode benchmark + isolated sharp YUV component timing.
 //!
+//! The two full-encode groups carry a mozjpeg (libjpeg-turbo, C) reference
+//! lane so zen/moz throughput ratios stay load-robust for A/B comparisons;
+//! without it these groups had no cross-encoder anchor, only raw times.
+//!
 //! Run: `cargo bench --bench encode_zenbench`
 
 use zenbench::prelude::*;
@@ -28,6 +32,24 @@ fn bench_encode(suite: &mut Suite) {
     let rgb_1k_xyb: &'static [u8] = Box::leak(noise_patches(1024, 1024).into_boxed_slice());
 
     suite.group("encode_q85_4k", |g| {
+        // Input-pixel throughput (RGB bytes in), comparable across every
+        // lane since they all consume the same source image.
+        g.throughput(Throughput::Bytes((3840 * 2160 * 3) as u64));
+
+        // Reference lane: mozjpeg (libjpeg-turbo, C + NASM SIMD). Gives a
+        // stable cross-encoder anchor so zen/moz throughput ratios are
+        // robust to ambient machine load in A/B comparisons — without it,
+        // this group had no reference and only raw times.
+        g.bench("mozjpeg baseline Q85 4:2:0 (C ref)", move |b| {
+            b.iter(|| {
+                mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::BaselineBalanced)
+                    .quality(85)
+                    .subsampling(mozjpeg_rs::Subsampling::S420)
+                    .encode_rgb(rgb_4k, 3840, 2160)
+                    .unwrap()
+            })
+        });
+
         g.bench("4:2:0 progressive", move |b| {
             b.iter(|| {
                 let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
@@ -94,6 +116,21 @@ fn bench_encode(suite: &mut Suite) {
     // gating, color conversion, parallel encoding).
     suite.group("encode_q85_1k_xyb", |g| {
         use zenjpeg::encode::encoder_types::HuffmanStrategy;
+
+        g.throughput(Throughput::Bytes((1024 * 1024 * 3) as u64));
+
+        // Reference lane (see encode_q85_4k). The XYB lanes below encode a
+        // different color space than mozjpeg, but the C encoder still gives
+        // a load-robust ratio anchor for the whole group.
+        g.bench("mozjpeg baseline Q85 4:2:0 (C ref)", move |b| {
+            b.iter(|| {
+                mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::BaselineBalanced)
+                    .quality(85)
+                    .subsampling(mozjpeg_rs::Subsampling::S420)
+                    .encode_rgb(rgb_1k_xyb, 1024, 1024)
+                    .unwrap()
+            })
+        });
 
         g.bench("ycbcr 4:2:0 progressive (baseline)", move |b| {
             b.iter(|| {
