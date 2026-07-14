@@ -350,6 +350,14 @@ jobs:
       - name: Clippy (default features)
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
 
+      # Lib-only, default features: test builds feature-unify __test-utils
+      # through zenjpeg-bench-utils (making internal modules pub and
+      # exempting them from dead-code analysis), so this is the only
+      # configuration where dead-code detection actually fires. Kept
+      # warning-clean since the 2026-07-13 review sweep (was 286 warnings).
+      - name: Clippy (lib only, true default config)
+        run: cargo clippy -p zenjpeg --lib -- -D warnings
+
       - name: Clippy (__expert + boundary-rd)
         run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
 
