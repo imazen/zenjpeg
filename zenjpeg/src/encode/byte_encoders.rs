@@ -122,24 +122,18 @@ impl BytesEncoder {
         })
     }
 
-    /// Build a StreamingEncoder from v2 config.
-    fn build_streaming_encoder(
+    /// Apply the builder configuration shared by every encode entry point
+    /// (interleaved-pixel and YCbCr-planar): restart resolution, scan-mode
+    /// decomposition, deringing/AQ, boundary-RD, 16-bit tables, tiny-file
+    /// mode, parallelism, and trellis. Callers add input-specific settings
+    /// (pixel format, color-mode wiring) before calling `.start()`.
+    fn apply_common_builder_config(
+        mut builder: crate::encode::streaming_builder::StreamingEncoderBuilder,
         config: &EncoderConfig,
         width: u32,
         height: u32,
-        layout: PixelLayout,
-    ) -> Result<StreamingEncoder> {
-        use crate::encode::streaming::StreamingEncoder as SE;
-        use crate::types::PixelFormat;
-
-        let pixel_format: PixelFormat = layout.into();
-        let subsampling = match config.color_mode {
-            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
-            super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
-            super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
-            super::encoder_types::ColorMode::Rgb => crate::types::Subsampling::S444,
-        };
-
+        subsampling: crate::types::Subsampling,
+    ) -> crate::encode::streaming_builder::StreamingEncoderBuilder {
         // Progressive mode: restart markers provide no benefit (progressive
         // decode requires multi-pass coefficient storage — parallel decode via
         // restart segments is impossible) but cost ~10% in overhead from RST
@@ -152,16 +146,13 @@ impl BytesEncoder {
         } else {
             super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
         };
-
-        let mut builder = SE::new(width, height)
+        builder = builder
             .quality(config.quality)
-            .pixel_format(pixel_format)
             .subsampling(subsampling)
             .huffman(config.huffman.clone())
             .chroma_downsampling(config.downsampling_method)
-            .restart_interval(restart_interval);
-
-        builder = builder.quant_table_config(config.quant_table_config.clone());
+            .restart_interval(restart_interval)
+            .quant_table_config(config.quant_table_config.clone());
 
         // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
@@ -189,13 +180,6 @@ impl BytesEncoder {
                 .smallest_seq_restart_interval(seq_interval);
         }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
-
-        if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
-            builder = builder.use_xyb(true).xyb_subsampling(subsampling);
-        }
-        if matches!(config.color_mode, super::encoder_types::ColorMode::Rgb) {
-            builder = builder.use_rgb(true);
-        }
 
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
@@ -229,7 +213,37 @@ impl BytesEncoder {
             builder = builder.trellis(*trellis);
         }
 
-        builder.start()
+        builder
+    }
+
+    /// Build a StreamingEncoder from v2 config.
+    fn build_streaming_encoder(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Result<StreamingEncoder> {
+        use crate::encode::streaming::StreamingEncoder as SE;
+        use crate::types::PixelFormat;
+
+        let pixel_format: PixelFormat = layout.into();
+        let subsampling = match config.color_mode {
+            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
+            super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::Rgb => crate::types::Subsampling::S444,
+        };
+
+        let mut builder = SE::new(width, height).pixel_format(pixel_format);
+
+        if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
+            builder = builder.use_xyb(true).xyb_subsampling(subsampling);
+        }
+        if matches!(config.color_mode, super::encoder_types::ColorMode::Rgb) {
+            builder = builder.use_rgb(true);
+        }
+
+        Self::apply_common_builder_config(builder, config, width, height, subsampling).start()
     }
 
     /// Push rows with explicit stride.
@@ -1159,84 +1173,16 @@ impl YCbCrPlanarEncoder {
             _ => crate::types::Subsampling::S444,
         };
 
-        // Progressive mode: restart markers provide no benefit (progressive
-        // decode requires multi-pass coefficient storage — parallel decode via
-        // restart segments is impossible) but cost ~10% in overhead from RST
-        // marker pairs + byte-alignment padding + DC prediction resets.
-        // `force_restart_markers(true)` overrides this for test scaffolding /
-        // decoder-side interop.
-        let restart_interval = if config.scan_mode.is_progressive() && !config.force_restart_markers
-        {
-            0
-        } else {
-            super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
-        };
-
         // Use RGB pixel format - the streaming encoder will accept YCbCr data
         // via push_ycbcr_strip_f32, but needs a pixel format for buffer sizing
-        let mut builder = StreamingEncoder::new(width, height)
-            .quality(config.quality)
-            .pixel_format(PixelFormat::Rgb) // Buffer sizing only
-            .subsampling(subsampling)
-            .huffman(config.huffman.clone())
-            .chroma_downsampling(config.downsampling_method)
-            .restart_interval(restart_interval);
+        let builder = StreamingEncoder::new(width, height).pixel_format(PixelFormat::Rgb); // Buffer sizing only
 
-        builder = builder.quant_table_config(config.quant_table_config.clone());
-
-        // Decompose ProgressiveScanMode into builder's individual fields
-        if config.scan_mode.is_progressive() {
-            builder = builder.progressive(true);
-        }
-        if matches!(
-            config.scan_mode,
-            super::encoder_types::ProgressiveScanMode::Smallest
-                | super::encoder_types::ProgressiveScanMode::SmallestSearch
-        ) {
-            // Sequential candidates are restart-free (pure rate
-            // minimizer) unless restart markers are explicitly forced.
-            let seq_interval = if config.force_restart_markers {
-                super::config::resolve_restart_rows(
-                    config.restart_mcu_rows,
-                    width,
-                    height,
-                    subsampling,
-                )
-            } else {
-                0
-            };
-            builder = builder
-                .smallest_scan(true)
-                .smallest_seq_restart_interval(seq_interval);
-        }
-        builder = builder.scan_strategy(config.scan_mode.scan_strategy());
-
-        // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
-        builder = builder.deringing(config.deringing);
-        builder = builder.aq_enabled(config.aq_enabled);
-
-        // Boundary-RD (#91 / PR #102, off by default). The public composable
-        // config is resolved into the flat internal knob struct here. Only
-        // compiled when `--features boundary-rd` is enabled.
-        #[cfg(feature = "boundary-rd")]
-        {
-            builder = builder.boundary_rd_flat(config.resolve_boundary_rd());
-        }
-
-        builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
-        builder = builder.force_sof1(matches!(
-            config.color_mode,
-            super::encoder_types::ColorMode::Xyb { .. }
-        ));
-
-        builder = builder.tiny_file_mode(config.tiny_file_mode);
-
-        #[cfg(feature = "parallel")]
-        if config.parallel.is_some() {
-            builder = builder.parallel(true);
-        }
-
-        builder.start()
+        // NOTE: the shared config applies `.trellis()` here where the old
+        // planar-specific bridge did not; the planar encoder previously
+        // silently ignored a configured trellis, which was itself a bug
+        // (config said trellis, output was non-trellis).
+        BytesEncoder::apply_common_builder_config(builder, config, width, height, subsampling)
+            .start()
     }
 
     /// Push full-resolution planes. Encoder subsamples chroma as needed.

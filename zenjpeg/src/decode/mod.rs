@@ -200,6 +200,20 @@ use crate::color::icc::apply_icc_transform_f32;
 #[cfg(feature = "moxcms")]
 use crate::color::icc::{TargetColorSpace, apply_icc_transform};
 
+/// Routing decisions shared by the borrowed and owned scanline-reader
+/// entry points (computed by `DecodeConfig::classify_scanline_route`).
+struct ScanlineRoute {
+    is_grayscale: bool,
+    #[allow(dead_code)] // recorded for completeness; buffering already implied it
+    is_cmyk: bool,
+    is_xyb: bool,
+    max_h: u8,
+    max_v_samp: usize,
+    mcu_height: usize,
+    needs_buffered: bool,
+    needs_buffered_sampling: bool,
+}
+
 impl DecodeConfig {
     /// Creates a new decoder configuration with default settings.
     #[must_use]
@@ -784,94 +798,26 @@ impl DecodeConfig {
         // via Auto at low Q), fall back to decode() + buffered scanline reader
         // transparently — the caller gets correct deblocked output without
         // streaming memory savings.
-        let needs_coefficient_deblock = match self.deblock_mode {
-            DeblockMode::Knusperli => true,
-            DeblockMode::Auto => {
-                let dc_quant = parser
-                    .quant_tables
-                    .iter()
-                    .find_map(|qt| qt.as_ref().map(|t| t[0]))
-                    .unwrap_or(0);
-                dc_quant >= 27
-            }
-            _ => false,
-        };
-        if needs_coefficient_deblock {
+        if self.needs_coefficient_deblock(&parser) {
             return self.scanline_reader_deblock_fallback(data);
         }
 
-        // DNL mode (height=0 in SOF) not supported - scanline reader needs dimensions upfront
-        if parser.height == 0 {
-            return Err(Error::unsupported_feature(
-                "scanline reader does not support DNL mode (height=0 in SOF)",
-            ));
-        }
+        let route = Self::classify_scanline_route(&parser)?;
+        let mcu_height = route.mcu_height;
 
-        // 12-bit precision (Extended Sequential) not yet fully supported
-        // The level shift and output scaling differ from 8-bit
-        if parser.precision != 8 {
-            return Err(Error::unsupported_feature(
-                "12-bit precision JPEG (Extended Sequential) is not yet supported. \
-                 Only 8-bit precision is currently implemented.",
-            ));
-        }
-
-        // Support grayscale (1), color (3), and CMYK/YCCK (4) images
-        if parser.num_components != 1 && parser.num_components != 3 && parser.num_components != 4 {
-            return Err(Error::unsupported_feature(
-                "scanline reader requires 1, 3, or 4 component image",
-            ));
-        }
-
-        let is_grayscale = parser.num_components == 1;
-        let is_cmyk = parser.num_components == 4;
-        let is_xyb = parser.info().is_xyb;
-
-        // Compute MCU height for crop resolution
-        let max_v_samp = parser.components[..parser.num_components as usize]
-            .iter()
-            .map(|c| c.v_samp_factor as usize)
-            .max()
-            .unwrap_or(1);
-        let mcu_height = max_v_samp * 8;
-
-        // Use buffered mode for:
-        // - Progressive JPEGs (format requires all scans before final coefficients)
-        // - Arithmetic-coded JPEGs (streaming entropy decoder is Huffman-only for now)
-        // - CMYK (4-component streaming not implemented yet)
-        let needs_buffered = matches!(
-            parser.mode,
-            JpegMode::Progressive
-                | JpegMode::ArithmeticSequential
-                | JpegMode::ArithmeticProgressive
-        ) || is_cmyk;
-
-        if needs_buffered {
+        if route.needs_buffered || route.needs_buffered_sampling {
             let width = parser.width;
             let height = parser.height;
             let num_components = parser.num_components;
-
-            // Fully decode the image (scanline reader doesn't support cancellation)
-            parser.chroma_upsampling = self.chroma_upsampling;
-            parser.apply_idct_method(self.effective_idct_method());
-            parser.decode(&Unstoppable)?;
-
-            // Compute subsampling from sampling factors
-            let subsampling = compute_subsampling(&parser.components, num_components);
-
-            // Convert to pixels (RGB for color, grayscale for 1-component)
-            let output_format = if is_grayscale {
-                PixelFormat::Gray
+            // Progressive/arithmetic/CMYK use the actual sampling factors;
+            // the exotic-sampling fallback normalizes from the max factors.
+            let subsampling = if route.needs_buffered {
+                compute_subsampling(&parser.components, num_components)
             } else {
-                PixelFormat::Rgb
+                subsampling_from_max(route.max_h, route.max_v_samp as u8, route.is_grayscale)
             };
-            let pixels = parser.to_pixels(
-                output_format,
-                is_xyb,
-                self.chroma_upsampling,
-                OutputTarget::Srgb8,
-                &Unstoppable,
-            )?;
+
+            let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
 
             let mut reader = ScanlineReader::new_buffered(
                 data,
@@ -880,78 +826,14 @@ impl DecodeConfig {
                 num_components,
                 subsampling,
                 pixels,
-                is_xyb,
-            );
-            self.apply_crop(&mut reader, width, height, mcu_height)?;
-            return Ok(reader);
-        }
-
-        // Baseline: use streaming mode
-        // Check for high sampling factors (>2x2) which need buffered mode
-        let max_h = parser.components[..parser.num_components as usize]
-            .iter()
-            .map(|c| c.h_samp_factor)
-            .max()
-            .unwrap_or(1);
-
-        // Detect exotic sampling that the strip processor cannot handle:
-        // - Factors > 2 in any dimension
-        // - Cb and Cr have different sampling factors (asymmetric chroma)
-        // - Chroma factors exceed luma (inverted subsampling)
-        // These are routed through the buffered decode path instead.
-        let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
-            max_h > 2 || max_v_samp > 2
-        } else {
-            let comps = &parser.components[..parser.num_components as usize];
-            let cb_h = comps[1].h_samp_factor;
-            let cb_v = comps[1].v_samp_factor;
-            let cr_h = comps[2].h_samp_factor;
-            let cr_v = comps[2].v_samp_factor;
-            max_h > 2
-                || max_v_samp > 2
-                || cb_h != cr_h
-                || cb_v != cr_v
-                || cb_h > comps[0].h_samp_factor
-                || cb_v > comps[0].v_samp_factor
-        };
-
-        if needs_buffered_sampling {
-            let width = parser.width;
-            let height = parser.height;
-            let num_components = parser.num_components;
-            let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
-
-            parser.chroma_upsampling = self.chroma_upsampling;
-            parser.apply_idct_method(self.effective_idct_method());
-            parser.decode(&Unstoppable)?;
-
-            let output_format = if is_grayscale {
-                PixelFormat::Gray
-            } else {
-                PixelFormat::Rgb
-            };
-            let pixels = parser.to_pixels(
-                output_format,
-                is_xyb,
-                self.chroma_upsampling,
-                OutputTarget::Srgb8,
-                &Unstoppable,
-            )?;
-
-            let mut reader = ScanlineReader::new_buffered(
-                data,
-                width,
-                height,
-                num_components,
-                subsampling,
-                pixels,
-                is_xyb,
+                route.is_xyb,
             );
             self.apply_crop(&mut reader, width, height, mcu_height)?;
             return Ok(reader);
         }
 
         // Extract scan data and construct scanline reader
+        let is_grayscale = route.is_grayscale;
         let scan_data = parser.into_scan_data(is_grayscale)?;
         let width = scan_data.width;
         let height = scan_data.height;
@@ -1009,12 +891,134 @@ impl DecodeConfig {
         }
     }
 
+    /// Shared routing decisions for `scanline_reader` / `scanline_reader_owned`.
+    ///
+    /// Validates the header (DNL / precision / component count) and computes
+    /// every mode-selection predicate in ONE place so the borrowed and owned
+    /// entry points cannot drift. The lifetime-driven ASSEMBLY (borrow vs
+    /// two-phase move of the owned Vec) intentionally stays per-variant; the
+    /// remaining structural unification is tracked with the CoeffSource
+    /// decision (docs/DECODER_UNIFICATION_PLAN.md).
+    fn classify_scanline_route(parser: &parser::JpegParser<'_>) -> Result<ScanlineRoute> {
+        if parser.height == 0 {
+            return Err(Error::unsupported_feature(
+                "scanline reader does not support DNL mode (height=0 in SOF)",
+            ));
+        }
+
+        if parser.precision != 8 {
+            return Err(Error::unsupported_feature(
+                "12-bit precision JPEG (Extended Sequential) is not yet supported. \
+                 Only 8-bit precision is currently implemented.",
+            ));
+        }
+
+        if parser.num_components != 1 && parser.num_components != 3 && parser.num_components != 4 {
+            return Err(Error::unsupported_feature(
+                "scanline reader requires 1, 3, or 4 component image",
+            ));
+        }
+
+        let is_grayscale = parser.num_components == 1;
+        let is_cmyk = parser.num_components == 4;
+        let is_xyb = parser.info().is_xyb;
+
+        let comps = &parser.components[..parser.num_components as usize];
+        let max_v_samp = comps
+            .iter()
+            .map(|c| c.v_samp_factor as usize)
+            .max()
+            .unwrap_or(1);
+        let max_h = comps.iter().map(|c| c.h_samp_factor).max().unwrap_or(1);
+        let mcu_height = max_v_samp * 8;
+
+        // Progressive/arithmetic require full coefficient storage; CMYK
+        // streaming is not implemented.
+        let needs_buffered = matches!(
+            parser.mode,
+            JpegMode::Progressive
+                | JpegMode::ArithmeticSequential
+                | JpegMode::ArithmeticProgressive
+        ) || is_cmyk;
+
+        // Exotic sampling the strip processor cannot handle:
+        // factors > 2, asymmetric Cb/Cr, or chroma factors exceeding luma.
+        let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
+            max_h > 2 || max_v_samp > 2
+        } else {
+            let cb_h = comps[1].h_samp_factor;
+            let cb_v = comps[1].v_samp_factor;
+            let cr_h = comps[2].h_samp_factor;
+            let cr_v = comps[2].v_samp_factor;
+            max_h > 2
+                || max_v_samp > 2
+                || cb_h != cr_h
+                || cb_v != cr_v
+                || cb_h > comps[0].h_samp_factor
+                || cb_v > comps[0].v_samp_factor
+        };
+
+        Ok(ScanlineRoute {
+            is_grayscale,
+            is_cmyk,
+            is_xyb,
+            max_h,
+            max_v_samp,
+            mcu_height,
+            needs_buffered,
+            needs_buffered_sampling,
+        })
+    }
+
+    /// Knusperli (and Auto-at-low-Q) deblocking needs full coefficient
+    /// access, so those requests fall back to the buffered decode path.
+    fn needs_coefficient_deblock(&self, parser: &parser::JpegParser<'_>) -> bool {
+        match self.deblock_mode {
+            DeblockMode::Knusperli => true,
+            DeblockMode::Auto => {
+                let dc_quant = parser
+                    .quant_tables
+                    .iter()
+                    .find_map(|qt| qt.as_ref().map(|t| t[0]))
+                    .unwrap_or(0);
+                dc_quant >= 27
+            }
+            _ => false,
+        }
+    }
+
+    /// Fully decode to pixels for the buffered scanline modes.
+    ///
+    /// Shared by the borrowed and owned entry points (each of which had two
+    /// copies of this block before the R6 dedup).
+    fn decode_buffered_pixels(
+        &self,
+        parser: &mut parser::JpegParser<'_>,
+        route: &ScanlineRoute,
+    ) -> Result<alloc::vec::Vec<u8>> {
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.apply_idct_method(self.effective_idct_method());
+        parser.decode(&Unstoppable)?;
+
+        let output_format = if route.is_grayscale {
+            PixelFormat::Gray
+        } else {
+            PixelFormat::Rgb
+        };
+        parser.to_pixels(
+            output_format,
+            route.is_xyb,
+            self.chroma_upsampling,
+            OutputTarget::Srgb8,
+            &Unstoppable,
+        )
+    }
+
     /// Internal: create a scanline reader that owns its JPEG data.
     ///
     /// The parser borrows `&vec` temporarily for header parsing, then the
     /// reader stores `Cow::Owned(vec)` for ongoing entropy decoding.
     fn scanline_reader_owned<'a>(&self, vec: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
-        use crate::types::JpegMode;
         use alloc::borrow::Cow;
 
         // Check if we need a transform
@@ -1049,7 +1053,7 @@ impl DecodeConfig {
 
         // Check if deblock mode needs coefficient path (Knusperli or Auto at low Q)
         {
-            let needs_coefficient_deblock = match self.deblock_mode {
+            let needs_deblock = match self.deblock_mode {
                 DeblockMode::Knusperli => true,
                 DeblockMode::Auto => {
                     let mut peek = JpegParser::with_strictness(
@@ -1060,16 +1064,11 @@ impl DecodeConfig {
                         self.alloc_pref,
                     )?;
                     peek.read_header()?;
-                    let dc_quant = peek
-                        .quant_tables
-                        .iter()
-                        .find_map(|qt| qt.as_ref().map(|t| t[0]))
-                        .unwrap_or(0);
-                    dc_quant >= 27
+                    self.needs_coefficient_deblock(&peek)
                 }
                 _ => false,
             };
-            if needs_coefficient_deblock {
+            if needs_deblock {
                 return self.scanline_reader_deblock_fallback_owned(vec);
             }
         }
@@ -1084,69 +1083,20 @@ impl DecodeConfig {
             )?;
             parser.read_header()?;
 
-            if parser.height == 0 {
-                return Err(Error::unsupported_feature(
-                    "scanline reader does not support DNL mode (height=0 in SOF)",
-                ));
-            }
+            let route = Self::classify_scanline_route(&parser)?;
+            let mcu_height = route.mcu_height;
 
-            if parser.precision != 8 {
-                return Err(Error::unsupported_feature(
-                    "12-bit precision JPEG (Extended Sequential) is not yet supported. \
-                     Only 8-bit precision is currently implemented.",
-                ));
-            }
-
-            if parser.num_components != 1
-                && parser.num_components != 3
-                && parser.num_components != 4
-            {
-                return Err(Error::unsupported_feature(
-                    "scanline reader requires 1, 3, or 4 component image",
-                ));
-            }
-
-            let is_grayscale = parser.num_components == 1;
-            let is_cmyk = parser.num_components == 4;
-            let is_xyb = parser.info().is_xyb;
-
-            let max_v_samp = parser.components[..parser.num_components as usize]
-                .iter()
-                .map(|c| c.v_samp_factor as usize)
-                .max()
-                .unwrap_or(1);
-            let mcu_height = max_v_samp * 8;
-
-            let needs_buffered = matches!(
-                parser.mode,
-                JpegMode::Progressive
-                    | JpegMode::ArithmeticSequential
-                    | JpegMode::ArithmeticProgressive
-            ) || is_cmyk;
-
-            if needs_buffered {
+            if route.needs_buffered || route.needs_buffered_sampling {
                 let width = parser.width;
                 let height = parser.height;
                 let num_components = parser.num_components;
-
-                parser.chroma_upsampling = self.chroma_upsampling;
-                parser.apply_idct_method(self.effective_idct_method());
-                parser.decode(&Unstoppable)?;
-
-                let subsampling = compute_subsampling(&parser.components, num_components);
-
-                let output_format = if is_grayscale {
-                    PixelFormat::Gray
+                let subsampling = if route.needs_buffered {
+                    compute_subsampling(&parser.components, num_components)
                 } else {
-                    PixelFormat::Rgb
+                    subsampling_from_max(route.max_h, route.max_v_samp as u8, route.is_grayscale)
                 };
-                let pixels = parser.to_pixels(
-                    output_format,
-                    is_xyb,
-                    self.chroma_upsampling,
-                    OutputTarget::Srgb8,
-                    &Unstoppable,
-                )?;
+
+                let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
 
                 ParseResult::Buffered {
                     width,
@@ -1154,66 +1104,12 @@ impl DecodeConfig {
                     num_components,
                     subsampling,
                     pixels,
-                    is_xyb,
+                    is_xyb: route.is_xyb,
                     mcu_height,
                 }
             } else {
-                // Check for exotic sampling
-                let max_h = parser.components[..parser.num_components as usize]
-                    .iter()
-                    .map(|c| c.h_samp_factor)
-                    .max()
-                    .unwrap_or(1);
-
-                let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
-                    max_h > 2 || max_v_samp > 2
-                } else {
-                    let comps = &parser.components[..parser.num_components as usize];
-                    let cb_h = comps[1].h_samp_factor;
-                    let cb_v = comps[1].v_samp_factor;
-                    let cr_h = comps[2].h_samp_factor;
-                    let cr_v = comps[2].v_samp_factor;
-                    max_h > 2
-                        || max_v_samp > 2
-                        || cb_h != cr_h
-                        || cb_v != cr_v
-                        || cb_h > comps[0].h_samp_factor
-                        || cb_v > comps[0].v_samp_factor
-                };
-
-                if needs_buffered_sampling {
-                    let width = parser.width;
-                    let height = parser.height;
-                    let num_components = parser.num_components;
-                    let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
-
-                    parser.chroma_upsampling = self.chroma_upsampling;
-                    parser.apply_idct_method(self.effective_idct_method());
-                    parser.decode(&Unstoppable)?;
-
-                    let output_format = if is_grayscale {
-                        PixelFormat::Gray
-                    } else {
-                        PixelFormat::Rgb
-                    };
-                    let pixels = parser.to_pixels(
-                        output_format,
-                        is_xyb,
-                        self.chroma_upsampling,
-                        OutputTarget::Srgb8,
-                        &Unstoppable,
-                    )?;
-
-                    ParseResult::Buffered {
-                        width,
-                        height,
-                        num_components,
-                        subsampling,
-                        pixels,
-                        is_xyb,
-                        mcu_height,
-                    }
-                } else {
+                let is_grayscale = route.is_grayscale;
+                {
                     // Baseline streaming mode
                     let scan_data = parser.into_scan_data(is_grayscale)?;
                     let width = scan_data.width;
