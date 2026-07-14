@@ -1217,7 +1217,7 @@ pub struct encoder::BytesEncoder
 pub fn encoder::BytesEncoder::encode_stats(&self) -> &encoder::EncodeStats
 pub fn encoder::BytesEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encoder::BytesEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
-pub fn encoder::BytesEncoder::finish_to<W: std::io::Write>(self, W) -> encoder::Result<W>
+pub fn encoder::BytesEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encoder::BytesEncoder::finish_with_huffman_frequencies(self) -> encoder::Result<(alloc::vec::Vec<u8>, core::option::Option<alloc::boxed::Box<encode::blocks::HuffmanSymbolFrequencies>>)>
 pub fn encoder::BytesEncoder::finish_with_metrics(self) -> encoder::Result<(alloc::vec::Vec<u8>, encode::zq::EncodeMetrics)>
 pub fn encoder::BytesEncoder::height(&self) -> u32
@@ -1431,7 +1431,7 @@ pub struct encoder::RgbEncoder<P: encoder::Pixel>
 pub fn encoder::RgbEncoder<P>::encode_stats(&self) -> &encoder::EncodeStats
 pub fn encoder::RgbEncoder<P>::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encoder::RgbEncoder<P>::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
-pub fn encoder::RgbEncoder<P>::finish_to<W: std::io::Write>(self, W) -> encoder::Result<W>
+pub fn encoder::RgbEncoder<P>::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encoder::RgbEncoder<P>::height(&self) -> u32
 pub fn encoder::RgbEncoder<P>::push(&mut self, &[P], usize, usize, impl enough::Stop) -> encoder::Result<()>
 pub fn encoder::RgbEncoder<P>::push_packed(&mut self, &[P], impl enough::Stop) -> encoder::Result<()>
@@ -1470,7 +1470,7 @@ pub fn encoder::TrellisConfig::thorough() -> Self
 pub struct encoder::YCbCrPlanarEncoder
 pub fn encoder::YCbCrPlanarEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encoder::YCbCrPlanarEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
-pub fn encoder::YCbCrPlanarEncoder::finish_to<W: std::io::Write>(self, W) -> encoder::Result<W>
+pub fn encoder::YCbCrPlanarEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encoder::YCbCrPlanarEncoder::height(&self) -> u32
 pub fn encoder::YCbCrPlanarEncoder::push(&mut self, &encoder::YCbCrPlanes<'_>, usize, impl enough::Stop) -> encoder::Result<()>
 pub fn encoder::YCbCrPlanarEncoder::push_subsampled(&mut self, &encoder::YCbCrPlanes<'_>, usize, impl enough::Stop) -> encoder::Result<()>
@@ -1645,7 +1645,7 @@ encoder::DownsamplingMethod: Clone, Copy, Debug, Default, Eq, PartialEq
 encoder::EncodePlan: Clone, Debug, Display
 encoder::EncodeStats: Clone, Debug, Default
 encoder::EncoderConfig: Clone, Debug
-encoder::Error: Debug, Display, Error, From<encoder::ErrorKind>, From<enough::reason::StopReason>, From<std::io::error::Error>, From<whereat::at::At<encoder::ErrorKind>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, PartialEq, zencodec::error::CategorizedError
+encoder::Error: Debug, Display, Error, From<core::io::error::Error>, From<encoder::ErrorKind>, From<enough::reason::StopReason>, From<whereat::at::At<encoder::ErrorKind>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, PartialEq, zencodec::error::CategorizedError
 encoder::ErrorKind: Clone, Debug, Display, Error, From<enough::reason::StopReason>, PartialEq, zencodec::error::CategorizedError
 encoder::Exif: Clone, Debug, From<encoder::ExifFields>
 encoder::ExifFields: Clone, Debug, Default

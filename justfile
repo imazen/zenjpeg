@@ -210,17 +210,25 @@ test-cross:
     just test-i686
     just test-aarch64
 
+# Pinned rustdoc-JSON nightly for the API snapshots (keep in sync with the
+# public-api job in .github/workflows/ci.yml). An unpinned tracking nightly
+# churns cross-crate path rendering (e.g. the 2026-07 core::io re-homing
+# turned `std::io::Write` into `core::io::write::Write`), breaking the CI
+# gate with zero repo changes. Bump deliberately, regenerating in the same
+# commit.
+apidoc_toolchain := "nightly-2026-07-13"
+
 # Format + regenerate the public-API surface snapshots (docs/public-api/).
 # The snapshot runner lives in the workspace-excluded apidoc/ package, so it
 # is never built or run by plain `cargo test` or any CI job.
 fmt:
     cargo fmt --all
-    cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshots only
 api-doc:
-    cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Verify the committed snapshots are current
 api-doc-check:
-    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml

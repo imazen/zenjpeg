@@ -666,7 +666,7 @@ pub fn encode::bdrd_trace::take_trace() -> core::option::Option<encode::bdrd_tra
 pub fn encode::byte_encoders::BytesEncoder::encode_stats(&self) -> &foundation::alloc::EncodeStats
 pub fn encode::byte_encoders::BytesEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encode::byte_encoders::BytesEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
-pub fn encode::byte_encoders::BytesEncoder::finish_to<W: std::io::Write>(self, W) -> encoder::Result<W>
+pub fn encode::byte_encoders::BytesEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encode::byte_encoders::BytesEncoder::finish_with_huffman_frequencies(self) -> encoder::Result<(alloc::vec::Vec<u8>, core::option::Option<alloc::boxed::Box<encode::HuffmanSymbolFrequencies>>)>
 pub fn encode::byte_encoders::BytesEncoder::finish_with_metrics(self) -> encoder::Result<(alloc::vec::Vec<u8>, encode::zq::EncodeMetrics)>
 pub fn encode::byte_encoders::BytesEncoder::height(&self) -> u32
@@ -679,7 +679,7 @@ pub fn encode::byte_encoders::BytesEncoder::width(&self) -> u32
 pub fn encode::byte_encoders::RgbEncoder<P>::encode_stats(&self) -> &foundation::alloc::EncodeStats
 pub fn encode::byte_encoders::RgbEncoder<P>::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encode::byte_encoders::RgbEncoder<P>::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
-pub fn encode::byte_encoders::RgbEncoder<P>::finish_to<W: std::io::Write>(self, W) -> encoder::Result<W>
+pub fn encode::byte_encoders::RgbEncoder<P>::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encode::byte_encoders::RgbEncoder<P>::height(&self) -> u32
 pub fn encode::byte_encoders::RgbEncoder<P>::push(&mut self, &[P], usize, usize, impl enough::Stop) -> encoder::Result<()>
 pub fn encode::byte_encoders::RgbEncoder<P>::push_packed(&mut self, &[P], impl enough::Stop) -> encoder::Result<()>
@@ -688,7 +688,7 @@ pub fn encode::byte_encoders::RgbEncoder<P>::rows_remaining(&self) -> u32
 pub fn encode::byte_encoders::RgbEncoder<P>::width(&self) -> u32
 pub fn encode::byte_encoders::YCbCrPlanarEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encode::byte_encoders::YCbCrPlanarEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
-pub fn encode::byte_encoders::YCbCrPlanarEncoder::finish_to<W: std::io::Write>(self, W) -> encoder::Result<W>
+pub fn encode::byte_encoders::YCbCrPlanarEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encode::byte_encoders::YCbCrPlanarEncoder::height(&self) -> u32
 pub fn encode::byte_encoders::YCbCrPlanarEncoder::push(&mut self, &encode::encoder_types::YCbCrPlanes<'_>, usize, impl enough::Stop) -> encoder::Result<()>
 pub fn encode::byte_encoders::YCbCrPlanarEncoder::push_subsampled(&mut self, &encode::encoder_types::YCbCrPlanes<'_>, usize, impl enough::Stop) -> encoder::Result<()>
@@ -1555,7 +1555,7 @@ pub fn huffman::encode::HuffmanEncodeTable::std_dc_chrominance() -> &'static Sel
 pub fn huffman::encode::HuffmanEncodeTable::std_dc_luminance() -> &'static Self
 pub fn huffman::encode::lengths_to_bits_values(&[u8]) -> ([u8; 16], alloc::vec::Vec<u8>)
 pub fn huffman::optimize::cluster::ClusterResult::clone(&self) -> huffman::optimize::cluster::ClusterResult
-pub fn huffman::optimize::cluster::ClusterResult::dump_merge_log(&self, &str) -> std::io::error::Result<()>
+pub fn huffman::optimize::cluster::ClusterResult::dump_merge_log(&self, &str) -> core::io::error::Result<()>
 pub fn huffman::optimize::cluster::ClusterResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::cluster::ClusterResult::get_slot(&self, usize) -> usize
 pub fn huffman::optimize::cluster::ClusterResult::new(usize) -> Self
@@ -1600,8 +1600,8 @@ pub fn huffman::optimize::frequency::OptimizedTable::from_bits_values_static([u8
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::clone(&self) -> huffman::optimize::progressive::ProgressiveTokenBuffer
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::counter(&self, usize) -> core::option::Option<&huffman::optimize::frequency::FrequencyCounter>
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dc_pred(&self, usize) -> i16
-pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dump_histograms(&self, &str) -> std::io::error::Result<()>
-pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dump_tokens(&self, &str) -> std::io::error::Result<()>
+pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dump_histograms(&self, &str) -> core::io::error::Result<()>
+pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dump_tokens(&self, &str) -> core::io::error::Result<()>
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::end_scan(&mut self)
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::generate_luma_chroma_tables(&self, usize) -> encoder::Result<(usize, alloc::vec::Vec<huffman::optimize::frequency::OptimizedTable>)>

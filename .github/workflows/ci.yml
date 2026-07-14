@@ -435,8 +435,15 @@ jobs:
       # Fails when docs/public-api/ snapshots don't match the current
       # public surface — API growth must be a reviewed, committed change
       # (regenerate with `just api-doc`).
+      #
+      # The rustdoc-JSON nightly is PINNED (keep in sync with the
+      # justfile): an unpinned tracking nightly churns cross-crate path
+      # rendering — the 2026-07 core::io re-homing turned
+      # `std::io::Write` into `core::io::write::Write` and broke this
+      # gate with zero repo changes. Bump the pin deliberately, in the
+      # same commit as a `just api-doc` regen.
       - name: Public API snapshots current
-        run: ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
+        run: ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN=nightly-2026-07-13 cargo test --manifest-path apidoc/Cargo.toml
 
   msrv:
     name: MSRV
