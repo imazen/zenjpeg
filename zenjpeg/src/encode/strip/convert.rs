@@ -43,6 +43,30 @@ impl<'a> PlaneStripMut<'a> {
             self.data.copy_within(src..src + stride, dst);
         }
     }
+
+    /// Replicate the last valid column (`valid_width - 1`) across this row's
+    /// padding columns (`valid_width..stride`) — the horizontal edge-pad used
+    /// throughout strip conversion. No-op when `valid_width >= stride`.
+    ///
+    /// Routing every horizontal pad through this one method keeps the stride
+    /// (padded vs packed) an explicit call-site decision, which is exactly the
+    /// distinction the #186 class of bug got wrong. `#[inline]` so it lowers to
+    /// the same code as the hand-written `for x in valid_width..stride` loop it
+    /// replaces.
+    #[inline]
+    pub(super) fn pad_row_right(&mut self, row: usize, valid_width: usize) {
+        let stride = self.stride;
+        if valid_width >= stride {
+            return;
+        }
+        debug_assert!(valid_width >= 1, "need a valid column to replicate");
+        let start = row * stride;
+        debug_assert!(start + stride <= self.data.len(), "row out of bounds");
+        let edge = self.data[start + valid_width - 1];
+        for x in valid_width..stride {
+            self.data[start + x] = edge;
+        }
+    }
 }
 
 impl StripProcessor {
@@ -84,12 +108,7 @@ impl StripProcessor {
             }
 
             // Edge-pad Y row
-            if width < padded_width {
-                let edge_val = self.y_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[dst_start + x] = edge_val;
-                }
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // Copy Cb/Cr with level shift (no padding, full resolution)
@@ -145,12 +164,7 @@ impl StripProcessor {
                 self.y_strip[dst_start + x] = y_row[src_start + x] + 128.0;
             }
 
-            if width < padded_width {
-                let edge_val = self.y_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[dst_start + x] = edge_val;
-                }
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // Copy Cb/Cr directly to downsampled buffers with level shift
@@ -245,12 +259,7 @@ impl StripProcessor {
                         self.y_strip[dst_start + x] = rgb_strip[src_start + x] as f32;
                     }
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[dst_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[dst_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::Cmyk => {
@@ -284,12 +293,7 @@ impl StripProcessor {
                             .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
                     }
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[y_row_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[y_row_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::Bgra | PixelFormat::Bgrx => {
@@ -335,12 +339,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[dst_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[dst_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
@@ -394,12 +393,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[y_row_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[y_row_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::GrayF32 => {
@@ -430,12 +424,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[dst_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[dst_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
@@ -490,12 +479,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[y_row_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[y_row_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
         }
@@ -749,12 +733,7 @@ impl StripProcessor {
             }
 
             // Edge-pad X (y_strip) row
-            if width < padded_width {
-                let edge_val = self.y_strip[y_row_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[y_row_start + x] = edge_val;
-                }
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // For XYB mode, we handle the components differently:
@@ -813,10 +792,7 @@ impl StripProcessor {
                 for x in (0..width).rev() {
                     self.cb_strip[dst_start + x] = self.cb_strip[src_start + x];
                 }
-                let edge_val = self.cb_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.cb_strip[dst_start + x] = edge_val;
-                }
+                PlaneStripMut::new(&mut self.cb_strip, padded_width).pad_row_right(row, width);
             }
         }
 
@@ -863,17 +839,13 @@ impl StripProcessor {
                 self.cr_strip[dst_start + x] = rgb_strip[src + b_off] as f32;
             }
 
-            // Right-edge replicate each plane to the padded width
-            if width < padded_width {
-                let r_edge = self.y_strip[dst_start + width - 1];
-                let g_edge = self.cb_strip[dst_start + width - 1];
-                let b_edge = self.cr_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[dst_start + x] = r_edge;
-                    self.cb_strip[dst_start + x] = g_edge;
-                    self.cr_strip[dst_start + x] = b_edge;
-                }
-            }
+            // Right-edge replicate each plane to the padded width. Three
+            // separate typed pads instead of one fused loop — the loop only
+            // covers the ≤7 padding columns, so the cost is identical, and
+            // each plane's stride stays an explicit decision.
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
+            PlaneStripMut::new(&mut self.cb_strip, padded_width).pad_row_right(row, width);
+            PlaneStripMut::new(&mut self.cr_strip, padded_width).pad_row_right(row, width);
         }
 
         Ok(())
@@ -972,10 +944,7 @@ impl StripProcessor {
                 self.y_strip[dst_start + x] = self.y_strip[src_start + x];
             }
 
-            let edge_val = self.y_strip[dst_start + width - 1];
-            for x in width..padded_width {
-                self.y_strip[dst_start + x] = edge_val;
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
     }
 
@@ -1057,12 +1026,8 @@ impl StripProcessor {
                 self.cr_down[dst_start + x] = self.cr_down[src_start + x];
             }
 
-            let cb_edge = self.cb_down[dst_start + c_width - 1];
-            let cr_edge = self.cr_down[dst_start + c_width - 1];
-            for x in c_width..padded_c_width {
-                self.cb_down[dst_start + x] = cb_edge;
-                self.cr_down[dst_start + x] = cr_edge;
-            }
+            PlaneStripMut::new(&mut self.cb_down, padded_c_width).pad_row_right(row, c_width);
+            PlaneStripMut::new(&mut self.cr_down, padded_c_width).pad_row_right(row, c_width);
         }
     }
 
@@ -1086,10 +1051,7 @@ impl StripProcessor {
                 self.cr_down[dst_start + x] = self.cr_down[src_start + x];
             }
 
-            let edge = self.cr_down[dst_start + b_width - 1];
-            for x in b_width..padded_b_width {
-                self.cr_down[dst_start + x] = edge;
-            }
+            PlaneStripMut::new(&mut self.cr_down, padded_b_width).pad_row_right(row, b_width);
         }
     }
 
