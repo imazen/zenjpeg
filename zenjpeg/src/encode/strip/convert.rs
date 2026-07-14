@@ -13,6 +13,38 @@ use crate::types::{PixelFormat, Subsampling};
 
 use super::StripProcessor;
 
+/// Mutable view of a strip plane with an EXPLICIT row stride.
+///
+/// The #186 class of bug is "code assumed the wrong stride for a buffer
+/// whose layout depends on color mode". Passing one of these instead of a
+/// bare `&mut [f32]` forces the stride decision to the call site, where
+/// the buffer-layout table (strip/mod.rs) is in view.
+pub(super) struct PlaneStripMut<'a> {
+    pub(super) data: &'a mut [f32],
+    /// Row stride in elements (padded or packed — caller decides, per the
+    /// buffer-layout invariant table).
+    pub(super) stride: usize,
+}
+
+impl<'a> PlaneStripMut<'a> {
+    pub(super) fn new(data: &'a mut [f32], stride: usize) -> Self {
+        debug_assert!(stride > 0);
+        Self { data, stride }
+    }
+
+    /// Replicate row `src_row` over rows `dst_rows` (vertical padding).
+    pub(super) fn replicate_row_down(&mut self, src_row: usize, dst_rows: core::ops::Range<usize>) {
+        let stride = self.stride;
+        let src = src_row * stride;
+        debug_assert!(src + stride <= self.data.len(), "source row out of bounds");
+        for row in dst_rows {
+            let dst = row * stride;
+            debug_assert!(dst + stride <= self.data.len(), "dest row out of bounds");
+            self.data.copy_within(src..src + stride, dst);
+        }
+    }
+}
+
 impl StripProcessor {
     /// Copies YCbCr f32 data to strip buffers with level shift.
     ///
@@ -961,20 +993,17 @@ impl StripProcessor {
 
         // Get last valid row index
         let last_row = actual_height - 1;
-        let src_start = last_row * padded_width;
 
-        // Replicate to all remaining rows
-        for row in actual_height..target_height {
-            let dst_start = row * padded_width;
-            self.y_strip
-                .copy_within(src_start..src_start + padded_width, dst_start);
-        }
+        // Y/X/R plane is ALWAYS in padded layout after conversion.
+        PlaneStripMut::new(&mut self.y_strip, padded_width)
+            .replicate_row_down(last_row, actual_height..target_height);
 
         if is_color {
             // Invariant (issue #186): the stride used below MUST match the
             // layout each buffer is in at this stage — see the buffer-layout
             // table in strip/mod.rs. cb/cr are PADDED under RGB and XYB
             // (rearranged by their converters), PACKED under standard YCbCr.
+            // `PlaneStripMut` forces that decision to be explicit here.
             debug_assert!(
                 self.cb_strip.len() >= target_height * padded_width
                     && self.cr_strip.len() >= target_height * padded_width,
@@ -983,13 +1012,10 @@ impl StripProcessor {
             if self.use_rgb {
                 // RGB passthrough: the converter leaves all three planes in
                 // padded layout, so replicate full padded rows.
-                for row in actual_height..target_height {
-                    let dst = row * padded_width;
-                    self.cb_strip
-                        .copy_within(src_start..src_start + padded_width, dst);
-                    self.cr_strip
-                        .copy_within(src_start..src_start + padded_width, dst);
-                }
+                PlaneStripMut::new(&mut self.cb_strip, padded_width)
+                    .replicate_row_down(last_row, actual_height..target_height);
+                PlaneStripMut::new(&mut self.cr_strip, padded_width)
+                    .replicate_row_down(last_row, actual_height..target_height);
             } else if self.layout.use_xyb {
                 // XYB (issue #186): convert_strip_to_xyb has already
                 // rearranged cb_strip (the perceptual-Y plane) to PADDED
@@ -999,21 +1025,16 @@ impl StripProcessor {
                 // pad rows with phase-shifted data. cr_strip is post-convert
                 // scratch under XYB (B already lives in cr_down, vertically
                 // padded inside the converter) — nothing to pad.
-                for row in actual_height..target_height {
-                    let dst = row * padded_width;
-                    self.cb_strip
-                        .copy_within(src_start..src_start + padded_width, dst);
-                }
+                PlaneStripMut::new(&mut self.cb_strip, padded_width)
+                    .replicate_row_down(last_row, actual_height..target_height);
             } else {
-                // For cb_strip/cr_strip (if they're in padded layout)
-                // Note: these are still in packed layout at this point
+                // Standard YCbCr: cb/cr are still in PACKED layout here
+                // (downsample_chroma_strip consumes them later).
                 let width = self.layout.width;
-                let last_src = last_row * width;
-                for row in actual_height..target_height {
-                    let dst = row * width;
-                    self.cb_strip.copy_within(last_src..last_src + width, dst);
-                    self.cr_strip.copy_within(last_src..last_src + width, dst);
-                }
+                PlaneStripMut::new(&mut self.cb_strip, width)
+                    .replicate_row_down(last_row, actual_height..target_height);
+                PlaneStripMut::new(&mut self.cr_strip, width)
+                    .replicate_row_down(last_row, actual_height..target_height);
             }
         }
     }

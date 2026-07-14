@@ -721,7 +721,7 @@ impl ComputedConfig {
     }
 
     /// Writes scan header for XYB mode.
-    pub(crate) fn write_scan_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_scan_header_rgb_ids(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
@@ -752,7 +752,7 @@ impl ComputedConfig {
     }
 
     /// Writes DHT markers for XYB optimized tables.
-    pub(crate) fn write_huffman_tables_xyb_optimized(
+    pub(crate) fn write_huffman_tables_shared_pair(
         &self,
         output: &mut Vec<u8>,
         dc_table: &OptimizedTable,

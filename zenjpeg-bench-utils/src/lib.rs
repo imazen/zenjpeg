@@ -1811,9 +1811,9 @@ impl EncoderConfig {
     pub fn encode(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         match self.encoder {
             EncoderImpl::JpegliRs => self.encode_with_jpegli_rs(img),
-            #[cfg(feature = "cjpegli-ffi")]
+            #[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
             EncoderImpl::CJpegli => self.encode_with_cjpegli_ffi(img),
-            #[cfg(not(feature = "cjpegli-ffi"))]
+            #[cfg(not(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp))))]
             EncoderImpl::CJpegli => Err("cjpegli requires cjpegli-ffi feature".to_string()),
         }
     }
@@ -1850,7 +1850,7 @@ impl EncoderConfig {
     /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
     ///
     /// Note: XYB mode is NOT supported via the libjpeg API.
-    #[cfg(feature = "cjpegli-ffi")]
+    #[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
     fn encode_with_cjpegli_ffi(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         use jpegli_internals_sys::*;
         use std::mem::MaybeUninit;
@@ -2046,7 +2046,7 @@ pub fn encode_jpegli_rs_xyb_progressive_444(img: &ImageData, quality: u8) -> Vec
 }
 
 /// Encode with C++ jpegli via FFI (requires cjpegli-ffi feature).
-#[cfg(feature = "cjpegli-ffi")]
+#[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
 pub fn encode_cjpegli_ffi(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
@@ -2056,7 +2056,7 @@ pub fn encode_cjpegli_ffi(img: &ImageData, quality: u8) -> Vec<u8> {
 }
 
 /// Encode with C++ jpegli via FFI, progressive mode.
-#[cfg(feature = "cjpegli-ffi")]
+#[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
 pub fn encode_cjpegli_ffi_progressive(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
@@ -2067,7 +2067,7 @@ pub fn encode_cjpegli_ffi_progressive(img: &ImageData, quality: u8) -> Vec<u8> {
 }
 
 /// Encode with C++ jpegli via FFI with specific subsampling.
-#[cfg(feature = "cjpegli-ffi")]
+#[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
 pub fn encode_cjpegli_ffi_with_subsampling(
     img: &ImageData,
     quality: u8,

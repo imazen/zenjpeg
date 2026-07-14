@@ -93,7 +93,7 @@ impl LayoutParams {
     /// Creates layout parameters from image dimensions and encoding options.
     ///
     /// This consolidates ALL geometry that was previously computed independently
-    /// in `StripProcessor::with_xyb()`, `StreamingAQ::new()`, `init_aq()`,
+    /// in `StripProcessor::with_color_modes()`, `StreamingAQ::new()`, `init_aq()`,
     /// and `estimate_memory_*` functions.
     ///
     /// Convenience for the common (XYB-BQuarter) case. Use [`new_xyb`] to

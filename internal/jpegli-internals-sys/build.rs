@@ -22,12 +22,21 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let jpegli_root = manifest_dir.parent().unwrap().join("jpegli-cpp");
 
-    // Check if jpegli-cpp submodule exists
+    // Let rustc know about our conditional cfg (silences unexpected-cfg lint)
+    println!("cargo:rustc-check-cfg=cfg(missing_jpegli_cpp)");
+
+    // When the jpegli-cpp submodule is absent, compile this crate EMPTY
+    // instead of failing the whole workspace build: every zenjpeg consumer
+    // of these bindings is behind `--features __ffi-tests`, so a bare clone
+    // can still run the full default test suite (see src/lib.rs).
     if !jpegli_root.join("CMakeLists.txt").exists() {
-        panic!(
-            "jpegli-cpp submodule not found at {:?}. Run: git submodule update --init --recursive",
+        println!(
+            "cargo:warning=jpegli-cpp submodule not found at {:?} — building empty \
+             jpegli-internals-sys (C++ parity tests need: git submodule update --init --recursive)",
             jpegli_root
         );
+        println!("cargo:rustc-cfg=missing_jpegli_cpp");
+        return;
     }
 
     let butteraugli_enabled = env::var("CARGO_FEATURE_BUTTERAUGLI").is_ok();

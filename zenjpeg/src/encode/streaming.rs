@@ -249,7 +249,7 @@ impl StreamingEncoder {
         // Create strip processor with quant tables provided at construction.
         // In streaming-through mode, only allocate one strip of block storage.
         let mut processor = if enable_streaming {
-            StripProcessor::with_xyb_streaming(
+            StripProcessor::with_color_modes_streaming(
                 width,
                 height,
                 builder.subsampling,
@@ -263,7 +263,7 @@ impl StreamingEncoder {
                 builder.aq_enabled,
             )?
         } else {
-            StripProcessor::with_xyb(
+            StripProcessor::with_color_modes(
                 width,
                 height,
                 builder.subsampling,
@@ -304,7 +304,7 @@ impl StreamingEncoder {
         // Caveats applied here:
         //
         // - XYB mode already uses a shared single-pair Huffman layout (see
-        //   `write_scan_header_xyb` and `write_huffman_tables_xyb_optimized`)
+        //   `write_scan_header_rgb_ids` and `write_huffman_tables_shared_pair`)
         //   and is not the heuristic's intended target, so tiny-file mode is
         //   a no-op there.
         // - The shared-table path is currently implemented for the baseline
@@ -1532,7 +1532,7 @@ impl StreamingEncoder {
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
             let (dc_table, ac_table, frequencies) = if xyb_full {
-                let (dc, ac, f) = config.build_optimized_tables_xyb_full(
+                let (dc, ac, f) = config.build_optimized_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1554,15 +1554,15 @@ impl StreamingEncoder {
                 (dc, ac, None)
             };
 
-            config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
+            config.write_huffman_tables_shared_pair(output, &dc_table, &ac_table);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
             let scan_data = if xyb_full {
-                config.encode_with_tables_xyb_full(
+                config.encode_with_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1581,15 +1581,15 @@ impl StreamingEncoder {
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
             // Custom tables: XYB uses dc_luma/ac_luma as the shared pair.
-            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
             let scan_data = if xyb_full {
-                config.encode_with_tables_xyb_full(
+                config.encode_with_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1613,15 +1613,15 @@ impl StreamingEncoder {
                 true,
                 config.subsampling,
             );
-            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
             let scan_data = if xyb_full {
-                config.encode_with_tables_xyb_full(
+                config.encode_with_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1672,20 +1672,20 @@ impl StreamingEncoder {
         config.write_frame_header_rgb(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
-            let (dc_table, ac_table, _f) = config.build_optimized_tables_xyb_full(
+            let (dc_table, ac_table, _f) = config.build_optimized_tables_shared_full(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
             )?;
 
-            config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
+            config.write_huffman_tables_shared_pair(output, &dc_table, &ac_table);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_full(
+            let scan_data = config.encode_with_tables_shared_full(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
@@ -1695,14 +1695,14 @@ impl StreamingEncoder {
             Ok((scan_data, None))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
             // Custom tables: like XYB, dc_luma/ac_luma serve as the shared pair.
-            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_full(
+            let scan_data = config.encode_with_tables_shared_full(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
@@ -1717,14 +1717,14 @@ impl StreamingEncoder {
                 false,
                 config.subsampling,
             );
-            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_full(
+            let scan_data = config.encode_with_tables_shared_full(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,

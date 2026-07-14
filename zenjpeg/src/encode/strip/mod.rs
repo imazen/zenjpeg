@@ -646,7 +646,7 @@ impl StripProcessor {
         pixel_format: PixelFormat,
     ) -> Result<Self> {
         let quant = QuantContext::default_for_tests();
-        Self::with_xyb(
+        Self::with_color_modes(
             width,
             height,
             subsampling,
@@ -666,7 +666,7 @@ impl StripProcessor {
     /// All geometry is computed once by `LayoutParams` — no duplicate calculations.
     /// `quant` provides all quantization tables and zero-bias parameters.
     /// `xyb_subsampling` controls the B-channel layout when `use_xyb` is true.
-    pub fn with_xyb(
+    pub fn with_color_modes(
         width: usize,
         height: usize,
         subsampling: Subsampling,
@@ -679,7 +679,7 @@ impl StripProcessor {
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
-        Self::with_xyb_inner(
+        Self::with_color_modes_inner(
             width,
             height,
             subsampling,
@@ -698,7 +698,7 @@ impl StripProcessor {
     /// Like [`with_xyb`](Self::with_xyb), but when `streaming_through` is true,
     /// only allocates one strip's worth of block storage instead of the full image.
     /// Use this when blocks are drained after each strip (streaming-through mode).
-    pub fn with_xyb_streaming(
+    pub fn with_color_modes_streaming(
         width: usize,
         height: usize,
         subsampling: Subsampling,
@@ -711,7 +711,7 @@ impl StripProcessor {
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
-        Self::with_xyb_inner(
+        Self::with_color_modes_inner(
             width,
             height,
             subsampling,
@@ -727,7 +727,7 @@ impl StripProcessor {
         )
     }
 
-    fn with_xyb_inner(
+    fn with_color_modes_inner(
         width: usize,
         height: usize,
         subsampling: Subsampling,

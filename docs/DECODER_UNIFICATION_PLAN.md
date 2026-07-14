@@ -1,6 +1,16 @@
 # Decoder Unification Plan
 
-> **Largely completed.** Streaming single-pass decode is implemented for all baseline subsampling modes. Arithmetic JPEG support has been added. The 4x4 IDCT tier was implemented then removed (2-tier dispatch: DC-only vs full 8x8).
+> **Status (corrected 2026-07-13): Phase 1 done; core unification DEFERRED —
+> decision tracked in issue #187.**
+> What landed: streaming single-pass decode for all baseline subsampling
+> modes, arithmetic JPEG support, strip-stride SIMD alignment, and the
+> 2-tier IDCT dispatch (a 4x4 tier was implemented then removed).
+> What did NOT land: the central `CoeffSource` abstraction and the removal
+> of `buffered_rgb` — `ScanlineReader` still forks buffered/streaming at
+> ~9 sites, and the borrowed/owned entry points still assemble separately
+> (their routing POLICY was unified 2026-07-13 into
+> `DecodeConfig::classify_scanline_route`, review R6). The header
+> previously said "largely completed", which overstated this.
 
 ## Problem Statement
 

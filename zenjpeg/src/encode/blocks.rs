@@ -852,7 +852,7 @@ impl ComputedConfig {
     /// Like [`Self::build_optimized_tables_xyb_raster`] but for XYB Full
     /// (R:1×1, G:1×1, B:1×1). One block per component per MCU; B is at the
     /// same resolution as X and Y. Mirror of the raster (BQuarter) version.
-    pub(crate) fn build_optimized_tables_xyb_full(
+    pub(crate) fn build_optimized_tables_shared_full(
         &self,
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -907,7 +907,7 @@ impl ComputedConfig {
 
     /// Encodes XYB Full raster-ordered blocks using optimized Huffman tables.
     /// All three components are at the same resolution — 1 block per component per MCU.
-    pub(crate) fn encode_with_tables_xyb_full(
+    pub(crate) fn encode_with_tables_shared_full(
         &self,
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
