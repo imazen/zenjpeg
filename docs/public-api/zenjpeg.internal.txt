@@ -1098,8 +1098,8 @@ pub fn encode::strip::StripProcessor::simd_token(&self) -> core::option::Option<
 pub fn encode::strip::StripProcessor::strip_height(&self) -> usize
 pub fn encode::strip::StripProcessor::subsampling(&self) -> types::Subsampling
 pub fn encode::strip::StripProcessor::take_blocks(&mut self) -> encode::strip::StripProcessorOutput
-pub fn encode::strip::StripProcessor::with_xyb(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
-pub fn encode::strip::StripProcessor::with_xyb_streaming(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
+pub fn encode::strip::StripProcessor::with_color_modes(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
+pub fn encode::strip::StripProcessor::with_color_modes_streaming(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
 pub fn encode::strip::StripProcessor::y_blocks(&self) -> &[[i16; 64]]
 pub fn encode::strip::StripProcessorOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::DroppedAxis::clone(&self) -> encode::sweep::DroppedAxis
