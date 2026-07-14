@@ -25,6 +25,13 @@ fn main() {
     // Let rustc know about our conditional cfg (silences unexpected-cfg lint)
     println!("cargo:rustc-check-cfg=cfg(missing_jpegli_cpp)");
 
+    // Re-probe when the submodule appears or vanishes; without this cargo
+    // replays a cached verdict from a tree state that no longer exists.
+    println!(
+        "cargo:rerun-if-changed={}",
+        jpegli_root.join("CMakeLists.txt").display()
+    );
+
     // When the jpegli-cpp submodule is absent, compile this crate EMPTY
     // instead of failing the whole workspace build: every zenjpeg consumer
     // of these bindings is behind `--features __ffi-tests`, so a bare clone

@@ -14,6 +14,12 @@ fn main() {
         .unwrap()
         .join("internal")
         .join("jpegli-cpp");
+    // Re-probe when the submodule appears or vanishes; without this cargo
+    // replays a cached verdict from a tree state that no longer exists.
+    println!(
+        "cargo:rerun-if-changed={}",
+        jpegli_root.join("CMakeLists.txt").display()
+    );
     if !jpegli_root.join("CMakeLists.txt").exists() {
         println!("cargo:rustc-cfg=missing_jpegli_cpp");
     }
