@@ -10,6 +10,40 @@ preserved from CLAUDE.md for future reference. This document records the specifi
 numbers and analysis behind performance decisions -- consult it when revisiting
 optimization work or understanding why a particular approach was chosen.
 
+## Decoder peak memory: coefficient path vs RGB buffered path (2026-07-15)
+
+Measured with `zenjpeg/examples/mem_probe_decode` — peak RSS (`VmHWM` from
+`/proc/self/status`), one decode per process, 4096×4096 progressive,
+`scanline_reader()` consuming rows into a 16-row batch (so the figure reflects
+what the *decoder* retains, not the caller's output). 3 runs per cell, spread
+≤0.02 B/px. Output checksums identical across every arm — same pixels, only
+the allocation strategy differs.
+
+| progressive 4096² | RGB buffered | coeff path (as landed, 992a3952) | coeff path + take-not-copy |
+|---|---|---|---|
+| 4:4:4 | 9.50 B/px (156 MB) | **12.50 B/px (205 MB), +31.6%** | **8.48 B/px (139 MB), −10.7%** |
+| 4:2:0 | 6.32 B/px (103 MB) | 6.29 B/px (−0.5%) | **5.26 B/px (86 MB), −16.8%** |
+
+**Why the +31.6% regression existed.** `extract_coefficients` flattened the
+parser's `Vec<[i16; 64]>` into `ComponentCoefficients.coeffs: Vec<i16>` by
+*borrowing* (`.iter().flat_map(...).copied().collect()`). Safe Rust has no
+zero-copy reinterpret between those two layouts, so the flatten must allocate —
+and borrowing held every component's source live alongside every component's
+destination, i.e. 2× coefficient memory at peak (4:4:4 coefficients are
+~6 B/px, hence 12). The RGB buffered path peaked at coefficients + RGB
+(6 + 3 = 9.5 measured).
+
+**Fix**: take each component (`core::mem::take`) and drop its source as soon as
+it is flattened, so the peak holds all destinations + one source rather than all
+destinations + all sources. Exact-capacity `try_with_capacity` prevents the
+flatten from double-growing. Peak is now *below* the buffered path it replaced
+on both subsamplings, so the #187 unification is a memory win, not a tradeoff.
+
+Note `coeffs: Vec<i16>` is public API (`recompress::expert::*` consumes it), so
+changing `ComponentCoefficients` to hold `Vec<[i16; 64]>` — which would make the
+extract a pure move and drop the peak to ~6 B/px for 4:4:4 — was not on the
+table here. That remains the ceiling if the type is ever revisited.
+
 ## Encoder Profiling Results (4K image, 2026-01-21)
 
 Run with: `cargo flamegraph --release -p zenjpeg --example flamegraph_profile -- 4k`
