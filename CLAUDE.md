@@ -1281,6 +1281,32 @@ use butteraugli::compute_butteraugli;
 - NEVER use the Kodak corpus. It's overfit by every codec and gives misleading results. Use CID22, CLIC, or screenshots instead.
 - NEVER use smooth gradients for test image generators. Gradients produce degenerate DCT coefficients (0 or ±1) where arithmetic right shift is identity (`-1 >> n = -1`), making successive approximation levels indistinguishable and frequency-split comparisons meaningless. Use noise+patches, photographic content, or checkerboard patterns instead.
 
+**REQUIRED test images: flat-chroma (DC-only) coverage for any decoder path test.**
+
+The gradient ban above is about *luma frequency-split* comparisons. Do NOT
+over-read it into "make everything high-frequency" — that is its own blind spot,
+and it has cost us a real shipped-adjacent bug:
+
+- A decoder's **DC-only** block paths (`coeff_count <= 1`, `idct_int_dc_only`)
+  are **unreachable** with high-frequency content. Smooth chroma quantizes to
+  DC-only, which is what essentially **every real photograph** produces.
+- 2026-07-15: the coefficient path's vertical-context peek had a wrong DC-only
+  IDCT (`(dc + 1024) >> 11` vs the correct `(dc + 4 + 1024) >> 3`). It was
+  byte-exact vs real libjpeg-turbo on every synthetic generator in the suite, at
+  every size × subsampling × path — because they all deliberately make chroma
+  non-flat (`color_noise`: *"so chroma isn't flat"*). Only a corpus image caught
+  it (waterhouse.jpg: 76/255 wrong on the last row of every MCU row). See
+  `docs/DECODER_UNIFICATION_PLAN.md`.
+
+So: any test that sweeps decode paths MUST cover **both** chroma regimes —
+high-frequency chroma *and* chroma that is flat within each 8×8 chroma block
+(varying across MCU boundaries so boundary errors stay visible). Canonical
+generators: `smooth_chroma_image` in `tests/libjpeg_idct_all_paths_parity.rs`
+(swept via `IMAGE_KINDS`) and `smooth_chroma_bands` in
+`tests/bundled/coeff_unification.rs`. Both are verified to fail against the
+pre-fix code — do not delete them citing the gradient ban; they are not
+gradients, and they are the only reason those branches are covered.
+
 ## Git Discipline
 
 1. **Commit early, commit often** - Uncommitted work is invisible
