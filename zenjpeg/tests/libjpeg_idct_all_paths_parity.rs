@@ -18,6 +18,12 @@
 //! (without it, `num_threads(4)` runs sequentially and the parallel arm is a
 //! trivial pass).
 //!
+//! Every cell is swept over TWO chroma regimes (`IMAGE_KINDS`): high-frequency
+//! chroma and flat/DC-only chroma. That is not redundancy — the DC-only chroma
+//! branches are unreachable with high-frequency content, and a real decoder bug
+//! lived there undetected precisely because every synthetic generator in this
+//! suite made chroma non-flat (see `smooth_chroma_image`).
+//!
 //! Note on the f32 path: `output_target(SrgbF32)` routes the *unclamped*
 //! libjpeg islow IDCT (`idct_int_tiered_libjpeg_unclamped`) but then does f32
 //! color conversion + f32→u8 rounding, so it is intentionally NOT byte-exact
@@ -31,6 +37,10 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Block-banded RGB with saturated red/blue (stresses clamping + chroma) and
 /// a high-frequency green ramp (stresses interpolation/IDCT).
+///
+/// NOTE: every 8×8 chroma block here is high-frequency, so chroma always
+/// quantizes with `coeff_count > 1`. That is a real blind spot — see
+/// [`smooth_chroma_image`], which must be swept alongside this one.
 fn test_image(w: usize, h: usize) -> Vec<u8> {
     let mut d = vec![0u8; w * h * 3];
     for y in 0..h {
@@ -43,6 +53,46 @@ fn test_image(w: usize, h: usize) -> Vec<u8> {
     }
     d
 }
+
+/// Chroma flat within each 8×8 chroma block, changing across MCU boundaries —
+/// i.e. chroma quantizes to **DC-only** (`coeff_count <= 1`) while luma keeps
+/// high-frequency detail. This is what ordinary photographic content looks like
+/// to the encoder, and what [`test_image`] structurally cannot produce.
+///
+/// Added 2026-07-15: the decoder's DC-only chroma paths were untested by every
+/// synthetic generator in this suite. A wrong DC-only IDCT in the coefficient
+/// path's vertical-context peek (`(dc + 1024) >> 11` instead of
+/// `(dc + 4 + 1024) >> 3`) was byte-exact against libjpeg-turbo on
+/// [`test_image`] at every size/subsampling here, while a real photo
+/// (waterhouse.jpg) was wrong by 76/255 on the last row of every MCU row. Do
+/// not remove this arm.
+fn smooth_chroma_image(w: usize, h: usize) -> Vec<u8> {
+    let mut d = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) * 3;
+            let (r, g, b) = match (y / 16) % 4 {
+                0 => (200i32, 90i32, 70i32),
+                1 => (70, 180, 90),
+                2 => (80, 90, 210),
+                _ => (190, 190, 70),
+            };
+            // Equal delta on all channels moves Y, leaves Cb/Cr ~flat.
+            let luma = ((x * 7 + y * 3) % 90) as i32 / 3;
+            d[i] = (r + luma).clamp(0, 255) as u8;
+            d[i + 1] = (g + luma).clamp(0, 255) as u8;
+            d[i + 2] = (b + luma).clamp(0, 255) as u8;
+        }
+    }
+    d
+}
+
+/// The generators every path-parity sweep must cover: high-frequency chroma
+/// (`coeff_count > 1`) AND flat/DC-only chroma (`coeff_count <= 1`).
+const IMAGE_KINDS: [(&str, fn(usize, usize) -> Vec<u8>); 2] = [
+    ("hf-chroma", test_image),
+    ("smooth-chroma", smooth_chroma_image),
+];
 
 fn encode(px: &[u8], w: u32, h: u32, sub: ChromaSubsampling, progressive: bool) -> Vec<u8> {
     let mut e = EncoderConfig::ycbcr(85.0, sub)
@@ -134,43 +184,45 @@ fn libjpeg_idct_all_paths_byte_identical() {
     ];
 
     for &(w, h) in &sizes {
-        let pixels = test_image(w, h);
-        for &(sub_name, sub) in &subsamplings {
-            for progressive in [false, true] {
-                let jpeg = encode(&pixels, w as u32, h as u32, sub, progressive);
-                let label = format!(
-                    "{w}x{h} {sub_name} {}",
-                    if progressive {
-                        "progressive"
-                    } else {
-                        "baseline"
-                    }
-                );
+        for (kind, make) in IMAGE_KINDS {
+            let pixels = make(w, h);
+            for &(sub_name, sub) in &subsamplings {
+                for progressive in [false, true] {
+                    let jpeg = encode(&pixels, w as u32, h as u32, sub, progressive);
+                    let label = format!(
+                        "{w}x{h} {kind} {sub_name} {}",
+                        if progressive {
+                            "progressive"
+                        } else {
+                            "baseline"
+                        }
+                    );
 
-                let full = decode_full(&jpeg, 1);
-                let scanline = decode_scanline(&jpeg);
-                let parallel = decode_full(&jpeg, 4);
+                    let full = decode_full(&jpeg, 1);
+                    let scanline = decode_scanline(&jpeg);
+                    let parallel = decode_full(&jpeg, 4);
 
-                // The u8 paths must be byte-for-byte identical under Libjpeg.
-                assert_eq!(
-                    max_diff(&full, &scanline),
-                    0,
-                    "{label}: scanline_reader() != decode() under IdctMethod::Libjpeg"
-                );
-                assert_eq!(
-                    max_diff(&full, &parallel),
-                    0,
-                    "{label}: parallel (4 threads) != decode() under IdctMethod::Libjpeg"
-                );
+                    // The u8 paths must be byte-for-byte identical under Libjpeg.
+                    assert_eq!(
+                        max_diff(&full, &scanline),
+                        0,
+                        "{label}: scanline_reader() != decode() under IdctMethod::Libjpeg"
+                    );
+                    assert_eq!(
+                        max_diff(&full, &parallel),
+                        0,
+                        "{label}: parallel (4 threads) != decode() under IdctMethod::Libjpeg"
+                    );
 
-                // f32 path uses the unclamped libjpeg islow + f32 color — a
-                // different precision regime, not byte-exact. Loose guard only.
-                let f32_diff = max_diff(&full, &decode_f32_to_u8(&jpeg));
-                assert!(
-                    f32_diff <= 40,
-                    "{label}: f32 path diverges by {f32_diff} (>40) — likely wrong IDCT, \
+                    // f32 path uses the unclamped libjpeg islow + f32 color — a
+                    // different precision regime, not byte-exact. Loose guard only.
+                    let f32_diff = max_diff(&full, &decode_f32_to_u8(&jpeg));
+                    assert!(
+                        f32_diff <= 40,
+                        "{label}: f32 path diverges by {f32_diff} (>40) — likely wrong IDCT, \
                      not just precision"
-                );
+                    );
+                }
             }
         }
     }
@@ -233,29 +285,31 @@ fn libjpeg_idct_all_paths_match_libjpeg_turbo() {
         (130, 47),
     ];
     for &(w, h) in &sizes {
-        let pixels = test_image(w, h);
-        for &(sub_name, sub) in &subsamplings {
-            for progressive in [false, true] {
-                let jpeg = encode(&pixels, w as u32, h as u32, sub, progressive);
-                let moz = decode_mozjpeg(&jpeg);
-                let label = format!(
-                    "{w}x{h} {sub_name} {}",
-                    if progressive {
-                        "progressive"
-                    } else {
-                        "baseline"
-                    }
-                );
-                for (path, decoded) in [
-                    ("decode()", decode_full(&jpeg, 1)),
-                    ("scanline_reader()", decode_scanline(&jpeg)),
-                    ("parallel", decode_full(&jpeg, 4)),
-                ] {
-                    assert_eq!(
-                        max_diff(&decoded, &moz),
-                        0,
-                        "{label}: {path} != libjpeg-turbo under IdctMethod::Libjpeg"
+        for (kind, make) in IMAGE_KINDS {
+            let pixels = make(w, h);
+            for &(sub_name, sub) in &subsamplings {
+                for progressive in [false, true] {
+                    let jpeg = encode(&pixels, w as u32, h as u32, sub, progressive);
+                    let moz = decode_mozjpeg(&jpeg);
+                    let label = format!(
+                        "{w}x{h} {kind} {sub_name} {}",
+                        if progressive {
+                            "progressive"
+                        } else {
+                            "baseline"
+                        }
                     );
+                    for (path, decoded) in [
+                        ("decode()", decode_full(&jpeg, 1)),
+                        ("scanline_reader()", decode_scanline(&jpeg)),
+                        ("parallel", decode_full(&jpeg, 4)),
+                    ] {
+                        assert_eq!(
+                            max_diff(&decoded, &moz),
+                            0,
+                            "{label}: {path} != libjpeg-turbo under IdctMethod::Libjpeg"
+                        );
+                    }
                 }
             }
         }
