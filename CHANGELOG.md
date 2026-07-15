@@ -43,6 +43,35 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **The default decoder IDCT is now `IdctMethod::Libjpeg`, not `Jpegli`
+  (closes #86).** Out of the box, `Decoder::new()` is now **byte-for-byte
+  identical to libjpeg-turbo / mozjpeg / djpeg** — the default
+  `ChromaUpsampling::Triangle` already selected turbo's fancy-upsampling, and
+  `Libjpeg` switches the remaining two stages (islow IDCT + turbo's 16-bit
+  YCbCr→RGB tables). Decoded pixels change by up to 2-3 levels per channel for
+  **color** images that did not set `.idct_method()` explicitly; grayscale is
+  unaffected (1-component sources already forced `Libjpeg`, #154). Opt back in
+  with `.idct_method(IdctMethod::Jpegli)`.
+  - **Why:** `Jpegli`'s 2-3 level drift broke every downstream regression
+    baseline captured against libjpeg-turbo — 8 of 15 remaining imageflow
+    failures in its zen-codecs-only build traced to it (#86). It is also the
+    *less accurate* kernel: measured against an f64 reference it carries a
+    systematic +0.002..+0.004 bias (the extra `+512` in its pass-2
+    `SCALE_BITS`), where islow is unbiased.
+  - **Cost:** ~3% of decode wall time (`benches/decode_zenbench.rs`). #86 held
+    this open citing a "~37% decode overhead" — that figure was stale, from
+    before the guarded SIMD islow kernel landed (28.1 ns vs 23.4 ns per dense
+    block, i.e. +20% on the kernel alone, which is a few % end-to-end). The
+    stale claim has been removed from the `idct_method()` docs.
+  - `IdctMethod::Jpegli` is a **misnomer** and its docs now say so: it is the
+    stb/zune 12-bit Loeffler, not what C++ jpegli uses (jpegli decodes with a
+    float IDCT — zenjpeg's f32 path, which XYB/`dequant_bias` route to).
+  - Pinned by `default_decoder_is_byte_exact_with_libjpeg_turbo`
+    (`__ffi-tests`), which asserts a bare `Decoder::new()` == mozjpeg across
+    sizes × chroma regimes × subsampling × baseline/progressive. Nothing pinned
+    the old default — every prior check either set the method explicitly or
+    tolerated `max_diff <= 3`, which 0 trivially satisfies.
+
 - **build: unreliable C++ jpegli compilation no longer breaks the Rust test
   suite.** The `jpegli-internals-sys` build script previously aborted the whole
   workspace build whenever the C++ jpegli toolchain failed — a flaky/absent

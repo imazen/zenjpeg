@@ -99,15 +99,17 @@ pub enum ChromaUpsampling {
     /// Both schemes are equally accurate vs the exact filter (max err 0.5,
     /// ~zero bias).
     ///
-    /// With the default [`IdctMethod::Jpegli`] IDCT, decoded RGB matches
-    /// libjpeg-turbo/mozjpeg within max_diff <= 3 (the IDCT precision differs).
-    /// With [`IdctMethod::Libjpeg`] all three stages switch to turbo's — the
-    /// islow IDCT, the h2v2 fixed upsampling biases, AND the 16-bit YCbCr→RGB
-    /// tables — so decoded RGB is BYTE-FOR-BYTE identical to mozjpeg/djpeg
-    /// (max_diff == 0), verified over sizes × qualities × 4:2:0 by
+    /// With the default [`IdctMethod::Libjpeg`] IDCT, all three stages are
+    /// turbo's — the islow IDCT, the h2v2 fixed upsampling biases, AND the
+    /// 16-bit YCbCr→RGB tables — so decoded RGB is BYTE-FOR-BYTE identical to
+    /// mozjpeg/djpeg (max_diff == 0), verified over sizes × qualities × 4:2:0 by
     /// `test_idct_method_libjpeg_fancy_matches_mozjpeg_exact` (`__ffi-tests`).
-    /// The Libjpeg islow IDCT is SIMD (guarded, bit-exact with its scalar
-    /// kernel) and costs ~3% of decode wall time vs the default Jpegli IDCT
+    /// That is the out-of-the-box behavior.
+    ///
+    /// Opting into [`IdctMethod::Jpegli`] keeps this upsampler's alternating
+    /// bias and the f32 YCbCr→RGB path, so decoded RGB then matches
+    /// libjpeg-turbo/mozjpeg only within max_diff <= 3 (the IDCT precision
+    /// differs), in exchange for ~3% faster decode
     /// (`benches/decode_zenbench.rs`).
     #[default]
     Triangle,
@@ -121,23 +123,44 @@ pub enum ChromaUpsampling {
 ///
 /// | Method | Precision | Matches |
 /// |--------|-----------|---------|
-/// | `Jpegli` | 12-bit fixed-point | jpegli (Google JPEG XL project) |
-/// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg |
+/// | `Jpegli` | 12-bit fixed-point | stb / zune-jpeg (NOT jpegli — see below) |
+/// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg (default) |
 ///
-/// The default is `Jpegli`. For pixel-exact mozjpeg matching, set
-/// `.idct_method(IdctMethod::Libjpeg)` explicitly.
+/// The default is `Libjpeg` (since 2026-07-15): it is both the more accurate
+/// integer kernel and byte-exact with libjpeg-turbo/mozjpeg/djpeg. Set
+/// `.idct_method(IdctMethod::Jpegli)` explicitly to opt into the faster 12-bit
+/// kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum IdctMethod {
-    /// 12-bit fixed-point IDCT (jpegli-derived).
+    /// 12-bit fixed-point IDCT (stb/zune-derived).
     ///
-    /// Uses AVX2 or portable wide SIMD with 12-bit precision.
-    /// This is the default and matches jpegli's IDCT behavior.
+    /// Uses AVX2 or portable wide SIMD with 12-bit precision. Roughly 3% faster
+    /// to decode than [`Libjpeg`](Self::Libjpeg) (the islow kernel's two
+    /// overflow guards), at the cost of accuracy and reference-exactness.
     /// Max diff vs libjpeg-turbo: 2-3 levels.
-    #[default]
+    ///
+    /// **The name is a misnomer** kept for API stability: this is *not* what
+    /// the C++ jpegli decoder uses. jpegli decodes with a float IDCT
+    /// (`lib/jpegli/idct.cc`) — zenjpeg's f32 path, which is what XYB and
+    /// `dequant_bias` route to. Both integer kernels here are the same Loeffler
+    /// islow butterfly, differing only in fixed-point precision (12 vs 13 bit),
+    /// rounding-bias placement, and intermediate width.
+    ///
+    /// **Less accurate than [`Libjpeg`](Self::Libjpeg)**: measured over 10k
+    /// random blocks per config against an f64 reference, this kernel carries a
+    /// systematic **+0.002..+0.004 bias** (from the extra `+512` in its pass-2
+    /// `SCALE_BITS`; 512/2^17 = +0.0039, which dominates at small coefficients),
+    /// where islow is unbiased (mean ≈ ±2e-4). See
+    /// `test_idct_accuracy_stats_vs_reference` in `idct_int.rs`.
+    ///
+    /// Note 1-component (grayscale) sources always use
+    /// [`Libjpeg`](Self::Libjpeg) regardless of this setting (#154) — the gray
+    /// plane must be identical across decode paths, and with no chroma there is
+    /// nothing for the 12-bit tuning to trade against.
     Jpegli,
 
-    /// 13-bit Loeffler IDCT (libjpeg-turbo compatible).
+    /// 13-bit Loeffler IDCT (libjpeg-turbo compatible). **Default.**
     ///
     /// Uses the Loeffler, Ligtenberg, Moschytz algorithm with 13-bit
     /// fixed-point constants, matching libjpeg-turbo's `jpeg_idct_islow`.
@@ -146,13 +169,22 @@ pub enum IdctMethod {
     /// tables, so all three decode stages are bit-exact with mozjpeg/djpeg:
     /// decoded RGB is byte-for-byte identical (max_diff == 0), verified
     /// against libjpeg-turbo by the `__ffi-tests` parity tests
-    /// (`test_idct_method_libjpeg_fancy_matches_mozjpeg_exact`). Pair with
-    /// [`ChromaUpsampling::Triangle`] for the full byte-exact pipeline; ~3%
-    /// slower to decode than the default [`Jpegli`](Self::Jpegli) IDCT.
+    /// (`test_idct_method_libjpeg_fancy_matches_mozjpeg_exact`).
+    ///
+    /// Paired with the default [`ChromaUpsampling::Triangle`] this makes the
+    /// out-of-the-box decode byte-exact with mozjpeg/djpeg. It is also the more
+    /// accurate integer kernel (unbiased; see [`Jpegli`](Self::Jpegli)), which
+    /// is why it is the default despite costing ~3% of decode wall time.
+    ///
+    /// The islow kernel is SIMD (guarded, bit-exact with its scalar kernel:
+    /// inputs and pass-1 outputs must fit `[-32768, 32767]`, else it falls back
+    /// to scalar — honest 8-bit imagery peaks around |4096| and never trips it).
+    ///
     /// Honored identically (byte-for-byte) on every u8 decode path — streaming
     /// `decode()`, `scanline_reader()`, and the parallel path — across all
     /// subsampling modes and baseline/progressive (see
     /// `tests/libjpeg_idct_all_paths_parity.rs`).
+    #[default]
     Libjpeg,
 }
 

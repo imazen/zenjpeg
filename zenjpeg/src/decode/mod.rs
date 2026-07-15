@@ -267,18 +267,21 @@ impl DecodeConfig {
         self
     }
 
-    /// Enables or disables fancy (triangle filter) upsampling.
-    ///
     /// Sets the integer IDCT algorithm.
     ///
-    /// Controls which fixed-point IDCT is used during decoding. Different
-    /// algorithms produce slightly different pixel values (max 2-3 levels).
+    /// Controls which fixed-point IDCT is used during decoding. The two kernels
+    /// produce slightly different pixel values (max 2-3 levels).
     ///
-    /// - [`IdctMethod::Jpegli`] (default): 12-bit fixed-point, matches jpegli
-    /// - [`IdctMethod::Libjpeg`]: 13-bit Loeffler, matches libjpeg-turbo/mozjpeg
+    /// - [`IdctMethod::Libjpeg`] (**default**): 13-bit Loeffler islow. Byte-exact
+    ///   with libjpeg-turbo/mozjpeg/djpeg when paired with the default
+    ///   [`ChromaUpsampling::Triangle`], and the more accurate kernel (unbiased).
+    /// - [`IdctMethod::Jpegli`]: 12-bit fixed-point, ~3% faster to decode, at the
+    ///   cost of a systematic +0.002..+0.004 rounding bias and reference-exactness.
+    ///   Despite the name this is the stb/zune kernel, *not* what C++ jpegli uses
+    ///   (jpegli decodes with a float IDCT — zenjpeg's f32 path).
     ///
-    /// The default IDCT is `Jpegli` regardless of upsampling mode.
-    /// Set `Libjpeg` for pixel-exact mozjpeg matching (adds ~37% overhead).
+    /// Applies regardless of upsampling mode. 1-component (grayscale) sources
+    /// always use `Libjpeg` regardless of this setting (#154).
     #[must_use]
     pub fn idct_method(mut self, method: IdctMethod) -> Self {
         self.idct_method = Some(method);
@@ -299,7 +302,7 @@ impl DecodeConfig {
     /// within ~20% of the default kernel per block (~8% end-to-end on a
     /// 10 MP gray scan; ~50% when it was scalar-only).
     pub(crate) fn effective_idct_method(&self) -> IdctMethod {
-        self.idct_method.unwrap_or(IdctMethod::Jpegli)
+        self.idct_method.unwrap_or(IdctMethod::Libjpeg)
     }
 
     /// Enable post-decode deblocking to reduce JPEG block artifacts.

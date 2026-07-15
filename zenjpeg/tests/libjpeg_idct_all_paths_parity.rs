@@ -315,3 +315,54 @@ fn libjpeg_idct_all_paths_match_libjpeg_turbo() {
         }
     }
 }
+
+/// **The out-of-the-box decode is byte-exact with libjpeg-turbo.**
+///
+/// Everything above pins `IdctMethod::Libjpeg` + `ChromaUpsampling::Triangle`
+/// *explicitly*. This pins the DEFAULT: a bare `Decoder::new()` must be
+/// byte-for-byte identical to mozjpeg/djpeg, because `Libjpeg` became the
+/// default IDCT on 2026-07-15 and `Triangle` was already the default upsampler.
+///
+/// Without this, nothing detects the default silently reverting — every other
+/// check either sets the method explicitly or tolerates `max_diff <= 3`, which
+/// 0 trivially satisfies.
+#[cfg(feature = "__ffi-tests")]
+#[test]
+fn default_decoder_is_byte_exact_with_libjpeg_turbo() {
+    let subsamplings = [
+        ("4:2:0", ChromaSubsampling::Quarter),
+        ("4:2:2", ChromaSubsampling::HalfHorizontal),
+        ("4:4:0", ChromaSubsampling::HalfVertical),
+        ("4:4:4", ChromaSubsampling::None),
+    ];
+    for &(w, h) in &[(67usize, 45usize), (74, 58), (128, 96)] {
+        for (kind, make) in IMAGE_KINDS {
+            let pixels = make(w, h);
+            for &(sub_name, sub) in &subsamplings {
+                for progressive in [false, true] {
+                    let jpeg = encode(&pixels, w as u32, h as u32, sub, progressive);
+                    let moz = decode_mozjpeg(&jpeg);
+                    // Bare defaults — no idct_method(), no chroma_upsampling().
+                    let got = Decoder::new()
+                        .auto_orient(false)
+                        .num_threads(1)
+                        .decode(&jpeg, Unstoppable)
+                        .expect("decode")
+                        .into_pixels_u8()
+                        .expect("u8");
+                    assert_eq!(
+                        max_diff(&got, &moz),
+                        0,
+                        "{w}x{h} {kind} {sub_name} {}: default Decoder::new() is not \
+                         byte-exact with libjpeg-turbo",
+                        if progressive {
+                            "progressive"
+                        } else {
+                            "baseline"
+                        }
+                    );
+                }
+            }
+        }
+    }
+}
