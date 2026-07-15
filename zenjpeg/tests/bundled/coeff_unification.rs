@@ -134,3 +134,93 @@ fn progressive_444_rgb_matches_decode() {
         .unwrap_or(0);
     assert_eq!(max, 0, "progressive 4:4:4 RGB: decode() vs scanline_reader");
 }
+
+fn read_all_rgb8(jpeg: &[u8]) -> Vec<u8> {
+    let mut r = Decoder::new().scanline_reader(jpeg).expect("scanline_reader");
+    let (w, h) = (r.width() as usize, r.height() as usize);
+    let stride = w * 3;
+    let mut p = vec![0u8; h * stride];
+    let mut row = 0;
+    while row < h {
+        let buf = imgref::ImgRefMut::new_stride(&mut p[row * stride..], w * 3, h - row, stride);
+        let n = r.read_rows_rgb8(buf).expect("read_rows_rgb8");
+        if n == 0 {
+            break;
+        }
+        row += n;
+    }
+    p
+}
+
+/// **Upsampling correctness for 4:2:2 through the coefficient path.**
+///
+/// Baseline 4:2:2 *streams* — it runs the years-validated, libjpeg-turbo-matching
+/// horizontal chroma-upsampling `StripProcessor::upsample_chroma`. Progressive
+/// 4:2:2 of the same source can't stream, so it takes the coefficient path
+/// (`from_coefficients` → the *same* strip pipeline). Baseline and progressive
+/// share identical quantized coefficients, so the streaming-decoder RGB must be
+/// byte-identical — if it weren't, the coefficient path's upsampling would
+/// diverge from the reference (the 4:2:0 vertical-boundary failure, but
+/// horizontal). It is byte-identical: the unification preserves upsampling.
+///
+/// NOTE: both sides read through [`Decoder::scanline_reader`], the canonical
+/// streaming decoder. The whole-image `Decoder::decode` convenience wrapper has a
+/// *separate, pre-existing* right-edge chroma quirk for 4:2:2 that diverges from
+/// `scanline_reader` by up to 11/255 on the rightmost column — present on
+/// baseline images too, unrelated to issue #187. Using `decode` here would test
+/// that unrelated wrapper bug, not the coefficient path.
+#[test]
+fn progressive_422_rgb_matches_baseline_upsampling() {
+    let (w, h) = (74usize, 58usize);
+    let rgb = color_noise(w, h);
+
+    let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
+        .progressive(false)
+        .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .expect("encode baseline 4:2:2");
+    let prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
+        .progressive(true)
+        .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .expect("encode progressive 4:2:2");
+
+    // Baseline streams (reference upsampling); progressive takes the coefficient
+    // path (unified upsampling). Same coefficients ⇒ byte-identical RGB.
+    let ref_rgb = read_all_rgb8(&base);
+    let coeff_rgb = read_all_rgb8(&prog);
+
+    assert_eq!(ref_rgb.len(), coeff_rgb.len(), "4:2:2 RGB length mismatch");
+    let (max, count) = ref_rgb.iter().zip(&coeff_rgb).fold((0i32, 0usize), |(m, c), (a, b)| {
+        let d = (*a as i32 - *b as i32).abs();
+        (m.max(d), c + usize::from(d != 0))
+    });
+    assert_eq!(
+        max, 0,
+        "4:2:2 horizontal upsampling diverges on the coefficient path: \
+         max pixel delta {max} over {count} bytes (baseline-stream vs progressive-coeff)"
+    );
+}
+
+/// Native YCbCr for 4:2:2 through the coefficient path: baseline (streaming) and
+/// progressive (coefficient) of one source must yield byte-identical *upsampled*
+/// YCbCr planes. This isolates the chroma-plane handling + horizontal upsample
+/// from the YCbCr→RGB matrix.
+#[test]
+fn progressive_422_ycbcr_matches_baseline() {
+    let (w, h) = (74usize, 58usize);
+    let rgb = color_noise(w, h);
+
+    let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
+        .progressive(false)
+        .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .expect("encode baseline 4:2:2");
+    let prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
+        .progressive(true)
+        .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .expect("encode progressive 4:2:2");
+
+    let (yb, cbb, crb) = read_all_ycbcr(&base);
+    let (yp, cbp, crp) = read_all_ycbcr(&prog);
+    assert_eq!(yb, yp, "4:2:2 Y must match baseline (native)");
+    assert_eq!(cbb, cbp, "4:2:2 Cb must match baseline (native upsample)");
+    assert_eq!(crb, crp, "4:2:2 Cr must match baseline (native upsample)");
+}
