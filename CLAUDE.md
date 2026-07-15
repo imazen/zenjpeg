@@ -1316,27 +1316,48 @@ gradients, and they are the only reason those branches are covered.
 
 ## Feature Flags
 
+Verified against `zenjpeg/Cargo.toml` on 2026-07-15. `Cargo.toml` is the source
+of truth — re-check it before relying on this list.
+
 ```toml
 [features]
-default = []
-trellis = []              # DEPRECATED no-op: trellis is always compiled (data-gated at runtime)
-decoder = []              # DEPRECATED no-op: decoder is always compiled (2026-06-11)
-parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
-boundary-rd = []          # Boundary-continuity refinement (#91 / PR #102, opt-in).
-moxcms = ["dep:moxcms"]   # Color management (pure-Rust, SIMD). Required for XYB + .correct_color()
-ultrahdr = [...]          # UltraHDR HDR gain map support
-layout = ["dep:zenresize"]  # Layout pipeline (geometry + resize)
+default = []                                   # everything below is opt-in
+
+# ── User-facing ──
+parallel = ["dep:rayon"]                       # multi-threaded DCT/quant + parallel decode
+moxcms = ["dep:moxcms"]                        # color management. Required for XYB + .correct_color()
 zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]  # zencodec trait impls + ICC synth
-cms = []                  # DEPRECATED no-op: icc-db synthesis always on with zencodec (2026-06-11)
-__ffi-tests = []          # C++ parity tests (requires C++ jpegli submodule + toolchain)
-__corpus-tests = []       # Corpus comparison tests
-__test-utils = []         # Testing utilities
+layout = ["dep:zenresize"]                     # lossless transforms + decode→resize→encode
+ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
+boundary-rd = []                               # boundary-continuity refinement (#91 / PR #102)
+target-zq = ["dep:zensim"]                     # Quality::Zq closed-loop perceptual target (#113)
+recompress = []                                # JPEG→JPEG recompression (decoder only, cheap)
+recompress-iqa = ["recompress", "dep:zensim"]  # + closed-loop IQA refinement (Budget::MaxIterations>1)
+recompress-expert = ["recompress"]             # recompress::expert — unstable, not semver-covered
+
+# ── Internal / dev-only (`__` prefix = don't use) ──
+__ffi-tests = []                               # C++ parity (needs jpegli submodule + toolchain)
+__corpus-tests = []                            # corpus comparison tests
+__test-utils = []                              # image generation / quality verification
+__expert = []                                  # InternalParams bundle (mirrors zenwebp's __expert)
+__profile = []                                 # scope-timer instrumentation
+__debug-tokens = []                            # token serialization for C++ comparison
+__alloc-instrument = []                        # Vec utilization logging on drop
+__bdrd-trace = ["boundary-rd"]                 # per-block BD-RD refinement trace sink
+__wasm-simd = []                               # WASM SIMD128 tests
+__picker-research = [...]                      # needs sibling ../../zenanalyze/zenpredict checkout
 ```
 
-zenyuv (SIMD RGB→YCbCr) is a mandatory dependency — no feature flag. The
-old `yuv = []` gate used to select between zenyuv-via-`fast_yuv` and an
-in-crate magetypes scalar fallback; the scalar path was deleted so there's
-only one code path now.
+**Flags that no longer exist** (removed; do not use — they will fail the build,
+not no-op): `trellis`, `decoder`, `cms`, `archmage-simd`, `yuv`. Trellis, the
+decoder, icc-db synthesis, archmage/magetypes SIMD, and zenyuv are all
+unconditionally compiled. zenyuv's old `yuv = []` gate selected between
+zenyuv-via-`fast_yuv` and an in-crate magetypes scalar fallback; the scalar path
+was deleted, so there is one code path now.
+
+**Recompress split:** `recompress` needs only the decoder (no heavy deps, barely
+moves compile time). The closed loop is split into `recompress-iqa` because it
+pulls `zensim` — same reason `target-zq` does.
 
 **Boundary-RD:** Adds the post-quantization refinement from issue #91.
 Disabled by default — `cargo build -p zenjpeg` (with or without trellis)
@@ -1347,9 +1368,8 @@ produces bit-for-bit identical output to pre-boundary-RD `origin/main`
 evolvable — coefficient (#94, #103) drives parameter-space exploration
 with GPU-backed metrics behind this flag.
 
-**Decoder:** The decoder API is in prerelease (always compiled — the old
-`decoder` flag is a no-op). API will have breaking changes. Historical
-`` invocations in this file still work (no-op).
+**Decoder:** The decoder API is in prerelease (always compiled — the `decoder`
+flag is gone entirely, not a no-op). API will have breaking changes.
 
 **SIMD:** archmage + magetypes are mandatory dependencies (token-based safe intrinsics).
 `wide` crate provides portable fallback. On x86_64, archmage dispatches to AVX2/FMA/AVX-512
