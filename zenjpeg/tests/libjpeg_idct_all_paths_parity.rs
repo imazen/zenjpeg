@@ -122,7 +122,16 @@ fn libjpeg_idct_all_paths_byte_identical() {
         ("4:4:4", ChromaSubsampling::None),
     ];
     // Non-MCU-aligned (partial MCUs), aligned, and large (engages parallel).
-    let sizes = [(67usize, 45usize), (128, 96), (256, 192)];
+    // 74/130 are EVEN and non-MCU-aligned: the 4:2:2 right-edge regression
+    // (#188) only manifests there — odd widths (67) and aligned widths
+    // (128/256) both miss it.
+    let sizes = [
+        (67usize, 45usize),
+        (128, 96),
+        (256, 192),
+        (74, 58),
+        (130, 47),
+    ];
 
     for &(w, h) in &sizes {
         let pixels = test_image(w, h);
@@ -216,7 +225,13 @@ fn libjpeg_idct_all_paths_match_libjpeg_turbo() {
         ("4:4:0", ChromaSubsampling::HalfVertical),
         ("4:4:4", ChromaSubsampling::None),
     ];
-    let sizes = [(67usize, 45usize), (128, 96), (256, 192)];
+    let sizes = [
+        (67usize, 45usize),
+        (128, 96),
+        (256, 192),
+        (74, 58),
+        (130, 47),
+    ];
     for &(w, h) in &sizes {
         let pixels = test_image(w, h);
         for &(sub_name, sub) in &subsamplings {

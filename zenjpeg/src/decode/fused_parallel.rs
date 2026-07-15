@@ -1089,7 +1089,9 @@ impl<'a> JpegParser<'a> {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
     ) -> FusedDecodeResult {
-        use super::upsample::{upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest};
+        use super::upsample::{
+            upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
+        };
 
         let width = self.width as usize;
         let height = self.height as usize;
@@ -1105,6 +1107,12 @@ impl<'a> JpegParser<'a> {
         let y_strip_height = y_v * 8;
         let c_strip_width = mcu_cols * self.components[1].h_samp_factor as usize * 8;
         let c_strip_height = self.components[1].v_samp_factor as usize * 8;
+        // Real (unpadded) chroma width — upsampling the MCU-padded strip width
+        // makes the last visible column interpolate against padding chroma
+        // (#188). Feed real widths + padded strides so the right-edge sample is
+        // replicated from the last real chroma column, matching scanline_reader.
+        let h_ratio = max_h_samp / self.components[1].h_samp_factor as usize;
+        let real_chroma_width = width.div_ceil(h_ratio);
 
         // Select IDCT function
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
@@ -1112,11 +1120,11 @@ impl<'a> JpegParser<'a> {
             IdctMethod::Jpegli => idct_int_tiered,
         };
 
-        // Select h2v1 upsample function
-        type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
+        // Select h2v1 upsample function (strided: real widths, padded strides).
+        type UpsampleFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: UpsampleFn = match chroma_upsampling {
-            ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
-            ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
+            ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
+            ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg_strided,
         };
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
@@ -1213,20 +1221,25 @@ impl<'a> JpegParser<'a> {
                                      cb_up: &mut [i16],
                                      cr_up: &mut [i16],
                                      rgb_chunk: &mut [u8]| {
-                    // Horizontal upsample Cb/Cr: c_strip_width → y_strip_width
+                    // Horizontal upsample Cb/Cr: real_chroma_width → width, at
+                    // padded strides (c_strip_width / y_strip_width).
                     upsample_fn(
                         cb_strip,
+                        real_chroma_width,
                         c_strip_width,
                         c_strip_height,
                         cb_up,
+                        width,
                         y_strip_width,
                         c_strip_height,
                     );
                     upsample_fn(
                         cr_strip,
+                        real_chroma_width,
                         c_strip_width,
                         c_strip_height,
                         cr_up,
+                        width,
                         y_strip_width,
                         c_strip_height,
                     );
