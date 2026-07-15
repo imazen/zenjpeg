@@ -236,6 +236,8 @@ mod rst_resync;
 mod s440_progressive_bug;
 #[path = "bundled/scan_optimize_integration.rs"]
 mod scan_optimize_integration;
+#[path = "bundled/streaming_scanline_upsample_parity.rs"]
+mod streaming_scanline_upsample_parity;
 #[path = "bundled/strip_edge_cpp_comparison.rs"]
 mod strip_edge_cpp_comparison;
 #[path = "bundled/subsampling_tests.rs"]

@@ -797,7 +797,7 @@ pub(super) fn run_simple_loop(
     geom: &StreamingGeometry,
     bufs: &mut StreamingBuffers,
     state: &mut McuRowState,
-    upsample_fn: Option<UpsampleFn>,
+    chroma_upsampling: ChromaUpsampling,
     use_fused_box: bool,
     c_data_offset: usize,
     stop: &impl enough::Stop,
@@ -962,21 +962,41 @@ pub(super) fn run_simple_loop(
                 }
             }
         } else {
-            // h2v1 or other: upsample then color convert
-            let upsample = upsample_fn.unwrap();
+            // h2v1 (4:2:2): horizontal chroma upsample, then color convert.
+            //
+            // Use the STRIDED kernel with the REAL chroma/luma widths (not the
+            // MCU-padded strip widths) so the kernel's right-edge replication
+            // lands on the last *real* chroma column — byte-identical to the
+            // scanline strip path (`StripProcessor::upsample_h2v1`) and to
+            // libjpeg-turbo's `h2v1_fancy_upsample`. Feeding the padded strip
+            // widths (`c_strip_width`/`y_strip_width`) instead made the final
+            // visible column interpolate against MCU-padding chroma, corrupting
+            // the rightmost column by up to ~11/255 for even widths (#188).
+            use crate::decode::upsample::{
+                upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
+            };
+            let upsample = match chroma_upsampling {
+                ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg_strided,
+                ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
+            };
+            let real_cw = (width + geom.h_ratio - 1) / geom.h_ratio;
             upsample(
                 &bufs.cb_a[..c_strip_width * c_strip_height],
+                real_cw,
                 c_strip_width,
                 c_strip_height,
                 &mut bufs.cb_up[..y_strip_width * y_strip_height],
+                width,
                 y_strip_width,
                 y_strip_height,
             );
             upsample(
                 &bufs.cr_a[..c_strip_width * c_strip_height],
+                real_cw,
                 c_strip_width,
                 c_strip_height,
                 &mut bufs.cr_up[..y_strip_width * y_strip_height],
+                width,
                 y_strip_width,
                 y_strip_height,
             );

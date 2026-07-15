@@ -136,7 +136,9 @@ fn progressive_444_rgb_matches_decode() {
 }
 
 fn read_all_rgb8(jpeg: &[u8]) -> Vec<u8> {
-    let mut r = Decoder::new().scanline_reader(jpeg).expect("scanline_reader");
+    let mut r = Decoder::new()
+        .scanline_reader(jpeg)
+        .expect("scanline_reader");
     let (w, h) = (r.width() as usize, r.height() as usize);
     let stride = w * 3;
     let mut p = vec![0u8; h * stride];
@@ -189,10 +191,13 @@ fn progressive_422_rgb_matches_baseline_upsampling() {
     let coeff_rgb = read_all_rgb8(&prog);
 
     assert_eq!(ref_rgb.len(), coeff_rgb.len(), "4:2:2 RGB length mismatch");
-    let (max, count) = ref_rgb.iter().zip(&coeff_rgb).fold((0i32, 0usize), |(m, c), (a, b)| {
-        let d = (*a as i32 - *b as i32).abs();
-        (m.max(d), c + usize::from(d != 0))
-    });
+    let (max, count) = ref_rgb
+        .iter()
+        .zip(&coeff_rgb)
+        .fold((0i32, 0usize), |(m, c), (a, b)| {
+            let d = (*a as i32 - *b as i32).abs();
+            (m.max(d), c + usize::from(d != 0))
+        });
     assert_eq!(
         max, 0,
         "4:2:2 horizontal upsampling diverges on the coefficient path: \

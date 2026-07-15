@@ -1048,7 +1048,7 @@ impl<'a> JpegParser<'a> {
                 &geom,
                 &mut bufs,
                 &mut state,
-                upsample_fn,
+                self.chroma_upsampling,
                 use_fused_box,
                 c_data_offset,
                 stop,
