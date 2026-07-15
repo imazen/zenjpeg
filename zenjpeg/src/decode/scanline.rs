@@ -2623,33 +2623,6 @@ impl<'a> ScanlineReader<'a> {
         self.read_rows_planar_i16_seq(y, y_stride, cb, cr, c_stride, max_mcu_rows)
     }
 
-    /// Deprecated alias for [`read_rows_ycbcr_f32()`](Self::read_rows_ycbcr_f32).
-    #[deprecated(since = "0.5.0", note = "renamed to read_rows_ycbcr_f32")]
-    pub fn read_rows_ycbcr_planes(
-        &mut self,
-        y_plane: &mut [f32],
-        cb_plane: &mut [f32],
-        cr_plane: &mut [f32],
-        stride: usize,
-        max_rows: usize,
-    ) -> Result<usize> {
-        self.read_rows_ycbcr_f32(y_plane, cb_plane, cr_plane, stride, max_rows)
-    }
-
-    /// Deprecated alias for [`read_rows_ycbcr_native_i16()`](Self::read_rows_ycbcr_native_i16).
-    #[deprecated(since = "0.5.0", note = "renamed to read_rows_ycbcr_native_i16")]
-    pub fn read_rows_planar_i16(
-        &mut self,
-        y: &mut [i16],
-        y_stride: usize,
-        cb: &mut [i16],
-        cr: &mut [i16],
-        c_stride: usize,
-        max_mcu_rows: usize,
-    ) -> Result<(usize, usize)> {
-        self.read_rows_ycbcr_native_i16(y, y_stride, cb, cr, c_stride, max_mcu_rows)
-    }
-
     /// Sequential implementation of `read_rows_ycbcr_native_i16`.
     fn read_rows_planar_i16_seq(
         &mut self,

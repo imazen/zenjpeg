@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1664 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3535 lines (842 hidden + 7212 excluded-feature)
+# files: zenjpeg.txt 1660 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3533 lines (842 hidden + 7206 excluded-feature)
 
 ## summary
 #
@@ -15,7 +15,7 @@
 #   pub consts/statics                         94
 #   pub macros                                  2
 #   free functions                             60
-#   inherent methods                          505
+#   inherent methods                          501
 #   struct fields                             372
 #   enum variants                             392
 #   re-exports                                  2
@@ -28,14 +28,14 @@
 #   blur                              1
 #   container                       276
 #   deblock                          16
-#   decoder                         558
+#   decoder                         556
 #   detect                           56
-#   encoder                         540
+#   encoder                         538
 #   heuristics                       24
 #   lossless                         42
 #   profile                           7
 
-## items (1531 lines)
+## items (1527 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -903,14 +903,12 @@ pub fn decoder::ScanlineReader<'a>::read_rows_bgrx8(&mut self, imgref::ImgRefMut
 pub fn decoder::ScanlineReader<'a>::read_rows_gray8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_gray_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_gray_linear_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
-pub fn decoder::ScanlineReader<'a>::read_rows_planar_i16(&mut self, &mut [i16], usize, &mut [i16], &mut [i16], usize, usize) -> encoder::Result<(usize, usize)>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgb8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgba8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgba_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgbx8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_f32(&mut self, &mut [f32], &mut [f32], &mut [f32], usize, usize) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_native_i16(&mut self, &mut [i16], usize, &mut [i16], &mut [i16], usize, usize) -> encoder::Result<(usize, usize)>
-pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_planes(&mut self, &mut [f32], &mut [f32], &mut [f32], usize, usize) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::subsampling(&self) -> decoder::Subsampling
 pub fn decoder::ScanlineReader<'a>::width(&self) -> u32
 pub trait decoder::MpfImageTypeExt
@@ -1454,7 +1452,6 @@ pub const fn encoder::TrellisConfig::disabled() -> Self
 pub fn encoder::TrellisConfig::favor_quality() -> Self
 pub fn encoder::TrellisConfig::favor_size() -> Self
 pub fn encoder::TrellisConfig::get_delta_dc_weight(&self) -> f32
-pub fn encoder::TrellisConfig::get_speed_level(&self) -> u8
 pub fn encoder::TrellisConfig::get_speed_mode(&self) -> encoder::TrellisSpeedMode
 pub fn encoder::TrellisConfig::is_ac_enabled(&self) -> bool
 pub fn encoder::TrellisConfig::is_dc_enabled(&self) -> bool
@@ -1464,7 +1461,6 @@ pub fn encoder::TrellisConfig::lambda_log_scale2(&self) -> f32
 pub fn encoder::TrellisConfig::lambda_scales(self, f32, f32) -> Self
 pub fn encoder::TrellisConfig::new() -> Self
 pub fn encoder::TrellisConfig::rd_factor(self, f32) -> Self
-pub fn encoder::TrellisConfig::speed_level(self, u8) -> Self
 pub fn encoder::TrellisConfig::speed_mode(self, encoder::TrellisSpeedMode) -> Self
 pub fn encoder::TrellisConfig::thorough() -> Self
 pub struct encoder::YCbCrPlanarEncoder

@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)       296
 #   pub consts/statics                        316
 #   free functions                            354
-#   inherent methods                         1191
+#   inherent methods                         1189
 #   struct fields                             754
 #   enum variants                             498
 #   re-exports                                 17
@@ -29,7 +29,7 @@
 #   decode                          444
 #   decoder                          54
 #   detect                           40
-#   encode                         1463
+#   encode                         1461
 #   encoder                         134
 #   entropy                         100
 #   foundation                      349
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         12
 
-## items (3330 lines)
+## items (3328 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -1162,7 +1162,6 @@ pub fn encode::trellis::compat::TrellisConfig::favor_quality() -> Self
 pub fn encode::trellis::compat::TrellisConfig::favor_size() -> Self
 pub fn encode::trellis::compat::TrellisConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::trellis::compat::TrellisConfig::get_delta_dc_weight(&self) -> f32
-pub fn encode::trellis::compat::TrellisConfig::get_speed_level(&self) -> u8
 pub fn encode::trellis::compat::TrellisConfig::get_speed_mode(&self) -> encode::trellis::compat::TrellisSpeedMode
 pub fn encode::trellis::compat::TrellisConfig::is_ac_enabled(&self) -> bool
 pub fn encode::trellis::compat::TrellisConfig::is_dc_enabled(&self) -> bool
@@ -1172,7 +1171,6 @@ pub fn encode::trellis::compat::TrellisConfig::lambda_log_scale2(&self) -> f32
 pub fn encode::trellis::compat::TrellisConfig::lambda_scales(self, f32, f32) -> Self
 pub fn encode::trellis::compat::TrellisConfig::new() -> Self
 pub fn encode::trellis::compat::TrellisConfig::rd_factor(self, f32) -> Self
-pub fn encode::trellis::compat::TrellisConfig::speed_level(self, u8) -> Self
 pub fn encode::trellis::compat::TrellisConfig::speed_mode(self, encode::trellis::compat::TrellisSpeedMode) -> Self
 pub fn encode::trellis::compat::TrellisConfig::thorough() -> Self
 pub fn encode::trellis::compat::TrellisSpeedMode::clone(&self) -> encode::trellis::compat::TrellisSpeedMode

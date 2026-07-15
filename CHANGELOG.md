@@ -85,6 +85,29 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Removed
 
+- **All 4 remaining `#[deprecated]` public items** (breaking; ships with the
+  0.9.0 break already queued above — no separate bump, per "accumulate breaks so
+  they ship as one version bump"). Per the API policy: *no deprecation shims or
+  legacy aliases — delete old APIs*. Zero in-tree callers besides one test.
+  - `ScanlineReader::read_rows_ycbcr_planes` (deprecated 0.5.0) → use
+    `read_rows_ycbcr_f32`. Was a pure delegating alias.
+  - `ScanlineReader::read_rows_planar_i16` (deprecated 0.5.0) → use
+    `read_rows_ycbcr_native_i16`. Was a pure delegating alias.
+  - `TrellisConfig::speed_level(u8)` (deprecated 0.7.0) → use
+    `speed_mode(TrellisSpeedMode::Level(n))`.
+  - `TrellisConfig::get_speed_level()` (deprecated 0.7.0) → use
+    `get_speed_mode()`.
+  - Behavior note: `speed_level()` clamped on the way in
+    (`Level(level.min(10))`); `speed_mode()` stores the mode verbatim. This is
+    NOT a behavior change — `TrellisSpeedMode::get_limits` already clamps
+    (`level.min(10)`) at the point of use, so an out-of-range `Level(15)`
+    encodes identically to `Level(10)`. The old `test_speed_level_clamping`
+    pinned the setter's clamp; it is replaced by `test_level_is_clamped_in_get_limits`,
+    which pins the clamp that actually governs encode behavior, across the
+    `nonzero_count` domain.
+  - Also drops 5 stale `#[allow(deprecated)]` attributes in `encode/streaming.rs`
+    + `encode/progressive.rs` that suppressed nothing (verified: removing them
+    produces no warnings).
 - **The deprecated no-op feature flags `decoder`, `trellis`, and `cms`**
   (breaking for manifests that still name them; ships with the 0.9.0 break
   already queued above). All three had zero `cfg` sites — the decoder and

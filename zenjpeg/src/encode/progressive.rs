@@ -670,7 +670,6 @@ mod tests {
             sizes.push((rows, label, file_size));
 
             // Verify the output decodes successfully
-            #[allow(deprecated)]
             let decoded = crate::decode::Decoder::new()
                 .decode(&jpeg, enough::Unstoppable)
                 .unwrap_or_else(|_| panic!("decode failed for restart_mcu_rows={}", rows));

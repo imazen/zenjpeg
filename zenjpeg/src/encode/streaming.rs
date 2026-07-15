@@ -2404,7 +2404,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
@@ -2427,7 +2426,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
@@ -2449,7 +2447,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
@@ -2472,7 +2469,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
