@@ -1520,17 +1520,20 @@ impl<'a> ScanlineReader<'a> {
 
                     let x_offset = mcu_x * h_blocks * 8 + h * 8;
 
-                    if coeff_count <= 1 {
-                        // DC-only: all pixels same value
-                        let dc = block[0] as i32 * quant[0] as i32;
-                        let val = ((dc + 1024) >> 11).clamp(0, 255) as i16;
-                        for px in 0..8 {
-                            if x_offset + px < next_row.len() {
-                                next_row[x_offset + px] = val;
-                            }
-                        }
-                    } else {
-                        // Full IDCT into temp, copy row 0
+                    {
+                        // Always route through the real IDCT — it has its own
+                        // DC-only fast path (`idct_int_dc_only`), so a
+                        // hand-rolled shortcut here buys nothing and can only
+                        // drift from the strip's own reconstruction. It did:
+                        // this used to special-case `coeff_count <= 1` as
+                        // `((dc * quant[0]) + 1024) >> 11`, but a DC-only IDCT
+                        // is `(dc + 4 + 1024) >> 3` — wrong shift (11 vs 3) and
+                        // no rounding term, so neutral chroma (dequantized
+                        // DC ~ 0) peeked as 0 instead of 128. Smooth chroma
+                        // quantizes to DC-only constantly, so every real photo
+                        // hit it (waterhouse.jpg: 76/255 on the last row of
+                        // every MCU row) while high-frequency synthetic test
+                        // images never did.
                         let mut temp_coeffs = [0i16; 64];
                         temp_coeffs.copy_from_slice(block);
                         let mut dequant_buf = [0i32; 64];

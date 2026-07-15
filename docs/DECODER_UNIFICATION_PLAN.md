@@ -1,25 +1,41 @@
 # Decoder Unification Plan
 
-> **Status (2026-07-15): coefficient-centric path now WIRED for 4:4:4 / 4:2:2
-> color progressive; 4:2:0 remains on the RGB buffered path — issue #187.**
+> **Status (2026-07-15): coefficient-centric path now WIRED for ALL symmetric-
+> chroma color progressive — 4:4:4, 4:2:2, 4:2:0, 4:4:0 — issue #187.**
 > The previously-dead `decode_mcu_row_from_coefficients` + `stored_coeffs`
 > (fully implemented but never populated with `Some`) are now populated by
 > `ScanlineReader::from_coefficients`, and `Decoder::scanline_reader` routes
-> 3-component color progressive/arithmetic JPEGs with **no vertical chroma
-> subsampling** (4:4:4, 4:2:2) through it. Those cases now decode native
-> YCbCr/gray via the same strip pipeline as streaming — the lossy RGB→YCbCr /
-> RGB→Y re-derivation (the correctness gaps in the table below) is FIXED for
-> them (proven by `tests/bundled/coeff_unification.rs`: progressive 4:4:4
-> YCbCr is byte-identical to the baseline decode). RGB output is byte-identical
-> to the old path; the streaming hot path is untouched (callgrind −0.0005%).
+> 3-component color progressive/arithmetic JPEGs through it. Those cases now
+> decode native YCbCr/gray via the same strip pipeline as streaming — the lossy
+> RGB→YCbCr / RGB→Y re-derivation (the correctness gaps in the table below) is
+> FIXED (proven by `tests/bundled/coeff_unification.rs`). RGB output is
+> byte-identical to the old path; the streaming hot path is untouched
+> (callgrind −0.0005%). CMYK, exotic-sampling normalization, and asymmetric
+> chroma stay on the RGB buffered path; grayscale stays there too (its Y is
+> already native).
 >
-> **What still blocks 4:2:0:** the coefficient path's *vertical* chroma-
-> upsampling boundary handling (`peek_next_chroma_row`) diverges from the
-> whole-image `to_pixels` reference — a systematic MCU-boundary chroma delta of
-> up to ~76 (dropping to ~32 with the peek disabled), so `coeff_strip_compatible`
-> gates 4:2:0 out until that vertical-boundary handling is reconciled with the
-> streaming path's double-buffered 1-row-lag mechanism. That is the remaining
-> #187 work; grayscale stays on the buffered path too (its Y is already native).
+> **What actually blocked 4:2:0 (resolved 2026-07-15).** The earlier note here
+> was right about the location — `peek_next_chroma_row`, ~76 MCU-boundary chroma
+> delta — but wrong about the cause. It was NOT a mechanism mismatch needing
+> reconciliation with the streaming path's double-buffered 1-row-lag design: the
+> peek's own bottom-context mechanism is sound. The bug was a hand-rolled
+> DC-only shortcut inside the peek computing `((dc * quant[0]) + 1024) >> 11`
+> where a DC-only IDCT is `(dc + 4 + 1024) >> 3` — wrong shift (11 vs 3) and no
+> rounding term. Neutral chroma (dequantized DC ≈ 0) therefore peeked as 0
+> instead of 128, poisoning the last row of every MCU row. Fix: delete the
+> shortcut and route through `idct_int_tiered`, which already has its own
+> DC-only fast path (`idct_int_dc_only`) — so the shortcut bought nothing and
+> could only drift.
+>
+> **Why it hid for so long.** The branch only fires on DC-only chroma blocks,
+> which is what *smooth* chroma quantizes to — i.e. essentially every real
+> photograph. Every synthetic test generator in the suite (`color_noise`, and
+> the high-frequency images in the parity sweeps) deliberately makes chroma
+> non-flat, so `coeff_count > 1` always and the branch was never executed. The
+> failure only ever appeared on corpus images (waterhouse.jpg 2048×1153: 76/255
+> on the last row of every MCU row). `coeff_unification.rs` now carries
+> `smooth_chroma_bands`, which reproduces it synthetically — verified to fail at
+> max delta 85 on row_in_mcu 15 against the pre-fix code.
 >
 > **Prior status (2026-07-14): Phase 1 done; buffered-fork surface reduced; full
 > `CoeffSource` unification DEFERRED as scoped future work — decision in

@@ -1064,17 +1064,17 @@ impl DecodeConfig {
     ///
     /// - at most 3 components (the i16 strip is 3-wide), and
     /// - for color, symmetric Cb/Cr sampling (strip requires `h[1]==h[2]`,
-    ///   `v[1]==v[2]`), and
-    /// - **no vertical chroma subsampling** (`v[0]==v[1]`).
+    ///   `v[1]==v[2]`).
     ///
-    /// The last restriction is the current boundary of issue #187: the
-    /// coefficient path's *vertical* chroma-upsampling boundary handling
-    /// (`peek_next_chroma_row`) does not yet match the whole-image reference for
-    /// 4:2:0 (a systematic MCU-boundary chroma delta up to ~76). 4:4:4, 4:2:2
-    /// (horizontal-only), and grayscale need no vertical upsampling and decode
-    /// byte-identically, so they take the native coefficient path (fixing the
-    /// lossy YCbCr/gray reads); 4:2:0 stays on the RGB buffered path until the
-    /// vertical-boundary handling is unified.
+    /// Vertically-subsampled chroma (4:2:0, 4:4:0) qualifies as of 2026-07-15.
+    /// It was previously gated out because the coefficient path's vertical
+    /// bottom-context peek (`peek_next_chroma_row`) diverged from the
+    /// whole-image reference by up to ~76/255 at MCU boundaries; that turned out
+    /// to be a wrong DC-only shortcut *inside* the peek rather than a defect in
+    /// the mechanism (see `docs/DECODER_UNIFICATION_PLAN.md`). With the shortcut
+    /// removed, all four symmetric-chroma modes decode byte-identically to the
+    /// streaming reference and to libjpeg-turbo, so they take the native
+    /// coefficient path (fixing the lossy YCbCr/gray reads).
     fn coeff_strip_compatible(parser: &parser::JpegParser<'_>) -> bool {
         // Only 3-component color benefits: grayscale already serves native Y
         // from the RGB(=Y) buffer, so routing it gains nothing and only adds
@@ -1084,9 +1084,7 @@ impl DecodeConfig {
             return false;
         }
         let c = &parser.components;
-        c[1].h_samp_factor == c[2].h_samp_factor
-            && c[1].v_samp_factor == c[2].v_samp_factor
-            && c[0].v_samp_factor == c[1].v_samp_factor
+        c[1].h_samp_factor == c[2].h_samp_factor && c[1].v_samp_factor == c[2].v_samp_factor
     }
 
     /// Internal: create a scanline reader that owns its JPEG data.
