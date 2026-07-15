@@ -352,6 +352,152 @@ impl<'a> ScanlineReader<'a> {
         })
     }
 
+    /// Creates a scanline reader backed by pre-decoded DCT coefficients — the
+    /// coefficient-centric buffered path (see docs/DECODER_UNIFICATION_PLAN.md,
+    /// issue #187).
+    ///
+    /// Progressive/arithmetic JPEGs can't stream (a scan refines coefficients
+    /// across the whole image), so their coefficients are decoded up front.
+    /// Unlike [`new_buffered`](Self::new_buffered) — which stores pre-converted
+    /// RGB and then re-derives YCbCr/gray *lossily* on demand — this stores the
+    /// coefficients and runs the SAME strip pipeline as streaming decode
+    /// (`decode_mcu_row_from_coefficients` → IDCT → upsample → the native
+    /// read paths). Every output format is produced natively, and the read
+    /// methods take their streaming branch instead of forking on `buffered_rgb`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_coefficients(
+        data: Cow<'a, [u8]>,
+        coeffs: super::DecodedCoefficients,
+        chroma_upsampling: super::ChromaUpsampling,
+        idct_method: super::IdctMethod,
+        output_target: super::OutputTarget,
+        deblock_mode: DeblockMode,
+        alloc_pref: zencodec::AllocPreference,
+        is_xyb: bool,
+        is_rgb: bool,
+    ) -> Result<Self> {
+        let width = coeffs.width;
+        let height = coeffs.height;
+        let num_components = coeffs.components.len() as u8;
+
+        let mut h_samp = [1u8; 3];
+        let mut v_samp = [1u8; 3];
+        let mut quant_indices = [0usize; 3];
+        for (i, c) in coeffs.components.iter().take(3).enumerate() {
+            h_samp[i] = c.h_samp;
+            v_samp[i] = c.v_samp;
+            quant_indices[i] = c.quant_table_idx as usize;
+        }
+
+        let mut quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4] = [None; 4];
+        for (i, slot) in quant_tables.iter_mut().enumerate() {
+            *slot = coeffs.quant_tables.get(i).copied().flatten();
+        }
+
+        let strip = StripProcessor::new(
+            width,
+            num_components,
+            h_samp,
+            v_samp,
+            chroma_upsampling,
+            idct_method,
+            output_target,
+            alloc_pref,
+        )?;
+
+        // Deblock setup — identical to the streaming constructor.
+        let effective_deblock = match deblock_mode {
+            DeblockMode::Auto | DeblockMode::AutoStreamable => DeblockMode::Boundary4Tap,
+            other => other,
+        };
+        let active = effective_deblock == DeblockMode::Boundary4Tap;
+        let deblock_strength = if active {
+            let mut strengths = [BoundaryStrength::from_dc_quant(1); 3];
+            for i in 0..num_components.min(3) as usize {
+                if let Some(ref qt) = quant_tables[quant_indices[i]] {
+                    strengths[i] = BoundaryStrength::from_dc_quant(qt[0]);
+                }
+            }
+            Some(strengths)
+        } else {
+            None
+        };
+        let deblock_prev_rows = if active {
+            let ys = strip.strip_stride;
+            let cs = strip.chroma_strip_stride;
+            let total = if num_components == 1 {
+                2 * ys
+            } else {
+                2 * ys + 2 * cs + 2 * cs
+            };
+            alloc::vec![0i16; total]
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self {
+            data,
+            width,
+            height,
+            num_components,
+            buffered_rgb: None,
+            strip,
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables,
+            quant_indices,
+            dc_tables: core::array::from_fn(|_| None),
+            ac_tables: core::array::from_fn(|_| None),
+            table_mapping: [(0, 0); 3],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb,
+            is_rgb,
+            stored_coeffs: Some(coeffs),
+            next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
+            deblock_mode: effective_deblock,
+            deblock_strength,
+            deblock_prev_rows,
+            deblock_has_prev: false,
+        })
+    }
+
     /// Creates a new scanline reader in buffered mode (for progressive JPEGs).
     ///
     /// In buffered mode, the image has already been decoded and we serve

@@ -805,6 +805,34 @@ impl DecodeConfig {
         let route = Self::classify_scanline_route(&parser)?;
         let mcu_height = route.mcu_height;
 
+        // Coefficient-centric buffered path (issue #187): progressive /
+        // arithmetic JPEGs can't stream, but instead of pre-converting to RGB
+        // (which forces a lossy RGB→YCbCr/gray re-derivation on those reads) we
+        // decode to coefficients and run the SAME strip pipeline as streaming,
+        // so every output format is native. Limited to what the i16 strip
+        // supports (≤3 components, symmetric Cb/Cr sampling); CMYK, the
+        // exotic-sampling normalization, and asymmetric chroma stay on the RGB
+        // buffered path below.
+        if route.needs_buffered && !route.is_cmyk && Self::coeff_strip_compatible(&parser) {
+            let width = parser.width;
+            let height = parser.height;
+            let is_rgb = parser.is_rgb_colorspace();
+            let coeffs = self.decode_buffered_coefficients(&mut parser)?;
+            let mut reader = ScanlineReader::from_coefficients(
+                alloc::borrow::Cow::Borrowed(data),
+                coeffs,
+                self.chroma_upsampling,
+                self.effective_idct_method(),
+                OutputTarget::Srgb8,
+                self.deblock_mode,
+                self.alloc_pref,
+                route.is_xyb,
+                is_rgb,
+            )?;
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            return Ok(reader);
+        }
+
         if route.needs_buffered || route.needs_buffered_sampling {
             let width = parser.width;
             let height = parser.height;
@@ -1012,6 +1040,53 @@ impl DecodeConfig {
             OutputTarget::Srgb8,
             &Unstoppable,
         )
+    }
+
+    /// Decode a non-streamable (progressive/arithmetic) JPEG all the way to
+    /// DCT coefficients, for the coefficient-centric buffered reader
+    /// ([`ScanlineReader::from_coefficients`]). Unlike
+    /// [`decode_buffered_pixels`](Self::decode_buffered_pixels) it stops before
+    /// `to_pixels`, keeping native YCbCr coefficients so every read format is
+    /// produced natively through the shared strip pipeline (issue #187).
+    fn decode_buffered_coefficients(
+        &self,
+        parser: &mut parser::JpegParser<'_>,
+    ) -> Result<DecodedCoefficients> {
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.apply_idct_method(self.effective_idct_method());
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.decode(&Unstoppable)?;
+        parser.extract_coefficients()
+    }
+
+    /// Whether a parsed JPEG's sampling fits the coefficient-centric buffered
+    /// reader ([`ScanlineReader::from_coefficients`]). Requirements:
+    ///
+    /// - at most 3 components (the i16 strip is 3-wide), and
+    /// - for color, symmetric Cb/Cr sampling (strip requires `h[1]==h[2]`,
+    ///   `v[1]==v[2]`), and
+    /// - **no vertical chroma subsampling** (`v[0]==v[1]`).
+    ///
+    /// The last restriction is the current boundary of issue #187: the
+    /// coefficient path's *vertical* chroma-upsampling boundary handling
+    /// (`peek_next_chroma_row`) does not yet match the whole-image reference for
+    /// 4:2:0 (a systematic MCU-boundary chroma delta up to ~76). 4:4:4, 4:2:2
+    /// (horizontal-only), and grayscale need no vertical upsampling and decode
+    /// byte-identically, so they take the native coefficient path (fixing the
+    /// lossy YCbCr/gray reads); 4:2:0 stays on the RGB buffered path until the
+    /// vertical-boundary handling is unified.
+    fn coeff_strip_compatible(parser: &parser::JpegParser<'_>) -> bool {
+        // Only 3-component color benefits: grayscale already serves native Y
+        // from the RGB(=Y) buffer, so routing it gains nothing and only adds
+        // risk. The lossy re-derivation this fixes (RGB→YCbCr, RGB→Y) is a
+        // color-only defect.
+        if parser.num_components != 3 {
+            return false;
+        }
+        let c = &parser.components;
+        c[1].h_samp_factor == c[2].h_samp_factor
+            && c[1].v_samp_factor == c[2].v_samp_factor
+            && c[0].v_samp_factor == c[1].v_samp_factor
     }
 
     /// Internal: create a scanline reader that owns its JPEG data.

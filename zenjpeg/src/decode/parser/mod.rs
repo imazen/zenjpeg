@@ -1060,20 +1060,7 @@ impl<'a> JpegParser<'a> {
         let scan_info = self.find_scan_info()?;
 
         // Detect RGB JPEGs
-        let is_rgb = if self.num_components == 3 {
-            match self.adobe_transform {
-                Some(AdobeColorTransform::Unknown) => true,
-                Some(AdobeColorTransform::YCbCr) => false,
-                None => {
-                    self.components[0].id == b'R'
-                        && self.components[1].id == b'G'
-                        && self.components[2].id == b'B'
-                }
-                _ => false,
-            }
-        } else {
-            false
-        };
+        let is_rgb = self.is_rgb_colorspace();
 
         Ok(ParsedScanData {
             data: self.data,
@@ -1092,6 +1079,26 @@ impl<'a> JpegParser<'a> {
             is_xyb,
             is_rgb,
         })
+    }
+
+    /// Whether this is an RGB JPEG (Adobe APP14 transform=0, or literal R/G/B
+    /// component IDs) — the decoder skips the YCbCr→RGB matrix for these. Shared
+    /// by `into_scan_data` (streaming) and the coefficient-centric buffered
+    /// reader so both classify color space identically.
+    pub(super) fn is_rgb_colorspace(&self) -> bool {
+        if self.num_components != 3 {
+            return false;
+        }
+        match self.adobe_transform {
+            Some(AdobeColorTransform::Unknown) => true,
+            Some(AdobeColorTransform::YCbCr) => false,
+            None => {
+                self.components[0].id == b'R'
+                    && self.components[1].id == b'G'
+                    && self.components[2].id == b'B'
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn extract_coefficients(&self) -> Result<crate::decode::image::DecodedCoefficients> {

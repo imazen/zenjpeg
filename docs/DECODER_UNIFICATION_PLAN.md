@@ -1,6 +1,27 @@
 # Decoder Unification Plan
 
-> **Status (2026-07-14): Phase 1 done; buffered-fork surface reduced; full
+> **Status (2026-07-15): coefficient-centric path now WIRED for 4:4:4 / 4:2:2
+> color progressive; 4:2:0 remains on the RGB buffered path — issue #187.**
+> The previously-dead `decode_mcu_row_from_coefficients` + `stored_coeffs`
+> (fully implemented but never populated with `Some`) are now populated by
+> `ScanlineReader::from_coefficients`, and `Decoder::scanline_reader` routes
+> 3-component color progressive/arithmetic JPEGs with **no vertical chroma
+> subsampling** (4:4:4, 4:2:2) through it. Those cases now decode native
+> YCbCr/gray via the same strip pipeline as streaming — the lossy RGB→YCbCr /
+> RGB→Y re-derivation (the correctness gaps in the table below) is FIXED for
+> them (proven by `tests/bundled/coeff_unification.rs`: progressive 4:4:4
+> YCbCr is byte-identical to the baseline decode). RGB output is byte-identical
+> to the old path; the streaming hot path is untouched (callgrind −0.0005%).
+>
+> **What still blocks 4:2:0:** the coefficient path's *vertical* chroma-
+> upsampling boundary handling (`peek_next_chroma_row`) diverges from the
+> whole-image `to_pixels` reference — a systematic MCU-boundary chroma delta of
+> up to ~76 (dropping to ~32 with the peek disabled), so `coeff_strip_compatible`
+> gates 4:2:0 out until that vertical-boundary handling is reconciled with the
+> streaming path's double-buffered 1-row-lag mechanism. That is the remaining
+> #187 work; grayscale stays on the buffered path too (its Y is already native).
+>
+> **Prior status (2026-07-14): Phase 1 done; buffered-fork surface reduced; full
 > `CoeffSource` unification DEFERRED as scoped future work — decision in
 > issue #187.**
 > What landed: streaming single-pass decode for all baseline subsampling

@@ -58,6 +58,8 @@ mod cmyk_transform;
 mod codec_corpus_conformance;
 #[path = "bundled/codec_coverage.rs"]
 mod codec_coverage;
+#[path = "bundled/coeff_unification.rs"]
+mod coeff_unification;
 #[path = "bundled/compare_420_cpp.rs"]
 mod compare_420_cpp;
 #[path = "bundled/compare_sizes.rs"]
