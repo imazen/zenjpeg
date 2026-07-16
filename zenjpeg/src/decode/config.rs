@@ -460,15 +460,30 @@ pub enum DecodeWarning {
     /// mozjpeg handles this via `std_huff_tables()` in `jinit_huff_decoder()`.
     MissingHuffmanTables,
 
-    /// Scan data was truncated; remaining blocks filled with zeros.
+    /// Scan data was truncated mid-scan; remaining blocks filled with zeros.
     ///
     /// The image may have partial content. `blocks_decoded` and `blocks_expected`
-    /// indicate how much data was recovered.
+    /// indicate how much data was recovered. Both are always real counts — a
+    /// truncation with no partial scan to describe reports
+    /// [`TruncatedBetweenScans`](Self::TruncatedBetweenScans) instead.
     TruncatedScan {
         /// Number of MCU blocks successfully decoded before truncation.
         blocks_decoded: u32,
         /// Total number of MCU blocks expected for this scan.
         blocks_expected: u32,
+    },
+
+    /// The stream ended at a marker boundary — after a complete scan, before the
+    /// next one (a missing EOI, or a file cut between scans).
+    ///
+    /// Every scan that was started also finished, so unlike
+    /// [`TruncatedScan`](Self::TruncatedScan) there is no partially-decoded scan
+    /// to report block counts for. For a baseline JPEG the image is complete; for
+    /// a progressive one it is decoded to `scans_decoded` scans of refinement,
+    /// which is a valid (if lower-quality) image.
+    TruncatedBetweenScans {
+        /// Number of scans fully decoded before the stream ended.
+        scans_decoded: u32,
     },
 
     /// Padding blocks beyond image boundary couldn't be decoded; filled with zeros.
@@ -562,6 +577,11 @@ impl core::fmt::Display for DecodeWarning {
                 f,
                 "scan truncated at block {}/{}; remaining filled with zeros",
                 blocks_decoded, blocks_expected
+            ),
+            Self::TruncatedBetweenScans { scans_decoded } => write!(
+                f,
+                "stream ended after {} complete scan(s); no EOI",
+                scans_decoded
             ),
             Self::PaddingBlockError => {
                 write!(f, "padding block decode failed; filled with zeros")

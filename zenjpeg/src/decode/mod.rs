@@ -116,9 +116,11 @@ pub use depth::{
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 use crate::types::{Component, Subsampling};
 
-// Re-export Stop trait for cancellation support
-pub use enough::Stop;
-use enough::Unstoppable;
+// Re-export the cancellation types. `Stop` is the trait every decode entry
+// point is generic over; `Unstoppable` is the no-op impl callers actually pass.
+// Both are re-exported here so decode-only users don't have to reach into
+// `zenjpeg::encoder` for the token they need to call a *decoder* (issue #168).
+pub use enough::{Stop, Unstoppable};
 
 use crate::error::{Error, Result};
 use crate::foundation::consts::MAX_COMPONENTS;

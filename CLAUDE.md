@@ -704,97 +704,50 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-~~1. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)**~~ —
-   **FIXED (2026-03-09, commit 08ef601).** Root cause was progressive decoder truncation near
-   restart markers (see Fixed Bugs below), NOT encoder trellis lambda weights. The trellis
-   analysis was a red herring. All quality levels Q70-Q99 now pass on bulb/baby/girl/city/flowers
-   with `auto_optimize(true)` + 4:2:0, minimum score 75.9 (previously catastrophic 20-43).
-   4:4:4 auto_optimize also passes, minimum 79.4.
+Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
+with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
+entries accumulate here.
 
-2. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
-   are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
-   was independently SA-optimized, finding different local optima. Results: ~10-20 SSIM2
-   points worse than JpegliProg at matched BPP, non-monotonic BPP vs quality.
-   - Root cause: Independent per-anchor SA without monotonicity constraints
-   - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
-
-~~3. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)**~~ — **FIXED (2026-03-09).**
-   Stale hashes after commit e0b5c86 forced `allow_16bit_quant_tables=true` for XYB.
-   At Q50, 2 of 3 quant tables exceed 255, requiring 16-bit DQT entries (+128 bytes).
-   Scan data is identical — only DQT marker overhead changed. Hashes updated.
-
-~~4. **frymire_hash_locked XYB Q50 pre-existing failure (2026-03-26)**~~ — **FIXED (2026-03-27).**
-   All XYB hashes updated. The stale hashes were from before archmage XYB cbrt_midp() changes.
-
-~~5. **Trellis dead parameters (2026-02-02, documented 2026-03-08)**~~ — **FIXED (2026-03-30,
-   commit d2a1af25).** Both `trellis_use_lambda_weight_tbl` and `trellis_num_loops` deleted
-   from ExpertConfig, TrellisConfig, and HybridConfig.
-
-6. **Progressive Q10 encoder ~2.8% larger than C++ jpegli (2026-03-31, issue #23)** -
-   At Q10 progressive, Rust produces ~3KB more entropy-coded scan data than C++.
-   Same scan count, same DHT sizes. Rust Q10 SSIM2 is +4.12 pts better than C++,
-   suggesting Rust preserves more AC coefficients at extreme quantization. Need to
-   investigate whether this is a quality mapping difference or DCT rounding.
-   - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
-   - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
-
-~~8.~~ **FIXED (2026-07-13, commit 0064e34a):** XYB bottom-partial-strip
-   vertical padding stride (issue #186). `pad_strips_vertically` now
-   replicates cb_strip at padded stride under XYB, and
-   `convert_strip_to_xyb` vertically pads the B plane (cr_down) below
-   `b_height`. Stripe-probe ratio 1.152 → 1.000 at 130×67 XYB-Full;
-   regression test `tests/bundled/xyb_edge_padding.rs` (fails at 1.152
-   on pre-fix code). Locked frymire hashes unchanged — the padding
-   branch fires there (bottom strip actual=1) but frymire's bottom row
-   is its uniform white border, so shifted replicas were byte-identical.
-   Original analysis below for reference:
-
-   **CONFIRMED: XYB bottom-partial-strip vertical padding uses the wrong
-   stride (2026-07-13, found+verified during issue #185 work)** —
-   `pad_strips_vertically` (`encode/strip/convert.rs`) replicates cb/cr
-   rows at packed `width` stride ("still in packed layout at this
-   point"), but under XYB `convert_strip_to_xyb` has ALREADY rearranged
-   `cb_strip` (perceptual-Y plane) to PADDED stride before
-   `process_strip` calls the vertical pad. When `width % 8 != 0` AND the
-   bottom strip is partial, the replicated rows land at shifted offsets,
-   so bottom-edge Y blocks DCT over phase-shifted padding.
-   **Measured (vertical-stripe probe, Q90):** XYB-Full 130×67 last-band
-   mean abs error = 8.75 vs interior 7.59 (**ratio 1.15**); the controls
-   are all ~1.00 (128×67 height-only, 130×64 width-only, YCbCr 4:4:4
-   130×67, all aligned sizes). XYB-BQuarter shows ≤1.04 (diluted by 2×2
-   sampling geometry). Additionally the B plane (`cr_down`) is
-   downsampled from only `actual_strip_height` rows and its remaining
-   bottom rows may be stale — likely part of the same measured error.
-   RGB passthrough mode (f87c722f) handles its own padded-layout case in
-   `pad_strips_vertically`; the XYB arm still needs the equivalent fix
-   plus B-plane vertical padding. Fixing changes locked XYB hashes
-   (frymire is 1118×1105 — both conditions hold), so the fix needs its
-   own commit with hash relock + before/after evidence. Tracked in
-   issue #186.
-
-~~7. **XYB encoder's linear-input paths (`Rgb16Linear`, `RgbF32Linear`)
-   produce pixel-broken JPEGs (2026-04-23)**~~ — **FIXED (2026-04-23,
-   commits 28658af6 + 9e2348fe).** The linear-input branch in
-   `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which
-   returns UN-scaled XYB on a 0-255 input range) and then multiplied by
-   255.0 again, producing Y values around ~1600 that saturated every
-   MCU to white. Fix: call `linear_rgb_to_xyb(r, g, b)` on the 0..1
-   linear RGB, then `scale_xyb(x, y, b)` to get scaled XYB matching the
-   sRGB-input SIMD branch, then the final ×255.0 JPEG-range step. No
-   changes to the Rgb8Srgb path (locked hashes unaffected).
-   - Tests: `xyb_linear_matches_srgb_solid_red`,
-     `xyb_full_linear_f32_pixel_correctness`,
-     `xyb_bquarter_linear_f32_pixel_correctness`,
-     `xyb_full_linear_u16_pixel_correctness` in
-     `zenjpeg/tests/bundled/xyb_roundtrip.rs`.
-   - The in-source comment at `linear_pixel_formats.rs:330` claimed
-     "chroma block indexing" — that was a red herring. The bug was
-     missing-scale-then-double-scale in the scalar f32/u16 branch.
+1. **SA-optimized quant tables are non-monotonic (2026-02-03, issue #12)** — the anchor
+   tables are non-monotonic across quality levels. Quant values must be non-increasing as
+   quality rises; these climb repeatedly.
+   - **Location (re-verified 2026-07-15):** `encode/tables/sa_piecewise_v4_data.rs`.
+     The old `optimized_tables.rs` no longer exists — the data was *restored* into
+     `sa_piecewise_v4{,_data}.rs` and wired into production as
+     `QuantTableConfig::PiecewiseV4` (`encode/plan.rs:182`), carried over **verbatim**,
+     so the defect shipped with it.
+   - **Measured (2026-07-15, read from the source data):** `ANCHOR_LUMA` DC q5→q100 =
+     15, 15, 28, 20, 24, 12, 14, 18, 23, 26, 30, 12, 6, 7, 5, 3, 8, 5, **37**, 6 — i.e.
+     the old q90=5 / q95=37 / q100=6 wobble is unchanged. `ANCHOR_CB` DC is worse: q100=81,
+     *coarser than q5's 66*. Independently corroborated by #12's own comment (34 size-
+     monotonicity violations q1–q99 vs 0 for Jpegli).
+   - **Root cause:** each anchor was independently SA-optimized, finding a different local
+     optimum; `tables_for_quality` (`sa_piecewise_v4.rs`) just lerps between anchors — no
+     smoothing, no constraint pass, and **no monotonicity test** anywhere in the tables path.
+   - **Impact:** not the default (`QuantTableConfig::default()` is Jpegli), so only callers
+     explicitly selecting `PiecewiseV4` hit it — but it is public and production-wired.
+     `sa_piecewise_v4.rs`'s own header doc recommends it as `EncoderConfig::adaptive`'s
+     default and claims it "beats jpegli on 99/100 quality levels" without mentioning any
+     of this — treat that doc as unreliable.
+   - **Fix:** constrained optimization or a post-smoothing pass over the 20 anchors, plus a
+     monotonicity regression test (natural home: `sa_piecewise_v4.rs`'s test module).
 
 ### Fixed / Resolved Bugs (historical reference)
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
+- Progressive Q10 encoder ~2.8% larger than C++ jpegli (issue #23) — FIXED; issue closed 2026-04-15.
+  **Verified 2026-07-15**: the 4 `quality_matrix` progressive tests that had been `#[ignore]`d citing
+  #23 (444/422/420/440) all pass, and the ignores are removed. Q10 progressive size deltas are now
+  +1.4..+2.4% *and* Rust scores +3.1..+4.1 SSIM2 better — i.e. it buys quality, not waste. The
+  sibling baseline case is still live as #78 (`test_ycbcr_420_baseline`, still `#[ignore]`d).
+- XYB bottom-partial-strip vertical padding stride (issue #186) — FIXED 2026-07-13 (0064e34a);
+  regression test `tests/bundled/xyb_edge_padding.rs`.
+- Catastrophic 4:2:0 auto_optimize quality at specific Q levels — FIXED 2026-03-09 (08ef601); root
+  cause was progressive decoder truncation near restart markers, NOT trellis lambda weights.
+- frymire_hash_locked XYB Q50 size mismatch — FIXED 2026-03-09 (stale hashes; 16-bit DQT at Q50).
+- frymire_hash_locked XYB Q50 pre-existing failure — FIXED 2026-03-27 (XYB hashes relocked).
+- Trellis dead parameters (`trellis_use_lambda_weight_tbl`, `trellis_num_loops`) — FIXED 2026-03-30 (d2a1af25).
 - XYB linear-input encoder paths saturated to white — FIXED 2026-04-23 (28658af6 + 9e2348fe).
 - Fused parallel decode bypassed coefficient storage (`DecodeMode::Coefficient`) — FIXED 2026-03-31 (c9b47ec1).
 - Progressive decoder truncation near restart markers (missing bit-by-bit Huffman fallback) — FIXED 2026-03-09 (08ef601).

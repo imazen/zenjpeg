@@ -337,6 +337,9 @@ impl<'a> JpegParser<'a> {
                     "missing Huffman table (DHT not defined before scan)"
                 }
                 DecodeWarning::TruncatedScan { .. } => "scan data truncated",
+                DecodeWarning::TruncatedBetweenScans { .. } => {
+                    "stream ended between scans (no EOI)"
+                }
                 DecodeWarning::PaddingBlockError => "padding block decode failed",
                 DecodeWarning::DnlHeightConflict { .. } => {
                     "DNL marker conflicts with SOF height (spec violation)"
@@ -723,10 +726,14 @@ impl<'a> JpegParser<'a> {
                         && scans_decoded > 0
                         && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                     {
-                        self.warnings.push(DecodeWarning::TruncatedScan {
-                            blocks_decoded: 0,
-                            blocks_expected: 0,
-                        });
+                        // Truncated at a marker boundary, i.e. BETWEEN scans: every
+                        // scan we started also finished, so there is no partially
+                        // decoded scan to report counts for. Emit the whole-stream
+                        // fact instead (#92) — the previous `0, 0` claimed "0 of 0
+                        // blocks recovered", which reads as total loss when in fact
+                        // every decoded scan is intact.
+                        self.warnings
+                            .push(DecodeWarning::TruncatedBetweenScans { scans_decoded });
                         break;
                     }
                     return Err(e);
@@ -751,9 +758,17 @@ impl<'a> JpegParser<'a> {
                             if self.strictness.recovers_data_errors()
                                 && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                             {
+                                // Reaching here means the scan recovered *nothing*
+                                // (mid-scan truncation self-recovers inside
+                                // `parse_scan`, which emits its own TruncatedScan
+                                // with real counts and returns Ok). So 0 blocks
+                                // decoded is accurate — but `blocks_expected` must
+                                // still be the real total, not 0 (#92): "0 of N"
+                                // is the recoverable-data signal callers need,
+                                // where "0 of 0" said nothing at all.
                                 self.warnings.push(DecodeWarning::TruncatedScan {
                                     blocks_decoded: 0,
-                                    blocks_expected: 0,
+                                    blocks_expected: self.total_mcus(),
                                 });
                                 break;
                             }
@@ -1301,6 +1316,25 @@ fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
 }
 
 impl JpegParser<'_> {
+    /// Total interleaved MCUs for the frame, from the SOF dimensions and the
+    /// max sampling factors — the `blocks_expected` denominator for truncation
+    /// warnings raised outside `parse_scan` (which computes this itself).
+    ///
+    /// Returns 0 before SOF is parsed (no dimensions yet).
+    fn total_mcus(&self) -> u32 {
+        let mut max_h = 1u8;
+        let mut max_v = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h = max_h.max(self.components[i].h_samp_factor);
+            max_v = max_v.max(self.components[i].v_samp_factor);
+        }
+        let mcu_w = (max_h as usize) * 8;
+        let mcu_h = (max_v as usize) * 8;
+        let cols = (self.width as usize).div_ceil(mcu_w);
+        let rows = (self.height as usize).div_ceil(mcu_h);
+        (cols * rows) as u32
+    }
+
     /// Set the IDCT method, normalizing 1-component sources to the
     /// libjpeg-exact kernel (#154): the gray plane must be identical across
     /// decode paths, and there is no chroma for the jpegli tuning to matter.

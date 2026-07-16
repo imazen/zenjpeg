@@ -14,9 +14,9 @@
 #   pub consts/statics                        316
 #   free functions                            354
 #   inherent methods                         1189
-#   struct fields                             754
-#   enum variants                             498
-#   re-exports                                 17
+#   struct fields                             755
+#   enum variants                             499
+#   re-exports                                 18
 #   trait roster entries (type × trait)       646
 #   auto-trait-complete types                 131
 #   auto-trait exceptions                       7
@@ -26,7 +26,7 @@
 #   alloc                             1
 #   color                           117
 #   container                         8
-#   decode                          444
+#   decode                          447
 #   decoder                          54
 #   detect                           40
 #   encode                         1461
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         12
 
-## items (3328 lines)
+## items (3331 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -2106,6 +2106,7 @@ pub type foundation::aligned_alloc::AlignedVec<T> = aligned_vec::AVec<T, foundat
 pub type foundation::alloc::ProfiledVec<T> = foundation::instrumented_vec::InstrumentedVec<T> [also: foundation::instrumented_vec]
 pub type foundation::instrumented_vec::InstrumentedVec<T>::Target = alloc::vec::Vec<T>
 pub use decode::Stop
+pub use decode::Unstoppable
 pub use encode::Stop
 pub use encode::mage_simd::Desktop64
 pub use encode::tables::ZERO_BIAS_MUL_XYB
@@ -2197,6 +2198,8 @@ pub decode::DecodeWarning::MissingHuffmanTables
 pub decode::DecodeWarning::PaddingBlockError
 pub decode::DecodeWarning::RestartMarkerResync
 pub decode::DecodeWarning::RestartMarkerResync::count: u32
+pub decode::DecodeWarning::TruncatedBetweenScans
+pub decode::DecodeWarning::TruncatedBetweenScans::scans_decoded: u32
 pub decode::DecodeWarning::TruncatedProgressiveScan
 pub decode::DecodeWarning::TruncatedScan
 pub decode::DecodeWarning::TruncatedScan::blocks_decoded: u32

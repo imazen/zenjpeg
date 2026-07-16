@@ -737,7 +737,6 @@ fn test_ycbcr_444_baseline() {
     );
 }
 
-#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
 fn test_ycbcr_444_progressive() {
     let path = get_frymire_path();
@@ -784,7 +783,6 @@ fn test_ycbcr_422_baseline() {
     );
 }
 
-#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
 fn test_ycbcr_422_progressive() {
     let path = get_frymire_path();
@@ -832,7 +830,6 @@ fn test_ycbcr_420_baseline() {
     );
 }
 
-#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
 fn test_ycbcr_420_progressive() {
     let path = get_frymire_path();
@@ -879,7 +876,6 @@ fn test_ycbcr_440_baseline() {
     );
 }
 
-#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
 fn test_ycbcr_440_progressive() {
     let path = get_frymire_path();
