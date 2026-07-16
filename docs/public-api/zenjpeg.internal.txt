@@ -13,9 +13,9 @@
 #   pub types (struct/enum/trait/alias)       296
 #   pub consts/statics                        316
 #   free functions                            354
-#   inherent methods                         1189
+#   inherent methods                         1191
 #   struct fields                             755
-#   enum variants                             499
+#   enum variants                             503
 #   re-exports                                 18
 #   trait roster entries (type × trait)       646
 #   auto-trait-complete types                 131
@@ -29,7 +29,7 @@
 #   decode                          447
 #   decoder                          54
 #   detect                           40
-#   encode                         1461
+#   encode                         1466
 #   encoder                         134
 #   entropy                         100
 #   foundation                      349
@@ -37,14 +37,14 @@
 #   huffman                         306
 #   layout                            3
 #   lossless                          4
-#   quant                           138
+#   quant                           139
 #   recompress                       12
 #   rgb                              11
 #   test_utils                       95
 #   types                           138
 #   ultrahdr                         12
 
-## items (3331 lines)
+## items (3337 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -889,9 +889,11 @@ pub fn encode::encoder_types::Quality::for_mozjpeg_tables(&self) -> u8
 pub fn encode::encoder_types::Quality::from(f32) -> Self
 pub fn encode::encoder_types::Quality::from(i32) -> Self
 pub fn encode::encoder_types::Quality::from(u8) -> Self
+pub fn encode::encoder_types::Quality::is_perceptual_target(&self) -> bool
 pub fn encode::encoder_types::Quality::is_zq_target(&self) -> bool
 pub fn encode::encoder_types::Quality::to_distance(&self) -> f32
 pub fn encode::encoder_types::Quality::to_internal(&self) -> f32
+pub fn encode::encoder_types::Quality::zq_picker_target(&self) -> core::option::Option<f32>
 pub fn encode::encoder_types::Quality::zq_target(&self) -> core::option::Option<encode::zq::ZqTarget>
 pub fn encode::encoder_types::QuantTableConfig::chroma_distance_scales(&self) -> core::option::Option<[f32; 2]>
 pub fn encode::encoder_types::QuantTableConfig::chroma_quality(&self) -> core::option::Option<u8>
@@ -2607,6 +2609,7 @@ pub encode::Quality::ApproxMozjpeg(u8)
 pub encode::Quality::ApproxSsim2(f32)
 pub encode::Quality::Zq(f32)
 pub encode::Quality::ZqExplicit(encode::zq::ZqTarget)
+pub encode::Quality::ZqPicker(f32)
 pub encode::QuantTableConfig::Custom(alloc::boxed::Box<encode::tuning::EncodingTables>)
 pub encode::QuantTableConfig::GlassaLowBpp
 pub encode::QuantTableConfig::Jpegli
@@ -2737,6 +2740,7 @@ pub encode::encoder_types::Quality::ApproxMozjpeg(u8)
 pub encode::encoder_types::Quality::ApproxSsim2(f32)
 pub encode::encoder_types::Quality::Zq(f32)
 pub encode::encoder_types::Quality::ZqExplicit(encode::zq::ZqTarget)
+pub encode::encoder_types::Quality::ZqPicker(f32)
 pub encode::encoder_types::QuantTableConfig::Custom(alloc::boxed::Box<encode::tuning::EncodingTables>)
 pub encode::encoder_types::QuantTableConfig::GlassaLowBpp
 pub encode::encoder_types::QuantTableConfig::Jpegli
@@ -3051,6 +3055,7 @@ pub encode::v2::Quality::ApproxMozjpeg(u8)
 pub encode::v2::Quality::ApproxSsim2(f32)
 pub encode::v2::Quality::Zq(f32)
 pub encode::v2::Quality::ZqExplicit(encode::zq::ZqTarget)
+pub encode::v2::Quality::ZqPicker(f32)
 pub encode::v2::XybSubsampling::BQuarter
 pub encode::v2::XybSubsampling::Full
 pub encode::v2::YCbCrPlanes::cb: &'a [f32]
@@ -3296,6 +3301,7 @@ pub quant::Quality::ApproxMozjpeg(u8)
 pub quant::Quality::ApproxSsim2(f32)
 pub quant::Quality::Zq(f32)
 pub quant::Quality::ZqExplicit(encode::zq::ZqTarget)
+pub quant::Quality::ZqPicker(f32)
 pub quant::QuantTable::precision: u8
 pub quant::QuantTable::values: [u16; 64]
 pub quant::ZeroBiasParams::mul: [f32; 64]

@@ -94,7 +94,12 @@ impl BytesEncoder {
         // entirely in that case (see `push`/`push_packed`). Without the
         // feature, Zq variants degrade to ApproxJpegli at the resolved
         // starting quality (no iteration, no measurement).
-        let zq_pixel_buffer = if cfg!(feature = "target-zq") && config.quality.is_zq_target() {
+        // Retained for BOTH the measuring loop (Zq/ZqExplicit) and the one-shot
+        // picker (ZqPicker) — the loop measures the source, the picker analyzes
+        // it. `is_perceptual_target()` covers both.
+        let zq_pixel_buffer = if cfg!(feature = "target-zq")
+            && config.quality.is_perceptual_target()
+        {
             let bpp = layout.bytes_per_pixel();
             let total = (width as usize)
                 .checked_mul(height as usize)
@@ -567,22 +572,36 @@ impl BytesEncoder {
     /// set and the achieved value falls outside that band.
     #[cfg_attr(not(feature = "target-zq"), allow(unused_mut))]
     pub fn finish_with_metrics(mut self) -> Result<(Vec<u8>, super::zq::EncodeMetrics)> {
+        // Perceptual-target dispatch: the measuring loop (Zq/ZqExplicit) or the
+        // one-shot picker (ZqPicker). Both retain the source pixels
+        // (`is_perceptual_target`), validate the row count, run their path, and
+        // then share the metadata-injection tail — each per-path encode ran
+        // without metadata.
         #[cfg(feature = "target-zq")]
-        if let (Some(buf), Some(target)) =
-            (self.zq_pixel_buffer.take(), self.config.quality.zq_target())
+        if self.config.quality.is_perceptual_target()
+            && let Some(buf) = self.zq_pixel_buffer.take()
         {
             // Validate complete row count was pushed.
             let bpp = self.layout.bytes_per_pixel();
             let row_bytes = self.width as usize * bpp;
-            let pushed_rows = if row_bytes == 0 {
-                0
-            } else {
-                buf.len() / row_bytes
-            };
+            let pushed_rows = buf.len().checked_div(row_bytes).unwrap_or(0);
             if pushed_rows != self.height as usize {
                 return Err(Error::incomplete_image(self.height, pushed_rows as u32));
             }
 
+            // The one-shot picker has no ZqTarget; synthesize one carrying only
+            // the target score (the picker + bucket lookup read nothing else).
+            let target = self
+                .config
+                .quality
+                .zq_target()
+                .or_else(|| {
+                    self.config
+                        .quality
+                        .zq_picker_target()
+                        .map(super::zq::ZqTarget::new)
+                })
+                .expect("is_perceptual_target ⇒ zq_target or zq_picker_target");
             let ctx = super::zq::IterationContext {
                 config: &self.config,
                 width: self.width,
@@ -591,11 +610,14 @@ impl BytesEncoder {
                 pixels: &buf,
                 target,
             };
-            let (mut bytes, metrics) = super::zq::run_iteration_loop(ctx)?;
+            let (mut bytes, metrics) = if self.config.quality.zq_picker_target().is_some() {
+                super::zq::run_picker_oneshot(ctx)?
+            } else {
+                super::zq::run_iteration_loop(ctx)?
+            };
 
-            // Inject metadata after iteration. Each per-pass encode ran
-            // without metadata; the same post-encode injection helpers
-            // used by `finish_into` apply here.
+            // Inject metadata after the encode. The same post-encode injection
+            // helpers used by `finish_into` apply here.
             if let Some(ref exif) = self.exif_data
                 && let Some(exif_bytes) = exif.to_bytes()
             {
@@ -618,7 +640,7 @@ impl BytesEncoder {
             ));
         }
 
-        // Non-Zq path: existing single-pass encode + minimal metrics.
+        // Non-perceptual path: existing single-pass encode + minimal metrics.
         let mut bytes = Vec::new();
         self.finish_into(&mut bytes)?;
         let metrics = super::zq::EncodeMetrics::no_target(bytes.len());

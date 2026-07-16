@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1662 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3536 lines (842 hidden + 7209 excluded-feature)
+# files: zenjpeg.txt 1665 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3542 lines (844 hidden + 7217 excluded-feature)
 
 ## summary
 #
@@ -15,9 +15,9 @@
 #   pub consts/statics                         94
 #   pub macros                                  2
 #   free functions                             60
-#   inherent methods                          501
+#   inherent methods                          503
 #   struct fields                             373
-#   enum variants                             393
+#   enum variants                             394
 #   re-exports                                  2
 #   trait roster entries (type × trait)       483
 #   auto-trait-complete types                 103
@@ -30,12 +30,12 @@
 #   deblock                          16
 #   decoder                         558
 #   detect                           56
-#   encoder                         538
+#   encoder                         541
 #   heuristics                       24
 #   lossless                         42
 #   profile                           7
 
-## items (1529 lines)
+## items (1532 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -1149,10 +1149,13 @@ pub encoder::Quality::ApproxMozjpeg(u8)
 pub encoder::Quality::ApproxSsim2(f32)
 pub encoder::Quality::Zq(f32)
 pub encoder::Quality::ZqExplicit(encode::zq::ZqTarget)
+pub encoder::Quality::ZqPicker(f32)
 pub fn encoder::Quality::for_mozjpeg_tables(&self) -> u8
+pub fn encoder::Quality::is_perceptual_target(&self) -> bool
 pub fn encoder::Quality::is_zq_target(&self) -> bool
 pub fn encoder::Quality::to_distance(&self) -> f32
 pub fn encoder::Quality::to_internal(&self) -> f32
+pub fn encoder::Quality::zq_picker_target(&self) -> core::option::Option<f32>
 pub fn encoder::Quality::zq_target(&self) -> core::option::Option<encode::zq::ZqTarget>
 #[non_exhaustive] pub enum encoder::QuantTableConfig
 pub encoder::QuantTableConfig::Custom(alloc::boxed::Box<encode::tuning::EncodingTables>)

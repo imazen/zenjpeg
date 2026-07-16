@@ -1283,7 +1283,7 @@ zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]  # zencodec tra
 layout = ["dep:zenresize"]                     # lossless transforms + decode→resize→encode
 ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
 boundary-rd = []                               # boundary-continuity refinement (#91 / PR #102)
-target-zq = ["dep:zensim"]                     # Quality::Zq closed-loop perceptual target (#113)
+target-zq = ["dep:zensim", "dep:zenpredict", ...] # all Quality::Zq* — see below
 recompress = []                                # JPEG→JPEG recompression (decoder only, cheap)
 recompress-iqa = ["recompress", "dep:zensim"]  # + closed-loop IQA refinement (Budget::MaxIterations>1)
 recompress-expert = ["recompress"]             # recompress::expert — unstable, not semver-covered
@@ -1311,6 +1311,21 @@ was deleted, so there is one code path now.
 **Recompress split:** `recompress` needs only the decoder (no heavy deps, barely
 moves compile time). The closed loop is split into `recompress-iqa` because it
 pulls `zensim` — same reason `target-zq` does.
+
+**`target-zq` is the umbrella for every `Quality::Zq*` variant** (2026-07-16):
+- `Quality::Zq` / `Quality::ZqExplicit` — closed loop (encode→decode→zensim→correct). Needs `zensim`.
+- `Quality::ZqPicker` — realtime one-shot: the distilled picker predicts the config, single encode, **no measurement** (`achieved_score` is `NaN`). Needs `zenpredict` + `zenanalyze-api`.
+
+The one-shot and iterative paths are a caller choice: pick the `Quality` variant.
+Both retain the source pixels (`Quality::is_perceptual_target()`). Per the
+2026-07-16 decision this is ONE feature (`target-zq` pulls both the metric and
+the picker) rather than a split `picker` flag — so a realtime-only consumer
+still compiles `zensim` it doesn't call. `zenpredict` is an unpublished sibling
+path dep (`../../zenanalyze/zenpredict`), which is why **no CI job enables
+`target-zq`** and the i686 manifest-strip rewrites it to `["dep:zensim"]`; it
+resolves to a normal version dep once the picker + new zensim publish.
+`__picker-research` is now a thin alias for `target-zq` (kept for the
+`picker_v0_3_holdout_ab` dev binary).
 
 **Boundary-RD:** Adds the post-quantization refinement from issue #91.
 Disabled by default — `cargo build -p zenjpeg` (with or without trellis)

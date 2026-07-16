@@ -136,6 +136,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- **`Quality::ZqPicker(f32)` — realtime one-shot perceptual target** (#134). The
+  distilled source-feature picker predicts the RD-optimal config (subsampling ×
+  progressive × sharp-yuv × effort) plus a starting quality, then encodes
+  **once** — no decode, no zensim, no correction pass. `EncodeMetrics::achieved_score`
+  is `NaN` (predicted, not measured); cost is ~one feature pass + one encode, for
+  a realtime / CDN hot path. This makes the `zq*` family a caller choice:
+  `ZqPicker` (predict once) vs `Zq` / `ZqExplicit` (measure-and-correct loop).
+  Both are gated on `target-zq`, which now pulls the picker runtime
+  (`zenpredict` + `zenanalyze-api`) alongside `zensim` — one umbrella feature.
+  Without `target-zq`, `ZqPicker` degrades to a plain encode at the fallback
+  starting quality, exactly like `Zq`. New `Quality::is_perceptual_target()` and
+  `Quality::zq_picker_target()` accessors. The picker warm-start (previously
+  `__picker-research`-only) now also seeds the iterative loop under `target-zq`;
+  `__picker-research` is a thin alias for `target-zq`. Tests:
+  `zq_picker_one_shot_predicts_without_measuring`,
+  `zq_picker_one_shot_differs_from_iterative_loop` (`tests/zq_target.rs`).
 - **`zenjpeg::decode::Unstoppable`** is now re-exported (#168, 57a15d65). `Stop`
   already was, but `Unstoppable` — the no-op token callers must actually pass to
   invoke a decoder — was reachable only via `zenjpeg::encoder`, forcing

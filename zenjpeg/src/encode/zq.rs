@@ -635,32 +635,7 @@ pub(crate) fn run_iteration_loop(
     // source fresh (other layouts keep the caller's config), returning None — and
     // keeping the caller's config — on any degenerate input, a non-finite target,
     // or a needed feature missing from this zenanalyze build.
-    #[cfg(feature = "__picker-research")]
-    {
-        let picked = if let Some(packed) = ctx.config.packed_source_features() {
-            match crate::encode::picker::pick_config_from_packed(packed, ctx.target.target) {
-                Ok(p) => p,
-                Err(e) => {
-                    return Err(crate::error::Error::invalid_config(alloc::format!(
-                        "Quality::Zq picker: packed source features unusable: {e:?}"
-                    )));
-                }
-            }
-        } else if let crate::encode::PixelLayout::Rgb8Srgb = ctx.layout {
-            crate::encode::picker::pick_config(ctx.pixels, ctx.width, ctx.height, ctx.target.target)
-        } else {
-            None
-        };
-        if let Some(picked) = picked {
-            pass_config = pass_config
-                .color_mode(crate::encode::ColorMode::YCbCr {
-                    subsampling: picked.subsampling,
-                })
-                .progressive(picked.progressive)
-                .sharp_yuv(picked.sharp_yuv)
-                .optimization(picked.effort.to_preset());
-        }
-    }
+    apply_picker_warmstart(&mut pass_config, &ctx)?;
 
     // Vertical sampling factor of the luma plane in iMCUs. Determines
     // how many block rows belong to a single iMCU emission. Covers
@@ -804,31 +779,30 @@ fn finalize(
 ) -> crate::error::Result<(alloc::vec::Vec<u8>, EncodeMetrics)> {
     // Strict-mode failure checks (see `ZqTarget::max_undershoot` and
     // `BlockArtifactBound::max_overshoot` docs).
-    if let Some(slack) = target.max_undershoot {
-        if score < target.target - slack {
-            return Err(crate::error::Error::invalid_config(alloc::format!(
-                "target-zq encoder achieved score {:.3}, below floor {:.3} \
-                 (max_undershoot = {:.3}) after {} passes",
-                score,
-                target.target,
-                slack,
-                passes_used
-            )));
-        }
+    if let Some(slack) = target.max_undershoot
+        && score < target.target - slack
+    {
+        return Err(crate::error::Error::invalid_config(alloc::format!(
+            "target-zq encoder achieved score {:.3}, below floor {:.3} \
+             (max_undershoot = {:.3}) after {} passes",
+            score,
+            target.target,
+            slack,
+            passes_used
+        )));
     }
-    if let Some(b) = target.block_artifact {
-        if let Some(slack) = b.max_overshoot {
-            if max_block > b.ceiling + slack {
-                return Err(crate::error::Error::invalid_config(alloc::format!(
-                    "target-zq encoder achieved max-block-artifact {:.4}, \
-                     above ceiling {:.4} (max_overshoot = {:.4}) after {} passes",
-                    max_block,
-                    b.ceiling,
-                    slack,
-                    passes_used
-                )));
-            }
-        }
+    if let Some(b) = target.block_artifact
+        && let Some(slack) = b.max_overshoot
+        && max_block > b.ceiling + slack
+    {
+        return Err(crate::error::Error::invalid_config(alloc::format!(
+            "target-zq encoder achieved max-block-artifact {:.4}, \
+             above ceiling {:.4} (max_overshoot = {:.4}) after {} passes",
+            max_block,
+            b.ceiling,
+            slack,
+            passes_used
+        )));
     }
     let targets_met = is_feasible(score, max_block, target);
     let bytes_len = bytes.len();
@@ -910,6 +884,101 @@ fn measure(
         })?;
     let dm = aggregate_diffmap_to_blocks(res.diffmap(), width as usize, height as usize);
     Ok((res.score() as f32, dm))
+}
+
+/// Apply the source-feature picker's categorical prediction to `pass_config`.
+///
+/// The distilled MLP predicts the RD-optimal cell (subsampling × progressive ×
+/// sharp_yuv × effort) for `ctx.target.target`; on success those four axes are
+/// overwritten so downstream config (v_samp, the AQ iMCU schedule, the actual
+/// encode) tracks the picked subsampling rather than a content-blind default.
+///
+/// Shared by both zq* paths so they warm-start identically: the closed loop
+/// (seeds pass 0) and the one-shot picker (its *only* config step).
+///
+/// If the caller supplied packed source features
+/// (`with_packed_source_features`), the picker reuses them and skips analysis —
+/// an incomplete/malformed pack is the caller's bug, so it FAILS the encode with
+/// the missing ids rather than mis-picking off zeroed inputs. Otherwise it
+/// analyzes the RGB8 source fresh (other layouts keep the caller's config),
+/// leaving `pass_config` unchanged on any degenerate input, a non-finite target,
+/// or a needed feature missing from this zenanalyze build.
+#[cfg(feature = "target-zq")]
+fn apply_picker_warmstart(
+    pass_config: &mut crate::encode::EncoderConfig,
+    ctx: &IterationContext<'_>,
+) -> crate::error::Result<()> {
+    let picked = if let Some(packed) = ctx.config.packed_source_features() {
+        match crate::encode::picker::pick_config_from_packed(packed, ctx.target.target) {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(crate::error::Error::invalid_config(alloc::format!(
+                    "Quality::Zq picker: packed source features unusable: {e:?}"
+                )));
+            }
+        }
+    } else if let crate::encode::PixelLayout::Rgb8Srgb = ctx.layout {
+        crate::encode::picker::pick_config(ctx.pixels, ctx.width, ctx.height, ctx.target.target)
+    } else {
+        None
+    };
+    if let Some(picked) = picked {
+        *pass_config = pass_config
+            .clone()
+            .color_mode(crate::encode::ColorMode::YCbCr {
+                subsampling: picked.subsampling,
+            })
+            .progressive(picked.progressive)
+            .sharp_yuv(picked.sharp_yuv)
+            .optimization(picked.effort.to_preset());
+    }
+    Ok(())
+}
+
+/// Realtime one-shot for [`Quality::ZqPicker`]: predict the config, encode once,
+/// no measurement.
+///
+/// The picker sets the categorical axes and a bucket-aware starting quality;
+/// a single encode follows. Unlike [`run_iteration_loop`] there is no
+/// `build_source_reference`, no decode, and no zensim `measure` — so
+/// `achieved_score` is `NaN` (predicted, not measured). Roughly one feature
+/// pass + one encode.
+#[cfg(feature = "target-zq")]
+pub(crate) fn run_picker_oneshot(
+    ctx: IterationContext<'_>,
+) -> crate::error::Result<(alloc::vec::Vec<u8>, EncodeMetrics)> {
+    use crate::encode::{EncoderConfig, Quality};
+
+    let mut pass_config: EncoderConfig = ctx.config.clone();
+    apply_picker_warmstart(&mut pass_config, &ctx)?;
+
+    // Bucket-aware starting quality (same ~1ms analysis the loop's pass 0 uses,
+    // and the same fallback to the bucket-naive lookup on tiny/failed inputs).
+    let bucket = detect_bucket(
+        ctx.layout,
+        ctx.pixels,
+        ctx.width,
+        ctx.height,
+        ctx.config.packed_source_features(),
+    );
+    let starting_q = match bucket {
+        Some(b) => zq_to_starting_jpegli_q_for_bucket(ctx.target.target, b),
+        None => zq_to_starting_jpegli_q(ctx.target.target),
+    };
+    pass_config = pass_config.quality(Quality::ApproxJpegli(starting_q));
+
+    let bytes = encode_pass(&pass_config, &ctx, None)?;
+    let bytes_len = bytes.len();
+    Ok((
+        bytes,
+        EncodeMetrics {
+            achieved_score: f32::NAN,
+            achieved_max_block_artifact: f32::NAN,
+            passes_used: 1,
+            bytes: bytes_len,
+            targets_met: true,
+        },
+    ))
 }
 
 /// Single-pass fallback: encode at the resolved starting q, no

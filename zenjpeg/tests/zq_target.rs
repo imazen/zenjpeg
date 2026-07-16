@@ -357,3 +357,78 @@ fn non_zq_quality_does_not_iterate() {
     );
     assert!(metrics.targets_met, "non-Zq has no goal — vacuously met");
 }
+
+// ---- Quality::ZqPicker: realtime one-shot (2026-07-16) ----
+
+/// The one-shot picker produces a valid JPEG and its metrics carry the
+/// one-shot signature: the score is PREDICTED, not measured, so
+/// `achieved_score` is `NaN` and exactly one pass runs. This is the
+/// distinguishing contract vs the measuring loop.
+#[test]
+fn zq_picker_one_shot_predicts_without_measuring() {
+    let (w, h) = (256u32, 256);
+    let rgb = synthetic_image(w, h);
+    let config = EncoderConfig::ycbcr(Quality::ZqPicker(85.0), ChromaSubsampling::Quarter);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .expect("encoder creation");
+    enc.push_packed(&rgb, Unstoppable).expect("push");
+    let (jpeg, metrics) = enc.finish_with_metrics().expect("finish_with_metrics");
+
+    assert!(!jpeg.is_empty(), "one-shot must produce JPEG bytes");
+    assert_eq!(
+        jpeg.len(),
+        metrics.bytes,
+        "metrics.bytes must match jpeg.len()"
+    );
+    assert_eq!(
+        metrics.passes_used, 1,
+        "one-shot is a single encode — no correction passes"
+    );
+    assert!(
+        metrics.achieved_score.is_nan(),
+        "one-shot PREDICTS the config; it does not decode+measure, so \
+         achieved_score is NaN (this is the signature that distinguishes it \
+         from the Zq measuring loop)"
+    );
+    assert!(
+        metrics.targets_met,
+        "one-shot reports met (it trusts the prediction; there is no measured miss)"
+    );
+
+    // The bytes must be a real, decodable JPEG at the right dimensions.
+    let img = zenjpeg::decode::Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("one-shot output must decode");
+    assert_eq!((img.width(), img.height()), (w, h), "decoded dimensions");
+}
+
+/// One-shot and iterative are observably different paths on the SAME source:
+/// the picker one-shot never measures (`achieved_score` NaN), while the Zq
+/// loop always does (finite). If a regression routed `ZqPicker` through the
+/// loop — or `Zq` through the one-shot — this catches it.
+#[test]
+fn zq_picker_one_shot_differs_from_iterative_loop() {
+    let (w, h) = (256u32, 256);
+    let rgb = synthetic_image(w, h);
+
+    let encode = |q: Quality| {
+        let mut enc = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&rgb, Unstoppable).unwrap();
+        enc.finish_with_metrics().unwrap().1
+    };
+
+    let one_shot = encode(Quality::ZqPicker(85.0));
+    let iterative = encode(Quality::Zq(85.0));
+
+    assert!(
+        one_shot.achieved_score.is_nan(),
+        "ZqPicker must take the no-measure one-shot path"
+    );
+    assert!(
+        iterative.achieved_score.is_finite(),
+        "Zq must take the measuring loop path"
+    );
+}

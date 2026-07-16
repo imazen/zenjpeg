@@ -234,8 +234,15 @@ pub(crate) fn pick_config(
 /// `Ok(None)` so the encoder keeps its heuristic, exactly like [`pick_config`].
 /// These variants are reserved for the caller having supplied *bad or
 /// incomplete* feature data.
+///
+/// The variants' payloads are diagnostic — surfaced via `Debug` in the encode
+/// error message (`apply_picker_warmstart` formats `{e:?}`). Rust's dead-code
+/// lint doesn't count a derived-`Debug` read, so the fields read as "never
+/// read"; `allow(dead_code)` is unconditional (the old `not(test)` gate stopped
+/// working once the picker moved from `__picker-research` to the `target-zq`
+/// umbrella, which compiles this under `--tests`).
 #[derive(Debug)]
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) enum PackedPickError {
     /// The packed pairs were malformed (duplicate id or non-finite value).
     Unpack(zenanalyze::feature::PackError),

@@ -241,7 +241,11 @@ __wasm-simd = []
 # bounds + NaN/inf guard) and the bake's safety/fallback sections. The wire
 # format always parses those sections; this only exposes the Rust API. Lean
 # `predict`/`argmin_masked`-only consumers leave it off.
-__picker-research = ["dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
+#
+# Now a thin alias over `target-zq` (which carries the picker deps since the
+# 2026-07-16 one-shot/iterate fold). Kept as a distinct name only because the
+# `picker_v0_3_holdout_ab` dev binary and some docs reference it.
+__picker-research = ["target-zq"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is
@@ -263,11 +267,21 @@ ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zento
 # anywhere in a build graph flipped the capability on regardless of zenjpeg's
 # flag.
 zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]
-# Target-perceptual-quality (`Quality::Zq` / `Quality::ZqExplicit`) closed-loop
-# encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
-# score target (issue #113). Pulls in `decoder` (for re-decoding each pass)
-# and the zensim crate (for the perceptual metric).
-target-zq = ["dep:zensim"]
+# Target-perceptual-quality encoder — the umbrella for every `zq*` variant.
+#   - `Quality::Zq` / `Quality::ZqExplicit`: closed loop. Iterates
+#     encode + decode + zensim diffmap to land at a perceptual score target
+#     (issue #113). Needs zensim (the metric).
+#   - `Quality::ZqPicker`: realtime one-shot. The distilled picker predicts the
+#     config, single encode, no measurement. Needs zenpredict + zenanalyze-api
+#     (the picker runtime); it does NOT use zensim, but the fold keeps a single
+#     flag rather than splitting a `picker` feature out (chosen 2026-07-16).
+# So this pulls BOTH the metric and the picker. The picker deps are an
+# unpublished sibling path dep today (`../../zenanalyze/zenpredict`), which is
+# why no CI job enables `target-zq` yet; it resolves once they publish. Kept on
+# one line so the i686 CI manifest-strip can rewrite it to just `["dep:zensim"]`
+# (it deletes the unpublished zenpredict path dep, which would otherwise leave a
+# dangling `dep:zenpredict` reference here — see .github/workflows/ci.yml).
+target-zq = ["dep:zensim", "dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
 # JPEG→JPEG recompression to a target zensim Profile A quality with no size
 # regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
 # core router/strategies/calibration need only the decoder — no heavy deps,

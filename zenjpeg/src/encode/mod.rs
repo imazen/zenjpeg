@@ -52,9 +52,11 @@ mod serialize;
 /// See [`Quality::Zq`] and [`Quality::ZqExplicit`] for the entry points.
 pub mod zq;
 
-/// Source-feature quality picker (warm-starts the `Quality::Zq` loop).
-/// Research-only: pulls the unpublished zenpredict v3 runtime + `zenanalyze/hdr`.
-#[cfg(feature = "__picker-research")]
+/// Source-feature quality picker. Powers `Quality::ZqPicker` (realtime
+/// one-shot) and warm-starts the `Quality::Zq` / `ZqExplicit` loop. Pulls the
+/// (currently unpublished) zenpredict v3 runtime + `zenanalyze/hdr`, so it
+/// rides the `target-zq` umbrella feature.
+#[cfg(feature = "target-zq")]
 pub(crate) mod picker;
 
 #[doc(hidden)]

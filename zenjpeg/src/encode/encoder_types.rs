@@ -41,6 +41,25 @@ pub enum Quality {
     /// Target perceptual quality with explicit iteration policy
     /// (issue #113). See [`zq::ZqTarget`] for the per-knob semantics.
     ZqExplicit(crate::encode::zq::ZqTarget),
+
+    /// Realtime perceptual target: predict the config in one shot, no
+    /// measurement loop.
+    ///
+    /// Given the source features and a target perceived-quality score (zq
+    /// units), the distilled picker predicts the RD-optimal categorical config
+    /// (subsampling × progressive × sharp-yuv × effort) and a starting quality,
+    /// then encodes **once**. Unlike [`Zq`](Self::Zq) / [`ZqExplicit`](Self::ZqExplicit)
+    /// there is no decode + zensim measurement and no correction pass, so the
+    /// cost is roughly one feature pass plus one encode — cheap enough for a
+    /// realtime / CDN hot path. The tradeoff is that the score is *predicted*,
+    /// not verified: [`EncodeMetrics::achieved_score`](crate::encode::zq::EncodeMetrics)
+    /// is `NaN` for this variant. Callers who need the achieved score measured,
+    /// or a strictness guarantee, want [`Zq`](Self::Zq) / [`ZqExplicit`](Self::ZqExplicit).
+    ///
+    /// Requires the `target-zq` feature (the picker's runtime). Without it, this
+    /// degrades to a plain encode at the fallback starting quality — the same
+    /// graceful degradation [`Zq`](Self::Zq) has.
+    ZqPicker(f32),
 }
 
 impl Default for Quality {
@@ -83,19 +102,49 @@ impl Quality {
             Quality::ApproxButteraugli(dist) => butteraugli_to_internal(*dist),
             Quality::Zq(zq) => crate::encode::zq::zq_to_starting_jpegli_q(*zq),
             Quality::ZqExplicit(t) => crate::encode::zq::zq_to_starting_jpegli_q(t.target),
+            Quality::ZqPicker(zq) => crate::encode::zq::zq_to_starting_jpegli_q(*zq),
         }
     }
 
     /// Whether this quality variant triggers the closed-loop iteration
     /// path (i.e. requires the decoder + zensim measurement on each
-    /// pass). Returns `false` for the existing one-shot variants.
+    /// pass). Returns `false` for the one-shot variants, including
+    /// [`Quality::ZqPicker`] (which is a perceptual target but does NOT
+    /// iterate — use [`is_perceptual_target`](Self::is_perceptual_target) for
+    /// "any zq* variant").
     #[must_use]
     pub fn is_zq_target(&self) -> bool {
         matches!(self, Quality::Zq(_) | Quality::ZqExplicit(_))
     }
 
+    /// Whether this is any perceptual-target variant — the measuring loop
+    /// ([`Zq`](Self::Zq) / [`ZqExplicit`](Self::ZqExplicit)) **or** the
+    /// one-shot picker ([`ZqPicker`](Self::ZqPicker)). All of these retain the
+    /// source pixels (the loop measures them; the picker analyzes them), so
+    /// this is the predicate the streaming encoder uses to decide whether to
+    /// buffer the source.
+    #[must_use]
+    pub fn is_perceptual_target(&self) -> bool {
+        matches!(
+            self,
+            Quality::Zq(_) | Quality::ZqExplicit(_) | Quality::ZqPicker(_)
+        )
+    }
+
+    /// The target score for the one-shot picker variant
+    /// ([`Quality::ZqPicker`]); `None` otherwise. The realtime dispatch keys
+    /// off this the way the loop keys off [`zq_target`](Self::zq_target).
+    #[must_use]
+    pub fn zq_picker_target(&self) -> Option<f32> {
+        match self {
+            Quality::ZqPicker(zq) => Some(*zq),
+            _ => None,
+        }
+    }
+
     /// Resolve to a [`crate::encode::zq::ZqTarget`] when this is a
-    /// closed-loop variant. Returns `None` for the one-shot variants.
+    /// closed-loop variant. Returns `None` for the one-shot variants
+    /// (including [`ZqPicker`](Self::ZqPicker), which does not iterate).
     #[must_use]
     pub fn zq_target(&self) -> Option<crate::encode::zq::ZqTarget> {
         match self {

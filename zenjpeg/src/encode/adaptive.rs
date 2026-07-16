@@ -402,7 +402,8 @@ impl AdaptiveMetric {
             | Quality::ApproxJpegli(_)
             | Quality::ApproxMozjpeg(_)
             | Quality::Zq(_)
-            | Quality::ZqExplicit(_) => AdaptiveMetric::Ssim2,
+            | Quality::ZqExplicit(_)
+            | Quality::ZqPicker(_) => AdaptiveMetric::Ssim2,
         }
     }
 }
