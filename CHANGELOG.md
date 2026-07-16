@@ -112,6 +112,38 @@ All notable changes to zenjpeg are documented here. Earlier history
   patch), and the workspace `[patch.crates-io] zencodec` tag-pin is removed.
   Only the pre-existing `ultrahdr-core` patch remains.
 
+### Fixed
+
+- **Four `quality_matrix` progressive tests were disabled for a bug that was
+  already fixed** (57a15d65). The 4:4:4 / 4:2:2 / 4:2:0 / 4:4:0 progressive tests
+  were `#[ignore]`d citing *"issue #23: progressive Q10 ~2.8% size excess vs C++
+  jpegli"*. #23 was closed COMPLETED on 2026-04-15, but the ignores were never
+  removed — so the tests sat dead for ~3 months. All four pass: Q10 progressive
+  is +1.4..+2.4% size while scoring **+3.1..+4.1 SSIM2 better** than C++ jpegli,
+  i.e. the bytes buy quality. They now run by default. (`#[ignore]` is a test
+  relaxation; it hid live coverage, not a live bug.) The sibling #78 (baseline
+  4:2:0 Q10 ~2.0%) is genuinely still live and stays ignored.
+- **Truncation warnings no longer report `0 of 0` blocks** (#92, 57a15d65). Both
+  top-level `TruncatedScan` emit sites hardcoded `blocks_decoded: 0,
+  blocks_expected: 0`, contradicting the variant's own contract ("indicate how
+  much data was recovered") — `0 of 0` reads as total loss while carrying no
+  information. Truncation *between* scans now reports the new
+  `DecodeWarning::TruncatedBetweenScans { scans_decoded }` (every scan that
+  started also finished, so there is no partial scan to count); truncation where
+  a scan recovered nothing now reports the real denominator (`0 of N`) via
+  `JpegParser::total_mcus()`. Mid-scan truncation already self-recovered inside
+  `parse_scan` with real counts and is unchanged.
+
+### Added
+
+- **`zenjpeg::decode::Unstoppable`** is now re-exported (#168, 57a15d65). `Stop`
+  already was, but `Unstoppable` — the no-op token callers must actually pass to
+  invoke a decoder — was reachable only via `zenjpeg::encoder`, forcing
+  decode-only users to import from `encoder` to call a *decoder*. Additive.
+- **`DecodeWarning::TruncatedBetweenScans { scans_decoded }`** — see above.
+  (`DecodeWarning` is `#[non_exhaustive]` and documents that variants may be
+  added in minor releases.)
+
 ### Removed
 
 - **All 4 remaining `#[deprecated]` public items** (breaking; ships with the
