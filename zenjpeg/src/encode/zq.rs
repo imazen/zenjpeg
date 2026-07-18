@@ -416,11 +416,27 @@ impl AqController for ScalingController {
     fn adjust(&mut self, strengths: &mut [f32], imcu_idx: usize) {
         let row = match self.scales.get(imcu_idx) {
             Some(r) => r,
-            None => return,
+            None => {
+                // diffmap-RD probe debug (ZQ_DEBUG_CTRL=1): schedule/row mismatch.
+                if std::env::var("ZQ_DEBUG_CTRL").is_ok() {
+                    eprintln!("[ctrl] imcu {imcu_idx}: NO SCHEDULE ROW ({} rows)", self.scales.len());
+                }
+                return;
+            }
         };
+        let before: f32 = strengths.iter().sum();
         for (i, s) in strengths.iter_mut().enumerate() {
             let scale = row.get(i).copied().unwrap_or(1.0);
             *s = (*s * scale).clamp(0.0, 0.20);
+        }
+        if std::env::var("ZQ_DEBUG_CTRL").is_ok() && imcu_idx < 3 {
+            let after: f32 = strengths.iter().sum();
+            let (smin, smax) = row.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+            eprintln!(
+                "[ctrl] imcu {imcu_idx}: n={} row_n={} scale[{smin:.3},{smax:.3}] strengthsum {before:.4}→{after:.4}",
+                strengths.len(),
+                row.len()
+            );
         }
     }
 }
@@ -664,7 +680,13 @@ pub(crate) fn run_iteration_loop(
     // loop; other layouts (BGR, RGBA, 16-bit linear, YCbCr) fall
     // through to single-pass — adding each is a small follow-up that
     // mirrors the path taken below.
-    let z = Zensim::new(ZensimProfile::codec_target());
+    //
+    // RD-experiment override (2026-07-18, diffmap-RD worktree):
+    // `ZENJPEG_ZQ_PROFILE=a|b|latest|bake:<path>` selects the loop's scoring
+    // profile (bake: mounts an arbitrary ZNPR via ZensimProfile::Custom —
+    // zensim `custom-profiles`, worktree-only) so the target-zensim RD eval
+    // can compare drivers; unset → codec_target() (the shipped default; B).
+    let z = Zensim::new(*ZQ_RD_PROFILE.get_or_init(zq_profile_from_env));
     let pre = match build_source_reference(&z, ctx.layout, ctx.pixels, ctx.width, ctx.height) {
         Some(p) => p,
         None => return run_single_pass(&ctx, None),
@@ -691,6 +713,15 @@ pub(crate) fn run_iteration_loop(
     // pass_config was cloned (and picker-warm-started) above; just set the
     // pass-0 starting q here.
     pass_config = pass_config.quality(Quality::ApproxJpegli(starting_q));
+    // diffmap-RD worktree (2026-07-18): track the jpegli q across passes for
+    // GLOBAL q-correction. Measured on the probe: the AQ-strength lever only
+    // shifts the zero-bias rounding threshold (quantize_with_zero_bias_zigzag)
+    // — a 20% strength change produced BYTE-IDENTICAL output — so the shipped
+    // correction passes cannot move the global score at all; only pass-0's
+    // starting q matters. The correction below adjusts q proportionally to the
+    // score error each pass (the missing workhorse); the ScalingController
+    // per-block modulation stays layered on top.
+    let mut q_current = starting_q;
 
     let bytes0 = encode_pass(&pass_config, &ctx, None)?;
     let (score0, dm0) = measure(&z, &pre, &bytes0, ctx.width, ctx.height)?;
@@ -721,6 +752,14 @@ pub(crate) fn run_iteration_loop(
     let mut current_max = max0;
 
     for _pass in 1..=ctx.target.max_passes {
+        // diffmap-RD worktree: GLOBAL q-correction (see comment at q_current).
+        // Proportional step on the score error; ~1.1 jpegli-q per score unit is
+        // the mid-range slope of the bucket tables. Clamped to sane jpegli q.
+        let err = ctx.target.target - current_score; // + ⇒ need higher quality
+        if err.abs() > 0.5 {
+            q_current = (q_current + err * 1.1).clamp(3.0, 99.5);
+            pass_config = pass_config.quality(Quality::ApproxJpegli(q_current));
+        }
         let next = next_scales(
             &current_scales,
             &current_dm,
@@ -734,6 +773,12 @@ pub(crate) fn run_iteration_loop(
         let (score_n, dm_n) = measure(&z, &pre, &bytes_n, ctx.width, ctx.height)?;
         let max_n = max_block(&dm_n);
         passes_used = passes_used.saturating_add(1);
+        if std::env::var("ZQ_DEBUG_CTRL").is_ok() {
+            eprintln!(
+                "[pass {passes_used}] score {score_n:.3} (prev {current_score:.3}) bytes {} max_block {max_n:.5}",
+                bytes_n.len()
+            );
+        }
 
         let cand_feasible = is_feasible(score_n, max_n, &ctx.target);
         // Best-tracking: prefer feasible over infeasible, then smallest bytes.
@@ -850,6 +895,116 @@ fn encode_pass(
     enc.finish()
 }
 
+/// diffmap-RD worktree (2026-07-18): model-sensitivity steering state.
+/// `ZENJPEG_ZQ_MODEL_MAP=signed|abs` → after the FIRST measure of the process,
+/// compute the active profile's per-feature gradient s_k (numerical central
+/// differences through `score_features_with_profile`) and steer every later
+/// measure's diffmap with `DiffmapWeighting::ModelSensitivity` (abs fold =
+/// pass −|s|, per the 2026-07-18 coherence matrix). Process-global by design:
+/// the RD probe runs one (image, target, driver) per process; a fixed-s
+/// additive driver is image-independent anyway.
+#[cfg(feature = "target-zq")]
+static ZQ_MODEL_S: std::sync::OnceLock<Option<&'static [f64]>> = std::sync::OnceLock::new();
+
+/// diffmap-RD worktree: bake bytes + resolved profile for
+/// `ZENJPEG_ZQ_PROFILE=bake:<path>` (once per process).
+#[cfg(feature = "target-zq")]
+static ZQ_BAKE_BYTES: std::sync::OnceLock<alloc::vec::Vec<u8>> = std::sync::OnceLock::new();
+#[cfg(feature = "target-zq")]
+fn zq_bake_bytes() -> &'static [u8] {
+    ZQ_BAKE_BYTES.get().expect("zq bake bytes set").as_slice()
+}
+#[cfg(feature = "target-zq")]
+static ZQ_RD_PROFILE: std::sync::OnceLock<zensim::ZensimProfile> = std::sync::OnceLock::new();
+
+#[cfg(feature = "target-zq")]
+fn zq_profile_from_env() -> zensim::ZensimProfile {
+    use zensim::ZensimProfile;
+    let v = std::env::var("ZENJPEG_ZQ_PROFILE").unwrap_or_default();
+    if let Some(path) = v.strip_prefix("bake:") {
+        let bytes = std::fs::read(path)
+            .unwrap_or_else(|e| panic!("ZENJPEG_ZQ_PROFILE bake {path}: {e}"));
+        ZQ_BAKE_BYTES.set(bytes).ok();
+        let params = zensim::profile::ProfileParams::builder()
+            .mlp(zq_bake_bytes)
+            .skip_score_mapping(true)
+            .extrapolate_score(true)
+            .extended_features(true)
+            .compute_iw_features(true)
+            .build();
+        let params: &'static zensim::profile::ProfileParams =
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(params));
+        return ZensimProfile::Custom { params, name: "zq-rd-bake" };
+    }
+    match v.as_str() {
+        "b" => ZensimProfile::B,
+        "latest" => ZensimProfile::latest_preview(),
+        "a" => {
+            #[allow(deprecated)]
+            ZensimProfile::A
+        }
+        _ => ZensimProfile::codec_target(),
+    }
+}
+
+#[cfg(feature = "target-zq")]
+fn zq_model_map_mode() -> Option<&'static str> {
+    match std::env::var("ZENJPEG_ZQ_MODEL_MAP").as_deref() {
+        Ok("signed") => Some("signed"),
+        Ok("abs") => Some("abs"),
+        _ => None,
+    }
+}
+
+/// Initialize `ZQ_MODEL_S` from a scored result's features (first measure only).
+#[cfg(feature = "target-zq")]
+fn zq_model_s_init(res: &zensim::DiffmapResult, z: &zensim::Zensim, width: u32, height: u32) {
+    let Some(mode) = zq_model_map_mode() else { return };
+    if ZQ_MODEL_S.get().is_some() {
+        return;
+    }
+    let profile = res.result().profile();
+    let feats = res.result().features();
+    // n_inputs by probe: our bakes are exact-width (same trick as the jxl side).
+    let n_in = [372usize, 300, 228, 156]
+        .into_iter()
+        .find(|&n| {
+            feats.len() >= n
+                && zensim::score_features_with_profile(profile, &feats[..n], width, height).is_ok()
+        })
+        .unwrap_or(0);
+    if n_in == 0 {
+        ZQ_MODEL_S.set(None).ok();
+        return;
+    }
+    let base: alloc::vec::Vec<f64> = feats[..n_in].to_vec();
+    let sf = |f: &[f64]| {
+        zensim::score_features_with_profile(profile, f, width, height).unwrap_or(f64::NAN)
+    };
+    let mut s = alloc::vec![0.0f64; n_in];
+    let mut probe = base.clone();
+    for (k, sk) in s.iter_mut().enumerate() {
+        let eps = (base[k].abs() * 1e-3).max(1e-5);
+        probe[k] = base[k] + eps;
+        let up = sf(&probe);
+        probe[k] = base[k] - eps;
+        let dn = sf(&probe);
+        probe[k] = base[k];
+        *sk = if up.is_finite() && dn.is_finite() {
+            (up - dn) / (2.0 * eps)
+        } else {
+            0.0
+        };
+    }
+    if mode == "abs" {
+        for v in &mut s {
+            *v = -v.abs();
+        }
+    }
+    let _ = z; // profile came from the result; z kept for signature clarity
+    ZQ_MODEL_S.set(Some(alloc::boxed::Box::leak(s.into_boxed_slice()))).ok();
+}
+
 /// Decode `jpeg`, compute zensim diffmap against `pre`, return
 /// (score, per-block diffmap).
 #[cfg(feature = "target-zq")]
@@ -875,14 +1030,30 @@ fn measure(
     })?;
     let chunks: &[[u8; 3]] = bytemuck_chunks(&pixels);
     let dec_slice = RgbSlice::new(chunks, width as usize, height as usize);
+    // diffmap-RD: steer with the model's own gradient once it is known
+    // (first measure of the process runs Trained and initializes it).
+    let weighting = match ZQ_MODEL_S.get() {
+        Some(Some(s)) => DiffmapWeighting::ModelSensitivity(s),
+        _ => DiffmapWeighting::Trained,
+    };
+    let model_active = matches!(weighting, DiffmapWeighting::ModelSensitivity(_));
     let res = z
-        .compute_with_ref_and_diffmap(pre, &dec_slice, DiffmapWeighting::Trained)
+        .compute_with_ref_and_diffmap(pre, &dec_slice, weighting)
         .map_err(|e| {
             crate::error::Error::invalid_config(alloc::format!(
                 "zensim compute_with_ref_and_diffmap failed: {e}"
             ))
         })?;
-    let dm = aggregate_diffmap_to_blocks(res.diffmap(), width as usize, height as usize);
+    zq_model_s_init(&res, z, width, height);
+    // A SIGNED model map carries negatives where refining LOSES score; the
+    // block aggregation + ceiling gates treat the map as error mass, so clamp
+    // at 0 (those blocks read as clean → the controller relaxes them).
+    let dm = if model_active {
+        let clamped: alloc::vec::Vec<f32> = res.diffmap().iter().map(|&v| v.max(0.0)).collect();
+        aggregate_diffmap_to_blocks(&clamped, width as usize, height as usize)
+    } else {
+        aggregate_diffmap_to_blocks(res.diffmap(), width as usize, height as usize)
+    };
     Ok((res.score() as f32, dm))
 }
 

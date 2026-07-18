@@ -25,3 +25,11 @@
 
 # Alternative: Set RUSTFLAGS environment variable per-build:
 # RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
+
+# --- diffmap-RD worktree experiment (2026-07-18) ---------------------------
+# Local live-iteration patch, per the workspace Cargo.toml's own instruction:
+# point zensim at the sibling checkout so this worktree gets ZensimProfile::B
+# + DiffmapWeighting::ModelSensitivity. Worktree-only — never land on main
+# (CI's isolated checkout has no siblings).
+[patch."https://github.com/imazen/zensim"]
+zensim = { path = "../zensim/zensim" }

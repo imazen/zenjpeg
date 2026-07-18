@@ -96,7 +96,10 @@ zenresize = { workspace = true, optional = true }
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 # Perceptual metric used by Quality::Zq target-perceptual-quality variants
 # (issue #113). Pulled in only when the `target-zq` feature is enabled.
-zensim = { workspace = true, optional = true }
+# diffmap-RD worktree (2026-07-18): custom-profiles enables mounting arbitrary
+# bakes + DiffmapWeighting::ModelSensitivity for the model-map RD experiment.
+# Worktree-only — do not land on main without review.
+zensim = { workspace = true, optional = true, features = ["custom-profiles"] }
 
 # zenpredict (ZNPR v3 runtime) — pulled in only by the
 # `__picker-research` feature for the dev/picker_v0_3_holdout_ab.rs
@@ -438,6 +441,12 @@ required-features = ["__expert"]
 
 [[example]]
 name = "zq_calibrate"
+required-features = ["target-zq"]
+
+# diffmap-RD worktree (2026-07-18): probe cell runner for the target-zensim RD
+# eval (zensim docs/RD_TARGET_EVAL_DESIGN_2026-07-18.md).
+[[example]]
+name = "zq_rd_probe"
 required-features = ["target-zq"]
 
 [[example]]
