@@ -7,7 +7,7 @@ Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 **The canonical index for all ML data lives at `~/work/zen/DATA_PROVENANCE.md`.**
 
 Quick paths:
-- Trainer input: `/mnt/v/zen/zensim-training/canonical-2026-05-21/`
+- Trainer input: `s3://zentrain/canonical/2026-06-27/` (per `~/work/zen/DATA_PROVENANCE.md`; 2026-05-21 superseded)
 - Master inventory: `~/work/zen/_ml-inventory-2026-05-20/00-MASTER-SYNTHESIS.md`
 - Per-codec picker audit: `~/work/zen/_ml-inventory-2026-05-20/05-per-codec-pickers.md`
 
@@ -29,26 +29,23 @@ The `benchmarks/zenjpeg_picker_v0.3_2026-05-04.bin` (7.5 KB, ZNPR format) is a t
 **Do NOT create `git worktree` directories in this repo.** Claude Code
 sessions have repeatedly desynced worktrees from `origin/main` across
 force-pushes and history rewrites, stranding WIP and stale `main` refs
-across multiple sibling directories. If you need to work on a different
-branch, either:
+across multiple sibling directories.
 
-1. Commit your current work and `git checkout <branch>` in the existing
-   working tree, or
-2. Use `jj` (jujutsu) which auto-snapshots on every command and has
-   first-class support for multiple concurrent changes on one working
-   copy — no worktrees needed. See the "jj alternative" note below.
+**Superseded 2026-07-19: the global jj-on-main workflow (see
+`~/.claude/CLAUDE.md`) is mandatory — no `git checkout` on tracked
+branches; sibling `jj workspace add` only when physically necessary.**
 
-**If you find yourself typing `git worktree add` — stop.** Commit,
-checkout, and work in place. The one exception is when a human
+**If you find yourself typing `git worktree add` — stop.** Work in
+place on main via jj. The one exception is when a human
 explicitly names a worktree path for a specific reason.
 
 **Cleanup of existing worktrees requires rescue first:** copy every
-modified and untracked file to `/tmp/_rescued-worktrees/<timestamp>-<name>/`
+modified and untracked file to `~/tmp/_rescued-worktrees/<timestamp>-<name>/`
 preserving relative paths BEFORE running `git worktree remove` — even
 if `git worktree remove` is supposed to refuse dirty trees. Belt and
 suspenders.
 
-### jj alternative (preferred going forward)
+### Why jj (incident context — jj is now mandatory, see above)
 
 `jj` (https://jj-vcs.github.io/jj/) is a git-compatible VCS that
 eliminates most of the footguns Claude has hit in this session:
@@ -64,8 +61,8 @@ eliminates most of the footguns Claude has hit in this session:
   unintended file (the `internal/jpegli-cpp` symlink typechange)
   don't exist.
 
-Setup: `cargo install jujutsu`, then `jj git init --colocate` in this
-repo. All existing git tooling (GitHub, PRs, CI) keeps working.
+This repo is already colocated (`.jj/` present). All existing git
+tooling (GitHub, PRs, CI) keeps working.
 
 ## API Stability Rules (CRITICAL)
 
@@ -1065,6 +1062,8 @@ cargo run --release --example benchmark_sharp_yuv
 
 ### Benchmark Output Rules (CRITICAL)
 
+NOTE 2026-07-19: NEW benches use zenbench (workspace mandate); the criterion notes below apply to legacy benches only.
+
 **NEVER re-run benchmarks just to parse output differently.** Criterion saves structured JSON:
 
 ```bash
@@ -1073,7 +1072,7 @@ cargo run --release --example benchmark_sharp_yuv
 cat target/criterion/decode_compare/jpegli-baseline/512x512/new/estimates.json | jq '.mean.point_estimate'
 
 # If you need terminal output, pipe to a file on FIRST run:
-cargo bench --bench decode_compare 2>&1 | tee /tmp/bench-output.txt
+cargo bench --bench decode_compare 2>&1 | tee ~/tmp/bench-output.txt
 ```
 
 **JSON structure:** `estimates.json` contains `mean`, `median`, `slope`, `std_dev` with `point_estimate` (nanoseconds) and `confidence_interval`.
