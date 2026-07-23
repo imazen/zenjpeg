@@ -35,6 +35,12 @@ bincode = "1.3"
 
 # Color management
 lcms2 = "6.0"
+# Capped at 0.8.1 in practice (2026-07-22): the `image` crate (a dev-dependency,
+# pulled in for a comparison/parity test) hard-pins `moxcms = "^0.8.0"` with no
+# feature gate, and cargo unifies it with this instance since our range overlaps.
+# Not fixable from our side short of dropping the `image` dev-dependency or
+# waiting for image to publish a release compatible with moxcms 0.9.x. Verified
+# 0.9.0 itself is fine — the block is purely this transitive constraint.
 moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)
