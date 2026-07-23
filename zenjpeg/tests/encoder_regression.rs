@@ -19,10 +19,11 @@ use zenjpeg::encoder::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, Pix
 // =============================================================================
 
 fn load_frymire() -> (Vec<u8>, u32, u32) {
-    let img = image::open("tests/images/frymire.png").expect("frymire.png not found");
-    let rgb = img.to_rgb8();
-    let (w, h) = rgb.dimensions();
-    (rgb.into_raw(), w, h)
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new("tests/images/frymire.png"))
+        .expect("frymire.png not found");
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, w as u32, h as u32)
 }
 
 // =============================================================================

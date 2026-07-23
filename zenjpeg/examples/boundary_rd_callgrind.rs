@@ -19,8 +19,8 @@ use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 use zenjpeg::encoder::{BoundaryRd, BoundaryRdConfig};
 
 fn load_img(path: &Path, max_side: u32) -> (Vec<u8>, usize, usize) {
-    let img = image::open(path).expect("open png");
-    let (w, h) = (img.width(), img.height());
+    let img = zenjpeg_bench_utils::load_png(path).expect("open png");
+    let (w, h) = (img.width() as u32, img.height() as u32);
     let scaled = if w.max(h) > max_side {
         let (tw, th) = if w >= h {
             (
@@ -33,19 +33,23 @@ fn load_img(path: &Path, max_side: u32) -> (Vec<u8>, usize, usize) {
                 max_side,
             )
         };
-        img.resize_exact(tw, th, image::imageops::FilterType::Triangle)
+        let config = zenresize::ResizeConfig::builder(w, h, tw, th)
+            .filter(zenresize::Filter::Triangle)
+            .build();
+        zenresize::resize_3ch(img.as_ref(), tw, th, &config)
     } else {
         img
     };
-    let w = (scaled.width() as usize) & !7;
-    let h = (scaled.height() as usize) & !7;
-    let rgb = scaled.to_rgb8();
-    let orig_w = rgb.width() as usize;
+    let w = scaled.width() & !7;
+    let h = scaled.height() & !7;
+    let orig_w = scaled.width();
     let mut buf = Vec::with_capacity(w * h * 3);
-    let raw = rgb.as_raw();
+    let raw = scaled.buf();
     for y in 0..h {
-        let row_start = y * orig_w * 3;
-        buf.extend_from_slice(&raw[row_start..row_start + w * 3]);
+        let row_start = y * orig_w;
+        for p in &raw[row_start..row_start + w] {
+            buf.extend_from_slice(&[p.r, p.g, p.b]);
+        }
     }
     (buf, w, h)
 }

@@ -95,9 +95,10 @@ fn gradient_gray(w: u32, h: u32) -> Vec<u8> {
 }
 
 fn load_rgb_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    let img = image::open(path).ok()?.to_rgb8();
-    let (w, h) = img.dimensions();
-    Some((img.into_raw(), w, h))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((bytes, w as u32, h as u32))
 }
 
 struct Measurement {

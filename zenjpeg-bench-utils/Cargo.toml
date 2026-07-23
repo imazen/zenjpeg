@@ -18,8 +18,10 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 
 # Image I/O
+# Decoding uses zenpng (below); `png` (encoder only) stays for save_png's PNG output.
 png = { workspace = true }
-# zenpng = { workspace = true }  # Temporarily disabled: zencodec/zenpixels API mismatch
+zenpng = { workspace = true }
+zenpixels-convert = { workspace = true, features = ["rgb"] }
 
 # JPEG decoding (de-facto standard decoder for comparisons)
 zune-jpeg = { workspace = true }

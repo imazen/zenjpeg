@@ -78,10 +78,11 @@ fn parse_args() -> Args {
 }
 
 fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let img =
-        image::open(path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
-    let rgb = img.to_rgb8();
-    (rgb.as_raw().clone(), rgb.width(), rgb.height())
+    let img = zenjpeg_bench_utils::load_png(path)
+        .unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, w as u32, h as u32)
 }
 
 fn encode_and_score(

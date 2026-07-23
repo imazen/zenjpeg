@@ -264,10 +264,11 @@ fn chrono_today() -> String {
 // ---------------------------------------------------------------------
 
 fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let img =
-        image::open(path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
-    let rgb = img.to_rgb8();
-    (rgb.as_raw().clone(), rgb.width(), rgb.height())
+    let img = zenjpeg_bench_utils::load_png(path)
+        .unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, w as u32, h as u32)
 }
 
 /// Resize an RGB8 image to fit within `target_max` on its longer side
@@ -279,11 +280,17 @@ fn resize_to(rgb: &[u8], w: u32, h: u32, target_max: u32) -> (Vec<u8>, u32, u32)
     let scale = target_max as f32 / w.max(h) as f32;
     let new_w = ((w as f32 * scale).round() as u32).max(1);
     let new_h = ((h as f32 * scale).round() as u32).max(1);
-    let buf = image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::from_raw(w, h, rgb.to_vec())
-        .expect("rgb8 buffer");
-    let resized =
-        image::imageops::resize(&buf, new_w, new_h, image::imageops::FilterType::Lanczos3);
-    (resized.into_raw(), new_w, new_h)
+    let pixels: Vec<rgb::RGB8> = rgb
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let src = imgref::Img::new(pixels, w as usize, h as usize);
+    let config = zenresize::ResizeConfig::builder(w, h, new_w, new_h)
+        .filter(zenresize::Filter::Lanczos)
+        .build();
+    let resized = zenresize::resize_3ch(src.as_ref(), new_w, new_h, &config);
+    let out_bytes: Vec<u8> = resized.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (out_bytes, new_w, new_h)
 }
 
 // ---------------------------------------------------------------------

@@ -29,7 +29,7 @@
 //!
 //! Usage:
 //!   cargo run --release -p zenjpeg \
-//!     --features "target-zq trellis" \
+//!     --features "target-zq" \
 //!     --example picker_v0_3_holdout_ab -- \
 //!     --bin benchmarks/zenjpeg_picker_v0.3_2026-05-04.bin \
 //!     --corpus ~/work/zentrain-corpus/mlp-validate/cid22-val \
@@ -37,7 +37,8 @@
 //!     --out-md benchmarks/picker_v0.3_zenjpeg_2026-05-04.md \
 //!     --out-tsv benchmarks/picker_v0.3_holdout_ab_2026-05-04.tsv
 
-#![cfg(all(feature = "target-zq", feature = "trellis"))]
+// zenjpeg 0.9.0 dropped the no-op `trellis` feature (trellis is always compiled now).
+#![cfg(feature = "target-zq")]
 #![forbid(unsafe_code)]
 
 use std::env;
@@ -442,13 +443,13 @@ struct DecodedPng {
 }
 
 fn decode_png(path: &Path) -> Option<DecodedPng> {
-    let img = image::open(path).ok()?.to_rgb8();
-    let w = img.width();
-    let h = img.height();
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (buf, w, h) = img.into_contiguous_buf();
+    let rgb: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some(DecodedPng {
-        rgb: img.into_raw(),
-        w,
-        h,
+        rgb,
+        w: w as u32,
+        h: h as u32,
     })
 }
 

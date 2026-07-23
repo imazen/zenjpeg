@@ -729,6 +729,28 @@ entries accumulate here.
    - **Fix:** constrained optimization or a post-smoothing pass over the 20 anchors, plus a
      monotonicity regression test (natural home: `sa_piecewise_v4.rs`'s test module).
 
+2. **Two `target-zq`-gated research examples don't compile against current APIs (found
+   2026-07-23, pre-existing).** Neither is part of the normal build/test matrix — both
+   require the `target-zq` feature, and per this doc's own Feature Flags section "no CI
+   job enables `target-zq`" — but `--all-features` exposes them, and one (below) was
+   additionally hidden behind a dead cfg condition until today.
+   - **`examples/zq_calibrate.rs`**: references `AnalysisFeature::TextLikelihood` and
+     `AnalysisFeature::ScreenContentLikelihood`, neither of which exist on the `zenanalyze`
+     git dependency's current `AnalysisFeature` enum (`error[E0599]`). Needs the current
+     variant names from `zenanalyze` (unpublished sibling, `~/work/zen/zenanalyze`).
+   - **`examples/picker_v0_3_holdout_ab.rs`**: `#![cfg(all(feature = "target-zq", feature =
+     "trellis"))]` referenced the removed `trellis` feature (see "Flags that no longer
+     exist" above), so the file was UNCONDITIONALLY compiled out — the `cfg` could never be
+     true, meaning nobody has actually built this file since `trellis` was dropped. Fixed
+     the gate to plain `#![cfg(feature = "target-zq")]` (now consistent with the
+     `[[example]]`'s own `required-features`), which reveals it's *also* stale: unresolved
+     `zenjpeg::encode::trellis::HybridConfig` import, and `EncoderConfig` has no
+     `chroma_distance_scale`/`hybrid_config` methods anymore (there's a `chroma_distance_scales`
+     — plural — getter in `encode/encoder_types.rs`, but the setter-side API this file
+     expects doesn't match current `EncoderConfig`). Needs a real pass against the current
+     encoder builder API, not attempted here — out of scope for the day's actual task
+     (removing the `image` dev-dependency to unblock a moxcms upgrade).
+
 ### Fixed / Resolved Bugs (historical reference)
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).

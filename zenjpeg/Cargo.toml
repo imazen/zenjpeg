@@ -158,13 +158,16 @@ proptest = { workspace = true }
 criterion = { workspace = true }
 zenbench = { workspace = true }
 png = { workspace = true }
-# zenpng = { workspace = true }  # Temporarily disabled: zencodec/zenpixels API mismatch
+# PNG-encodes visual-diff montages (tests/bundled/visual_diff_regression.rs).
+zenpng = { workspace = true }
 dssim-core = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg-rs = { workspace = true }
 rayon = { workspace = true }
-# zenresize = { workspace = true }  # Disabled: linear-srgb version mismatch
+# Downscaling test/calibration corpus images (zq_pareto_calibrate,
+# boundary_rd_perf_bench, boundary_rd_callgrind).
+zenresize = { workspace = true }
 # For corpus comparison tests (requires local codec-eval crate)
 codec-eval = { workspace = true }
 # Metadata crates (for integration testing)
@@ -180,7 +183,6 @@ ultrahdr-core = { workspace = true }
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
 zensim-regress = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a944420ca0e040ecfcea0f4afa263" }
 zensim = { workspace = true, features = ["classification"] }
-image = "0.25"
 
 [features]
 default = []

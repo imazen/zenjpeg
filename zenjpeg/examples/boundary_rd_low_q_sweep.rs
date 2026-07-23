@@ -201,11 +201,9 @@ fn build_grid() -> Vec<ConfigKnob> {
 // ---------------- corpus loading ----------------
 
 fn load_rgb(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
-    let img = image::open(path).ok()?;
-    let rgb = img.to_rgb8();
-    let w = rgb.width() as usize;
-    let h = rgb.height() as usize;
-    let buf = rgb.into_raw();
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (rgb, w, h) = img.into_contiguous_buf();
+    let buf: Vec<u8> = rgb.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     debug_assert_eq!(buf.len(), w * h * 3);
     Some((buf, w, h))
 }

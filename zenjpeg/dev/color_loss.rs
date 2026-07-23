@@ -487,9 +487,10 @@ fn compute_metrics(orig: &[u8], recon: &[u8], w: usize, h: usize) -> PathMetrics
 }
 
 fn load_rgb8(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
-    let img = image::open(path).ok()?.to_rgb8();
-    let (w, h) = (img.width() as usize, img.height() as usize);
-    Some((img.into_raw(), w, h))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((bytes, w, h))
 }
 
 fn main() {

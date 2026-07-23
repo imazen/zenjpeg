@@ -21,13 +21,6 @@ fn bitmap_from_rgba(rgba: &[u8], width: u32, height: u32) -> Bitmap {
     Bitmap::from_rgba_slice(rgba, width, height).expect("rgba buffer matches w*h*4")
 }
 
-/// Convert a `Bitmap` to an `image::RgbaImage` (the rest of this test, incl.
-/// `save_montage`, works with `image::RgbaImage`).
-fn bitmap_to_image(bm: Bitmap) -> image::RgbaImage {
-    let (w, h) = bm.dimensions();
-    image::RgbaImage::from_raw(w, h, bm.into_raw()).expect("bitmap raw matches dimensions")
-}
-
 /// Shim preserving the old `create_comparison_montage_raw` signature on top of
 /// zensim-regress 0.4's `Bitmap` API: amplified diff panel + side-by-side
 /// montage `[expected | actual | diff]`.
@@ -38,11 +31,11 @@ fn create_comparison_montage_raw(
     height: u32,
     amplification: u8,
     gap: u32,
-) -> image::RgbaImage {
+) -> Bitmap {
     let expected = bitmap_from_rgba(ref_rgba, width, height);
     let actual = bitmap_from_rgba(test_rgba, width, height);
     let diff = generate_diff_image(&expected, &actual, amplification);
-    bitmap_to_image(create_montage(&[&expected, &actual, &diff], gap))
+    create_montage(&[&expected, &actual, &diff], gap)
 }
 
 /// Shim preserving the old `generate_diff_image_raw` signature on top of
@@ -53,10 +46,29 @@ fn generate_diff_image_raw(
     width: u32,
     height: u32,
     amplification: u8,
-) -> image::RgbaImage {
+) -> Bitmap {
     let expected = bitmap_from_rgba(ref_rgba, width, height);
     let actual = bitmap_from_rgba(test_rgba, width, height);
-    bitmap_to_image(generate_diff_image(&expected, &actual, amplification))
+    generate_diff_image(&expected, &actual, amplification)
+}
+
+/// Encode a `Bitmap` (packed RGBA8) as PNG bytes and write it to `path`.
+fn write_bitmap_png(bitmap: &Bitmap, path: &std::path::Path) {
+    let pixels: Vec<rgb::Rgba<u8>> = bitmap
+        .as_raw()
+        .chunks_exact(4)
+        .map(|c| rgb::Rgba::new(c[0], c[1], c[2], c[3]))
+        .collect();
+    let img = imgref::Img::new(pixels, bitmap.width() as usize, bitmap.height() as usize);
+    let png_bytes = zenpng::encode_rgba8(
+        img.as_ref(),
+        None,
+        &zenpng::EncodeConfig::default(),
+        &enough::Unstoppable,
+        &enough::Unstoppable,
+    )
+    .expect("encode montage PNG");
+    std::fs::write(path, png_bytes).expect("write montage PNG");
 }
 
 /// Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel) for zensim-regress.
@@ -250,14 +262,14 @@ fn make_noise_patches_image(width: usize, height: usize) -> Vec<u8> {
 
 /// Save a montage to disk. Creates the output dir if needed.
 /// Silently skips if the output dir can't be created (e.g., CI without /mnt/v/).
-fn save_montage(montage: &image::RgbaImage, name: &str) {
+fn save_montage(montage: &Bitmap, name: &str) {
     let dir = std::path::Path::new(OUTPUT_DIR);
     if std::fs::create_dir_all(dir).is_err() {
         println!("  Skipped save (output dir unavailable): {}", dir.display());
         return;
     }
     let path = dir.join(format!("{name}.png"));
-    montage.save(&path).expect("save montage");
+    write_bitmap_png(montage, &path);
     println!("  Saved: {}", path.display());
 }
 
@@ -379,9 +391,10 @@ fn run_visual_diff(
         let diff_img = generate_diff_image_raw(ref_rgba, &zen_rgba, width, height, amplification);
         let diff_dir = std::path::Path::new(OUTPUT_DIR);
         if diff_dir.exists() {
-            diff_img
-                .save(diff_dir.join(format!("{label}_{path_name}_diff.png")))
-                .expect("save diff");
+            write_bitmap_png(
+                &diff_img,
+                &diff_dir.join(format!("{label}_{path_name}_diff.png")),
+            );
         }
     }
 
@@ -909,9 +922,10 @@ fn test_waterhouse_banding() {
         let diff_img = generate_diff_image_raw(ref_rgba, &zen_rgba, w, h, 10);
         let diff_dir = std::path::Path::new(OUTPUT_DIR);
         if diff_dir.exists() {
-            diff_img
-                .save(diff_dir.join(format!("waterhouse_{path_name}_diff.png")))
-                .expect("save diff");
+            write_bitmap_png(
+                &diff_img,
+                &diff_dir.join(format!("waterhouse_{path_name}_diff.png")),
+            );
         }
 
         // Assertions:

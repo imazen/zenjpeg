@@ -40,9 +40,10 @@ fn cjpegli_path() -> PathBuf {
 }
 
 fn load_rgb(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
-    let img = image::open(path).ok()?.to_rgb8();
-    let (w, h) = img.dimensions();
-    Some((w, h, img.into_raw()))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((w as u32, h as u32, bytes))
 }
 
 fn write_ppm(path: &Path, w: u32, h: u32, rgb: &[u8]) {
