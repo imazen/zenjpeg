@@ -40,20 +40,42 @@ lcms2 = "6.0"
 # older instance). The `image` crate that used to force-cap this whole
 # workspace at 0.8.1 is gone (see zenjpeg/Cargo.toml's dev-dependencies).
 #
-# One separate, ISOLATED moxcms 0.8.1 instance remains, entirely contained
-# within the ultrahdr-rs dev-dependency subtree (ultrahdr-rs 0.3.5 on
-# crates.io hard-pins moxcms = "0.8.1"; its own main branch already widened
-# this, but publishing a fix cascades further — ultrahdr-core needs
-# zenpixels-convert ^0.2.15, unpublished, and patching that to the local
-# checkout breaks the published zenpng 0.1.4's use of its
-# PixelBufferConvertExt, whose method shapes drifted between 0.2.14 and
-# local 0.2.15). Tried and reverted a 3-hop local-path patch chain
-# (ultrahdr-rs + ultrahdr-core + zenpixels-convert) — it unifies everything
-# onto 0.9.0 but breaks zenpng's build. Not worth forcing: zenjpeg's own code
-# never crosses the moxcms type across the ultrahdr-rs boundary (it's used
-# as a black-box comparison tool via its own public API), so the isolated
-# 0.8.1 instance is harmless. Revisit once ultrahdr-rs + zenpixels-convert
-# actually publish.
+# UPDATE 2026-07-24: the 3-hop chain (zenpixels-convert -> ultrahdr-core ->
+# ultrahdr-rs) that used to force an isolated moxcms 0.8.1 instance is now
+# published for real, not just locally patched: zenpixels 0.2.16,
+# zenpixels-convert 0.2.16 (crates.io), ultrahdr-core 0.6.0 (crates.io,
+# see below). `cargo tree -i moxcms` inside ~/work/zen/ultrahdr now shows a
+# single unified moxcms 0.9.0 instance.
+#
+# One ISOLATED moxcms 0.8.1 instance remains here in zenjpeg specifically,
+# entirely contained within the ultrahdr-rs *dev*-dependency subtree (used
+# only by our own test suite as a black-box HDR comparison tool — dev-deps
+# never ship in the published zenjpeg crate). Root cause is now circular
+# rather than unpublished-sibling: ultrahdr-rs's own next release (0.4.1,
+# tagged + GitHub-released, see imazen/ultrahdr) requires zenjpeg 0.9.0
+# published on crates.io first (workspace pin `zenjpeg = { path =
+# "../zenjpeg/zenjpeg", version = "0.9.0" }`), and zenjpeg 0.9.0 itself is
+# pre-bumped but gated on explicit owner sign-off before `cargo publish`
+# (same zencodec-0.1.26-driven release batch as zenpng 0.2.0 — see
+# CHANGELOG.md's `[Unreleased]` section). So crates.io ultrahdr-rs stays at
+# 0.3.5 (hard-pinning moxcms = "0.8.1") until that publish happens. As
+# before: zenjpeg's own code never crosses a moxcms type across the
+# ultrahdr-rs boundary, so the isolated instance is harmless, not just
+# unfixed. Revisit by publishing zenjpeg 0.9.0 (unblocks ultrahdr-rs 0.4.1,
+# which then unblocks this).
+#
+# A SECOND, unrelated isolated moxcms 0.7.11 instance was found the same day
+# via `codec-eval` (another dev-dependency, our own crate at ~/work/codec-eval,
+# used for corpus comparison tests). Root cause is different and NOT a moxcms
+# problem: codec-eval's published 0.3.1/0.3.2 both require `fast-ssim2 =
+# "^0.7.2"`, and fast-ssim2 0.7.2 + 0.7.3 are BOTH YANKED with no 0.7.4 —
+# codec-eval >0.3.0 is currently unresolvable from crates.io at all, so this
+# workspace's Cargo.lock is stuck on the last resolvable version, 0.3.0,
+# whose own moxcms pin predates codec-eval's later `moxcms = "0.8"` bump.
+# Same "harmless, dev-only, no type crosses the boundary" reasoning applies.
+# Fix requires a codec-eval 0.3.3 publish bumping its fast-ssim2 requirement
+# past the yanked range — out of scope for the moxcms unification pass that
+# produced this comment; not attempted here.
 moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)
@@ -155,7 +177,7 @@ zentone = { version = "0.1", default-features = false }
 
 # Our ultrahdr crates
 ultrahdr-rs = ">=0.3.5, <0.5"
-ultrahdr-core = { version = "0.5", default-features = false }
+ultrahdr-core = { version = ">=0.5, <0.7", default-features = false }
 
 # Resize pipeline. Constraint solver (FitMode) and EXIF-orientation bridge
 # both live in zenresize 0.3+. zenlayout is no longer used anywhere in this
@@ -221,7 +243,3 @@ manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
 
-[patch.crates-io]
-# ultrahdr-core 0.5.0 on crates.io predates full_reconstruction_boost (the
-# canonical ReconstructHdr boost route, heic#20). Drop on next publish.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "3ac20f99d45e985e09f274fc07181b238385e703" }

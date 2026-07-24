@@ -255,7 +255,9 @@ __picker-research = ["target-zq"]
 # + zenjpeg::container::xmp; types fold to zenpixels (PixelFormat,
 # ColorPrimaries, TransferFunction, PixelBuffer).
 # `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
-ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
+# `ultrahdr-core/f16` restores HdrOutputFormat::LinearF16 (ultrahdr-core 0.6.0
+# made it default-off; ReconstructHdr's `wants_f16` output path needs it).
+ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "ultrahdr-core/f16", "dep:half", "dep:zentone"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
 # zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
 # path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
