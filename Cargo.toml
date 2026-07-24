@@ -64,18 +64,16 @@ lcms2 = "6.0"
 # unfixed. Revisit by publishing zenjpeg 0.9.0 (unblocks ultrahdr-rs 0.4.1,
 # which then unblocks this).
 #
-# A SECOND, unrelated isolated moxcms 0.7.11 instance was found the same day
-# via `codec-eval` (another dev-dependency, our own crate at ~/work/codec-eval,
-# used for corpus comparison tests). Root cause is different and NOT a moxcms
-# problem: codec-eval's published 0.3.1/0.3.2 both require `fast-ssim2 =
-# "^0.7.2"`, and fast-ssim2 0.7.2 + 0.7.3 are BOTH YANKED with no 0.7.4 —
-# codec-eval >0.3.0 is currently unresolvable from crates.io at all, so this
-# workspace's Cargo.lock is stuck on the last resolvable version, 0.3.0,
-# whose own moxcms pin predates codec-eval's later `moxcms = "0.8"` bump.
-# Same "harmless, dev-only, no type crosses the boundary" reasoning applies.
-# Fix requires a codec-eval 0.3.3 publish bumping its fast-ssim2 requirement
-# past the yanked range — out of scope for the moxcms unification pass that
-# produced this comment; not attempted here.
+# RESOLVED 2026-07-24: a second, unrelated isolated moxcms 0.7.11 instance
+# via `codec-eval` (our own crate at ~/work/codec-eval, a dev-dependency for
+# corpus comparison tests) is now gone for real. Root cause wasn't moxcms:
+# codec-eval's published 0.3.1/0.3.2 both required `fast-ssim2 = "^0.7.2"`,
+# and fast-ssim2 0.7.2 + 0.7.3 are BOTH YANKED with no 0.7.4 — codec-eval
+# >0.3.0 was unresolvable from crates.io at all, so this workspace stuck on
+# the last resolvable version, 0.3.0. Fixed by publishing codec-eval 0.3.3
+# (bumps fast-ssim2 to 0.8.0+ and widens its own moxcms range to cover
+# 0.9.0). `cargo update -p codec-eval@0.3.0` picked it up; only the
+# ultrahdr-rs 0.8.1 instance documented above remains.
 moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)

@@ -126,6 +126,17 @@ All notable changes to zenjpeg are documented here. Earlier history
   `ultrahdr-rs` *dev*-dependency subtree (test-only, never ships) — it
   requires `zenjpeg 0.9.0` itself to publish first (see QUEUED BREAKING
   CHANGES above), a circular dependency this repo can't unblock alone.
+- **deps: `codec-eval` bumped to `0.3.3`, eliminating the second isolated
+  `moxcms 0.7.11` dev-dependency instance.** codec-eval 0.3.1/0.3.2 both
+  required `fast-ssim2 = "^0.7.2"`, and fast-ssim2 0.7.2/0.7.3 are both
+  yanked with no 0.7.4 ever published — codec-eval >0.3.0 was unresolvable
+  from crates.io at all, so this workspace's Cargo.lock was stuck on 0.3.0,
+  whose moxcms pin predated codec-eval's own later `moxcms = "0.8"` bump.
+  Published codec-eval 0.3.3 (bumps fast-ssim2 past the yanked range, widens
+  its own moxcms range to cover 0.9.0); `cargo update -p codec-eval@0.3.0`
+  picked it up here. The shipped `moxcms` graph is unchanged (was already
+  unified at 0.9.0) — this only removes dev-dependency graph bloat. Only the
+  `ultrahdr-rs` 0.8.1 instance above remains.
 
 ### Fixed
 
