@@ -111,6 +111,21 @@ All notable changes to zenjpeg are documented here. Earlier history
   resolves from the registry, so the graph unifies on one `zencodec` with no
   patch), and the workspace `[patch.crates-io] zencodec` tag-pin is removed.
   Only the pre-existing `ultrahdr-core` patch remains.
+- **deps: `ultrahdr-core` bumped to `>=0.5, <0.7` — the remaining
+  `[patch.crates-io]` entry noted above is now retired too** (5ddb6a10).
+  `ultrahdr-core` 0.6.0 published on crates.io (imazen/ultrahdr) already
+  contains the git-rev this workspace was patched to (`3ac20f99`, confirmed
+  via `git merge-base --is-ancestor`), so the patch is redundant. Also picks
+  up `zenpixels`/`zenpixels-convert` 0.2.16 (now published), which fully
+  unifies this workspace's own `moxcms` dependency onto a single `v0.9.0`
+  instance in the *shipped* graph. `ultrahdr-core` 0.6.0 made
+  `HdrOutputFormat::LinearF16` opt-in behind a new `f16` feature (was
+  unconditional); forwarded `ultrahdr-core/f16` through this crate's own
+  `ultrahdr` feature to keep `ReconstructHdr`'s `wants_f16` output path
+  compiling. One isolated `moxcms 0.8.1` instance remains, confined to the
+  `ultrahdr-rs` *dev*-dependency subtree (test-only, never ships) — it
+  requires `zenjpeg 0.9.0` itself to publish first (see QUEUED BREAKING
+  CHANGES above), a circular dependency this repo can't unblock alone.
 
 ### Fixed
 
