@@ -186,6 +186,10 @@ zensim = { workspace = true, features = ["classification"] }
 
 [features]
 default = []
+# Dev-only: enables archmage/testable_dispatch so benches/tier_isolation.rs can
+# disable the baseline SIMD token (NEON on aarch64) and measure a real scalar
+# arm. Never enable in a published build.
+_dev = ["archmage/testable_dispatch"]
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
 # Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time
@@ -305,6 +309,11 @@ recompress-expert = ["recompress"]
 layout = ["dep:zenresize"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
 # zennode = ["dep:zennode", "zencodec"]
+
+[[bench]]
+name = "tier_isolation"
+harness = false
+required-features = ["_dev"]
 
 [[bench]]
 name = "encode"

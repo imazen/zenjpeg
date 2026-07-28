@@ -1,0 +1,297 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling libm v0.2.16
+   Compiling libc v0.2.189
+   Compiling autocfg v1.5.1
+   Compiling cfg-if v1.0.4
+   Compiling safe_unaligned_simd v0.2.5
+   Compiling rustversion v1.0.23
+   Compiling imgref v1.12.2
+   Compiling bitflags v2.13.1
+   Compiling shlex v2.0.1
+   Compiling num-traits v0.2.19
+   Compiling thiserror v2.0.19
+   Compiling find-msvc-tools v0.1.9
+   Compiling crossbeam-utils v0.8.22
+   Compiling cc v1.4.0
+   Compiling crossbeam-epoch v0.9.20
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling memchr v2.8.3
+   Compiling serde_core v1.0.229
+   Compiling either v1.17.0
+   Compiling crossbeam-deque v0.8.7
+   Compiling whereat v0.1.5
+   Compiling zerocopy v0.8.55
+   Compiling enough v0.4.4
+   Compiling rustix v1.1.4
+   Compiling rayon-core v1.13.0
+   Compiling errno v0.3.14
+   Compiling serde v1.0.229
+   Compiling paste v1.0.15
+   Compiling once_cell v1.21.4
+   Compiling thiserror-impl v2.0.19
+   Compiling serde_derive v1.0.229
+   Compiling rayon v1.12.0
+   Compiling zmij v1.0.23
+   Compiling almost-enough v0.4.4
+   Compiling bytemuck_derive v1.11.0
+   Compiling archmage-macros v0.9.28
+   Compiling zerocopy-derive v0.8.55
+   Compiling num-integer v0.1.46
+   Compiling version_check v0.9.5
+   Compiling getrandom v0.3.4
+   Compiling bytemuck v1.25.2
+   Compiling target-features v0.1.6
+   Compiling itoa v1.0.18
+   Compiling archmage v0.9.28
+   Compiling serde_json v1.0.151
+   Compiling generic-array v0.14.7
+   Compiling num-bigint v0.4.8
+   Compiling rgb v0.8.53
+   Compiling wide v1.5.0
+   Compiling zenpixels v0.2.16
+   Compiling magetypes v0.9.28
+   Compiling zencodec v0.1.26
+   Compiling garb v0.2.8
+   Compiling pxfm v0.1.30
+   Compiling simd-adler32 v0.3.10
+   Compiling bytes v1.12.1
+   Compiling crc32fast v1.5.0
+   Compiling utf8parse v0.2.2
+   Compiling lz4_flex v0.13.1
+   Compiling anstyle-parse v1.0.0
+   Compiling linear-srgb v0.6.12
+   Compiling num-rational v0.4.2
+   Compiling half v2.7.1
+   Compiling zenpixels-convert v0.2.16
+   Compiling num-derive v0.4.2
+   Compiling cmake v0.1.58
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling byte-slice-cast v1.2.3
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling getrandom v0.4.3
+   Compiling anstyle-query v1.1.5
+   Compiling typenum v1.20.1
+   Compiling adler2 v2.0.1
+   Compiling yuvxyb-math v0.1.1
+   Compiling fast-ssim2 v0.8.2
+   Compiling miniz_oxide v0.8.9
+   Compiling anstream v1.0.0
+   Compiling av-data v0.4.4
+   Compiling jpegli-internals-sys v0.1.0 (/Users/lilith/work/zen/zenjpeg/internal/jpegli-internals-sys)
+   Compiling rand_core v0.9.5
+   Compiling v_frame v0.5.2
+   Compiling equator-macro v0.4.2
+   Compiling clap_lex v1.1.0
+   Compiling log v0.4.33
+   Compiling heck v0.5.0
+   Compiling regex-syntax v0.8.11
+   Compiling strsim v0.11.1
+   Compiling option-ext v0.2.0
+   Compiling dirs-sys v0.5.0
+   Compiling yuvxyb v0.5.0
+   Compiling clap_builder v4.6.2
+   Compiling clap_derive v4.6.4
+   Compiling equator v0.4.2
+   Compiling nasm-rs v0.3.2
+   Compiling zenflate v0.3.6
+   Compiling itertools v0.14.0
+   Compiling alloca v0.4.0
+   Compiling objc2-core-foundation v0.3.2
+   Compiling ciborium-io v0.2.2
+   Compiling zenresize v0.3.1
+   Compiling lz4_flex v0.11.6
+   Compiling plotters-backend v0.3.7
+   Compiling tinyvec_macros v0.1.1
+   Compiling dunce v1.0.5
+   Compiling fastrand v2.5.0
+   Compiling core-foundation-sys v0.8.7
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+   Compiling tempfile v3.27.0
+   Compiling test-case-core v3.3.1
+   Compiling iana-time-zone v0.1.65
+   Compiling plotters-svg v0.3.7
+   Compiling mozjpeg-sys v2.2.3
+   Compiling tinyvec v1.12.0
+   Compiling dssim-core v3.4.0
+   Compiling zenpredict v0.2.1 (https://github.com/imazen/zenanalyze?rev=9a9be8200f26f643b45338711426cacae820f3a1#9a9be820)
+   Compiling ciborium-ll v0.2.2
+   Compiling objc2-io-kit v0.3.2
+   Compiling zenpng v0.1.4
+   Compiling clap v4.6.4
+   Compiling regex-automata v0.4.16
+   Compiling multiversion-macros v0.8.0
+   Compiling aligned-vec v0.6.4
+   Compiling dirs v6.0.0
+   Compiling flate2 v1.1.9
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling zenanalyze v0.2.0 (https://github.com/imazen/zenanalyze?rev=13d40c3be60e#13d40c3b)
+   Compiling ultrahdr-core v0.6.0
+   Compiling zenyuv v0.1.3 (/Users/lilith/work/zen/zenjpeg/zenyuv)
+warning: function `rgb_to_yuv420_scalar_tail` is never used
+   --> zenyuv/src/encode.rs:281:15
+    |
+281 | pub(crate) fn rgb_to_yuv420_scalar_tail(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pack_i16_pair` is never used
+   --> zenyuv/src/types.rs:124:21
+    |
+124 | pub(crate) const fn pack_i16_pair(a: i16, b: i16) -> i32 {
+    |                     ^^^^^^^^^^^^^
+
+   Compiling ppv-lite86 v0.2.21
+   Compiling butteraugli v0.9.3
+   Compiling zenblend v0.1.3
+   Compiling moxcms v0.9.0
+   Compiling moxcms v0.8.1
+warning: `zenyuv` (lib) generated 2 warnings
+   Compiling fdeflate v0.3.7
+   Compiling archmage-macros v0.4.0
+   Compiling fd-lock v4.0.4
+   Compiling itertools v0.13.0
+   Compiling csv-core v0.1.13
+   Compiling wait-timeout v0.2.1
+   Compiling cast v0.3.0
+   Compiling ryu v1.0.23
+   Compiling same-file v1.0.6
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling zenjpeg-bench-utils v0.1.0 (/Users/lilith/work/zen/zenjpeg/zenjpeg-bench-utils)
+   Compiling zune-core v0.5.1
+   Compiling zune-jpeg v0.5.15
+   Compiling bit-set v0.8.0
+   Compiling rusty-fork v0.3.1
+   Compiling criterion-plot v0.8.2
+   Compiling walkdir v2.5.0
+   Compiling csv v1.4.0
+   Compiling archmage v0.4.0
+   Compiling codec-corpus v1.1.0
+   Compiling png v0.18.1
+   Compiling zenjpeg v0.9.0 (/Users/lilith/work/zen/zenjpeg/zenjpeg)
+warning: unused imports: `YCBCR_B_TO_CB`, `YCBCR_B_TO_CR`, `YCBCR_B_TO_Y`, `YCBCR_G_TO_CB`, `YCBCR_G_TO_CR`, `YCBCR_G_TO_Y`, `YCBCR_R_TO_CB`, `YCBCR_R_TO_CR`, and `YCBCR_R_TO_Y`
+  --> zenjpeg/src/encode_simd.rs:40:5
+   |
+40 |     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+41 |     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling rand_chacha v0.9.0
+warning: unused variable: `w`
+   --> zenjpeg/src/decode/upsample.rs:453:13
+    |
+453 |         let w = out_width.min(in_width);
+    |             ^ help: if this is intentional, prefix it with an underscore: `_w`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling multiversion v0.8.0
+   Compiling digest v0.10.7
+   Compiling regex v1.13.1
+   Compiling sysinfo v0.36.1
+   Compiling ciborium v0.2.2
+   Compiling zensim v0.3.0 (https://github.com/imazen/zensim?rev=9d8f73a5a82a944420ca0e040ecfcea0f4afa263#9d8f73a5)
+   Compiling test-case-macros v3.3.1
+   Compiling plotters v0.3.7
+   Compiling chrono v0.4.45
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/lib/libjpegli-static.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/third_party/highway/libhwy.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/lib/libjxl_extras-internal.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/third_party/liblcms2.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: `jpegli-internals-sys` (lib) generated 4 warnings
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling ultrahdr-core v0.4.1
+   Compiling tinytemplate v1.2.1
+   Compiling jpeg-decoder v0.3.2
+   Compiling fs4 v1.1.0
+   Compiling terminal_size v0.4.4
+   Compiling yuv v0.8.16
+   Compiling cpufeatures v0.2.17
+   Compiling page_size v0.6.0
+   Compiling fs2 v0.4.3
+   Compiling anes v0.1.6
+   Compiling base64 v0.22.1
+   Compiling oorandom v11.1.5
+   Compiling mutate_once v0.1.2
+   Compiling unarray v0.1.4
+   Compiling seahash v4.1.0
+   Compiling zensim-regress v0.4.0 (https://github.com/imazen/zensim?rev=9d8f73a5a82a944420ca0e040ecfcea0f4afa263#9d8f73a5)
+   Compiling mozjpeg-rs v0.5.5
+   Compiling proptest v1.11.0
+   Compiling kamadak-exif v0.6.1
+   Compiling criterion v0.8.2
+   Compiling sha2 v0.10.9
+   Compiling zenbench v0.1.9
+   Compiling codec-eval v0.3.3
+   Compiling ultrahdr-rs v0.3.5
+   Compiling test-case v3.3.1
+   Compiling img-parts v0.4.0
+   Compiling zencodec-testkit v0.1.0
+   Compiling bincode v1.3.3
+   Compiling approx v0.5.1
+   Compiling smallvec v1.15.2
+warning: `zenjpeg` (lib) generated 2 warnings (run `cargo fix --lib -p zenjpeg` to apply 2 suggestions)
+warning: unused import: `archmage::SimdToken`
+  --> zenjpeg/benches/tier_isolation.rs:37:9
+   |
+37 |     use archmage::SimdToken;
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenjpeg` (bench "tier_isolation") generated 1 warning (run `cargo fix --bench "tier_isolation" -p zenjpeg` to apply 1 suggestion)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 44.72s
+     Running benches/tier_isolation.rs (/Users/lilith/work/zen/zenjpeg/target/release/deps/tier_isolation-c93314a0deb73100)
+[tier_isolation] comparing neon vs forced scalar
+[zenbench] calibration: int=0.30ns/iter mem_bw=106.1GiB/s mem_lat=8.3ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.27ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /var/folders/sc/m9jbk0qj0jz4w09h7gg8v3p80000gn/T/zenbench/zenbench-1785245641-675b.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1785245641-675b
+  git: 93053de1e41493c74667be9ac7e377aad203d38f
+═══════════════════════════════════════════════════════════════
+
+  encode_q85_420_1MP  40 rounds × 1 calls
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ neon     25.6 ±1.5ms  [25.3–26.0]ms       117M
+  ╰─ scalar   32.7 ±0.3ms  [+25.1%–+30.0%]    91.7M
+
+  neon    ███████████████████████████████████████████████████████████ 117 MiB/s
+  scalar  ██████████████████████████████████████████████ 91.7 MiB/s
+
+  decode_q85_420_1MP  80 rounds × 1 calls
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ neon     13.2 ±0.7ms  [13.0–13.4]ms      49.5M
+  ╰─ scalar   17.3 ±0.5ms  [+27.5%–+33.5%]    37.9M
+
+  neon    ███████████████████████████████████████████████████████████ 49.5 MiB/s
+  scalar  █████████████████████████████████████████████ 37.9 MiB/s
+
+  total: 18.3s  (80 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

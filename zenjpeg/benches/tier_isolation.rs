@@ -1,0 +1,121 @@
+//! SIMD-tier isolation: the native top tier vs the same code forced to scalar.
+//!
+//! zenjpeg has ~139 SIMD dispatch sites and ~20 files carrying NEON kernels,
+//! but no bench could tell you what any of them are worth on ARM. The existing
+//! SIMD benches either compare zenjpeg against mozjpeg/libjpeg-turbo (which
+//! answers "are we competitive", not "is our SIMD earning its keep") or are
+//! written `#[cfg(target_arch = "x86_64")]` and do not build on aarch64 at all
+//! (`mage_simd.rs`). A kernel slower than its own scalar fallback is invisible
+//! to both.
+//!
+//! This bench runs the identical encode and decode pipelines with the native
+//! SIMD token disabled. (The same gap in linear-srgb was hiding a real
+//! regression.)
+//!
+//! Run: `cargo bench -p zenjpeg --bench tier_isolation --features _dev`
+//! Do NOT build with `-C target-cpu=native`: that pins the tier at compile
+//! time, after which it cannot be disabled and this bench skips rather than
+//! silently reporting the SIMD path under both labels.
+
+use enough::Unstoppable;
+use zenbench::prelude::*;
+
+#[cfg(target_arch = "aarch64")]
+type TierToken = archmage::NeonToken;
+#[cfg(target_arch = "x86_64")]
+type TierToken = archmage::X64V3Token;
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
+    "neon"
+} else {
+    "v3(avx2)"
+};
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+fn set_simd(enabled: bool) -> bool {
+    use archmage::SimdToken;
+    TierToken::dangerously_disable_token_process_wide(!enabled).is_ok()
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn set_simd(_enabled: bool) -> bool {
+    false
+}
+
+fn noise_patches(w: usize, h: usize) -> Vec<u8> {
+    let mut rgb = vec![0u8; w * h * 3];
+    let mut state = 0x9e37_79b9u32;
+    for y in 0..h {
+        for x in 0..w {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let patch = ((x / 32 + y / 32) & 3) as u8;
+            let i = (y * w + x) * 3;
+            rgb[i] = ((state >> 24) as u8).wrapping_add(patch.wrapping_mul(40));
+            rgb[i + 1] = ((state >> 16) as u8).wrapping_add(patch.wrapping_mul(80));
+            rgb[i + 2] = ((state >> 8) as u8).wrapping_add(patch.wrapping_mul(120));
+        }
+    }
+    rgb
+}
+
+fn bench_tiers(suite: &mut Suite) {
+    use zenjpeg::encode::EncoderConfig;
+    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
+
+    if !set_simd(true) || !set_simd(false) {
+        eprintln!(
+            "[tier_isolation] no toggleable SIMD tier on this target, or the tier is \
+             compile-time guaranteed (drop -C target-cpu=native, build with --features _dev). \
+             Skipping."
+        );
+        return;
+    }
+    set_simd(true);
+    eprintln!("[tier_isolation] comparing {TIER_NAME} vs forced scalar");
+
+    // 1 MP keeps a full SIMD-on/SIMD-off sweep to a sane wall time while still
+    // being large enough that per-call overhead is not the story.
+    let w = 1024usize;
+    let h = 1024usize;
+    let rgb: &'static [u8] = Box::leak(noise_patches(w, h).into_boxed_slice());
+
+    let jpeg: &'static [u8] = Box::leak(
+        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+            .encode_bytes(rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+            .expect("encode for decode fixture")
+            .into_boxed_slice(),
+    );
+
+    suite.compare("encode_q85_420_1MP", |g| {
+        g.throughput(Throughput::Bytes((w * h * 3) as u64));
+        for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+            g.bench(arm, move |b| {
+                b.with_input(move || set_simd(simd)).run(move |_| {
+                    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+                    config
+                        .encode_bytes(rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+                        .unwrap()
+                })
+            });
+        }
+    });
+
+    suite.compare("decode_q85_420_1MP", |g| {
+        g.throughput(Throughput::Bytes(jpeg.len() as u64));
+        for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+            g.bench(arm, move |b| {
+                b.with_input(move || set_simd(simd))
+                    .run(move |_| {
+                        zenjpeg::decoder::Decoder::new()
+                            .decode(jpeg, Unstoppable)
+                            .unwrap()
+                    })
+            });
+        }
+    });
+
+    set_simd(true);
+}
+
+zenbench::main!(bench_tiers);
