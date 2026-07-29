@@ -34,3 +34,7 @@ workspace = true
 [[bench]]
 name = "rgb_to_yuv_bench"
 harness = false
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
