@@ -47,6 +47,9 @@ exclude = [
 name = "zenjpeg"
 
 [dependencies]
+# ML restoration runtime (feature `restore`, DEFAULT OFF). Path dep until
+# zensr-micro publishes / gets a remote — see the restore-feature PR.
+zensr-micro = { path = "../../zensr/crates/zensr-micro", optional = true }
 aligned-vec = { workspace = true }
 bytemuck = { workspace = true }
 rgb = { workspace = true }
@@ -185,6 +188,9 @@ zensim-regress = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a
 zensim = { workspace = true, features = ["classification"] }
 
 [features]
+# DEFAULT OFF: optional ML restoration (x1 dejpeg + S10 projection) via the
+# zensr runtime. Shallow tree: zensr-micro -> archmage + magetypes only.
+restore = ["dep:zensr-micro"]
 default = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]

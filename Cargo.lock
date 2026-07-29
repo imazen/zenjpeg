@@ -2512,6 +2512,7 @@ dependencies = [
  "zenresize",
  "zensim",
  "zensim-regress",
+ "zensr-micro",
  "zentone",
  "zenyuv",
  "zune-core",
@@ -2665,6 +2666,14 @@ dependencies = [
  "zenpng",
  "zenresize",
  "zensim",
+]
+
+[[package]]
+name = "zensr-micro"
+version = "0.0.1"
+dependencies = [
+ "archmage 0.9.28",
+ "magetypes",
 ]
 
 [[package]]
