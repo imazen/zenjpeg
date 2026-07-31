@@ -70,6 +70,15 @@ pub struct RestoreOptions {
     pub deblock_policy: bool,
     /// Skip the model on near-pristine input (measured gate; module docs).
     pub high_q_identity: bool,
+    /// IJG/Mozjpeg-scale quality at or above which the model is skipped.
+    /// Default 94.5 = the QUALITY tier's measured crossover. The REALTIME
+    /// tier is more aggressive and turns net-negative above ~q85 (zensr
+    /// benchmarks/rt24g_high_*: q85 +0.29, q90 -0.23, q93 -0.51 ssim2), so
+    /// realtime deployments should use [`RestoreOptions::realtime_tier`].
+    pub high_q_threshold: f32,
+    /// Cjpegli-family (Butteraugli-distance scale) counterpart: skip at or
+    /// below this distance. Default 0.6; realtime uses 1.0.
+    pub high_q_distance: f32,
     /// Apply the S10 quantization-consistency projection (output re-encodes
     /// to the file's own coefficients; never increases error vs the truth).
     pub projection: bool,
@@ -77,13 +86,29 @@ pub struct RestoreOptions {
 
 impl Default for RestoreOptions {
     fn default() -> Self {
-        Self { threads: 1, tile: 0, deblock_policy: true, high_q_identity: true, projection: true }
+        Self {
+            threads: 1,
+            tile: 0,
+            deblock_policy: true,
+            high_q_identity: true,
+            high_q_threshold: 94.5,
+            high_q_distance: 0.6,
+            projection: true,
+        }
     }
 }
 
 impl RestoreOptions {
     pub fn with_threads(mut self, t: usize) -> Self {
         self.threads = t;
+        self
+    }
+    /// Preset for the 84KB realtime model: identity above q82 / distance 1.0.
+    /// Measured crossover — the realtime tier trades gentleness for low-q
+    /// power, so the quality-tier defaults let it run where it hurts.
+    pub fn realtime_tier(mut self) -> Self {
+        self.high_q_threshold = 82.0;
+        self.high_q_distance = 1.0;
         self
     }
 }
@@ -135,10 +160,12 @@ fn wants_knusperli(p: &JpegProbe) -> bool {
         && p.quality.value <= 9.5
 }
 
-fn high_q_identity(p: &JpegProbe) -> bool {
+fn high_q_identity(p: &JpegProbe, opts: &RestoreOptions) -> bool {
     match p.quality.scale {
-        QualityScale::IjgQuality | QualityScale::MozjpegQuality => p.quality.value >= 94.5,
-        QualityScale::ButteraugliDistance => p.quality.value <= 0.6,
+        QualityScale::IjgQuality | QualityScale::MozjpegQuality => {
+            p.quality.value >= opts.high_q_threshold
+        }
+        QualityScale::ButteraugliDistance => p.quality.value <= opts.high_q_distance,
         _ => false,
     }
 }
@@ -200,7 +227,7 @@ pub fn restore(
             planes[c * plane + i] = px[i * 3 + c] as f32 / 255.0;
         }
     }
-    if opts.high_q_identity && high_q_identity(&probe) {
+    if opts.high_q_identity && high_q_identity(&probe, opts) {
         report.skipped_model_high_q = true;
         return Ok(Restored { planes, width: w, height: h, report });
     }
