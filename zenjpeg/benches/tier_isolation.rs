@@ -105,12 +105,11 @@ fn bench_tiers(suite: &mut Suite) {
         g.throughput(Throughput::Bytes(jpeg.len() as u64));
         for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
             g.bench(arm, move |b| {
-                b.with_input(move || set_simd(simd))
-                    .run(move |_| {
-                        zenjpeg::decoder::Decoder::new()
-                            .decode(jpeg, Unstoppable)
-                            .unwrap()
-                    })
+                b.with_input(move || set_simd(simd)).run(move |_| {
+                    zenjpeg::decoder::Decoder::new()
+                        .decode(jpeg, Unstoppable)
+                        .unwrap()
+                })
             });
         }
     });
