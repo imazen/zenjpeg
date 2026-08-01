@@ -100,12 +100,22 @@ pub(crate) fn yuv444_to_rgb_generic(
 /// unit stride on all three planes and vectorizes cleanly. Nothing about the
 /// arithmetic blocks SIMD — only the addressing does.
 ///
-/// The fix is to duplicate chroma rather than index it: load 8 chroma samples,
-/// zip each with itself (`vzip1q_u8(c, c)` on NEON) to get 16 values aligned
-/// to 16 luma pixels, then run the existing conversion 16-wide. Not done here
-/// — it is a new kernel with real colour-correctness surface (coefficients,
-/// rounding, clamping), so it wants a fresh pass gated against this scalar
-/// form, not a tired one.
+/// TRIED AND REVERTED (2026-07-31): restructuring this loop chroma-major — one
+/// chroma sample serving its two luma pixels, hoisting the chroma-derived
+/// addends and removing the per-pixel `col / 2` — was **2x SLOWER**
+/// (2.9 ms -> 6.0 ms at 1920x1080). It was bit-identical (verified 0 diff over
+/// 8 shapes including odd dimensions), just worse: the fixed 2-iteration inner
+/// loop with a variable bound (for odd widths) blocks more optimization than
+/// the removed division and the halved chroma arithmetic recover. Do not
+/// re-attempt that particular shape.
+///
+/// What has NOT been tried: duplicating chroma into a scratch row so the main
+/// loop is a flat unit-stride pass over `width` with no nested loop at all
+/// (load 8 chroma, `vzip1q_u8(c, c)` to align 16 chroma to 16 luma, then run
+/// the 4:4:4 conversion). That keeps the inner loop the same SHAPE as the
+/// 4:4:4 path — which is the one that actually reaches 3.57x — at the cost of
+/// a per-row scratch buffer. That is the promising direction; the failed
+/// attempt above kept the nesting and only fixed the addressing.
 pub(crate) fn yuv420_to_rgb_generic(
     _token: Token,
     y_plane: &[u8],
