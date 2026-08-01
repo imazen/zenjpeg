@@ -691,7 +691,16 @@ impl JpegEncoder {
                 self.limits.max_pixels.unwrap_or(0),
             )
         })?;
-        let estimated_mem = width as u64 * height as u64 * layout.bytes_per_pixel() as u64;
+        // Honest pre-flight: gate on the calibrated peak estimate — the
+        // encoder's working set (`heuristics::estimate_encode`, VmHWM-marginal
+        // calibrated, 2026-06-23 sweep, `estimate_memory_ceiling`-backed safe
+        // upper bound) PLUS the input buffer held for the encode's duration —
+        // not just the `w*h*bpp` input buffer, which under-states the real
+        // peak severalfold. Same input+working convention as
+        // `estimate_encode_resources`.
+        let input_bytes = width as u64 * height as u64 * layout.bytes_per_pixel() as u64;
+        let est = crate::heuristics::estimate_encode(width, height, &self.effective_config);
+        let estimated_mem = est.peak_memory_bytes.saturating_add(input_bytes);
         self.limits.check_memory(estimated_mem).map_err(|_| {
             Error::resource_limit_exceeded(
                 zencodec::LimitKind::Memory,

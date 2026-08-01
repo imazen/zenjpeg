@@ -722,6 +722,76 @@ mod api_tests {
         assert!(result.is_err());
     }
 
+    /// The encode memory pre-flight gates on the CALIBRATED peak estimate
+    /// (`heuristics::estimate_encode` working set + the held input buffer),
+    /// not just the raw `w*h*bpp` input buffer. 1024×1024 RGB8: the input
+    /// buffer is 3 MiB — the old input-buffer check ADMITTED it under a
+    /// 4 MiB cap — but the calibrated peak (input + ~1.5 MB fixed overhead +
+    /// the ≥3.85 B/px working set) is well past the budget. The honest check
+    /// must reject up front with `LimitKind::Memory`.
+    #[test]
+    fn encode_memory_preflight_rejects_calibrated_peak_over_budget() {
+        use zencodec::{ErrorCategory, LimitKind, ResourceError};
+
+        let cap: u64 = 4 * 1024 * 1024;
+        let (w, h) = (1024usize, 1024usize);
+        let input_bytes = (w * h * 3) as u64;
+        assert!(
+            input_bytes < cap,
+            "input buffer must fit the cap (the old check admitted this size)"
+        );
+
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32,
+            };
+            w * h
+        ];
+        let img = Img::new(pixels.as_slice(), w, h);
+        let limits = ResourceLimits::none().with_max_memory(cap);
+        let err = JpegEncoderConfig::new()
+            .job()
+            .with_limits(limits)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .expect_err("calibrated peak must exceed the 4 MiB cap");
+        assert_eq!(
+            err.error().category(),
+            ErrorCategory::Resource(ResourceError::Limits(LimitKind::Memory)),
+            "rejection must be the memory-limit path, got: {err}"
+        );
+    }
+
+    /// A budget that covers the calibrated peak admits the encode and it
+    /// completes (moderate 64 MiB cap for a 1024×1024 RGB8 encode whose
+    /// modeled peak is ~9-12 MiB).
+    #[test]
+    fn encode_memory_preflight_admits_within_budget() {
+        let (w, h) = (1024usize, 1024usize);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32,
+            };
+            w * h
+        ];
+        let img = Img::new(pixels.as_slice(), w, h);
+        let limits = ResourceLimits::none().with_max_memory(64 * 1024 * 1024);
+        let out = JpegEncoderConfig::new()
+            .job()
+            .with_limits(limits)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .expect("64 MiB budget must admit a 1 MP encode");
+        assert!(!out.data().is_empty());
+        assert_eq!(&out.data()[0..2], &[0xFF, 0xD8]);
+    }
+
     /// Regression test: passing the full `supported_descriptors()` list (which
     /// includes f32 types like RGBF32_LINEAR) to `decoder()` must not panic.
     ///
