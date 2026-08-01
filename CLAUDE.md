@@ -1453,13 +1453,26 @@ arm, no `incant!`, and end in a bare scalar call:
 | `encode/linear_lut.rs::linear_rgbf32_to_ycbcr_x8` | ditto |
 | `decode/rst_scan.rs::scan_rst_markers` | byte scan, not obviously vectorizable the same way |
 
-The four `linear_lut` ones differ from the DCT case: they have no generated
-`_neon` variant to wire up, because they are written as `_v3` functions pinned
-to `X64V3Token` rather than under `#[magetypes(...)]`. Their bodies already use
-backend-generic `mt_f32x8` ops, so converting them to
-`#[magetypes(v3, neon, wasm128, scalar)]` + `incant!` should work — the same
-change shape that makes `forward_dct_8x8_simd_chained_fallback` portable. Not
-done here; measure before and after, and gate each against its scalar twin.
+The four `linear_lut` ones differ from the DCT case, and the reason is
+STRUCTURAL rather than a missing attribute. Investigated 2026-07-31:
+
+Their only sRGB step is `linear_srgb::tokens::x8::linear_to_srgb_v3`, and the
+whole `linear_srgb::tokens::x8` MODULE is `#[cfg(target_arch = "x86_64")]` —
+there is no 8-wide transfer-function path on ARM at all. Adding
+`#[magetypes(v3, neon, wasm128)]` to that function was tried and REVERTED: it
+generates a `_neon` variant that is unreachable, because the module containing
+it does not exist on aarch64. A mechanical conversion of the zenjpeg side alone
+cannot work either, for the same reason.
+
+The ARM route is `linear_srgb::tokens::x4`, which is NOT arch-gated and carries
+37 `_neon` entry points. So porting these four means writing an aarch64 arm that
+runs two x4 calls per 8 values, not re-attributing the existing x8 body. That is
+real work with a real payoff (this is the per-pixel 16-bit / f32 linear
+strip-encode path, called from `encode/strip/convert.rs`), but it is a new
+kernel, not a wiring fix — size it accordingly.
+
+Do NOT start by adding `#[magetypes]` to linear-srgb's x8 functions; that path
+is a dead end and has already been walked.
 
 **Where ARM is already fine:** `color/ycbcr.rs`, `decode/idct_int.rs` and
 `quant/aq/simd.rs` all dispatch through `incant!` with magetypes-generated NEON
