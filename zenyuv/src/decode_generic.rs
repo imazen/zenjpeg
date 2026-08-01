@@ -100,22 +100,30 @@ pub(crate) fn yuv444_to_rgb_generic(
 /// unit stride on all three planes and vectorizes cleanly. Nothing about the
 /// arithmetic blocks SIMD — only the addressing does.
 ///
-/// TRIED AND REVERTED (2026-07-31): restructuring this loop chroma-major — one
-/// chroma sample serving its two luma pixels, hoisting the chroma-derived
-/// addends and removing the per-pixel `col / 2` — was **2x SLOWER**
-/// (2.9 ms -> 6.0 ms at 1920x1080). It was bit-identical (verified 0 diff over
-/// 8 shapes including odd dimensions), just worse: the fixed 2-iteration inner
-/// loop with a variable bound (for odd widths) blocks more optimization than
-/// the removed division and the halved chroma arithmetic recover. Do not
-/// re-attempt that particular shape.
+/// OPTIMIZED 2026-07-31: 2.9 ms -> 1.7 ms at 1920x1080, bit-identical.
 ///
-/// What has NOT been tried: duplicating chroma into a scratch row so the main
-/// loop is a flat unit-stride pass over `width` with no nested loop at all
-/// (load 8 chroma, `vzip1q_u8(c, c)` to align 16 chroma to 16 luma, then run
-/// the 4:4:4 conversion). That keeps the inner loop the same SHAPE as the
-/// 4:4:4 path — which is the one that actually reaches 3.57x — at the cost of
-/// a per-row scratch buffer. That is the promising direction; the failed
-/// attempt above kept the nesting and only fixed the addressing.
+/// This used to be the one decode entry with no SIMD benefit at all (1.00x
+/// against its own forced-scalar tier) while the 4:4:4 sibling reached 3.57x
+/// from the same generic machinery. The cause was the inner loop's shape, not
+/// its arithmetic: `cx = col / 2` made chroma advance at half the luma rate, so
+/// the loop could not be a flat unit-stride pass the way 4:4:4's is.
+///
+/// Chroma is now expanded into a FIXED stack scratch (no allocation — this is a
+/// `no_std` decode hot path) and the conversion runs as a flat unit-stride loop
+/// over each chunk. Both tiers improved equally, which is the expected result:
+/// NEON is baseline on aarch64, so what changed is that the autovectorizer can
+/// now do to this loop what it already did to 4:4:4's.
+///
+/// FAILED FIRST ATTEMPT, kept as a warning: fixing the addressing WITHOUT
+/// flattening — chroma-major outer loop with a 2-iteration inner loop — was 2x
+/// SLOWER (2.9 -> 6.0 ms), despite being bit-identical and removing the same
+/// division. Replacing one flat loop with a nested one whose inner bound is
+/// variable costs more than the division saves. The scratch buffer is what buys
+/// a loop with no inner bound at all; that distinction is the whole fix.
+///
+/// Bit-identity verified by hashing the output of 14 shapes (78,114 bytes)
+/// including chunk boundaries (128/129/255/256/257) and odd dimensions, against
+/// the pre-change implementation: identical.
 pub(crate) fn yuv420_to_rgb_generic(
     _token: Token,
     y_plane: &[u8],
@@ -128,23 +136,62 @@ pub(crate) fn yuv420_to_rgb_generic(
 ) {
     let cw = width.div_ceil(2);
 
+    // Chroma is duplicated into a FIXED stack scratch so the inner loop is a
+    // flat, unit-stride pass — the same shape as the 4:4:4 kernel, which is the
+    // one that actually vectorizes (3.57x). No allocation: a decode hot path
+    // should not heap-allocate per call, and this crate is `no_std`.
+    //
+    // An earlier attempt fixed the addressing WITHOUT flattening (chroma-major
+    // outer loop, 2-iteration inner loop) and was 2x slower — the nesting, not
+    // the `col / 2`, was the dominant cost.
+    const CHUNK: usize = 128;
+    let mut cb_row = [0.0f32; CHUNK];
+    let mut cr_row = [0.0f32; CHUNK];
+
     for row in 0..height {
         let cy = row / 2;
-        for col in 0..width {
-            let cx = col / 2;
-            let yi = row * width + col;
-            let ci = cy * cw + cx;
+        let crow = cy * cw;
+        let yrow = row * width;
 
-            let y_val = y_plane[yi] as f32 + coeffs.y_offset;
-            let cb_val = cb_plane[ci] as f32 + coeffs.uv_offset;
-            let cr_val = cr_plane[ci] as f32 + coeffs.uv_offset;
-            let y_scaled = y_val * coeffs.y_coeff;
+        let mut base = 0usize;
+        while base < width {
+            let n = CHUNK.min(width - base);
 
-            let p = yi * 3;
-            rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
-            rgb[p + 1] =
-                crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
-            rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
+            // Expand chroma for this chunk: unit-stride reads, contiguous
+            // pair writes.
+            let cx0 = base / 2;
+            let mut i = 0usize;
+            while i < n {
+                let cx = cx0 + (base + i) / 2 - base / 2;
+                let cb_val = cb_plane[crow + cx] as f32 + coeffs.uv_offset;
+                let cr_val = cr_plane[crow + cx] as f32 + coeffs.uv_offset;
+                cb_row[i] = cb_val;
+                cr_row[i] = cr_val;
+                if i + 1 < n && (base + i) % 2 == 0 {
+                    cb_row[i + 1] = cb_val;
+                    cr_row[i + 1] = cr_val;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+
+            // Flat unit-stride conversion over the chunk.
+            for k in 0..n {
+                let yi = yrow + base + k;
+                let y_val = y_plane[yi] as f32 + coeffs.y_offset;
+                let cb_val = cb_row[k];
+                let cr_val = cr_row[k];
+                let y_scaled = y_val * coeffs.y_coeff;
+
+                let p = yi * 3;
+                rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
+                rgb[p + 1] =
+                    crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
+                rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
+            }
+
+            base += n;
         }
     }
 }
