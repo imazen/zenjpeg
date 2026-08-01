@@ -1423,3 +1423,52 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Support `Rgba8` and `Bgra8` for encode and decode — encode: commit 44dcc4a, decode: commit 001319b
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
+
+## aarch64 / NEON dispatch audit (2026-07-31)
+
+**Fixed:** `encode::dct::forward_dct_8x8` had an x86_64 arm and a wasm32 arm but
+NO aarch64 arm, so ARM fell through to `forward_dct_8x8_scalar`. The NEON code
+already existed — `forward_dct_8x8_simd_chained_fallback` carries
+`#[magetypes(v3, neon, wasm128, scalar)]`, so a `_neon` variant was generated on
+every ARM build and was simply unreachable. Wiring the arm: **3.24x** on the
+kernel (95.2 -> 29.4 ns), end-to-end encode 1.23x -> 1.30x vs forced scalar.
+Gate: `forward_dct_8x8_dispatched_matches_scalar`.
+
+The pre-existing tests could not have caught it — they only ever exercised the
+scalar path on ARM, so they stayed green through both the bug and the fix.
+
+**The shape to grep for:** a dispatch fn with a `#[cfg(target_arch = "x86_64")]`
+arm that terminates in a bare `*_scalar(...)` call instead of
+`incant!(*_fallback(...))`. The `incant!` form dispatches NEON correctly (that
+is why `forward_dct_8x8_wide` was fine); the bare-scalar form silently drops ARM.
+
+**Still open — 4 portable-looking, 1 unclear.** These have an x86 arm, no NEON
+arm, no `incant!`, and end in a bare scalar call:
+
+| site | note |
+|---|---|
+| `encode/linear_lut.rs::linear_to_srgb_255_x8` | x86-only `_v3`, body is generic `mt_f32x8` |
+| `encode/linear_lut.rs::linear_u16_to_srgb_255_x8` | ditto |
+| `encode/linear_lut.rs::linear_rgb16_to_ycbcr_x8` | ditto |
+| `encode/linear_lut.rs::linear_rgbf32_to_ycbcr_x8` | ditto |
+| `decode/rst_scan.rs::scan_rst_markers` | byte scan, not obviously vectorizable the same way |
+
+The four `linear_lut` ones differ from the DCT case: they have no generated
+`_neon` variant to wire up, because they are written as `_v3` functions pinned
+to `X64V3Token` rather than under `#[magetypes(...)]`. Their bodies already use
+backend-generic `mt_f32x8` ops, so converting them to
+`#[magetypes(v3, neon, wasm128, scalar)]` + `incant!` should work — the same
+change shape that makes `forward_dct_8x8_simd_chained_fallback` portable. Not
+done here; measure before and after, and gate each against its scalar twin.
+
+**Where ARM is already fine:** `color/ycbcr.rs`, `decode/idct_int.rs` and
+`quant/aq/simd.rs` all dispatch through `incant!` with magetypes-generated NEON
+variants — their extra `X64V3Token` hits are additional x86-only fast paths on
+top, not a missing ARM path. `encode/mage_simd.rs` is x86-only by design
+(callers pass `Option<Desktop64>`, which is None on ARM and falls back).
+
+**Known unrelated breakage:** `jpegli-internals-sys`'s vendored archive contains
+`adaptive_quantization.cc.o` that is "not a mach-o file" on this host, which
+breaks any target depending on it (`cpp_comparison` bench, the `__test-utils`
+integration tests). Pre-existing. `--lib` and `--bench tier_isolation` are
+unaffected.
