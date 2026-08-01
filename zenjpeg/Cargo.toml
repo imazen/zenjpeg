@@ -189,7 +189,7 @@ default = []
 # Dev-only: enables archmage/testable_dispatch so benches/tier_isolation.rs can
 # disable the baseline SIMD token (NEON on aarch64) and measure a real scalar
 # arm. Never enable in a published build.
-_dev = ["archmage/testable_dispatch"]
+_dev = ["archmage/testable_dispatch", "__test-utils"]
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
 # Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time

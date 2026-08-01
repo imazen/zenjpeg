@@ -462,6 +462,34 @@ pub(crate) mod simd {
         output
     }
 
+    /// Forward DCT 8x8 for aarch64 with a pre-summoned `NeonToken`.
+    ///
+    /// Exact twin of [`forward_dct_8x8_simd_chained_wasm`] — same generic body
+    /// over `GenericF32x8`, only the token type differs. The magetypes macro on
+    /// `forward_dct_8x8_simd_chained_fallback` below ALREADY generates a `_neon`
+    /// variant of this code path; before this, `forward_dct_8x8` simply had no
+    /// aarch64 arm, so ARM fell through to `forward_dct_8x8_scalar` and the
+    /// vector code was unreachable. x86 and wasm each had an arm; ARM did not.
+    #[cfg(target_arch = "aarch64")]
+    #[inline]
+    pub(crate) fn forward_dct_8x8_simd_chained_neon(
+        token: archmage::NeonToken,
+        input: &[f32; 64],
+    ) -> [f32; 64] {
+        type F32x8 = GenericF32x8<archmage::NeonToken>;
+
+        let mut rows = F32x8::load_8x8(token, input);
+        F32x8::transpose_8x8(&mut rows);
+        let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
+        let mut rows_for_col = cols_after_row;
+        F32x8::transpose_8x8(&mut rows_for_col);
+        let final_rows = scale_vec_generic(token, dct_1d_vec_generic(token, rows_for_col));
+
+        let mut output = [0.0f32; 64];
+        F32x8::store_8x8(&final_rows, &mut output);
+        output
+    }
+
     /// Fallback DCT using magetypes generics (portable SIMD).
     #[magetypes(v3, neon, wasm128, scalar)]
     fn forward_dct_8x8_simd_chained_fallback(token: Token, input: &[f32; 64]) -> [f32; 64] {
@@ -716,6 +744,12 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
             let mut output = [0.0f32; 64];
             simd::forward_dct_8x8_mage(input, &mut output);
             return output;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if let Some(token) = archmage::NeonToken::summon() {
+            return simd::forward_dct_8x8_simd_chained_neon(token, input);
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -1335,6 +1369,82 @@ mod tests {
                 assert!(
                     report.permutations_run >= 2,
                     "expected at least 2 permutations"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod arm_dispatch_tests {
+    use super::*;
+
+    /// `forward_dct_8x8` must agree with its own scalar reference on whatever
+    /// tier this host dispatches to.
+    ///
+    /// This exists because the aarch64 arm was MISSING: the function had an
+    /// x86_64 arm and a wasm32 arm, and ARM fell through to
+    /// `forward_dct_8x8_scalar` — so the `_neon` variant that
+    /// `#[magetypes(v3, neon, wasm128, scalar)]` already generates for
+    /// `forward_dct_8x8_simd_chained_fallback` was unreachable. Nothing failed;
+    /// the vector code was simply never run. A test that only checked the
+    /// scalar path would have stayed green through both the bug and the fix.
+    ///
+    /// Content is deliberately varied — flat, ramp, alternating, and impulse
+    /// blocks — because a DCT can agree on smooth input while a transpose or
+    /// butterfly error shows only on high-frequency content.
+    #[test]
+    fn forward_dct_8x8_dispatched_matches_scalar() {
+        let cases: Vec<[f32; 64]> = vec![
+            [0.0; 64],
+            {
+                let mut b = [0.0f32; 64];
+                for (i, v) in b.iter_mut().enumerate() {
+                    *v = i as f32 - 32.0;
+                }
+                b
+            },
+            {
+                let mut b = [0.0f32; 64];
+                for (i, v) in b.iter_mut().enumerate() {
+                    *v = if (i / 8 + i % 8) % 2 == 0 { 100.0 } else { -100.0 };
+                }
+                b
+            },
+            {
+                let mut b = [0.0f32; 64];
+                b[0] = 255.0;
+                b
+            },
+            {
+                let mut b = [0.0f32; 64];
+                b[63] = -255.0;
+                b
+            },
+            {
+                // Pseudo-random, the case most likely to expose a lane swap.
+                let mut s = 0x9E37_79B9u32;
+                let mut b = [0.0f32; 64];
+                for v in b.iter_mut() {
+                    s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    *v = ((s >> 16) as f32 / 65535.0) * 510.0 - 255.0;
+                }
+                b
+            },
+        ];
+
+        for (ci, input) in cases.iter().enumerate() {
+            let got = forward_dct_8x8(input);
+            let want = forward_dct_8x8_scalar(input);
+            for k in 0..64 {
+                let d = (got[k] - want[k]).abs();
+                // f32 vector vs f32 scalar with a different operation order;
+                // magnitudes here reach ~2000 after the DCT gain.
+                assert!(
+                    d < 2e-2,
+                    "case {ci} coeff {k}: dispatched {} vs scalar {} (diff {d:e})",
+                    got[k],
+                    want[k]
                 );
             }
         }

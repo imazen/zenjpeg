@@ -116,6 +116,37 @@ fn bench_tiers(suite: &mut Suite) {
     });
 
     set_simd(true);
+
+    // ---- per-kernel: the forward DCT ----
+    //
+    // The whole-image rows above cannot size one kernel: encode also does
+    // colour conversion, quantization and entropy coding, so even a large DCT
+    // win lands as a few percent end-to-end. This measures it directly.
+    //
+    // It exists because `forward_dct_8x8` had NO aarch64 arm. x86 and wasm each
+    // dispatched to a vector path; ARM fell through to `forward_dct_8x8_scalar`,
+    // so the `_neon` variant that `#[magetypes(v3, neon, wasm128, scalar)]`
+    // already generates for `forward_dct_8x8_simd_chained_fallback` was
+    // unreachable. Nothing failed — the vector code simply never ran.
+    {
+        let mut blk = [0.0f32; 64];
+        let mut st = 0x9E37_79B9u32;
+        for v in blk.iter_mut() {
+            st = st.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *v = ((st >> 16) as f32 / 65535.0) * 510.0 - 255.0;
+        }
+        let blk: &'static [f32; 64] = Box::leak(Box::new(blk));
+        suite.compare("forward_dct_8x8", |g| {
+            for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                g.bench(arm, move |b| {
+                    b.iter(move || {
+                        set_simd(simd);
+                        zenjpeg::encode::dct::forward_dct_8x8(blk)
+                    })
+                });
+            }
+        });
+    }
 }
 
 zenbench::main!(bench_tiers);
