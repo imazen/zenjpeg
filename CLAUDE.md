@@ -1453,26 +1453,28 @@ arm, no `incant!`, and end in a bare scalar call:
 | `encode/linear_lut.rs::linear_rgbf32_to_ycbcr_x8` | ditto |
 | `decode/rst_scan.rs::scan_rst_markers` | byte scan, not obviously vectorizable the same way |
 
-The four `linear_lut` ones differ from the DCT case, and the reason is
-STRUCTURAL rather than a missing attribute. Investigated 2026-07-31:
+**DONE 2026-07-31.** All four now have an aarch64 arm:
 
-Their only sRGB step is `linear_srgb::tokens::x8::linear_to_srgb_v3`, and the
-whole `linear_srgb::tokens::x8` MODULE is `#[cfg(target_arch = "x86_64")]` —
-there is no 8-wide transfer-function path on ARM at all. Adding
-`#[magetypes(v3, neon, wasm128)]` to that function was tried and REVERTED: it
-generates a `_neon` variant that is unreachable, because the module containing
-it does not exist on aarch64. A mechanical conversion of the zenjpeg side alone
-cannot work either, for the same reason.
+    linear_to_srgb_255_x8       38.6 -> 11.2 ns   3.45x
+    linear_u16_to_srgb_255_x8   35.3 ->  9.7 ns   3.64x
+    linear_rgb16_to_ycbcr_x8   108.7 -> 20.0 ns   5.44x
+    linear_rgbf32_to_ycbcr_x8   85.9 -> 16.2 ns   5.30x
 
-The ARM route is `linear_srgb::tokens::x4`, which is NOT arch-gated and carries
-37 `_neon` entry points. So porting these four means writing an aarch64 arm that
-runs two x4 calls per 8 values, not re-attributing the existing x8 body. That is
-real work with a real payoff (this is the per-pixel 16-bit / f32 linear
-strip-encode path, called from `encode/strip/convert.rs`), but it is a new
-kernel, not a wiring fix — size it accordingly.
+They could NOT be fixed the way the DCT was, and the reason is worth keeping:
+their only sRGB step is `linear_srgb::tokens::x8::linear_to_srgb_v3`, and the
+whole `tokens::x8` module is `#[cfg(target_arch = "x86_64")]`. Adding
+`#[magetypes(v3, neon, wasm128)]` to that body was tried and reverted — it
+generates a `_neon` variant inside a module that does not exist on aarch64.
 
-Do NOT start by adding `#[magetypes]` to linear-srgb's x8 functions; that path
-is a dead end and has already been walked.
+The ARM arms are instead built on `linear_srgb::tokens::x4` (not arch-gated,
+NEON-capable), running the 4-wide transfer twice per 8 values. Because that is
+a different decomposition from the x86 body rather than the same code on a
+different token, each kernel is gated against the wrapper's own scalar fallback
+(`arm_linear_lut_tests`), with inputs spanning the sRGB piecewise knee
+(0.0031308), the linear segment below it, the power segment above, exact 0/1,
+and HDR values > 1 that trigger Reinhard — a transfer curve can agree in
+midtones while a branch or clamp is wrong at a boundary. Verified LIVE: scaling
+the x255 step to 254 fails all four.
 
 **Where ARM is already fine:** `color/ycbcr.rs`, `decode/idct_int.rs` and
 `quant/aq/simd.rs` all dispatch through `incant!` with magetypes-generated NEON

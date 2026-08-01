@@ -251,6 +251,147 @@ mod simd_fused {
     }
 }
 
+
+/// aarch64 fused kernels.
+///
+/// These mirror `simd_fused`'s x86 bodies but are built on
+/// `linear_srgb::tokens::x4`, not `x8`. That is forced, not a preference: the
+/// whole `linear_srgb::tokens::x8` module is `#[cfg(target_arch = "x86_64")]`,
+/// so there is no 8-wide transfer-function path on ARM to reuse. Adding
+/// `#[magetypes]` to the x8 body was tried and reverted — it generates a
+/// `_neon` variant inside a module that does not exist on aarch64.
+///
+/// So each 8-value kernel runs the x4 NEON transfer twice. The surrounding
+/// arithmetic (Reinhard, the BT.601 matrix) stays 4-wide to match, which keeps
+/// the operation order per lane identical to the scalar reference.
+#[cfg(target_arch = "aarch64")]
+mod simd_fused_neon {
+    use super::*;
+    use archmage::{NeonToken, arcane, rite};
+    use magetypes::simd::generic::f32x4 as mt_f32x4;
+
+    type F32x4 = mt_f32x4<NeonToken>;
+
+    /// sRGB transfer + x255 on 4 linear values, via the x4 NEON entry point.
+    #[rite]
+    fn linear_to_srgb_255_x4(token: NeonToken, v: F32x4) -> F32x4 {
+        let srgb = linear_srgb::tokens::x4::linear_to_srgb_neon(token, v.to_array());
+        F32x4::from_array(token, srgb) * F32x4::splat(token, 255.0)
+    }
+
+    /// Reinhard tone-map for HDR values, identical in form to the x86 body:
+    /// `x > 1` uses `x / (1 + x)`, otherwise `x` unchanged; negatives clamped.
+    #[rite]
+    fn reinhard_x4(token: NeonToken, x: F32x4) -> F32x4 {
+        let zero = F32x4::zero(token);
+        let one = F32x4::splat(token, 1.0);
+        let v = x.max(zero);
+        let reinhard = v / (one + v);
+        let mask = v.simd_gt(one);
+        F32x4::blend(mask, reinhard, v)
+    }
+
+    #[rite]
+    fn u16x4_to_linear(token: NeonToken, v: &[u16], off: usize) -> F32x4 {
+        let arr = [
+            v[off] as f32,
+            v[off + 1] as f32,
+            v[off + 2] as f32,
+            v[off + 3] as f32,
+        ];
+        F32x4::from_array(token, arr) * F32x4::splat(token, 1.0 / 65535.0)
+    }
+
+    #[arcane]
+    pub(super) fn linear_to_srgb_255_x8_neon(token: NeonToken, x: &[f32; 8]) -> [f32; 8] {
+        let mut out = [0.0f32; 8];
+        for h in 0..2 {
+            let lo = h * 4;
+            let v = F32x4::from_array(token, [x[lo], x[lo + 1], x[lo + 2], x[lo + 3]]);
+            let r = linear_to_srgb_255_x4(token, reinhard_x4(token, v)).to_array();
+            out[lo..lo + 4].copy_from_slice(&r);
+        }
+        out
+    }
+
+    #[arcane]
+    pub(super) fn linear_u16_to_srgb_255_x8_neon(token: NeonToken, values: &[u16; 8]) -> [f32; 8] {
+        let mut out = [0.0f32; 8];
+        for h in 0..2 {
+            let lo = h * 4;
+            let v = u16x4_to_linear(token, values, lo);
+            let r = linear_to_srgb_255_x4(token, v).to_array();
+            out[lo..lo + 4].copy_from_slice(&r);
+        }
+        out
+    }
+
+    /// BT.601 RGB->YCbCr on 4 already-sRGB-x255 lanes.
+    #[rite]
+    fn ycbcr_x4(token: NeonToken, r: F32x4, g: F32x4, b: F32x4) -> (F32x4, F32x4, F32x4) {
+        let kr_y = F32x4::splat(token, YCBCR_R_TO_Y);
+        let kg_y = F32x4::splat(token, YCBCR_G_TO_Y);
+        let kb_y = F32x4::splat(token, YCBCR_B_TO_Y);
+        let kr_cb = F32x4::splat(token, YCBCR_R_TO_CB);
+        let kg_cb = F32x4::splat(token, YCBCR_G_TO_CB);
+        let kb_cb = F32x4::splat(token, YCBCR_B_TO_CB);
+        let kr_cr = F32x4::splat(token, YCBCR_R_TO_CR);
+        let kg_cr = F32x4::splat(token, YCBCR_G_TO_CR);
+        let kb_cr = F32x4::splat(token, YCBCR_B_TO_CR);
+        let offset = F32x4::splat(token, CHROMA_OFFSET);
+
+        let y = kr_y.mul_add(r, kg_y.mul_add(g, kb_y * b));
+        let cb = kr_cb.mul_add(r, kg_cb.mul_add(g, kb_cb * b)) + offset;
+        let cr = kr_cr.mul_add(r, kg_cr.mul_add(g, kb_cr * b)) + offset;
+        (y, cb, cr)
+    }
+
+    #[arcane]
+    pub(super) fn linear_rgb16_to_ycbcr_x8_neon(
+        token: NeonToken,
+        r: &[u16; 8],
+        g: &[u16; 8],
+        b: &[u16; 8],
+    ) -> ([f32; 8], [f32; 8], [f32; 8]) {
+        let (mut oy, mut ocb, mut ocr) = ([0.0f32; 8], [0.0f32; 8], [0.0f32; 8]);
+        for h in 0..2 {
+            let lo = h * 4;
+            let rr = linear_to_srgb_255_x4(token, u16x4_to_linear(token, r, lo));
+            let gg = linear_to_srgb_255_x4(token, u16x4_to_linear(token, g, lo));
+            let bb = linear_to_srgb_255_x4(token, u16x4_to_linear(token, b, lo));
+            let (y, cb, cr) = ycbcr_x4(token, rr, gg, bb);
+            oy[lo..lo + 4].copy_from_slice(&y.to_array());
+            ocb[lo..lo + 4].copy_from_slice(&cb.to_array());
+            ocr[lo..lo + 4].copy_from_slice(&cr.to_array());
+        }
+        (oy, ocb, ocr)
+    }
+
+    #[arcane]
+    pub(super) fn linear_rgbf32_to_ycbcr_x8_neon(
+        token: NeonToken,
+        r: &[f32; 8],
+        g: &[f32; 8],
+        b: &[f32; 8],
+    ) -> ([f32; 8], [f32; 8], [f32; 8]) {
+        let (mut oy, mut ocb, mut ocr) = ([0.0f32; 8], [0.0f32; 8], [0.0f32; 8]);
+        let load = |c: &[f32; 8], lo: usize| {
+            F32x4::from_array(token, [c[lo], c[lo + 1], c[lo + 2], c[lo + 3]])
+        };
+        for h in 0..2 {
+            let lo = h * 4;
+            let rr = linear_to_srgb_255_x4(token, reinhard_x4(token, load(r, lo)));
+            let gg = linear_to_srgb_255_x4(token, reinhard_x4(token, load(g, lo)));
+            let bb = linear_to_srgb_255_x4(token, reinhard_x4(token, load(b, lo)));
+            let (y, cb, cr) = ycbcr_x4(token, rr, gg, bb);
+            oy[lo..lo + 4].copy_from_slice(&y.to_array());
+            ocb[lo..lo + 4].copy_from_slice(&cb.to_array());
+            ocr[lo..lo + 4].copy_from_slice(&cr.to_array());
+        }
+        (oy, ocb, ocr)
+    }
+}
+
 /// Convert 8 linear f32 values [0,infinity) to sRGB [0, 255].
 ///
 /// Values > 1.0 are tone-mapped with Reinhard: x / (1 + x).
@@ -261,6 +402,13 @@ pub fn linear_to_srgb_255_x8(x: &[f32; 8]) -> [f32; 8] {
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             return simd_fused::linear_to_srgb_255_x8_v3(token, x);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken as _;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return simd_fused_neon::linear_to_srgb_255_x8_neon(token, x);
         }
     }
     linear_to_srgb_255_x8_scalar(x)
@@ -290,6 +438,13 @@ pub fn linear_u16_to_srgb_255_x8(values: &[u16; 8]) -> [f32; 8] {
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             return simd_fused::linear_u16_to_srgb_255_x8_v3(token, values);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken as _;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return simd_fused_neon::linear_u16_to_srgb_255_x8_neon(token, values);
         }
     }
     linear_u16_to_srgb_255_x8_scalar(values)
@@ -326,6 +481,13 @@ pub fn linear_rgb16_to_ycbcr_x8(
             return simd_fused::linear_rgb16_to_ycbcr_x8_v3(token, r, g, b);
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken as _;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return simd_fused_neon::linear_rgb16_to_ycbcr_x8_neon(token, r, g, b);
+        }
+    }
     // Scalar fallback
     let r = linear_u16_to_srgb_255_x8_scalar(r);
     let g = linear_u16_to_srgb_255_x8_scalar(g);
@@ -348,6 +510,13 @@ pub fn linear_rgbf32_to_ycbcr_x8(
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             return simd_fused::linear_rgbf32_to_ycbcr_x8_v3(token, r, g, b);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken as _;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return simd_fused_neon::linear_rgbf32_to_ycbcr_x8_neon(token, r, g, b);
         }
     }
     // Scalar fallback
@@ -607,5 +776,100 @@ mod tests {
             ref_ns / fast_time.as_nanos() as f64,
             ref_ns / u16_time.as_nanos() as f64
         );
+    }
+}
+
+#[cfg(test)]
+mod arm_linear_lut_tests {
+    use super::*;
+
+    /// The four fused `*_x8` kernels must agree with their scalar twins on
+    /// whatever tier this host dispatches to.
+    ///
+    /// These had NO aarch64 arm — x86 dispatched a fused SIMD path and ARM fell
+    /// through to scalar. The ARM kernels added alongside are built on
+    /// `linear_srgb::tokens::x4` rather than `x8`, because the entire
+    /// `tokens::x8` module is x86-only, so they run the 4-wide transfer twice
+    /// per 8 values. That is a different decomposition from the x86 body, which
+    /// is exactly why it needs checking rather than assuming.
+    ///
+    /// Inputs deliberately span the sRGB piecewise knee (0.0031308), the
+    /// linear segment below it, the power segment above, exact 0 and 1, and
+    /// HDR values > 1 that trigger Reinhard — a transfer curve can agree in
+    /// midtones while a branch or a clamp is wrong at a boundary.
+    fn probe_f32() -> [f32; 8] {
+        [0.0, 0.001, 0.0031308, 0.01, 0.2, 0.5, 1.0, 4.0]
+    }
+    fn probe_u16() -> [u16; 8] {
+        [0, 1, 205, 512, 13107, 32768, 60000, 65535]
+    }
+
+    #[test]
+    fn linear_to_srgb_255_x8_matches_scalar() {
+        let x = probe_f32();
+        let got = linear_to_srgb_255_x8(&x);
+        let want = linear_to_srgb_255_x8_scalar(&x);
+        for i in 0..8 {
+            assert!(
+                (got[i] - want[i]).abs() < 1e-3,
+                "lane {i}: dispatched {} vs scalar {}",
+                got[i],
+                want[i]
+            );
+        }
+    }
+
+    #[test]
+    fn linear_u16_to_srgb_255_x8_matches_scalar() {
+        let v = probe_u16();
+        let got = linear_u16_to_srgb_255_x8(&v);
+        let want = linear_u16_to_srgb_255_x8_scalar(&v);
+        for i in 0..8 {
+            assert!(
+                (got[i] - want[i]).abs() < 1e-3,
+                "lane {i}: dispatched {} vs scalar {}",
+                got[i],
+                want[i]
+            );
+        }
+    }
+
+    #[test]
+    fn linear_rgb16_to_ycbcr_x8_matches_scalar() {
+        let r = probe_u16();
+        let g = [65535u16, 60000, 32768, 13107, 512, 205, 1, 0];
+        let b = [512u16, 0, 65535, 1, 32768, 13107, 60000, 205];
+        let (y, cb, cr) = linear_rgb16_to_ycbcr_x8(&r, &g, &b);
+        // The wrapper's own scalar fallback path, composed the same way.
+        let (wy, wcb, wcr) = {
+            let rs = linear_u16_to_srgb_255_x8_scalar(&r);
+            let gs = linear_u16_to_srgb_255_x8_scalar(&g);
+            let bs = linear_u16_to_srgb_255_x8_scalar(&b);
+            rgb_to_ycbcr_x8_scalar(&rs, &gs, &bs)
+        };
+        for i in 0..8 {
+            assert!((y[i] - wy[i]).abs() < 1e-3, "Y lane {i}: {} vs {}", y[i], wy[i]);
+            assert!((cb[i] - wcb[i]).abs() < 1e-3, "Cb lane {i}: {} vs {}", cb[i], wcb[i]);
+            assert!((cr[i] - wcr[i]).abs() < 1e-3, "Cr lane {i}: {} vs {}", cr[i], wcr[i]);
+        }
+    }
+
+    #[test]
+    fn linear_rgbf32_to_ycbcr_x8_matches_scalar() {
+        let r = probe_f32();
+        let g = [4.0f32, 1.0, 0.5, 0.2, 0.01, 0.0031308, 0.001, 0.0];
+        let b = [0.2f32, 0.0, 4.0, 0.001, 0.5, 0.01, 1.0, 0.0031308];
+        let (y, cb, cr) = linear_rgbf32_to_ycbcr_x8(&r, &g, &b);
+        let (wy, wcb, wcr) = {
+            let rs = linear_to_srgb_255_x8_scalar(&r);
+            let gs = linear_to_srgb_255_x8_scalar(&g);
+            let bs = linear_to_srgb_255_x8_scalar(&b);
+            rgb_to_ycbcr_x8_scalar(&rs, &gs, &bs)
+        };
+        for i in 0..8 {
+            assert!((y[i] - wy[i]).abs() < 1e-3, "Y lane {i}: {} vs {}", y[i], wy[i]);
+            assert!((cb[i] - wcb[i]).abs() < 1e-3, "Cb lane {i}: {} vs {}", cb[i], wcb[i]);
+            assert!((cr[i] - wcr[i]).abs() < 1e-3, "Cr lane {i}: {} vs {}", cr[i], wcr[i]);
+        }
     }
 }

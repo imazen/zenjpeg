@@ -61,6 +61,11 @@ pub(crate) mod picker;
 
 #[doc(hidden)]
 pub mod config;
+/// Public under `__test-utils` so `benches/tier_isolation.rs` can measure the
+/// fused linear/HDR kernels per-tier. Not public API.
+#[cfg(feature = "__test-utils")]
+pub mod linear_lut;
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod linear_lut;
 
 // Archmage-based SIMD (token-based safe intrinsics)

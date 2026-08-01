@@ -146,6 +146,42 @@ fn bench_tiers(suite: &mut Suite) {
             }
         });
     }
+
+    // ---- linear/HDR strip-encode kernels ----
+    //
+    // These four had an x86 fused-SIMD arm and NO aarch64 arm, so ARM ran the
+    // scalar loop. They could not be fixed by re-attributing the x86 body: its
+    // only sRGB step lives in `linear_srgb::tokens::x8`, and that whole module
+    // is x86-only. The ARM arms are built on `tokens::x4` instead, running the
+    // 4-wide transfer twice per 8 values.
+    {
+        let xf: &'static [f32; 8] =
+            Box::leak(Box::new([0.0, 0.001, 0.0031308, 0.01, 0.2, 0.5, 1.0, 4.0]));
+        let xu: &'static [u16; 8] =
+            Box::leak(Box::new([0, 1, 205, 512, 13107, 32768, 60000, 65535]));
+        macro_rules! k {
+            ($name:expr, $call:expr) => {
+                suite.compare($name, |g| {
+                    for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                        g.bench(arm, move |b| {
+                            b.iter(move || {
+                                set_simd(simd);
+                                $call
+                            })
+                        });
+                    }
+                });
+            };
+        }
+        k!("linear_to_srgb_255_x8",
+           zenjpeg::encode::linear_lut::linear_to_srgb_255_x8(xf));
+        k!("linear_u16_to_srgb_255_x8",
+           zenjpeg::encode::linear_lut::linear_u16_to_srgb_255_x8(xu));
+        k!("linear_rgb16_to_ycbcr_x8",
+           zenjpeg::encode::linear_lut::linear_rgb16_to_ycbcr_x8(xu, xu, xu));
+        k!("linear_rgbf32_to_ycbcr_x8",
+           zenjpeg::encode::linear_lut::linear_rgbf32_to_ycbcr_x8(xf, xf, xf));
+    }
 }
 
 zenbench::main!(bench_tiers);
