@@ -87,6 +87,25 @@ pub(crate) fn yuv444_to_rgb_generic(
 /// Y is full-resolution; Cb/Cr are half in both dimensions.
 #[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
+/// NOTE (measured 2026-07-31, `benches/kernel_tiers.rs`): this gets **no**
+/// SIMD benefit on aarch64 — 2.9 ms vs 2.9 ms, 1.00x against its own forced
+/// scalar tier at 1920x1080 — while the 4:4:4 sibling
+/// [`yuv444_to_rgb_generic`] reaches 3.57x from the same generic machinery.
+/// 4:2:0 is the dominant subsampling in real JPEG/WebP, so this is the case
+/// that matters most.
+///
+/// The cause is the chroma addressing below: `cx = col / 2` advances the
+/// chroma index at half the luma rate, so a lane-parallel loop over `col`
+/// reads `cb_plane`/`cr_plane` with a gather-like pattern. The 4:4:4 path has
+/// unit stride on all three planes and vectorizes cleanly. Nothing about the
+/// arithmetic blocks SIMD — only the addressing does.
+///
+/// The fix is to duplicate chroma rather than index it: load 8 chroma samples,
+/// zip each with itself (`vzip1q_u8(c, c)` on NEON) to get 16 values aligned
+/// to 16 luma pixels, then run the existing conversion 16-wide. Not done here
+/// — it is a new kernel with real colour-correctness surface (coefficients,
+/// rounding, clamping), so it wants a fresh pass gated against this scalar
+/// form, not a tired one.
 pub(crate) fn yuv420_to_rgb_generic(
     _token: Token,
     y_plane: &[u8],

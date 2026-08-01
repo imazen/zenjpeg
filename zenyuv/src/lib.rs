@@ -33,6 +33,11 @@
 // ── Modules ────────────────────────────────────────────────────────────────
 
 pub mod context;
+/// Public under `_dev` so `benches/kernel_tiers.rs` can measure the decode
+/// kernels per-tier. Not public API, not semver-covered.
+#[cfg(feature = "_dev")]
+pub mod decode;
+#[cfg(not(feature = "_dev"))]
 mod decode;
 mod decode_generic;
 mod encode;

@@ -123,6 +123,37 @@ fn bench(suite: &mut Suite) {
     // directly and `avx2_decode.rs` has no callers at all. Worth a look from
     // inside the crate; flagged rather than silently skipped.
 
+
+    // ---- decode ----
+    // Flagged earlier as having no hand-written kernel on ANY architecture:
+    // `decode.rs` calls the generic magetypes path directly for all five entry
+    // points, and `avx2_decode.rs` — which exists and compiles — has zero
+    // callers. That generic path DOES instantiate a NEON tier through
+    // `incant!`, so this is a missing hand-written kernel, not a missing vector
+    // path. Whether that costs anything was unmeasurable until now, because the
+    // decode fns are crate-internal; `_dev` exposes them.
+    {
+        let yp: &'static [u8] =
+            Box::leak((0..n).map(|i| (i % 251) as u8).collect::<Vec<u8>>().into_boxed_slice());
+        let cp: &'static [u8] =
+            Box::leak((0..n).map(|i| (i % 199) as u8).collect::<Vec<u8>>().into_boxed_slice());
+        macro_rules! dec {
+            ($name:expr, $call:expr) => {
+                suite.compare($name, |g| {
+                    g.throughput(Throughput::Bytes((n * 3) as u64));
+                    for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                        g.bench(arm, move |b| {
+                            b.with_input(move || { set_simd(simd); vec![0u8; n * 3] })
+                                .run(move |mut out| { $call(&mut out); out })
+                        });
+                    }
+                });
+            };
+        }
+        dec!("yuv444_to_rgb", |o: &mut Vec<u8>| zenyuv::decode::yuv444_to_rgb(yp, cp, cp, o, W, H));
+        dec!("yuv420_to_rgb", |o: &mut Vec<u8>| zenyuv::decode::yuv420_to_rgb(yp, cp, cp, o, W, H));
+    }
+
     set_simd(true);
 }
 

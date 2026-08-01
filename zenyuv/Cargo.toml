@@ -27,6 +27,8 @@ zenbench = { workspace = true }
 [features]
 default = ["std"]
 std = []
+# Dev-only: exposes internal decode kernels for per-tier benchmarking. Not API.
+_dev = ["archmage/testable_dispatch"]
 
 [lints]
 workspace = true
@@ -38,3 +40,4 @@ harness = false
 [[bench]]
 name = "kernel_tiers"
 harness = false
+required-features = ["_dev"]
