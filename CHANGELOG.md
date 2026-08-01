@@ -43,6 +43,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **zencodec encode memory pre-flight now gates on the calibrated peak
+  estimate (281c948f).** With `ResourceLimits::max_memory_bytes` set, all
+  zencodec encode entry points compare the budget against
+  `heuristics::estimate_encode(..)`'s `peak_memory_bytes` (the
+  VmHWM-calibrated working set, a safe upper bound from the 2026-06-23
+  sweep) plus the held input buffer — the same convention
+  `estimate_encode_resources` reports — instead of just the `w*h*bpp`
+  input buffer (1024×1024 RGB8: 3 MiB claimed vs ~9-12 MiB real peak).
+  Encodes near a tight budget that previously slipped through now fail up
+  front with `ErrorCategory::Resource(Limits(Memory))`; raise
+  `max_memory_bytes` if the honest estimate rejects a budget you know is
+  sufficient. No thread-count hook: zenjpeg's one-shot encode is measured
+  serial (`encode_threading_info()` = SERIAL), so there is no
+  thread-memory axis to cap.
 - **The default decoder IDCT is now `IdctMethod::Libjpeg`, not `Jpegli`
   (closes #86).** Out of the box, `Decoder::new()` is now **byte-for-byte
   identical to libjpeg-turbo / mozjpeg / djpeg** — the default
