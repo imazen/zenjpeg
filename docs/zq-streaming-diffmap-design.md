@@ -1,205 +1,244 @@
-# Per-window streaming diffmap measurement (zenjpeg #113 PR-F)
+# Streaming measurement for target-zq (zenjpeg #113 PR-F) — design v2
 
-Design doc for the per-window streaming diffmap measurement layer of the
-target-zq closed-loop encoder. Context: the iteration loop currently
-runs a full-image diffmap per pass, which dominates encode cost on large
-images. This doc proposes amortizing the cost via a per-window streaming
-consumer in zensim.
+Revised 2026-07-31. **This version supersedes the v1 draft in place** after
+a source-verified coherence review of the proposal against zensim at the
+pinned rev (`9d8f73a5`, what zenjpeg builds today) and zensim `main`
+(`f316807e`, mid feature/scoring redesign). The v1 draft's API shape and
+several of its load-bearing facts did not survive contact with the source;
+the corrected facts, the revised upstream proposal, and the implementation
+ordering are below.
 
-Status: design only. No implementation yet. Coordination needed with
-upstream zensim before zenjpeg-side wiring.
+Status: design + upstream coordination. zensim-side implementation is
+**deliberately deferred to the post-freeze surface** (see "Timing");
+zenjpeg-side wiring follows the upstream landing.
 
-## Problem
+## Verdict (from the 2026-07-31 coherence review)
 
-Today's iteration loop in `BytesEncoder::finish_with_metrics` (after
-PR-B / #117) does, per pass:
+Per-strip streaming measurement is **mathematically coherent under
+zensim's MLP/linear-projection scoring — if and only if accumulation
+happens in feature space and the scoring head runs once at finalize.**
 
-```
-encode → decode → compute_with_ref_and_diffmap (FULL IMAGE) → adjust
-```
+- Every spatial pooling op in the shipped runtime is an f64 sum, a
+  power-sum (the "p95"-named fields are L8 power means, not
+  percentiles), a weighted-sum-normalized-by-count, or a running max —
+  all exactly strip-accumulable. There are **no true percentiles, no
+  histograms, and no global normalizations** in the pooling path
+  (`9d8f73a5:zensim/src/streaming.rs:297-343`, `metric.rs:630-635`).
+- All nonlinearities (p-roots, HF ratios, the MLP head, the α/hybrid
+  gate, the PCHIP output spline) apply to the ~372 globally pooled
+  scalars once, at finalize (`9d8f73a5:zensim/src/metric.rs:2026-2162`).
+- zensim **already ships** strip-based accumulation proven equivalent to
+  the one-shot path to <1e-13 rel — `compute_with_ref_streaming_strips`
+  at strip geometry 256 inner / 128 margin
+  (`9d8f73a5:zensim/src/metric.rs:1386-1440`, `streaming.rs:2635-2660`).
+- **Per-strip `score_delta` is mathematically ill-defined** under the
+  nonlinear head: the telescoped marginal is order-dependent, confounds
+  the strip's own error with coverage renormalization of *all* prior
+  pooled features, and partial pools feed the MLP out-of-distribution
+  inputs. It must not be in the API. The per-strip **block diffmap is
+  clean** — purely local (±40 full-res rows of context under default
+  options), no coverage normalization, no head — and it is the only
+  per-strip signal the zq controller actually consumes.
 
-`compute_with_ref_and_diffmap` cost on a 4K image is ~91 ms threaded,
-~366 ms single-threaded (per zensim README). For typical 2-pass
-encodes, the diffmap cost is ~30–50 % of total time. On larger images
-this fraction grows — at 8K it dominates.
+## Corrections to the v1 draft (verified against source)
 
-## Goal
+| v1 claim | Reality |
+|---|---|
+| `STRIP_INNER = 16`, an input cadence | `STRIP_INNER = 32`, an internal band-blocking constant inside a one-shot pass (`9d8f73a5:zensim/src/streaming.rs:33-54`) |
+| Multi-scale context ±32 rows | ±40 full-res rows for the default (SSIM-only) diffmap; **±80** for the score side (masked+IW features need a second blur at scale 3) |
+| "Rolling band buffers already expose the state machine" | No rolling push machinery exists at the pinned rev. Strips are independently recomputed with 128-row margins (~2× row-work vs inner rows; at v1's 16-row inner it would be ~17×). Zero-overlap streaming exists only in the v2 feature-regime producer on zensim main |
+| `PrecomputedReference::new` ~half a diffmap cost | ~25% (4K) to ~34% (8K) of one compare — and zq.rs already builds it once per encode (`zq.rs:668`), so no new saving there |
+| `ScaleAccumulators` ~50 MB at 4K | ~1 KB (33 small arrays). The real memory is the distorted-side plane window plus the fused full-res diffmap (~33 MB f32 at 4K) — which should not be materialized at all when only block means are consumed |
+| Emit per-strip `score_delta` | Ill-defined under the MLP head; deleted from the proposal |
+| Strip path can emit diffmaps | It cannot: the strip aggregator passes no diffmap weights internally; per-band diffmap plumbing exists but is unwired |
 
-Replace the full-image measurement with a per-window streaming consumer
-that:
+Two additional facts that shape the plan:
 
-1. Accepts strips of distorted pixels as the encoder produces them
-   (every K iMCU rows, where K is small — 4 to 8 strips per encode).
-2. Maintains rolling `ScaleAccumulators` against a precomputed source
-   reference.
-3. Emits per-strip "score contribution" deltas the controller can use
-   between pass boundaries.
-4. Finalizes to the canonical full-image score within FP epsilon.
+- **Exactness geometry**: strip inner boundaries must be multiples of 8
+  full-res rows (pyramid parity); documented minimum inner height is
+  176 rows with ≥128-row margins for exact-vs-one-shot accumulation.
+  Byte-exactness is also **per-process**: band layout depends on the
+  rayon thread count, so parity harnesses must pin threading.
+- **The final rows**: the last ~min(margin, remaining) rows can only
+  finalize after the last push — a push consumer must either buffer
+  with lag or emit provisional values and correct them.
 
-Cost model:
-- One-time: `PrecomputedReference::new` on source (~half a full-image
-  diffmap cost). Reused across all passes.
-- Per strip: ~`width * STRIP_INNER` pixel cost. STRIP_INNER = 16 in
-  zensim today; aligns with one 4:2:0 iMCU row.
+## Prior art: zensim#16 (closed 2026-04-29) — read before touching this
 
-For the iteration loop this means: pass cost ≈ encode + IDCT-back +
-per-strip metric, all scaling linearly with image area but with smaller
-per-pixel constants than full-image diffmap.
+The v1 draft's upstream ask was already filed as
+[imazen/zensim#16](https://github.com/imazen/zensim/issues/16) and
+**closed with a reasoned negative result** after synthetic + real-codec
+validation of three mechanisms:
 
-## Proposed upstream zensim API
+| | Option A (buffered streaming) | Option B (scale-0 proxy) | Option D (slice + ZensimScratch) |
+|---|---|---|---|
+| Per-window signal mid-stream | NaN until finalize | yes (~6% weight mass) | yes (truncated context) |
+| Real-codec spatial top-1 | n/a | 33% | 24% |
+| Mean SROCC vs ground-truth diffmap | n/a | 0.394 | 0.571 |
 
-```rust
-// New public type in zensim::streaming.
+Verdict there: *"the multi-scale metric's cross-window psychovisual
+masking is fundamental and isn't recoverable from any per-window
+computation"* — per-window **canonical score** as a targeting oracle is
+dead, and stays dead. Option A's 750-LOC `StreamingDiffmap` (strip-fed,
+canonical-equivalent finalize, <1e-4 parity) is parked at
+`explored/issue-16-option-a-buffered-streaming` as reference.
 
-/// Per-strip streaming consumer that accumulates distorted-side
-/// contributions against a precomputed source reference. Produces a
-/// canonical full-image DiffmapResult on finalize.
-pub struct StreamingDiffmap<'a> {
-    /// Borrow of the precomputed source pyramid; never modified.
-    reference: &'a PrecomputedReference,
-    /// Internal per-scale accumulators, shape mirrors the reference's
-    /// pyramid.
-    scales: Vec<ScaleAccumulators>,
-    /// User-supplied diffmap shaping options.
-    options: DiffmapOptions,
-    /// Rows pushed so far; finalized when this hits image height.
-    rows_pushed: usize,
-}
+**What changed since:** the attribution surface does not compute
+per-window scores at all — it spatially decomposes the *global* score's
+first-order sensitivity (∂score/∂region of the full-image pooled
+features), which sidesteps the cross-window-context problem entirely.
+Upstream measured it at M2 0.999–1.000 across block sizes 16–128 px
+(the 128 px inversion that plagued the fold is cured), and #69
+validated H3 magnitude steering with it in a real closed loop. That —
+not a per-window score — is the per-strip signal the revised proposal
+carries, so the new issue supersedes #16 rather than reopening it.
 
-impl<'a> StreamingDiffmap<'a> {
-    pub fn new(
-        reference: &'a PrecomputedReference,
-        options: DiffmapOptions,
-    ) -> Self;
+## The redesign context (zensim main, freeze plan 2026-07-31)
 
-    /// Push `rows` rows of distorted pixels starting at `strip_y` in
-    /// the source coordinate system. `rows` must be a multiple of
-    /// STRIP_INNER (16) except possibly the final strip.
-    ///
-    /// Returns `Some((score_contribution, ...))` when this push
-    /// completes a full strip's accumulators; `None` while waiting
-    /// for more rows. The score contribution is the delta this strip
-    /// adds to the running full-image score.
-    pub fn push_distorted_strip(
-        &mut self,
-        distorted: &impl ImageSource,
-        strip_y: usize,
-        rows: usize,
-    ) -> Option<StripContribution>;
+The metric redesign moves the target surface out from under the v1
+proposal:
 
-    /// Linear-planar variant for encoder pipelines that already have
-    /// linear-RGB f32 strips on hand (no need to interleave back to
-    /// RGB8 just to feed the metric).
-    pub fn push_distorted_strip_linear_planar(
-        &mut self,
-        planes: [&[f32]; 3],
-        strip_y: usize,
-        rows: usize,
-        stride: usize,
-    ) -> Option<StripContribution>;
+- `ZensimProfile::codec_target()` is now **Profile B** (deterministic
+  linear ensemble); Profile A is deprecated. The frozen dial will be an
+  **MLP bake** — per-strip score additivity is permanently unavailable.
+- The feature regime moves 372 → **944** (feature_v2), extracted
+  **streaming-only** in 128-row kernel strips with 10-row halos, with
+  **bit-exact fixed accumulation order** (a push consumer must add
+  strips in row order, not merge reassociated partials).
+- **The diffmap fold is demoted to visualization-only.** The codec
+  steering surface is the **attribution density + summed-area table**
+  (`compute_with_ref_score_and_attribution`): signed per-pixel
+  first-order ∂score/∂region with O(1) rect queries, valid for
+  MLP-class dials (piecewise-linear ⇒ locally exact gradients). The
+  validated closed-loop rule is **H3 magnitude steering** (per-tile
+  steps ∝ attribution magnitude, capped) — upstream's #69 result found
+  a coherent *map* alone did NOT improve target-hitting; the magnitude
+  rule did.
+- The freeze plan's own Phase-3 item requires a 944-regime **fused
+  compare with extractor-side retention hooks** — i.e. upstream must
+  build a per-strip-signal surface anyway. The push consumer should BE
+  that mechanism, not a parallel one.
 
-    /// Finalize and return the full DiffmapResult. Must be called
-    /// after exactly `image_height` rows have been pushed.
-    pub fn finalize(self) -> DiffmapResult;
+## Revised upstream proposal: `StreamingCompare`
 
-    /// Instantaneous estimate of the full-image score from
-    /// already-finalized strip accumulators. Useful for early-stop
-    /// heuristics; final value comes from `finalize`.
-    pub fn current_score(&self) -> f32;
-}
-
-pub struct StripContribution {
-    /// Strip's contribution to the running zensim score (signed delta).
-    pub score_delta: f32,
-    /// Per-block diffmap for the strip rows that just completed
-    /// (block-aligned, length = blocks_w * (rows / 8)).
-    pub block_diffmap: Vec<f32>,
-}
-```
-
-## Multi-scale boundary handling
-
-zensim is multi-scale (4 levels, 2× downsampled each, per the v0.2
-profile). Scale 3 = 8× downsampled, so features at row Y depend on
-rows Y±32 at full resolution. A pure-window measurement that only sees
-[Y, Y+STRIP] has wrong features near the strip edges.
-
-The internal `streaming.rs` already handles this with rolling band
-buffers — `STRIP_INNER = 16` rows of "valid" output backed by
-lookahead/lookback for higher-scale context. The proposed
-`StreamingDiffmap` consumer just exposes that internal state machine
-publicly; the boundary math is already correct.
-
-**Test-slice validation strategy** (per #113 user direction):
-
-1. Pick a corpus of test images (CID22 + screen content, ~30 images).
-2. For each image, encode at q=80, decode.
-3. Compute one-shot `compute_with_ref_and_diffmap` → reference score S₀.
-4. Compute strip-by-strip via `StreamingDiffmap::push_distorted_strip`
-   → finalized score S_n.
-5. Assert |S_n − S₀| < ε for ε = 1e-4 (FP rounding tolerance).
-6. Repeat with non-aligned slice subsets (e.g. push the first 7 strips,
-   skip 1, push the rest) to catch any "valid only when aligned"
-   regressions in the boundary handling.
-
-## zenjpeg-side changes (after upstream lands)
-
-`zq.rs::run_iteration_loop` would become:
+Filed as a zensim issue (see Tracking). Regime- and head-agnostic:
 
 ```rust
-let mut streaming = StreamingDiffmap::new(&pre, DiffmapOptions::default());
-
-// Pass 0: encode, push strips into streaming consumer as they're
-// finalized by the strip processor.
-for strip in encoder.strips() {
-    let decoded_strip = idct_back(strip);
-    if let Some(contrib) = streaming.push_distorted_strip(&decoded_strip, ...) {
-        // Per-strip controller hook: adjust AQ for next strip based on
-        // contrib.block_diffmap.
-        controller.observe(strip_y, contrib);
-    }
+/// Push-based streaming compare. Accumulates in feature space; the
+/// profile head runs once at finalize.
+pub struct StreamingCompare<'a> {
+    reference: &'a PrecomputedReference, // or the v2 ref equivalent
+    // internal: rolling distorted-side window (O(width × context) rows),
+    // per-scale accumulators, emission cursor lagging the push cursor
+    // by the profile's documented context radius.
 }
-let result = streaming.finalize();
+
+pub struct StreamOptions {
+    /// Per-strip signal shape. `Attribution` block sums are the
+    /// post-freeze default; the v1 fold ships only as visualization.
+    pub strip_signal: StripSignal, // None | BlockDiffmap {..} | Attribution {..}
+    pub emit_estimated_score: bool, // off by default
+}
+
+impl<'a> StreamingCompare<'a> {
+    pub fn new(r: &'a PrecomputedReference, o: StreamOptions) -> Result<Self, ZensimError>;
+
+    /// Rows arrive top-to-bottom, contiguous, any multiple of 8 (16-row
+    /// iMCU strips qualify). Feedback covers rows that became FINAL —
+    /// which lags the push cursor by the context radius.
+    pub fn push_distorted_linear_planar(
+        &mut self, planes: [&[f32]; 3], rows: usize, stride: usize,
+    ) -> Result<StripFeedback, ZensimError>;
+
+    /// Canonical result — identical (≤ documented ε, thread count
+    /// pinned) to the one-shot fused compare for the same profile.
+    pub fn finalize(self) -> Result<(ZensimResult, AttributionResult), ZensimError>;
+}
+
+#[non_exhaustive]
+pub struct StripFeedback {
+    /// Newly-finalized full-res rows (empty while lookahead fills).
+    pub emitted_rows: core::ops::Range<usize>,
+    /// Local per-8×8-block signal for emitted rows. For `Attribution`,
+    /// block sums of the signed density (score units; H3-ready).
+    pub block_signal: alloc::vec::Vec<f32>,
+    /// Score of the covered region so far — NOT the final score, NOT a
+    /// delta, NOT additive. NaN until coverage ≥ threshold.
+    pub estimated_score_so_far: f32,
+    pub coverage: f32,
+}
 ```
 
-This collapses encode + measure into a single pass with strip-level
-feedback. The per-pass full-image diffmap cost vanishes; what's left is
-just the IDCT-back of the just-encoded blocks (which we have in
-memory anyway).
+Deliberate choices: **no `score_delta`**; feedback keyed to *emitted*
+(context-complete) rows; `finalize` returns the fused-compare types so
+the streaming path is a drop-in for
+`compute_with_ref_score_and_attribution`; the head is versioned
+implicitly via `ZensimProfile`.
 
-## Open questions
+Interim option (pinned rev, if ever needed before the freeze lands): a
+rolling-window `ImageSource` adapter driving
+`compute_with_ref_streaming_strips` with multithreading off — correct
+and bounded-memory for the *score* side only, at ~2× margin-recompute
+overhead; the block map still requires a finalize-time fused map. Any
+per-strip *diffmap emission* work at the pinned rev is effort spent on
+the surface being retired — don't.
 
-1. **Per-strip score deltas vs only-finalize semantics?** If callers
-   only ever use `finalize()`, the per-strip return value is overhead.
-   Maybe have two modes: `StreamingDiffmap::silent()` and
-   `::with_strip_feedback()`.
+## zenjpeg-side plan
 
-2. **Memory ownership of accumulators.** The internal
-   `ScaleAccumulators` are sized by the source pyramid. For a 4K image
-   that's ~50 MB of f32 buffers. Should `StreamingDiffmap::new` take
-   `&mut PrecomputedReference` to allow pooling, or is allocate-per-call
-   fine?
+1. **Now (this doc + upstream issue):** coordination only. The zq loop
+   keeps its one-shot `compute_with_ref_and_diffmap` measurement; it is
+   correct, and its reference pyramid is already amortized across
+   passes.
+2. **When `StreamingCompare` lands upstream:** replace `measure()` in
+   `encode/zq.rs` with the push consumer fed by strip-wise decode of the
+   candidate (decoder scanline reader), and wire
+   `AqController::observe` (`encode/aq_controller.rs` Layer 3) with
+   per-strip `block_signal` feedback. The controller's tighten/loosen
+   thresholds are currently full-image block-map percentiles
+   (`zq.rs:461-491`) — with per-strip feedback these must come from the
+   previous pass or a running estimate: that is a controller redesign,
+   and it should adopt **H3 magnitude semantics** (validated upstream
+   for MLP-class dials) rather than reusing the percentile rule
+   unmeasured.
+3. **Known gap to fix in the same PR:** the zq per-block scale grid is
+   `width/8 × height/8` truncating (`zq.rs:608`, `546-569`), so partial
+   edge blocks are never measured or corrected — and edge MCUs are
+   exactly where partial-MCU artifacts live. The recompress refinement
+   (2026-07-31) chose the conservative policy (unmeasured ⇒ untouched);
+   the zq rewrite should measure partial blocks (partial-region means)
+   instead.
 
-3. **`current_score()` precision.** Strip-level streaming inherently
-   has slight pyramid-fusion-order differences from one-shot. The
-   "canonical full-image score" comes from `finalize()`; `current_score`
-   is an estimate. Does that estimate need a documented error bar?
+## Validation strategy (kept from v1, corrected)
+
+1. Corpus (CID22 + screen content, ~30 images), encode q≈80, decode.
+2. One-shot `compute_with_ref_and_diffmap` → S₀ (and fused compare on
+   the post-freeze surface).
+3. Strip-by-strip via the push consumer → finalized S_n.
+4. Assert |S_n − S₀| < 1e-4 **with the rayon thread count pinned**.
+5. Non-aligned pushes (7 strips, skip, rest) — this is exactly the test
+   that catches boundary-margin bugs; keep it.
+6. Run at both the 372/A|B regime and (post-freeze) the 944 regime.
+
+## Timing
+
+Do **not** land `StreamingDiffmap`-as-v1 upstream now: it targets a
+signal shape (fold diffmap + additive deltas over 372/A) that the
+freeze plan retires, and zensim is mid-endgame with concurrent sessions
+landing freeze-gate work. The upstream issue proposes the
+`StreamingCompare` skeleton as the push-based delivery of the freeze
+plan's own fused-compare retention hooks, so one mechanism serves both.
 
 ## Tracking
 
-- zenjpeg #113 PR-F (this design): zenjpeg/docs/zq-streaming-diffmap-design.md
-- Upstream zensim issue: TODO (to be filed after this design lands)
-- Existing experimental ctor exposure (zensim/--diffmap-public-ctors
-  workspace): supersede / discard once StreamingDiffmap lands —
-  internal-ctor exposure isn't needed if the public consumer covers
-  the use case.
-
-## Order of operations
-
-1. Open upstream zensim issue with this design (link this doc).
-2. Land the internal `StreamingDiffmap` API in zensim.
-3. Ship a zensim release with the new public API.
-4. zenjpeg PR-F: bump zensim dep, replace `compute_with_ref_and_diffmap`
-   with the streaming consumer in `run_iteration_loop`.
-5. Validate convergence behavior didn't regress (zq_target tests
-   should pass unchanged; per-pass time should drop on large images).
+- zenjpeg #113 PR-F (this doc, v2).
+- Upstream: [imazen/zensim#54](https://github.com/imazen/zensim/issues/54)
+  "StreamingCompare: push-based streaming compare for encoder closed
+  loops" (filed 2026-07-31 from this design; supersedes zensim#16).
+- Prior art: [imazen/zensim#16](https://github.com/imazen/zensim/issues/16)
+  (closed 2026-04-29) — three explored options with real-codec
+  validation; Option A's parked branch
+  `explored/issue-16-option-a-buffered-streaming` is a reusable
+  substrate for the score-accumulation half.
+- Full coherence review (pipeline verification with file:line evidence
+  at both revs, op-by-op decomposability table, cost-model corrections):
+  produced 2026-07-31; key findings are folded into this doc.
