@@ -162,6 +162,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- **Diffmap-guided per-block refinement for closed-loop recompression**
+  (`recompress-iqa`). When the closed loop's winning candidate is Preserve, was
+  measured, and clears the target with iteration budget left, remaining passes
+  now convert measured overshoot into bytes: the zensim diffmap is pooled to
+  per-8×8-block means and drives an AQ zero-bias depth ladder — blocks in the
+  measured low-error tail (≤ p40) deepen one rung (64→48→32→16 zigzag), blocks
+  the map flags (≥ p95 and > 2× median) get their mask cleared (the measured
+  veto of the energy heuristic in `recompress::aq`). Refined candidates re-run
+  only the coefficient-domain emit + one measurement, and are kept only when
+  strictly smaller AND still clearing the target under the loop's own
+  calibration arithmetic; MCU-padding/edge-sliver blocks are never touched.
+  Requires a calibrated encoder class (gexp table); otherwise refinement is
+  skipped. Also: closed-loop measurement now builds the source reference
+  pyramid ONCE per `recompress` call (`measure::MeasureCtx`) instead of
+  re-decoding the source and rebuilding the pyramid on every pass.
+
 - **`Quality::ZqPicker(f32)` — realtime one-shot perceptual target** (#134). The
   distilled source-feature picker predicts the RD-optimal config (subsampling ×
   progressive × sharp-yuv × effort) plus a starting quality, then encodes

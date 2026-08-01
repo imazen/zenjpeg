@@ -12,8 +12,10 @@ use crate::recompress::strategies;
 
 /// Closed-loop (Lever 4): stop bumping once the predicted achieved
 /// quality is within this many zensim-A of the target. Avoids spending an
-/// extra encode to claw back a fraction of a point.
-const CLOSED_LOOP_TOL: f32 = 1.0;
+/// extra encode to claw back a fraction of a point. Shared with the
+/// diffmap refinement pass (`refine` module), which applies the same
+/// acceptance rule to its candidates.
+pub(in crate::recompress) const CLOSED_LOOP_TOL: f32 = 1.0;
 
 /// Iteration cap for [`Budget::MaxTime`] (which has no explicit count).
 /// `MaxIterations(n)` uses its own `n`.
@@ -390,6 +392,18 @@ pub fn recompress(jpeg_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
             };
             let mut budget_state = crate::recompress::budget::BudgetState::new(opts.budget);
 
+            // Measurement context: source decoded + reference pyramid
+            // built ONCE, reused by every measured pass and by the
+            // diffmap refinement below. (The previous per-pass
+            // `score_recompression` re-decoded the source and rebuilt
+            // the pyramid on every iteration.)
+            #[cfg(feature = "recompress-iqa")]
+            let measure_ctx = if measure {
+                Some(crate::recompress::measure::MeasureCtx::new(jpeg_bytes)?)
+            } else {
+                None
+            };
+
             let encoder_class =
                 crate::recompress::calibration::EncoderClass::from_family(analysis.encoder);
             let source_est = analysis.estimated_zensim_a_vs_reference();
@@ -405,6 +419,18 @@ pub fn recompress(jpeg_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
             let mut cur = params;
             let mut anchor = projected_zensim_a;
             let mut best: Option<(Vec<u8>, StrategyKind, Option<f32>, f32)> = None;
+
+            // Companion state the diffmap refinement needs about the
+            // winning candidate: the params/anchor it was produced at
+            // and its measured per-block error map.
+            #[cfg(feature = "recompress-iqa")]
+            struct BestExt {
+                params: crate::recompress::router::StrategyParams,
+                anchor: f32,
+                block_map: crate::recompress::measure::BlockErrorMap,
+            }
+            #[cfg(feature = "recompress-iqa")]
+            let mut best_ext: Option<BestExt> = None;
 
             // Expected generation-loss for this cell, looked up ONCE on the
             // `target` axis — that is the axis the GEXP tables were fit on
@@ -432,13 +458,12 @@ pub fn recompress(jpeg_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
                 };
                 budget_state.note_iteration();
                 #[cfg(feature = "recompress-iqa")]
-                let g = if measure {
-                    Some(crate::recompress::measure::score_recompression(
-                        jpeg_bytes,
-                        &outcome.bytes,
-                    )?)
-                } else {
-                    None
+                let (g, block_map) = match measure_ctx.as_ref() {
+                    Some(ctx) => {
+                        let (score, blocks) = ctx.score_with_blocks(&outcome.bytes)?;
+                        (Some(score), Some(blocks))
+                    }
+                    None => (None, None),
                 };
                 #[cfg(not(feature = "recompress-iqa"))]
                 let g: Option<f32> = None;
@@ -472,6 +497,14 @@ pub fn recompress(jpeg_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
                 };
                 if replace {
                     best = Some((outcome.bytes.clone(), akind, g, a_hat));
+                    #[cfg(feature = "recompress-iqa")]
+                    {
+                        best_ext = block_map.map(|blocks| BestExt {
+                            params: cur,
+                            anchor,
+                            block_map: blocks,
+                        });
+                    }
                 }
 
                 // Stop: no measurement (OneShot), target reached, iteration
@@ -502,6 +535,47 @@ pub fn recompress(jpeg_bytes: &[u8], opts: &RecompressOptions) -> Result<Recompr
                 cur.target_ijg_q = new_q;
                 cur.target_ba_distance =
                     crate::recompress::target::target_zensim_a_to_ba_distance(new_dial);
+            }
+
+            // Diffmap-guided per-block refinement (Lever 5): when the
+            // winning candidate is Preserve, was measured, and overshoots
+            // the target with iteration budget left, spend the remaining
+            // passes converting measured per-block slack into bytes (and
+            // un-zeroing blocks the measured map flags). See the
+            // `refine` module docs. Refinement errors never discard the
+            // incumbent — worst case it returns nothing.
+            #[cfg(feature = "recompress-iqa")]
+            {
+                let incumbent = best
+                    .as_ref()
+                    .map(|(bytes, kind, _, a_hat)| (*kind, bytes.len(), *a_hat));
+                if let Some((StrategyKind::Preserve, incumbent_len, incumbent_a_hat)) = incumbent
+                    && let Some(ctx) = measure_ctx.as_ref()
+                    && let Some(ext) = best_ext.as_ref()
+                    && let Some(ge) = gexp
+                {
+                    let max_passes = hard_cap.saturating_sub(budget_state.iterations_used);
+                    let refined = crate::recompress::refine::refine_preserve(
+                        jpeg_bytes,
+                        &analysis,
+                        &ext.params,
+                        ctx,
+                        crate::recompress::refine::RefineInputs {
+                            anchor: ext.anchor,
+                            gexp: ge,
+                            target,
+                            incumbent_len,
+                            incumbent_a_hat,
+                            block_map: &ext.block_map,
+                            max_passes,
+                        },
+                        &mut budget_state,
+                    )
+                    .unwrap_or(None);
+                    if let Some(r) = refined {
+                        best = Some((r.bytes, StrategyKind::Preserve, Some(r.g), r.a_hat));
+                    }
+                }
             }
 
             let (bytes, actual_kind, measured_g, a_hat) =

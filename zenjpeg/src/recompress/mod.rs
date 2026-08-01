@@ -5,8 +5,10 @@
 //! needs only `zenjpeg` itself; the optional closed loop ([`Budget::
 //! MaxIterations`] > 1 / [`Budget::MaxTime`]) measures generation loss
 //! against the source and is gated behind the `recompress-iqa` feature
-//! (which pulls in `zensim`). The `recompress-expert` feature exposes the
-//! [`expert`] internals.
+//! (which pulls in `zensim`). Under `recompress-iqa`, leftover iteration
+//! budget on an overshooting Preserve candidate feeds the diffmap-guided
+//! per-block refinement pass (see the `refine` module). The
+//! `recompress-expert` feature exposes the [`expert`] internals.
 //!
 //! Moved into the zenjpeg crate 2026-05-29 (was the standalone
 //! `zenjpeg-recompress` crate); reaches zenjpeg's `pub(crate)` codec
@@ -19,6 +21,8 @@ mod calibration;
 mod error;
 #[cfg(feature = "recompress-iqa")]
 mod measure;
+#[cfg(feature = "recompress-iqa")]
+mod refine;
 mod router;
 mod source;
 mod strategies;

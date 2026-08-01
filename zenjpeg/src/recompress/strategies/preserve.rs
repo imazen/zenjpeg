@@ -79,12 +79,62 @@ fn zensim_a_to_ijg_q_estimate(z: f32) -> u8 {
     q as u8
 }
 
+/// Everything `run_preserve` derives from the input before emitting:
+/// decoded coefficients, carried metadata segments, the quant strategy,
+/// and the heuristic AQ mask. Factored out so the diffmap-guided
+/// refinement pass ([`crate::recompress::refine`], `recompress-iqa`) can
+/// rebuild the *identical* emit state for a given `params` and then
+/// evolve only the mask.
+pub(in crate::recompress) struct PreparedPreserve {
+    pub(in crate::recompress) coeffs: crate::decode::DecodedCoefficients,
+    pub(in crate::recompress) preserved_segments: Vec<crate::decode::PreservedSegment>,
+    pub(in crate::recompress) quant_strategy: QuantStrategy,
+    pub(in crate::recompress) aq_mask: Option<super::preserve_emit::AqMask>,
+    pub(in crate::recompress) subsampling: Subsampling,
+}
+
 pub fn run_preserve(
     jpeg_bytes: &[u8],
     analysis: &SourceAnalysis,
     params: &StrategyParams,
     _opts: &RecompressOptions,
 ) -> Result<StrategyOutcome, Error> {
+    let prepared = prepare_preserve(jpeg_bytes, analysis, params)?;
+
+    // Emit.
+    let cfg = EmitConfig {
+        quant_strategy: prepared.quant_strategy,
+        aq_mask: prepared.aq_mask,
+        preserved_segments: prepared.preserved_segments,
+    };
+    let bytes = emit_preserved(&prepared.coeffs, prepared.subsampling, &cfg)?;
+
+    // Validate the emitted bytes round-trip through zenjpeg's decoder.
+    // If they don't, the emitter hit an edge case — return an error so
+    // the API layer falls back to Lossless rather than shipping an
+    // invalid file. The Lossless fallback guarantees a usable output.
+    if DecodeConfig::new().decode(&bytes, Unstoppable).is_err() {
+        return Err(Error::Internal(
+            "preserve: emitted bytes failed roundtrip decode",
+        ));
+    }
+
+    Ok(StrategyOutcome {
+        bytes,
+        measured_zensim_a: None,
+    })
+}
+
+/// Decode + derive the Preserve emit state for `params` WITHOUT
+/// emitting. Deterministic in `(jpeg_bytes, analysis, params)` — two
+/// calls with the same inputs produce the same quant strategy and the
+/// same heuristic mask, which is what lets the refinement pass
+/// reconstruct the state a prior `run_preserve` emitted from.
+pub(in crate::recompress) fn prepare_preserve(
+    jpeg_bytes: &[u8],
+    analysis: &SourceAnalysis,
+    params: &StrategyParams,
+) -> Result<PreparedPreserve, Error> {
     // Operating window: with the zigzag DQT bug fixed (2026-05-28),
     // Preserve produces pixel-identical output for IDENTITY scale
     // across 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 with even dimensions.
@@ -93,7 +143,6 @@ pub fn run_preserve(
     // roundtrip-decode guard below catches the syntactic failures;
     // the byte gate here only rejects targets that would zero every
     // AC coefficient (encoder structural minimum).
-    let _ = analysis;
     if params.target_ijg_q < 8 {
         return Err(Error::Internal(
             "preserve: target IJG-Q too low (would zero all AC coefficients)",
@@ -177,31 +226,17 @@ pub fn run_preserve(
         None
     };
 
-    // 4. Emit.
-    let cfg = EmitConfig {
-        quant_strategy,
-        aq_mask,
-        preserved_segments,
-    };
     let subsampling = match analysis.subsampling {
         Subsampling::S444 | Subsampling::S422 | Subsampling::S420 | Subsampling::S440 => {
             analysis.subsampling
         }
     };
-    let bytes = emit_preserved(&coeffs, subsampling, &cfg)?;
 
-    // Validate the emitted bytes round-trip through zenjpeg's decoder.
-    // If they don't, the emitter hit an edge case — return an error so
-    // the API layer falls back to Lossless rather than shipping an
-    // invalid file. The Lossless fallback guarantees a usable output.
-    if DecodeConfig::new().decode(&bytes, Unstoppable).is_err() {
-        return Err(Error::Internal(
-            "preserve: emitted bytes failed roundtrip decode",
-        ));
-    }
-
-    Ok(StrategyOutcome {
-        bytes,
-        measured_zensim_a: None,
+    Ok(PreparedPreserve {
+        coeffs,
+        preserved_segments,
+        quant_strategy,
+        aq_mask,
+        subsampling,
     })
 }
