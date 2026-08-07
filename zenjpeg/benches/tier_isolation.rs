@@ -173,14 +173,22 @@ fn bench_tiers(suite: &mut Suite) {
                 });
             };
         }
-        k!("linear_to_srgb_255_x8",
-           zenjpeg::encode::linear_lut::linear_to_srgb_255_x8(xf));
-        k!("linear_u16_to_srgb_255_x8",
-           zenjpeg::encode::linear_lut::linear_u16_to_srgb_255_x8(xu));
-        k!("linear_rgb16_to_ycbcr_x8",
-           zenjpeg::encode::linear_lut::linear_rgb16_to_ycbcr_x8(xu, xu, xu));
-        k!("linear_rgbf32_to_ycbcr_x8",
-           zenjpeg::encode::linear_lut::linear_rgbf32_to_ycbcr_x8(xf, xf, xf));
+        k!(
+            "linear_to_srgb_255_x8",
+            zenjpeg::encode::linear_lut::linear_to_srgb_255_x8(xf)
+        );
+        k!(
+            "linear_u16_to_srgb_255_x8",
+            zenjpeg::encode::linear_lut::linear_u16_to_srgb_255_x8(xu)
+        );
+        k!(
+            "linear_rgb16_to_ycbcr_x8",
+            zenjpeg::encode::linear_lut::linear_rgb16_to_ycbcr_x8(xu, xu, xu)
+        );
+        k!(
+            "linear_rgbf32_to_ycbcr_x8",
+            zenjpeg::encode::linear_lut::linear_rgbf32_to_ycbcr_x8(xf, xf, xf)
+        );
     }
 }
 

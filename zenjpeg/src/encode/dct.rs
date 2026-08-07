@@ -1407,7 +1407,11 @@ mod arm_dispatch_tests {
             {
                 let mut b = [0.0f32; 64];
                 for (i, v) in b.iter_mut().enumerate() {
-                    *v = if (i / 8 + i % 8) % 2 == 0 { 100.0 } else { -100.0 };
+                    *v = if (i / 8 + i % 8) % 2 == 0 {
+                        100.0
+                    } else {
+                        -100.0
+                    };
                 }
                 b
             },
