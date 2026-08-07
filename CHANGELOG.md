@@ -43,6 +43,27 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **Ultra HDR measured-nits pass (zensim campaign appendix AA).**
+  (1) `ReconstructHdr`'s envelope `content_light_level` is now MEASURED from
+  the reconstructed pixels via the zenpixels owner
+  (`zenpixels_convert::CllMeasure::measure_max`, MaxRGB per CTA-861.3,
+  BT.2408 anchor) instead of being derived from the gain map's declared
+  capacity — a range bound that over-states content whenever the range isn't
+  fully used — and MaxFALL is filled from the same scan (f16 output keeps the
+  capacity-derived fallback; the mastering-display peak deliberately stays
+  capacity-derived — it describes what the encoding can express).
+  (2) `encode_ultrahdr_luma`'s `Bt2446C` constants now state FACTS — the
+  per-transfer input normalization of the fused splitter's rows
+  (`curve_input_scale_nits`: linear/sRGB → 203, PQ → 10 000, HLG → 1) and the
+  curve's calibrated ~100-nit SDR reference — instead of an assumed
+  1000-nit content peak + a mis-slotted 203-nit "SDR peak". VERSION FACT: the
+  published zentone 0.1.0 this build resolves reserves both params (curve is
+  input-relative), so (2) is byte-neutral today; the
+  `bt2446c_params_inert_at_zentone_0_1` pin fails loudly when a zentone bump
+  makes them live, forcing conscious re-verification. zenpixels /
+  zenpixels-convert min 0.2.16 (+`hdr-experimental` under the `ultrahdr`
+  feature). The declared-grid-vs-quantization-basis defect in the fused
+  metadata is tracked separately (#193) and untouched here.
 - **zencodec encode memory pre-flight now gates on the calibrated peak
   estimate (281c948f).** With `ResourceLimits::max_memory_bytes` set, all
   zencodec encode entry points compare the budget against

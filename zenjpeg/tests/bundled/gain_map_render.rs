@@ -122,14 +122,23 @@ fn reconstruct_hdr_produces_linear_hdr_with_envelope() {
         "reconstructed HDR must exceed SDR white (max = {max})"
     );
 
-    // Envelope obligation.
+    // Envelope obligation. CLL is MEASURED from the reconstructed pixels
+    // (appendix AA — zenpixels CllMeasure, MaxRGB, BT.2408 anchor), so the
+    // 4×-SDR-white fixture must read ≈ 4·203 = 812 nits (lossy encode +
+    // gain-map quantization give it slop) — a content measurement, not the
+    // gain map's declared capacity bound.
     let sc = &out.info().source_color;
     let cll = sc
         .content_light_level
         .expect("ReconstructHdr must populate content_light_level");
     assert!(
-        cll.max_content_light_level > 203,
-        "derived peak above SDR white nits"
+        (600..=1100).contains(&cll.max_content_light_level),
+        "measured content peak should be ~812 nits (4× SDR white), got {}",
+        cll.max_content_light_level
+    );
+    assert!(
+        cll.max_frame_average_light_level > 0,
+        "the measurement scan fills MaxFALL too"
     );
     assert!(
         sc.mastering_display.is_some(),
