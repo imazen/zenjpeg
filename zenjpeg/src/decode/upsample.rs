@@ -629,7 +629,6 @@ pub fn upsample_h2v2_libjpeg_row(
 /// `upsample_h2v2_libjpeg_row_scalar`, interior columns vectorized in i32x8.
 /// Used on non-x86 (NEON/wasm128); x86 uses the hand AVX2 kernel.
 #[magetypes(v3, neon, wasm128, scalar)]
-#[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "x86_64", allow(dead_code))]
 fn upsample_h2v2_libjpeg_row_generic(
     token: Token,

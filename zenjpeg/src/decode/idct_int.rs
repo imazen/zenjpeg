@@ -340,7 +340,6 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
 /// # Notes
 /// - Uses fixed-point arithmetic with 12-bit precision
 /// - Output is already level-shifted (+128) and clamped to [0, 255]
-#[allow(clippy::too_many_lines)]
 pub fn idct_int(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
     // DC-only fast path
     if is_dc_only_int(in_vector) {
@@ -466,7 +465,6 @@ pub fn idct_int(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize
 
 /// Integer IDCT for blocks with only top-left 4x4 non-zero.
 /// Faster than full 8x8 IDCT when AC coefficients are sparse.
-#[allow(clippy::too_many_lines)]
 pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
     // Vertical pass (only first 4 columns matter)
     for ptr in 0..4 {

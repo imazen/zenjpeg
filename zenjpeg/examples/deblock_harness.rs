@@ -182,7 +182,6 @@ fn get_luma_dc_quant(jpeg_bytes: &[u8]) -> Option<u16> {
 
 /// Decode JPEG to planar Y, Cb, Cr (each as Vec<f32> in 0-255 range).
 /// For 4:2:0: cb/cr are half-resolution.
-#[allow(clippy::type_complexity)]
 fn decode_to_coeff_planes(jpeg_bytes: &[u8]) -> Option<CoeffPlanes> {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;

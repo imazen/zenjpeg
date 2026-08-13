@@ -1,4 +1,3 @@
-#![allow(clippy::len_zero, clippy::print_literal)]
 //! Measure runtime and file size for each encoder configuration.
 //!
 //! Uses CID22 corpus (real photos). Reports wall-clock time and output
