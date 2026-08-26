@@ -23,6 +23,7 @@
 
 mod coeff_transform;
 mod exif;
+mod geometry;
 mod pipeline;
 mod restructure;
 #[cfg(test)]

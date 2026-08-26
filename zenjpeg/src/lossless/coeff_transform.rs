@@ -359,22 +359,27 @@ pub fn transform_coefficients(
     let mcu_width = max_h_samp as u32 * 8;
     let mcu_height = max_v_samp as u32 * 8;
 
-    // Check MCU alignment for transforms that need it
     let needs_h_trim = coeffs.width % mcu_width != 0;
     let needs_v_trim = coeffs.height % mcu_height != 0;
 
-    let needs_trim = match config.transform {
-        LosslessTransform::FlipHorizontal => needs_h_trim,
-        LosslessTransform::FlipVertical => needs_v_trim,
-        LosslessTransform::Rotate90 => needs_v_trim,
-        LosslessTransform::Rotate180 => needs_h_trim || needs_v_trim,
-        LosslessTransform::Rotate270 => needs_h_trim,
-        LosslessTransform::Transpose => false, // never has edge issues
-        LosslessTransform::Transverse => needs_h_trim || needs_v_trim,
-        LosslessTransform::None => false,
+    // Which source dimensions the transform relocates away from the trailing
+    // edge (matching jpegtran's per-transform trim requirements). A partial
+    // trailing edge may stay partial; one that would move to a leading edge or
+    // interior must be MCU-aligned or trimmed. Each dimension is decided
+    // independently — trimming a dimension the transform doesn't move loses
+    // pixels for no reason.
+    let (w_must_align, h_must_align) = match config.transform {
+        LosslessTransform::None | LosslessTransform::Transpose => (false, false),
+        LosslessTransform::FlipHorizontal => (true, false),
+        LosslessTransform::FlipVertical => (false, true),
+        LosslessTransform::Rotate90 => (false, true),
+        LosslessTransform::Rotate270 => (true, false),
+        LosslessTransform::Rotate180 | LosslessTransform::Transverse => (true, true),
     };
+    let trim_w = w_must_align && needs_h_trim;
+    let trim_h = h_must_align && needs_v_trim;
 
-    if needs_trim && config.edge_handling == EdgeHandling::RejectPartialBlocks {
+    if (trim_w || trim_h) && config.edge_handling == EdgeHandling::RejectPartialBlocks {
         return Err(TransformError::NotMcuAligned {
             width: coeffs.width,
             height: coeffs.height,
@@ -383,42 +388,45 @@ pub fn transform_coefficients(
         });
     }
 
-    // For trim mode, we may reduce the block grid for affected components.
-    // For simplicity in this initial implementation, we transform the full
-    // block grid (including padding blocks) and adjust the output dimensions.
+    // Trim by cropping the block grids BEFORE transforming, so the transform
+    // only ever moves blocks that survive. Transforming the full padded grid
+    // and shrinking the dimensions afterwards (the previous approach) leaves
+    // relocated padding blocks inside the visible region and desyncs the grid
+    // from the declared dimensions — the issue #195 corruption.
+    let kept_w = if trim_w {
+        (coeffs.width / mcu_width) * mcu_width
+    } else {
+        coeffs.width
+    };
+    let kept_h = if trim_h {
+        (coeffs.height / mcu_height) * mcu_height
+    } else {
+        coeffs.height
+    };
 
     let (new_width, new_height) = if swaps {
-        // For trim: trim the source dimension that will become problematic after swap
-        let trimmed_w = if needs_trim {
-            (coeffs.width / mcu_width) * mcu_width
-        } else {
-            coeffs.width
-        };
-        let trimmed_h = if needs_trim {
-            (coeffs.height / mcu_height) * mcu_height
-        } else {
-            coeffs.height
-        };
-        (trimmed_h, trimmed_w)
+        (kept_h, kept_w)
     } else {
-        let trimmed_w = if needs_h_trim && needs_trim {
-            (coeffs.width / mcu_width) * mcu_width
-        } else {
-            coeffs.width
-        };
-        let trimmed_h = if needs_v_trim && needs_trim {
-            (coeffs.height / mcu_height) * mcu_height
-        } else {
-            coeffs.height
-        };
-        (trimmed_w, trimmed_h)
+        (kept_w, kept_h)
     };
 
     let mut transformed_components = Vec::with_capacity(coeffs.components.len());
 
     for comp in &coeffs.components {
-        let src_bw = comp.blocks_wide;
-        let src_bh = comp.blocks_high;
+        // Cropped source grid: a trimmed dimension is MCU-aligned, so the kept
+        // block count is exact; an untrimmed dimension keeps its full padded
+        // extent (partial + padding blocks stay on the trailing edge, where
+        // the transform keeps them trailing).
+        let src_bw = if trim_w {
+            (kept_w / mcu_width) as usize * comp.h_samp as usize
+        } else {
+            comp.blocks_wide
+        };
+        let src_bh = if trim_h {
+            (kept_h / mcu_height) as usize * comp.v_samp as usize
+        } else {
+            comp.blocks_high
+        };
 
         // For transforms that swap dimensions, swap block grid too
         let (dst_bw, dst_bh) = if swaps {
@@ -432,12 +440,12 @@ pub fn transform_coefficients(
 
         for src_by in 0..src_bh {
             for src_bx in 0..src_bw {
-                // Calculate destination block position
+                // Calculate destination block position (within the cropped grid)
                 let (dst_bx, dst_by) =
                     remap_block(src_bx, src_by, src_bw, src_bh, config.transform);
 
-                // Get source block
-                let src_idx = src_by * src_bw + src_bx;
+                // Get source block (indexed in the FULL stored grid)
+                let src_idx = src_by * comp.blocks_wide + src_bx;
                 let src_block = comp.block(src_idx);
                 let mut src_arr = [0i16; 64];
                 src_arr.copy_from_slice(src_block);

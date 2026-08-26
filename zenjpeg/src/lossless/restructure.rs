@@ -17,6 +17,7 @@ use crate::huffman::optimize::{ContextConfig, ProgressiveTokenBuffer};
 use enough::Stop;
 
 use super::coeff_transform::{TransformConfig, TransformedCoefficients, transform_coefficients};
+use super::geometry::McuGeom;
 use super::pipeline::{
     component_to_blocks, encode_from_coefficients, write_marker_segment, write_quant_tables,
 };
@@ -254,9 +255,36 @@ fn encode_progressive_from_coefficients(
         false
     };
 
-    // Convert to block arrays
-    let all_blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> =
-        coeffs.components.iter().map(component_to_blocks).collect();
+    // Validated grid geometry (fails loudly on inconsistent grids).
+    let geom = McuGeom::from_components(coeffs.width, coeffs.height, &coeffs.components)?;
+
+    // Convert to block arrays, cropped to each component's TRUE grid.
+    //
+    // The stored grids are MCU-padded, but every scan this emitter writes is
+    // either non-interleaved (subsampled case) or has 1×1 sampling throughout
+    // (4:4:4 / grayscale, where padded == true). Per T.81 A.2.2 a
+    // non-interleaved scan contains exactly ceil(comp_dim/8) data units per
+    // row — tokenizing the padded grid emits extra block rows/columns the
+    // decoder does not expect and corrupts every following scan (issue #195's
+    // "extraneous bytes before marker" failure on non-MCU-aligned images).
+    let all_blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> = coeffs
+        .components
+        .iter()
+        .zip(&geom.comps)
+        .map(|(comp, cg)| {
+            let full = component_to_blocks(comp);
+            if cg.true_bw == cg.padded_bw && cg.true_bh == cg.padded_bh {
+                full
+            } else {
+                let mut cropped = Vec::with_capacity(cg.true_bw * cg.true_bh);
+                for by in 0..cg.true_bh {
+                    let row_start = by * cg.padded_bw;
+                    cropped.extend_from_slice(&full[row_start..row_start + cg.true_bw]);
+                }
+                cropped
+            }
+        })
+        .collect();
 
     stop.check()?;
 
