@@ -1509,18 +1509,18 @@ pub fn foundation::simd_types::Block8x8f::get(&self, usize, usize) -> f32
 pub fn foundation::simd_types::Block8x8f::mul(&self, &Self) -> Self
 pub fn foundation::simd_types::Block8x8f::scale(&self, f32) -> Self
 pub fn foundation::simd_types::Block8x8f::set(&mut self, usize, usize, f32)
-pub fn foundation::simd_types::Block8x8f::to_array(&self) -> [f32; 64]
+pub fn foundation::simd_types::Block8x8f::to_array(self) -> [f32; 64]
 pub fn foundation::simd_types::Block8x8i16::clone(&self) -> foundation::simd_types::Block8x8i16
 pub fn foundation::simd_types::Block8x8i16::default() -> Self
 pub fn foundation::simd_types::Block8x8i16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::Block8x8i16::from_array(&[i16; 64]) -> Self
 pub fn foundation::simd_types::Block8x8i16::get(&self, usize, usize) -> i16
-pub fn foundation::simd_types::Block8x8i16::to_array(&self) -> [i16; 64]
+pub fn foundation::simd_types::Block8x8i16::to_array(self) -> [i16; 64]
 pub fn foundation::simd_types::Block8x8i32::clone(&self) -> foundation::simd_types::Block8x8i32
 pub fn foundation::simd_types::Block8x8i32::default() -> Self
 pub fn foundation::simd_types::Block8x8i32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn foundation::simd_types::Block8x8i32::to_i16(&self) -> foundation::simd_types::Block8x8i16
-pub fn foundation::simd_types::Block8x8i32::to_i16_array(&self) -> [i16; 64]
+pub fn foundation::simd_types::Block8x8i32::to_i16(self) -> foundation::simd_types::Block8x8i16
+pub fn foundation::simd_types::Block8x8i32::to_i16_array(self) -> [i16; 64]
 pub fn foundation::simd_types::QuantTableSimd::clone(&self) -> foundation::simd_types::QuantTableSimd
 pub fn foundation::simd_types::QuantTableSimd::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::QuantTableSimd::from_f32_values(&[f32; 64]) -> Self

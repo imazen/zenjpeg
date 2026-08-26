@@ -54,7 +54,8 @@ fn bench_gather_even_odd(c: &mut Criterion) {
     let mut group = c.benchmark_group("Gather Even/Odd x8");
     group.throughput(Throughput::Elements(16));
 
-    let _data: [f32; 16] = std::array::from_fn(|i| i as f32);
+    #[cfg(target_arch = "x86_64")]
+    let data: [f32; 16] = std::array::from_fn(|i| i as f32);
 
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
@@ -87,9 +88,12 @@ fn bench_rgb_to_ycbcr(c: &mut Criterion) {
     let mut group = c.benchmark_group("RGB to YCbCr 8px");
     group.throughput(Throughput::Elements(8));
 
-    let _r_in = [128.0f32; 8];
-    let _g_in = [128.0f32; 8];
-    let _b_in = [128.0f32; 8];
+    #[cfg(target_arch = "x86_64")]
+    let r_in = [128.0f32; 8];
+    #[cfg(target_arch = "x86_64")]
+    let g_in = [128.0f32; 8];
+    #[cfg(target_arch = "x86_64")]
+    let b_in = [128.0f32; 8];
 
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
