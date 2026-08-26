@@ -89,7 +89,7 @@ fn max_err(a: &[u8], b: &[u8]) -> u8 {
 /// Per-channel sum of squared errors for packed RGB.
 fn sum_sq_per_channel(a: &[u8], b: &[u8]) -> [f64; 3] {
     let mut s = [0.0f64; 3];
-    for (chunk_a, chunk_b) in a.chunks_exact(3).zip(b.chunks_exact(3)) {
+    for (chunk_a, chunk_b) in a.as_chunks::<3>().0.iter().zip(b.as_chunks::<3>().0) {
         for c in 0..3 {
             let d = chunk_a[c] as f64 - chunk_b[c] as f64;
             s[c] += d * d;
@@ -113,7 +113,7 @@ fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let src = &buf[..info.buffer_size()];
             let mut out = Vec::with_capacity(raw_w * raw_h * 3);
-            for c in src.chunks_exact(4) {
+            for c in src.as_chunks::<4>().0 {
                 out.extend_from_slice(&c[..3]);
             }
             out

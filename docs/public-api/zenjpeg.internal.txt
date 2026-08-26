@@ -1,5 +1,5 @@
 # zenjpeg public API — doc(hidden) items and excluded-feature surface
-# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__picker-research,__profile,__test-utils,__wasm-simd
+# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__picker-research,__profile,__test-utils,__wasm-simd,_dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -12,12 +12,12 @@
 #   pub modules                                82
 #   pub types (struct/enum/trait/alias)       296
 #   pub consts/statics                        316
-#   free functions                            354
-#   inherent methods                         1191
+#   free functions                            346
+#   inherent methods                         1190
 #   struct fields                             755
 #   enum variants                             503
-#   re-exports                                 18
-#   trait roster entries (type × trait)       646
+#   re-exports                                 17
+#   trait roster entries (type × trait)       647
 #   auto-trait-complete types                 131
 #   auto-trait exceptions                       7
 #
@@ -26,10 +26,10 @@
 #   alloc                             1
 #   color                           117
 #   container                         8
-#   decode                          447
+#   decode                          445
 #   decoder                          54
 #   detect                           40
-#   encode                         1466
+#   encode                         1461
 #   encoder                         134
 #   entropy                         100
 #   foundation                      349
@@ -37,14 +37,14 @@
 #   huffman                         306
 #   layout                            3
 #   lossless                          4
-#   quant                           139
+#   quant                           136
 #   recompress                       12
 #   rgb                              11
 #   test_utils                       95
 #   types                           138
 #   ultrahdr                         12
 
-## items (3337 lines)
+## items (3326 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -448,7 +448,7 @@ pub fn color::xyb::linear_rgb_to_xyb_255(f32, f32, f32) -> (f32, f32, f32)
 pub fn color::xyb::linear_rgb_to_xyb_simd(&mut [[f32; 3]])
 pub fn color::xyb::linear_rgb_to_xyb_simd_255(&mut [[f32; 3]])
 pub fn color::xyb::linear_to_srgb(f32) -> f32
-pub fn color::xyb::linear_to_srgb_fast(f32) -> f32
+pub fn color::xyb::linear_to_srgb_fast(f32) -> f32 [also: encode::linear_lut]
 pub fn color::xyb::linear_to_srgb_u8(f32) -> u8
 pub fn color::xyb::linear_to_srgb_u8_fast(f32) -> u8
 pub fn color::xyb::rgb_buffer_to_scaled_xyb_planes(&[u8], usize, usize) -> (alloc::vec::Vec<f32>, alloc::vec::Vec<f32>, alloc::vec::Vec<f32>)
@@ -541,7 +541,6 @@ pub fn decode::ParallelStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> co
 pub fn decode::decode_coefficients(&[u8]) -> encoder::Result<alloc::vec::Vec<alloc::vec::Vec<[i16; 64]>>>
 pub fn decode::idct::inverse_dct_8x8(&[f32; 64]) -> [f32; 64]
 pub fn decode::idct::inverse_dct_8x8_into(&[f32; 64], &mut [f32; 64])
-pub fn decode::idct::inverse_dct_8x8_into_with_token(archmage::tokens::generated::x86::X64V3Token, &[f32; 64], &mut [f32; 64])
 pub fn decode::idct::inverse_dct_8x8_u8(&[f32; 64]) -> [u8; 64]
 pub fn decode::idct::inverse_dct_blocks(&[[f32; 64]]) -> alloc::vec::Vec<[f32; 64]>
 pub fn decode::idct_int::coeffs_i32_to_f32(&[i32; 64]) -> [f32; 64]
@@ -549,7 +548,6 @@ pub fn decode::idct_int::idct_int(&mut [i32; 64], &mut [i16], usize)
 pub fn decode::idct_int::idct_int_4x4(&mut [i32; 64], &mut [i16], usize)
 pub fn decode::idct_int::idct_int_auto(&mut [i32; 64], &mut [i16], usize)
 pub fn decode::idct_int::idct_int_auto_unclamped(&mut [i32; 64], &mut [i16], usize)
-pub fn decode::idct_int::idct_int_avx2_raw(archmage::tokens::generated::x86::X64V3Token, &mut [i32; 64], &mut [i16], usize)
 pub fn decode::idct_int::idct_int_dc_only(i32, &mut [i16], usize)
 pub fn decode::idct_int::idct_int_dc_only_unclamped(i32, &mut [i16], usize)
 pub fn decode::idct_int::idct_int_libjpeg(&mut [i32; 64], &mut [i16], usize)
@@ -1025,22 +1023,18 @@ pub fn encode::internal_params::ColorPath::fmt(&self, &mut core::fmt::Formatter<
 pub fn encode::internal_params::InternalParams::clone(&self) -> encode::internal_params::InternalParams
 pub fn encode::internal_params::InternalParams::default() -> encode::internal_params::InternalParams
 pub fn encode::internal_params::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::mage_simd::mage_box_filter_2x2(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_fast_exp2_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_fast_log2_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_forward_dct_8x8(archmage::tokens::generated::x86::X64V3Token, &[f32; 64], &mut [f32; 64])
-pub fn encode::mage_simd::mage_forward_dct_8x8_dual(archmage::tokens::generated::x86::X64V4Token, &[f32; 64], &[f32; 64], &mut [f32; 64], &mut [f32; 64])
-pub fn encode::mage_simd::mage_forward_dct_8x8_wide(archmage::tokens::generated::x86::X64V3Token, &foundation::simd_types::Block8x8f) -> foundation::simd_types::Block8x8f
-pub fn encode::mage_simd::mage_forward_dct_8x8_wide_dual(archmage::tokens::generated::x86::X64V4Token, &foundation::simd_types::Block8x8f, &foundation::simd_types::Block8x8f) -> (foundation::simd_types::Block8x8f, foundation::simd_types::Block8x8f)
-pub fn encode::mage_simd::mage_gamma_modulation_sum_8x8(archmage::tokens::generated::x86::X64V3Token, &[f32], usize, usize, usize) -> f32
-pub fn encode::mage_simd::mage_gather_even_odd_x8(archmage::tokens::generated::x86::X64V3Token, &[f32; 16]) -> (core::core_arch::x86::__m256, core::core_arch::x86::__m256)
-pub fn encode::mage_simd::mage_hf_modulation_sum_8x8(archmage::tokens::generated::x86::X64V3Token, &[f32], usize, usize, usize) -> f32
-pub fn encode::mage_simd::mage_masking_sqrt_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_pre_erosion_pixel_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_ratio_of_derivatives_inv_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_ratio_of_derivatives_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
-pub fn encode::mage_simd::mage_rgb_to_ycbcr_8px(archmage::tokens::generated::x86::X64V3Token, &[f32; 8], &[f32; 8], &[f32; 8], &mut [f32; 8], &mut [f32; 8], &mut [f32; 8])
-pub fn encode::mage_simd::mage_transpose_8x8_inplace(archmage::tokens::generated::x86::X64V3Token, &mut [core::core_arch::x86::__m256; 8])
+pub fn encode::linear_lut::linear_f32_to_srgb_255_fast(f32) -> f32
+pub fn encode::linear_lut::linear_f32_to_srgb_255_reference(f32) -> f32
+pub fn encode::linear_lut::linear_rgb16_to_ycbcr(u16, u16, u16) -> (f32, f32, f32)
+pub fn encode::linear_lut::linear_rgb16_to_ycbcr_x8(&[u16; 8], &[u16; 8], &[u16; 8]) -> ([f32; 8], [f32; 8], [f32; 8])
+pub fn encode::linear_lut::linear_rgbf32_to_ycbcr_fast(f32, f32, f32) -> (f32, f32, f32)
+pub fn encode::linear_lut::linear_rgbf32_to_ycbcr_lut(f32, f32, f32) -> (f32, f32, f32)
+pub fn encode::linear_lut::linear_rgbf32_to_ycbcr_x8(&[f32; 8], &[f32; 8], &[f32; 8]) -> ([f32; 8], [f32; 8], [f32; 8])
+pub fn encode::linear_lut::linear_to_srgb_255(f32) -> f32
+pub fn encode::linear_lut::linear_to_srgb_255_x8(&[f32; 8]) -> [f32; 8]
+pub fn encode::linear_lut::linear_to_srgb_reference(f32) -> f32
+pub fn encode::linear_lut::linear_u16_to_srgb_255(u16) -> f32
+pub fn encode::linear_lut::linear_u16_to_srgb_255_x8(&[u16; 8]) -> [f32; 8]
 pub fn encode::parallel::ParallelEntropyConfig::clone(&self) -> encode::parallel::ParallelEntropyConfig
 pub fn encode::parallel::ParallelEntropyConfig::standard() -> Self
 pub fn encode::parallel::parallel_dct_chroma_blocks(&[f32], &[f32], usize, usize, usize, &mut alloc::vec::Vec<foundation::simd_types::Block8x8f>, &mut alloc::vec::Vec<foundation::simd_types::Block8x8f>)
@@ -1096,7 +1090,6 @@ pub fn encode::strip::StripProcessor::process_strip_ycbcr_f32(&mut self, &[f32],
 pub fn encode::strip::StripProcessor::process_strip_ycbcr_f32_subsampled(&mut self, &[f32], &[f32], &[f32], usize) -> encoder::Result<usize>
 pub fn encode::strip::StripProcessor::set_deringing(&mut self, bool)
 pub fn encode::strip::StripProcessor::set_trellis(&mut self, encode::trellis::compat::TrellisConfig)
-pub fn encode::strip::StripProcessor::simd_token(&self) -> core::option::Option<archmage::tokens::generated::x86::Desktop64>
 pub fn encode::strip::StripProcessor::strip_height(&self) -> usize
 pub fn encode::strip::StripProcessor::subsampling(&self) -> types::Subsampling
 pub fn encode::strip::StripProcessor::take_blocks(&mut self) -> encode::strip::StripProcessorOutput
@@ -1735,9 +1728,6 @@ pub fn quant::aq::simd::compute_fuzzy_erosion_blocks_simd(&[f32], usize, usize, 
 pub fn quant::aq::simd::compute_pre_erosion_simd(&[f32], usize, usize) -> core::result::Result<foundation::aligned_alloc::AlignedVec<f32>, foundation::aligned_alloc::AllocError>
 pub fn quant::aq::simd::fuzzy_erosion_row_simd(&[f32], usize, usize, usize, &mut [f32]) -> usize
 pub fn quant::aq::simd::fuzzy_erosion_simd(&[f32], usize, usize, usize, usize, &mut [f32]) -> core::result::Result<(), foundation::aligned_alloc::AllocError>
-pub fn quant::aq::simd::mage_per_block_modulations_row(archmage::tokens::generated::x86::X64V3Token, &[f32], usize, usize, usize, &mut [f32], f32, f32)
-pub fn quant::aq::simd::mage_pre_erosion_row_padded(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], &[f32], usize, &mut [f32])
-pub fn quant::aq::simd::mage_pre_erosion_row_padded_v4(&[f32], &[f32], &[f32], usize, &mut [f32])
 pub fn quant::aq::simd::per_block_modulations_row(&[f32], usize, usize, usize, usize, usize, &mut [f32], f32, f32)
 pub fn quant::aq::simd::per_block_modulations_simd(f32, &[f32], usize, usize, usize, usize, &mut [f32])
 pub fn quant::aq::simd::pre_erosion_row(&[f32], &[f32], &[f32], &mut [f32])
@@ -1940,7 +1930,7 @@ pub mod encode::exif
 pub mod encode::expert
 pub mod encode::extras
 pub mod encode::internal_params
-pub mod encode::mage_simd
+pub mod encode::linear_lut
 pub mod encode::parallel
 pub mod encode::plan
 pub mod encode::request
@@ -2110,7 +2100,6 @@ pub type foundation::instrumented_vec::InstrumentedVec<T>::Target = alloc::vec::
 pub use decode::Stop
 pub use decode::Unstoppable
 pub use encode::Stop
-pub use encode::mage_simd::Desktop64
 pub use encode::tables::ZERO_BIAS_MUL_XYB
 pub use encode::tables::ZERO_BIAS_MUL_XYB_HQ
 pub use encode::tables::ZERO_BIAS_MUL_XYB_LQ
@@ -3384,7 +3373,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (197 types)
+## trait impls (198 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3567,6 +3556,7 @@ rgb::formats::rgb::Rgb<u8>: encode::byte_encoders::Pixel
 rgb::formats::rgba::Rgba<f32>: encode::byte_encoders::Pixel
 rgb::formats::rgba::Rgba<u16>: encode::byte_encoders::Pixel
 rgb::formats::rgba::Rgba<u8>: encode::byte_encoders::Pixel
+target_quality::TargetSearchResult: TrivialClone
 test_utils::TestImage: Clone, Debug
 test_utils::TestPattern: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 types::ColorSpace: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, TrivialClone

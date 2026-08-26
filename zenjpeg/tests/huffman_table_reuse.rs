@@ -98,7 +98,7 @@ fn harvested_tables_roundtrip_through_reencode() {
 fn gray_harvest_falls_back_to_luma_tables() {
     let (w, h) = (64u32, 64u32);
     let rgb = test_rgb(w as usize, h as usize);
-    let gray: Vec<u8> = rgb.chunks_exact(3).map(|p| p[0]).collect();
+    let gray: Vec<u8> = rgb.as_chunks::<3>().0.iter().map(|p| p[0]).collect();
 
     // Baseline: the slot 0 = luma / slot 1 = chroma convention is a
     // baseline-stream property (progressive scan scripts spread tables

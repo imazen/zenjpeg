@@ -20,7 +20,7 @@ mod tests {
             png::ColorType::Rgba => {
                 let src = &buf[..info.buffer_size()];
                 let mut out = Vec::with_capacity((info.width * info.height * 3) as usize);
-                for c in src.chunks_exact(4) {
+                for c in src.as_chunks::<4>().0 {
                     out.extend_from_slice(&c[..3]);
                 }
                 out

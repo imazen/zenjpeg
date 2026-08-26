@@ -1265,7 +1265,9 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                             )
                             .with_transfer(zenpixels::TransferFunction::Linear);
                             let rgb: Vec<Rgb<f32>> = pixels_f32
-                                .chunks_exact(3)
+                                .as_chunks::<3>()
+                                .0
+                                .iter()
                                 .map(|c| Rgb {
                                     r: c[0],
                                     g: c[1],

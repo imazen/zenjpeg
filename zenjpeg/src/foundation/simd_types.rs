@@ -488,6 +488,7 @@ mod tests {
 
     /// Build realistic test data for quantize dispatch testing.
     /// Returns (block, quant_table, zero_bias, aq_strength).
+    #[cfg(target_arch = "x86_64")]
     fn quantize_test_data() -> (Block8x8f, QuantTableSimd, ZeroBiasSimd, f32) {
         // Simulate DCT coefficients: DC large, AC coefficients decaying
         let mut coeffs = [0.0f32; 64];

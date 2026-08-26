@@ -16,10 +16,10 @@
 use std::borrow::Cow;
 
 use fast_ssim2::{LinearRgbImage, compute_ssimulacra2, srgb_u8_to_linear};
-use imgref::{Img, ImgExt};
+use imgref::Img;
 use rgb::Rgb;
 use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-use zencodec::encode::{Encoder as _, EncoderConfig as _};
+
 use zenpixels::PixelDescriptor;
 
 use zenjpeg::target_quality::{TargetOptions, encode_with_target};
@@ -51,7 +51,9 @@ fn textured_rgb8(w: usize, h: usize) -> Vec<u8> {
 
 fn to_linear(bytes: &[u8], w: usize, h: usize) -> LinearRgbImage {
     let pixels: Vec<[f32; 3]> = bytes
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             [
                 srgb_u8_to_linear(c[0]),
@@ -65,7 +67,9 @@ fn to_linear(bytes: &[u8], w: usize, h: usize) -> LinearRgbImage {
 
 fn encode_at(rgb8: &[u8], w: usize, h: usize, q: f32) -> Vec<u8> {
     let pixels: Vec<Rgb<u8>> = rgb8
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| Rgb {
             r: c[0],
             g: c[1],

@@ -1744,20 +1744,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // available-bits validation (the MSB-aligned zero-padding
                     // still gives a valid fast_lookup index for codes ≤ avail bits).
                     let fast_bits = HuffmanDecodeTable::FAST_BITS as u8;
-                    let bits9;
-                    let partial_peek;
-                    match self.reader.peek_bits_refill(fast_bits) {
-                        Some(b) => {
-                            bits9 = b;
-                            partial_peek = false;
-                        }
+
+                    let (bits9, partial_peek) = match self.reader.peek_bits_refill(fast_bits) {
+                        Some(b) => (b, false),
                         None => {
                             let avail = self.reader.bits_available();
                             if avail == 0 {
                                 return Ok(false);
                             }
-                            bits9 = self.reader.peek_top(fast_bits);
-                            partial_peek = true;
+                            (self.reader.peek_top(fast_bits), true)
                         }
                     };
 

@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenyuv.txt 46 lines (supported surface) | zenyuv.features.txt 0 added (features: std) | zenyuv.internal.txt 5 lines (5 hidden + 0 excluded-feature)
+# files: zenyuv.txt 46 lines (supported surface) | zenyuv.features.txt 0 added (features: std) | zenyuv.internal.txt 16 lines (5 hidden + 11 excluded-feature)
 
 ## summary
 #

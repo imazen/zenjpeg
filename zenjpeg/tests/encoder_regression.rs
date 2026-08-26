@@ -305,7 +305,9 @@ fn test_content_checksums() {
 
             // Convert RGB to RGBA for zensim-regress
             let rgba: Vec<u8> = dec_pixels
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .flat_map(|px| [px[0], px[1], px[2], 255])
                 .collect();
 

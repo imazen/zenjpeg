@@ -35,7 +35,7 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let src = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((w * h * 3) as usize);
-            for chunk in src.chunks_exact(4) {
+            for chunk in src.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&chunk[..3]);
             }
             rgb

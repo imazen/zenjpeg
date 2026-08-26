@@ -39,7 +39,7 @@ pub fn md5(data: &[u8]) -> [u8; 16] {
     padded.extend_from_slice(&bit_len.to_le_bytes());
 
     // Process each 64-byte block
-    for chunk in padded.chunks_exact(64) {
+    for chunk in padded.as_chunks::<64>().0 {
         let mut m = [0u32; 16];
         for (i, word) in m.iter_mut().enumerate() {
             *word = u32::from_le_bytes([

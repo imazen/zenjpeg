@@ -640,7 +640,6 @@ fn test_frymire_s440_progressive_hash() {
     ignore = "locked values are x86_64-specific (NEON output differs)"
 )]
 #[test]
-#[ignore = "utility for updating reference values"]
 fn print_current_values() {
     let (rgb, width, height) = load_frymire();
     println!("// Test image: frymire.png {}x{}", width, height);

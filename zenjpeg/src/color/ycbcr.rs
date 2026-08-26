@@ -120,7 +120,7 @@ pub fn ycbcr_to_rgb_f32(y: f32, cb: f32, cr: f32) -> (f32, f32, f32) {
 pub fn convert_rgb_to_ycbcr_buffer(buffer: &mut [u8]) {
     assert!(buffer.len() % 3 == 0, "Buffer length must be multiple of 3");
 
-    for chunk in buffer.chunks_exact_mut(3) {
+    for chunk in buffer.as_chunks_mut::<3>().0 {
         let (y, cb, cr) = rgb_to_ycbcr(chunk[0], chunk[1], chunk[2]);
         chunk[0] = y;
         chunk[1] = cb;
@@ -132,7 +132,7 @@ pub fn convert_rgb_to_ycbcr_buffer(buffer: &mut [u8]) {
 pub fn convert_ycbcr_to_rgb_buffer(buffer: &mut [u8]) {
     assert!(buffer.len() % 3 == 0, "Buffer length must be multiple of 3");
 
-    for chunk in buffer.chunks_exact_mut(3) {
+    for chunk in buffer.as_chunks_mut::<3>().0 {
         let (r, g, b) = ycbcr_to_rgb(chunk[0], chunk[1], chunk[2]);
         chunk[0] = r;
         chunk[1] = g;
@@ -737,7 +737,7 @@ pub fn bgra_to_rgba(bgra: &[u8; 4]) -> [u8; 4] {
 /// The buffer length must be a multiple of 3.
 pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
     debug_assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
+    for pixel in data.as_chunks_mut::<3>().0 {
         pixel.swap(0, 2);
     }
 }
@@ -3032,6 +3032,7 @@ mod tests {
 
     /// libjpeg-turbo reference RGB for one centered triple (the exact table
     /// math from `int_ycbcr_vs_libjpeg_turbo_tables`).
+    #[cfg(target_arch = "x86_64")]
     fn turbo_ref_rgb(y: i32, cb: i32, cr: i32) -> (u8, u8, u8) {
         const FIX_1_40200: i64 = 91881;
         const FIX_1_77200: i64 = 116130;

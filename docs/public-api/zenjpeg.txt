@@ -6,25 +6,25 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1665 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3542 lines (844 hidden + 7217 excluded-feature)
+# files: zenjpeg.txt 1689 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3532 lines (821 hidden + 7231 excluded-feature)
 
 ## summary
 #
-#   pub modules                                17
-#   pub types (struct/enum/trait/alias)       143
-#   pub consts/statics                         94
+#   pub modules                                19
+#   pub types (struct/enum/trait/alias)       146
+#   pub consts/statics                         95
 #   pub macros                                  2
-#   free functions                             60
+#   free functions                             64
 #   inherent methods                          503
-#   struct fields                             373
+#   struct fields                             384
 #   enum variants                             394
 #   re-exports                                  2
-#   trait roster entries (type × trait)       483
-#   auto-trait-complete types                 103
+#   trait roster entries (type × trait)       492
+#   auto-trait-complete types                 106
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
-#   (root)                           67
+#   (root)                           69
 #   blur                              1
 #   container                       276
 #   deblock                          16
@@ -34,8 +34,10 @@
 #   heuristics                       24
 #   lossless                         42
 #   profile                           7
+#   target_quality                   17
+#   zq_seed                           2
 
-## items (1532 lines)
+## items (1553 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -1567,10 +1569,31 @@ pub fn profile::ProfileStats::new() -> Self
 pub fn profile::ProfileStats::print_summary()
 pub fn profile::ProfileStats::record(&'static str, core::time::Duration)
 pub fn profile::ProfileStats::reset()
+pub mod target_quality
+pub struct target_quality::TargetOptions
+pub target_quality::TargetOptions::max_encodes: u8
+pub target_quality::TargetOptions::max_quality: f32
+pub target_quality::TargetOptions::min_quality: f32
+pub target_quality::TargetOptions::q_start: core::option::Option<f32>
+pub target_quality::TargetOptions::tolerance: f64
+pub struct target_quality::TargetSearchResult
+pub target_quality::TargetSearchResult::converged: bool
+pub target_quality::TargetSearchResult::encodes: u8
+pub target_quality::TargetSearchResult::quality: f32
+pub target_quality::TargetSearchResult::score: f64
+pub struct target_quality::TargetedEncode
+pub target_quality::TargetedEncode::data: alloc::vec::Vec<u8>
+pub target_quality::TargetedEncode::search: target_quality::TargetSearchResult
+pub fn target_quality::anchor_guess(f64) -> f32
+pub fn target_quality::encode_with_target<E, Err>(f64, &target_quality::TargetOptions, E) -> core::result::Result<target_quality::TargetedEncode, Err> where E: core::ops::function::FnMut(f32) -> core::result::Result<(alloc::vec::Vec<u8>, f64), Err>
+pub fn target_quality::search_target<E, Err>(f64, &target_quality::TargetOptions, E) -> core::result::Result<target_quality::TargetSearchResult, Err> where E: core::ops::function::FnMut(f32) -> core::result::Result<f64, Err>
+pub mod zq_seed
+pub const zq_seed::ZQ_FEATURES: [zenanalyze::feature::AnalysisFeature; 6]
+pub fn zq_seed::predict_q0_from_features(&[f32; 6], f64, u64) -> core::option::Option<f32>
 pub macro profile_block!
 pub macro profile_scope!
 
-## trait impls (119 types)
+## trait impls (122 types)
 
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
@@ -1689,12 +1712,15 @@ rgb::formats::rgb::Rgb<u8>: encoder::Pixel
 rgb::formats::rgba::Rgba<f32>: encoder::Pixel
 rgb::formats::rgba::Rgba<u16>: encoder::Pixel
 rgb::formats::rgba::Rgba<u8>: encoder::Pixel
+target_quality::TargetOptions: Clone, Debug, Default
+target_quality::TargetSearchResult: Clone, Copy, Debug, PartialEq
+target_quality::TargetedEncode: Clone, Debug
 whereat::at::At<encoder::ErrorKind>: From<encoder::Error>
 whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder::ErrorKind>
 
 ## auto traits
 
-103 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+106 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 decoder::DecodeConfig: !RefUnwindSafe !UnwindSafe
 decoder::DecodeInfo: !Freeze
 decoder::DecodePool: !Freeze

@@ -450,7 +450,7 @@ pub fn upsample_h1v2_i16_libjpeg_strided(
         let far_row = far_y * in_stride;
 
         let bias = if is_upper { 1i16 } else { 2i16 };
-        let w = out_width.min(in_width);
+        let _w = out_width.min(in_width);
 
         #[cfg(target_arch = "x86_64")]
         {
@@ -619,7 +619,6 @@ pub fn upsample_h2v2_libjpeg_row(
         incant!(upsample_h2v2_libjpeg_row_generic(
             near, far, output, in_width, out_width, bias
         ));
-        return;
     }
     #[cfg(target_arch = "x86_64")]
     upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, bias);

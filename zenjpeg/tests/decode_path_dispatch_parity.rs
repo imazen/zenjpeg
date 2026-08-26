@@ -12,7 +12,9 @@
 //! Run: cargo test --release -p zenjpeg --test decode_path_dispatch_parity -- --nocapture
 
 use enough::Unstoppable;
-use zenjpeg::decode::{ChromaUpsampling, Decoder, OutputTarget};
+use zenjpeg::decode::Decoder;
+#[cfg(target_arch = "x86_64")]
+use zenjpeg::decode::{ChromaUpsampling, OutputTarget};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // ============================================================================
@@ -43,6 +45,7 @@ fn make_red_blue_blocks(width: usize, height: usize) -> Vec<u8> {
 }
 
 /// Smooth gradient — exercises interior upsampling more than boundaries.
+#[cfg(target_arch = "x86_64")]
 fn make_gradient(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
     for y in 0..height {
@@ -57,6 +60,7 @@ fn make_gradient(width: usize, height: usize) -> Vec<u8> {
 }
 
 /// Noise-like pattern — stresses all code paths uniformly.
+#[cfg(target_arch = "x86_64")]
 fn make_noise(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
     let mut rng: u32 = 0xDEAD_BEEF;
@@ -99,6 +103,7 @@ fn encode_jpeg(
 // ============================================================================
 
 /// Decode via `decode()` (streaming or coefficient path, auto-selected).
+#[cfg(target_arch = "x86_64")]
 fn decode_full(jpeg: &[u8], upsampling: ChromaUpsampling) -> Vec<u8> {
     let decoder = Decoder::new()
         .chroma_upsampling(upsampling)
@@ -109,6 +114,7 @@ fn decode_full(jpeg: &[u8], upsampling: ChromaUpsampling) -> Vec<u8> {
 }
 
 /// Decode via `scanline_reader()` (pull-based streaming).
+#[cfg(target_arch = "x86_64")]
 fn decode_scanline(jpeg: &[u8], upsampling: ChromaUpsampling) -> Vec<u8> {
     let decoder = Decoder::new()
         .chroma_upsampling(upsampling)
@@ -132,6 +138,7 @@ fn decode_scanline(jpeg: &[u8], upsampling: ChromaUpsampling) -> Vec<u8> {
 }
 
 /// Decode via coefficient path (forced by requesting f32 output), converted to u8.
+#[cfg(target_arch = "x86_64")]
 fn decode_coefficient_f32_to_u8(jpeg: &[u8], upsampling: ChromaUpsampling) -> Vec<u8> {
     let decoder = Decoder::new()
         .chroma_upsampling(upsampling)
@@ -148,6 +155,7 @@ fn decode_coefficient_f32_to_u8(jpeg: &[u8], upsampling: ChromaUpsampling) -> Ve
 }
 
 /// Decode via zune-jpeg (external reference).
+#[cfg(target_arch = "x86_64")]
 fn decode_zune(jpeg: &[u8]) -> Vec<u8> {
     use zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
@@ -156,6 +164,7 @@ fn decode_zune(jpeg: &[u8]) -> Vec<u8> {
 }
 
 /// Decode via jpeg-decoder (libjpeg reference).
+#[cfg(target_arch = "x86_64")]
 fn decode_jpeg_decoder(jpeg: &[u8]) -> Vec<u8> {
     let mut dec = jpeg_decoder::Decoder::new(jpeg);
     dec.decode().expect("decode")
@@ -166,6 +175,7 @@ fn decode_jpeg_decoder(jpeg: &[u8]) -> Vec<u8> {
 // ============================================================================
 
 /// Compute max absolute pixel diff between two RGB images.
+#[cfg(target_arch = "x86_64")]
 fn max_diff(a: &[u8], b: &[u8]) -> u8 {
     a.iter()
         .zip(b.iter())
@@ -176,6 +186,7 @@ fn max_diff(a: &[u8], b: &[u8]) -> u8 {
 
 /// Compute per-row max diff, returning (boundary_max, interior_max).
 /// MCU boundary = row % mcu_height == 0 or row % mcu_height == mcu_height - 1.
+#[cfg(target_arch = "x86_64")]
 fn boundary_interior_max(
     a: &[u8],
     b: &[u8],
@@ -208,6 +219,7 @@ fn boundary_interior_max(
 // Test configurations
 // ============================================================================
 
+#[cfg(target_arch = "x86_64")]
 struct TestCase {
     name: &'static str,
     width: u32,
@@ -218,6 +230,7 @@ struct TestCase {
     restart_mcu_rows: u16,
 }
 
+#[cfg(target_arch = "x86_64")]
 fn test_cases() -> Vec<TestCase> {
     vec![
         // 4:2:0 baseline — the most common case and where the fixup bug lived

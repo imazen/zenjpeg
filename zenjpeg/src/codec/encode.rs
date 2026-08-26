@@ -784,7 +784,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         stride_pixels: u32,
     ) -> Result<EncodeOutput, Self::Error> {
         if make_opaque {
-            for chunk in data.chunks_exact_mut(4) {
+            for chunk in data.as_chunks_mut::<4>().0 {
                 chunk[3] = 255;
             }
         }
