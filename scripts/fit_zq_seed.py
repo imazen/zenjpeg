@@ -46,6 +46,14 @@ def pava_increasing(y):
     return res
 
 def load(split):
+    # Registration: candidate pool = exemplar list ∩ named feat_* columns present.
+    schema = set(pq.read_schema(f"{BASE}/{split}.parquet").names)
+    global CAND, LOG1P
+    missing = [c for c in CAND if f"feat_{c}" not in schema]
+    if missing:
+        print(f"dropping absent candidates: {missing}", file=sys.stderr)
+        CAND = [c for c in CAND if f"feat_{c}" in schema]
+        LOG1P = {c for c in LOG1P if c in CAND}
     t = pq.read_table(f"{BASE}/{split}.parquet",
         columns=["origin_id","cell","width","height","q","score_zensim"]
                 + [f"feat_{c}" for c in CAND])
@@ -59,15 +67,12 @@ def build_curves(t):
     q  = t.column("q").to_numpy(zero_copy_only=False).astype(float)
     s  = t.column("score_zensim").to_numpy(zero_copy_only=False).astype(float)
     feats = {c: t.column(f"feat_{c}").to_numpy(zero_copy_only=False).astype(float) for c in CAND}
-    key = np.core.defchararray.add(np.core.defchararray.add(og.astype(str), "|"+cl.astype(str)+"|"),
-                                   (w*100000+h).astype(str))
-    order = np.argsort(key, kind="stable")
+    groups = {}
+    for i in range(len(og)):
+        groups.setdefault((og[i], cl[i], int(w[i]), int(h[i])), []).append(i)
     curves = {}
-    i = 0; ordk = key[order]
-    while i < len(order):
-        j = i
-        while j < len(order) and ordk[j] == ordk[i]: j += 1
-        rows = order[i:j]
+    for _k, idxs in groups.items():
+        rows = np.array(idxs)
         qq = q[rows]; so = np.argsort(qq)
         rows = rows[so]; qq = qq[so]
         # dedupe q (mean)
@@ -75,13 +80,14 @@ def build_curves(t):
         ss = np.zeros(len(uq)); cnt = np.zeros(len(uq))
         np.add.at(ss, inv, s[rows]); np.add.at(cnt, inv, 1)
         ss = ss/cnt
+        if len(uq) < 4:
+            continue  # coarse 3-pt sweep-plan curves: unusable for inversion
         iso = pava_increasing(ss)
         r0 = rows[0]
         curves[(og[r0], cl[r0], int(w[r0]), int(h[r0]))] = {
             "q": uq, "s": iso, "px": float(w[r0]*h[r0]),
             "f": {c: feats[c][r0] for c in CAND},
         }
-        i = j
     return curves
 
 def invert(c, t):
@@ -150,7 +156,6 @@ def fit_l1(X, y, w, iters=30, lam=1e-3):
     ww = w.copy()
     beta = None
     for _ in range(iters):
-        W = np.diag(ww)
         A = X.T @ (ww[:,None]*X) + lam*np.eye(X.shape[1])
         b = X.T @ (ww*y)
         beta = np.linalg.solve(A, b)
@@ -175,7 +180,15 @@ def main():
     R_tr, sk_tr = rows_of(tr); R_va, sk_va = rows_of(va)
     print(f"labels: train={len(R_tr)} (skip {sk_tr}) val={len(R_va)} (skip {sk_va})", file=sys.stderr)
 
-    # greedy forward selection by LOO-origin p90 on train
+    # greedy forward selection by LOO-origin p90 on train.
+    # Selection runs on a seeded subsample for tractability; the FINAL fit uses
+    # the full label set (implementation detail; gates unchanged).
+    R_sel = R_tr
+    if len(R_tr) > 80000:
+        rng = np.random.default_rng(42)
+        idx = rng.choice(len(R_tr), 80000, replace=False)
+        R_sel = [R_tr[i] for i in idx]
+        print(f"selection subsample: {len(R_sel)} of {len(R_tr)}", file=sys.stderr)
     chosen = []
     pool = [c for c in CAND]
     best_p90 = None
@@ -183,7 +196,7 @@ def main():
         scores = []
         for cand in pool:
             names = chosen + [cand]
-            X, y, w, og = design(R_tr, names)
+            X, y, w, og = design(R_sel, names)
             if len(y) == 0: continue
             uniq = np.unique(og)
             fold = max(1, len(uniq)//8)

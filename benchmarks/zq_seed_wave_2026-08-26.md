@@ -45,3 +45,19 @@ PASS ⇒ consts into `zenjpeg/src/zq_seed.rs` (q0_head-style module, doc'd
 provenance, unit tests incl. clamp/monotone/finite), TSV + fit table in
 `benchmarks/`, plan/memory updated. FAIL ⇒ the miss is committed here with the
 numbers; no consts ship.
+
+## RESULT (2026-08-26, first arm) — G-Z2 **FAIL** as registered
+Fit ran per registration (amendment noted: 27,684 curves carry only a 3-point
+coarse-plan q grid and are excluded; 96,894 full 7-pt curves fit; the absent
+`palette_density` column dropped from the candidate pool; greedy selection ran
+on a seeded 80k-label subsample for tractability — final fit on all 927,217
+labels). Selected features: flat_color_block_ratio, dct_compressibility_uv,
+spectral_slope_y, distinct_color_bins, grayscale_score, skin_tone_fraction.
+
+- G-Z1 (diagnostic): val |q0−q*| p50 **6.54**, p90 **19.04** (n=559,596).
+- G-Z2: mean encodes **4.53 → 3.37** (**−25.7%**, bar ≥10% ✓) BUT converged
+  count regressed **559,596 → 559,407** (−189, 0.034%) → the frozen
+  no-regression clause fails ⇒ **FAIL. No consts ship from this arm.**
+
+Numbers: `benchmarks/zq_seed_fit_2026-08-26.tsv`. A remedy arm (safety-clamped
+seed) will be REGISTERED below before it runs, same decision gate.
