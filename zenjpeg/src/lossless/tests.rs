@@ -3593,3 +3593,228 @@ mod restructure_tests {
         );
     }
 }
+
+/// Trim-semantics oracle built from synthetic coefficient grids (issue #195).
+///
+/// Constructs coefficient sets whose PADDING blocks (beyond each component's
+/// true ceil(dim/8) grid) are filled with SENTINEL garbage, plus per-transform
+/// "twin" sets at the trimmed dimensions sharing the kept region's blocks
+/// (blocks are content-addressed by position). For every transform requiring a
+/// trim, `TrimPartialBlocks` on the non-aligned stream must produce exactly
+/// what the transform produces on the pre-trimmed twin — proving the trim
+/// keeps precisely the right region — and no sentinel may ever appear inside
+/// the output's true grid (the pre-fix code relocated padding blocks into the
+/// visible region).
+mod trim_sentinel_tests {
+    use crate::decode::{ComponentCoefficients, DecodeConfig, DecodedCoefficients};
+    use crate::lossless::coeff_transform::TransformedCoefficients;
+    use crate::lossless::pipeline::encode_from_coefficients;
+    use crate::lossless::{
+        EdgeHandling, LosslessTransform, TransformConfig, transform_coefficients,
+    };
+    use enough::Unstoppable;
+
+    const SENTINEL: i16 = 999;
+
+    /// Deterministic small coefficient value for block (bx, by), coeff `k`.
+    fn coeff_val(comp: usize, bx: usize, by: usize, k: usize) -> i16 {
+        let base = (comp * 5 + bx * 3 + by * 7 + k) as i16;
+        (base % 17) - 8
+    }
+
+    /// Build one component grid; blocks outside the true `real_bw`×`real_bh`
+    /// grid (i.e. MCU padding blocks) are filled with the sentinel.
+    fn build_component(
+        id: u8,
+        bw: usize,
+        bh: usize,
+        real_bw: usize,
+        real_bh: usize,
+        h_samp: u8,
+        v_samp: u8,
+    ) -> ComponentCoefficients {
+        let mut coeffs = vec![0i16; bw * bh * 64];
+        for by in 0..bh {
+            for bx in 0..bw {
+                let start = (by * bw + bx) * 64;
+                if bx < real_bw && by < real_bh {
+                    coeffs[start] = coeff_val(id as usize, bx, by, 0);
+                    for k in 1..6 {
+                        coeffs[start + k] = coeff_val(id as usize, bx, by, k);
+                    }
+                } else {
+                    for k in 0..64 {
+                        coeffs[start + k] = SENTINEL;
+                    }
+                }
+            }
+        }
+        ComponentCoefficients {
+            id,
+            coeffs,
+            blocks_wide: bw,
+            blocks_high: bh,
+            h_samp,
+            v_samp,
+            quant_table_idx: if id == 1 { 0 } else { 1 },
+        }
+    }
+
+    fn quant_tables() -> Vec<Option<[u16; 64]>> {
+        vec![Some([16u16; 64]), Some([17u16; 64])]
+    }
+
+    /// 4:2:0 coefficient set for the given pixel dims; sentinel fills the MCU
+    /// padding blocks beyond each component's true grid.
+    fn synth_420(w: u32, h: u32) -> DecodedCoefficients {
+        let mcus_w = (w as usize).div_ceil(16);
+        let mcus_h = (h as usize).div_ceil(16);
+        let luma_bw = (w as usize).div_ceil(8);
+        let luma_bh = (h as usize).div_ceil(8);
+        let chroma_bw = (w as usize).div_ceil(2).div_ceil(8);
+        let chroma_bh = (h as usize).div_ceil(2).div_ceil(8);
+        DecodedCoefficients {
+            width: w,
+            height: h,
+            components: vec![
+                build_component(1, mcus_w * 2, mcus_h * 2, luma_bw, luma_bh, 2, 2),
+                build_component(2, mcus_w, mcus_h, chroma_bw, chroma_bh, 1, 1),
+                build_component(3, mcus_w, mcus_h, chroma_bw, chroma_bh, 1, 1),
+            ],
+            quant_tables: quant_tables(),
+            huffman_tables: None,
+        }
+    }
+
+    /// No sentinel may appear inside any component's true (visible) grid.
+    fn assert_no_sentinel_in_true_region(out: &TransformedCoefficients, ctx: &str) {
+        let max_h = out.components.iter().map(|c| c.h_samp).max().unwrap() as u32;
+        let max_v = out.components.iter().map(|c| c.v_samp).max().unwrap() as u32;
+        for c in &out.components {
+            let comp_w = (out.width * u32::from(c.h_samp)).div_ceil(max_h);
+            let comp_h = (out.height * u32::from(c.v_samp)).div_ceil(max_v);
+            let true_bw = comp_w.div_ceil(8) as usize;
+            let true_bh = comp_h.div_ceil(8) as usize;
+            for by in 0..true_bh {
+                for bx in 0..true_bw {
+                    let start = (by * c.blocks_wide + bx) * 64;
+                    assert!(
+                        !c.coeffs[start..start + 64].contains(&SENTINEL),
+                        "{ctx}: sentinel padding content leaked into visible \
+                         block ({bx},{by}) of component id {}",
+                        c.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// Which source dimensions each transform requires to be MCU-aligned.
+    fn must_align(t: LosslessTransform) -> (bool, bool) {
+        match t {
+            LosslessTransform::None | LosslessTransform::Transpose => (false, false),
+            LosslessTransform::FlipHorizontal | LosslessTransform::Rotate270 => (true, false),
+            LosslessTransform::FlipVertical | LosslessTransform::Rotate90 => (false, true),
+            LosslessTransform::Rotate180 | LosslessTransform::Transverse => (true, true),
+        }
+    }
+
+    #[test]
+    fn trim_equals_pretrimmed_twin_and_never_leaks_padding() {
+        // 72x56: both axes partial vs the 16x16 MCU (true region 72x56,
+        // aligned region 64x48). Every padding block carries the sentinel.
+        let padded = synth_420(72, 56);
+
+        for t in [
+            LosslessTransform::FlipHorizontal,
+            LosslessTransform::FlipVertical,
+            LosslessTransform::Rotate90,
+            LosslessTransform::Rotate180,
+            LosslessTransform::Rotate270,
+            LosslessTransform::Transverse,
+        ] {
+            let (wa, ha) = must_align(t);
+            let kept_w = if wa { 64 } else { 72 };
+            let kept_h = if ha { 48 } else { 56 };
+            // The twin is pre-trimmed: aligned in exactly the dimensions the
+            // transform requires, sharing kept-region blocks by position.
+            let twin = synth_420(kept_w, kept_h);
+
+            let trimmed = transform_coefficients(
+                &padded,
+                &TransformConfig {
+                    transform: t,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
+                },
+            )
+            .unwrap();
+            let reference = transform_coefficients(
+                &twin,
+                &TransformConfig {
+                    transform: t,
+                    edge_handling: EdgeHandling::RejectPartialBlocks,
+                },
+            )
+            .unwrap();
+
+            assert_eq!(
+                (trimmed.width, trimmed.height),
+                (reference.width, reference.height),
+                "{t:?}: trimmed dims"
+            );
+            for (ct, cr) in trimmed.components.iter().zip(&reference.components) {
+                assert_eq!(
+                    (ct.blocks_wide, ct.blocks_high),
+                    (cr.blocks_wide, cr.blocks_high),
+                    "{t:?}: grid dims (component id {})",
+                    ct.id
+                );
+                assert_eq!(
+                    ct.coeffs, cr.coeffs,
+                    "{t:?}: component id {} coefficients differ from the \
+                     pre-trimmed twin (wrong kept region)",
+                    ct.id
+                );
+            }
+            assert_no_sentinel_in_true_region(&trimmed, &alloc::format!("{t:?}"));
+
+            // The full pipeline (emit + decode) must roundtrip the trimmed
+            // result exactly over the true grid.
+            let bytes = encode_from_coefficients(&trimmed, None, 0, &Unstoppable).unwrap();
+            let decoded = DecodeConfig::new()
+                .decode_coefficients(&bytes, Unstoppable)
+                .unwrap();
+            assert_eq!(
+                (decoded.width, decoded.height),
+                (trimmed.width, trimmed.height),
+                "{t:?}: emitted dims"
+            );
+        }
+    }
+
+    /// Transpose keeps partial trailing edges without trimming — the output's
+    /// true grid must be exactly the transposed true grid, sentinel-free.
+    #[test]
+    fn transpose_preserves_partial_edges_without_trim() {
+        let padded = synth_420(72, 56); // luma true grid 9x7, padded 10x8
+        let out = transform_coefficients(
+            &padded,
+            &TransformConfig {
+                transform: LosslessTransform::Transpose,
+                edge_handling: EdgeHandling::RejectPartialBlocks,
+            },
+        )
+        .unwrap();
+        assert_eq!((out.width, out.height), (56, 72));
+        // Output luma true grid is 7x9; dst (bx, by) came from src (by, bx).
+        let luma = &out.components[0];
+        for by in 0..9usize {
+            for bx in 0..7usize {
+                let dc = luma.coeffs[(by * luma.blocks_wide + bx) * 64];
+                let expected = coeff_val(1, by, bx, 0);
+                assert_eq!(dc, expected, "transposed luma block ({bx},{by}) DC");
+            }
+        }
+        assert_no_sentinel_in_true_region(&out, "Transpose");
+    }
+}

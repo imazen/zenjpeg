@@ -461,7 +461,9 @@ fn textured_image(w: u32, h: u32) -> Vec<u8> {
             let g_base = (y * 255 / h) as u8;
             let b_base = ((x + y) * 255 / (w + h)) as u8;
             // Denser noise than synthetic_image (applied every pixel, wider range).
-            let n = ((x.wrapping_mul(2654435761)) ^ (y.wrapping_mul(40503)) ^ ((x + y).wrapping_mul(2246822519))) as u8;
+            let n = ((x.wrapping_mul(2654435761))
+                ^ (y.wrapping_mul(40503))
+                ^ ((x + y).wrapping_mul(2246822519))) as u8;
             rgb[idx] = r_base.wrapping_add(n & 0x7F);
             rgb[idx + 1] = g_base.wrapping_add((n >> 1) & 0x7F);
             rgb[idx + 2] = b_base.wrapping_add((n >> 2) & 0x7F);

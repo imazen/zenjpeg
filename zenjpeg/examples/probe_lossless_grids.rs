@@ -8,7 +8,7 @@
 use enough::Unstoppable;
 use zenjpeg::decode::DecodeConfig;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zenjpeg::lossless::{transform, EdgeHandling, LosslessTransform, TransformConfig};
+use zenjpeg::lossless::{EdgeHandling, LosslessTransform, TransformConfig, transform};
 
 fn gen_rgb(w: u32, h: u32) -> Vec<u8> {
     let mut rgb = vec![0u8; (w * h * 3) as usize];
@@ -98,7 +98,11 @@ fn main() {
                         .sum();
                     println!(
                         "{ss_name} {t:?}: our decode Ok, |coeff| sum {sum_abs} vs src {src_sum} ({})",
-                        if sum_abs == src_sum { "EQUAL" } else { "DIFFERS" }
+                        if sum_abs == src_sum {
+                            "EQUAL"
+                        } else {
+                            "DIFFERS"
+                        }
                     );
                 }
                 Err(e) => println!("{ss_name} {t:?}: our own decoder REJECTS output: {e}"),

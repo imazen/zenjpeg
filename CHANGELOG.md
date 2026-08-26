@@ -175,6 +175,50 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **Lossless transforms/restructure emitted corrupt or silently-wrong JPEGs
+  in four distinct ways** (issues #194, #195; fixed in c453d299, verified
+  against mozjpeg 4.1.5 `jpegtran`/`djpeg`): (1) Huffman frequency counting
+  walked blocks in raster order while entropy encoding walked MCU-interleaved
+  order, so a DC category unique to encode order got a zero-length code and
+  silently desynced the stream — the whole of #194 (Transpose/Transverse on
+  subsampled chroma, 97-99% wrong pixels) plus #195's sequential Rotate90/270
+  "bad Huffman code"; (2) emitters recomputed grid geometry from pixel dims
+  while the decoder produces MCU-padded grids, scrambling blocks via a stride
+  mismatch on non-aligned dimension-swapping transforms; (3)
+  `TrimPartialBlocks` transformed the full padded grid and only shrank the
+  declared dimensions, leaving relocated padding blocks inside the visible
+  region (decoded cleanly, ~87% wrong pixels vs `jpegtran -trim`); (4)
+  progressive restructure tokenized padded grids where T.81 A.2.2
+  non-interleaved scans need exactly ceil(comp_dim/8) data units, producing
+  "extraneous bytes before marker" on every non-MCU-aligned input. Fix: new
+  `lossless/geometry.rs` validates every component grid against the declared
+  dimensions and provides the single interleaved-scan traversal shared by
+  frequency counting and encoding; trims now crop grids per-dimension BEFORE
+  transforming (swap transforms no longer over-trim the dimension that could
+  stay partial); progressive tokenizes true grids. Lossless re-encode of
+  other-than-1/3-component JPEGs (e.g. Adobe CMYK) is now a loud
+  `unsupported_feature` error instead of a silently corrupt scan. After the
+  fix, all 21 #194 cells are pixel-identical to `jpegtran` and trim outputs
+  are pixel-identical to `jpegtran -trim`; the unified traversal is also
+  3-5% faster (transform Rotate90 2000x1333 4:2:0: 37.5 → 35.8 ms median).
+
+### Added (lossless regression coverage, same change)
+
+- `tests/lossless_matrix.rs`: conformance matrix over 5 subsampling modes ×
+  5 dimension-alignment classes × all 8 transforms × both edge modes ×
+  seq/prog output × noisy + flat-chroma content, with four oracle layers
+  (exact coefficient roundtrip, exact D4 Cayley composition, ±measured-envelope
+  spatial placement via box upsampling, jpeg-decoder + zune-jpeg
+  cross-decoder conformance) (c453d299 follow-up).
+- `tests/lossless_dispatch_parity.rs`: the integer-only lossless pipeline must
+  be BYTE-identical across every archmage SIMD token permutation.
+- `lossless::tests::trim_sentinel_tests`: synthetic-coefficient oracle proving
+  trimmed output equals the pre-trimmed twin and padding-block content can
+  never leak into the visible region.
+- `HuffmanEncodeTable::encode` now `debug_assert`s the symbol has a code
+  (zero release cost) — any future count/encode traversal divergence fails
+  loudly in tests instead of silently corrupting the stream.
+
 - **Four `quality_matrix` progressive tests were disabled for a bug that was
   already fixed** (57a15d65). The 4:4:4 / 4:2:2 / 4:2:0 / 4:4:0 progressive tests
   were `#[ignore]`d citing *"issue #23: progressive Q10 ~2.8% size excess vs C++

@@ -18,8 +18,8 @@ use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg::lossless::{
-    restructure, transform, EdgeHandling, LosslessTransform, OutputMode, RestartInterval,
-    RestructureConfig, TransformConfig,
+    EdgeHandling, LosslessTransform, OutputMode, RestartInterval, RestructureConfig,
+    TransformConfig, restructure, transform,
 };
 
 fn moz_bin(tool: &str) -> PathBuf {
@@ -167,10 +167,12 @@ fn run_issue_194(outdir: &Path) {
                     continue;
                 }
             };
-            let zen_path = outdir.join(format!("i194-{}-{:?}-zen.jpg", ss_name.replace(':', ""), t));
+            let zen_path =
+                outdir.join(format!("i194-{}-{:?}-zen.jpg", ss_name.replace(':', ""), t));
             std::fs::write(&zen_path, &zen_out).unwrap();
 
-            let ref_path = outdir.join(format!("i194-{}-{:?}-moz.jpg", ss_name.replace(':', ""), t));
+            let ref_path =
+                outdir.join(format!("i194-{}-{:?}-moz.jpg", ss_name.replace(':', ""), t));
             let jt = Command::new(moz_bin("jpegtran"))
                 .args(["-copy", "none"])
                 .args(jpegtran_args(t))
@@ -179,7 +181,11 @@ fn run_issue_194(outdir: &Path) {
                 .arg(&src_path)
                 .output()
                 .expect("run jpegtran");
-            assert!(jt.status.success(), "jpegtran failed: {}", String::from_utf8_lossy(&jt.stderr));
+            assert!(
+                jt.status.success(),
+                "jpegtran failed: {}",
+                String::from_utf8_lossy(&jt.stderr)
+            );
 
             let zen_dec = djpeg(&zen_path);
             let moz_dec = djpeg(&ref_path).expect("reference must decode");
@@ -190,7 +196,9 @@ fn run_issue_194(outdir: &Path) {
                 Some((zw, zh, zp, zwarn)) => {
                     let (mw, mh, mp, _) = moz_dec;
                     if (zw, zh) != (mw, mh) {
-                        println!("{ss_name} {t:?}: DIMENSION MISMATCH zen {zw}x{zh} vs moz {mw}x{mh}");
+                        println!(
+                            "{ss_name} {t:?}: DIMENSION MISMATCH zen {zw}x{zh} vs moz {mw}x{mh}"
+                        );
                         continue;
                     }
                     let s = diff(&zp, &mp);
@@ -291,7 +299,10 @@ fn run_195_case(
                 if warn.trim().is_empty() {
                     format!("OK {dw}x{dh}")
                 } else {
-                    format!("OK-with-warnings {dw}x{dh} [{}]", warn.trim().replace('\n', " | "))
+                    format!(
+                        "OK-with-warnings {dw}x{dh} [{}]",
+                        warn.trim().replace('\n', " | ")
+                    )
                 }
             }
         };

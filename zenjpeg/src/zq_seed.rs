@@ -60,32 +60,32 @@ pub const ZQ_FEATURES: [zenanalyze::feature::AnalysisFeature; 6] = [
 /// f_0*h80..f_5*h80]` with `tn=(t−65)/25`, `h_k=max(t−k,0)/10`,
 /// `logpx_n=(ln(px)−13)/3`.
 const ZQ_COEFS: [f64; 26] = [
-    36.752419364192620,   // const
-    18.532795461862516,   // tn
-    7.471654457918908,    // h50
-    10.488342837677967,   // h60
-    -8.120355846244466,   // h70
-    -8.690436307114338,   // h80
-    -3.6566196740897556,  // h85
+    36.752419364192620,    // const
+    18.532795461862516,    // tn
+    7.471654457918908,     // h50
+    10.488342837677967,    // h60
+    -8.120355846244466,    // h70
+    -8.690436307114338,    // h80
+    -3.6566196740897556,   // h85
     0.0035565671303173455, // logpx_n
-    -17.620623388914616,  // flat_color_block_ratio
-    3.436723078983692,    // ln_1p(dct_compressibility_uv)
-    -16.85493783310687,   // spectral_slope_y
-    1.9475242187926536,   // ln_1p(distinct_color_bins)
-    -6.786372929520951,   // grayscale_score
-    -4.6579855184998396,  // skin_tone_fraction
-    -3.345171080091729,   // fcbr*tn
-    1.4250166987945871,   // dcuv*tn
-    -4.45295171168348,    // ssy*tn
-    0.130007394190472,    // dcb*tn
-    0.5174768442810931,   // gs*tn
-    -0.17685600917547373, // stf*tn
-    20.242273889207684,   // fcbr*h80
-    -4.520650281804192,   // dcuv*h80
-    20.418726350287514,   // ssy*h80
-    -1.4890129479408634,  // dcb*h80
-    4.626467480003019,    // gs*h80
-    5.387196900167114,    // stf*h80
+    -17.620623388914616,   // flat_color_block_ratio
+    3.436723078983692,     // ln_1p(dct_compressibility_uv)
+    -16.85493783310687,    // spectral_slope_y
+    1.9475242187926536,    // ln_1p(distinct_color_bins)
+    -6.786372929520951,    // grayscale_score
+    -4.6579855184998396,   // skin_tone_fraction
+    -3.345171080091729,    // fcbr*tn
+    1.4250166987945871,    // dcuv*tn
+    -4.45295171168348,     // ssy*tn
+    0.130007394190472,     // dcb*tn
+    0.5174768442810931,    // gs*tn
+    -0.17685600917547373,  // stf*tn
+    20.242273889207684,    // fcbr*h80
+    -4.520650281804192,    // dcuv*h80
+    20.418726350287514,    // ssy*h80
+    -1.4890129479408634,   // dcb*h80
+    4.626467480003019,     // gs*h80
+    5.387196900167114,     // stf*h80
 ];
 
 /// Fitted target band; basis inputs clamp here.
@@ -101,11 +101,7 @@ const ZQ_CLAMP_ABOVE: f32 = 12.0;
 /// seed quality clamped to `[anchor−18, anchor+12]` and then `[1, 100]`.
 /// `None` if any input is non-finite — the caller keeps the anchor curve.
 #[must_use]
-pub fn predict_q0_from_features(
-    features: &[f32; 6],
-    target: f64,
-    pixels: u64,
-) -> Option<f32> {
+pub fn predict_q0_from_features(features: &[f32; 6], target: f64, pixels: u64) -> Option<f32> {
     if !target.is_finite() || features.iter().any(|f| !f.is_finite()) {
         return None;
     }
@@ -155,14 +151,16 @@ mod tests {
     /// px=300000 → raw head 98.6607, anchor 81.76 → upper clamp → 93.76.
     #[test]
     fn golden_matches_fit_pipeline() {
-        let q0 = predict_q0_from_features(&[0.25, 3.5, -1.2, 40.0, 0.1, 0.05], 72.0, 300_000)
-            .unwrap();
+        let q0 =
+            predict_q0_from_features(&[0.25, 3.5, -1.2, 40.0, 0.1, 0.05], 72.0, 300_000).unwrap();
         assert!((q0 - 93.76).abs() < 1e-3, "q0 = {q0}");
     }
 
     #[test]
     fn non_finite_inputs_return_none() {
-        assert!(predict_q0_from_features(&[f32::NAN, 0.0, 0.0, 0.0, 0.0, 0.0], 70.0, 1000).is_none());
+        assert!(
+            predict_q0_from_features(&[f32::NAN, 0.0, 0.0, 0.0, 0.0, 0.0], 70.0, 1000).is_none()
+        );
         assert!(predict_q0_from_features(&[0.0; 6], f64::NAN, 1000).is_none());
     }
 

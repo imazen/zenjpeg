@@ -219,9 +219,19 @@ impl HuffmanEncodeTable {
     }
 
     /// Returns the code and length for a symbol.
+    ///
+    /// A symbol absent from the table has length 0: writing it emits ZERO
+    /// bits and silently desyncs the bitstream (the issue #194 corruption
+    /// class). Table construction must guarantee every emitted symbol was
+    /// counted; the debug assert catches any traversal divergence in tests.
     #[inline(always)]
     pub fn encode(&self, symbol: u8) -> (u32, u8) {
         let idx = symbol as usize;
+        debug_assert!(
+            self.lengths[idx] > 0,
+            "Huffman symbol {symbol:#04x} has no code — frequency counting \
+             diverged from the encode traversal"
+        );
         (self.codes[idx], self.lengths[idx])
     }
 
