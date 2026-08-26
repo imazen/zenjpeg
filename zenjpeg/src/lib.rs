@@ -331,6 +331,7 @@ pub mod profile;
 // further gated behind `recompress-iqa`.
 #[cfg(feature = "recompress")]
 pub mod recompress;
+pub mod target_quality;
 
 // Image content analysis for `EncoderConfig::adaptive` lives in `zenanalyze`
 // directly — the former `zenjpeg::analyze` re-export shim was removed so this
