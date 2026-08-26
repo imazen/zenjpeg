@@ -53,7 +53,7 @@ impl Block8x8f {
 
     /// Convert to a flat array (for compatibility with existing code)
     #[inline]
-    pub fn to_array(&self) -> [f32; 64] {
+    pub fn to_array(self) -> [f32; 64] {
         let mut arr = [0.0f32; 64];
         for (row_idx, row) in self.rows.iter().enumerate() {
             arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(row);
@@ -141,7 +141,7 @@ impl Block8x8i16 {
 
     /// Convert to a flat array
     #[inline]
-    pub fn to_array(&self) -> [i16; 64] {
+    pub fn to_array(self) -> [i16; 64] {
         let mut arr = [0i16; 64];
         for (row_idx, row) in self.rows.iter().enumerate() {
             arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(row);
@@ -321,7 +321,7 @@ impl Block8x8i32 {
 
     /// Convert to i16 block (with saturation)
     #[inline]
-    pub fn to_i16(&self) -> Block8x8i16 {
+    pub fn to_i16(self) -> Block8x8i16 {
         let mut result = Block8x8i16::ZERO;
         for i in 0..8 {
             for j in 0..8 {
@@ -333,7 +333,7 @@ impl Block8x8i32 {
 
     /// Convert to flat i16 array
     #[inline]
-    pub fn to_i16_array(&self) -> [i16; 64] {
+    pub fn to_i16_array(self) -> [i16; 64] {
         self.to_i16().to_array()
     }
 }

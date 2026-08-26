@@ -1587,16 +1587,21 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2<const TURBO: bool>(
 
     // Use chunks_exact to let the compiler prove slice lengths, eliminating bounds checks.
     // Input: 3 planes of i16, chunked by 16. Output: interleaved RGB u8, chunked by 48.
-    let y_chunks = y_plane.chunks_exact(16);
-    let remainder_len = y_chunks.remainder().len();
-    for ((y_chunk, cb_chunk), (cr_chunk, rgb_chunk)) in y_chunks
-        .zip(cb_plane.chunks_exact(16))
-        .zip(cr_plane.chunks_exact(16).zip(rgb.chunks_exact_mut(48)))
+    let (y_arrays, y_rem) = y_plane.as_chunks::<16>();
+    let remainder_len = y_rem.len();
+    for ((y_chunk, cb_chunk), (cr_chunk, rgb_chunk)) in
+        y_arrays.iter().zip(cb_plane.as_chunks::<16>().0).zip(
+            cr_plane
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .zip(rgb.as_chunks_mut::<48>().0),
+        )
     {
         let (y_vec, cb_vec, cr_vec) = (
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap()),
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap()),
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap()),
+            safe_simd::_mm256_loadu_si256(y_chunk),
+            safe_simd::_mm256_loadu_si256(cb_chunk),
+            safe_simd::_mm256_loadu_si256(cr_chunk),
         );
 
         // Subtract 128 from Cb and Cr
@@ -1801,15 +1806,20 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2<const TURBO: bool>(
     let alpha_sse = _mm_set1_epi8(-1_i8); // 0xFF
 
     // Process 16 pixels per iteration → 64 output bytes.
-    let y_chunks = y_plane.chunks_exact(16);
-    let remainder_len = y_chunks.remainder().len();
-    for ((y_chunk, cb_chunk), (cr_chunk, out_chunk)) in y_chunks
-        .zip(cb_plane.chunks_exact(16))
-        .zip(cr_plane.chunks_exact(16).zip(rgba.chunks_exact_mut(64)))
+    let (y_arrays, y_rem) = y_plane.as_chunks::<16>();
+    let remainder_len = y_rem.len();
+    for ((y_chunk, cb_chunk), (cr_chunk, out_chunk)) in
+        y_arrays.iter().zip(cb_plane.as_chunks::<16>().0).zip(
+            cr_plane
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .zip(rgba.as_chunks_mut::<64>().0),
+        )
     {
-        let y_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap());
-        let cb_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap());
-        let cr_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap());
+        let y_vec = safe_simd::_mm256_loadu_si256(y_chunk);
+        let cb_vec = safe_simd::_mm256_loadu_si256(cb_chunk);
+        let cr_vec = safe_simd::_mm256_loadu_si256(cr_chunk);
 
         let cb_centered = _mm256_sub_epi16(cb_vec, bias);
         let cr_centered = _mm256_sub_epi16(cr_vec, bias);
