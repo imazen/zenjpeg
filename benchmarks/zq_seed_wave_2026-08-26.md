@@ -73,3 +73,17 @@ L ∈ {12, 15, 18, 20, 25}, pick the LARGEST L with ZERO convergence regressions
 on validate; re-measure improvement at that L. **Gate: G-Z2 unchanged**
 (≥10% mean-encode improvement, no convergence regression). If no L achieves
 zero regressions, arm B FAILS and the wave closes FAILED.
+
+## RESULT — arm B **PASS**; head SHIPPED (2026-08-26)
+Grid (frozen rule, validate, 559,596 cells; `zq_armB_grid_2026-08-26.tsv`):
+L=25→11 regressions, L=20→5, **L=18→0** (conv 559,596/559,596, mean encodes
+4.53→3.92, **−13.5%**), L=15→0 (−11.6%), L=12→0 (−9.2%). Rule picks **L=18**
+(largest zero-regression L) ⇒ **G-Z2 PASS** (≥10% ✓, no regression ✓).
+
+Shipped: `src/zq_seed.rs` — `predict_q0_from_features(&[f32;6], target, px)
+→ Option<f32>`, clamp `[anchor−18, anchor+12]`, `ZQ_FEATURES` =
+{flat_color_block_ratio, dct_compressibility_uv†, spectral_slope_y,
+distinct_color_bins†, grayscale_score, skin_tone_fraction} († ln_1p inside).
+4 unit tests incl. a Python-pipeline golden (93.760 @ t=72). Wire-up: pass
+the value as `TargetOptions::q_start`; `None` ⇒ anchor curve (G-Z3 holds by
+construction).
