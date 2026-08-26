@@ -61,3 +61,15 @@ spectral_slope_y, distinct_color_bins, grayscale_score, skin_tone_fraction.
 
 Numbers: `benchmarks/zq_seed_fit_2026-08-26.tsv`. A remedy arm (safety-clamped
 seed) will be REGISTERED below before it runs, same decision gate.
+
+## AMENDMENT (registered 2026-08-26, before any arm-B run) — arm B: safety-clamped seed
+Diagnosis of the 189 (committed above): ALL are deep undershoots — q0 lands
+p50 33.6 BELOW q* (min −4.4 absolute) at t∈[40,65]; from a deep-low seed the
+walk-up (step = 1.2·gap, min 4) exhausts max_encodes=8. Zero overshoot cases.
+
+**Arm B**: q0' = clamp(q0, anchor−L, anchor+12). The high clamp is fixed (+12,
+untuned — no overshoot failures exist). **L selection rule (frozen)**: over
+L ∈ {12, 15, 18, 20, 25}, pick the LARGEST L with ZERO convergence regressions
+on validate; re-measure improvement at that L. **Gate: G-Z2 unchanged**
+(≥10% mean-encode improvement, no convergence regression). If no L achieves
+zero regressions, arm B FAILS and the wave closes FAILED.
