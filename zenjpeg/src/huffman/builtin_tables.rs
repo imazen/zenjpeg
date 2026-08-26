@@ -2874,12 +2874,192 @@ pub(crate) fn select_tables(
     subsampling: crate::types::Subsampling,
 ) -> HuffmanTableSet {
     let tier_idx = nearest_quality_tier(quality.to_internal());
-    if use_xyb {
+    let set = if use_xyb {
         xyb_tables(tier_idx)
     } else {
         match subsampling {
             crate::types::Subsampling::S444 => ycbcr_444_tables(tier_idx),
             _ => ycbcr_420_tables(tier_idx),
         }
+    };
+    complete_table_set(set)
+}
+
+/// Legal baseline DC symbols: difference categories 0..=11.
+const LEGAL_DC_SYMBOLS: core::ops::RangeInclusive<u8> = 0..=11;
+
+/// Whether `sym` is a legal baseline AC symbol: EOB (0x00), ZRL (0xF0), or
+/// (run 0..=15, size 1..=10).
+fn is_legal_ac_symbol(sym: u8) -> bool {
+    matches!(sym, 0x00 | 0xF0) || matches!(sym & 0x0F, 1..=10)
+}
+
+/// Ensure every legal baseline symbol has a code in every table of `set`.
+///
+/// The corpus-trained tables above were baked from observed frequencies only,
+/// so symbols the training corpus never produced (large DC jumps, rare
+/// run/size pairs) have NO code. `HuffmanEncodeTable::encode` returns zero
+/// bits for a codeless symbol, so content outside the corpus distribution
+/// (e.g. dithered/synthetic images like frymire) was silently entropy-coded
+/// into an undecodable stream — a shipping corruption bug in every
+/// `optimize_huffman(false)` baseline encode, caught 2026-08-26 by the
+/// missing-symbol debug_assert added with the issue #194 fix.
+///
+/// Incomplete tables are re-derived from frequencies synthesized to preserve
+/// the baked tables' relative symbol ranking (freq = 2^(24-len)), with a
+/// floor of 1 for every missing legal symbol, so common symbols keep
+/// near-identical code lengths and rare symbols get valid long codes.
+/// Complete tables are returned unchanged. Pure integer math — identical on
+/// every architecture and SIMD tier.
+fn complete_table_set(set: HuffmanTableSet) -> HuffmanTableSet {
+    let dc_legal: alloc::vec::Vec<u8> = LEGAL_DC_SYMBOLS.collect();
+    let ac_legal: alloc::vec::Vec<u8> = (0u8..=255).filter(|&s| is_legal_ac_symbol(s)).collect();
+    HuffmanTableSet {
+        dc_luma: complete_table(set.dc_luma, &dc_legal),
+        ac_luma: complete_table(set.ac_luma, &ac_legal),
+        dc_chroma: complete_table(set.dc_chroma, &dc_legal),
+        ac_chroma: complete_table(set.ac_chroma, &ac_legal),
+    }
+}
+
+fn complete_table(t: OptimizedTable, legal: &[u8]) -> OptimizedTable {
+    if legal.iter().all(|&s| t.table.lengths[s as usize] > 0) {
+        return t;
+    }
+    let mut freq = [0i64; 257];
+    for &s in legal {
+        let len = u32::from(t.table.lengths[s as usize]);
+        freq[s as usize] = if len > 0 {
+            1i64 << (24 - len.min(16))
+        } else {
+            1
+        };
+    }
+    // Keep any baked non-legal symbols encodable too (defensive: nothing
+    // should emit them, but dropping a code a caller might look up would
+    // trade one landmine for another).
+    for sym in 0..256usize {
+        let len = u32::from(t.table.lengths[sym]);
+        if len > 0 && freq[sym] == 0 {
+            freq[sym] = 1i64 << (24 - len.min(16));
+        }
+    }
+    let (bits, values) = crate::huffman::classic::generate_optimal_table(&mut freq)
+        .expect("table completion from valid baked lengths cannot fail");
+    OptimizedTable::from_bits_values(bits, values)
+        .expect("generated bits/values are structurally valid")
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    /// Legal baseline symbols: DC categories 0..=11; AC EOB (0x00), ZRL
+    /// (0xF0), and (run 0..=15, size 1..=10).
+    fn legal_dc() -> Vec<u8> {
+        (0u8..=11).collect()
+    }
+    fn legal_ac() -> Vec<u8> {
+        let mut v = vec![0x00u8, 0xF0];
+        for run in 0u8..16 {
+            for size in 1u8..=10 {
+                v.push((run << 4) | size);
+            }
+        }
+        v
+    }
+
+    fn audit(name: &str, tier: usize, t: &OptimizedTable, legal: &[u8]) -> (usize, u32) {
+        let missing: Vec<u8> = legal
+            .iter()
+            .copied()
+            .filter(|&s| t.table.lengths[s as usize] == 0)
+            .collect();
+        let kraft: u32 = t
+            .table
+            .lengths
+            .iter()
+            .filter(|&&l| l > 0)
+            .map(|&l| 1u32 << (16 - u32::from(l)))
+            .sum();
+        let slack = (1u32 << 16).saturating_sub(kraft);
+        if !missing.is_empty() {
+            eprintln!(
+                "{name} tier {tier}: {} missing symbols (slack {slack}): {:02x?}",
+                missing.len(),
+                missing
+            );
+        }
+        (missing.len(), slack)
+    }
+
+    /// Selected (completed) tables must cover every legal baseline symbol —
+    /// a codeless symbol entropy-codes as ZERO bits and silently corrupts the
+    /// stream. This is the regression gate for the frymire fixed-table
+    /// corruption (missing-symbol class, found 2026-08-26).
+    #[test]
+    fn selected_tables_cover_all_legal_symbols() {
+        for &q in QUALITY_TIERS {
+            for use_xyb in [false, true] {
+                for ss in [
+                    crate::types::Subsampling::S444,
+                    crate::types::Subsampling::S420,
+                ] {
+                    let quality = crate::encode::encoder_types::Quality::from(f32::from(q));
+                    let set = select_tables(&quality, use_xyb, ss);
+                    for (kind, t, legal) in [
+                        ("dc_luma", &set.dc_luma, legal_dc()),
+                        ("ac_luma", &set.ac_luma, legal_ac()),
+                        ("dc_chroma", &set.dc_chroma, legal_dc()),
+                        ("ac_chroma", &set.ac_chroma, legal_ac()),
+                    ] {
+                        let missing: alloc::vec::Vec<u8> = legal
+                            .iter()
+                            .copied()
+                            .filter(|&s| t.table.lengths[s as usize] == 0)
+                            .collect();
+                        assert!(
+                            missing.is_empty(),
+                            "q{q} xyb={use_xyb} {ss:?} {kind}: selected table is missing                              legal symbols {missing:02x?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Print a full audit of baked-table completeness (run with --nocapture).
+    #[test]
+    fn audit_builtin_table_symbol_coverage() {
+        let mut total_missing = 0usize;
+        let mut graftable = 0usize;
+        let mut tables_with_missing = 0usize;
+        for tier in 0..QUALITY_TIERS.len() {
+            for (fam, set) in [
+                ("444", ycbcr_444_tables(tier)),
+                ("420", ycbcr_420_tables(tier)),
+                ("xyb", xyb_tables(tier)),
+            ] {
+                for (kind, t, legal) in [
+                    ("dc_luma", &set.dc_luma, legal_dc()),
+                    ("ac_luma", &set.ac_luma, legal_ac()),
+                    ("dc_chroma", &set.dc_chroma, legal_dc()),
+                    ("ac_chroma", &set.ac_chroma, legal_ac()),
+                ] {
+                    let (m, s) = audit(&format!("{fam}/{kind}"), tier, t, &legal);
+                    if m > 0 {
+                        tables_with_missing += 1;
+                        total_missing += m;
+                        if s as usize >= m {
+                            graftable += 1;
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "TOTAL: {tables_with_missing} incomplete tables, {total_missing} missing symbols, \
+             {graftable} graftable within existing Kraft slack"
+        );
     }
 }

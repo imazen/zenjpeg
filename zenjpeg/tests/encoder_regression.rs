@@ -47,7 +47,14 @@ impl Config {
             .optimize_huffman(self.optimize_huffman);
         let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
         enc.push_packed(rgb, Unstoppable).unwrap();
-        enc.finish().unwrap()
+        let jpeg = enc.finish().unwrap();
+        // Cross-tier byte comparisons pass even when EVERY tier is corrupt —
+        // each compared stream must also decode (2026-08-26 fixed-table audit).
+        let decoded = zenjpeg::decoder::Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .unwrap_or_else(|e| panic!("{}: encoded stream does not decode: {e}", self.name));
+        assert_eq!((decoded.width, decoded.height), (w, h), "{}", self.name);
+        jpeg
     }
 }
 

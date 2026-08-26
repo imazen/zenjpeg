@@ -211,7 +211,13 @@ fn encode_rust(
         .expect("encoder setup");
     enc.push_packed(rgb, enough::Unstoppable)
         .expect("push data");
-    enc.finish().expect("Rust encode failed")
+    let jpeg = enc.finish().expect("Rust encode failed");
+    // Locked references must describe DECODABLE output (2026-08-26 audit).
+    let decoded = zenjpeg::decoder::Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("locked-reference stream must decode");
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    jpeg
 }
 
 fn encode_cpp(png_path: &str, quality: u8, subsampling: &str) -> Option<Vec<u8>> {

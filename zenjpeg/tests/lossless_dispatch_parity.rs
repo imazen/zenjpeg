@@ -79,7 +79,16 @@ fn lossless_pipeline_byte_identical_across_token_tiers() {
                     )
                     .unwrap();
                     match &reference {
-                        None => reference = Some(out),
+                        None => {
+                            // Byte-identity across tiers passes even when every
+                            // tier is corrupt — the reference must also decode.
+                            zenjpeg::decode::DecodeConfig::new()
+                                .decode(&out, Unstoppable)
+                                .unwrap_or_else(|e| {
+                                    panic!("{ss_name} {w}x{h} {t:?}: output does not decode: {e}")
+                                });
+                            reference = Some(out);
+                        }
                         Some(r) => assert_eq!(
                             &out, r,
                             "{ss_name} {w}x{h} {t:?}: lossless transform output \
@@ -108,7 +117,16 @@ fn lossless_pipeline_byte_identical_across_token_tiers() {
                     )
                     .unwrap();
                     match &reference {
-                        None => reference = Some(out),
+                        None => {
+                            zenjpeg::decode::DecodeConfig::new()
+                                .decode(&out, Unstoppable)
+                                .unwrap_or_else(|e| {
+                                    panic!(
+                                        "{ss_name} {w}x{h} {out_mode:?}: output does not decode: {e}"
+                                    )
+                                });
+                            reference = Some(out);
+                        }
                         Some(r) => assert_eq!(
                             &out, r,
                             "{ss_name} {w}x{h} {out_mode:?}: restructure output \

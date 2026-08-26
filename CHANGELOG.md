@@ -175,6 +175,32 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`optimize_huffman(false)` baseline encodes silently produced undecodable
+  JPEGs on content outside the training-corpus distribution** (found
+  2026-08-26 by the missing-symbol debug_assert added with the #194 fix; the
+  frymire hash-lock suite had locked corrupt bytes for every `huffman=fixed`
+  row — mozjpeg djpeg and zenjpeg's own decoder both reject them). Root
+  cause: the corpus-trained built-in Huffman tables were baked from observed
+  frequencies only, so 324 of 360 tables lacked codes for 13,238 legal
+  baseline symbols (large DC categories, rare run/size pairs), and
+  `HuffmanEncodeTable::encode` emits ZERO bits for a codeless symbol. Fix:
+  `builtin_tables::select_tables` now completes every table — incomplete
+  tables are re-derived from frequencies synthesized to preserve the baked
+  ranking (freq = 2^(24-len), floor 1 for missing legal symbols), so common
+  symbols keep near-identical code lengths and rare symbols get valid long
+  codes. Measured cost on photo-like content: +0.06..+0.5% size (mostly the
+  fuller DHT markers), speed equal-or-faster on every measured cell.
+  Regression gate: `selected_tables_cover_all_legal_symbols` +
+  `audit_builtin_table_symbol_coverage` in `huffman/builtin_tables.rs`.
+- **Hash-lock/byte-identity encoder tests now also decode every stream they
+  hash** (locked_values — check AND regenerator, ycbcr_locked,
+  boundary_rd_hash_lock, parity_reference_locked, encoder_regression
+  dispatch-parity, lossless_dispatch_parity). A hash lock alone blesses
+  whatever bytes the encoder produced — that is exactly how the corrupt
+  fixed-table streams stayed locked-green. The regenerator now refuses to
+  lock undecodable bytes. New `.github/workflows/regen-locked-values.yml`
+  (workflow_dispatch) regenerates `values_archmage.csv` on an x86_64 runner.
+
 - **Lossless transforms/restructure emitted corrupt or silently-wrong JPEGs
   in four distinct ways** (issues #194, #195; fixed in c453d299, verified
   against mozjpeg 4.1.5 `jpegtran`/`djpeg`): (1) Huffman frequency counting

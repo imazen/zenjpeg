@@ -250,7 +250,15 @@ fn encode_jpeg(
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
     enc.push_packed(rgb, enough::Unstoppable).expect("push");
-    enc.finish().expect("Encoding failed")
+    let jpeg = enc.finish().expect("Encoding failed");
+    // A hash lock alone blesses whatever bytes came out — every locked stream
+    // must also decode (the 2026-08-26 fixed-table audit found hash locks
+    // covering undecodable output).
+    let decoded = zenjpeg::decoder::Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("locked stream must decode");
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    jpeg
 }
 
 fn hash_bytes(data: &[u8]) -> u64 {
