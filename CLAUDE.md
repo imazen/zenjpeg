@@ -755,7 +755,14 @@ entries accumulate here.
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
-- Progressive Q10 encoder ~2.8% larger than C++ jpegli (issue #23) — FIXED; issue closed 2026-04-15.
+- Lossless transform/restructure corruption class (issues #194 + #195: Transpose/Transverse wrong on
+  subsampled chroma; TrimPartialBlocks/progressive restructure corrupt on non-MCU-aligned images) —
+  FIXED 2026-08-26 (c453d299). Four root causes: count-vs-encode traversal divergence (zero-length
+  Huffman codes), emitters rederiving geometry from pixel dims instead of the MCU-padded grids,
+  trim-by-shrinking-dims-only, and progressive tokenizing padded instead of true grids. Regression
+  gates: `tests/lossless_matrix.rs` (5 modes × 5 dim classes × 8 transforms, 4 oracle layers),
+  `tests/lossless_dispatch_parity.rs` (byte-identity across SIMD token tiers),
+  `lossless::tests::trim_sentinel_tests` (padding can never leak into visible region).
   **Verified 2026-07-15**: the 4 `quality_matrix` progressive tests that had been `#[ignore]`d citing
   #23 (444/422/420/440) all pass, and the ignores are removed. Q10 progressive size deltas are now
   +1.4..+2.4% *and* Rust scores +3.1..+4.1 SSIM2 better — i.e. it buys quality, not waste. The
