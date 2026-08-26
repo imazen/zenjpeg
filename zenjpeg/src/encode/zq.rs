@@ -715,12 +715,75 @@ pub(crate) fn run_iteration_loop(
         return finalize(best_bytes, score0, max0, passes_used, &ctx.target);
     }
 
-    let mut current_scales = alloc::vec![1.0f32; blocks_w * blocks_h];
-    let mut current_dm = dm0;
-    let mut current_score = score0;
-    let mut current_max = max0;
+    // Latest measured state feeding the redistribution phase — advanced by the
+    // global-q correction below when it runs, else it is just pass 0.
+    let mut latest_dm = dm0;
+    let mut latest_score = score0;
+    let mut latest_max = max0;
+    let mut cur_q = starting_q;
 
-    for _pass in 1..=ctx.target.max_passes {
+    // GLOBAL-Q CORRECTION (#113): `next_scales` only REDISTRIBUTES bits across
+    // blocks — it cannot raise the global quality level. When the calibrated
+    // `starting_q` undershoots the floor (common on high-texture content, where
+    // the content-blind q lookup lands under target), redistribution saturates
+    // and the score plateaus below the floor at every pass count. So when pass 0
+    // undershoots the SCORE floor, first spend budget on a global-q secant that
+    // raises q toward the floor; the per-block phase then claws bytes back from
+    // the corrected level. Peak-only infeasibility (score met, max-block over the
+    // ceiling) is left to redistribution — that is what tightens peaks. Fires
+    // only in the undershoot path, so feasible/overshoot cases are unchanged.
+    if latest_score < ctx.target.target {
+        let mut q_prev = cur_q;
+        let mut s_prev = latest_score;
+        while passes_used <= ctx.target.max_passes
+            && latest_score < ctx.target.target
+            && cur_q < 100.0
+        {
+            let slope = latest_score - s_prev;
+            let q_est = if slope.abs() > 1e-3 {
+                cur_q + (ctx.target.target - latest_score) * (cur_q - q_prev) / slope
+            } else {
+                cur_q + 8.0
+            };
+            let q_next = q_est.clamp(cur_q + 1.0, 100.0);
+            pass_config = pass_config.quality(Quality::ApproxJpegli(q_next));
+            let bytes_n = encode_pass(&pass_config, &ctx, None)?;
+            let (score_n, dm_n) = measure(&z, &pre, &bytes_n, ctx.width, ctx.height)?;
+            let max_n = max_block(&dm_n);
+            passes_used = passes_used.saturating_add(1);
+            let cand_feasible = is_feasible(score_n, max_n, &ctx.target);
+            // Same best-tracking rule as the redistribution loop: prefer feasible,
+            // then smallest bytes; while infeasible, keep the highest score.
+            let take = match (best_feasible, cand_feasible) {
+                (false, true) => true,
+                (true, false) => false,
+                (true, true) => bytes_n.len() < best_bytes.len(),
+                (false, false) => score_n > best_score,
+            };
+            if take {
+                best_bytes = bytes_n;
+                best_score = score_n;
+                best_max = max_n;
+                best_feasible = cand_feasible;
+            }
+            q_prev = cur_q;
+            s_prev = latest_score;
+            cur_q = q_next;
+            latest_score = score_n;
+            latest_dm = dm_n;
+            latest_max = max_n;
+            if cand_feasible {
+                break; // reached the floor; hand off to redistribution for claw-back
+            }
+        }
+    }
+
+    let mut current_scales = alloc::vec![1.0f32; blocks_w * blocks_h];
+    let mut current_dm = latest_dm;
+    let mut current_score = latest_score;
+    let mut current_max = latest_max;
+
+    while passes_used <= ctx.target.max_passes {
         let next = next_scales(
             &current_scales,
             &current_dm,

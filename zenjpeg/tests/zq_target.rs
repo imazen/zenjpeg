@@ -486,15 +486,14 @@ fn textured_image(w: u32, h: u32) -> Vec<u8> {
 /// unreachable floor. Generous by design (#113 calibration is approximate); the
 /// gate catches a broken/absent per-block secant, with the full census printed.
 ///
-/// KNOWN WEAK ZONE (measured 2026-08-26, this content set): heavy-texture content
-/// at moderate-LOW floors misses (~5/27) — and misses with k2 == k3 (identical
-/// achieved at 1 vs 2 correction passes), i.e. the loop does NOT climb there
-/// rather than converging slowly: the calibrated start lands well under the floor
-/// on dense texture (e.g. floor 74 -> ~58) and the upward correction stalls. The
-/// high-floor and easy-content cells converge cleanly. Gate is 3/4 within k3 —
-/// clear of a working loop, a regression trip-wire if the per-block secant breaks
-/// — with the per-cell census printed so the stall stays visible (worth a #113
-/// follow-up on the upward-correction step for high-texture content).
+/// The per-block loop REDISTRIBUTES bits but cannot raise the global quality
+/// level, so a calibrated start that undershoots the floor (dense texture) used
+/// to freeze the score below target at any pass count. The global-q correction
+/// (#113, `zq.rs`) fixes that: an undershooting pass 0 now secant-raises q toward
+/// the floor before redistribution. With it, all 27 cells reach the floor within
+/// k3; the few k2 misses are texture cells whose bad calibration start needs two
+/// secant steps to climb. Generous by design (#113 calibration is approximate);
+/// the gate catches a regression in the per-block secant OR the global-q climb.
 #[test]
 fn zq_convergence_census_27_cells_k2_k3() {
     type Gen = fn(u32, u32) -> Vec<u8>;
@@ -553,11 +552,12 @@ fn zq_convergence_census_27_cells_k2_k3() {
     // floor within a 3-pass budget on the clear majority; k2 is the fast-path
     // yield (calibrated start + one correction).
     assert!(
-        k3 >= (total * 3) / 4,
-        "zq loop reached the floor within k3 (≤3 passes) on only {k3}/{total} cells (see census)"
+        k3 >= total - 1,
+        "zq loop reached the floor within k3 (≤3 passes) on only {k3}/{total} cells \
+         (the global-q correction should reach every floor; see census)"
     );
     assert!(
-        k2 >= total / 2,
+        k2 >= (total * 2) / 3,
         "only {k2}/{total} cells reached the floor within k2 (≤2 passes)"
     );
 }
