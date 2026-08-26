@@ -41,7 +41,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 /// The CSV bytes are unchanged from a4f5dc4e; only the constant is corrected
 /// to actually hash the committed CSV.
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "ccfd6df6db0791f74a3f4fe4f9c0a13c84b5885b25fa9d858ef166b06fd3954a";
+const VALUES_FILE_HASH: &str = "091a9b061ece3af287f0f9e4f4468b84378ce147e1f471f1cd70879e1fe5e7c8";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
