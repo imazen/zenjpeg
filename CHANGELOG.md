@@ -229,6 +229,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- **`recompress` preserve strategy ships the smaller of sequential and
+  progressive** (#143 item 2): `preserve_emit::emit_preserved` serializes
+  the edited coefficients sequentially and, when that lands at or below
+  `ENTROPY_TRIAL_MAX_BYTES` (32 KiB — the same gate as the main encoder's
+  trials; the issue body's 16 KiB was wrong), also serializes the SAME
+  coefficients progressively through the lossless pipeline's emitter
+  (`lossless::restructure::encode_progressive_from_coefficients`, jpegli
+  scan script) and returns the shorter stream. Pure rate decision —
+  coefficients are preserved by construction either way. The edited planes
+  are moved, not cloned, into the trial. Gate:
+  `preserve_emit::smallest_trial_tests::preserve_emit_ships_the_smaller_of_sequential_and_progressive`
+  (identical coefficient planes for both candidates and vs the source; the
+  shipped bytes equal the shorter candidate; progressive wins on all three
+  fixtures, e.g. 1830 → 1118 B). This closes the last open item of #143.
 - **Per-image exact 8-bit DQT downgrade for `allow_16bit_quant_tables(true)`
   users** (#143 item 1): once every block is quantized, the buffered builder
   checks each 16-bit table's >255 positions against that table's component

@@ -239,7 +239,7 @@ fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<Progres
 ///
 /// Two-pass: tokenize all scans → optimize Huffman tables → replay with
 /// optimized tables.
-fn encode_progressive_from_coefficients(
+pub(crate) fn encode_progressive_from_coefficients(
     coeffs: &TransformedCoefficients,
     preserved_segments: Option<&[crate::decode::PreservedSegment]>,
     _restart_interval: u16,

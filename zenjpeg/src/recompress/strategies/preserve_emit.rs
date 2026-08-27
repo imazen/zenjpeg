@@ -13,11 +13,17 @@
 //! and [`OptimizedTable`] under [`crate::huffman::optimize`], and
 //! [`crate::entropy::encode_blocks_mcu_order`].
 //!
+//! Entropy layout is a pure rate decision once the coefficients are fixed,
+//! so this emitter gets the same "Smallest" treatment as the main encoder
+//! (#143 item 2): it serializes sequentially and, when that lands at or
+//! below [`crate::encode::ENTROPY_TRIAL_MAX_BYTES`], also serializes the
+//! SAME edited coefficients progressively through
+//! `lossless::restructure::encode_progressive_from_coefficients` and ships
+//! the shorter stream. Coefficients are preserved by construction either
+//! way; only the scan structure differs.
+//!
 //! What this module deliberately does **not** do:
-//! - Progressive scans (single-scan sequential only; trade off
-//!   complexity vs payoff — Lossless path covers progressive). zenjpeg
-//!   does **not** do full trellis rewinding here; this is a straight
-//!   lossless coefficient re-emit.
+//! - Trellis rewinding — this is a straight lossless coefficient re-emit.
 //! - Restart markers (`restart_interval = 0`).
 //!
 //! Metadata (ICC / EXIF / XMP / JFIF / Adobe / COM) IS carried through
@@ -243,8 +249,6 @@ pub fn emit_preserved(
         return Err(Error::Internal("DecodedCoefficients has no components"));
     }
 
-    let is_color = coeffs.components.len() >= 3;
-
     // Sanity: the decoder stores MCU-padded block arrays. For
     // partial-MCU sources, `luma.blocks_wide * 8` may exceed
     // `coeffs.width` — that's normal. We pass the MCU-aligned width
@@ -283,7 +287,42 @@ pub fn emit_preserved(
 
     // 3. Compute optimized Huffman tables from the edited coefficient
     // distributions.
-    let huff = optimize_huffman_tables(&edited_components, is_color)?;
+    let out = emit_sequential(
+        coeffs,
+        subsampling,
+        &edited_components,
+        &new_quant_tables,
+        &config.preserved_segments,
+    )?;
+
+    // Smallest-trial (#143 item 2): same coefficients, progressive scan
+    // structure, ship whichever is shorter. Gated on the sequential size
+    // like the main encoder's trials, so large outputs never pay for a
+    // second serialization.
+    if out.len() <= crate::encode::ENTROPY_TRIAL_MAX_BYTES
+        && let Some(prog) = emit_progressive_trial(
+            coeffs,
+            edited_components,
+            new_quant_tables,
+            &config.preserved_segments,
+        )
+        && prog.len() < out.len()
+    {
+        return Ok(prog);
+    }
+    Ok(out)
+}
+
+/// Serialize the edited coefficients as one baseline-sequential scan.
+fn emit_sequential(
+    coeffs: &DecodedCoefficients,
+    subsampling: Subsampling,
+    edited_components: &[EditedComponent],
+    new_quant_tables: &[Option<[u16; 64]>],
+    preserved_segments: &[PreservedSegment],
+) -> Result<Vec<u8>, Error> {
+    let is_color = coeffs.components.len() >= 3;
+    let huff = optimize_huffman_tables(edited_components, is_color)?;
 
     // 4. Emit JPEG bytes.
     let mut out = Vec::with_capacity(64 * 1024);
@@ -294,19 +333,13 @@ pub fn emit_preserved(
     // order (JFIF/APP0 first in well-formed files). `seg.data` is the raw
     // payload excluding the 2 length bytes, exactly what
     // `write_marker_segment` expects. MPF is filtered out by the caller.
-    for seg in &config.preserved_segments {
+    for seg in preserved_segments {
         write_marker_segment(&mut out, seg.marker, &seg.data);
     }
-    let needs_sof1 = write_dqt(&mut out, &new_quant_tables)?;
-    write_sof(
-        &mut out,
-        coeffs,
-        subsampling,
-        &edited_components,
-        needs_sof1,
-    )?;
+    let needs_sof1 = write_dqt(&mut out, new_quant_tables)?;
+    write_sof(&mut out, coeffs, subsampling, edited_components, needs_sof1)?;
     write_dht(&mut out, &huff, is_color)?;
-    write_sos(&mut out, &edited_components, is_color)?;
+    write_sos(&mut out, edited_components, is_color)?;
     // Pass the MCU-aligned width to the scan emitter so its computed
     // `y_blocks_w` matches our actual block array stride. The SOF we
     // wrote above already carries the unpadded image dimensions, so
@@ -314,7 +347,7 @@ pub fn emit_preserved(
     let mcu_aligned_width = edited_components[0].blocks_wide * 8;
     write_scan_data(
         &mut out,
-        &edited_components,
+        edited_components,
         &huff,
         is_color,
         subsampling,
@@ -323,6 +356,48 @@ pub fn emit_preserved(
     out.push(0xFF);
     out.push(MARKER_EOI);
     Ok(out)
+}
+
+/// Serialize the SAME edited coefficients progressively via the lossless
+/// pipeline's emitter (jpegli scan script, optimized per-scan Huffman
+/// tables, natural-order quant tables — the layout `DecodedCoefficients`
+/// already uses). Consumes the edited components so no coefficient plane
+/// is cloned. `None` if the emitter declines (the sequential stream is
+/// then shipped unchanged).
+fn emit_progressive_trial(
+    coeffs: &DecodedCoefficients,
+    edited_components: Vec<EditedComponent>,
+    new_quant_tables: Vec<Option<[u16; 64]>>,
+    preserved_segments: &[PreservedSegment],
+) -> Option<Vec<u8>> {
+    use crate::decode::ComponentCoefficients;
+    use crate::lossless::TransformedCoefficients;
+    let components = edited_components
+        .into_iter()
+        .zip(&coeffs.components)
+        .map(|(e, src)| ComponentCoefficients {
+            id: src.id,
+            coeffs: e.coeffs,
+            blocks_wide: e.blocks_wide,
+            blocks_high: e.blocks_high,
+            h_samp: e.h_samp,
+            v_samp: e.v_samp,
+            quant_table_idx: e.quant_table_idx,
+        })
+        .collect();
+    let tc = TransformedCoefficients {
+        width: coeffs.width,
+        height: coeffs.height,
+        components,
+        quant_tables: new_quant_tables,
+    };
+    crate::lossless::restructure::encode_progressive_from_coefficients(
+        &tc,
+        Some(preserved_segments),
+        0,
+        &enough::Unstoppable,
+    )
+    .ok()
 }
 
 /// Per-component requantized data (in zigzag order, length =
@@ -896,5 +971,129 @@ mod tests {
                 "pos {i}: ratio {r} too far from mean {mean} (not near-uniform)"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod smallest_trial_tests {
+    use super::*;
+
+    /// #143 item 2: `emit_preserved` must ship the shorter of the sequential
+    /// and progressive serializations (when the sequential one is within the
+    /// trial gate), and both candidates must carry IDENTICAL coefficients —
+    /// the trial is a pure rate decision.
+    #[test]
+    fn preserve_emit_ships_the_smaller_of_sequential_and_progressive() {
+        use crate::decoder::Decoder;
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+        use enough::Unstoppable;
+
+        fn smooth_blocks(w: u32, h: u32) -> Vec<u8> {
+            // Flat 16×16 tiles with mild per-tile colour steps: mostly-zero AC,
+            // where progressive EOB runs and DC-first scans pay off.
+            let mut v = vec![0u8; (w * h * 3) as usize];
+            for y in 0..h as usize {
+                for x in 0..w as usize {
+                    let i = (y * w as usize + x) * 3;
+                    let t = ((x / 16) * 7 + (y / 16) * 13) as u8;
+                    v[i] = 90u8.wrapping_add(t);
+                    v[i + 1] = 110u8.wrapping_add(t.wrapping_mul(2));
+                    v[i + 2] = 130u8.wrapping_sub(t);
+                }
+            }
+            v
+        }
+        fn noisy(w: u32, h: u32) -> Vec<u8> {
+            let mut v = vec![0u8; (w * h * 3) as usize];
+            let mut s = 0x1357u32;
+            for b in v.iter_mut() {
+                s ^= s << 13;
+                s ^= s >> 17;
+                s ^= s << 5;
+                *b = (s >> 24) as u8;
+            }
+            v
+        }
+        fn jpeg(rgb: &[u8], w: u32, h: u32) -> Vec<u8> {
+            let mut enc = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
+                .progressive(false)
+                .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(rgb, Unstoppable).unwrap();
+            enc.finish().unwrap()
+        }
+        fn coeff_planes(jpeg: &[u8]) -> Vec<(u8, Vec<i16>)> {
+            let c = Decoder::new()
+                .decode_coefficients(jpeg, Unstoppable)
+                .expect("decode_coefficients");
+            c.components
+                .iter()
+                .map(|comp| (comp.id, comp.coeffs.clone()))
+                .collect()
+        }
+
+        let mut prog_won = 0usize;
+        for (name, rgb, w, h) in [
+            ("smooth", smooth_blocks(256, 192), 256u32, 192u32),
+            ("noisy", noisy(96, 64), 96, 64),
+            ("tiny", smooth_blocks(24, 24), 24, 24),
+        ] {
+            let src = jpeg(&rgb, w, h);
+            let coeffs = Decoder::new()
+                .decode_coefficients(&src, Unstoppable)
+                .expect("source coefficients");
+            let cfg = EmitConfig::default();
+
+            // The two candidates, built exactly as emit_preserved builds them.
+            let (tables, scales) = build_new_quant_tables(&coeffs, cfg.quant_strategy).unwrap();
+            let edited = edit_coefficients(&coeffs, &scales, None);
+            let seq = emit_sequential(&coeffs, Subsampling::S420, &edited, &tables, &[]).unwrap();
+            let prog = emit_progressive_trial(&coeffs, edited, tables, &[])
+                .expect("progressive trial must succeed on a plain 4:2:0 source");
+            assert!(
+                seq.len() <= crate::encode::ENTROPY_TRIAL_MAX_BYTES,
+                "{name}: fixture must sit inside the trial gate ({} B)",
+                seq.len()
+            );
+
+            // Pure rate decision: identical coefficients either way.
+            assert_eq!(
+                coeff_planes(&seq),
+                coeff_planes(&prog),
+                "{name}: candidates differ"
+            );
+            assert_eq!(
+                coeff_planes(&seq),
+                coeff_planes(&src),
+                "{name}: not lossless vs source"
+            );
+
+            let shipped = emit_preserved(&coeffs, Subsampling::S420, &cfg).unwrap();
+            let expect = if prog.len() < seq.len() { &prog } else { &seq };
+            assert_eq!(
+                shipped.len(),
+                expect.len(),
+                "{name}: shipped {} B, sequential {} B, progressive {} B",
+                shipped.len(),
+                seq.len(),
+                prog.len()
+            );
+            assert_eq!(
+                &shipped, expect,
+                "{name}: shipped bytes are not the shorter candidate"
+            );
+            eprintln!(
+                "{name}: sequential {} B, progressive {} B",
+                seq.len(),
+                prog.len()
+            );
+            if prog.len() < seq.len() {
+                prog_won += 1;
+            }
+        }
+        assert!(
+            prog_won > 0,
+            "no fixture where progressive wins — the trial gate is untested"
+        );
     }
 }
