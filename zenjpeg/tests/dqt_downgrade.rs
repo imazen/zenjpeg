@@ -126,3 +126,54 @@ fn busy_chroma_image_keeps_16bit_dqt() {
     let img = Decoder::new().decode(&with, Unstoppable).expect("decode");
     assert_eq!((img.width(), img.height()), (w, h));
 }
+
+/// Full-spectrum RGB noise across the low qualities where the jpegli tables
+/// exceed 255 in many positions. At the very lowest (q1, q5) the divisors are
+/// so large that even noise quantizes to all-zero blocks, and the downgrade
+/// correctly emits 8-bit tables; as soon as some coefficient survives at a
+/// position whose divisor exceeds 255 the table must stay 16-bit (SOF1). This gate asserts the
+/// sweep as a whole — the "kept" branch on real content — and decodes every
+/// file; the bundled `quant_16bit_comparison` suite sweeps the same qualities
+/// but links C deps and cannot run everywhere.
+#[test]
+fn full_spectrum_noise_keeps_16bit_dqt_where_coefficients_survive() {
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let noise: Vec<u8> = (0..64 * 64 * 3)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as u8
+        })
+        .collect();
+    let mut kept_16bit_at = Vec::new();
+    for quality in [1.0f32, 5.0, 10.0, 15.0, 20.0] {
+        let cfg = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
+            .progressive(false)
+            .allow_16bit_quant_tables(true);
+        let mut enc = cfg
+            .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+            .expect("encoder");
+        enc.push_packed(&noise, Unstoppable).expect("push");
+        let jpeg = enc.finish().expect("finish");
+        let (precisions, sof) = dqt_precisions_and_sof(&jpeg);
+        let has_16bit = precisions.contains(&1);
+        // Precision and frame type must agree: 16-bit anywhere ⇔ SOF1.
+        assert_eq!(
+            sof,
+            if has_16bit { 0xC1 } else { 0xC0 },
+            "q{quality}: precisions {precisions:?} vs SOF {sof:#x}"
+        );
+        if has_16bit {
+            kept_16bit_at.push(quality);
+        }
+        let img = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        assert_eq!((img.width(), img.height()), (64, 64));
+    }
+    assert!(
+        !kept_16bit_at.is_empty(),
+        "noise never kept a 16-bit table across q1..q20 — the downgrade is \
+         discarding tables the image uses"
+    );
+    eprintln!("[dqt_downgrade] noise kept 16-bit tables at q{kept_16bit_at:?}");
+}

@@ -96,11 +96,6 @@ const ZQ_T_MAX: f64 = 90.0;
 const ZQ_CLAMP_BELOW: f32 = 18.0;
 const ZQ_CLAMP_ABOVE: f32 = 12.0;
 
-/// Pure evaluation of the fitted head on already-extracted feature values
-/// (in [`ZQ_FEATURES`] order, RAW — transforms applied here). Returns the
-/// seed quality clamped to `[anchor−18, anchor+12]` and then `[1, 100]`.
-/// `None` if any input is non-finite — the caller keeps the anchor curve.
-
 /// Image-level seed: extract the six [`ZQ_FEATURES`] from RGB8 pixels
 /// in-binary (zenanalyze) and predict the starting quality for `target`.
 /// The composition the census harness validated; `None` on any missing or
@@ -135,6 +130,10 @@ pub fn predict_q0_from_image(rgb: &[u8], width: u32, height: u32, target: f64) -
     predict_q0_from_features(&fv, target, u64::from(width) * u64::from(height))
 }
 
+/// Pure evaluation of the fitted head on already-extracted feature values
+/// (in [`ZQ_FEATURES`] order, RAW — transforms applied here). Returns the
+/// seed quality clamped to `[anchor−18, anchor+12]` and then `[1, 100]`.
+/// `None` if any input is non-finite — the caller keeps the anchor curve.
 #[must_use]
 pub fn predict_q0_from_features(features: &[f32; 6], target: f64, pixels: u64) -> Option<f32> {
     if !target.is_finite() || features.iter().any(|f| !f.is_finite()) {
@@ -246,8 +245,10 @@ mod image_seed_tests {
         let t = 72.0;
         let seed = predict_q0_from_image(&rgb, w, h, t).expect("head fires on real content");
         let anchor = anchor_guess(t);
-        assert!(seed >= anchor - 18.0 - 1e-3 && seed <= anchor + 12.0 + 1e-3,
-                "seed {seed} outside clamp around anchor {anchor}");
+        assert!(
+            seed >= anchor - 18.0 - 1e-3 && seed <= anchor + 12.0 + 1e-3,
+            "seed {seed} outside clamp around anchor {anchor}"
+        );
         assert!((1.0..=100.0).contains(&seed));
         // Degenerate input: never panics, falls back to None.
         assert_eq!(predict_q0_from_image(&rgb[..10], w, h, t), None);
@@ -263,6 +264,9 @@ mod image_seed_tests {
         }
         let opts = crate::target_quality::TargetOptions::seeded_for_image(&rgb, w, h, 70.0);
         assert_eq!(opts.q_start, predict_q0_from_image(&rgb, w, h, 70.0));
-        assert_eq!(opts.max_encodes, crate::target_quality::TargetOptions::default().max_encodes);
+        assert_eq!(
+            opts.max_encodes,
+            crate::target_quality::TargetOptions::default().max_encodes
+        );
     }
 }

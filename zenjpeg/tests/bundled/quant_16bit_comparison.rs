@@ -280,19 +280,38 @@ fn test_default_uses_8bit_tables() {
     }
 }
 
-/// Test that 16-bit tables are used when explicitly enabled.
+/// Test that 16-bit tables are used when explicitly enabled AND the image
+/// actually uses them.
 ///
-/// With allow_16bit_quant_tables=true, quant values can exceed 255 and
-/// the encoder uses SOF1 (extended sequential) with 16-bit DQT markers.
+/// With `allow_16bit_quant_tables=true`, quant values can exceed 255 and the
+/// encoder uses SOF1 (extended sequential) with 16-bit DQT markers — but only
+/// for tables the image really needs at >255 positions. Since the per-image
+/// exact 8-bit DQT downgrade (#143, `544a1c48`), a table whose >255 positions
+/// hold only zero coefficients is emitted as its 8-bit clamp (pixel-identical
+/// by construction, saves 64 DQT bytes, and SOF0 replaces SOF1 when no
+/// 16-bit table remains). So this test needs high-frequency content — a
+/// smooth gradient quantizes every >255 position to zero and (correctly)
+/// comes out all-8-bit, which the second half pins.
 #[test]
 fn test_16bit_tables_when_enabled() {
-    let img = generate_gradient_d(64, 64, 3);
+    // Deterministic full-spectrum noise: every zigzag position carries a
+    // nonzero coefficient at these qualities, so the >255 table entries are
+    // genuinely used and must survive the downgrade as 16-bit.
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let noise: Vec<u8> = (0..64 * 64 * 3)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as u8
+        })
+        .collect();
 
     let mut found_16bit = false;
     let mut found_values_over_255 = false;
 
     for quality in [1, 5, 10, 15, 20] {
-        let jpeg = encode_test_image_16bit(&img.pixels, 64, 64, quality as f32);
+        let jpeg = encode_test_image_16bit(&noise, 64, 64, quality as f32);
         let tables = extract_dqt_tables(&jpeg);
 
         let max_value: u16 = tables
@@ -305,7 +324,7 @@ fn test_16bit_tables_when_enabled() {
         let has_16bit = tables.iter().any(|t| t.precision == 1);
 
         println!(
-            "Quality {} (16-bit enabled): {} tables, max_value={}, precisions={:?}",
+            "Quality {} (16-bit enabled, noise): {} tables, max_value={}, precisions={:?}",
             quality,
             tables.len(),
             max_value,
@@ -333,8 +352,23 @@ fn test_16bit_tables_when_enabled() {
     );
     assert!(
         found_16bit,
-        "Test should have found quality levels using 16-bit tables"
+        "Test should have found 16-bit tables at low quality"
     );
+
+    // The other half of the contract: content that never uses a >255 position
+    // gets the exact 8-bit clamp (SOF0), even with 16-bit tables allowed.
+    let gradient = generate_gradient_d(64, 64, 3);
+    for quality in [1, 5, 10, 15, 20] {
+        let jpeg = encode_test_image_16bit(&gradient.pixels, 64, 64, quality as f32);
+        let tables = extract_dqt_tables(&jpeg);
+        assert!(
+            tables.iter().all(|t| t.precision == 0),
+            "Quality {}: a smooth gradient uses no >255 position, so every table \
+             must be downgraded to 8-bit; got precisions {:?}",
+            quality,
+            tables.iter().map(|t| t.precision).collect::<Vec<_>>()
+        );
+    }
 }
 
 // ============================================================================

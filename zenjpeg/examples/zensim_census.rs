@@ -55,7 +55,7 @@ fn main() {
             if arm != "B" {
                 return None;
             }
-zenjpeg::zq_seed::predict_q0_from_image(&rgb, w, h, t)
+            zenjpeg::zq_seed::predict_q0_from_image(&rgb, w, h, t)
         };
         for &t in &targets {
             let seed = q0_for(t);
@@ -70,10 +70,8 @@ zenjpeg::zq_seed::predict_q0_from_image(&rgb, w, h, t)
             let t0 = std::time::Instant::now();
             let res = search_target(t, &opts, |q| -> Result<f64, String> {
                 encodes += 1;
-                let cfg = EncoderConfig::ycbcr(
-                    Quality::ApproxJpegli(q),
-                    ChromaSubsampling::Quarter,
-                );
+                let cfg =
+                    EncoderConfig::ycbcr(Quality::ApproxJpegli(q), ChromaSubsampling::Quarter);
                 let jpeg = cfg
                     .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
                     .map_err(|e| format!("encode: {e:?}"))?;
@@ -100,7 +98,10 @@ zenjpeg::zq_seed::predict_q0_from_image(&rgb, w, h, t)
                 (res.score - t).abs(),
             )
             .unwrap();
-            eprintln!("{name} t{t:.0} {arm}: encodes={encodes} achieved={:.2}", res.score);
+            eprintln!(
+                "{name} t{t:.0} {arm}: encodes={encodes} achieved={:.2}",
+                res.score
+            );
         }
     }
 }
