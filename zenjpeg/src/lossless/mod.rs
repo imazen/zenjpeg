@@ -24,7 +24,6 @@
 mod coeff_transform;
 // Crate-internal handle for the recompress preserve emitter's progressive
 // smallest-trial (#143); NOT part of the public lossless API.
-pub(crate) use coeff_transform::TransformedCoefficients;
 mod exif;
 mod geometry;
 mod pipeline;
