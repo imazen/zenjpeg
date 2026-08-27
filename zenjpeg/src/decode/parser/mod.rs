@@ -776,18 +776,6 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
-                MARKER_DNL => {
-                    // Define Number of Lines - update height if it was 0 in SOF
-                    self.parse_dnl()?;
-                }
-                MARKER_DQT => self.parse_quant_table()?,
-                MARKER_DHT => self.parse_huffman_table()?,
-                MARKER_DAC => self.parse_dac()?,
-                MARKER_DRI => self.parse_restart_interval()?,
-                // Stray restart markers between scans — some encoders write a
-                // trailing RST after the final MCU interval. These are standalone
-                // 2-byte markers with no length field, so just skip them.
-                0xD0..=0xD7 => {}
                 MARKER_EOI => {
                     // Validate that we have a valid height (either from SOF or DNL)
                     if self.height == 0 {
@@ -799,8 +787,44 @@ impl<'a> JpegParser<'a> {
                     self.extract_mpf_secondary_images()?;
                     break;
                 }
-                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
-                _ => self.skip_segment()?,
+                // Every other marker carries a table / metadata segment. Their
+                // parse errors funnel through one recovery below so that a
+                // stream cut INSIDE such a segment (between scans) gets the
+                // same treatment as a cut at the marker boundary above: no
+                // scan had started, so nothing partial exists to report (#92).
+                // Before this, a prefix ending mid-DHT/mid-DQT errored while
+                // both the shorter prefix (ending after the previous scan)
+                // and the longer one (ending in the next scan's data) decoded
+                // — a consumer re-decoding a growing prefix saw the image
+                // flicker back into an error.
+                _ => {
+                    let segment = match marker {
+                        // Define Number of Lines - update height if it was 0 in SOF
+                        MARKER_DNL => self.parse_dnl(),
+                        MARKER_DQT => self.parse_quant_table(),
+                        MARKER_DHT => self.parse_huffman_table(),
+                        MARKER_DAC => self.parse_dac(),
+                        MARKER_DRI => self.parse_restart_interval(),
+                        // Stray restart markers between scans — some encoders
+                        // write a trailing RST after the final MCU interval.
+                        // These are standalone 2-byte markers with no length
+                        // field, so just skip them.
+                        0xD0..=0xD7 => Ok(()),
+                        MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker),
+                        _ => self.skip_segment(),
+                    };
+                    if let Err(e) = segment {
+                        if self.strictness.recovers_data_errors()
+                            && scans_decoded > 0
+                            && matches!(e.kind(), ErrorKind::TruncatedData { .. })
+                        {
+                            self.warnings
+                                .push(DecodeWarning::TruncatedBetweenScans { scans_decoded });
+                            break;
+                        }
+                        return Err(e);
+                    }
+                }
             }
         }
 

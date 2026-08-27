@@ -473,8 +473,10 @@ pub enum DecodeWarning {
         blocks_expected: u32,
     },
 
-    /// The stream ended at a marker boundary — after a complete scan, before the
-    /// next one (a missing EOI, or a file cut between scans).
+    /// The stream ended between scans — after a complete scan, before the
+    /// next one's entropy data: at a marker boundary (a missing EOI, a file
+    /// cut between scans) or inside a table / metadata segment (DHT, DQT,
+    /// DRI, APPn, COM) that precedes the next scan.
     ///
     /// Every scan that was started also finished, so unlike
     /// [`TruncatedScan`](Self::TruncatedScan) there is no partially-decoded scan

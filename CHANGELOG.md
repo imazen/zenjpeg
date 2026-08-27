@@ -196,6 +196,35 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **A growing-prefix decode could flip from partial image back to error**
+  (#92): under `Balanced`/`Lenient`/`Permissive`, a stream cut *inside* a
+  table or metadata segment between scans (mid-DHT/DQT/DRI/APPn/COM before
+  the next scan) errored with `TruncatedData`, while both the shorter prefix
+  (ending after the previous scan) and the longer one (ending in the next
+  scan's data) decoded. The between-scans recovery now covers segment bodies
+  too, reporting `DecodeWarning::TruncatedBetweenScans { scans_decoded }`
+  exactly as for a cut at the marker boundary (no scan had started). Found by
+  the new `tests/decode_truncation.rs`, which decodes EVERY byte prefix of
+  baseline / restart-interval / progressive / grayscale fixtures and asserts:
+  no panic, header dimensions on every `Ok`, monotone acceptance (a longer
+  prefix of a decodable stream must decode), `Strict`-accepted prefixes are
+  pixel-identical under `Balanced`, and any prefix that lost scan data
+  carries a `Truncated*` warning. Progressive fixtures fail at prefix 364 of
+  881 before the fix.
+
+### Added
+
+- **`fuzz_truncation` target** (#92, proposal 6): drives the decoder over
+  several cuts of each input (including one steered by the last byte) and
+  checks the same contract as `tests/decode_truncation.rs` — no panic,
+  header dims, monotone acceptance, Strict==Balanced pixels — plus the
+  `decode_rows` / `decode_coefficients` routes. Wired into `just fuzz` and
+  `fuzz/README.md`. Still open from #92: progressive per-scan rollback
+  (proposal 3) and a rows/bytes-consumed completeness signal (proposal 4) —
+  both are public-behaviour / public-API decisions, see the issue.
+
+### Fixed (continued)
+
 - **`QuantTableConfig::PiecewiseV4` anchors were non-monotonic across quality**
   (#12): the 20 SA-optimized anchors were each optimized independently, so
   1,265 of the 3,840 `(position, anchor)` cells quantized COARSER at the next

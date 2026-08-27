@@ -33,6 +33,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_truncation"
+path = "fuzz_targets/fuzz_truncation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_read_info"
 path = "fuzz_targets/fuzz_read_info.rs"
 test = false

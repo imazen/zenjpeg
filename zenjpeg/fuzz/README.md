@@ -13,6 +13,7 @@ This directory contains fuzz targets for testing jpegli's decoder and encoder.
 |--------|-------------|----------|
 | `fuzz_decode` | Decode arbitrary JPEG data | **Critical** |
 | `fuzz_read_info` | Parse JPEG headers only | High |
+| `fuzz_truncation` | Every prefix of a stream: no panic, header dims, monotone accept, Strict==Balanced pixels (#92) | High |
 | `fuzz_roundtrip` | Encode then decode with structured input | Medium |
 | `fuzz_differential` | Compare against zune-jpeg | Medium |
 

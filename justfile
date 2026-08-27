@@ -4,6 +4,7 @@
 fuzz SECONDS="60":
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_read_info -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_truncation -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode_limits -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode_paths -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
