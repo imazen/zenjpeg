@@ -175,6 +175,16 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`target-zq` bucket detection requested the full `FeatureSet::SUPPORTED`
+  analysis** (#135, as re-scoped in its triage comment): `detect_bucket`
+  (`encode/zq.rs`) now requests `adaptive::BUCKET_FEATURES` — exactly the 12
+  features `infer_bucket` reads — instead of the picker's 108-feature input
+  vector. Bucket output is unchanged (gated by
+  `bucket_features_cover_every_feature_infer_bucket_reads`, which also fails if
+  a feature `infer_bucket` reads is ever dropped from the set). The picker's
+  own `SUPPORTED` request is untouched: narrowing it would misalign the MLP.
+  The issue's original 51-feature / v2.2 framing and its per-call ms savings
+  were measured against a bake that no longer ships and are not carried over.
 - **Ultra HDR fused encode wrote under-boosted files** (#193, the ultrahdr#33
   defect class): `encode_ultrahdr_with_curve` / `encode_ultrahdr_luma` quantized
   gain-map bytes on the CONFIG boost grid (`compute_gain_row`) but

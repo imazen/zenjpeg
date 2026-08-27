@@ -56,7 +56,18 @@ use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, AnalysisResults, Featu
 /// (0.55, 0.5, 0.5) preserve the documented F1 / precision / recall
 /// targets without depending on zenanalyze's deprecated combinator path.
 /// Re-derive against a corpus sweep on the next adaptive recalibration.
-const ADAPTIVE_FEATURES: FeatureSet = FeatureSet::new()
+const ADAPTIVE_FEATURES: FeatureSet = BUCKET_FEATURES
+    // XYB-BQuarter B-subsample loss — drives the XYB Full-vs-BQuarter pick
+    // (see `pick_xyb_b_subsampling`). Experimental zenanalyze feature (id 139).
+    .with(AnalysisFeature::XybBquarterChromaLoss);
+
+/// Exactly the features [`infer_bucket`] (and the likelihood helpers it
+/// calls) read. This is the request set for callers that only need the
+/// content bucket — `target-zq`'s `detect_bucket` in `zq.rs` — so they don't
+/// pay for the full `FeatureSet::SUPPORTED` analysis (#135). Keep in sync
+/// with `infer_bucket`: `bucket_features_cover_every_feature_infer_bucket_reads`
+/// fails if a feature it reads is missing here.
+pub(crate) const BUCKET_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::ChromaComplexity)
     .with(AnalysisFeature::CbSharpness)
     .with(AnalysisFeature::CrSharpness)
@@ -68,10 +79,26 @@ const ADAPTIVE_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::HighFreqEnergyRatio)
     .with(AnalysisFeature::LumaHistogramEntropy)
     .with(AnalysisFeature::DistinctColorBins)
-    .with(AnalysisFeature::PatchFraction)
-    // XYB-BQuarter B-subsample loss — drives the XYB Full-vs-BQuarter pick
-    // (see `pick_xyb_b_subsampling`). Experimental zenanalyze feature (id 139).
-    .with(AnalysisFeature::XybBquarterChromaLoss);
+    .with(AnalysisFeature::PatchFraction);
+
+/// Every [`AnalysisFeature`] that [`infer_bucket`] / `text_likelihood` /
+/// `screen_content_likelihood` read. Test-side mirror of [`BUCKET_FEATURES`]
+/// so the two can be cross-checked mechanically.
+#[cfg(test)]
+const INFER_BUCKET_READS: [AnalysisFeature; 12] = [
+    AnalysisFeature::ChromaComplexity,
+    AnalysisFeature::CbSharpness,
+    AnalysisFeature::CrSharpness,
+    AnalysisFeature::CbPeakSharpness,
+    AnalysisFeature::CrPeakSharpness,
+    AnalysisFeature::Uniformity,
+    AnalysisFeature::FlatColorBlockRatio,
+    AnalysisFeature::EdgeDensity,
+    AnalysisFeature::HighFreqEnergyRatio,
+    AnalysisFeature::LumaHistogramEntropy,
+    AnalysisFeature::DistinctColorBins,
+    AnalysisFeature::PatchFraction,
+];
 
 /// `TextLikelihood` formula ported verbatim from
 /// `zenanalyze::compute_derived_likelihoods` (deleted commit `b1623ba`).
@@ -736,6 +763,53 @@ mod tests {
 
     fn slice(rgb: &[u8], w: u32, h: u32) -> PixelSlice<'_> {
         PixelSlice::new(rgb, w, h, (w as usize) * 3, PixelDescriptor::RGB8_SRGB).unwrap()
+    }
+
+    /// #135 gate: a `BUCKET_FEATURES`-only analysis must carry every feature
+    /// `infer_bucket` reads (an absent feature silently reads as 0.0 via `f`,
+    /// which would shift buckets without any error), and must produce the
+    /// same bucket as the full `SUPPORTED` analysis on content spanning the
+    /// bucket boundaries.
+    #[test]
+    fn bucket_features_cover_every_feature_infer_bucket_reads() {
+        let (w, h) = (64u32, 64u32);
+        // Three regimes: flat, noisy photo-like, and a text-like checkerboard.
+        let flat = vec![128u8; (w * h * 3) as usize];
+        let mut noisy = vec![0u8; (w * h * 3) as usize];
+        let mut seed = 0x9E37_79B9_u32;
+        for v in noisy.iter_mut() {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            *v = (seed >> 24) as u8;
+        }
+        let mut text = vec![255u8; (w * h * 3) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                if (x / 3 + y / 5) % 2 == 0 {
+                    let i = ((y * w + x) * 3) as usize;
+                    text[i..i + 3].copy_from_slice(&[0, 0, 0]);
+                }
+            }
+        }
+        for rgb in [&flat, &noisy, &text] {
+            let narrow = analyze_features(slice(rgb, w, h), &AnalysisQuery::new(BUCKET_FEATURES))
+                .expect("narrow analysis");
+            for feat in INFER_BUCKET_READS {
+                assert!(
+                    narrow.get_f32(feat).is_some(),
+                    "{feat:?} is read by infer_bucket but absent from a BUCKET_FEATURES analysis"
+                );
+            }
+            let full =
+                analyze_features(slice(rgb, w, h), &AnalysisQuery::new(FeatureSet::SUPPORTED))
+                    .expect("full analysis");
+            assert_eq!(
+                infer_bucket(&narrow),
+                infer_bucket(&full),
+                "bucket differs between BUCKET_FEATURES and SUPPORTED analyses"
+            );
+        }
     }
 
     #[test]

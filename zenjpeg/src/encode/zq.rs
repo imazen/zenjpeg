@@ -1168,7 +1168,10 @@ fn detect_bucket(
         // still corrects from there.
         return None;
     }
-    let query = zenanalyze::feature::AnalysisQuery::new(zenanalyze::feature::FeatureSet::SUPPORTED);
+    // Request only what `infer_bucket` reads (#135). `FeatureSet::SUPPORTED`
+    // is the PICKER's input vector (108 features, see `picker.rs`); bucket
+    // detection consumes a dozen of them and must not pay for the rest.
+    let query = zenanalyze::feature::AnalysisQuery::new(crate::encode::adaptive::BUCKET_FEATURES);
     let analysis = zenanalyze::analyze_features_rgb8(pixels, width, height, &query);
     Some(crate::encode::adaptive::infer_bucket(&analysis))
 }
