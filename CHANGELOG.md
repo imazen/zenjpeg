@@ -175,6 +175,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **Auto-orient / explicit-transform permute delegates to
+  `zenpixels_convert::orient::apply_orientation_into`** under the `zencodec`
+  feature (#150), which now also enables zenpixels-convert's `fast-transpose`
+  (AVX2 / NEON transposing kernels for every pixel width; no new dependency —
+  archmage + magetypes are already mandatory). Covers u8 (1/3/4 bpp) and f32
+  (1/3/4 ch) buffers; the scalar gather stays as the fallback for builds
+  without `zencodec` and is held byte-identical to the delegate by
+  `permute_delegation_matches_scalar_gather` (7 transforms × 6 pixel widths ×
+  7 shapes incl. partial tiles). Measured with the new
+  `benches/decode_orient_zenbench.rs` (12 MP, sequential, aarch64 laptop,
+  noisy CV 30–70%, record in `benchmarks/decode_orient_delegation_2026-08-27.txt`):
+  the Rotate90 overhead over an upright decode drops from ≈ +52 ms (RGB8) /
+  +46 ms (BGRA8) to ≈ +4.6 ms / +5 ms — paired CI +9.7–19.1% vs +58–77%
+  before. Rotate180 (memory-bound flip) is roughly unchanged (≈ +31/+35 ms vs
+  +39/+41 ms). Default-feature builds keep the previous scalar permute.
 - **Decode pipeline is monomorphized once, in zenjpeg, instead of once per
   `Stop` type in every dependent crate** (#190). Every public decode entry
   point (`decode`, `decode_into`, `decode_rows`, `decode_rows_f32`,

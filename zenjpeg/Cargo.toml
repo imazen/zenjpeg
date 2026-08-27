@@ -286,7 +286,10 @@ ultrahdr = [
 # 0.2.13 ships icc-db in its defaults, so any default-features consumer
 # anywhere in a build graph flipped the capability on regardless of zenjpeg's
 # flag.
-zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]
+# `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
+# kernels, which the decoder's auto-orient permute delegates to (#150); it
+# adds no dependency (archmage + magetypes are already mandatory here).
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
 # Target-perceptual-quality encoder — the umbrella for every `zq*` variant.
 #   - `Quality::Zq` / `Quality::ZqExplicit`: closed loop. Iterates
 #     encode + decode + zensim diffmap to land at a perceptual score target
@@ -392,6 +395,13 @@ harness = false
 name = "decode_zenbench"
 harness = false
 required-features = ["zencodec"]
+
+# Auto-orient permute A/B (#150). No required-features on purpose: run with
+# and without `zencodec` to compare the scalar gather against the
+# zenpixels-convert delegate.
+[[bench]]
+name = "decode_orient_zenbench"
+harness = false
 
 [[bench]]
 name = "huffman_decode"

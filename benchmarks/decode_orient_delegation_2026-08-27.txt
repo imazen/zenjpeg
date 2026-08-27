@@ -1,0 +1,63 @@
+# decode_orient_zenbench A/B — #150 — 2026-08-27 — commit 1b90596c3709 + WIP — host mac (aarch64 macOS, shared 12-core laptop, nice -n 19, CV 30-70%)
+# cmd A: cargo bench -p zenjpeg --bench decode_orient_zenbench            (scalar gather transform_interleaved)
+# cmd B: cargo bench -p zenjpeg --bench decode_orient_zenbench --features zencodec   (zenpixels_convert::orient::apply_orientation_into, fast-transpose NEON)
+
+## A: internal scalar gather
+  ├─ upright (auto_orient off)      62.9 ±8.7ms  [54.5–73.1]ms      191M [1]
+  ├─ rotate90 (EXIF 6, auto_or…   115.3 ±22.3ms  [+57.9%–+77.0%]    104M [2]
+  ╰─ rotate180 (EXIF 3, auto_o…   101.7 ±12.5ms  [+59.7%–+79.7%]    118M [3]
+
+  upright (auto_orient off)   ███████████████████████████████████████ 191 Mops/s
+  rotate180 (EXIF 3, auto_o…  ████████████████████████ 118 Mops/s
+  rotate90 (EXIF 6, auto_or…  █████████████████████ 104 Mops/s
+  [1] CV=46%
+  [2] CV=45%
+  [3] CV=31%
+
+  orient_12mp_bgra8  40 rounds × 1 calls
+                                   mean ±mad ms  95% CI vs base     ops/s
+  ├─ upright (auto_orient off)      56.4 ±3.6ms  [51.4–61.9]ms      213M [1]
+  ├─ rotate90 (EXIF 6, auto_or…   102.5 ±12.1ms  [+73.8%–+87.7%]    117M [2] [3]
+  ╰─ rotate180 (EXIF 3, auto_o…    97.9 ±10.7ms  [+66.0%–+75.6%]    123M [4]
+
+  upright (auto_orient off)   ███████████████████████████████████████ 213 Mops/s
+  rotate180 (EXIF 3, auto_o…  ██████████████████████ 123 Mops/s
+  rotate90 (EXIF 6, auto_or…  █████████████████████ 117 Mops/s
+  [1] CV=31%
+  [2] drift r=0.68 — later rounds slower
+  [3] CV=30%
+  [4] CV=33%
+
+  total: 33.2s  (63 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+
+## B: zenpixels-convert delegate
+                                   mean ±mad ms  95% CI vs base     ops/s
+  ├─ upright (auto_orient off)     75.2 ±10.1ms  [60.5–92.8]ms      160M [1]
+  ├─ rotate90 (EXIF 6, auto_or…    79.8 ±10.7ms  [+9.7%–+19.1%]     150M [2]
+  ╰─ rotate180 (EXIF 3, auto_o…   106.2 ±10.5ms  [+30.8%–+41.2%]    113M [3]
+
+  upright (auto_orient off)   ███████████████████████████████████████ 160 Mops/s
+  rotate90 (EXIF 6, auto_or…  █████████████████████████████████████ 150 Mops/s
+  rotate180 (EXIF 3, auto_o…  ████████████████████████████ 113 Mops/s
+  [1] CV=70%
+  [2] CV=51%
+  [3] CV=60%
+
+  orient_12mp_bgra8  45 rounds × 1 calls
+                                  mean ±mad ms  95% CI vs base     ops/s
+  ├─ upright (auto_orient off)     61.3 ±6.6ms  [53.9–70.2]ms      196M [1]
+  ├─ rotate90 (EXIF 6, auto_or…    66.2 ±3.2ms  [+8.8%–+10.6%]     181M [2]
+  ╰─ rotate180 (EXIF 3, auto_o…   96.8 ±11.0ms  [+47.0%–+57.7%]    124M [3]
+
+  upright (auto_orient off)   ███████████████████████████████████████ 196 Mops/s
+  rotate90 (EXIF 6, auto_or…  ████████████████████████████████████ 181 Mops/s
+  rotate180 (EXIF 3, auto_o…  █████████████████████████ 124 Mops/s
+  [1] CV=47%
+  [2] CV=41%
+  [3] CV=41%
+
+  total: 34.5s  (81 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

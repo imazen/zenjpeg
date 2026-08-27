@@ -32,6 +32,24 @@ pub enum LosslessTransform {
 }
 
 impl LosslessTransform {
+    /// The same permutation as a [`zenpixels::Orientation`] (EXIF display
+    /// semantics on both sides: `Rotate90` = 90° clockwise, EXIF 6). Used by
+    /// the decoder's `zenpixels_convert` orientation delegate (#150).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn as_orientation(self) -> zenpixels::Orientation {
+        use zenpixels::Orientation as O;
+        match self {
+            Self::None => O::Identity,
+            Self::FlipHorizontal => O::FlipH,
+            Self::FlipVertical => O::FlipV,
+            Self::Transpose => O::Transpose,
+            Self::Transverse => O::Transverse,
+            Self::Rotate90 => O::Rotate90,
+            Self::Rotate180 => O::Rotate180,
+            Self::Rotate270 => O::Rotate270,
+        }
+    }
+
     /// Whether this transform swaps image width and height.
     #[must_use]
     pub fn swaps_dimensions(self) -> bool {

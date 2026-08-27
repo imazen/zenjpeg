@@ -1225,12 +1225,12 @@ impl DecodeResult {
         if let Some(px) = self.pixels_u8.take() {
             // Interleaved u8: stride unit is bytes_per_pixel (4 for Bgrx).
             let ch = self.format.bytes_per_pixel();
-            self.pixels_u8 = Some(transform_interleaved(&px, w, h, ch, transform));
+            self.pixels_u8 = Some(permute_interleaved(&px, w, h, ch, transform));
         }
         if let Some(px) = self.pixels_f32.take() {
             // f32 buffers are packed with one element per channel.
             let ch = self.format.num_channels();
-            self.pixels_f32 = Some(transform_interleaved(&px, w, h, ch, transform));
+            self.pixels_f32 = Some(permute_interleaved(&px, w, h, ch, transform));
         }
         if transform.swaps_dimensions() {
             core::mem::swap(&mut self.width, &mut self.height);
@@ -1478,6 +1478,90 @@ impl DecodeInfo {
 /// packed). Returns a new buffer in the transformed geometry (dimensions
 /// swap for Transpose/Rotate90/Rotate270/Transverse). Pure permutation —
 /// every output pixel is copied verbatim from exactly one input pixel.
+/// Permute an interleaved `w × h` buffer of `ch`-element pixels by
+/// `transform`, returning the oriented buffer.
+///
+/// With the `zencodec` feature this delegates to
+/// `zenpixels_convert::orient::apply_orientation_into` (#150): one permute
+/// implementation for the ecosystem, cache-tiled and SIMD (`fast-transpose`:
+/// AVX2 / NEON kernels for every pixel width from 1 to 16 bytes) where it
+/// pays. The scalar gather [`transform_interleaved`] stays as the fallback
+/// for builds without `zencodec` and for any pixel width the delegate has no
+/// descriptor for; the two are held byte-identical by
+/// `permute_delegation_matches_scalar_gather`.
+pub(crate) fn permute_interleaved<T: Copy + bytemuck::Pod>(
+    src: &[T],
+    w: usize,
+    h: usize,
+    ch: usize,
+    transform: LosslessTransform,
+) -> Vec<T> {
+    #[cfg(feature = "zencodec")]
+    if let Some(out) = permute_via_zenpixels_convert(src, w, h, ch, transform) {
+        return out;
+    }
+    transform_interleaved(src, w, h, ch, transform)
+}
+
+/// The `zenpixels_convert` delegate behind [`permute_interleaved`]. `None`
+/// when no descriptor matches the pixel width or the delegate declines —
+/// the caller then takes the scalar path. Orientation is a pure whole-pixel
+/// permutation, so only the descriptor's bytes-per-pixel matters; the
+/// channel semantics it carries are irrelevant.
+#[cfg(feature = "zencodec")]
+fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
+    src: &[T],
+    w: usize,
+    h: usize,
+    ch: usize,
+    transform: LosslessTransform,
+) -> Option<Vec<T>> {
+    use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+    if w == 0 || h == 0 || src.len() != w * h * ch {
+        return None;
+    }
+    let bpp = ch * core::mem::size_of::<T>();
+    let descriptor = match bpp {
+        1 => PixelDescriptor::GRAY8,
+        3 => PixelDescriptor::RGB8,
+        4 => PixelDescriptor::RGBA8,
+        12 => PixelDescriptor::RGBF32,
+        16 => PixelDescriptor::RGBAF32,
+        _ => return None,
+    };
+    let (ow, oh) = if transform.swaps_dimensions() {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let (w32, h32, ow32, oh32) = (
+        u32::try_from(w).ok()?,
+        u32::try_from(h).ok()?,
+        u32::try_from(ow).ok()?,
+        u32::try_from(oh).ok()?,
+    );
+    let src_slice =
+        PixelSlice::new(bytemuck::cast_slice(src), w32, h32, w * bpp, descriptor).ok()?;
+    let mut dst: Vec<T> = vec![T::zeroed(); src.len()];
+    let dst_slice = PixelSliceMut::new(
+        bytemuck::cast_slice_mut(&mut dst),
+        ow32,
+        oh32,
+        ow * bpp,
+        descriptor,
+    )
+    .ok()?;
+    zenpixels_convert::orient::apply_orientation_into(
+        src_slice,
+        transform.as_orientation(),
+        dst_slice,
+    )
+    .ok()?;
+    Some(dst)
+}
+
+/// Scalar output-sequential gather: the reference permutation and the
+/// fallback for [`permute_interleaved`].
 pub(crate) fn transform_interleaved<T: Copy>(
     src: &[T],
     w: usize,
@@ -1567,6 +1651,62 @@ pub struct JpegInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #150: the `zenpixels_convert` delegate must be byte-identical to the
+    /// scalar gather for every transform, every pixel width the decoder
+    /// emits (u8 ×1/3/4, f32 ×1/3/4), and shapes that hit partial tiles.
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn permute_delegation_matches_scalar_gather() {
+        use crate::lossless::LosslessTransform as T;
+        let transforms = [
+            T::FlipHorizontal,
+            T::FlipVertical,
+            T::Rotate180,
+            T::Transpose,
+            T::Rotate90,
+            T::Rotate270,
+            T::Transverse,
+        ];
+        let shapes = [
+            (1, 1),
+            (1, 9),
+            (9, 1),
+            (7, 5),
+            (33, 17),
+            (64, 48),
+            (70, 130),
+        ];
+        let mut delegated = 0usize;
+        for &(w, h) in &shapes {
+            for &ch in &[1usize, 3, 4] {
+                let n = w * h * ch;
+                let src_u8: Vec<u8> = (0..n).map(|i| (i * 31 % 251) as u8).collect();
+                let src_f32: Vec<f32> = (0..n).map(|i| (i as f32) * 0.37 - 5.0).collect();
+                for &t in &transforms {
+                    let d = permute_via_zenpixels_convert(&src_u8, w, h, ch, t)
+                        .unwrap_or_else(|| panic!("u8 ch={ch} {w}x{h} {t:?}: delegate declined"));
+                    assert_eq!(
+                        d,
+                        transform_interleaved(&src_u8, w, h, ch, t),
+                        "u8 ch={ch} {w}x{h} {t:?}"
+                    );
+                    let d = permute_via_zenpixels_convert(&src_f32, w, h, ch, t)
+                        .unwrap_or_else(|| panic!("f32 ch={ch} {w}x{h} {t:?}: delegate declined"));
+                    assert_eq!(
+                        d,
+                        transform_interleaved(&src_f32, w, h, ch, t),
+                        "f32 ch={ch} {w}x{h} {t:?}"
+                    );
+                    delegated += 2;
+                }
+            }
+        }
+        assert_eq!(delegated, shapes.len() * 3 * transforms.len() * 2);
+        // Unsupported width falls back (None), never panics.
+        let odd: Vec<u8> = vec![0; 5 * 4 * 5];
+        assert!(permute_via_zenpixels_convert(&odd, 4, 5, 5, T::Rotate90).is_none());
+    }
 
     #[test]
     fn resolve_crop_basic() {
