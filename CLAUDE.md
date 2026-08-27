@@ -705,31 +705,7 @@ Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
 with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
 
-1. **SA-optimized quant tables are non-monotonic (2026-02-03, issue #12)** — the anchor
-   tables are non-monotonic across quality levels. Quant values must be non-increasing as
-   quality rises; these climb repeatedly.
-   - **Location (re-verified 2026-07-15):** `encode/tables/sa_piecewise_v4_data.rs`.
-     The old `optimized_tables.rs` no longer exists — the data was *restored* into
-     `sa_piecewise_v4{,_data}.rs` and wired into production as
-     `QuantTableConfig::PiecewiseV4` (`encode/plan.rs:182`), carried over **verbatim**,
-     so the defect shipped with it.
-   - **Measured (2026-07-15, read from the source data):** `ANCHOR_LUMA` DC q5→q100 =
-     15, 15, 28, 20, 24, 12, 14, 18, 23, 26, 30, 12, 6, 7, 5, 3, 8, 5, **37**, 6 — i.e.
-     the old q90=5 / q95=37 / q100=6 wobble is unchanged. `ANCHOR_CB` DC is worse: q100=81,
-     *coarser than q5's 66*. Independently corroborated by #12's own comment (34 size-
-     monotonicity violations q1–q99 vs 0 for Jpegli).
-   - **Root cause:** each anchor was independently SA-optimized, finding a different local
-     optimum; `tables_for_quality` (`sa_piecewise_v4.rs`) just lerps between anchors — no
-     smoothing, no constraint pass, and **no monotonicity test** anywhere in the tables path.
-   - **Impact:** not the default (`QuantTableConfig::default()` is Jpegli), so only callers
-     explicitly selecting `PiecewiseV4` hit it — but it is public and production-wired.
-     `sa_piecewise_v4.rs`'s own header doc recommends it as `EncoderConfig::adaptive`'s
-     default and claims it "beats jpegli on 99/100 quality levels" without mentioning any
-     of this — treat that doc as unreliable.
-   - **Fix:** constrained optimization or a post-smoothing pass over the 20 anchors, plus a
-     monotonicity regression test (natural home: `sa_piecewise_v4.rs`'s test module).
-
-2. **Two `target-zq`-gated research examples don't compile against current APIs (found
+1. **Two `target-zq`-gated research examples don't compile against current APIs (found
    2026-07-23, pre-existing).** Neither is part of the normal build/test matrix — both
    require the `target-zq` feature, and per this doc's own Feature Flags section "no CI
    job enables `target-zq`" — but `--all-features` exposes them, and one (below) was
@@ -755,6 +731,16 @@ entries accumulate here.
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
+- **SA-optimized `PiecewiseV4` quant tables were non-monotonic across quality (issue #12)** — FIXED
+  2026-08-27. The raw v4 anchors (each SA-optimized independently) had 1,265 per-cell violations
+  (luma DC q90=5 / q95=37 / q100=6; Cb DC q100=81 coarser than q5's 66), giving 30-34 size-vs-q
+  reversals on a 512² sweep. `encode/tables/sa_piecewise_v4.rs` now passes the raw anchors
+  (`RAW_ANCHOR_*`, kept as provenance) through a compile-time per-cell L2 isotonic (PAV) fit;
+  the public `ANCHOR_*` are the monotone result. Gates: `shipped_anchors_are_non_increasing_per_cell`,
+  `tables_for_quality_is_non_increasing_over_the_whole_q_range`, and the q1-q99 size sweep
+  `tests/piecewise_v4.rs::piecewise_v4_size_is_monotone_in_quality` (0 violations). The raw-anchor
+  pareto figures (+6.602 / +6.09 vs jpegli) have NOT been re-measured post-smoothing; the family
+  stays opt-in (default is Jpegli).
 - **`optimize_huffman(false)` baseline encodes produced undecodable JPEGs on out-of-corpus content**
   (e.g. frymire at every quality; mozjpeg + zenjpeg decoders both rejected the output) — FIXED
   2026-08-26 (73c84c50). The corpus-trained builtin Huffman tables lacked codes for 13,238 legal

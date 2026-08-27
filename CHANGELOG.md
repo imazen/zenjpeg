@@ -175,6 +175,23 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`QuantTableConfig::PiecewiseV4` anchors were non-monotonic across quality**
+  (#12): the 20 SA-optimized anchors were each optimized independently, so
+  1,265 of the 3,840 `(position, anchor)` cells quantized COARSER at the next
+  higher quality (luma DC q90=5 → q95=37 → q100=6; Cb DC q100=81, coarser than
+  q5's 66), and the lerp inherited the wobble — file size went DOWN with
+  rising q at 30 of 98 steps on a 512² noise+patches sweep (0 for the jpegli
+  tables). The public `ANCHOR_LUMA/CB/CR` are now the raw anchors passed through
+  a compile-time per-cell L2 isotonic regression (pool-adjacent-violators)
+  enforcing non-increasing quant values as q rises; the raw data stays in-tree
+  as `RAW_ANCHOR_*`. **This moves the opt-in tables' bytes:** 67% of cells
+  changed, mean |Δ| 7.8, max |Δ| 113 (the L2-minimal monotone fit). The raw
+  anchors' pareto figures (+6.602 training / +6.09 holdout vs jpegli) have NOT
+  been re-measured on the smoothed tables — the module doc now says so and no
+  longer recommends the family as `adaptive()`'s default. Gates: per-cell and
+  whole-q-range monotonicity unit tests plus the q1–q99 size sweep in
+  `tests/piecewise_v4.rs` (all mutation-verified against the raw anchors).
+  Default behaviour (`QuantTableConfig::Jpegli`) is unaffected.
 - **`recompress` feature lint debt** (#143 item 3): `cargo clippy --features
   recompress -- -D warnings` had 16 failures nobody saw because no CI job
   compiled the opt-in module. Items reachable only through the

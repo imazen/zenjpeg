@@ -86,3 +86,37 @@ fn piecewise_v4_differs_from_jpegli_defaults() {
         "PiecewiseV4 must actually select different tables"
     );
 }
+
+/// #12 regression gate: file size must not go DOWN when quality goes UP.
+///
+/// The raw v4 anchors were SA-optimized independently per quality and
+/// lerping between them produced 34 size-monotonicity violations on this
+/// exact harness (q1–q99 step 1, 512² noise+patches, baseline 4:2:0), vs 0
+/// for the jpegli tables. The shipped anchors are the raw ones passed
+/// through a per-cell isotonic (PAV) smoothing at compile time; with
+/// every quant cell non-increasing in q, size is non-decreasing in q.
+#[test]
+fn piecewise_v4_size_is_monotone_in_quality() {
+    let (w, h) = (512u32, 512u32);
+    let rgb = photo_ish_rgb(w, h);
+    let mut violations = Vec::new();
+    let mut prev: Option<(u8, usize)> = None;
+    for q in 1..=99u8 {
+        let cfg = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
+            .progressive(false)
+            .quant_table_config(QuantTableConfig::PiecewiseV4);
+        let size = encode(&cfg, &rgb, w, h).len();
+        if let Some((pq, ps)) = prev
+            && size < ps
+        {
+            violations.push(format!("q{pq}->q{q}: {ps} -> {size} B"));
+        }
+        prev = Some((q, size));
+    }
+    assert!(
+        violations.is_empty(),
+        "{} size-monotonicity violations:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}
