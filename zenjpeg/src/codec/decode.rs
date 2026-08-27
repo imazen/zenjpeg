@@ -779,7 +779,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 dst_bytes,
-                stop.clone(),
+                stop,
                 header.num_components,
                 header.is_xyb,
             )
@@ -788,7 +788,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 dst_bytes,
-                Unstoppable,
+                &Unstoppable,
                 header.num_components,
                 header.is_xyb,
             )
@@ -801,7 +801,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 &mut contiguous,
-                stop.clone(),
+                stop,
                 header.num_components,
                 header.is_xyb,
             )
@@ -810,7 +810,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 &mut contiguous,
-                Unstoppable,
+                &Unstoppable,
                 header.num_components,
                 header.is_xyb,
             )

@@ -1641,7 +1641,7 @@ impl DecodeConfig {
         &self,
         data: &[u8],
         transform: crate::lossless::LosslessTransform,
-        stop: impl Stop,
+        stop: &dyn Stop,
     ) -> Result<DecodeResult> {
         let mut upright = self.clone();
         upright.auto_orient = false;
@@ -1651,7 +1651,7 @@ impl DecodeConfig {
         // EXIF extras handling matches the pre-#149 transform path: with
         // auto_orient disabled on the inner decode, the user's own preserve
         // config applies — EXIF is kept only when the caller asked for it.
-        let mut result = upright.decode(data, stop)?;
+        let mut result = upright.decode_dyn(data, stop)?;
         result.apply_pixel_transform(transform);
 
         if let Some(crop_region) = self.crop_region {
@@ -1673,6 +1673,20 @@ impl DecodeConfig {
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        self.decode_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode`](Self::decode).
+    ///
+    /// Every public decode entry point is a thin `impl Stop` shim over a
+    /// `&dyn Stop` body like this one, so the decode pipeline is
+    /// monomorphized ONCE, here in zenjpeg, instead of once per `Stop` type
+    /// in every dependent crate (#190: a 300-line consumer used to pull
+    /// ~50k LLVM lines of decoder internals into its own codegen). The
+    /// cancellation checks are per-row / per-scan, so the indirect call is
+    /// noise. `&dyn Stop: Stop` (via `enough`'s blanket `&T` impl), so the
+    /// parser-level `&impl Stop` helpers instantiate for `&dyn Stop` only.
+    pub(crate) fn decode_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodeResult> {
         // Track whether we force-preserved EXIF just for auto_orient
         let forced_exif = self.auto_orient && !self.preserve.exif;
         let preserve = if self.auto_orient {
@@ -2067,6 +2081,18 @@ impl DecodeConfig {
         dst: &mut [u8],
         stop: impl Stop,
     ) -> Result<usize> {
+        self.decode_into_dyn(data, format, dst, &stop)
+    }
+
+    /// Non-generic body of [`decode_into`](Self::decode_into) (see
+    /// [`decode_dyn`](Self::decode_dyn) for why).
+    fn decode_into_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: &dyn Stop,
+    ) -> Result<usize> {
         // Eligible direct path: standard RGB-family u8 / gray u8, no transform,
         // no crop, no Knusperli, default output target.
         let direct_eligible = matches!(
@@ -2148,7 +2174,7 @@ impl DecodeConfig {
         data: &[u8],
         format: PixelFormat,
         dst: &mut [u8],
-        stop: impl Stop,
+        stop: &dyn Stop,
         num_components: u8,
         is_xyb: bool,
     ) -> Result<usize> {
@@ -2194,13 +2220,13 @@ impl DecodeConfig {
         data: &[u8],
         format: PixelFormat,
         dst: &mut [u8],
-        stop: impl Stop,
+        stop: &dyn Stop,
     ) -> Result<usize> {
         // Fallback: full decode then memcpy. Allocates an intermediate Vec but
         // exists so callers can rely on `decode_into()` always working.
         let mut cfg = self.clone();
         cfg.output_format = Some(format);
-        let result = cfg.decode(data, stop)?;
+        let result = cfg.decode_dyn(data, stop)?;
         let pixels = result.into_pixels_u8().ok_or_else(|| {
             Error::internal("decode_into requires u8 output (use decode for f32)")
         })?;
@@ -2221,6 +2247,19 @@ impl DecodeConfig {
     where
         F: FnMut(RowSlice<'_>) -> Result<()>,
     {
+        self.decode_rows_dyn(data, format, &mut callback, &stop)
+    }
+
+    /// Non-generic body of [`decode_rows`](Self::decode_rows): the callback
+    /// and the stop token both cross a `dyn` boundary (one indirect call per
+    /// row, see [`decode_dyn`](Self::decode_dyn)).
+    fn decode_rows_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        callback: &mut dyn FnMut(RowSlice<'_>) -> Result<()>,
+        stop: &dyn Stop,
+    ) -> Result<ScanlineInfo> {
         // Validate format is u8-based
         match format {
             PixelFormat::Rgb
@@ -2304,6 +2343,17 @@ impl DecodeConfig {
     where
         F: FnMut(RowSliceF32<'_>) -> Result<()>,
     {
+        self.decode_rows_f32_dyn(data, format, &mut callback, &stop)
+    }
+
+    /// Non-generic body of [`decode_rows_f32`](Self::decode_rows_f32).
+    fn decode_rows_f32_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        callback: &mut dyn FnMut(RowSliceF32<'_>) -> Result<()>,
+        stop: &dyn Stop,
+    ) -> Result<ScanlineInfo> {
         // Validate format is f32-based
         let floats_per_pixel = match format {
             PixelFormat::RgbaF32 => 4,
@@ -2373,6 +2423,11 @@ impl DecodeConfig {
     ///
     /// For analysis of large images, consider streaming APIs.
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
+        self.decode_coefficients_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode_coefficients`](Self::decode_coefficients).
+    fn decode_coefficients_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
@@ -2426,6 +2481,16 @@ impl DecodeConfig {
         data: &[u8],
         stop: impl Stop,
     ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
+        self.decode_coefficients_with_jbrd_metadata_dyn(data, &stop)
+    }
+
+    /// Non-generic body of
+    /// [`decode_coefficients_with_jbrd_metadata`](Self::decode_coefficients_with_jbrd_metadata).
+    fn decode_coefficients_with_jbrd_metadata_dyn(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
@@ -2465,6 +2530,16 @@ impl DecodeConfig {
         &self,
         data: &[u8],
         stop: impl Stop,
+    ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
+        self.decode_coefficients_with_extras_dyn(data, &stop)
+    }
+
+    /// Non-generic body of
+    /// [`decode_coefficients_with_extras`](Self::decode_coefficients_with_extras).
+    fn decode_coefficients_with_extras_dyn(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
     ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
         let mut parser = JpegParser::with_strictness(
             data,
@@ -2524,6 +2599,11 @@ impl DecodeConfig {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
+        self.decode_to_ycbcr_f32_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode_to_ycbcr_f32`](Self::decode_to_ycbcr_f32).
+    fn decode_to_ycbcr_f32_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,

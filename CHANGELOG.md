@@ -173,6 +173,27 @@ All notable changes to zenjpeg are documented here. Earlier history
   unified at 0.9.0) — this only removes dev-dependency graph bloat. Only the
   `ultrahdr-rs` 0.8.1 instance above remains.
 
+### Changed
+
+- **Decode pipeline is monomorphized once, in zenjpeg, instead of once per
+  `Stop` type in every dependent crate** (#190). Every public decode entry
+  point (`decode`, `decode_into`, `decode_rows`, `decode_rows_f32`,
+  `decode_coefficients`, `decode_coefficients_with_jbrd_metadata`,
+  `decode_coefficients_with_extras`, `decode_to_ycbcr_f32`) keeps its
+  `impl Stop` signature but is now a thin shim over a non-generic
+  `&dyn Stop` body (`decode_rows*` also take the row callback as
+  `&mut dyn FnMut`). No public signature changed. Measured with
+  `cargo llvm-lines -p zjpeg` (the in-workspace CLI consumer, dev profile):
+  total 315,269 → 247,052 LLVM lines (−21.6%); `zenjpeg::decode` internals
+  instantiated in the consumer 51,658 lines / 268 fns → 2,680 / 87 (−95%) —
+  previously every consumer got TWO copies of the pipeline (`Unstoppable`
+  and `&Unstoppable`). Cancellation checks are per-row/per-scan so the
+  indirect call is noise. Gate: `tests/decode_cancellation.rs` (a counting
+  token reaches every entry point through the `dyn` boundary; a never-firing
+  token is byte-identical to `Unstoppable`). The `lossless::*` pipeline
+  (`encode_from_coefficients`, `restructure`, `transform`) still instantiates
+  per caller (~4k lines in `zjpeg`) — a follow-up of the same shape.
+
 ### Fixed
 
 - **`QuantTableConfig::PiecewiseV4` anchors were non-monotonic across quality**

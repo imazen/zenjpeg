@@ -41,13 +41,12 @@ struct F32Temps {
 }
 
 impl YuvContext {
-    /// Create a context for the given color space, sized for images up to
-    /// `max_width × max_strip_height` pixels per call.
-    ///
-    /// For whole-image encoding, set `max_strip_height = image_height`.
-    /// For strip encoding (zenjpeg), set `max_strip_height = strip_height` (typically 16).
     /// Create a context for the given color space.
-    /// No buffers allocated until first use — zero cost for u8 box-average.
+    ///
+    /// No buffers are allocated until first use — zero cost for u8
+    /// box-average. The f32 temps and the sharp workspace are sized lazily
+    /// from the dimensions of the first call that needs them and regrown on
+    /// demand; there is no up-front `max_width × max_strip_height` sizing.
     pub fn new(range: Range, matrix: Matrix) -> Self {
         Self {
             range,
