@@ -755,6 +755,14 @@ entries accumulate here.
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
+- **`optimize_huffman(false)` baseline encodes produced undecodable JPEGs on out-of-corpus content**
+  (e.g. frymire at every quality; mozjpeg + zenjpeg decoders both rejected the output) — FIXED
+  2026-08-26 (73c84c50). The corpus-trained builtin Huffman tables lacked codes for 13,238 legal
+  symbols across 324/360 tables; `encode()` emits ZERO bits for a codeless symbol. The frymire
+  hash-lock suite had locked the corrupt bytes (hashes without decoding). `select_tables` now
+  completes every table; every hash-lock encoder test also decodes what it hashes; the locked-values
+  regenerator refuses to lock undecodable bytes. Regen `values_archmage.csv` via the
+  `regen-locked-values` workflow (x86-only hashes).
 - Lossless transform/restructure corruption class (issues #194 + #195: Transpose/Transverse wrong on
   subsampled chroma; TrimPartialBlocks/progressive restructure corrupt on non-MCU-aligned images) —
   FIXED 2026-08-26 (c453d299). Four root causes: count-vs-encode traversal divergence (zero-length
