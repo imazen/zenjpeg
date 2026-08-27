@@ -229,6 +229,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- **Per-image exact 8-bit DQT downgrade for `allow_16bit_quant_tables(true)`
+  users** (#143 item 1): once every block is quantized, the buffered builder
+  checks each 16-bit table's >255 positions against that table's component
+  blocks (Cb+Cr for a shared chroma table, all three for RGB passthrough);
+  if no nonzero coefficient sits there, the 8-bit clamp is emitted instead —
+  pixel-identical by construction (zero coefficients dequantize to zero
+  under any divisor), 64 fewer DQT bytes per table, and SOF0 when no 16-bit
+  table remains. Tables whose positions ARE used keep 16-bit. Only the
+  buffered (Huffman-optimized, the default) builder can do this; the
+  streaming-through path writes its headers first and keeps the plan's
+  precision. Default configs (`allow_16bit` off) are byte-unchanged. Gates:
+  `dqt_downgrade_is_exactly_the_dominance_check` (unit, every branch) and
+  `tests/dqt_downgrade.rs` (DC-only chroma at Q50 → all-8-bit DQT + SOF0;
+  2×2-cell colour checkerboard → 16-bit kept).
 - **`fuzz_truncation` target** (#92, proposal 6): drives the decoder over
   several cuts of each input (including one steered by the last byte) and
   checks the same contract as `tests/decode_truncation.rs` — no panic,

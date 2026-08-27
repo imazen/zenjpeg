@@ -34,6 +34,7 @@ use crate::encode::config::ComputedConfig;
 use crate::encode::encoder_types::HuffmanStrategy;
 use crate::encode::strip::StripProcessor;
 use crate::error::{Error, Result};
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, Subsampling};
 use enough::{Stop, Unstoppable};
@@ -131,6 +132,70 @@ pub(crate) struct StreamingEncoder {
 
     /// Streaming-through state. None = buffered mode (default).
     streaming: Option<StreamingOutputState>,
+}
+
+/// Per-image exact 8-bit DQT downgrade (#143 item 1).
+///
+/// A 16-bit table (`precision > 0`, some value > 255) costs 64 extra DQT
+/// bytes and forces SOF1. Zero coefficients dequantize to zero under ANY
+/// table value, so if no block of the component(s) that use a 16-bit table
+/// has a nonzero coefficient at a zigzag position where the 8-bit clamp
+/// differs from the 16-bit value, emitting the clamp instead is
+/// pixel-identical by construction. This is a dominance check over the
+/// already-quantized blocks — it does NOT re-quantize — which is why it can
+/// only run in the buffered builder (all blocks in hand before the headers
+/// are written); the streaming-through path emits its headers first and
+/// keeps whatever precision the plan chose.
+///
+/// Table → block mapping: table 0 = Y blocks; table 1 = Cb blocks, plus the
+/// Cr blocks when chroma shares one table (`!separate_chroma_tables`);
+/// table 2 = Cr blocks. RGB passthrough (`use_rgb`) writes one shared table
+/// (table 0), so it is checked against all three block sets. Tables already
+/// at 8-bit precision pass through untouched.
+fn downgrade_provably_lossless_16bit(
+    (y, cb, cr): (
+        &[[i16; DCT_BLOCK_SIZE]],
+        &[[i16; DCT_BLOCK_SIZE]],
+        &[[i16; DCT_BLOCK_SIZE]],
+    ),
+    tables: [&QuantTable; 3],
+    separate_chroma_tables: bool,
+    use_rgb: bool,
+) -> [QuantTable; 3] {
+    let sets: [&[&[[i16; DCT_BLOCK_SIZE]]]; 3] = if use_rgb {
+        [&[y, cb, cr], &[cb], &[cr]]
+    } else if separate_chroma_tables {
+        [&[y], &[cb], &[cr]]
+    } else {
+        [&[y], &[cb, cr], &[cr]]
+    };
+    let mut out = [tables[0].clone(), tables[1].clone(), tables[2].clone()];
+    for (t, blocks) in out.iter_mut().zip(sets) {
+        if t.precision == 0 {
+            continue;
+        }
+        let clamped = t.clone().clamp_to_baseline();
+        // Zigzag positions where the clamp changes the divisor.
+        let mut changed = [false; DCT_BLOCK_SIZE];
+        let mut any = false;
+        for k in 0..DCT_BLOCK_SIZE {
+            changed[k] = clamped.values[k] != t.values[k];
+            any |= changed[k];
+        }
+        if !any {
+            // Precision flag set but every value fits 8 bits already.
+            *t = clamped;
+            continue;
+        }
+        let dominated = blocks
+            .iter()
+            .flat_map(|set| set.iter())
+            .all(|block| (0..DCT_BLOCK_SIZE).all(|k| !changed[k] || block[k] == 0));
+        if dominated {
+            *t = clamped;
+        }
+    }
+    out
 }
 
 impl StreamingEncoder {
@@ -1194,6 +1259,22 @@ impl StreamingEncoder {
     ) -> Result<()> {
         stop.check()?;
 
+        // Per-image exact 8-bit DQT downgrade (#143): every block is
+        // quantized by now, so a 16-bit table whose >255 positions carry
+        // only zero coefficients can be emitted as its 8-bit clamp with
+        // provably identical pixels.
+        let downgraded = downgrade_provably_lossless_16bit(
+            (
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+            ),
+            [y_quant, cb_quant, cr_quant],
+            config.separate_chroma_tables,
+            config.use_rgb,
+        );
+        let (y_quant, cb_quant, cr_quant) = (&downgraded[0], &downgraded[1], &downgraded[2]);
+
         if config.smallest_scan {
             return Self::build_smallest_into(
                 config,
@@ -1920,6 +2001,107 @@ impl StreamingEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #143 item 1: the dominance check behind the per-image 8-bit DQT
+    /// downgrade. Built directly on synthetic blocks so each branch is pinned:
+    /// clean → clamped 8-bit; a single nonzero coefficient at a clamped
+    /// position → 16-bit kept; shared chroma table checks Cr blocks too; RGB
+    /// passthrough checks all three block sets; 8-bit tables pass through.
+    #[test]
+    fn dqt_downgrade_is_exactly_the_dominance_check() {
+        fn t16(hot: &[usize]) -> QuantTable {
+            let mut values = [16u16; DCT_BLOCK_SIZE];
+            for &k in hot {
+                values[k] = 560; // > 255 → clamps to 255
+            }
+            QuantTable {
+                values,
+                precision: 1,
+            }
+        }
+        fn blocks(nonzero_at: &[(usize, usize)], n: usize) -> Vec<[i16; DCT_BLOCK_SIZE]> {
+            let mut v = vec![[0i16; DCT_BLOCK_SIZE]; n];
+            for &(b, k) in nonzero_at {
+                v[b][k] = 3;
+            }
+            v
+        }
+        let out = |y: &[(usize, usize)],
+                   cb: &[(usize, usize)],
+                   cr: &[(usize, usize)],
+                   tables: [&QuantTable; 3],
+                   separate: bool,
+                   rgb: bool| {
+            let (y, cb, cr) = (blocks(y, 4), blocks(cb, 4), blocks(cr, 4));
+            downgrade_provably_lossless_16bit((&y, &cb, &cr), tables, separate, rgb)
+        };
+        let hot = t16(&[60, 61, 62, 63]);
+        let cold = QuantTable {
+            values: [16; DCT_BLOCK_SIZE],
+            precision: 0,
+        };
+
+        // Clean: nothing nonzero at 60..64 anywhere → all three downgraded.
+        let r = out(
+            &[(0, 1), (3, 59)],
+            &[(1, 5)],
+            &[(2, 0)],
+            [&hot, &hot, &hot],
+            true,
+            false,
+        );
+        for t in &r {
+            assert_eq!(t.precision, 0);
+            assert_eq!(t.values[63], 255, "clamped, not dropped");
+            assert_eq!(t.values[0], 16);
+        }
+
+        // Y has a coefficient at a clamped position → Y stays 16-bit, chroma downgrades.
+        let r = out(&[(2, 62)], &[], &[], [&hot, &hot, &hot], true, false);
+        assert_eq!(r[0].precision, 1);
+        assert_eq!(r[0].values[62], 560);
+        assert_eq!(r[1].precision, 0);
+        assert_eq!(r[2].precision, 0);
+
+        // Shared chroma table: a Cr coefficient must block table 1 too.
+        let r = out(&[], &[], &[(0, 60)], [&hot, &hot, &hot], false, false);
+        assert_eq!(r[0].precision, 0);
+        assert_eq!(
+            r[1].precision, 1,
+            "shared chroma table must consider Cr blocks"
+        );
+        // …but not when chroma tables are separate.
+        let r = out(&[], &[], &[(0, 60)], [&hot, &hot, &hot], true, false);
+        assert_eq!(r[1].precision, 0);
+        assert_eq!(r[2].precision, 1);
+
+        // RGB passthrough: table 0 is shared by all three → a Cb hit keeps it.
+        let r = out(&[], &[(1, 63)], &[], [&hot, &hot, &hot], true, true);
+        assert_eq!(r[0].precision, 1);
+
+        // 8-bit tables are untouched, even with coefficients everywhere.
+        let r = out(
+            &[(0, 63)],
+            &[(0, 63)],
+            &[(0, 63)],
+            [&cold, &cold, &cold],
+            true,
+            false,
+        );
+        for t in &r {
+            assert_eq!(t.precision, 0);
+            assert_eq!(t.values, cold.values);
+        }
+
+        // Precision flag set but every value ≤ 255: downgrade unconditionally.
+        let flagged = QuantTable {
+            values: [200; DCT_BLOCK_SIZE],
+            precision: 1,
+        };
+        let r = out(&[(0, 63)], &[], &[], [&flagged, &cold, &cold], true, false);
+        assert_eq!(r[0].precision, 0);
+        assert_eq!(r[0].values, [200; DCT_BLOCK_SIZE]);
+    }
     use crate::encode::encoder_types::Quality;
 
     #[test]
