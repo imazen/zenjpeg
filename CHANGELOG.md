@@ -175,6 +175,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **Ultra HDR fused encode wrote under-boosted files** (#193, the ultrahdr#33
+  defect class): `encode_ultrahdr_with_curve` / `encode_ultrahdr_luma` quantized
+  gain-map bytes on the CONFIG boost grid (`compute_gain_row`) but
+  `build_gainmap_metadata` declared the content's OBSERVED gain range as the
+  per-channel `min`/`max`. Readers dequantize on the declared range, so any
+  image whose gain range was narrower than the configured one reconstructed
+  under-boosted in every conformant reader — with the default grid
+  (`max_boost = 6`) a flat 4× patch came back at 2.9× (−27%). The metadata now
+  declares the config grid; the observed accumulator only widens
+  `alternate_hdr_headroom` (mirror of ultrahdr-core `a09478f0bfaa`).
+  Regression gate: `tests/ultrahdr_gainmap_grid.rs` (declared range == grid
+  structurally, plus a full-weight round-trip peak check). **Interop note:**
+  files written by earlier versions are mis-declared and cannot be repaired by
+  readers (the file does not record the true grid) — re-encode from source.
 - **Three more count/emit divergence bugs in the main encoder** (sweep issue
   #197, verified by adversarial review; same #194 mechanism): (1) the three
   XYB/RGB-passthrough frequency-counting passes carried DC prediction across

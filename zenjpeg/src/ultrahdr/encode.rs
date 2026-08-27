@@ -170,8 +170,10 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
 ///
 /// Sampling matches `compute_gainmap_slice`: each gain-map cell `(gx, gy)`
 /// reads the source pixel at `(gx*scale + scale/2, gy*scale + scale/2)`,
-/// clamped to image bounds. Gain-map metadata bounds are accumulated across
-/// the same pixels via `compute_gain_row`'s `observed_min_max` accumulator.
+/// clamped to image bounds. `compute_gain_row`'s `observed_min_max`
+/// accumulator is tracked across the same pixels, but the declared metadata
+/// range is the CONFIG grid the bytes were quantized on — the accumulator
+/// only widens the alternate headroom (see [`build_gainmap_metadata`]).
 fn split_and_compute_gainmap<C: LumaToneMap>(
     hdr: &PixelBuffer,
     curve: &C,
@@ -283,17 +285,38 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
     Ok((sdr_buffer, gainmap, metadata))
 }
 
-/// Build [`GainMapMetadata`] from the configured ranges and the `(min, max)`
-/// gain accumulator returned by `compute_gain_row` across the image. Mirrors
-/// `compute_gainmap_slice`'s metadata construction (clamp to config range,
-/// log2 conversion, ISO 21496-1 fields), kept here so we don't depend on
-/// ultrahdr-core's `pub(crate) metadata_from_arrays`.
+/// Build the [`GainMapMetadata`] that matches gain-map bytes quantized by
+/// `compute_gain_row` on `config`'s boost grid.
+///
+/// **Contract (zenjpeg #193, ultrahdr #33): the declared per-channel
+/// `min`/`max` ARE the dequantization grid.** `compute_gain_row` normalizes
+/// each byte over `log(config.min_boost) ..= log(config.max_boost)`, and
+/// every conformant reader reconstructs
+/// `gain = 2^(min + byte/255 · (max − min))` from the declared range — so
+/// the metadata must declare exactly that grid. Declaring the content's
+/// observed range instead (what this function did before #193) made every
+/// reader dequantize on a narrower grid than the bytes were written on,
+/// reconstructing under-boosted HDR whenever the content's gain range was
+/// narrower than the configured one.
+///
+/// `min_max` — the `(min, max)` gain accumulator `compute_gain_row` fills
+/// across the image — does not feed the declared range. Its `max` only
+/// widens `alternate_hdr_headroom` so full gain application stays reachable
+/// when the content exceeds the configured headroom; a non-finite or
+/// non-positive value (no pixel observed) falls back to the grid top.
+///
+/// Mirrors ultrahdr-core's `pub(crate) metadata_for_config_grid`
+/// (`a09478f0bfaa`), replicated here because it is not exported.
 fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMapMetadata {
-    let actual_min = min_max.0.max(config.min_boost);
-    let actual_max = min_max.1.min(config.max_boost);
+    let observed_max = min_max.1;
+    let observed = if observed_max.is_finite() && observed_max > 0.0 {
+        observed_max.clamp(config.min_boost, config.max_boost)
+    } else {
+        config.max_boost
+    };
     let channel = GainMapChannel {
-        min: (actual_min as f64).log2(),
-        max: (actual_max as f64).log2(),
+        min: (config.min_boost as f64).log2(),
+        max: (config.max_boost as f64).log2(),
         gamma: config.gamma as f64,
         base_offset: config.base_offset as f64,
         alternate_offset: config.alternate_offset as f64,
@@ -301,7 +324,7 @@ fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMa
     let mut metadata = GainMapMetadata::default();
     metadata.channels = [channel; 3];
     metadata.base_hdr_headroom = (config.base_hdr_headroom as f64).log2();
-    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(actual_max) as f64).log2();
+    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(observed) as f64).log2();
     metadata.use_base_color_space = true;
     metadata.backward_direction = false;
     metadata
