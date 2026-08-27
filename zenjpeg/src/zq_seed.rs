@@ -100,6 +100,41 @@ const ZQ_CLAMP_ABOVE: f32 = 12.0;
 /// (in [`ZQ_FEATURES`] order, RAW — transforms applied here). Returns the
 /// seed quality clamped to `[anchor−18, anchor+12]` and then `[1, 100]`.
 /// `None` if any input is non-finite — the caller keeps the anchor curve.
+
+/// Image-level seed: extract the six [`ZQ_FEATURES`] from RGB8 pixels
+/// in-binary (zenanalyze) and predict the starting quality for `target`.
+/// The composition the census harness validated; `None` on any missing or
+/// non-finite feature — callers keep the [`anchor_guess`] curve, so this can
+/// only re-seed the search, never break it.
+///
+/// This is the DEFAULT `q_start` source for zensim-targeted encodes since
+/// 2026-08-28 (user-approved wiring of the census-validated head:
+/// `benchmarks/zensim_instrument_census_2026-08-27.md` — mean encodes
+/// 4.53 → 3.92, zero convergence regressions on 559,596 validate cells).
+#[must_use]
+pub fn predict_q0_from_image(rgb: &[u8], width: u32, height: u32, target: f64) -> Option<f32> {
+    use zenanalyze::feature::{AnalysisQuery, FeatureSet, FeatureValue};
+    if rgb.len() < (width as usize) * (height as usize) * 3 || width == 0 || height == 0 {
+        return None;
+    }
+    let mut set = FeatureSet::just(ZQ_FEATURES[0]);
+    for f in &ZQ_FEATURES[1..] {
+        set = set.with(*f);
+    }
+    let an = zenanalyze::analyze_features_rgb8(rgb, width, height, &AnalysisQuery::new(set));
+    let mut fv = [0.0f32; 6];
+    for (i, feat) in ZQ_FEATURES.iter().enumerate() {
+        fv[i] = an.get_f32(*feat).or_else(|| {
+            an.get(*feat).and_then(|v| match v {
+                FeatureValue::U32(x) => Some(x as f32),
+                FeatureValue::F32(x) => Some(x),
+                _ => None,
+            })
+        })?;
+    }
+    predict_q0_from_features(&fv, target, u64::from(width) * u64::from(height))
+}
+
 #[must_use]
 pub fn predict_q0_from_features(features: &[f32; 6], target: f64, pixels: u64) -> Option<f32> {
     if !target.is_finite() || features.iter().any(|f| !f.is_finite()) {
@@ -187,5 +222,47 @@ mod tests {
         let a40 = anchor_guess(40.0);
         let a10 = anchor_guess(10.0);
         assert!((lo - lo2).abs() <= (a40 - a10).abs() + 1e-4);
+    }
+}
+
+#[cfg(test)]
+mod image_seed_tests {
+    use super::*;
+
+    #[test]
+    fn image_seed_matches_feature_composition_and_stays_in_clamp() {
+        // Deterministic non-flat synthetic image (gradient + checker) so the
+        // six features are all finite and the head fires.
+        let (w, h) = (128u32, 96u32);
+        let mut rgb = vec![0u8; (w * h * 3) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 3) as usize;
+                rgb[i] = (x * 2) as u8;
+                rgb[i + 1] = (y * 2) as u8;
+                rgb[i + 2] = if (x / 8 + y / 8) % 2 == 0 { 220 } else { 30 };
+            }
+        }
+        let t = 72.0;
+        let seed = predict_q0_from_image(&rgb, w, h, t).expect("head fires on real content");
+        let anchor = anchor_guess(t);
+        assert!(seed >= anchor - 18.0 - 1e-3 && seed <= anchor + 12.0 + 1e-3,
+                "seed {seed} outside clamp around anchor {anchor}");
+        assert!((1.0..=100.0).contains(&seed));
+        // Degenerate input: never panics, falls back to None.
+        assert_eq!(predict_q0_from_image(&rgb[..10], w, h, t), None);
+        assert_eq!(predict_q0_from_image(&rgb, 0, 0, t), None);
+    }
+
+    #[test]
+    fn seeded_options_carry_the_head_seed() {
+        let (w, h) = (64u32, 64u32);
+        let mut rgb = vec![0u8; (w * h * 3) as usize];
+        for (i, px) in rgb.iter_mut().enumerate() {
+            *px = (i % 251) as u8;
+        }
+        let opts = crate::target_quality::TargetOptions::seeded_for_image(&rgb, w, h, 70.0);
+        assert_eq!(opts.q_start, predict_q0_from_image(&rgb, w, h, 70.0));
+        assert_eq!(opts.max_encodes, crate::target_quality::TargetOptions::default().max_encodes);
     }
 }

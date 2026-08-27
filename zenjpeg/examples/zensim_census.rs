@@ -14,12 +14,9 @@
 use std::io::Write;
 
 use enough::Unstoppable;
-use zenanalyze::analyze_features_rgb8;
-use zenanalyze::feature::{AnalysisQuery, FeatureSet};
 use zenjpeg::decode::Decoder;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 use zenjpeg::target_quality::{TargetOptions, search_target};
-use zenjpeg::zq_seed::{ZQ_FEATURES, predict_q0_from_features};
 use zensim::{DiffmapWeighting, RgbSlice, Zensim, ZensimProfile};
 
 fn load_png(path: &str) -> (Vec<u8>, u32, u32) {
@@ -58,22 +55,7 @@ fn main() {
             if arm != "B" {
                 return None;
             }
-            let mut set = FeatureSet::just(ZQ_FEATURES[0]);
-            for f in &ZQ_FEATURES[1..] {
-                set = set.with(*f);
-            }
-            let an = analyze_features_rgb8(&rgb, w, h, &AnalysisQuery::new(set));
-            let mut fv = [0.0f32; 6];
-            for (i, feat) in ZQ_FEATURES.iter().enumerate() {
-                fv[i] = an.get_f32(*feat).or_else(|| {
-                    an.get(*feat).and_then(|v| match v {
-                        zenanalyze::feature::FeatureValue::U32(x) => Some(x as f32),
-                        zenanalyze::feature::FeatureValue::F32(x) => Some(x),
-                        _ => None,
-                    })
-                })?;
-            }
-            predict_q0_from_features(&fv, t, u64::from(w) * u64::from(h))
+zenjpeg::zq_seed::predict_q0_from_image(&rgb, w, h, t)
         };
         for &t in &targets {
             let seed = q0_for(t);

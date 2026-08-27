@@ -35,9 +35,9 @@ anchor_guess is the weakest baseline in the family, exactly where a fitted
 head pays. Harness `zenjpeg/examples/zensim_census.rs`; cells at
 `/mnt/v/output/zenjpeg/instrument-census-2026-08-27/`.
 
-## PROPOSAL (user-gated — nothing flips without an explicit yes)
+## PROPOSAL — ★ APPROVED + WIRED 2026-08-28 (explicit user yes, AskUserQuestion)
 Wire `zq_seed::predict_q0_from_features` as the DEFAULT `TargetOptions::
 q_start` source in the target-quality path (feature extraction is in-binary;
 `None` fallback keeps anchor_guess — G-J3 shape). The head shipped as consts
 2026-08-26 but has zero src consumers; this census is the instrument
-evidence for consuming it. Until a yes, everything stays harness-side.
+evidence for consuming it. Wired 2026-08-28: `zq_seed::predict_q0_from_image` (the in-src image→features→seed composition; census harness now calls it — dedup) + `TargetOptions::seeded_for_image` = the canonical seeded constructor for zensim-target searches; plain `Default` stays seedless. Unit-tested (clamp + degenerate-input fallback + options carry).

@@ -52,6 +52,22 @@ impl Default for TargetOptions {
     }
 }
 
+impl TargetOptions {
+    /// The canonical options for a zensim-targeted encode of `rgb` at
+    /// `target`: defaults plus the census-validated Zq seed head as the
+    /// `q_start` source ([`crate::zq_seed::predict_q0_from_image`]; `None`
+    /// falls back to [`anchor_guess`] inside the search). User-approved
+    /// default wiring 2026-08-28 — plain [`Default`] stays seedless for
+    /// callers that bring their own seed.
+    #[must_use]
+    pub fn seeded_for_image(rgb: &[u8], width: u32, height: u32, target: f64) -> Self {
+        Self {
+            q_start: crate::zq_seed::predict_q0_from_image(rgb, width, height, target),
+            ..Self::default()
+        }
+    }
+}
+
 /// Outcome of [`search_target`]: which quality won, its achieved score, and
 /// whether the target band was actually reached.
 #[derive(Debug, Clone, Copy, PartialEq)]
