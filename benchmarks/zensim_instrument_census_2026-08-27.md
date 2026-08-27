@@ -19,3 +19,25 @@ clamp internal) but is INERT — no src consumer wires it (verified by grep).
   AND ±2-hit count not regressed. A alone closes the census requirement.
 - Harness: `zenjpeg/examples/zensim_census.rs` (this repo, loop-ownership),
   family TSV schema + seed_q column.
+
+## RESULTS (2026-08-27, same day) — census CLOSED; arm B PASSES the family bar
+
+| arm | k | median \|err\| | ±2 hits | photo | nonphoto |
+|---|---|---|---|---|---|
+| A anchor_guess (shipped default) | 2 | 3.657 | 8/27 | 2.834 | 7.283 |
+| A | 3 | 2.556 | 11/27 | 2.311 | 4.747 |
+| B zq_seed head | 2 | **1.905** | **14/27** | 1.671 | 4.330 |
+| B | 3 | **1.383** | **17/27** | 1.160 | 3.488 |
+
+B vs A: k2 **+47.9%**, k3 **+45.9%** (bar ≥15%), hits improve both k —
+**PASS**, and unlike zenwebp/jxl the head improves BOTH classes: zenjpeg's
+anchor_guess is the weakest baseline in the family, exactly where a fitted
+head pays. Harness `zenjpeg/examples/zensim_census.rs`; cells at
+`/mnt/v/output/zenjpeg/instrument-census-2026-08-27/`.
+
+## PROPOSAL (user-gated — nothing flips without an explicit yes)
+Wire `zq_seed::predict_q0_from_features` as the DEFAULT `TargetOptions::
+q_start` source in the target-quality path (feature extraction is in-binary;
+`None` fallback keeps anchor_guess — G-J3 shape). The head shipped as consts
+2026-08-26 but has zero src consumers; this census is the instrument
+evidence for consuming it. Until a yes, everything stays harness-side.
