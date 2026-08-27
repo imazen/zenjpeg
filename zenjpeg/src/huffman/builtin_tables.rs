@@ -2904,16 +2904,6 @@ pub(crate) fn is_legal_ac_symbol(sym: u8, extended: bool) -> bool {
     matches!(sym, 0x00 | 0xF0) || (1..=max_size).contains(&(sym & 0x0F))
 }
 
-/// Symbols from `legal` that have no code in `t` — empty means the table can
-/// encode anything the mode may emit.
-pub(crate) fn missing_symbols(t: &OptimizedTable, legal: &[u8]) -> alloc::vec::Vec<u8> {
-    legal
-        .iter()
-        .copied()
-        .filter(|&s| t.table.lengths[s as usize] == 0)
-        .collect()
-}
-
 /// Ensure every legal baseline symbol has a code in every table of `set`.
 ///
 /// The corpus-trained tables above were baked from observed frequencies only,

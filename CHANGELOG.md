@@ -187,11 +187,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   markers with no DRI header plus histogram/emission divergence. The
   documented auto-selection now happens ONCE at config computation
   (`resolve_restart_rows(4, ...)`), so the DRI header, frequency counting,
-  and segmented emission all agree. (3) Custom Huffman tables are now
-  completeness-validated at build time against the mode's emittable symbol
-  range (XYB rides SOF1: DC categories to 15, AC sizes to 14 — Annex K is
-  correctly rejected for XYB); previously `.huffman(...)` + XYB silently
-  produced undecodable streams. The built-in XYB fixed-table families are
+  and segmented emission all agree. (3) Custom Huffman tables (harvested-table
+  reuse, #77) still pass through byte-identically, but can no longer
+  silently corrupt: the block-array paths coverage-verify the caller's
+  tables against the exact symbol stream (same traversal as the
+  optimizers), and the streaming emitter errors loudly on any codeless
+  symbol instead of writing zero bits; previously `.huffman(...)` with
+  tables the content exceeds (e.g. Annex K under XYB's SOF1 range)
+  silently produced undecodable streams. The built-in XYB fixed-table families are
   now completed against the extended range too (the #196 completion had
   floored DC at category 11). Progressive replay fallbacks that could write
   zero bits or silently skip promised extra bits on eobruns underrun now

@@ -107,6 +107,70 @@ impl HuffmanSymbolFrequencies {
 }
 
 impl ComputedConfig {
+    /// Verify caller-supplied (Custom) Huffman tables cover every symbol the
+    /// given blocks will emit, using the EXACT counting traversals the
+    /// optimizers use (same MCU order and restart-boundary DC resets as the
+    /// emitters). A codeless symbol would otherwise encode as ZERO bits and
+    /// silently corrupt the stream (issue #197). Only invoked on the Custom
+    /// strategy — zero cost for every other path.
+    pub(crate) fn verify_custom_coverage_ycbcr(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+        tables: &HuffmanTableSet,
+    ) -> Result<()> {
+        let freqs = self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color);
+        Self::check_coverage(&freqs.dc_luma, &tables.dc_luma.table, "dc_luma")?;
+        Self::check_coverage(&freqs.ac_luma, &tables.ac_luma.table, "ac_luma")?;
+        if is_color {
+            Self::check_coverage(&freqs.dc_chroma, &tables.dc_chroma.table, "dc_chroma")?;
+            Self::check_coverage(&freqs.ac_chroma, &tables.ac_chroma.table, "ac_chroma")?;
+        }
+        Ok(())
+    }
+
+    /// XYB variant of [`Self::verify_custom_coverage_ycbcr`] — XYB shares one
+    /// (dc, ac) table pair across all components.
+    pub(crate) fn verify_custom_coverage_xyb(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        xyb_full: bool,
+        dc_table: &crate::huffman::optimize::OptimizedTable,
+        ac_table: &crate::huffman::optimize::OptimizedTable,
+    ) -> Result<()> {
+        let freqs = if xyb_full {
+            self.build_optimized_tables_shared_full(x_blocks, y_blocks, b_blocks)?
+                .2
+        } else {
+            self.build_optimized_tables_xyb_raster_with_counts(x_blocks, y_blocks, b_blocks)?
+                .2
+        };
+        Self::check_coverage(&freqs.dc_luma, &dc_table.table, "dc (shared)")?;
+        Self::check_coverage(&freqs.ac_luma, &ac_table.table, "ac (shared)")?;
+        Ok(())
+    }
+
+    fn check_coverage(
+        freq: &FrequencyCounter,
+        table: &HuffmanEncodeTable,
+        name: &str,
+    ) -> Result<()> {
+        for sym in 0..=255u8 {
+            if freq.get_count(sym) > 0 && table.lengths[sym as usize] == 0 {
+                return Err(crate::error::Error::invalid_config(alloc::format!(
+                    "custom Huffman table {name} has no code for symbol \
+                     {sym:#04x}, which this content emits — encoding would \
+                     silently corrupt the stream"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Counts symbol frequencies from quantized blocks (for Huffman optimization).
     pub(crate) fn count_block_frequencies(
         &self,

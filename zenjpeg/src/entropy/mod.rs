@@ -178,6 +178,16 @@ pub fn encode_block_to_writer(
     let dc_diff = dc - prev_dc;
     let dc_cat = category(dc_diff);
     let (code, len) = dc_table.encode(dc_cat);
+    // A codeless symbol encodes as ZERO bits and silently desyncs the stream
+    // (issue #197). Reachable here with caller-supplied Custom tables whose
+    // coverage the content exceeds; the branch is never taken on the
+    // completed builtin/optimized tables.
+    if len == 0 {
+        return Err(crate::error::Error::invalid_config(alloc::format!(
+            "Huffman DC table has no code for category {dc_cat} \
+             (custom tables must cover every symbol the content produces)"
+        )));
+    }
 
     if dc_cat > 0 {
         let additional = additional_bits_with_cat(dc_diff, dc_cat);
@@ -197,6 +207,11 @@ pub fn encode_block_to_writer(
             // Encode any runs of 16 zeros
             while run >= 16 {
                 let (code, len) = ac_table.encode(0xF0); // ZRL
+                if len == 0 {
+                    return Err(crate::error::Error::invalid_config(
+                        "Huffman AC table has no code for ZRL (0xF0)".into(),
+                    ));
+                }
                 writer.write_bits(code, len);
                 run -= 16;
             }
@@ -205,6 +220,12 @@ pub fn encode_block_to_writer(
             let ac_cat = category(ac);
             let symbol = (run << 4) | ac_cat;
             let (code, len) = ac_table.encode(symbol);
+            if len == 0 {
+                return Err(crate::error::Error::invalid_config(alloc::format!(
+                    "Huffman AC table has no code for symbol {symbol:#04x} \
+                     (custom tables must cover every symbol the content produces)"
+                )));
+            }
             let additional = additional_bits_with_cat(ac, ac_cat);
             writer.write_code_and_extra(code, len, additional, ac_cat);
             run = 0;
@@ -214,6 +235,11 @@ pub fn encode_block_to_writer(
     // EOB if there are trailing zeros
     if run > 0 {
         let (code, len) = ac_table.encode(0x00); // EOB
+        if len == 0 {
+            return Err(crate::error::Error::invalid_config(
+                "Huffman AC table has no code for EOB (0x00)".into(),
+            ));
+        }
         writer.write_bits(code, len);
     }
 

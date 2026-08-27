@@ -129,35 +129,67 @@ fn parallel_with_restart_zero_stays_consistent() {
         .expect("parallel restart-0 output must decode in jpeg-decoder");
 }
 
-/// Custom Huffman tables must be rejected at build time when they cannot
-/// cover the mode's symbol range: Annex K is complete for baseline YCbCr but
-/// lacks the SOF1/XYB extended DC categories 12-15.
+/// Custom Huffman tables pass through byte-identically (the harvested-table
+/// contract, issue #77) but can never silently corrupt: emission errors
+/// loudly when the content produces a symbol the table lacks. Annex K stays
+/// fine for baseline YCbCr; for XYB — whose DC diffs reach categories 12-15
+/// that Annex K has no codes for — DC-slamming content must yield a coverage
+/// ERROR (pre-fix: zero-bit writes, undecodable output returned as Ok).
 #[test]
-fn custom_tables_validated_for_mode_coverage() {
+fn custom_tables_error_loudly_on_uncovered_symbols() {
     use zenjpeg::huffman::optimize::HuffmanTableSet;
     let annex_k = HuffmanTableSet::from_standard().unwrap();
 
     // YCbCr baseline: Annex K covers everything the mode can emit.
-    let ok = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
+    let mut enc = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
         .progressive(false)
         .huffman(annex_k.clone())
-        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb);
-    assert!(ok.is_ok(), "Annex K must remain valid for baseline YCbCr");
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .expect("Annex K must remain valid for baseline YCbCr");
+    enc.push_packed(&dc_slam_rgb(64, 64, 16), Unstoppable)
+        .unwrap();
+    let jpeg = enc.finish().expect("baseline Annex K encode");
+    assert_stream_valid(&jpeg, "ycbcr/annex-k-custom");
 
-    // XYB: DC categories 12-15 are reachable; Annex K has no codes for them
-    // and would previously encode them as ZERO bits (silent corruption).
-    let err = EncoderConfig::xyb(75.0, XybSubsampling::BQuarter)
+    // XYB at low quality with DC-slamming content: either the encoder
+    // reports the missing coverage, or (if this content happened to stay in
+    // range) the output must decode — NEVER a silently corrupt Ok.
+    let result = EncoderConfig::xyb(10.0, XybSubsampling::BQuarter)
         .progressive(false)
         .huffman(annex_k)
-        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb);
-    match err {
+        .encode_from_bytes(256, 256, PixelLayout::Rgb8Srgb)
+        .and_then(|mut enc| {
+            enc.push_packed(&dc_slam_rgb(256, 256, 16), Unstoppable)?;
+            enc.finish()
+        });
+    match result {
+        Ok(jpeg) => assert_stream_valid(&jpeg, "xyb/annex-k-custom"),
         Err(e) => {
             let msg = format!("{e}");
             assert!(
                 msg.contains("no code"),
-                "error should explain the missing coverage, got: {msg}"
+                "error should name the missing coverage, got: {msg}"
             );
         }
-        Ok(_) => panic!("incomplete custom tables must be rejected for XYB"),
     }
+
+    // Deterministic guard trip: a DC table carrying only categories 4..=6
+    // cannot encode ordinary content — the coverage check (block paths) or
+    // the emission guard (streaming path) must error, never write zero bits.
+    let mut crippled = HuffmanTableSet::from_standard().unwrap();
+    crippled.dc_luma = zenjpeg::huffman::optimize::OptimizedTable::from_bits_values(
+        [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![4, 5, 6],
+    )
+    .expect("3-symbol canonical table is valid");
+    let err = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .huffman(crippled)
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .and_then(|mut enc| {
+            enc.push_packed(&dc_slam_rgb(64, 64, 16), Unstoppable)?;
+            enc.finish()
+        });
+    let msg = format!("{}", err.expect_err("crippled DC table must be rejected"));
+    assert!(msg.contains("no code"), "got: {msg}");
 }

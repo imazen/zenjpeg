@@ -1598,6 +1598,16 @@ impl StreamingEncoder {
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
             // Custom tables: XYB uses dc_luma/ac_luma as the shared pair.
+            // Verify coverage against the exact symbol stream first — a
+            // codeless symbol would encode as ZERO bits (issue #197).
+            config.verify_custom_coverage_xyb(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                xyb_full,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
             config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
@@ -1712,6 +1722,15 @@ impl StreamingEncoder {
             Ok((scan_data, None))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
             // Custom tables: like XYB, dc_luma/ac_luma serve as the shared pair.
+            // Coverage-verify against the exact symbol stream (issue #197).
+            config.verify_custom_coverage_xyb(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                true,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
             config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
@@ -1849,6 +1868,14 @@ impl StreamingEncoder {
             )?;
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            // Coverage-verify against the exact symbol stream (issue #197).
+            config.verify_custom_coverage_ycbcr(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                tables,
+            )?;
             config.write_huffman_tables_optimized(output, tables)?;
 
             if config.restart_interval > 0 {

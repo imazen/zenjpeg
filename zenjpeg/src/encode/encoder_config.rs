@@ -1540,50 +1540,13 @@ impl EncoderConfig {
                 "progressive mode requires optimized Huffman tables".into(),
             ));
         }
-        // Custom Huffman tables must have a code for every symbol this mode
-        // can emit. HuffmanEncodeTable::encode returns zero bits for a
-        // codeless symbol, so an incomplete custom table silently produces an
-        // undecodable stream (sweep issue #197; #196 mechanism). XYB rides the
-        // SOF1 extended range (DC categories up to 15), so e.g. the Annex K
-        // set — complete for baseline YCbCr — is rejected here for XYB.
-        if let HuffmanStrategy::Custom(ref tables) = self.huffman {
-            use crate::huffman::builtin_tables::{
-                is_legal_ac_symbol, legal_dc_symbols, missing_symbols,
-            };
-            let extended = matches!(self.color_mode, ColorMode::Xyb { .. });
-            let dc_legal: alloc::vec::Vec<u8> = legal_dc_symbols(extended).collect();
-            let ac_legal: alloc::vec::Vec<u8> = (0u8..=255)
-                .filter(|&s| is_legal_ac_symbol(s, extended))
-                .collect();
-            // XYB uses only the dc_luma/ac_luma pair; YCbCr uses all four.
-            let mut to_check: alloc::vec::Vec<(
-                &str,
-                &crate::huffman::optimize::OptimizedTable,
-                &[u8],
-            )> = alloc::vec![
-                ("dc_luma", &tables.dc_luma, dc_legal.as_slice()),
-                ("ac_luma", &tables.ac_luma, ac_legal.as_slice()),
-            ];
-            if !extended {
-                to_check.push(("dc_chroma", &tables.dc_chroma, dc_legal.as_slice()));
-                to_check.push(("ac_chroma", &tables.ac_chroma, ac_legal.as_slice()));
-            }
-            for (name, table, legal) in to_check {
-                let missing = missing_symbols(table, legal);
-                if !missing.is_empty() {
-                    return Err(crate::error::Error::invalid_config(alloc::format!(
-                        "custom Huffman table {name} has no code for {} legal \
-                         symbol(s) this mode can emit (first missing: {:#04x}); \
-                         an incomplete table would silently corrupt the stream. \
-                         Required coverage: DC categories {:?}, AC sizes 1..={}",
-                        missing.len(),
-                        missing[0],
-                        legal_dc_symbols(extended),
-                        if extended { 14 } else { 10 },
-                    )));
-                }
-            }
-        }
+        // Custom Huffman tables (e.g. tables harvested from a decoded JPEG,
+        // issue #77) are deliberately NOT completeness-checked here: per-image
+        // optimized tables legitimately cover only the symbols that image
+        // produces, and the DHT must round-trip byte-identically. Safety is
+        // enforced at emission instead — encode_block_to_writer errors on any
+        // codeless symbol rather than writing zero bits (issue #197), and the
+        // XYB custom arms pre-verify their block arrays.
         Ok(())
     }
 
