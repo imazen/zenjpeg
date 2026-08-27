@@ -357,15 +357,18 @@ impl ComputedConfig {
             Subsampling::S440 => (1, 2),
         };
 
-        // Use parallel encoding when explicitly enabled
+        // Use parallel entropy encoding when explicitly enabled AND restart
+        // markers are in play. Segmented parallel emission joins segments at
+        // RST markers, so with restart_interval == 0 (the documented way to
+        // DISABLE restart markers) the parallel form would emit RST markers
+        // without any DRI header and reset DC prediction where the frequency
+        // count had none — an undecodable/corrupt stream (sweep issue #197).
+        // The old code silently substituted 64 here, at emission only; never
+        // resolve the interval inside the emitter alone. With markers
+        // disabled we fall through to sequential emission instead.
         #[cfg(feature = "parallel")]
-        if self.parallel {
-            // Auto-set restart interval if not specified
-            let restart_interval = if self.restart_interval > 0 {
-                self.restart_interval
-            } else {
-                64 // Default restart interval for parallel encoding
-            };
+        if self.parallel && self.restart_interval > 0 {
+            let restart_interval = self.restart_interval;
             use super::parallel::{
                 ParallelEntropyConfig, parallel_entropy_encode_444,
                 parallel_entropy_encode_subsampled,
@@ -681,6 +684,9 @@ impl ComputedConfig {
         let mut prev_dc_x: i16 = 0;
         let mut prev_dc_y: i16 = 0;
         let mut prev_dc_b: i16 = 0;
+        let restart_interval = self.restart_interval as usize;
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = 0usize;
 
         for mcu_y in 0..mcu_v {
             for mcu_x in 0..mcu_h {
@@ -735,6 +741,19 @@ impl ComputedConfig {
                 };
                 Self::collect_block_frequencies(b_block, prev_dc_b, &mut dc_freq, &mut ac_freq);
                 prev_dc_b = b_block[0];
+
+                // Reset DC prediction at restart boundaries — must mirror the
+                // paired emitter's check_restart() (called after every MCU
+                // except the last) EXACTLY, or post-restart DC diffs produce
+                // categories this count never saw and the optimized table
+                // emits them as zero bits (sweep issue #197, same mechanism
+                // as #194).
+                mcu_idx += 1;
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    prev_dc_x = 0;
+                    prev_dc_y = 0;
+                    prev_dc_b = 0;
+                }
             }
         }
 
@@ -783,6 +802,9 @@ impl ComputedConfig {
         let mut prev_dc_x: i16 = 0;
         let mut prev_dc_y: i16 = 0;
         let mut prev_dc_b: i16 = 0;
+        let restart_interval = self.restart_interval as usize;
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = 0usize;
 
         for mcu_y in 0..mcu_v {
             for mcu_x in 0..mcu_h {
@@ -831,6 +853,19 @@ impl ComputedConfig {
                 };
                 Self::collect_block_frequencies(b_block, prev_dc_b, &mut dc_freq, &mut ac_freq);
                 prev_dc_b = b_block[0];
+
+                // Reset DC prediction at restart boundaries — must mirror the
+                // paired emitter's check_restart() (called after every MCU
+                // except the last) EXACTLY, or post-restart DC diffs produce
+                // categories this count never saw and the optimized table
+                // emits them as zero bits (sweep issue #197, same mechanism
+                // as #194).
+                mcu_idx += 1;
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    prev_dc_x = 0;
+                    prev_dc_y = 0;
+                    prev_dc_b = 0;
+                }
             }
         }
 
@@ -873,6 +908,9 @@ impl ComputedConfig {
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
         let mut prev_dc = [0i16; 3];
+        let restart_interval = self.restart_interval as usize;
+        let total_mcus = blocks_w * blocks_h;
+        let mut mcu_idx = 0usize;
 
         for by in 0..blocks_h {
             for bx in 0..blocks_w {
@@ -887,6 +925,17 @@ impl ComputedConfig {
                         &mut ac_freq,
                     );
                     prev_dc[comp_idx] = block[0];
+                }
+
+                // Reset DC prediction at restart boundaries — must mirror the
+                // paired emitter's check_restart() (called after every MCU
+                // except the last) EXACTLY, or post-restart DC diffs produce
+                // categories this count never saw and the optimized table
+                // emits them as zero bits (sweep issue #197, same mechanism
+                // as #194).
+                mcu_idx += 1;
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    prev_dc = [0i16; 3];
                 }
             }
         }

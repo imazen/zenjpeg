@@ -175,6 +175,30 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **Three more count/emit divergence bugs in the main encoder** (sweep issue
+  #197, verified by adversarial review; same #194 mechanism): (1) the three
+  XYB/RGB-passthrough frequency-counting passes carried DC prediction across
+  the whole image while their paired emitters reset it at every restart
+  interval — a post-restart DC category the count never saw got no code and
+  was emitted as ZERO bits (undecodable output for XYB + restart markers,
+  the default `restart_mcu_rows(4)` included); counting now mirrors
+  `check_restart` exactly. (2) With `--features parallel`, the emitter alone
+  silently substituted restart interval 64 when the config said 0: RST
+  markers with no DRI header plus histogram/emission divergence. The
+  documented auto-selection now happens ONCE at config computation
+  (`resolve_restart_rows(4, ...)`), so the DRI header, frequency counting,
+  and segmented emission all agree. (3) Custom Huffman tables are now
+  completeness-validated at build time against the mode's emittable symbol
+  range (XYB rides SOF1: DC categories to 15, AC sizes to 14 — Annex K is
+  correctly rejected for XYB); previously `.huffman(...)` + XYB silently
+  produced undecodable streams. The built-in XYB fixed-table families are
+  now completed against the extended range too (the #196 completion had
+  floored DC at category 11). Progressive replay fallbacks that could write
+  zero bits or silently skip promised extra bits on eobruns underrun now
+  return internal errors. Regression gates: `tests/huffman_consistency.rs`
+  (XYB/YCbCr restart matrices with DC-slamming content, decode-validated;
+  parallel restart-0 consistency; custom-table rejection).
+
 - **`optimize_huffman(false)` baseline encodes silently produced undecodable
   JPEGs on content outside the training-corpus distribution** (found
   2026-08-26 by the missing-symbol debug_assert added with the #194 fix; the

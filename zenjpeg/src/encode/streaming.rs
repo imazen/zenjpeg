@@ -359,6 +359,23 @@ impl StreamingEncoder {
             config.restart_interval = config.align_restart_to_row(config.restart_interval);
         }
 
+        // Parallel entropy encoding joins segments at restart markers, so it
+        // needs a nonzero interval. Resolve the documented auto-selection
+        // ("if restart_mcu_rows is 0, the encoder auto-selects") HERE — once,
+        // before frequency counting, DRI emission, and entropy encoding — so
+        // all three agree. The pre-fix code substituted 64 inside the emitter
+        // only, producing RST markers with no DRI header and DC-prediction
+        // resets the histogram never saw (sweep issue #197).
+        #[cfg(feature = "parallel")]
+        if config.parallel && config.restart_interval == 0 {
+            config.restart_interval = super::config::resolve_restart_rows(
+                4,
+                config.width,
+                config.height,
+                config.subsampling,
+            );
+        }
+
         let streaming = if enable_streaming {
             // Get tables: custom if provided, otherwise standard JPEG tables
             let tables = match builder.huffman {

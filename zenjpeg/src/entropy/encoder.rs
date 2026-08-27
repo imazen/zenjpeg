@@ -699,8 +699,11 @@ impl<'a> EntropyEncoder<'a> {
             // Write the Huffman code for the symbol
             let (code, len) = dc_table.encode(token.symbol);
 
-            // Handle symbol not in table (shouldn't happen if tokenization is correct)
-            if len == 0 && token.symbol != 0 {
+            // Handle symbol not in table (shouldn't happen if tokenization is
+            // correct). No exemption for symbol 0: if the token stream contains
+            // it, it gets emitted, and a zero-length code would write ZERO bits
+            // and silently desync the stream (sweep issue #197).
+            if len == 0 {
                 return Err(Error::internal(
                     "DC symbol not in Huffman table during replay - histogram may be incomplete",
                 ));
@@ -758,6 +761,13 @@ impl<'a> EntropyEncoder<'a> {
                 let base = 1u16 << (token.symbol >> 4);
                 let run = base + token.extra_bits;
                 let (eob_code, eob_len) = ac_table.encode(0x00);
+                if eob_len == 0 {
+                    // Writing a zero-length code `run` times would emit NOTHING
+                    // and return Ok — silent corruption (sweep issue #197).
+                    return Err(Error::internal(
+                        "EOB symbol not in Huffman table during replay fallback",
+                    ));
+                }
                 for _ in 0..run {
                     self.writer.write_bits(eob_code, eob_len);
                 }
@@ -820,17 +830,27 @@ impl<'a> EntropyEncoder<'a> {
                 // Symbol not in table - for EOB runs, fall back to individual EOBs
                 if is_eob {
                     let run_bits = ref_token.symbol >> 4;
+                    let (eob_code, eob_len) = ac_table.encode(0x00);
+                    if eob_len == 0 {
+                        // A zero-length code would write NOTHING and return Ok —
+                        // silent corruption (sweep issue #197).
+                        return Err(Error::internal(
+                            "EOB symbol not in Huffman table during refinement replay",
+                        ));
+                    }
                     if run_bits > 0 {
-                        // Get the actual run value from eobruns array
-                        let run = scan_info.eobruns.get(eobrun_idx).copied().unwrap_or(1);
+                        // Get the actual run value from eobruns array; an
+                        // underrun means tokenization and replay disagree.
+                        let Some(&run) = scan_info.eobruns.get(eobrun_idx) else {
+                            return Err(Error::internal(
+                                "eobruns underrun during refinement replay",
+                            ));
+                        };
                         eobrun_idx += 1;
-
-                        let (eob_code, eob_len) = ac_table.encode(0x00);
                         for _ in 0..run {
                             self.writer.write_bits(eob_code, eob_len);
                         }
                     } else {
-                        let (eob_code, eob_len) = ac_table.encode(0x00);
                         self.writer.write_bits(eob_code, eob_len);
                     }
                 } else {
@@ -839,14 +859,19 @@ impl<'a> EntropyEncoder<'a> {
             } else {
                 self.writer.write_bits(code, len);
 
-                // For EOB runs > 1, write the extra bits
+                // For EOB runs > 1, write the extra bits. The just-written
+                // symbol PROMISED run_bits extra bits — silently skipping them
+                // on an eobruns underrun desyncs the stream (sweep issue #197).
                 if is_eob && (ref_token.symbol >> 4) > 0 {
                     let run_bits = ref_token.symbol >> 4;
-                    if let Some(&run) = scan_info.eobruns.get(eobrun_idx) {
-                        let extra = run & ((1 << run_bits) - 1);
-                        self.writer.write_bits(extra as u32, run_bits);
-                        eobrun_idx += 1;
-                    }
+                    let Some(&run) = scan_info.eobruns.get(eobrun_idx) else {
+                        return Err(Error::internal(
+                            "eobruns underrun while writing EOB-run extra bits",
+                        ));
+                    };
+                    let extra = run & ((1 << run_bits) - 1);
+                    self.writer.write_bits(extra as u32, run_bits);
+                    eobrun_idx += 1;
                 }
 
                 // Write sign bit FIRST for newly-nonzero coefficients

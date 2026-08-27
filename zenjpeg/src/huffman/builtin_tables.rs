@@ -2882,16 +2882,36 @@ pub(crate) fn select_tables(
             _ => ycbcr_420_tables(tier_idx),
         }
     };
-    complete_table_set(set)
+    // XYB rides SOF1's extended range: its DC diffs routinely reach
+    // categories 12-15 (that is WHY force_sof1 exists) and its ACs can
+    // exceed the baseline 10-bit bound, so the XYB families must be
+    // completed against the extended symbol set (sweep issue #197).
+    complete_table_set(set, use_xyb)
 }
 
-/// Legal baseline DC symbols: difference categories 0..=11.
-const LEGAL_DC_SYMBOLS: core::ops::RangeInclusive<u8> = 0..=11;
+/// Legal DC symbols: difference categories 0..=11 for baseline 8-bit YCbCr
+/// (mathematically guaranteed: |level-shifted DC| <= 1024, so diffs fit
+/// category 11), 0..=15 for the SOF1/XYB extended range.
+pub(crate) fn legal_dc_symbols(extended: bool) -> core::ops::RangeInclusive<u8> {
+    if extended { 0..=15 } else { 0..=11 }
+}
 
-/// Whether `sym` is a legal baseline AC symbol: EOB (0x00), ZRL (0xF0), or
-/// (run 0..=15, size 1..=10).
-fn is_legal_ac_symbol(sym: u8) -> bool {
-    matches!(sym, 0x00 | 0xF0) || matches!(sym & 0x0F, 1..=10)
+/// Whether `sym` is a legal AC symbol: EOB (0x00), ZRL (0xF0), or
+/// (run 0..=15, size 1..=10) for baseline 8-bit — size up to 14 for the
+/// SOF1/XYB extended range (T.81 12-bit analog).
+pub(crate) fn is_legal_ac_symbol(sym: u8, extended: bool) -> bool {
+    let max_size = if extended { 14 } else { 10 };
+    matches!(sym, 0x00 | 0xF0) || (1..=max_size).contains(&(sym & 0x0F))
+}
+
+/// Symbols from `legal` that have no code in `t` — empty means the table can
+/// encode anything the mode may emit.
+pub(crate) fn missing_symbols(t: &OptimizedTable, legal: &[u8]) -> alloc::vec::Vec<u8> {
+    legal
+        .iter()
+        .copied()
+        .filter(|&s| t.table.lengths[s as usize] == 0)
+        .collect()
 }
 
 /// Ensure every legal baseline symbol has a code in every table of `set`.
@@ -2911,9 +2931,11 @@ fn is_legal_ac_symbol(sym: u8) -> bool {
 /// near-identical code lengths and rare symbols get valid long codes.
 /// Complete tables are returned unchanged. Pure integer math — identical on
 /// every architecture and SIMD tier.
-fn complete_table_set(set: HuffmanTableSet) -> HuffmanTableSet {
-    let dc_legal: alloc::vec::Vec<u8> = LEGAL_DC_SYMBOLS.collect();
-    let ac_legal: alloc::vec::Vec<u8> = (0u8..=255).filter(|&s| is_legal_ac_symbol(s)).collect();
+fn complete_table_set(set: HuffmanTableSet, extended: bool) -> HuffmanTableSet {
+    let dc_legal: alloc::vec::Vec<u8> = legal_dc_symbols(extended).collect();
+    let ac_legal: alloc::vec::Vec<u8> = (0u8..=255)
+        .filter(|&s| is_legal_ac_symbol(s, extended))
+        .collect();
     HuffmanTableSet {
         dc_luma: complete_table(set.dc_luma, &dc_legal),
         ac_luma: complete_table(set.ac_luma, &ac_legal),
@@ -2956,17 +2978,19 @@ mod coverage_tests {
 
     /// Legal baseline symbols: DC categories 0..=11; AC EOB (0x00), ZRL
     /// (0xF0), and (run 0..=15, size 1..=10).
+    fn legal_dc_for(extended: bool) -> Vec<u8> {
+        legal_dc_symbols(extended).collect()
+    }
+    fn legal_ac_for(extended: bool) -> Vec<u8> {
+        (0u8..=255)
+            .filter(|&s| is_legal_ac_symbol(s, extended))
+            .collect()
+    }
     fn legal_dc() -> Vec<u8> {
-        (0u8..=11).collect()
+        legal_dc_for(false)
     }
     fn legal_ac() -> Vec<u8> {
-        let mut v = vec![0x00u8, 0xF0];
-        for run in 0u8..16 {
-            for size in 1u8..=10 {
-                v.push((run << 4) | size);
-            }
-        }
-        v
+        legal_ac_for(false)
     }
 
     fn audit(name: &str, tier: usize, t: &OptimizedTable, legal: &[u8]) -> (usize, u32) {
@@ -3007,11 +3031,12 @@ mod coverage_tests {
                 ] {
                     let quality = crate::encode::encoder_types::Quality::from(f32::from(q));
                     let set = select_tables(&quality, use_xyb, ss);
+                    // XYB tables must cover the SOF1 extended range.
                     for (kind, t, legal) in [
-                        ("dc_luma", &set.dc_luma, legal_dc()),
-                        ("ac_luma", &set.ac_luma, legal_ac()),
-                        ("dc_chroma", &set.dc_chroma, legal_dc()),
-                        ("ac_chroma", &set.ac_chroma, legal_ac()),
+                        ("dc_luma", &set.dc_luma, legal_dc_for(use_xyb)),
+                        ("ac_luma", &set.ac_luma, legal_ac_for(use_xyb)),
+                        ("dc_chroma", &set.dc_chroma, legal_dc_for(use_xyb)),
+                        ("ac_chroma", &set.ac_chroma, legal_ac_for(use_xyb)),
                     ] {
                         let missing: alloc::vec::Vec<u8> = legal
                             .iter()

@@ -545,6 +545,17 @@ fn optimize_huffman_tables(
     // ~5-10% larger but is always correct, which beats a sometimes-
     // smaller-sometimes-broken optimizer. Returning to the
     // frequency-fitted path is a v0.2 task.
+    //
+    // ROOT CAUSE OF THE v0.1 BREAKAGE (diagnosed 2026-08-26, sweep issue
+    // #197 / same class as #194): `_frequency_optimized_huffman_tables_v02_path`
+    // below counts each component's DC diffs in RASTER/storage block order,
+    // but emission goes through `encode_blocks_mcu_order`, which walks luma
+    // MCU-INTERLEAVED for subsampled sources — a different DC-diff sequence,
+    // so a category can appear at emit time that was never counted, get no
+    // code, and be written as ZERO bits (silently corrupt output). Before
+    // re-enabling: make the counting pass share the exact
+    // `encode_blocks_mcu_order` traversal (per-block callback), the way
+    // `lossless/pipeline.rs` unified its count+emit after #194.
     HuffmanTableSet::from_standard().map_err(|e| Error::Zenjpeg(format!("standard huffman: {e}")))
 }
 

@@ -194,8 +194,10 @@ impl StreamingEncoderBuilder {
     /// Enables parallel encoding for improved throughput on multi-core systems.
     ///
     /// When enabled, the encoder will use multiple threads for entropy encoding
-    /// (and optionally DCT). This requires restart markers, so if `restart_interval`
-    /// is 0, it will be automatically set to 64 MCUs.
+    /// (and optionally DCT). This requires restart markers, so if the restart
+    /// interval is 0 it is auto-resolved (4+ MCU rows via the standard restart
+    /// heuristics) at config computation — consistently for the DRI header,
+    /// frequency counting, and emission.
     #[cfg(feature = "parallel")]
     #[must_use]
     pub(crate) fn parallel(mut self, enable: bool) -> Self {
