@@ -472,6 +472,10 @@ name = "sweep_cell"
 required-features = ["__expert"]
 
 [[example]]
+name = "zensim_census"
+required-features = ["target-zq"]
+
+[[example]]
 name = "zq_calibrate"
 required-features = ["target-zq"]
 
