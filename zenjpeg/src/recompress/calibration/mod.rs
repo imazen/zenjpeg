@@ -21,6 +21,10 @@ pub mod per_encoder;
 /// Coarse encoder class used as the calibration-table axis. Multiple
 /// fingerprints collapse to the same class when their RD curves are
 /// effectively interchangeable.
+// `ZenjpegYcbcr` / `ZenjpegXyb` are never produced by `from_family` (no
+// zenjpeg fingerprint in `EncoderFamily` yet); they are constructible by
+// `recompress-expert` consumers. See the note on `TableId` below (#143).
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncoderClass {
     /// libjpeg-turbo / Pillow / generic IJG-table emitters.
@@ -62,6 +66,13 @@ impl EncoderClass {
 }
 
 /// Logical identity of a baked calibration table.
+///
+/// This type, `CellEstimate::preferred`, and the `Tight` / `Empty` CI
+/// classes are reachable only through the `recompress-expert` re-export;
+/// under plain `recompress` nothing in-crate reads or constructs them, so
+/// dead-code analysis is silenced for that configuration (#143). Kept
+/// unconditionally compiled so the module has one shape across features.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TableId {
     /// Seed table — coarse, derived from `crate::detect::reencode`.
@@ -69,6 +80,7 @@ pub enum TableId {
 }
 
 /// One cell estimate from the table.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub struct CellEstimate {
     /// Projected zensim-A vs original after applying this strategy at
@@ -89,6 +101,7 @@ pub struct CellEstimate {
 }
 
 /// Confidence interval class for a cell estimate.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CellCi {
     /// CI < 1 zensim-A, fit on ≥40 samples / cell.

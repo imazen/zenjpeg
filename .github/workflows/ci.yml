@@ -369,6 +369,13 @@ jobs:
       - name: Clippy (__expert + boundary-rd)
         run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
 
+      # `recompress` is opt-in (`default = []`), so no other job compiles the
+      # module; lint it on its own (#143). Deliberately WITHOUT
+      # `recompress-expert`: the expert re-export would mask dead code in the
+      # plain-`recompress` configuration, which is the one users get.
+      - name: Clippy (recompress)
+        run: cargo clippy -p zenjpeg --lib --tests --features recompress -- -D warnings
+
 
   fmt:
     name: Format

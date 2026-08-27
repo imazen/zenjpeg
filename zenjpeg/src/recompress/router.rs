@@ -75,6 +75,9 @@ pub enum RouterOutput {
 }
 
 /// Parameter pack passed to the chosen strategy.
+// `ci` is populated by `decide_strategy` and read by `recompress-expert`
+// consumers; in-crate strategies do not consult it yet (#143).
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub struct StrategyParams {
     /// Target IJG quality for IJG-family re-encodes.

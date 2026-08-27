@@ -7,6 +7,10 @@ use crate::detect::{Confidence, EncoderFamily, JpegProbe, QualityEstimate, Quali
 use crate::recompress::error::Error;
 
 /// What we know about the source JPEG without decoding its coefficients.
+///
+/// Several fields are informational for `recompress-expert` consumers
+/// (`analyze_source` is re-exported there) and not read in-crate (#143).
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub struct SourceAnalysis {
     /// Original bytes length (for size-ratio computation).

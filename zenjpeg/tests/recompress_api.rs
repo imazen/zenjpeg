@@ -23,7 +23,7 @@ fn make_rgb_test_image() -> Vec<u8> {
     for y in 0..H {
         for x in 0..W {
             // Diagonal stripes + per-pixel noise via xorshift.
-            let s = ((x ^ y) as u32).wrapping_mul(2654435761);
+            let s = (x ^ y).wrapping_mul(2654435761);
             let r = ((x * 7 + y * 3) % 240 + (s & 0x0F)) as u8;
             let g = ((x * 5 + y * 11) % 220 + ((s >> 4) & 0x1F)) as u8;
             let b = ((x * 13 + y * 2) % 200 + ((s >> 9) & 0x3F)) as u8;

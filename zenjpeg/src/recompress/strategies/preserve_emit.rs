@@ -169,6 +169,9 @@ pub struct EmitConfig {
     pub preserved_segments: Vec<PreservedSegment>,
 }
 
+// The constructors/builders are the `recompress-expert` surface for
+// `emit_preserved`; in-crate callers build `EmitConfig` literally (#143).
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 impl EmitConfig {
     /// Uniform per-component scaling of the source's quant tables.
     pub fn uniform_scale(scale: QuantScale) -> Self {
@@ -814,6 +817,17 @@ fn write_scan_data(
     Ok(())
 }
 
+fn component_to_blocks(comp: &EditedComponent) -> Vec<[i16; 64]> {
+    let n = comp.blocks_wide * comp.blocks_high;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut b = [0i16; 64];
+        b.copy_from_slice(&comp.coeffs[i * 64..(i + 1) * 64]);
+        out.push(b);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -883,15 +897,4 @@ mod tests {
             );
         }
     }
-}
-
-fn component_to_blocks(comp: &EditedComponent) -> Vec<[i16; 64]> {
-    let n = comp.blocks_wide * comp.blocks_high;
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut b = [0i16; 64];
-        b.copy_from_slice(&comp.coeffs[i * 64..(i + 1) * 64]);
-        out.push(b);
-    }
-    out
 }

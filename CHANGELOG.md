@@ -175,6 +175,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`recompress` feature lint debt** (#143 item 3): `cargo clippy --features
+  recompress -- -D warnings` had 16 failures nobody saw because no CI job
+  compiled the opt-in module. Items reachable only through the
+  `recompress-expert` re-export (the `aq` diagnostics, `TableId` /
+  `CellEstimate::preferred` / `CellCi::{Tight,Empty}`, `StrategyParams::ci`,
+  `SourceAnalysis` fields, `StrategyOutcome::measured_zensim_a`, the
+  `EmitConfig` builders) now carry
+  `#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]` with a
+  reason; the unwired forward `per_encoder::lookup` is documented as such and
+  the measured jpegli `*_RATIO` tables stay referenced rather than deleted; a
+  stray cast in `tests/recompress_api.rs` and a helper placed after the test
+  module in `preserve_emit.rs` are fixed. CI gains a `Clippy (recompress)` step
+  (plain `recompress`, deliberately without `-expert` so the re-export cannot
+  mask dead code). Items 1 (per-image 8-bit DQT downgrade proof) and 2
+  (`preserve_emit` smallest-trial) of #143 are still open.
 - **`target-zq` bucket detection requested the full `FeatureSet::SUPPORTED`
   analysis** (#135, as re-scoped in its triage comment): `detect_bucket`
   (`encode/zq.rs`) now requests `adaptive::BUCKET_FEATURES` — exactly the 12
