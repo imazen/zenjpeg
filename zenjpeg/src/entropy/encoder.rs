@@ -696,18 +696,19 @@ impl<'a> EntropyEncoder<'a> {
                 .as_ref()
                 .ok_or_else(|| Error::internal("DC table not set for token replay"))?;
 
-            // Write the Huffman code for the symbol
-            let (code, len) = dc_table.encode(token.symbol);
-
             // Handle symbol not in table (shouldn't happen if tokenization is
             // correct). No exemption for symbol 0: if the token stream contains
             // it, it gets emitted, and a zero-length code would write ZERO bits
-            // and silently desync the stream (sweep issue #197).
-            if len == 0 {
+            // and silently desync the stream (sweep issue #197). Checked before
+            // encode() so this returns an error instead of tripping encode()'s
+            // debug_assert.
+            if dc_table.lengths[token.symbol as usize] == 0 {
                 return Err(Error::internal(
                     "DC symbol not in Huffman table during replay - histogram may be incomplete",
                 ));
             }
+            // Write the Huffman code for the symbol
+            let (code, len) = dc_table.encode(token.symbol);
             self.writer.write_bits(code, len);
 
             // Write extra bits if any
@@ -743,35 +744,38 @@ impl<'a> EntropyEncoder<'a> {
                 next_rst += 1;
             }
 
-            // Write the Huffman code for the symbol
-            let (code, len) = ac_table.encode(token.symbol);
+            // Symbol-coverage checks BEFORE encode(), so guarded fallbacks
+            // run (and errors return) instead of tripping encode()'s
+            // debug_assert (sweep issue #197).
+            let missing = ac_table.lengths[token.symbol as usize] == 0;
 
             // Check if this is an EOB run symbol (upper nibble indicates run size)
             let is_eob_run = (token.symbol & 0x0F) == 0 && token.symbol != 0xF0;
 
-            if len == 0 && !is_eob_run && token.symbol != 0x00 {
+            if missing && !is_eob_run && token.symbol != 0x00 {
                 return Err(Error::internal(
                     "AC symbol not in Huffman table during replay",
                 ));
             }
 
             // For missing EOB run symbols, fall back to individual EOBs
-            if len == 0 && is_eob_run {
+            if missing && is_eob_run {
                 // Compute actual run: base (1 << log2) + offset (extra_bits)
                 let base = 1u16 << (token.symbol >> 4);
                 let run = base + token.extra_bits;
-                let (eob_code, eob_len) = ac_table.encode(0x00);
-                if eob_len == 0 {
+                if ac_table.lengths[0x00] == 0 {
                     // Writing a zero-length code `run` times would emit NOTHING
                     // and return Ok — silent corruption (sweep issue #197).
                     return Err(Error::internal(
                         "EOB symbol not in Huffman table during replay fallback",
                     ));
                 }
+                let (eob_code, eob_len) = ac_table.encode(0x00);
                 for _ in 0..run {
                     self.writer.write_bits(eob_code, eob_len);
                 }
             } else {
+                let (code, len) = ac_table.encode(token.symbol);
                 self.writer.write_bits(code, len);
 
                 // Write extra bits if any
@@ -820,24 +824,28 @@ impl<'a> EntropyEncoder<'a> {
             //   int symbol = t.symbol & 253;
             let masked_symbol = ref_token.symbol & 253;
 
-            // Write the Huffman code for the masked symbol
-            let (code, len) = ac_table.encode(masked_symbol);
-
             // Check if this is an EOB symbol (low nibble = 0, not ZRL)
             let is_eob = (masked_symbol & 0x0F) == 0 && masked_symbol != 0xF0;
 
-            if len == 0 && masked_symbol != 0x00 {
+            // Coverage checked BEFORE encode(), so the fallback runs (and
+            // errors return) instead of tripping encode()'s debug_assert
+            // (sweep issue #197).
+            let missing = ac_table.lengths[masked_symbol as usize] == 0;
+            // No 0x00 exemption: a missing plain-EOB routes through the
+            // is_eob arm below and errors there (writing it as zero bits
+            // would silently desync the stream).
+            if missing {
                 // Symbol not in table - for EOB runs, fall back to individual EOBs
                 if is_eob {
                     let run_bits = ref_token.symbol >> 4;
-                    let (eob_code, eob_len) = ac_table.encode(0x00);
-                    if eob_len == 0 {
+                    if ac_table.lengths[0x00] == 0 {
                         // A zero-length code would write NOTHING and return Ok —
                         // silent corruption (sweep issue #197).
                         return Err(Error::internal(
                             "EOB symbol not in Huffman table during refinement replay",
                         ));
                     }
+                    let (eob_code, eob_len) = ac_table.encode(0x00);
                     if run_bits > 0 {
                         // Get the actual run value from eobruns array; an
                         // underrun means tokenization and replay disagree.
@@ -857,6 +865,8 @@ impl<'a> EntropyEncoder<'a> {
                     return Err(Error::internal("AC refinement symbol not in Huffman table"));
                 }
             } else {
+                // Write the Huffman code for the masked symbol
+                let (code, len) = ac_table.encode(masked_symbol);
                 self.writer.write_bits(code, len);
 
                 // For EOB runs > 1, write the extra bits. The just-written
