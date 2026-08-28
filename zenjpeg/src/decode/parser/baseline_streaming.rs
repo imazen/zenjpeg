@@ -422,7 +422,11 @@ pub(super) fn decode_mcu_row(
     for mcu_x in 0..mcu_cols {
         if restart_interval > 0 && state.mcu_count > 0 && state.mcu_count % restart_interval == 0 {
             decoder.align_to_byte();
-            decoder.read_restart_marker(state.next_restart_num)?;
+            if !decoder.read_restart_marker_tolerant(state.next_restart_num)?
+                && state.streaming_truncation_mcu.is_none()
+            {
+                state.streaming_truncation_mcu = Some(state.mcu_count);
+            }
             state.next_restart_num = (state.next_restart_num + 1) & 7;
             decoder.reset_dc();
             state.prev_coeff_counts = [64; 4];
@@ -443,11 +447,15 @@ pub(super) fn decode_mcu_row(
                     )? {
                         ScanRead::Value(c) => c,
                         ScanRead::EndOfScan | ScanRead::Truncated => {
+                            // Fall through with a zero block so the strip gets the
+                            // documented zero fill — `continue` left whatever the
+                            // previous MCU row had put there in the output (#92).
                             if state.streaming_truncation_mcu.is_none() {
                                 state.streaming_truncation_mcu = Some(state.mcu_count);
                             }
                             state.prev_coeff_counts[*comp_idx] = 64;
-                            continue;
+                            state.coeffs = [0i16; DCT_BLOCK_SIZE];
+                            1
                         }
                     };
                     state.prev_coeff_counts[*comp_idx] =

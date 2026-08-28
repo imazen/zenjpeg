@@ -1076,7 +1076,8 @@ impl<'a> ScanlineReader<'a> {
                     && self.mcu_count % self.restart_interval as u32 == 0
                 {
                     decoder.align_to_byte();
-                    decoder.read_restart_marker(self.next_restart_num)?;
+                    // A cut at the boundary: the blocks below decode `Truncated`.
+                    let _ = decoder.read_restart_marker_tolerant(self.next_restart_num)?;
                     self.next_restart_num = (self.next_restart_num + 1) & 7;
                     decoder.reset_dc();
                     self.prev_coeff_counts = [64; 4];
@@ -1215,7 +1216,9 @@ impl<'a> ScanlineReader<'a> {
                 && self.mcu_count % self.restart_interval as u32 == 0
             {
                 decoder.align_to_byte();
-                decoder.read_restart_marker(self.next_restart_num)?;
+                // A cut at the boundary: the blocks below decode `Truncated`
+                // and are emitted as zero blocks.
+                let _ = decoder.read_restart_marker_tolerant(self.next_restart_num)?;
                 self.next_restart_num = (self.next_restart_num + 1) & 7;
                 decoder.reset_dc();
                 self.prev_coeff_counts = [64; 4];
@@ -1242,8 +1245,12 @@ impl<'a> ScanlineReader<'a> {
                         )? {
                             ScanRead::Value(c) => c,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
+                                // Emit the documented zero block. `continue`
+                                // skipped the IDCT and served whatever the
+                                // previous MCU row had left in the strip (#92).
                                 self.prev_coeff_counts[comp_idx] = 64;
-                                continue;
+                                self.coeffs_buf = [0i16; 64];
+                                1
                             }
                         };
                         self.prev_coeff_counts[comp_idx] =
@@ -1695,7 +1702,9 @@ impl<'a> ScanlineReader<'a> {
                 && self.mcu_count % self.restart_interval as u32 == 0
             {
                 decoder.align_to_byte();
-                decoder.read_restart_marker(self.next_restart_num)?;
+                // A cut at the boundary: the blocks below decode `Truncated`
+                // and are emitted as zero blocks.
+                let _ = decoder.read_restart_marker_tolerant(self.next_restart_num)?;
                 self.next_restart_num = (self.next_restart_num + 1) & 7;
                 decoder.reset_dc();
                 self.prev_coeff_counts = [64; 4];
@@ -1718,8 +1727,12 @@ impl<'a> ScanlineReader<'a> {
                         )? {
                             ScanRead::Value(c) => c,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
+                                // Emit the documented zero block. `continue`
+                                // skipped the IDCT and served whatever the
+                                // previous MCU row had left in the strip (#92).
                                 self.prev_coeff_counts[comp_idx] = 64;
-                                continue;
+                                self.coeffs_buf = [0i16; 64];
+                                1
                             }
                         };
                         self.prev_coeff_counts[comp_idx] =

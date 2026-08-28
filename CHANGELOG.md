@@ -226,6 +226,49 @@ All notable changes to zenjpeg are documented here. Earlier history
   pixel-identical under `Balanced`, and any prefix that lost scan data
   carries a `Truncated*` warning. Progressive fixtures fail at prefix 364 of
   881 before the fix.
+- **Truncated scans no longer decode phantom data past the cut** (#92). The
+  bit reader zero-extended past the END OF THE DATA exactly as it does at a
+  marker, so every decode path kept "decoding" the rest of a cut scan out of
+  synthetic zero bits: each block below the cut became whatever symbol the
+  all-zero code maps to (an optimized AC table's `0x01` → a `-1 << al`
+  coefficient in every block; 66k phantom coefficients on one 800×600
+  progressive prefix), and a cut mid-symbol handed the residual bits to the
+  NEXT block as its DC. Now: past the data with no marker the reader serves
+  only the real bits (`BitReader::starved` flags the first read that asked
+  for more), `Truncated` drops the unfinished residue, and the AC-refinement
+  scan returns "not complete" instead of finishing a code/sign bit against
+  zeros. Zero-extension at a *marker* is unchanged (a conformant segment's
+  last symbol still decodes against padding). Consequences that were also
+  bugs: the streaming baseline paths `continue`d past a truncated block and
+  shipped whatever the previous MCU row had left in the strip (now the
+  documented zero block); the speculative padding-block arm rewound on
+  `Truncated` as if the encoder had omitted the block; a cut exactly at a
+  restart-marker boundary errored (`read_restart_marker_tolerant`: a stream
+  that ENDS where the marker belongs is a truncation, wrong bytes there are
+  still corruption); `scan_rst_markers` reported `entropy_end = len - 1` on a
+  marker-less tail (the last byte carries coded bits) and did not re-examine
+  the second `0xFF` of a fill run as a marker prefix; and the fused parallel
+  4:2:0 fancy path (`--features parallel`) left the junction below the cut
+  unblended and, because the last present segment nominally ran to the end
+  of the image, saved a grey row as its boundary — the fused output differed
+  from sequential on the two pixel rows around the cut. Gates, all in
+  `tests/decode_truncation.rs`: coefficient-domain monotone convergence over
+  EVERY byte prefix (a coefficient may never move away from its final value
+  — the phantom-data detector), zero fill two MCU rows below a baseline cut,
+  the issue's 8-chunk progressive-arrival simulation (each arrival strictly
+  improves at least one coefficient, pixel RMS-to-final non-increasing,
+  final arrival byte-identical to one-shot), and fused-parallel vs
+  sequential byte-identity over 257 spread cuts + 512 consecutive cuts
+  through two DRI fixtures; plus `foundation::bitstream::tests` for the
+  reader contract and `rst_scan::tests` for the scanner. This supersedes the
+  issue's proposal 3 (per-scan rollback): a partially received progressive
+  scan now contributes exactly the bits that arrived and nothing invented,
+  which is the libjpeg-turbo partial-scan behaviour the issue called the
+  more expensive option. Hot-path cost: none measured — `decode_zenbench`
+  `progressive_4:2:0_Q85` (10 CID22 512² images, 200 rounds, interleaved
+  with mozjpeg as the reference lane; M-series laptop shared with another
+  build agent, so only the ratio is meaningful): before, zenjpeg 12.6 ±0.5
+  ms at +9.5%..+13.2% vs mozjpeg; after, 11.8 ±0.3 ms at +1.9%..+5.2%.
 
 ### Added
 

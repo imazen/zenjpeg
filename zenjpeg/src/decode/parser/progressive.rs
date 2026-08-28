@@ -181,7 +181,10 @@ fn decode_dc_scan_non_interleaved(
                     buf.extend_from_slice(&decoder.partial_byte_padding_bits());
                 }
                 decoder.align_to_byte();
-                decoder.read_restart_marker(next_restart_num)?;
+                if !decoder.read_restart_marker_tolerant(next_restart_num)? {
+                    had_progressive_truncation = true;
+                    break 'ni_dc;
+                }
                 next_restart_num = (next_restart_num + 1) & 7;
                 decoder.reset_dc();
             }
@@ -250,7 +253,10 @@ fn decode_dc_scan_interleaved(
                     buf.extend_from_slice(&decoder.partial_byte_padding_bits());
                 }
                 decoder.align_to_byte();
-                decoder.read_restart_marker(next_restart_num)?;
+                if !decoder.read_restart_marker_tolerant(next_restart_num)? {
+                    had_progressive_truncation = true;
+                    break 'dc_scan;
+                }
                 next_restart_num = (next_restart_num + 1) & 7;
                 decoder.reset_dc();
             }

@@ -370,6 +370,12 @@ pub struct BitReader<'a> {
     marker_found: Option<u8>,
     /// Number of bytes we've over-read past end of data
     overread_by: usize,
+    /// Set once a read asked for a bit the stream no longer had — past the
+    /// end of the data with no marker in sight, i.e. a truncated scan. Reads
+    /// that hit a *marker* are not starved: the entropy segment ended where
+    /// the encoder said it would, and the zero-extension there is the usual
+    /// "decode the last symbol against zero padding" tolerance.
+    starved: bool,
     /// When true, accept any RST marker instead of requiring exact sequence.
     permissive_rst: bool,
     /// Count of RST marker resyncs (wrong number accepted or forward-scanned).
@@ -384,6 +390,7 @@ pub struct BitReaderState {
     bits_in_buffer: u8,
     marker_found: Option<u8>,
     overread_by: usize,
+    starved: bool,
     permissive_rst: bool,
     rst_resync_count: u32,
 }
@@ -423,6 +430,7 @@ impl<'a> BitReader<'a> {
             bits_in_buffer: 0,
             marker_found: None,
             overread_by: 0,
+            starved: false,
             permissive_rst: false,
             rst_resync_count: 0,
         }
@@ -503,12 +511,28 @@ impl<'a> BitReader<'a> {
             return true;
         }
 
-        // If we've found a marker or are overreading, extend with zeros.
-        // The freed positions in aligned_buffer are already 0 (from left-shifts),
-        // so we just claim more bits without modifying the buffer.
-        if self.marker_found.is_some() || self.overread_by > 0 {
+        // At a marker, extend with zeros: the entropy-coded segment ended
+        // where the encoder said it would, and a conformant stream's last
+        // symbol always fits in the real bits, so the padding only ever
+        // feeds a peek. The freed positions in aligned_buffer are already 0
+        // (from left-shifts), so we just claim more bits without modifying
+        // the buffer.
+        //
+        // Past the END OF THE DATA with no marker (a truncated scan) we do
+        // NOT fabricate bits. Zero-extending there let every decode path
+        // keep "decoding" the rest of the scan out of nothing: each block
+        // below the cut turned into whatever symbol the all-zero code maps
+        // to (an optimized AC table's `0x01` → a `-1 << al` coefficient in
+        // every block, 66k phantom coefficients on a 800×600 progressive
+        // prefix — #92). With no synthetic bits, `bits_available()` is the
+        // real count, the guarded fast paths fall back to the bit-by-bit
+        // decoders, and those report `Truncated` exactly at the last real bit.
+        if self.marker_found.is_some() {
             self.bits_in_buffer = self.bits_in_buffer.saturating_add(32).min(64);
             return true;
+        }
+        if self.overread_by > 0 {
+            return self.bits_in_buffer > 0;
         }
 
         // Try fast 8-byte path first when we have room for 5+ bytes.
@@ -579,6 +603,9 @@ impl<'a> BitReader<'a> {
         if self.bits_in_buffer == 0 {
             let _ = self.refill();
             if self.bits_in_buffer == 0 {
+                // Only reachable past the end of the data (a marker would
+                // have zero-extended the buffer): the scan is truncated.
+                self.starved = true;
                 return 0;
             }
         }
@@ -800,6 +827,7 @@ impl<'a> BitReader<'a> {
             bits_in_buffer: self.bits_in_buffer,
             marker_found: self.marker_found,
             overread_by: self.overread_by,
+            starved: self.starved,
             permissive_rst: self.permissive_rst,
             rst_resync_count: self.rst_resync_count,
         }
@@ -812,6 +840,7 @@ impl<'a> BitReader<'a> {
         self.bits_in_buffer = state.bits_in_buffer;
         self.marker_found = state.marker_found;
         self.overread_by = state.overread_by;
+        self.starved = state.starved;
         self.permissive_rst = state.permissive_rst;
         self.rst_resync_count = state.rst_resync_count;
     }
@@ -827,11 +856,12 @@ impl<'a> BitReader<'a> {
         // Clear the marker_found flag since we're explicitly reading the marker
         self.marker_found = None;
 
-        // Read first byte - should be 0xFF
+        // Read first byte - should be 0xFF. Running out of data here is a
+        // truncated stream (a cut at a restart-interval boundary), not
+        // corruption: callers recover it the same way as a cut mid-segment.
         if self.position >= self.data.len() {
-            return Err(Error::invalid_jpeg_data(
-                "unexpected end of data before restart marker",
-            ));
+            self.starved = true;
+            return Err(Error::truncated_data("restart marker"));
         }
         let first = self.data[self.position];
         if first != 0xFF {
@@ -845,9 +875,8 @@ impl<'a> BitReader<'a> {
 
         // Read second byte - should be 0xD0 + expected_num
         if self.position >= self.data.len() {
-            return Err(Error::invalid_jpeg_data(
-                "unexpected end of data in restart marker",
-            ));
+            self.starved = true;
+            return Err(Error::truncated_data("restart marker"));
         }
         let second = self.data[self.position];
         let expected_marker = 0xD0 + (expected_num & 7);
@@ -955,15 +984,33 @@ impl<'a> BitReader<'a> {
         self.bits_in_buffer
     }
 
+    /// Whether any read has asked for bits past the end of the data with no
+    /// marker present — the truncated-scan signal. Once set it stays set
+    /// (until [`restore_state`](Self::restore_state) rewinds past it), so a
+    /// scan decoder can check it once at the end instead of after every
+    /// [`read_bit_refine`](Self::read_bit_refine).
+    #[must_use]
+    pub fn starved(&self) -> bool {
+        self.starved
+    }
+
     /// Returns the appropriate end state based on why we stopped reading.
     ///
     /// - `EndOfScan` if a marker was found (legitimate end of entropy-coded segment)
     /// - `Truncated` if data ended without finding a marker
+    ///
+    /// `Truncated` also drops whatever bits were still buffered: they are the
+    /// head of a symbol or value the stream never finished, and leaving them
+    /// let the NEXT block decode them as its own DC (#92 — a truncated
+    /// baseline prefix showed a DC that exists in no version of the stream).
     #[inline]
-    fn end_state<T>(&self) -> ScanRead<T> {
+    fn end_state<T>(&mut self) -> ScanRead<T> {
         if self.marker_found.is_some() {
             ScanRead::EndOfScan
         } else {
+            self.starved = true;
+            self.bits_in_buffer = 0;
+            self.aligned_buffer = 0;
             ScanRead::Truncated
         }
     }
@@ -972,6 +1019,98 @@ impl<'a> BitReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #92: past the end of the data with no marker, the reader must not
+    /// fabricate bits — every decode path keyed "phantom" symbols off the
+    /// zero-extension that used to happen here.
+    #[test]
+    fn eof_without_marker_serves_only_real_bits() {
+        let data = [0b1010_1100u8, 0b1111_0000];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(
+            reader.read_bits(12).unwrap(),
+            ScanRead::Value(0b1010_1100_1111)
+        );
+        assert!(!reader.starved());
+        // 4 real bits left: a 9-bit peek must fail rather than pad.
+        assert_eq!(reader.peek_bits_refill(9), None);
+        assert_eq!(reader.bits_available(), 4);
+        assert!(!reader.ensure_bits());
+        assert_eq!(
+            reader.bits_available(),
+            4,
+            "ensure_bits must not invent bits at EOF"
+        );
+        assert_eq!(reader.read_bits(4).unwrap(), ScanRead::Value(0));
+        assert_eq!(reader.bits_available(), 0);
+        assert!(
+            !reader.starved(),
+            "reading exactly the real bits is not starvation"
+        );
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Truncated);
+        assert!(reader.starved());
+        assert_eq!(reader.read_bit_refine(), 0);
+        assert!(reader.starved());
+    }
+
+    /// A read that needs more bits than the data has left is `Truncated`
+    /// AND consumes the residue: the leftover bits are the head of something
+    /// the stream never finished, not the start of the next symbol.
+    #[test]
+    fn truncated_read_drops_the_residual_bits() {
+        // Not 0xFF: a lone 0xFF is a marker prefix and loads no bits at all.
+        let data = [0b1110_0101u8];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(3).unwrap(), ScanRead::Value(0b111));
+        assert_eq!(reader.bits_available(), 5);
+        assert_eq!(reader.read_bits(6).unwrap(), ScanRead::Truncated);
+        assert_eq!(
+            reader.bits_available(),
+            0,
+            "residue must not be served to a later read"
+        );
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Truncated);
+        assert_eq!(reader.read_bit_refine(), 0);
+    }
+
+    /// At a marker the zero-extension stays: the last symbol of a conformant
+    /// segment is decoded against padding, and `EndOfScan` (not `Truncated`)
+    /// is the end state. `starved` never fires on a marker.
+    #[test]
+    fn marker_still_zero_extends_and_is_not_starvation() {
+        let data = [0b1010_1100u8, 0xFF, 0xD9];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0b1010_1100));
+        assert_eq!(reader.peek_bits_refill(9), Some(0));
+        assert!(reader.bits_available() >= 9);
+        assert_eq!(reader.marker_found(), Some(0xD9));
+        assert_eq!(reader.read_bit_refine(), 0);
+        assert!(!reader.starved());
+        // Drain the padding: the reader keeps zero-extending at a marker
+        // (reads never fail there), and the end state is the marker, not
+        // truncation.
+        while reader.bits_available() > 0 {
+            reader.skip_bits(reader.bits_available());
+        }
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0));
+        assert_eq!(reader.end_state::<u32>(), ScanRead::EndOfScan);
+        assert!(!reader.starved());
+    }
+
+    /// `restore_state` rewinds the starvation flag with everything else
+    /// (speculative padding-block decodes roll back through it).
+    #[test]
+    fn restore_state_rewinds_starvation() {
+        let data = [0xA5u8];
+        let mut reader = BitReader::new(&data);
+        let saved = reader.save_state();
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xA5));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Truncated);
+        assert!(reader.starved());
+        reader.restore_state(saved);
+        assert!(!reader.starved());
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xA5));
+    }
 
     #[test]
     fn test_write_read_bits() {

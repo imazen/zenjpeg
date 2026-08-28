@@ -395,8 +395,14 @@ impl<'a> JpegParser<'a> {
                     }
                     // Align to byte boundary (discard padding bits)
                     decoder.align_to_byte();
-                    // Read and verify restart marker
-                    decoder.read_restart_marker(next_restart_num)?;
+                    // Read and verify restart marker. A stream that ends here
+                    // is a cut at the segment boundary: record it, and let the
+                    // blocks below come back `Truncated` into the zero fill.
+                    if !decoder.read_restart_marker_tolerant(next_restart_num)?
+                        && truncation_mcu.is_none()
+                    {
+                        truncation_mcu = Some(mcu_count);
+                    }
                     // Update expected marker number (cycles 0-7)
                     next_restart_num = (next_restart_num + 1) & 7;
                     // Reset DC predictors
@@ -470,12 +476,27 @@ impl<'a> JpegParser<'a> {
                                             self.coeff_counts[info.comp_idx][block_idx] = count;
                                             prev_coeff_counts[info.comp_idx] = count;
                                         }
-                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                        Ok(ScanRead::EndOfScan) => {
+                                            // The encoder omitted this padding block:
+                                            // rewind so the next block reads these bits.
                                             decoder.restore_state(saved_state);
                                             self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
                                             self.coeff_counts[info.comp_idx][block_idx] = 1;
                                             prev_coeff_counts[info.comp_idx] = 64;
                                             had_padding_error = true;
+                                        }
+                                        Ok(ScanRead::Truncated) => {
+                                            // The data ended inside this padding block: a
+                                            // cut is a cut wherever it lands. Rewinding here
+                                            // handed this block's bits to the NEXT block,
+                                            // which then decoded a DC/AC set that exists in
+                                            // no version of the stream (#92).
+                                            if truncation_mcu.is_none() {
+                                                truncation_mcu = Some(mcu_count);
+                                            }
+                                            self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                            self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                            prev_coeff_counts[info.comp_idx] = 64;
                                         }
                                         Err(_e) => {
                                             decoder.restore_state(saved_state);
@@ -773,7 +794,11 @@ impl<'a> JpegParser<'a> {
                 // Check for restart marker
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
                     decoder.align_to_byte();
-                    decoder.read_restart_marker(next_restart_num)?;
+                    if !decoder.read_restart_marker_tolerant(next_restart_num)?
+                        && streaming_truncation_mcu.is_none()
+                    {
+                        streaming_truncation_mcu = Some(mcu_count);
+                    }
                     next_restart_num = (next_restart_num + 1) & 7;
                     decoder.reset_dc();
                     prev_coeff_counts = [64; 4]; // Force full zero after restart
@@ -791,12 +816,16 @@ impl<'a> JpegParser<'a> {
                     )? {
                         ScanRead::Value(c) => c,
                         ScanRead::EndOfScan | ScanRead::Truncated => {
-                            // Truncation: record for warning, Strict will error after loop
+                            // Truncation: record for warning, Strict will error after loop.
+                            // Fall through with a zero block so the strip gets the
+                            // documented zero fill — `continue` left whatever the
+                            // previous MCU row had put there in the output (#92).
                             if streaming_truncation_mcu.is_none() {
                                 streaming_truncation_mcu = Some(mcu_count);
                             }
                             prev_coeff_counts[*comp_idx] = 64;
-                            continue;
+                            coeffs = [0i16; DCT_BLOCK_SIZE];
+                            1
                         }
                     };
                     // Track maximum, not just previous, for reusable buffer correctness

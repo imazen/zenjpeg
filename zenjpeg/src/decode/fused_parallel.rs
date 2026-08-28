@@ -531,8 +531,12 @@ impl<'a> JpegParser<'a> {
 
                 // Truncated files may have fewer restart segments than expected,
                 // leaving trailing RGB chunks with no data to decode. Return empty
-                // warnings — the RGB chunk remains zeroed (black).
+                // warnings — the RGB chunk is the zero-block grey.
                 if first_raw >= num_raw_segments {
+                    // Fill with the neutral grey a zero block decodes to, so a
+                    // missing trailing segment matches the sequential path's
+                    // zero fill (it used to stay black).
+                    rgb_chunk.fill(128);
                     return Ok(SegmentWarnings {
                         had_ac_overflow: false,
                         had_invalid_huffman: false,
@@ -644,8 +648,14 @@ impl<'a> JpegParser<'a> {
                                 *ac_table as usize,
                             ) {
                                 Ok(ScanRead::Value(c)) => c,
-                                Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                    if let Some(state) = padding_state {
+                                Ok(end @ (ScanRead::EndOfScan | ScanRead::Truncated)) => {
+                                    // A marker inside a padding block means the encoder omitted
+                                    // it: rewind and let the next block read those bits. A cut
+                                    // (`Truncated`) is a cut wherever it lands — rewinding would
+                                    // hand the padding block's bits to the NEXT block (#92).
+                                    if let Some(state) = padding_state
+                                        && matches!(end, ScanRead::EndOfScan)
+                                    {
                                         decoder.restore_state(state);
                                         coeffs_buf = [0i16; 64];
                                         had_padding_error = true;
@@ -862,6 +872,10 @@ impl<'a> JpegParser<'a> {
                 // Truncated files may have fewer restart segments than expected,
                 // leaving trailing RGB chunks with no data to decode.
                 if first_raw >= num_raw_segments {
+                    // Fill with the neutral grey a zero block decodes to, so a
+                    // missing trailing segment matches the sequential path's
+                    // zero fill (it used to stay black).
+                    rgb_chunk.fill(128);
                     return Ok(SegmentWarnings {
                         had_ac_overflow: false,
                         had_invalid_huffman: false,
@@ -984,8 +998,14 @@ impl<'a> JpegParser<'a> {
                                         *ac_table as usize,
                                     ) {
                                         Ok(ScanRead::Value(c)) => c,
-                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                            if let Some(state) = padding_state {
+                                        Ok(end @ (ScanRead::EndOfScan | ScanRead::Truncated)) => {
+                                            // A marker inside a padding block means the encoder omitted
+                                            // it: rewind and let the next block read those bits. A cut
+                                            // (`Truncated`) is a cut wherever it lands — rewinding would
+                                            // hand the padding block's bits to the NEXT block (#92).
+                                            if let Some(state) = padding_state
+                                                && matches!(end, ScanRead::EndOfScan)
+                                            {
                                                 decoder.restore_state(state);
                                                 coeffs_buf = [0i16; 64];
                                                 had_padding_error = true;
@@ -1188,6 +1208,10 @@ impl<'a> JpegParser<'a> {
                 // Truncated files may have fewer restart segments than expected,
                 // leaving trailing RGB chunks with no data to decode.
                 if first_raw >= num_raw_segments {
+                    // Fill with the neutral grey a zero block decodes to, so a
+                    // missing trailing segment matches the sequential path's
+                    // zero fill (it used to stay black).
+                    rgb_chunk.fill(128);
                     return Ok(SegmentWarnings {
                         had_ac_overflow: false,
                         had_invalid_huffman: false,
@@ -1336,8 +1360,14 @@ impl<'a> JpegParser<'a> {
                                         *ac_table as usize,
                                     ) {
                                         Ok(ScanRead::Value(c)) => c,
-                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                            if let Some(state) = padding_state {
+                                        Ok(end @ (ScanRead::EndOfScan | ScanRead::Truncated)) => {
+                                            // A marker inside a padding block means the encoder omitted
+                                            // it: rewind and let the next block read those bits. A cut
+                                            // (`Truncated`) is a cut wherever it lands — rewinding would
+                                            // hand the padding block's bits to the NEXT block (#92).
+                                            if let Some(state) = padding_state
+                                                && matches!(end, ScanRead::EndOfScan)
+                                            {
                                                 decoder.restore_state(state);
                                                 coeffs_buf = [0i16; 64];
                                                 had_padding_error = true;
@@ -1575,6 +1605,29 @@ impl<'a> JpegParser<'a> {
                 // Truncated files may have fewer restart segments than expected,
                 // leaving trailing RGB chunks with no data to decode.
                 if first_raw >= num_raw_segments {
+                    // Fill with the neutral grey a zero block decodes to, so a
+                    // missing trailing segment matches the sequential path's
+                    // zero fill (it used to stay black).
+                    rgb_chunk.fill(128);
+                    // The zero blocks still have chroma (128) that the fixup
+                    // pass below blends into the last real segment's bottom
+                    // row and this segment's top row — exactly as the
+                    // sequential path's fancy upsampler sees them. Without
+                    // these boundaries the junction stayed unblended and the
+                    // fused output differed from sequential on the first
+                    // pixel row below the cut (#92).
+                    let expected_raw = mcu_rows.div_ceil(mcu_rows_per_ri);
+                    let boundaries: Vec<SegmentBoundary> = (first_raw
+                        ..((group_idx + 1) * group_stride).min(expected_raw))
+                        .map(|_| SegmentBoundary {
+                            first_cb_row: vec![128i16; c_strip_width],
+                            first_cr_row: vec![128i16; c_strip_width],
+                            last_cb_row: vec![128i16; c_strip_width],
+                            last_cr_row: vec![128i16; c_strip_width],
+                            first_y_row: vec![128i16; y_strip_width],
+                            last_y_row: vec![128i16; y_strip_width],
+                        })
+                        .collect();
                     return Ok((
                         SegmentWarnings {
                             had_ac_overflow: false,
@@ -1582,7 +1635,7 @@ impl<'a> JpegParser<'a> {
                             truncation_mcu: None,
                             had_padding_error: false,
                         },
-                        Vec::new(),
+                        boundaries,
                     ));
                 }
 
@@ -1686,6 +1739,16 @@ impl<'a> JpegParser<'a> {
                     let seg_data = &scan_data[seg_starts[raw_idx]..seg_ends[raw_idx]];
                     let (mcu_start, mcu_end) =
                         Self::segment_mcu_range(raw_idx, num_raw_segments, ri, 1, total_mcus);
+                    // The last raw segment nominally runs to the end of the
+                    // image. This chunk only holds this group's MCU rows, and
+                    // the boundary rows saved below must come from the last
+                    // row IN the chunk — on a truncated stream (fewer segments
+                    // than the image needs) the unclamped range decoded every
+                    // remaining row as zero blocks into the void and saved the
+                    // last of THOSE as the boundary, so the fixup pass blended
+                    // the junction against grey instead of real data (#92).
+                    let mcu_end =
+                        mcu_end.min(((group_idx + 1) * group_stride * ri).min(total_mcus));
 
                     let mut decoder = Self::setup_segment_decoder(
                         seg_data,
@@ -1750,8 +1813,16 @@ impl<'a> JpegParser<'a> {
                                             *ac_table as usize,
                                         ) {
                                             Ok(ScanRead::Value(c)) => c,
-                                            Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                                if let Some(state) = padding_state {
+                                            Ok(
+                                                end @ (ScanRead::EndOfScan | ScanRead::Truncated),
+                                            ) => {
+                                                // A marker inside a padding block means the encoder omitted
+                                                // it: rewind and let the next block read those bits. A cut
+                                                // (`Truncated`) is a cut wherever it lands — rewinding would
+                                                // hand the padding block's bits to the NEXT block (#92).
+                                                if let Some(state) = padding_state
+                                                    && matches!(end, ScanRead::EndOfScan)
+                                                {
                                                     decoder.restore_state(state);
                                                     coeffs_buf = [0i16; 64];
                                                     had_padding_error = true;
@@ -2467,8 +2538,14 @@ impl WaveParallelState {
                                     *ac_table as usize,
                                 ) {
                                     Ok(ScanRead::Value(c)) => c,
-                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                        if let Some(state) = padding_state {
+                                    Ok(end @ (ScanRead::EndOfScan | ScanRead::Truncated)) => {
+                                        // A marker inside a padding block means the encoder omitted
+                                        // it: rewind and let the next block read those bits. A cut
+                                        // (`Truncated`) is a cut wherever it lands — rewinding would
+                                        // hand the padding block's bits to the NEXT block (#92).
+                                        if let Some(state) = padding_state
+                                            && matches!(end, ScanRead::EndOfScan)
+                                        {
                                             decoder.restore_state(state);
                                             coeffs_buf = [0i16; 64];
                                             had_padding_error = true;
@@ -2779,8 +2856,14 @@ impl WaveParallelState {
                                     *ac_table as usize,
                                 ) {
                                     Ok(ScanRead::Value(c)) => c,
-                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                        if let Some(state) = padding_state {
+                                    Ok(end @ (ScanRead::EndOfScan | ScanRead::Truncated)) => {
+                                        // A marker inside a padding block means the encoder omitted
+                                        // it: rewind and let the next block read those bits. A cut
+                                        // (`Truncated`) is a cut wherever it lands — rewinding would
+                                        // hand the padding block's bits to the NEXT block (#92).
+                                        if let Some(state) = padding_state
+                                            && matches!(end, ScanRead::EndOfScan)
+                                        {
                                             decoder.restore_state(state);
                                             coeffs_buf = [0i16; 64];
                                             had_padding_error = true;
