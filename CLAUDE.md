@@ -594,6 +594,7 @@ Four levels controlling error tolerance during decode:
 |----------|--------|----------|---------|------------|
 | Non-JFIF markers | Error | Warn | Warn | Warn |
 | Truncated data | Error | Pad zeros | Pad zeros | Pad zeros |
+| AC run past block | Error | Warn (EOB) | Warn (EOB) | Warn (EOB) |
 | Bad restart count | Error | Error | Warn | Resync fwd |
 | RST sequence wrong | Error | Error | Error | Accept any |
 | Zero quant value | Error | Clamp to 1 | Clamp to 1 | Clamp to 1 |
