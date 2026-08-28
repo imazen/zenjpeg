@@ -1,8 +1,13 @@
 //! Truncation fuzzer (#92): the decoder must accept ANY prefix of a JPEG
 //! byte stream without panicking, and whatever it returns must be
 //! self-consistent — an `Ok` carries the header's dimensions, and once a
-//! prefix decodes, every longer prefix of the same stream must decode too
-//! (more bytes can never turn a partial image back into an error).
+//! prefix decodes, a longer prefix must never fail with a *truncation*
+//! error (more bytes can never turn a partial image back into "not enough
+//! bytes"). When the whole input decodes — so every prefix is a pure
+//! truncation of a clean stream — a longer prefix must not fail at all.
+//! A longer prefix of a mutated stream MAY fail with a corruption error
+//! (`Balanced` rejects bad Huffman data by design; see `Strictness`): the
+//! extra bytes revealed the corruption, they did not un-decode the prefix.
 //!
 //! The differential half: whenever `Strict` accepts a prefix, the default
 //! (`Balanced`) decode of that prefix yields the identical pixmap.
@@ -13,7 +18,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use zenjpeg::decoder::{Decoder, Strictness};
+use zenjpeg::decoder::{Decoder, ErrorKind, Strictness};
 
 const MAX_PX: u64 = 1_000_000;
 
@@ -34,6 +39,8 @@ fuzz_target!(|data: &[u8]| {
             .decode(&data[..len], enough::Unstoppable)
             .is_ok()
     };
+    // Every prefix of a stream that decodes in full is a pure truncation.
+    let clean_stream = ok_at(n);
 
     let mut sorted = cuts;
     sorted.sort_unstable();
@@ -63,11 +70,15 @@ fuzz_target!(|data: &[u8]| {
             }
         } else if let Some(f) = first_ok {
             // Monotone: a longer prefix of a stream that already decoded
-            // must still decode.
+            // must never come back as "not enough data", and on a clean
+            // stream must still decode outright.
+            let err = full.as_ref().err();
+            let is_truncation = err
+                .map(|e| matches!(e.kind(), ErrorKind::TruncatedData { .. }))
+                .unwrap_or(false);
             assert!(
-                !ok_at(f),
-                "prefix {f} decoded but longer prefix {len} errored: {:?}",
-                full.err()
+                !(is_truncation || clean_stream) || !ok_at(f),
+                "prefix {f} decoded but longer prefix {len} errored (clean stream: {clean_stream}): {err:?}"
             );
         }
     }

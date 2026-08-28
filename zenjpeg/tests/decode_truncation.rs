@@ -101,7 +101,54 @@ fn fixtures() -> Vec<(String, Vec<u8>)> {
             EncoderConfig::ycbcr(80.0, ChromaSubsampling::None).progressive(false),
             true,
         ),
+        // Metadata segments AFTER scan data: a trailing COM before EOI (the
+        // shape of MPF / Ultra HDR trailers) and a COM between two
+        // progressive scans. A cut inside such a segment used to error with
+        // "segment length exceeds data" (InvalidJpegData) while shorter and
+        // longer prefixes decoded — found by fuzz_truncation (#92).
+        {
+            let (name, jpeg) = fixture(
+                "baseline-444-com-before-eoi",
+                w,
+                h,
+                EncoderConfig::ycbcr(80.0, ChromaSubsampling::None).progressive(false),
+                false,
+            );
+            let at = jpeg.len() - 2;
+            (name, with_com_at(&jpeg, at))
+        },
+        {
+            let (name, jpeg) = fixture(
+                "progressive-420-com-between-scans",
+                w,
+                h,
+                EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter).progressive(true),
+                false,
+            );
+            let second_sos = jpeg
+                .windows(2)
+                .enumerate()
+                .filter(|(_, m)| *m == [0xFF, 0xDA])
+                .nth(1)
+                .map(|(i, _)| i)
+                .expect("progressive fixture has a second SOS");
+            (name, with_com_at(&jpeg, second_sos))
+        },
     ]
+}
+
+/// Insert a 40-byte COM segment (marker + length + 36 payload bytes) at
+/// byte offset `at`, which must be a marker boundary.
+fn with_com_at(jpeg: &[u8], at: usize) -> Vec<u8> {
+    assert_eq!(jpeg[at], 0xFF, "COM must be inserted at a marker boundary");
+    let payload = b"zenjpeg #92 trailer-segment fixture!";
+    assert_eq!(payload.len(), 36);
+    let mut out = Vec::with_capacity(jpeg.len() + 40);
+    out.extend_from_slice(&jpeg[..at]);
+    out.extend_from_slice(&[0xFF, 0xFE, 0x00, 38]);
+    out.extend_from_slice(payload);
+    out.extend_from_slice(&jpeg[at..]);
+    out
 }
 
 /// MCU size in pixels for a fixture, by name.
@@ -476,5 +523,69 @@ fn fused_parallel_truncation_matches_sequential() {
             }
         }
         assert!(ok_seen, "{name}: no cut ever decoded");
+    }
+}
+
+/// Inputs `fuzz_truncation` found on the fixed decoder (#92), kept as
+/// regression seeds. Each is a mutated JPEG that decodes in full under
+/// `Balanced`, where some prefix decoded but a longer prefix came back as a
+/// *corruption* error: a cut inside a trailing COM (`segment length exceeds
+/// data`), a cut that forced the bit-by-bit AC path onto a run past the
+/// block that the fast_ac path had always tolerated, a restart-marker
+/// resync that ran to the end of the data (`could not resync`), and a cut
+/// inside an over-long DRI body. The contract is the fuzz target's: once a
+/// prefix decodes, a longer prefix must never fail with `TruncatedData`,
+/// and on a stream that decodes in full it must not fail at all.
+#[test]
+fn fuzz_found_prefix_regressions() {
+    use zenjpeg::decoder::ErrorKind;
+    let seeds: [(&str, &[u8]); 4] = [
+        (
+            "cut-inside-trailing-segment",
+            include_bytes!("../fuzz/regression/truncation-cut-inside-trailing-segment"),
+        ),
+        (
+            "ac-overflow-slow-path",
+            include_bytes!("../fuzz/regression/truncation-ac-overflow-slow-path"),
+        ),
+        (
+            "rst-resync-to-eof",
+            include_bytes!("../fuzz/regression/truncation-rst-resync-to-eof"),
+        ),
+        (
+            "cut-inside-dri-body",
+            include_bytes!("../fuzz/regression/truncation-cut-inside-dri-body"),
+        ),
+    ];
+    for (name, data) in seeds {
+        let decode = |len: usize| Decoder::new().decode(&data[..len], Unstoppable);
+        let clean = decode(data.len()).is_ok();
+        assert!(
+            clean,
+            "{name}: seed no longer decodes in full (the seed's premise)"
+        );
+        let mut first_ok: Option<usize> = None;
+        for n in 0..=data.len() {
+            match decode(n) {
+                Ok(_) => {
+                    if first_ok.is_none() {
+                        first_ok = Some(n);
+                    }
+                }
+                Err(e) => {
+                    if let Some(f) = first_ok {
+                        panic!(
+                            "{name}: prefix {f} decoded but longer prefix {n} errored: {e} (kind {:?})",
+                            e.kind()
+                        );
+                    }
+                    assert!(
+                        !matches!(e.kind(), ErrorKind::TruncatedData { .. }) || first_ok.is_none(),
+                        "{name}@{n}: truncation error after a decodable prefix"
+                    );
+                }
+            }
+        }
+        assert!(first_ok.is_some(), "{name}: no prefix decoded");
     }
 }

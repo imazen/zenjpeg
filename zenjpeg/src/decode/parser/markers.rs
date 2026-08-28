@@ -410,7 +410,10 @@ impl<'a> JpegParser<'a> {
         if length != 4 {
             let extra = (length as usize).saturating_sub(4);
             if self.position + extra > self.data.len() {
-                return Err(Error::invalid_jpeg_data("DRI marker length exceeds data"));
+                // Declared body runs past the data: a cut inside the segment,
+                // reported as truncation so the between-scans recovery applies
+                // (#92, found by fuzz_truncation).
+                return Err(Error::truncated_data("DRI segment body"));
             }
             self.position += extra;
             self.warn(DecodeWarning::MalformedSegmentSkipped)?;
@@ -518,7 +521,10 @@ impl<'a> JpegParser<'a> {
         }
         let skip = length - 2;
         if self.position + skip > self.data.len() {
-            return Err(Error::invalid_jpeg_data("segment length exceeds data"));
+            // The declared body runs past the data: a stream cut inside the
+            // segment. Reported as truncation so the between-scans recovery
+            // applies (a growing prefix must never flip back to an error).
+            return Err(Error::truncated_data("marker segment body"));
         }
         self.position += skip;
         Ok(())
@@ -536,9 +542,13 @@ impl<'a> JpegParser<'a> {
         }
         let data_len = length - 2;
 
-        // Validate that segment data doesn't extend past input
+        // Validate that segment data doesn't extend past input. The declared
+        // body running past the data is a stream cut inside the segment
+        // (MPF / Ultra HDR trailers sit after the scan data): report it as
+        // truncation so the between-scans recovery applies and a growing
+        // prefix never flips back to an error (#92, found by fuzz_truncation).
         if self.position + data_len > self.data.len() {
-            return Err(Error::invalid_jpeg_data("segment length exceeds data"));
+            return Err(Error::truncated_data("APPn/COM segment body"));
         }
 
         // Always check for APP14 Adobe marker (needed for CMYK/YCCK detection)

@@ -510,8 +510,11 @@ pub enum DecodeWarning {
 
     /// AC coefficient index exceeded block bounds; treated as end-of-block.
     ///
-    /// Only recovered in Lenient mode. Indicates malformed run-length data
-    /// where the run + position would exceed the 64-coefficient block.
+    /// Indicates malformed run-length data where the run + position would
+    /// exceed the 64-coefficient block. Tolerated (with this warning) under
+    /// `Balanced`, `Lenient` and `Permissive` on every decode path — the
+    /// value bits are consumed and the block ends, as libjpeg-turbo does —
+    /// and rejected under `Strict`.
     AcIndexOverflow,
 
     /// Invalid Huffman code encountered; treated as end-of-block.

@@ -217,6 +217,36 @@ All notable changes to zenjpeg are documented here. Earlier history
   snapshot is regenerated. The #92 decoder helpers (`BitReader::starved`,
   `EntropyDecoder::read_restart_marker_tolerant`) are `pub(crate)` so the
   `__test-utils` internal surface is unchanged.
+- **Four ways a longer prefix of a decodable stream came back as a
+  *corruption* error** (#92; each found by `fuzz_truncation` on the fixed
+  decoder, each fixed and re-fuzzed until a 200 s / 35k-input session ran
+  clean). (1) `skip_segment` / `process_app_or_com` reported a declared body
+  running past the data as `InvalidJpegData("segment length exceeds data")`,
+  which the between-scans recovery does not cover, so a prefix ending inside
+  a trailing COM/APPn (MPF / Ultra HDR trailers) or a COM between
+  progressive scans errored while shorter and longer prefixes decoded; now
+  `TruncatedData` → `TruncatedBetweenScans` (`Strict` still errors). (2) The
+  same for an over-long DRI body. (3) A restart-marker resync that scanned
+  to the END of the data reported `could not resync to restart marker`; that
+  is a cut, and is now `TruncatedData` (the 4096-byte window running out
+  with data still ahead stays corruption). (4) **AC run past the block was
+  policy-split by decode path**: the fast_ac path silently tolerated
+  `run + index >= 64` (as libjpeg-turbo does — its natural-order table has
+  16 dummy slots for it) while the regular and bit-by-bit paths errored
+  unless `Lenient`, so a cut that starved the 9-bit peek and forced the slow
+  path onto such a symbol errored on a stream that decodes in full. All
+  paths (four baseline block decoders + progressive AC-first) now consume
+  the value bits, end the block, and report `DecodeWarning::AcIndexOverflow`
+  — `Strict` rejects at scan end on EVERY path (it used to pass the fast_ac
+  case silently), `Balanced` now warns instead of erroring on the slow
+  paths. Gates in `tests/decode_truncation.rs`: two every-prefix fixtures
+  with a COM after scan data (`baseline-444-com-before-eoi`,
+  `progressive-420-com-between-scans`) and `fuzz_found_prefix_regressions`
+  over the four fuzz inputs (`fuzz/regression/truncation-*`, 0.5–2.5 KB).
+  The fuzz target's monotone-acceptance check is now the precise contract:
+  a longer prefix must never fail with `TruncatedData`, and on a stream that
+  decodes in full it must not fail at all — a longer prefix of a *mutated*
+  stream may legitimately fail with a corruption error.
 - **A growing-prefix decode could flip from partial image back to error**
   (#92): under `Balanced`/`Lenient`/`Permissive`, a stream cut *inside* a
   table or metadata segment between scans (mid-DHT/DQT/DRI/APPn/COM before

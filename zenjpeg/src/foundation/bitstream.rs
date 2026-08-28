@@ -931,7 +931,15 @@ impl<'a> BitReader<'a> {
             pos += 1;
         }
 
-        // Couldn't find any RST marker within range — treat as truncation
+        // No RST marker before the end of the data: the stream is cut
+        // (#92 — a prefix of a stream that decodes in full via resync must
+        // not turn into a corruption error). Only when the 4096-byte window
+        // ran out with data still ahead is it corruption.
+        if scan_end == self.data.len() {
+            self.position = scan_end;
+            self.starved = true;
+            return Err(Error::truncated_data("restart marker resync"));
+        }
         Err(Error::invalid_jpeg_data(
             "could not resync to restart marker",
         ))
