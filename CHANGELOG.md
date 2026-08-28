@@ -341,9 +341,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   checks the same contract as `tests/decode_truncation.rs` — no panic,
   header dims, monotone acceptance, Strict==Balanced pixels — plus the
   `decode_rows` / `decode_coefficients` routes. Wired into `just fuzz` and
-  `fuzz/README.md`. Still open from #92: progressive per-scan rollback
-  (proposal 3) and a rows/bytes-consumed completeness signal (proposal 4) —
-  both are public-behaviour / public-API decisions, see the issue.
+  `fuzz/README.md`. Still open from #92: a rows/bytes-consumed completeness
+  signal (proposal 4) — a public-API decision, see the issue. Proposal 3
+  (per-scan rollback) is superseded by the no-phantom-data fix above.
 
 ### Fixed (continued)
 
