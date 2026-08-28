@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1689 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (845 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1691 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3532 lines (821 hidden + 7231 excluded-feature)
 
 ## summary
 #
@@ -14,8 +14,8 @@
 #   pub types (struct/enum/trait/alias)       146
 #   pub consts/statics                         95
 #   pub macros                                  2
-#   free functions                             64
-#   inherent methods                          503
+#   free functions                             65
+#   inherent methods                          504
 #   struct fields                             384
 #   enum variants                             394
 #   re-exports                                  2
@@ -34,10 +34,10 @@
 #   heuristics                       24
 #   lossless                         42
 #   profile                           7
-#   target_quality                   17
-#   zq_seed                           2
+#   target_quality                   18
+#   zq_seed                           3
 
-## items (1553 lines)
+## items (1555 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -1576,6 +1576,7 @@ pub target_quality::TargetOptions::max_quality: f32
 pub target_quality::TargetOptions::min_quality: f32
 pub target_quality::TargetOptions::q_start: core::option::Option<f32>
 pub target_quality::TargetOptions::tolerance: f64
+pub fn target_quality::TargetOptions::seeded_for_image(&[u8], u32, u32, f64) -> Self
 pub struct target_quality::TargetSearchResult
 pub target_quality::TargetSearchResult::converged: bool
 pub target_quality::TargetSearchResult::encodes: u8
@@ -1590,6 +1591,7 @@ pub fn target_quality::search_target<E, Err>(f64, &target_quality::TargetOptions
 pub mod zq_seed
 pub const zq_seed::ZQ_FEATURES: [zenanalyze::feature::AnalysisFeature; 6]
 pub fn zq_seed::predict_q0_from_features(&[f32; 6], f64, u64) -> core::option::Option<f32>
+pub fn zq_seed::predict_q0_from_image(&[u8], u32, u32, f64) -> core::option::Option<f32>
 pub macro profile_block!
 pub macro profile_scope!
 

@@ -990,7 +990,7 @@ impl<'a> BitReader<'a> {
     /// scan decoder can check it once at the end instead of after every
     /// [`read_bit_refine`](Self::read_bit_refine).
     #[must_use]
-    pub fn starved(&self) -> bool {
+    pub(crate) fn starved(&self) -> bool {
         self.starved
     }
 

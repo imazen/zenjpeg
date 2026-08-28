@@ -211,6 +211,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`Public API surface` CI job was red on `main`** since 37e44fda added
+  `TargetOptions::seeded_for_image` + `zq_seed::predict_q0_from_image`
+  (user-approved) without regenerating `docs/public-api/zenjpeg.txt`; the
+  snapshot is regenerated. The #92 decoder helpers (`BitReader::starved`,
+  `EntropyDecoder::read_restart_marker_tolerant`) are `pub(crate)` so the
+  `__test-utils` internal surface is unchanged.
 - **A growing-prefix decode could flip from partial image back to error**
   (#92): under `Balanced`/`Lenient`/`Permissive`, a stream cut *inside* a
   table or metadata segment between scans (mid-DHT/DQT/DRI/APPn/COM before

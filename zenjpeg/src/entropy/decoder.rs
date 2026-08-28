@@ -1222,7 +1222,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// reader is left exhausted, so every block decoded afterwards comes
     /// back `Truncated` and the caller's normal zero-fill applies. Corruption
     /// (wrong bytes where the marker should be) is still an error.
-    pub fn read_restart_marker_tolerant(&mut self, expected_num: u8) -> Result<bool> {
+    pub(crate) fn read_restart_marker_tolerant(&mut self, expected_num: u8) -> Result<bool> {
         match self.reader.read_restart_marker(expected_num) {
             Ok(()) => Ok(true),
             Err(e) if matches!(e.kind(), ErrorKind::TruncatedData { .. }) => Ok(false),
