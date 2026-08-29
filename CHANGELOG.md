@@ -39,6 +39,46 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`decode_into()` silently dropped crop, deblocking and ICC correction.**
+  `decode_into` has a "direct" path that decodes straight into the caller's
+  buffer, bypassing every post-decode stage, and a fallback that runs the
+  ordinary `decode()` and copies. The direct-path eligibility check excluded
+  lossless transforms, non-sRGB output targets and the coefficient-domain
+  deblock modes — but not three settings that also live after the decode loop.
+  All three were accepted and then discarded, with no error:
+  - **`crop_region`.** `.crop(..).decode_into(..)` with a destination sized for
+    the full frame wrote and reported the **whole 18432-byte uncropped image**,
+    byte-identical to an uncropped decode, where `.crop(..).decode(..)` returns
+    32x32 / 3072 bytes. With a correctly crop-sized destination it instead
+    failed with an *internal* error (`dst too small for fast i16 subsampled`)
+    — the fast path trying to write the full frame into the caller's smaller
+    buffer.
+  - **`DeblockMode::Boundary4Tap` / `AutoStreamable`.** Only `Knusperli` and
+    `Auto` were excluded. The two streaming-compatible modes were admitted and
+    then not applied: 4819 of 18432 bytes wrong (max delta 10) at Q25 against
+    `decode()`.
+  - **`correct_color`.** The correction runs on the assembled output, so the
+    direct path skipped it — while `codec::info::decode_descriptor` still
+    stamps the result `Cicp::SRGB` whenever `correct_color` is `Some`. A
+    wide-gamut JPEG therefore reached a zencodec sink as source-gamut pixels
+    *labelled sRGB*, which nothing downstream can detect. Measured with a
+    Display-P3-primaries source corrected to sRGB: **17417 of 18432 bytes
+    wrong, max delta 108**. `codec/decode.rs`'s push-decoder path uses
+    `decode_into`, so this was reachable from the zencodec API.
+
+  All three now fall through to `decode_into_via_decode`, which delegates to
+  `decode()` and copies — correct output at the cost of one intermediate
+  buffer, exactly as `Knusperli`/`Auto` already did. The fast path is
+  unchanged for the configurations it was actually valid for.
+
+  Gate: `zenjpeg/tests/decode_into_parity.rs` — `decode_into` must be
+  byte-identical to `decode` for the same configuration, across crop (aligned,
+  unaligned, percent), all five deblock modes, ICC correction, crop+deblock
+  combined, and four pixel formats at two subsamplings. Each stage-specific
+  test is paired with a guard proving the stage changes pixels at all, so none
+  of them can pass vacuously. Mutation-verified: restoring each of the three
+  eligibility conditions fails exactly its own test.
+
 - **`Decoder::max_memory()` was inert — it is now enforced.** The setting had a
   field, a `Default` (512 MB), a `Debug`, two setters, a getter, two
   `codec/decode.rs` sites that wrote it, an

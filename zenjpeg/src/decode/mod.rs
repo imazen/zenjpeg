@@ -2140,8 +2140,16 @@ impl DecodeConfig {
         dst: &mut [u8],
         stop: &dyn Stop,
     ) -> Result<usize> {
-        // Eligible direct path: standard RGB-family u8 / gray u8, no transform,
-        // no crop, no Knusperli, default output target.
+        // Eligibility for the direct path, which decodes straight into `dst`
+        // and therefore runs NONE of `decode()`'s post-decode stages.
+        //
+        // Anything this list fails to exclude is silently dropped: the caller
+        // gets pixels that do not match what they configured, with no error to
+        // say so. `decode_into_via_decode` handles every excluded case
+        // correctly by delegating to `decode()` and copying, at the cost of one
+        // intermediate buffer. Correctness first; the fast path is an
+        // optimisation under the "decode_into == decode" contract, gated by
+        // `tests/decode_into_parity.rs`.
         let direct_eligible = matches!(
             format,
             PixelFormat::Rgb
@@ -2152,10 +2160,21 @@ impl DecodeConfig {
                 | PixelFormat::Gray
         ) && self.compute_effective_transform_from_data(data)
             == crate::lossless::LosslessTransform::None
-            && !matches!(
-                self.deblock_mode,
-                DeblockMode::Knusperli | DeblockMode::Auto
-            )
+            // Deblocking is applied after the decode loop, so no mode survives
+            // the direct path — not just the coefficient-domain ones.
+            // `Boundary4Tap`/`AutoStreamable` were previously admitted here and
+            // silently discarded (4819 of 18432 bytes wrong at Q25).
+            && self.deblock_mode == DeblockMode::Off
+            // Crop is applied to the decoded image. The direct path decoded the
+            // WHOLE frame into `dst` and reported the full byte count, so
+            // `.crop(..).decode_into(..)` returned the uncropped image.
+            && self.crop_region.is_none()
+            // ICC correction runs on the assembled output. Dropping it while
+            // `codec::info::decode_descriptor` stamps the result `Cicp::SRGB`
+            // hands the sink source-gamut pixels labelled sRGB — undetectable
+            // downstream (measured: 17417 of 18432 bytes wrong, max delta 108,
+            // for a Display-P3 source corrected to sRGB).
+            && self.correct_color.is_none()
             && self.output_target == OutputTarget::Srgb8;
 
         if direct_eligible {
