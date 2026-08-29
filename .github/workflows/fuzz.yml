@@ -1,0 +1,153 @@
+name: Fuzz
+
+# A BUILD gate, not a fuzzing campaign. It compiles every fuzz target on every
+# push so API drift and resolution breakage fail CI the day they happen.
+#
+# Why it exists: this repo had 13 fuzz targets and no Fuzz workflow at all.
+# `zenjpeg/fuzz/` is a standalone Cargo workspace (`[workspace] members =
+# ["."]`) excluded from the root, so nothing in ci.yml ever reached it —
+# neither `cargo test` nor clippy at the repo root compiles a line of it. It
+# rotted silently: by 2026-08-29 the sub-workspace could not even resolve,
+# because 147444fe moved `zenanalyze` to a crates.io version resolved through
+# a `[patch.crates-io]` at the REPO-ROOT manifest, and a `[patch]` table is
+# only read from the workspace root of the build being performed. See the long
+# comment on that table in `zenjpeg/fuzz/Cargo.toml`.
+#
+# Why `cargo check` and not `cargo fuzz build`: `cargo fuzz` needs a nightly
+# toolchain plus `-Zsanitizer=address`, and it fully codegens the whole codec
+# dependency graph with sanitizer-coverage instrumentation — minutes of work
+# per target, times thirteen targets, for a gate whose entire job is to catch
+# type drift and resolution breakage. `cargo check` catches exactly that class
+# on stable in a fraction of the time (measured 2026-08-29 on this workspace:
+# ~0.2s warm for all 13 targets once the dependency graph is checked). Actual
+# fuzzing stays a hand-run/nightly activity — `zenjpeg/fuzz/README.md`
+# documents it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Superseded runs waste runner queue; only the newest commit per ref matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  # Linux only, deliberately: the fuzz targets are `#![no_main]` libFuzzer bins
+  # that only ever run under `cargo fuzz` on x86-64 Linux. Compiling them on
+  # Windows/macOS would gate nothing these targets can actually exercise.
+  targets:
+    name: Fuzz targets compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      # `zenjpeg/fuzz` path-patches exactly one checkout outside this repo.
+      # Verified with `cargo metadata` on 2026-08-29: `zenanalyze` is the only
+      # external path package in the resolved graph — 62 packages, everything
+      # else is crates.io or in-repo. It is required even though `zenpredict`
+      # never enters the graph (it is optional behind `target-zq`, which
+      # nothing here enables): Cargo loads a path dependency's manifest during
+      # resolution regardless of whether the activating feature is on, and
+      # zenjpeg declares `zenpredict = { path = "../../zenanalyze/zenpredict",
+      # optional = true }`.
+      #
+      # `$GITHUB_WORKSPACE/..` is where `../../../zenanalyze` from
+      # `zenjpeg/fuzz/` lands, and where every `Clone sibling repos` step in
+      # ci.yml already puts its clones — same layout, no special casing.
+      #
+      # Deliberately NOT zen-workspace's setup action. That action runs
+      # `cargo superwork ci-clone --add-paths`, which REWRITES manifests and
+      # deletes `patch.crates-io` sections. Rewriting is exactly wrong for this
+      # gate: the failure it exists to catch IS a fuzz manifest whose own patch
+      # table has gone stale, and a rewrite would mask it. Cloning by hand
+      # keeps the committed manifest under test verbatim.
+      - name: Clone the sibling checkout this workspace path-patches
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/.."
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      # After the clone, not before: rust-cache runs `cargo metadata` on the
+      # declared workspace to build its key, and with the sibling missing that
+      # cannot enumerate the graph.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz-targets
+          workspaces: zenjpeg/fuzz
+
+      # No `--locked`: a lock pinned to a stale sibling rev would keep passing
+      # while the API it targets moved on, which is the drift this gate exists
+      # to see. `zenjpeg/fuzz/Cargo.lock` stays committed for reproducible
+      # hand-fuzzing; CI is allowed to re-resolve on top of it.
+      - name: cargo check --all-targets
+        working-directory: zenjpeg/fuzz
+        run: cargo check --all-targets
+
+  # The committed crash seeds under `zenjpeg/fuzz/regression/` are minimized
+  # inputs for bugs that have been fixed. Replaying them needs neither nightly
+  # nor cargo-fuzz, so they gate on stable — see
+  # `zenjpeg/tests/fuzz_regression.rs`.
+  #
+  # ci.yml's `test` job already picks this test up via `--tests` on all six
+  # platforms. This job exists anyway so the replay cannot be silently switched
+  # off by an unrelated edit to that job's invocation: a gate named after what
+  # it gates does not drift.
+  #
+  # No `|| true`-shaped fallback anywhere: the harness asserts the seed
+  # directory exists, is non-empty, and holds a non-zero number of bytes, and
+  # counts the seeds it actually replayed — a moved or emptied corpus fails
+  # loudly instead of turning into a gate that doesn't gate.
+  regression:
+    name: Fuzz regression seeds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Same single sibling, same reason as the job above: zenjpeg's
+      # `zenpredict` path dep must resolve.
+      - name: Clone the sibling checkout this workspace path-patches
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/.."
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      # Unlike the `targets` job, this one builds the LIBRARY's dev-dependency
+      # graph, which reaches the `internal/jpegli-cpp` C++ submodule through
+      # `jpegli-internals-sys`. ci.yml's `test` job strips the same members and
+      # deps for the same reason; ci.yml is the source of truth for this block,
+      # keep them in sync. Note this touches the ROOT manifest only — it never
+      # goes near `zenjpeg/fuzz/Cargo.toml` or any `patch.crates-io` table, so
+      # it cannot mask the resolution failure the `targets` job gates.
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz-regression
+
+      - name: Replay committed crash seeds
+        run: cargo test -p zenjpeg --test fuzz_regression -- --nocapture

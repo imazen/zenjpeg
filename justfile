@@ -1,23 +1,43 @@
 # zenjpeg development commands
 
-# Run all fuzz targets for 60 seconds each
+# Run all 13 fuzz targets for 60 seconds each (needs nightly + cargo-fuzz).
+# Keep this list in sync with zenjpeg/fuzz/Cargo.toml's [[bin]] entries —
+# `cargo fuzz run` on a name with no [[bin]] fails, and the five container /
+# push-decode targets were missing here until 2026-08-29.
 fuzz SECONDS="60":
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_read_info -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_truncation -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode_limits -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode_paths -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_push_decode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_encode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_differential -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_marker -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_mpf -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_xmp -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_probe -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+
+# Compile every fuzz target on stable — the same gate .github/workflows/fuzz.yml
+# runs. `zenjpeg/fuzz` is its own workspace, so nothing at the repo root ever
+# compiles it; this is what stops the targets bit-rotting between hand-run
+# fuzzing sessions. Needs the ../zenanalyze sibling checked out.
+fuzz-check:
+    cd zenjpeg/fuzz && cargo check --all-targets
+
+# Replay the committed crash seeds in zenjpeg/fuzz/regression/ on stable.
+# Neither nightly nor cargo-fuzz required.
+fuzz-regression:
+    cargo test -p zenjpeg --test fuzz_regression -- --nocapture
 
 # Run all lib tests
 test:
     cargo test -p zenjpeg --lib
 
-# Pre-commit: fmt + clippy + test
+# Pre-commit: fmt + clippy + test + the two fuzz gates CI runs
 ci:
-    cargo fmt -p zenjpeg -- --check && cargo clippy -p zenjpeg -- -D warnings && just test
+    cargo fmt -p zenjpeg -- --check && cargo clippy -p zenjpeg -- -D warnings && just test && just fuzz-check && just fuzz-regression
 
 # Default test image for profiling
 TEST_IMAGE := env_var_or_default("TEST_IMAGE", "~/work/codec-eval/codec-corpus/CID22/CID22-512/validation/1025469.png")
