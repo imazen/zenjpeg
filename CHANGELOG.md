@@ -5,6 +5,73 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Added
+
+- **Fuzz build gate + stable crash-seed replay.** This repo had 13 fuzz targets
+  and no Fuzz workflow at all. `zenjpeg/fuzz/` is a standalone Cargo workspace
+  excluded from the root, so nothing in `ci.yml` ever compiled a line of it,
+  and it broke silently. Two new pieces close that:
+  - `.github/workflows/fuzz.yml` — Linux-only, `push` + `pull_request`. Job
+    `targets` runs `cargo check --all-targets` in `zenjpeg/fuzz` on **stable**;
+    job `regression` replays the committed crash seeds. `cargo check` rather
+    than `cargo fuzz build` on purpose: `cargo fuzz` needs nightly plus
+    `-Zsanitizer=address` and codegens the whole graph with sanitizer coverage
+    per target, while every rot this class produces is a plain resolution or
+    type error — measured at ~0.2 s warm for all 13 targets here. It clones
+    only `zenanalyze`, the one sibling the fuzz graph path-patches (proven with
+    `cargo metadata`: 62 packages, one external path package), and deliberately
+    does **not** route through zen-workspace's setup action, which rewrites
+    manifests and deletes `patch.crates-io` sections — that would mask the
+    exact failure the gate exists to catch.
+  - `zenjpeg/tests/fuzz_regression.rs` — replays all 10 seeds in
+    `zenjpeg/fuzz/regression/` through **every** entry point the 13 targets
+    drive (decode matrix, limits, push/streaming rows, `read_info`, the
+    truncation prefix sweep, all four container parsers, encode + roundtrip,
+    and the zune-jpeg differential) under the same tight limits, on stable. It
+    rides plain `cargo test -p zenjpeg --tests`, so ci.yml picks it up on all
+    six platforms for free. Asserts the corpus exists, is non-empty, holds
+    non-zero bytes, and that the replay loop actually visited every seed — no
+    `|| true`-shaped escape hatch, so an emptied corpus fails loudly instead of
+    passing vacuously (verified live: pointing it at an empty directory fails
+    both tests).
+  - `just fuzz-check` / `just fuzz-regression` run the two gates locally and
+    are now part of `just ci`.
+
+### Fixed
+
+- **`zenjpeg/fuzz` could not resolve at all** — every fresh resolve died before
+  compiling a line with `failed to select a version for the requirement
+  zenanalyze = "^0.2.0"` (crates.io tops out at 0.1.0). `147444fe` (2026-08-29)
+  moved `zenanalyze` from a git rev pin to a crates.io version resolved through
+  a `[patch.crates-io]` at the **repo-root** manifest — the right shape there —
+  but a `[patch]` table is only read from the workspace root of the build being
+  performed, and `zenjpeg/fuzz` is its own `[workspace]` consuming zenjpeg by
+  `path = ".."` (the member crate), so the root's table never applied. Carried
+  the entry into `zenjpeg/fuzz/Cargo.toml` and refreshed that workspace's stale
+  lock (which still pinned `zenanalyze?rev=13d40c3be60e` and held archmage /
+  magetypes at 0.9.26 against the 0.9.27 floor the current zenanalyze needs).
+  Same failure and fix as zenpipe `7040aa6a` / zenjxl `1ae0da79`.
+
+  Patched **by path**, not git like the root table: the `../../../zenanalyze`
+  checkout is mandatory here regardless, because zenjpeg declares `zenpredict =
+  { path = "../../zenanalyze/zenpredict", optional = true }` and Cargo loads a
+  path dependency's manifest during resolution even when the activating feature
+  is off (verified with a minimal repro). A git patch would fetch a second,
+  independently resolved copy of the same repo alongside it. `zenanalyze-api`
+  is deliberately **not** patched — `cargo metadata` shows no such node in this
+  graph, and an entry for a non-existent edge only emits "patch … was not used
+  in the crate graph" on every invocation. Both notes are recorded in the
+  manifest, along with the removal condition (zenanalyze 0.2.x publishing).
+
+  **All 13 targets compiled clean once resolution was fixed** — no `Limits`-style
+  API drift of the kind that had rotted eight of zenpipe's targets. The
+  resolution failure was the whole of the breakage.
+
+- Stale fuzz docs: `just fuzz` listed only 8 of the 13 targets (`cargo fuzz run`
+  on a name with no `[[bin]]` fails, so the five container/push-decode targets
+  were unrunnable via the recipe), and `zenjpeg/fuzz/README.md`'s target table
+  listed 5. Both now list all 13.
+
 ### Changed
 
 - **`zenanalyze` / `zenanalyze-api` unified to crates.io versions + one

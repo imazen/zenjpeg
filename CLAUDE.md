@@ -706,6 +706,30 @@ Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
 with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
 
+0. **`fuzz_differential` will report false crashes on malformed-but-recoverable
+   input (found 2026-08-29, pre-existing).** `fuzz/fuzz_targets/fuzz_differential.rs`
+   asserts `max_diff <= 4` between zenjpeg's and zune-jpeg's pixels whenever
+   *both* decoders return `Ok`. That bound only describes IDCT rounding, which is
+   the only legitimate difference on a **well-formed** stream. On a malformed one
+   neither decoder is decoding — both are *recovering*, and zenjpeg's recovery is a
+   deliberate four-level ladder (pad-zeros on truncation, EOB on an AC run past the
+   block, RST resync; see `docs/strictness.md`) that no other decoder promises to
+   match. Comparing recovered pixels compares two policies, not two implementations
+   of one contract.
+
+   Demonstrated, not theorized: `fuzz/regression/truncation-ac-overflow-slow-path`
+   is rejected by `Strictness::Strict` ("extraneous bytes between markers"),
+   recovered by both Balanced and zune, and the two recoveries differ by **27**.
+   Any fuzzing session that draws such an input gets a spurious crash report.
+
+   `tests/fuzz_regression.rs` gates its own copy of the comparison on
+   `Strictness::Strict` accepting the input — the same "complete, clean stream"
+   test `fuzz_truncation` already uses — which keeps the assertion at full
+   strength exactly where it is well-defined. The fuzz target itself was left
+   unchanged on purpose (changing a test's assertion is an owner call, not a
+   side effect of adding a CI gate). Apply the same one-line gate there when
+   ready.
+
 1. **Two `target-zq`-gated research examples don't compile against current APIs (found
    2026-07-23, pre-existing).** Neither is part of the normal build/test matrix — both
    require the `target-zq` feature, and per this doc's own Feature Flags section "no CI
