@@ -39,6 +39,49 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **Sequential JPEGs split into non-interleaved scans decoded to garbage.** A
+  frame may legally be written as one scan per component (`Ns=1`, ISO/IEC
+  10918-1 A.2.2): `cjpeg -scans` with a `0;\n1;\n2;` script emits exactly that,
+  and the reference testdata already carried two
+  (`internal/jpegli-cpp/testdata/jxl/flower/flower_small.q85_{420,444}_non_interleaved.jpg`).
+  Every whole-frame decode path treated such a scan as if it were interleaved:
+  - `can_use_streaming()` inspected only frame-level fields, so a three-scan
+    4:2:0 file matched the `(2,2,1,1)` arm. The streaming decoder then read the
+    luma-only scan as though each MCU carried Y+Cb+Cr, left the chroma strips at
+    their allocated zeros, and latched `streaming_rgb` — after which the Cb and
+    Cr scans were decoded into coefficients that the output stage discarded.
+  - `try_fused_parallel_decode()` gated on MCU count and DRI alignment but never
+    on scan shape, so `--features parallel` hit the same wrong reading.
+  - `decode_scan()` and `decode_arithmetic_scan()` walked the frame's
+    MCU-padded grid, but a non-interleaved scan holds `ceil(x_i/8)*ceil(y_i/8)`
+    data units in raster order over the component's own grid — 11x7 rather than
+    12x8 at 88x54 4:2:0.
+
+  Measured before the fix, 88x54 4:2:0/4:2:2/4:4:4 pairs from `cjpeg`: up to
+  **255** channel delta on **99.6%** of output bytes vs libjpeg-turbo's `djpeg`
+  (not a greyscale image — saturated garbage, because Y was descrambled against
+  a zeroed chroma plane). After: byte-identical to `djpeg` on all three, and to
+  the interleaved encoding of the same coefficients.
+
+  The single-component case is the same rule, so this also corrects
+  `grayscale_24x16_sampling2x2.jpg` (a 1-component frame with `Hi=Vi=2`, whose
+  `3x2` true grid is not the MCU grid's `4x2`): **576 of 1152 output bytes were
+  wrong, max delta 246**; now byte-identical to `djpeg`. That is the only
+  existing corpus output this change moves —
+  `grayscale_16x24_sampling2x2.jpg`, `non-interleaved-mcu.jpg`, `mjpeg.jpg`,
+  `blank_800x280.jpg` and `Reconyx_HC500_Hyperfire.jpg` were verified
+  byte-identical to `djpeg` both before and after.
+
+  Gate: `zenjpeg/tests/non_interleaved_scans.rs` — 8 tests over committed
+  `cjpeg`/`djpeg`-verified fixture pairs (4:2:0, 4:2:2, 4:4:4, partially
+  interleaved `{Y}{Cb,Cr}`, arithmetic SOF9, grayscale `Hi=Vi=2`, and a
+  264x264+DRI pair large enough to reach the fused parallel decoder). Each pair
+  is the same source at the same quality and sampling differing only in scan
+  layout, so identical coefficients must give byte-identical pixels; `djpeg`
+  confirms the oracle on every pair. The non-interleaved block geometry is now
+  one shared `parser::component_block_grid` used by the baseline, arithmetic
+  and progressive paths instead of three copies.
+
 - **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` and
   `zenyuv-ci.yml` keyed their concurrency group on
   `${{ github.head_ref || github.run_id }}`. `github.head_ref` is populated only

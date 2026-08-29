@@ -104,6 +104,14 @@ impl<'a> JpegParser<'a> {
         if num_comps != 1 && num_comps != 3 {
             return Ok(false);
         }
+        // Like the streaming path, this renders the WHOLE frame from ONE scan by
+        // walking the frame's interleaved MCU grid. That only reads the
+        // bitstream correctly when the scan carries every frame component
+        // (ISO/IEC 10918-1 A.2.3). A sequential frame split into per-component
+        // non-interleaved scans (`Ns=1`, A.2.2) must go to the buffered path.
+        if scan_components.len() != num_comps {
+            return Ok(false);
+        }
 
         // Calculate MCU grid
         let max_h_samp = (0..num_comps)

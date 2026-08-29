@@ -60,6 +60,55 @@ pub(super) struct CompInfo {
     pub(super) is_full_res: bool,
 }
 
+/// Per-component block grid for a **non-interleaved** scan (`Ns == 1`).
+///
+/// ISO/IEC 10918-1 A.2.2: when a scan carries one component the MCU *is* one
+/// data unit, and the scan contains `ceil(x_i/8) * ceil(y_i/8)` data units in
+/// raster order over that component's own grid — where `x_i`/`y_i` are the
+/// component's dimensions from A.1.1. That count is **not** the interleaved
+/// MCU grid: at 88x54 4:2:0 the luma true grid is 11x7 while the MCU-padded
+/// grid is 12x8.
+///
+/// Storage stays MCU-padded (`mcu_cols * h_samp` stride) because the output
+/// path indexes it that way, so iteration uses the true extents and indexing
+/// uses the padded stride.
+pub(super) struct ComponentBlockGrid {
+    /// Data-unit rows the scan actually contains (`ceil(y_i/8)`).
+    pub(super) comp_blocks_v: usize,
+    /// Data units per row the scan actually contains (`ceil(x_i/8)`).
+    pub(super) comp_blocks_h: usize,
+    /// Storage stride — MCU-padded to match the output path (`mcu_cols * h_samp`).
+    pub(super) padded_blocks_h: usize,
+}
+
+/// Build the [`ComponentBlockGrid`] for one component of a non-interleaved scan.
+///
+/// `max_h_samp`/`max_v_samp` are the **frame**-level maxima (A.1.1), not the
+/// scan's, and `mcu_cols` is the frame's interleaved MCU column count.
+pub(super) fn component_block_grid(
+    components: &[Component],
+    comp_idx: usize,
+    width: u32,
+    height: u32,
+    mcu_cols: usize,
+    max_h_samp: u8,
+    max_v_samp: u8,
+) -> ComponentBlockGrid {
+    let h_samp = components[comp_idx].h_samp_factor as usize;
+    let v_samp = components[comp_idx].v_samp_factor as usize;
+    let width = width as usize;
+    let height = height as usize;
+    let max_h = max_h_samp as usize;
+    let max_v = max_v_samp as usize;
+    let scaled_w = (width * h_samp).div_ceil(max_h);
+    let scaled_h = (height * v_samp).div_ceil(max_v);
+    ComponentBlockGrid {
+        comp_blocks_v: scaled_h.div_ceil(8),
+        comp_blocks_h: scaled_w.div_ceil(8),
+        padded_blocks_h: mcu_cols * h_samp,
+    }
+}
+
 /// Parsed JPEG scan data needed to construct a scanline reader.
 ///
 /// Bundles the parser fields that `ScanlineReader` needs, replacing

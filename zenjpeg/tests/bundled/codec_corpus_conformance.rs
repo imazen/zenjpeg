@@ -490,8 +490,21 @@ fn is_unsupported_feature(err: &zenjpeg::decoder::Error) -> bool {
         || err_str.contains("unsupported color")
 }
 
-/// Known decoder bugs - files that SHOULD work but don't yet.
+/// Known decoder bugs — files that SHOULD work but don't yet.
 /// These are tracked here so tests pass while bugs are being fixed.
+///
+/// **Scope**: this list is only consulted in the `Err(..)` arm below, so it
+/// excuses a file that fails to *decode*. It says nothing about a file that
+/// decodes to the wrong pixels — such a file is counted as a success here.
+/// `decode_accuracy_corpus` is the gate for pixel correctness.
+///
+/// Measured 2026-08-29 against libjpeg-turbo `djpeg` (see the non-interleaved
+/// scan fix): every remaining entry decodes without error, and
+/// `mjpeg.jpg`, `non-interleaved-mcu.jpg`, `Reconyx_HC500_Hyperfire.jpg` and
+/// `blank_800x280.jpg` are byte-identical to `djpeg`'s output. They are kept
+/// listed because removing an entry is a claim about a file nobody has fixed;
+/// `partial_progressive.jpg` (4x4) still differs from `djpeg` by up to 7 on
+/// 31 of 48 bytes, so at least one entry is still live.
 const KNOWN_DECODER_BUGS: &[&str] = &[
     // MJPEG format not fully supported
     "mjpeg.jpg",
@@ -502,9 +515,20 @@ const KNOWN_DECODER_BUGS: &[&str] = &[
     // Restart marker edge cases
     "Reconyx_HC500_Hyperfire.jpg",
     "blank_800x280.jpg",
-    // Grayscale with 2x2 sampling factors
+    // Grayscale with 2x2 sampling factors.
+    //
+    // `grayscale_24x16_sampling2x2.jpg` was removed 2026-08-29: a
+    // single-component scan is non-interleaved (T.81 A.2.2), so it holds
+    // `ceil(24/8) * ceil(16/8) = 3x2` data units in raster order, not the
+    // `2x1` MCU grid's `4x2`. Walking the MCU grid put half the blocks in the
+    // wrong place — 576 of 1152 output bytes wrong vs `djpeg`, max delta 246.
+    // Now byte-identical to `djpeg`; gated by `tests/non_interleaved_scans.rs`.
+    //
+    // `grayscale_16x24_sampling2x2.jpg` stays listed: it was NOT broken (its
+    // 1-column MCU grid makes both traversals coincide) and was verified
+    // byte-identical to `djpeg` both before and after that fix, so there is
+    // nothing here that this session fixed.
     "grayscale_16x24_sampling2x2.jpg",
-    "grayscale_24x16_sampling2x2.jpg",
 ];
 
 /// Test valid JPEGs that MUST decode correctly.

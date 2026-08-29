@@ -168,7 +168,7 @@ impl<'a> JpegParser<'a> {
 
                 if !used_fused {
                     if self.decode_mode == super::DecodeMode::Auto
-                        && self.can_use_streaming()
+                        && self.can_use_streaming(&scan_components)
                         && self.streaming_rgb.is_none()
                     {
                         // Use streaming decode for all baseline subsampling modes
@@ -313,7 +313,8 @@ impl<'a> JpegParser<'a> {
             decoder.set_ac_table(ac_idx, ac_table_ref);
         }
 
-        // Decode MCUs with proper interleaving
+        // Decode data units. `mcu_count` counts MCUs for restart-interval
+        // purposes; in a non-interleaved scan one MCU *is* one data unit.
         let mut mcu_count = 0u32;
         let restart_interval = self.restart_interval as u32;
         let mut next_restart_num = 0u8;
@@ -329,123 +330,253 @@ impl<'a> JpegParser<'a> {
         let mut prev_coeff_counts: [u8; 4] = [64; 4];
         let mut had_padding_error = false;
         let mut truncation_mcu: Option<u32> = None;
+        // Data units this scan is expected to contain — the denominator of the
+        // `TruncatedScan` warning. Differs between the two traversals below.
+        let total_data_units: u32;
 
-        // Pre-compute per-component invariants outside the MCU loop.
-        // These values are constant for the entire scan but were being recomputed
-        // per MCU × per component (~1.5M times), costing ~57M instructions.
-        struct CompScanInfo {
-            comp_idx: usize,
-            dc_table: usize,
-            ac_table: usize,
-            h_samp: usize,
-            v_samp: usize,
-            comp_blocks_h: usize,
-            actual_blocks_h: usize,
-            actual_blocks_v: usize,
-            is_single_component_oversample: bool,
-            has_any_padding: bool,
-        }
-        let comp_scan_infos: Vec<CompScanInfo> = scan_components
-            .iter()
-            .map(|(comp_idx, dc_table, ac_table)| {
-                let h_samp = self.components[*comp_idx].h_samp_factor as usize;
-                let v_samp = self.components[*comp_idx].v_samp_factor as usize;
-                let comp_blocks_h = mcu_cols * h_samp;
-                let comp_width =
-                    (self.width as usize * h_samp + max_h_samp as usize - 1) / max_h_samp as usize;
-                let comp_height =
-                    (self.height as usize * v_samp + max_v_samp as usize - 1) / max_v_samp as usize;
-                let actual_blocks_h = (comp_width + 7) / 8;
-                let actual_blocks_v = (comp_height + 7) / 8;
-                let is_single_component_oversample =
-                    scan_components.len() == 1 && (h_samp > 1 || v_samp > 1);
-                let has_any_padding =
-                    actual_blocks_h < comp_blocks_h || actual_blocks_v < mcu_rows * v_samp;
-                CompScanInfo {
-                    comp_idx: *comp_idx,
-                    dc_table: *dc_table as usize,
-                    ac_table: *ac_table as usize,
-                    h_samp,
-                    v_samp,
-                    comp_blocks_h,
-                    actual_blocks_h,
-                    actual_blocks_v,
-                    is_single_component_oversample,
-                    has_any_padding,
+        // Non-interleaved scan (ISO/IEC 10918-1 A.2.2). `Ns == 1` means the MCU
+        // is a single data unit, and the scan holds `ceil(x_i/8) * ceil(y_i/8)`
+        // of them in raster order over the component's OWN block grid — not the
+        // frame's interleaved MCU grid. At 88x54 4:2:0 the luma true grid is
+        // 11x7 while the MCU-padded grid is 12x8, so walking the padded grid
+        // reads the wrong count in the wrong order.
+        //
+        // Storage keeps the MCU-padded stride the output path indexes with, so
+        // iteration uses the true extents and indexing uses `padded_blocks_h`.
+        // Blocks outside the true grid are never coded: they stay at the zeros
+        // the coefficient allocation established.
+        if let &[(comp_idx, dc_table, ac_table)] = scan_components {
+            let dc_table = dc_table as usize;
+            let ac_table = ac_table as usize;
+            let grid = super::component_block_grid(
+                &self.components,
+                comp_idx,
+                self.width,
+                self.height,
+                mcu_cols,
+                max_h_samp,
+                max_v_samp,
+            );
+
+            for block_y in 0..grid.comp_blocks_v {
+                // Check for cancellation at each block row
+                if stop.should_stop() {
+                    return Err(Error::cancelled());
                 }
-            })
-            .collect();
 
-        for mcu_y in 0..mcu_rows {
-            // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
+                for block_x in 0..grid.comp_blocks_h {
+                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                        if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                            buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+                        }
+                        decoder.align_to_byte();
+                        if !decoder.read_restart_marker_tolerant(next_restart_num)?
+                            && truncation_mcu.is_none()
+                        {
+                            truncation_mcu = Some(mcu_count);
+                        }
+                        next_restart_num = (next_restart_num + 1) & 7;
+                        decoder.reset_dc();
+                        prev_coeff_counts = [64; 4];
+                    }
+
+                    let block_idx = block_y * grid.padded_blocks_h + block_x;
+                    match decoder.decode_block_into(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        prev_coeff_counts[comp_idx],
+                        comp_idx,
+                        dc_table,
+                        ac_table,
+                    )? {
+                        ScanRead::Value(count) => {
+                            self.coeff_counts[comp_idx][block_idx] = count;
+                            prev_coeff_counts[comp_idx] = count;
+                        }
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                            // Truncation: Strict errors via warn(), Balanced/Lenient
+                            // fill zeros — same policy as the interleaved path.
+                            if truncation_mcu.is_none() {
+                                truncation_mcu = Some(mcu_count);
+                            }
+                            self.coeffs[comp_idx][block_idx] = [0i16; 64];
+                            self.coeff_counts[comp_idx][block_idx] = 1;
+                            prev_coeff_counts[comp_idx] = 64;
+                        }
+                    }
+
+                    mcu_count += 1;
+                }
             }
 
-            for mcu_x in 0..mcu_cols {
-                // Check for restart marker
-                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                    // JBRD: capture entropy-segment pad bits before aligning.
-                    // Per-RST padding bits are part of the source bitstream;
-                    // byte-exact JPEG-XL transcoding (djxl --reconstruct_jpeg)
-                    // needs them to mirror the source encoder's zero-padding
-                    // behaviour. No-op when JBRD tracking is disabled.
-                    if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
-                        buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+            total_data_units = (grid.comp_blocks_v * grid.comp_blocks_h) as u32;
+        } else {
+            // Pre-compute per-component invariants outside the MCU loop.
+            // These values are constant for the entire scan but were being recomputed
+            // per MCU × per component (~1.5M times), costing ~57M instructions.
+            struct CompScanInfo {
+                comp_idx: usize,
+                dc_table: usize,
+                ac_table: usize,
+                h_samp: usize,
+                v_samp: usize,
+                comp_blocks_h: usize,
+                actual_blocks_h: usize,
+                actual_blocks_v: usize,
+                has_any_padding: bool,
+            }
+            let comp_scan_infos: Vec<CompScanInfo> = scan_components
+                .iter()
+                .map(|(comp_idx, dc_table, ac_table)| {
+                    let h_samp = self.components[*comp_idx].h_samp_factor as usize;
+                    let v_samp = self.components[*comp_idx].v_samp_factor as usize;
+                    let comp_blocks_h = mcu_cols * h_samp;
+                    let comp_width = (self.width as usize * h_samp + max_h_samp as usize - 1)
+                        / max_h_samp as usize;
+                    let comp_height = (self.height as usize * v_samp + max_v_samp as usize - 1)
+                        / max_v_samp as usize;
+                    let actual_blocks_h = (comp_width + 7) / 8;
+                    let actual_blocks_v = (comp_height + 7) / 8;
+                    let has_any_padding =
+                        actual_blocks_h < comp_blocks_h || actual_blocks_v < mcu_rows * v_samp;
+                    CompScanInfo {
+                        comp_idx: *comp_idx,
+                        dc_table: *dc_table as usize,
+                        ac_table: *ac_table as usize,
+                        h_samp,
+                        v_samp,
+                        comp_blocks_h,
+                        actual_blocks_h,
+                        actual_blocks_v,
+                        has_any_padding,
                     }
-                    // Align to byte boundary (discard padding bits)
-                    decoder.align_to_byte();
-                    // Read and verify restart marker. A stream that ends here
-                    // is a cut at the segment boundary: record it, and let the
-                    // blocks below come back `Truncated` into the zero fill.
-                    if !decoder.read_restart_marker_tolerant(next_restart_num)?
-                        && truncation_mcu.is_none()
-                    {
-                        truncation_mcu = Some(mcu_count);
-                    }
-                    // Update expected marker number (cycles 0-7)
-                    next_restart_num = (next_restart_num + 1) & 7;
-                    // Reset DC predictors
-                    decoder.reset_dc();
-                    // Reset smart zeroing hints (force full zero after restart)
-                    prev_coeff_counts = [64; 4];
+                })
+                .collect();
+
+            for mcu_y in 0..mcu_rows {
+                // Check for cancellation at each MCU row
+                if stop.should_stop() {
+                    return Err(Error::cancelled());
                 }
 
-                // For each component in the scan (using pre-computed invariants)
-                for info in &comp_scan_infos {
-                    // Hoist block coordinate base outside v/h loops
-                    let base_block_x = mcu_x * info.h_samp;
-                    let base_block_y = mcu_y * info.v_samp;
+                for mcu_x in 0..mcu_cols {
+                    // Check for restart marker
+                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                        // JBRD: capture entropy-segment pad bits before aligning.
+                        // Per-RST padding bits are part of the source bitstream;
+                        // byte-exact JPEG-XL transcoding (djxl --reconstruct_jpeg)
+                        // needs them to mirror the source encoder's zero-padding
+                        // behaviour. No-op when JBRD tracking is disabled.
+                        if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                            buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+                        }
+                        // Align to byte boundary (discard padding bits)
+                        decoder.align_to_byte();
+                        // Read and verify restart marker. A stream that ends here
+                        // is a cut at the segment boundary: record it, and let the
+                        // blocks below come back `Truncated` into the zero fill.
+                        if !decoder.read_restart_marker_tolerant(next_restart_num)?
+                            && truncation_mcu.is_none()
+                        {
+                            truncation_mcu = Some(mcu_count);
+                        }
+                        // Update expected marker number (cycles 0-7)
+                        next_restart_num = (next_restart_num + 1) & 7;
+                        // Reset DC predictors
+                        decoder.reset_dc();
+                        // Reset smart zeroing hints (force full zero after restart)
+                        prev_coeff_counts = [64; 4];
+                    }
 
-                    // Decode all blocks for this component in this MCU
-                    for v in 0..info.v_samp {
-                        let block_y = base_block_y + v;
-                        for h in 0..info.h_samp {
-                            let block_x = base_block_x + h;
-                            let block_idx = block_y * info.comp_blocks_h + block_x;
+                    // For each component in the scan (using pre-computed invariants)
+                    for info in &comp_scan_infos {
+                        // Hoist block coordinate base outside v/h loops
+                        let base_block_x = mcu_x * info.h_samp;
+                        let base_block_y = mcu_y * info.v_samp;
 
-                            // Check if this block is beyond actual image bounds (padding).
-                            // Skip the check entirely for MCU-aligned components (no padding possible).
-                            let is_padding = info.has_any_padding
-                                && (block_x >= info.actual_blocks_h
-                                    || block_y >= info.actual_blocks_v);
+                        // Decode all blocks for this component in this MCU
+                        for v in 0..info.v_samp {
+                            let block_y = base_block_y + v;
+                            for h in 0..info.h_samp {
+                                let block_x = base_block_x + h;
+                                let block_idx = block_y * info.comp_blocks_h + block_x;
 
-                            if is_padding && info.is_single_component_oversample {
-                                // Single-component with oversampling: skip padding blocks
-                                // These encoders typically omit them
-                                self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
-                                self.coeff_counts[info.comp_idx][block_idx] = 1; // DC-only (zeros)
-                                continue;
-                            }
+                                // Check if this block is beyond actual image bounds (padding).
+                                // Skip the check entirely for MCU-aligned components (no padding possible).
+                                let is_padding = info.has_any_padding
+                                    && (block_x >= info.actual_blocks_h
+                                        || block_y >= info.actual_blocks_v);
 
-                            if is_padding {
-                                // For padding blocks in multi-component images, behavior depends on strictness:
-                                // - Strict: require all padding blocks (error if missing)
-                                // - Balanced/Lenient: speculatively decode, fill with zeros if missing
-                                //   (matches mozjpeg: missing padding blocks produce zero-filled output)
+                                if is_padding {
+                                    // For padding blocks in multi-component images, behavior depends on strictness:
+                                    // - Strict: require all padding blocks (error if missing)
+                                    // - Balanced/Lenient: speculatively decode, fill with zeros if missing
+                                    //   (matches mozjpeg: missing padding blocks produce zero-filled output)
 
-                                if self.strictness.is_strict() {
-                                    // Strict: require padding blocks, propagate errors
+                                    if self.strictness.is_strict() {
+                                        // Strict: require padding blocks, propagate errors
+                                        let count = match decoder.decode_block_into(
+                                            &mut self.coeffs[info.comp_idx][block_idx],
+                                            prev_coeff_counts[info.comp_idx],
+                                            info.comp_idx,
+                                            info.dc_table,
+                                            info.ac_table,
+                                        )? {
+                                            ScanRead::Value(c) => c,
+                                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                                return Err(Error::invalid_jpeg_data(
+                                                    "padding blocks missing (encoder omitted MCU padding)",
+                                                ));
+                                            }
+                                        };
+                                        self.coeff_counts[info.comp_idx][block_idx] = count;
+                                        prev_coeff_counts[info.comp_idx] = count;
+                                    } else {
+                                        // Balanced/Lenient: speculative decoding with recovery
+                                        let saved_state = decoder.save_state();
+                                        match decoder.decode_block_into(
+                                            &mut self.coeffs[info.comp_idx][block_idx],
+                                            prev_coeff_counts[info.comp_idx],
+                                            info.comp_idx,
+                                            info.dc_table,
+                                            info.ac_table,
+                                        ) {
+                                            Ok(ScanRead::Value(count)) => {
+                                                self.coeff_counts[info.comp_idx][block_idx] = count;
+                                                prev_coeff_counts[info.comp_idx] = count;
+                                            }
+                                            Ok(ScanRead::EndOfScan) => {
+                                                // The encoder omitted this padding block:
+                                                // rewind so the next block reads these bits.
+                                                decoder.restore_state(saved_state);
+                                                self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                                self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                                prev_coeff_counts[info.comp_idx] = 64;
+                                                had_padding_error = true;
+                                            }
+                                            Ok(ScanRead::Truncated) => {
+                                                // The data ended inside this padding block: a
+                                                // cut is a cut wherever it lands. Rewinding here
+                                                // handed this block's bits to the NEXT block,
+                                                // which then decoded a DC/AC set that exists in
+                                                // no version of the stream (#92).
+                                                if truncation_mcu.is_none() {
+                                                    truncation_mcu = Some(mcu_count);
+                                                }
+                                                self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                                self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                                prev_coeff_counts[info.comp_idx] = 64;
+                                            }
+                                            Err(_e) => {
+                                                decoder.restore_state(saved_state);
+                                                self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                                self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                                prev_coeff_counts[info.comp_idx] = 64;
+                                                had_padding_error = true;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Non-padding block: decode with strictness-aware truncation handling
                                     let count = match decoder.decode_block_into(
                                         &mut self.coeffs[info.comp_idx][block_idx],
                                         prev_coeff_counts[info.comp_idx],
@@ -455,88 +586,28 @@ impl<'a> JpegParser<'a> {
                                     )? {
                                         ScanRead::Value(c) => c,
                                         ScanRead::EndOfScan | ScanRead::Truncated => {
-                                            return Err(Error::invalid_jpeg_data(
-                                                "padding blocks missing (encoder omitted MCU padding)",
-                                            ));
-                                        }
-                                    };
-                                    self.coeff_counts[info.comp_idx][block_idx] = count;
-                                    prev_coeff_counts[info.comp_idx] = count;
-                                } else {
-                                    // Balanced/Lenient: speculative decoding with recovery
-                                    let saved_state = decoder.save_state();
-                                    match decoder.decode_block_into(
-                                        &mut self.coeffs[info.comp_idx][block_idx],
-                                        prev_coeff_counts[info.comp_idx],
-                                        info.comp_idx,
-                                        info.dc_table,
-                                        info.ac_table,
-                                    ) {
-                                        Ok(ScanRead::Value(count)) => {
-                                            self.coeff_counts[info.comp_idx][block_idx] = count;
-                                            prev_coeff_counts[info.comp_idx] = count;
-                                        }
-                                        Ok(ScanRead::EndOfScan) => {
-                                            // The encoder omitted this padding block:
-                                            // rewind so the next block reads these bits.
-                                            decoder.restore_state(saved_state);
-                                            self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
-                                            self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                            prev_coeff_counts[info.comp_idx] = 64;
-                                            had_padding_error = true;
-                                        }
-                                        Ok(ScanRead::Truncated) => {
-                                            // The data ended inside this padding block: a
-                                            // cut is a cut wherever it lands. Rewinding here
-                                            // handed this block's bits to the NEXT block,
-                                            // which then decoded a DC/AC set that exists in
-                                            // no version of the stream (#92).
+                                            // Truncation: Strict errors via warn(), Balanced/Lenient fills zeros
                                             if truncation_mcu.is_none() {
                                                 truncation_mcu = Some(mcu_count);
                                             }
                                             self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
                                             self.coeff_counts[info.comp_idx][block_idx] = 1;
                                             prev_coeff_counts[info.comp_idx] = 64;
+                                            continue;
                                         }
-                                        Err(_e) => {
-                                            decoder.restore_state(saved_state);
-                                            self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
-                                            self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                            prev_coeff_counts[info.comp_idx] = 64;
-                                            had_padding_error = true;
-                                        }
-                                    }
+                                    };
+                                    self.coeff_counts[info.comp_idx][block_idx] = count;
+                                    prev_coeff_counts[info.comp_idx] = count;
                                 }
-                            } else {
-                                // Non-padding block: decode with strictness-aware truncation handling
-                                let count = match decoder.decode_block_into(
-                                    &mut self.coeffs[info.comp_idx][block_idx],
-                                    prev_coeff_counts[info.comp_idx],
-                                    info.comp_idx,
-                                    info.dc_table,
-                                    info.ac_table,
-                                )? {
-                                    ScanRead::Value(c) => c,
-                                    ScanRead::EndOfScan | ScanRead::Truncated => {
-                                        // Truncation: Strict errors via warn(), Balanced/Lenient fills zeros
-                                        if truncation_mcu.is_none() {
-                                            truncation_mcu = Some(mcu_count);
-                                        }
-                                        self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
-                                        self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                        prev_coeff_counts[info.comp_idx] = 64;
-                                        continue;
-                                    }
-                                };
-                                self.coeff_counts[info.comp_idx][block_idx] = count;
-                                prev_coeff_counts[info.comp_idx] = count;
                             }
                         }
                     }
-                }
 
-                mcu_count += 1;
+                    mcu_count += 1;
+                }
             }
+
+            total_data_units = (mcu_rows * mcu_cols) as u32;
         }
 
         // JBRD: capture end-of-scan entropy-segment pad bits. The next marker
@@ -554,11 +625,10 @@ impl<'a> JpegParser<'a> {
         self.position += decoder.position();
 
         // Emit warnings for any issues detected during decode
-        let total_mcus = (mcu_rows * mcu_cols) as u32;
         if let Some(at_mcu) = truncation_mcu {
             self.warn(DecodeWarning::TruncatedScan {
                 blocks_decoded: at_mcu,
-                blocks_expected: total_mcus,
+                blocks_expected: total_data_units,
             })?;
         }
         if had_padding_error {
@@ -577,13 +647,27 @@ impl<'a> JpegParser<'a> {
         Ok(())
     }
 
-    /// Check if streaming decode can be used.
+    /// Check if streaming decode can be used for this scan.
     ///
     /// Streaming is supported for baseline grayscale, 4:4:4, 4:2:0, and 4:2:2.
     /// Only standard sampling factor combinations are accepted.
-    pub(super) fn can_use_streaming(&self) -> bool {
+    pub(super) fn can_use_streaming(&self, scan_components: &[(usize, u8, u8)]) -> bool {
         // Must be baseline (not progressive — progressive needs multi-scan coefficient storage)
         if self.mode != JpegMode::Baseline {
+            return false;
+        }
+        // The streaming path renders the WHOLE frame from ONE scan: it walks the
+        // frame's interleaved MCU grid and writes the Y/Cb/Cr strips as it goes.
+        // That is only a valid reading of the bitstream when the scan actually
+        // carries every frame component in interleaved order (ISO/IEC 10918-1
+        // A.2.3).
+        //
+        // A sequential frame may legally be split across several scans — one
+        // non-interleaved scan per component (`Ns=1`, A.2.2), or a mix. Feeding
+        // such a scan to this path decodes the wrong data units in the wrong
+        // order and leaves the other components' strips untouched, so fall back
+        // to the buffered coefficient path, which handles both traversals.
+        if scan_components.len() != self.num_components as usize {
             return false;
         }
         // f32 IDCT required (dimension-swapping transforms need symmetric IDCT) —

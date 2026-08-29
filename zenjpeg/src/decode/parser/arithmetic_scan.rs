@@ -91,6 +91,67 @@ impl<'a> JpegParser<'a> {
         // Reset decoder for this scan
         decoder.reset_for_scan();
 
+        // Non-interleaved scan (ISO/IEC 10918-1 A.2.2): `Ns == 1` means the MCU
+        // is one data unit and the scan holds `ceil(x_i/8) * ceil(y_i/8)` of
+        // them in raster order over the component's own grid. Same rule the
+        // arithmetic *progressive* DC path below already follows; the sequential
+        // path was walking the interleaved grid unconditionally.
+        if let &[(comp_idx, dc_table, ac_table)] = scan_components {
+            let grid = super::component_block_grid(
+                &self.components,
+                comp_idx,
+                self.width,
+                self.height,
+                mcu_cols,
+                max_h_samp,
+                max_v_samp,
+            );
+            let total_units = grid.comp_blocks_h * grid.comp_blocks_v;
+            let mut unit_count = 0usize;
+
+            for block_y in 0..grid.comp_blocks_v {
+                if stop.should_stop() {
+                    return Err(Error::cancelled());
+                }
+                for block_x in 0..grid.comp_blocks_h {
+                    let block_idx = block_y * grid.padded_blocks_h + block_x;
+                    match decoder.decode_block(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        comp_idx,
+                        dc_table as usize,
+                        ac_table as usize,
+                    )? {
+                        ScanRead::Value(()) => {
+                            let block = &self.coeffs[comp_idx][block_idx];
+                            let mut count = 0u8;
+                            for (i, &coef) in block.iter().enumerate() {
+                                if coef != 0 {
+                                    count = (i + 1) as u8;
+                                }
+                            }
+                            self.coeff_counts[comp_idx][block_idx] = count.max(1);
+                        }
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                            self.coeffs[comp_idx][block_idx] = [0i16; 64];
+                            self.coeff_counts[comp_idx][block_idx] = 1;
+                        }
+                    }
+
+                    // DRI counts MCUs, and here one MCU is one data unit.
+                    unit_count += 1;
+                    if unit_count < total_units {
+                        decoder.check_restart_mcu()?;
+                    }
+                }
+            }
+
+            if decoder.had_overflow() {
+                self.warn(DecodeWarning::ArithmeticBadCode)?;
+            }
+            self.position += decoder.position();
+            return Ok(());
+        }
+
         let total_mcus = mcu_rows * mcu_cols;
 
         // Decode MCUs
