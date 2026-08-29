@@ -237,6 +237,41 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **`zencodec` / `zenpixels` / `zenpixels-convert` / `zencodec-testkit`
+  requirements widened to span the published minor and the next.** Five
+  requirement lines across three workspaces:
+
+  | manifest | was | now |
+  |---|---|---|
+  | `Cargo.toml` (workspace dep) | `zencodec "0.1.26"` | `">=0.1.26, <0.3.0"` |
+  | `Cargo.toml` (workspace dep) | `zenpixels "0.2.16"` | `">=0.2.16, <0.4.0"` |
+  | `Cargo.toml` (workspace dep) | `zenpixels-convert "0.2.16"` | `">=0.2.16, <0.4.0"` |
+  | `zenjpeg/Cargo.toml` (dev-dep) | `zencodec-testkit "0.1.0"` | `">=0.1.0, <0.3.0"` |
+  | `zenjpeg/fuzz/Cargo.toml` | `zenpixels "0.2.10"` | `">=0.2.10, <0.4.0"` |
+
+  The fuzz crate keeps its own lower floor (0.2.10) — only the ceiling moves.
+
+  Why: a caret requirement on a `0.x` crate caps at the *next* minor, so a
+  consumer on `0.2.x` and a consumer on `0.3.x` are semver-incompatible and
+  Cargo resolves **two copies**. Two copies of `zenpixels` means `PixelSlice`
+  from one is not `PixelSlice` from the other, and types stop unifying across
+  the crate boundary — the same failure mode the `zenanalyze` rev-pin entry
+  below describes, reached by a different route. zenjpeg sits in a dependency
+  graph with ~20 sibling crates that have already been widened; leaving these
+  five narrow is what would split the graph once `zencodec 0.2.0` exists.
+
+  Verified per workspace, not assumed — `zenjpeg/fuzz` and `apidoc` are their
+  own workspaces and do **not** inherit the root `[patch.crates-io]`:
+  - root: `cargo metadata --locked` rc=0, one `zencodec` (0.1.26), one
+    `zencodec-testkit` (0.1.0), one `zenpixels` (0.2.16), one
+    `zenpixels-convert` (0.2.16)
+  - `zenjpeg/fuzz`: rc=0, one `zencodec` (0.1.26), one `zenpixels` (0.2.16),
+    one `zenpixels-convert` (0.2.16)
+  - `apidoc`: rc=0, no `zen*` packages in its graph at all
+  - all three tracked lockfiles byte-identical before and after — every lock
+    was already at the newest version in the widened range, so resolution does
+    not move.
+
 - **`zenanalyze` / `zenanalyze-api` unified to crates.io versions + one
   workspace-root `[patch.crates-io]`; the picker's offer reuse is now
   version-pinned per feature.** Owner directive 2026-08-28: "zenanalyze-api

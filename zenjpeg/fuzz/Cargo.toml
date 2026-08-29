@@ -15,7 +15,7 @@ enough = "0.4.3"
 zune-jpeg = "0.5"
 zune-core = "0.5"
 
-zenpixels = { version = "0.2.10", default-features = false }
+zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
 
 [dependencies.zenjpeg]
 path = ".."
