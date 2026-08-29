@@ -399,6 +399,13 @@ All notable changes to zenjpeg are documented here. Earlier history
   dev-dep and is already documented at length in the workspace manifest — it is
   a zen-family constraint and out of scope for a third-party pass.
 
+  The two **nested** tracked lockfiles were refreshed under the same
+  constraint: `zenjpeg/fuzz/Cargo.lock` (30 packages) and `apidoc/Cargo.lock`
+  (22 packages — `camino` 1.2.5, `rustdoc-types`, `serde`, `syn`). The fuzz
+  workspace is the one CI actually compiles (`fuzz.yml`,
+  `working-directory: zenjpeg/fuzz`, `cargo check --all-targets`) and it still
+  checks clean; `apidoc/` is the CI-free snapshot runner and also checks clean.
+
 - **`zencodec` / `zenpixels` / `zenpixels-convert` / `zencodec-testkit`
   requirements widened to span the published minor and the next.** Five
   requirement lines across three workspaces:
