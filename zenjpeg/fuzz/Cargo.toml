@@ -25,6 +25,58 @@ features = ["zencodec"]
 [workspace]
 members = ["."]
 
+# Because of that `[workspace]` above, this directory is its OWN workspace root,
+# and a `[patch]` table is only ever read from the workspace root of the build
+# being performed. The repo-root `../../Cargo.toml` patch table therefore never
+# applies here — and `zenjpeg` is pulled in by `path = ".."`, i.e. as the MEMBER
+# crate, which bypasses its workspace's patch table the same way.
+#
+# zenjpeg 147444fe (2026-08-29) moved `zenanalyze` from a git rev pin to a
+# crates.io VERSION (`zenanalyze = "0.2.0"`) resolved through that repo-root
+# `[patch.crates-io]`. That is the right shape there — Cargo unifies by source,
+# so one root patch collapses `zenanalyze_api::Offer` to a single type where a
+# dozen per-manifest rev pins had produced several incompatible ones in one
+# graph — but from here the requirement fell straight through to crates.io,
+# where zenanalyze is frozen at 0.1.0 by its 0.1.x API freeze (0.2.x, with the
+# `hdr` feature and the retired `composites`, only ever exists on git). Every
+# fresh resolve of this workspace died before compiling a line:
+#   error: failed to select a version for the requirement `zenanalyze = "^0.2.0"`
+#   candidate versions found which didn't match: 0.1.0
+#   required by package `zenjpeg v0.9.0 (…/zenjpeg/zenjpeg)`
+# Same failure and same fix as zenpipe 7040aa6a / zenjxl 1ae0da79.
+#
+# PATH, not git — deliberately, and unlike the git form the repo-root table
+# uses. The sibling checkout at `../../../zenanalyze` is NOT optional for this
+# workspace: zenjpeg declares
+# `zenpredict = { path = "../../zenanalyze/zenpredict", optional = true }`, and
+# Cargo loads a path dependency's manifest during resolution even when the
+# feature that activates it is off (verified 2026-08-29 with a minimal repro:
+# an unactivated optional `path` dep pointing at a missing directory fails with
+# "failed to read …/Cargo.toml"). So the checkout has to be on disk either way
+# — `.github/workflows/fuzz.yml` clones it, as every job in ci.yml already
+# does. Patching by git on top of that would fetch a SECOND, independently
+# resolved copy of the same repo, and nothing crossing between the two copies
+# type-unifies; it would also let the graph drift from the zenpredict tree
+# sitting right next to it. Path costs nothing extra and keeps one source.
+#
+# Only `zenanalyze` is patched, not `zenanalyze-api`: `cargo metadata` on
+# 2026-08-29 shows `zenanalyze` as the single external path package in the
+# resolved graph, and no `zenanalyze-api` node at all (zenjpeg's dep on it is
+# optional behind `target-zq`, which nothing here enables, and zenanalyze's own
+# is optional behind its `api` feature). An entry for an edge that does not
+# exist is dead config that only emits "patch … was not used in the crate
+# graph" on every cargo invocation. If a future feature here does pull the
+# contract in, add it back FROM THE SAME CHECKOUT
+# (`../../../zenanalyze/zenanalyze-api`) — zenanalyze's internal dep on it is
+# `{ version = "0.1.1", path = "zenanalyze-api" }`, so patching the two to
+# different sources splits `Offer` into two incompatible types.
+#
+# REMOVABLE once zenanalyze 0.2.x publishes to crates.io: the `zenanalyze
+# = "0.2.0"` requirement resolves on its own then and this whole table goes
+# away. Keep in sync with `../../Cargo.toml`.
+[patch.crates-io]
+zenanalyze = { path = "../../../zenanalyze" }
+
 [[bin]]
 name = "fuzz_decode"
 path = "fuzz_targets/fuzz_decode.rs"
