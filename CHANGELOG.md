@@ -37,6 +37,26 @@ All notable changes to zenjpeg are documented here. Earlier history
   - `just fuzz-check` / `just fuzz-regression` run the two gates locally and
     are now part of `just ci`.
 
+### Fixed (docs)
+
+- **`Decoder::max_memory`'s "Measured cost per pixel" table now has six measured cells,
+  not five.** The 4:4:4-streaming cell (3.00 B/px) had been read off the charge site
+  (`width * height * out_bpp`, no coefficient storage on that path) rather than measured,
+  so the heading claimed slightly more than the evidence supported. Measured it instead of
+  softening the heading: `tests/decode_memory_limit.rs::streaming_444_charges_three_bytes_per_pixel`
+  binary-searches the smallest `max_memory` that still admits a baseline 4:4:4 decode
+  through the default `decode()`. **The documented 3.00 B/px is confirmed exactly**
+  (589,824 bytes for 512×384). The assertion is `==`, not `<=`, so it fails if the
+  streaming path ever starts charging for coefficient storage it does not use.
+
+  Worth recording: the first version of that test measured **9.42 B/px** — because
+  `EncoderConfig::ycbcr()` emits a *progressive* file by default (verified: the encode
+  emits SOF2/`0xFFC2`) even though `ProgressiveScanMode`'s own `#[default]` is `Baseline`.
+  9.42 is exactly the table's progressive 4:4:4 cell, so the wrong measurement looked like
+  a plausible answer rather than an obvious error — it would have "disproved" a correct
+  number. The test now forces `.progressive(false)` and asserts the fixture is SOF0. That
+  accident independently corroborates the progressive 4:4:4 cell.
+
 ### Known issues
 
 - **zenjpeg cannot be published at all right now, and it is not a CI problem.**

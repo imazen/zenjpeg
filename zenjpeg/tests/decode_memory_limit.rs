@@ -265,6 +265,86 @@ fn ordinary_images_are_unaffected_by_the_default_cap() {
     }
 }
 
+/// Measures the 4:4:4 streaming cell of the "Cost per pixel" table in
+/// [`Decoder::max_memory`]'s rustdoc, so that number is measured rather than
+/// read off the charge site.
+///
+/// Binary-searches the smallest `max_memory` that still admits a baseline 4:4:4
+/// decode through the default `decode()` (the streaming path). That threshold
+/// *is* the budget the decode charges, which is what the table reports.
+///
+/// Deliberately not a `<=` bound: an upper bound would still pass if the
+/// streaming path started charging for coefficient storage it does not use,
+/// which is the whole claim the row is making.
+#[test]
+fn streaming_444_charges_three_bytes_per_pixel() {
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+    let (w, h) = (512u32, 384u32);
+    let mut rgb = vec![0u8; (w * h * 3) as usize];
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    for px in rgb.as_chunks_mut::<3>().0 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        px[0] = (state >> 32) as u8;
+        px[1] = (state >> 40) as u8;
+        px[2] = (state >> 48) as u8;
+    }
+
+    // `.progressive(false)` is load-bearing: `EncoderConfig::ycbcr` produces a
+    // PROGRESSIVE file by default (verified — the encode emits SOF2/0xFFC2),
+    // even though `ProgressiveScanMode`'s own `#[default]` is `Baseline`.
+    // Without this the test silently measures the progressive row instead, and
+    // lands on 9.42 B/px — which is exactly the progressive 4:4:4 cell, so the
+    // mistake looks like a plausible answer rather than an obvious error.
+    let mut enc = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None)
+        .progressive(false)
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
+    enc.push_packed(&rgb, Unstoppable).expect("push");
+    let jpeg = enc.finish().expect("finish");
+    assert_eq!(
+        jpeg.windows(2)
+            .find(|w| w[0] == 0xFF && (w[1] == 0xC0 || w[1] == 0xC2)),
+        Some(&[0xFFu8, 0xC0u8][..]),
+        "this row is about the BASELINE streaming path; the fixture must be SOF0"
+    );
+
+    let decodes_under = |cap: u64| {
+        Decoder::new()
+            .max_memory(cap)
+            .decode(&jpeg, Unstoppable)
+            .is_ok()
+    };
+
+    let pixels = u64::from(w) * u64::from(h);
+    // Bracket the search: 1 byte must fail, 16 B/px must pass. (`0` means
+    // unlimited, so it cannot be the failing end of the bracket.)
+    let mut lo = 1u64;
+    let mut hi = pixels * 16;
+    assert!(!decodes_under(lo), "a 1-byte cap must refuse this frame");
+    assert!(decodes_under(hi), "a 16 B/px cap must admit this frame");
+
+    while lo + 1 < hi {
+        let mid = lo + (hi - lo) / 2;
+        if decodes_under(mid) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+
+    assert_eq!(
+        hi,
+        pixels * 3,
+        "baseline 4:4:4 streaming decode charges {hi} bytes for {pixels} pixels \
+         ({:.2} B/px); the table in Decoder::max_memory's rustdoc says 3.00 B/px. \
+         Update both together.",
+        hi as f64 / pixels as f64
+    );
+}
+
 /// The charge accumulates across a decode, so a multi-scan file cannot spend
 /// the same budget three times over.
 #[test]

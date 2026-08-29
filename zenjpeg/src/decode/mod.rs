@@ -416,6 +416,12 @@ impl DecodeConfig {
     /// | baseline, buffered (coefficients, transforms, non-interleaved scans) | 6.03 B/px | 9.05 B/px |
     /// | progressive | 6.22 B/px | 9.42 B/px |
     ///
+    /// Each cell is the smallest `max_memory` that still admits the decode, not
+    /// a reading of the charge sites. The 4:4:4 streaming cell is pinned by
+    /// `tests/decode_memory_limit.rs::streaming_444_charges_three_bytes_per_pixel`,
+    /// which binary-searches that threshold; if the streaming path ever starts
+    /// charging for coefficient storage it does not use, that test fails.
+    ///
     /// At the 512 MB default that admits ~179 MP of streaming baseline but
     /// only ~86 MP of 4:2:0 progressive and ~57 MP of 4:4:4 progressive.
     /// [`max_pixels`](Self::max_pixels) defaults to 120 MP, so the two
