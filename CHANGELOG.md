@@ -39,6 +39,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` and
+  `zenyuv-ci.yml` keyed their concurrency group on
+  `${{ github.head_ref || github.run_id }}`. `github.head_ref` is populated only
+  for `pull_request` events, so on a push it was empty and the group fell through
+  to `github.run_id` — unique per run, so no two pushes ever shared a group and
+  `cancel-in-progress` could never fire. Measured here, not theorised: three
+  commits pushed 74 seconds apart on 2026-08-28 (20:28:56 / 20:29:44 / 20:30:10)
+  each ran a full matrix to completion with none cancelled, and the same pattern
+  repeated at 17:07–17:09 on 08-27. Both matrices carry `macos-latest` plus
+  `macos-26-intel`, so the waste landed on the scarcest runner pool. Both now key
+  on `${{ github.ref }}`, which is set for both event types (`refs/heads/main` on
+  push, `refs/pull/N/merge` on a PR): PR cancellation is unchanged and
+  consecutive pushes supersede each other. This matches the form `coverage.yml`
+  and `fuzz.yml` already used correctly.
 - **"zenyuv CI" had been red on every leg for 74 days** (2026-06-16 .. 2026-08-29,
   11 consecutive failed runs), and not from a code regression: all six jobs died at
   manifest load with `failed to load manifest for workspace member .../zjr-calibrate`
