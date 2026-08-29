@@ -37,7 +37,50 @@ All notable changes to zenjpeg are documented here. Earlier history
   - `just fuzz-check` / `just fuzz-regression` run the two gates locally and
     are now part of `just ci`.
 
+### Known issues
+
+- **zenjpeg cannot be published at all right now, and it is not a CI problem.**
+  With the manifest-load rot fixed, `Release`'s `Publish (dry run)` finally ran and
+  reported the real blocker (run 33264805311, 2026-08-29):
+
+      error: failed to verify manifest at `.../zenjpeg/Cargo.toml`
+      Caused by: all dependencies must have a version requirement specified when
+        publishing. dependency `zensim` does not specify a version
+
+  `zensim` is pinned as a git rev with no `version` (workspace root: the rev carrying
+  `ZensimProfile::A`, which the crates.io 0.2.x line dropped). That rev is **zensim
+  0.3.0**, and **crates.io tops out at zensim 0.2.7** — 0.3.0 was never published. So
+  there is no version string that is both true and resolvable: `version = "0.3.0"`
+  publishes a crate nobody can resolve, and `version = "0.2.7"` points consumers at a
+  zensim that lacks the profile the recompressor targets. Note zenjpeg 0.8.4 on
+  crates.io carries `zensim ^0.2` only as a **dev**-dependency; the normal optional
+  `zensim` dep is newer than that release.
+
+  Deliberately **not** worked around. The two ways to make the gate pass — inventing a
+  version, or stripping `zensim` and silently dropping `target-zq` / `recompress-iqa`
+  from the published crate — are a falsehood and a public-API change respectively.
+  Resolving it is a decision for the owner: publish zensim 0.3.0 to crates.io, or
+  decide the published zenjpeg should not carry the zensim-backed features.
+
 ### Fixed
+
+- **`Benchmark`'s last two steps had outlived their configuration.** With the manifest
+  fixed, the benchmarks themselves ran clean and two real failures surfaced (run
+  33264806779, fresh logs — the 2026-03-31 logs are long past retention):
+  - `Build WASM benchmark` passed `--features "std,decoder"`, but zenjpeg has neither
+    feature any more (`default = []`), so it failed outright with `error: the package
+    'zenjpeg' does not contain these features: decoder, std`. Dropped the list;
+    verified locally that `--no-default-features` builds the example clean. The same
+    stale invocation appeared twice in `zenjpeg/examples/wasm_bench.rs`'s own doc
+    comment and was corrected there too.
+  - `Store benchmark results` died with `fatal: couldn't find remote ref gh-pages` —
+    `benchmark-action/github-action-benchmark` fetches that branch before doing
+    anything, even with `auto-push` false, and this repo has no `gh-pages` branch.
+    Added `skip-fetch-gh-pages: true`. **This stops the failure; it does not restore
+    regression tracking** — with no gh-pages there is no history to compare against,
+    and `auto-push` is dead config besides (the workflow is `workflow_dispatch`-only,
+    so `github.event_name == 'push'` is never true). Real tracking needs a gh-pages
+    branch *and* a push trigger; both are owner decisions.
 
 - **`Release` and `Benchmark` were both dead, from the same rot that killed zenyuv CI.**
   This repo carried FOUR hand-maintained copies of the sibling-clone + manifest-strip

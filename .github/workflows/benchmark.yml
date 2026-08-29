@@ -72,8 +72,13 @@ jobs:
       # WASM benchmarks using wasmtime
       - name: Build WASM benchmark
         if: matrix.wasm
+        # No `--features` list: zenjpeg has neither a `std` nor a `decoder`
+        # feature (its `default` is `[]`), so the old
+        # `--features "std,decoder"` failed the build outright with
+        # "error: the package 'zenjpeg' does not contain these features:
+        # decoder, std". Verified 2026-08-29 that this line builds clean.
         run: |
-          RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-wasip1 -p zenjpeg --example wasm_bench --no-default-features --features "std,decoder"
+          RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-wasip1 -p zenjpeg --example wasm_bench --no-default-features
 
       - name: Run WASM benchmarks
         if: matrix.wasm
@@ -138,6 +143,23 @@ jobs:
           output-file-path: benchmark-results/results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # This repo has no `gh-pages` branch, and the action fetches it
+          # before doing anything -- even when auto-push is false -- so every
+          # native leg died here with:
+          #   Command 'git' failed ... fetch ... gh-pages:gh-pages:
+          #   fatal: couldn't find remote ref gh-pages
+          # That is what has been failing since the last run on 2026-03-31.
+          #
+          # HONEST LIMITATION: with no gh-pages branch there is no history, so
+          # the alert-threshold comparison below has nothing to compare against
+          # and this step now only validates and formats the current results.
+          # `auto-push` is dead config too -- this workflow is
+          # workflow_dispatch-only, so `github.event_name == 'push'` is never
+          # true. Restoring real regression tracking means creating a gh-pages
+          # branch AND putting back a push trigger; both are owner decisions,
+          # so this change only stops the step from failing. The per-arch
+          # results are still kept by "Upload benchmark artifacts" below.
+          skip-fetch-gh-pages: true
           alert-threshold: '115%'
           comment-on-alert: true
           fail-on-alert: false
