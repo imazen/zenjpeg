@@ -349,6 +349,56 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **Third-party lockfile refresh — 45 packages, `Cargo.lock` only.** Run as
+  `cargo update -p …` naming each of the 236 third-party packages individually,
+  with every zen-family crate excluded (`zenpng`, `zensim`, `zenanalyze`,
+  `zenanalyze-api`, `zenpixels*`, `zencodec*`, `zenresize`, `zenblend`,
+  `zenpredict`, `zentone`, `zenyuv`, `zenbench`, `zenjpeg-bench-utils`,
+  `archmage`, `magetypes`, `garb`, `linear-srgb`, `whereat`, `enough`,
+  `almost-enough`, `butteraugli`, `fast-ssim2`, `mozjpeg-rs`, `codec-eval`,
+  `codec-corpus`, `ultrahdr-rs`, `ultrahdr-core`, `jpegli-internals-sys`), so
+  nothing in the sibling graph moved and no manifest requirement changed.
+  No package was removed from the graph.
+
+  The moves that touch arithmetic are the ones worth naming: **`wide` 1.5.0 →
+  1.7.0** and **`safe_arch` 1.1.0 → 1.2.0** (the SIMD primitives under the DCT
+  and colour paths), **`yuv` 0.8.16 → 0.8.17** (the YUV conversion comparison
+  path), and `zune-core` 0.5.1 → 0.5.3 (the reference decoder). Also
+  `thiserror` 2.0.19 → 2.0.20, `imgref` 1.12.2 → 1.12.3, `flate2` 1.1.9 →
+  1.1.10, `crc32fast` 1.5.0 → 1.5.1, `cc` 1.4.0 → 1.4.4, plus
+  wasm-bindgen/clap/syn/zerocopy.
+
+  Verified against the refreshed lock with
+  `--features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert"`:
+  **2465 tests pass, 0 fail** (130 pre-existing `#[ignore]`s that need external
+  corpora, testdata or a C++ jpegli build). The byte-identity gates
+  specifically re-run clean — `boundary_rd_hash_lock`,
+  `libjpeg_idct_all_paths_parity` (the all-SIMD-paths IDCT check, which is
+  exactly what a `wide` bump would break), `lossless_dispatch_parity`,
+  `decode_path_dispatch_parity` and `decode_into_parity` — so the SIMD moves
+  are pixel-neutral here. Four of CI's five clippy invocations,
+  `cargo fmt -p zenjpeg -p zenjpeg-bench-utils --check`, and
+  `cargo hack check -p zenjpeg --rust-version` (MSRV) are all clean.
+
+  Two host-specific limitations, both reproduced identically on the *pre-update*
+  lockfile and therefore not caused by this refresh: `jpegli-internals-sys`
+  ships a GNU-format static archive that will not link on macOS
+  (`ld: archive member 'adaptive_quantization.cc.o' not a mach-o file`), so
+  these runs used the sanctioned `ZENJPEG_SKIP_CPP=1` opt-out and the C++
+  parity suite was not executed on this host; and
+  `cargo clippy -p zenjpeg --lib -- -D warnings` reports
+  `upsample_h2v2_libjpeg_row_scalar` as never used on aarch64, because that
+  function's call sites and its `allow(dead_code)` are both
+  `target_arch = "x86_64"`-gated (`src/decode/upsample.rs:632`). CI's Clippy
+  job runs on `ubuntu-latest`, so neither affects CI.
+
+  Not taken: `bincode` `1.3` → `3.0.0`. It is a dev-dependency used to
+  serialize test data, and 3.0 is two major versions on from 1.3 with a
+  rewritten API — a port, not a routine bump. `moxcms` still resolves two
+  instances (0.8.1 and 0.9.0); the isolated 0.8.1 comes from the `ultrahdr-rs`
+  dev-dep and is already documented at length in the workspace manifest — it is
+  a zen-family constraint and out of scope for a third-party pass.
+
 - **`zencodec` / `zenpixels` / `zenpixels-convert` / `zencodec-testkit`
   requirements widened to span the published minor and the next.** Five
   requirement lines across three workspaces:
