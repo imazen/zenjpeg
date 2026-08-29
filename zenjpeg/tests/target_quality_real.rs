@@ -131,6 +131,10 @@ fn converges_on_real_jpeg_ssim2() {
         tolerance: 1.5,
         max_encodes: 10,
         q_start: None,
+        // Inherit the shipped `quality_step` rather than pinning one here, so
+        // this test exercises the default the crate actually ships and does not
+        // go stale again the next time a field is added.
+        ..Default::default()
     };
     let target = (s_lo + s_hi) / 2.0; // comfortably inside the achievable band
 
@@ -187,6 +191,8 @@ fn convergence_census_across_targets() {
         tolerance: 1.5,
         max_encodes: 12,
         q_start: None,
+        // See the note above: inherit the shipped `quality_step`.
+        ..Default::default()
     };
 
     let lo = s_lo + (s_hi - s_lo) * 0.15;

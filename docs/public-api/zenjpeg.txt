@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1691 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (845 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1692 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (845 hidden + 7231 excluded-feature)
 
 ## summary
 #
@@ -16,7 +16,7 @@
 #   pub macros                                  2
 #   free functions                             65
 #   inherent methods                          504
-#   struct fields                             384
+#   struct fields                             385
 #   enum variants                             394
 #   re-exports                                  2
 #   trait roster entries (type × trait)       492
@@ -34,10 +34,10 @@
 #   heuristics                       24
 #   lossless                         42
 #   profile                           7
-#   target_quality                   18
+#   target_quality                   19
 #   zq_seed                           3
 
-## items (1555 lines)
+## items (1556 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -1575,6 +1575,7 @@ pub target_quality::TargetOptions::max_encodes: u8
 pub target_quality::TargetOptions::max_quality: f32
 pub target_quality::TargetOptions::min_quality: f32
 pub target_quality::TargetOptions::q_start: core::option::Option<f32>
+pub target_quality::TargetOptions::quality_step: f32
 pub target_quality::TargetOptions::tolerance: f64
 pub fn target_quality::TargetOptions::seeded_for_image(&[u8], u32, u32, f64) -> Self
 pub struct target_quality::TargetSearchResult
