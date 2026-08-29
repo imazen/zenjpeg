@@ -38,16 +38,8 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Strip non-CI workspace members
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            -e '/"zenjpeg"/d' \
-            -e '/"zenjpeg-bench-utils"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
+      - name: Reduce workspace to zenyuv
+        uses: ./.github/actions/zenyuv-only-workspace
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -65,16 +57,8 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Strip non-CI workspace members
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            -e '/"zenjpeg"/d' \
-            -e '/"zenjpeg-bench-utils"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
+      - name: Reduce workspace to zenyuv
+        uses: ./.github/actions/zenyuv-only-workspace
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -98,16 +82,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cross
 
-      - name: Strip non-CI workspace members
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            -e '/"zenjpeg"/d' \
-            -e '/"zenjpeg-bench-utils"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
+      - name: Reduce workspace to zenyuv
+        uses: ./.github/actions/zenyuv-only-workspace
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -127,16 +103,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Strip non-CI workspace members
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            -e '/"zenjpeg"/d' \
-            -e '/"zenjpeg-bench-utils"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
+      - name: Reduce workspace to zenyuv
+        uses: ./.github/actions/zenyuv-only-workspace
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -156,16 +124,8 @@ jobs:
         with:
           components: clippy
 
-      - name: Strip non-CI workspace members
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            -e '/"zenjpeg"/d' \
-            -e '/"zenjpeg-bench-utils"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
+      - name: Reduce workspace to zenyuv
+        uses: ./.github/actions/zenyuv-only-workspace
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -185,16 +145,8 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Strip non-CI workspace members
-        shell: bash
-        run: |
-          sed \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            -e '/"zjpeg"/d' \
-            -e '/"zenjpeg"/d' \
-            -e '/"zenjpeg-bench-utils"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
+      - name: Reduce workspace to zenyuv
+        uses: ./.github/actions/zenyuv-only-workspace
 
       - name: Format check
         run: cargo fmt -p zenyuv -- --check

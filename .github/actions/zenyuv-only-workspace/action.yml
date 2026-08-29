@@ -1,0 +1,58 @@
+name: Reduce the workspace to zenyuv
+description: >
+  Rewrite the root Cargo.toml so `[workspace] members` contains ONLY `zenyuv`,
+  then drop Cargo.lock. `zenyuv` is a leaf crate with no sibling path deps, so
+  a workspace holding just that member resolves from a bare checkout — which is
+  the whole point of zenyuv-ci.yml: it clones no siblings.
+
+  Cargo loads the manifest of EVERY workspace member (and, transitively, every
+  path dep of every member) before it compiles anything, even for
+  `cargo fmt --check` or `cargo clippy -p zenyuv`. So one member whose path-dep
+  chain leaves the checkout kills every job in this workflow at manifest load.
+
+  This step is an ALLOW-LIST on purpose. It used to be a deny-list — a sed
+  naming the four members to delete — duplicated verbatim in all six jobs.
+  When `zjr-calibrate` was added as workspace member #5 (it path-deps zenjpeg,
+  which path-deps `../../zenanalyze/zenpredict`, a sibling this workflow never
+  clones) nobody updated the six copies, and every leg of zenyuv CI failed with
+
+      error: failed to load manifest for workspace member `.../zjr-calibrate`
+      Caused by: failed to read `.../zenanalyze/zenpredict/Cargo.toml`
+
+  for 74 days (2026-06-16 .. 2026-08-29, 11 consecutive red runs). An
+  allow-list cannot rot that way: member #6 and everything after it is stripped
+  the day it lands, with no edit here.
+
+  Runs on Linux, macOS and Windows — sed only, no awk/python/jq, and no GNU-sed
+  extensions (`\n` in an `s///` replacement is not portable to BSD sed, which
+  is what macos-latest and macos-26-intel ship). Windows uses Git Bash.
+
+runs:
+  using: composite
+  steps:
+    - name: Reduce workspace to zenyuv
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Every member entry in this manifest is its own indented, quoted line
+        # inside `members = [ ... ]`, and no other line in the file starts with
+        # optional whitespace then a quote (checked 2026-08-29). So: delete
+        # every such line that is not zenyuv.
+        sed -e '/^[[:space:]]*"/{ /"zenyuv"/!d; }' \
+          Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+
+        # The reducer is line-oriented, so a future inline `members = ["a","b"]`
+        # would slip past it. Fail here, saying why, rather than 40 lines later
+        # with the cryptic manifest error this action exists to prevent.
+        remaining=$(sed -n '/^members = \[/,/^]/p' Cargo.toml | grep '"' | tr -d ' \t' | tr -d '\r')
+        if [ "$remaining" != '"zenyuv",' ] && [ "$remaining" != '"zenyuv"' ]; then
+          echo "::error::workspace reducer left members=[$remaining]; expected only zenyuv." >&2
+          echo "If members is now an inline array, teach .github/actions/zenyuv-only-workspace to strip it." >&2
+          exit 1
+        fi
+
+        echo "Reduced workspace members to: $remaining"
+
+        # Regenerated against the one-member workspace.
+        rm -f Cargo.lock

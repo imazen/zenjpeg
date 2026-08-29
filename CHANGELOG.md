@@ -39,6 +39,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **"zenyuv CI" had been red on every leg for 74 days** (2026-06-16 .. 2026-08-29,
+  11 consecutive failed runs), and not from a code regression: all six jobs died at
+  manifest load with `failed to load manifest for workspace member .../zjr-calibrate`
+  → `failed to read .../zenanalyze/zenpredict/Cargo.toml`. `zenyuv-ci.yml` clones no
+  siblings (by design — `zenyuv` is a leaf crate) and reduced the workspace with a
+  **deny-list** sed naming four members to delete, copy-pasted verbatim into all six
+  jobs. Workspace member #5 `zjr-calibrate` path-deps `zenjpeg`, which path-deps the
+  unpublished sibling `../../zenanalyze/zenpredict`; none of the six copies were
+  updated, so cargo could not parse the workspace for `cargo fmt --check` either.
+  Replaced with an **allow-list** — `.github/actions/zenyuv-only-workspace`, one
+  composite action used by all six jobs, that reduces `members` to exactly
+  `["zenyuv"]` and fails loudly if it cannot. Member #6 and everything after it is
+  stripped the day it lands, with no edit to CI.
+
 - **`zenjpeg/fuzz` could not resolve at all** — every fresh resolve died before
   compiling a line with `failed to select a version for the requirement
   zenanalyze = "^0.2.0"` (crates.io tops out at 0.1.0). `147444fe` (2026-08-29)
