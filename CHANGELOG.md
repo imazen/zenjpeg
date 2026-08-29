@@ -5,6 +5,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- `target_quality::search_target` now selects FLOAT qualities (new
+  `TargetOptions::quality_step`, default 0.25; `1.0` restores the old integer
+  grid). The previous integer rounding rested on a false premise ("JPEG
+  quality is integer-valued") — zenjpeg quality is `f32` end to end — and
+  imposed a ~1-quality quantization floor on target-hitting error.
+  `encode_with_target`'s trial cache is now keyed by `f32` bits.
+
 ### Added
 
 - **Fuzz build gate + stable crash-seed replay.** This repo had 13 fuzz targets

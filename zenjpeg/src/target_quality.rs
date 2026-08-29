@@ -38,6 +38,12 @@ pub struct TargetOptions {
     /// Optional starting quality (e.g. a zenpredict Zq seed). `None` uses
     /// [`anchor_guess`].
     pub q_start: Option<f32>,
+    /// Quality resolution the search honors. zenjpeg quality is FLOAT end to
+    /// end (`EncodeOptions`-side and internally), so the secant may select
+    /// fractional qualities; trial qualities snap to multiples of this step
+    /// and the bracket terminates once its span is at or below it. `1.0`
+    /// reproduces the earlier integer-only behavior. Default `0.25`.
+    pub quality_step: f32,
 }
 
 impl Default for TargetOptions {
@@ -48,6 +54,7 @@ impl Default for TargetOptions {
             tolerance: 0.5,
             max_encodes: 8,
             q_start: None,
+            quality_step: 0.25,
         }
     }
 }
@@ -138,6 +145,7 @@ where
         .unwrap_or_else(|| anchor_guess(target))
         .clamp(min_q, max_q);
     let mut encodes = 0u8;
+    let step = options.quality_step.max(1.0 / 64.0);
 
     while encodes < max_encodes {
         let s = trial(q)?;
@@ -162,8 +170,8 @@ where
         let next = match (lo, hi) {
             (Some((lq, ls)), Some((hq, hs))) => {
                 let span = hq - lq;
-                if span <= 1.0 {
-                    break; // adjacent integer qualities — quantization floor
+                if span <= step {
+                    break; // bracket at the quality-step resolution floor
                 }
                 let sec = if (hs - ls).abs() > 1e-9 {
                     lq + ((target - ls) / (hs - ls)) as f32 * span
@@ -175,18 +183,18 @@ where
             }
             (Some((lq, ls)), None) => {
                 // Under target, no upper bracket yet: extrapolate up.
-                let step = (((target - ls) as f32) * 1.2).max(4.0);
-                let n = (lq + step).min(max_q);
-                if n <= lq + 0.5 {
+                let up = (((target - ls) as f32) * 1.2).max(4.0);
+                let n = (lq + up).min(max_q);
+                if n <= lq + step * 0.5 {
                     break; // pinned at max_quality and still short
                 }
                 n
             }
             (None, Some((hq, hs))) => {
                 // At/above target, no lower bracket yet: extrapolate down.
-                let step = (((hs - target) as f32) * 1.2).max(4.0);
-                let n = (hq - step).max(min_q);
-                if n >= hq - 0.5 {
+                let down = (((hs - target) as f32) * 1.2).max(4.0);
+                let n = (hq - down).max(min_q);
+                if n >= hq - step * 0.5 {
                     break; // pinned at min_quality and still over
                 }
                 n
@@ -194,10 +202,11 @@ where
             (None, None) => unreachable!("one of lo/hi is set after a trial"),
         };
 
-        // Round to an integer quality (JPEG quality is integer-valued) and stop
+        // Snap to the quality-step grid (zenjpeg quality is float-valued;
+        // the step is a search resolution, not a codec constraint) and stop
         // if the search would repeat the same quality.
-        let next = next.round().clamp(min_q, max_q);
-        if (next - q).abs() < 0.5 {
+        let next = ((next / step).round() * step).clamp(min_q, max_q);
+        if (next - q).abs() < step * 0.5 {
             break;
         }
         q = next;
@@ -252,17 +261,17 @@ where
 {
     // Keep each trial's bytes so the winning quality is returned without a
     // redundant final encode.
-    let mut cache: Vec<(u8, Vec<u8>)> = Vec::new();
+    let mut cache: Vec<(u32, Vec<u8>)> = Vec::new();
     let search = search_target(target, options, |q| {
         let (bytes, score) = trial(q)?;
-        cache.push((q.round().clamp(0.0, 100.0) as u8, bytes));
+        cache.push((q.to_bits(), bytes));
         Ok(score)
     })?;
-    let qi = search.quality.round().clamp(0.0, 100.0) as u8;
+    let qbits = search.quality.to_bits();
     let data = cache
         .into_iter()
         .rev()
-        .find(|(cq, _)| *cq == qi)
+        .find(|(cq, _)| *cq == qbits)
         .map(|(_, b)| b)
         .unwrap_or_default();
     Ok(TargetedEncode { data, search })
@@ -411,6 +420,50 @@ mod tests {
             "returned bytes are not the selected quality's encode"
         );
         assert!((out.search.quality - 70.0).abs() <= 1.0);
+    }
+
+    // Float-native selection (2026-08-29, user correction: zenjpeg quality is
+    // float internally AND externally — the earlier integer rounding was a
+    // search-side artifact, not a codec constraint).
+    #[test]
+    fn search_selects_fractional_quality_at_fine_step() {
+        let opts = TargetOptions {
+            tolerance: 0.05,
+            max_encodes: 16,
+            quality_step: 0.25,
+            ..Default::default()
+        };
+        // score(q) = q; target 70.4 is reachable only on the fractional grid.
+        let out = search_target(70.4, &opts, |q| Ok::<_, ()>(q as f64)).unwrap();
+        assert!(out.converged);
+        assert!(
+            (out.quality - 70.5).abs() < 0.26,
+            "expected a fractional-grid quality near 70.4, got {}",
+            out.quality
+        );
+        assert!(
+            (out.quality.fract()).abs() > 1e-6,
+            "search stayed on the integer grid: {}",
+            out.quality
+        );
+    }
+
+    #[test]
+    fn quality_step_one_restores_integer_grid() {
+        let opts = TargetOptions {
+            tolerance: 0.05,
+            max_encodes: 16,
+            quality_step: 1.0,
+            ..Default::default()
+        };
+        let out = search_target(70.4, &opts, |q| Ok::<_, ()>(q as f64)).unwrap();
+        for _ in 0..1 {
+            assert!(
+                out.quality.fract().abs() < 1e-6,
+                "step 1.0 must keep integer qualities, got {}",
+                out.quality
+            );
+        }
     }
 
     // encode_with_target propagates a trial error.
