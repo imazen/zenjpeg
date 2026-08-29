@@ -39,6 +39,58 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`Decoder::max_memory()` was inert — it is now enforced.** The setting had a
+  field, a `Default` (512 MB), a `Debug`, two setters, a getter, two
+  `codec/decode.rs` sites that wrote it, an
+  `enforces_max_memory(true)` capability advertised to zencodec consumers, and
+  a `fuzz_decode_limits` target that set it — and **no reader anywhere in the
+  decode implementation**. `MemoryTracker`, the type built for this, was
+  constructed only in its own unit tests.
+
+  Measured on the pre-fix code path (peak RSS via `/usr/bin/time -l`, release
+  build): a **265-byte** header declaring 15000x8000 (120 MP, exactly the
+  `max_pixels` default, so the pixel cap does not catch it) decoded to a peak
+  of **716 MiB**, against **2.7 MiB** for the same header at 64x64. The
+  `max_memory(64 MB)` in the fuzz target changed nothing.
+
+  `JpegParser` now carries the budget and charges it *before* each allocation
+  whose size comes from the header-declared dimensions: full-frame coefficient
+  storage (baseline, arithmetic, progressive) with its per-block count and
+  nonzero-bitmap side tables, and the full-frame pixel output on every path
+  (streaming, fused parallel, buffered). Charges accumulate across the whole
+  decode, so a multi-scan file cannot spend the budget repeatedly. Exceeding it
+  returns `ErrorKind::ResourceLimitExceeded` with `zencodec::LimitKind::Memory`.
+  `O(width)` per-MCU-row strip scratch is deliberately not charged — a small
+  header cannot amplify it — so the cap bounds dimension-driven growth, not
+  exact peak RSS. `0` and `u64::MAX` both mean unlimited, matching `max_pixels`.
+
+  **Behaviour change the owner should review.** The 512 MB default was
+  previously decorative; it now rejects decodes. Measured budget per pixel:
+
+  | path | 4:2:0 | 4:4:4 |
+  |---|---|---|
+  | baseline, streaming (default `decode()`) | 3.00 B/px | 3.00 B/px |
+  | baseline, buffered (coefficients, transforms, non-interleaved scans) | 6.03 B/px | 9.05 B/px |
+  | progressive | 6.22 B/px | 9.42 B/px |
+
+  So the default admits ~179 MP of streaming baseline but only ~89 MP of 4:2:0
+  buffered, ~86 MP of 4:2:0 progressive and ~57 MP of 4:4:4 progressive —
+  while `max_pixels` still defaults to 120 MP. **The two defaults no longer
+  agree**: frames between roughly 57 MP and 120 MP pass the pixel cap and are
+  then refused by the memory cap. Reconciling them (raising
+  `DEFAULT_MAX_MEMORY`, lowering `DEFAULT_MAX_PIXELS`, or leaving the
+  asymmetry as an explicit policy) is a defaults decision and was left alone
+  here. No test in the suite trips the new cap.
+
+  Gate: `zenjpeg/tests/decode_memory_limit.rs` — 6 tests building the
+  amplification header from scratch in-test (no fixture; it is 265 bytes of
+  markers) across baseline-interleaved, baseline-non-interleaved and
+  progressive, asserting the typed error, that raising the cap admits the same
+  file, that the sentinels mean unlimited, that charges accumulate across
+  scans, and that ordinary images are unaffected. Mutation-verified: making
+  `charge_memory` a no-op reproduces the pre-fix behaviour and fails 4 of the
+  6. `fuzz/fuzz_targets/fuzz_decode_limits.rs` now exercises a real cap.
+
 - **Sequential JPEGs split into non-interleaved scans decoded to garbage.** A
   frame may legally be written as one scan per component (`Ns=1`, ISO/IEC
   10918-1 A.2.2): `cjpeg -scans` with a `0;\n1;\n2;` script emits exactly that,

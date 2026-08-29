@@ -223,6 +223,12 @@ pub(super) struct JpegParser<'a> {
     // Security limits
     pub(super) max_pixels: u64,
 
+    /// Ceiling for the decode's header-dimension-scaled allocations, in bytes
+    /// (`u64::MAX` = unlimited). See [`JpegParser::charge_memory`].
+    pub(super) max_memory: u64,
+    /// Bytes charged against [`Self::max_memory`] so far.
+    pub(super) memory_used: u64,
+
     // Extras preservation
     preserve_config: Option<PreserveConfig>,
     extras: Option<DecodedExtras>,
@@ -297,17 +303,66 @@ impl<'a> JpegParser<'a> {
         Self::with_strictness(
             data,
             max_pixels,
+            u64::MAX,
             preserve_config,
             Strictness::default(),
             zencodec::AllocPreference::CodecDefault,
         )
     }
 
+    /// Charge `bytes` against the decode's memory budget **before** allocating.
+    ///
+    /// This is the enforcement point for
+    /// [`Decoder::max_memory`](crate::decode::Decoder::max_memory). It is
+    /// applied at every allocation whose size is derived from the
+    /// header-declared frame dimensions — the ones an attacker controls with a
+    /// tiny file. Concretely: full-frame DCT coefficient storage (baseline,
+    /// arithmetic and progressive), the per-block coefficient-count and
+    /// nonzero-bitmap side tables, and the full-frame pixel output buffers,
+    /// including the fused-parallel ones.
+    ///
+    /// Deliberately **not** charged: per-MCU-row strip scratch, which is
+    /// `O(width)` rather than `O(width * height)` and so cannot be amplified
+    /// into a large allocation by a small header, and buffers the *caller*
+    /// supplies (`decode_into`). The budget therefore bounds the decode's
+    /// dimension-driven growth, not its exact peak RSS.
+    ///
+    /// Charges accumulate for the whole decode and are never released, so a
+    /// multi-scan file cannot spend the budget repeatedly.
+    ///
+    /// Returns [`ErrorKind::ResourceLimitExceeded`](crate::error::ErrorKind)
+    /// with [`zencodec::LimitKind::Memory`] once the running total would pass
+    /// the ceiling.
+    pub(super) fn charge_memory(&mut self, bytes: usize, context: &'static str) -> Result<()> {
+        // `0` means unlimited, matching `max_pixels` (see `read_frame_header`).
+        if self.max_memory == 0 || self.max_memory == u64::MAX {
+            return Ok(());
+        }
+        let bytes = bytes as u64;
+        let total = self
+            .memory_used
+            .checked_add(bytes)
+            .ok_or_else(|| Error::size_overflow(context))?;
+        if total > self.max_memory {
+            return Err(Error::resource_limit_exceeded(
+                zencodec::LimitKind::Memory,
+                total,
+                self.max_memory,
+            ));
+        }
+        self.memory_used = total;
+        Ok(())
+    }
+
     /// Create a new parser with explicit strictness level and allocation
     /// preference.
+    ///
+    /// `max_memory` is the ceiling for header-dimension-scaled allocations;
+    /// pass `u64::MAX` for unlimited. See [`JpegParser::charge_memory`].
     pub(super) fn with_strictness(
         data: &'a [u8],
         max_pixels: u64,
+        max_memory: u64,
         preserve_config: Option<&PreserveConfig>,
         strictness: Strictness,
         alloc_pref: zencodec::AllocPreference,
@@ -356,6 +411,8 @@ impl<'a> JpegParser<'a> {
             idct_method: super::IdctMethod::default(),
             icc_profile,
             max_pixels,
+            max_memory,
+            memory_used: 0,
             preserve_config,
             extras,
             mpf_header_pos: 0,

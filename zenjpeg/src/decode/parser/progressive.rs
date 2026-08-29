@@ -543,6 +543,13 @@ impl<'a> JpegParser<'a> {
             let padded_blocks_h = geom.mcu_cols * h_samp;
             let padded_blocks_v = geom.mcu_rows * v_samp;
             let num_blocks = checked_size_2d(padded_blocks_h, padded_blocks_v)?;
+            // coeffs + coeff_counts + nonzero_bitmaps are all sized purely from
+            // the (untrusted) SOF dimensions — ~137 bytes per block. Charge the
+            // budget before allocating.
+            self.charge_memory(
+                num_blocks.saturating_mul(DCT_BLOCK_SIZE * 2 + 1 + 8),
+                "DCT coefficient storage",
+            )?;
             // Full-frame coefficient storage sized from the (untrusted) SOF
             // dimensions → default fallible.
             self.coeffs.push(try_alloc_dct_blocks_pref(

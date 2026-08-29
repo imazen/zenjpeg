@@ -381,10 +381,51 @@ impl DecodeConfig {
         self
     }
 
-    /// Sets the maximum memory allowed for allocations during decoding.
+    /// Sets the ceiling for the decode's header-dimension-scaled allocations.
     ///
-    /// Default is 512 MB. Set to `usize::MAX` for unlimited.
-    /// This prevents memory exhaustion attacks from malicious images.
+    /// Default is 512 MB; `0` and `u64::MAX` both mean unlimited.
+    ///
+    /// A JPEG header is a few hundred bytes no matter what frame size it
+    /// declares, while the decoder's coefficient storage and pixel output are
+    /// both sized from those declared dimensions — so without this cap a
+    /// 265-byte file declaring 15000x8000 costs ~716 MiB of peak RSS
+    /// (measured). This bounds that amplification.
+    ///
+    /// # What counts against the budget
+    ///
+    /// Every allocation whose size comes from the header-declared dimensions:
+    /// full-frame DCT coefficient storage (baseline, arithmetic, progressive)
+    /// with its per-block count and nonzero-bitmap side tables, and the
+    /// full-frame pixel output buffer on every path (streaming, fused
+    /// parallel, and buffered). Charges accumulate for the whole decode, so a
+    /// multi-scan file cannot spend the budget more than once.
+    ///
+    /// Per-MCU-row strip scratch is **not** counted: it is `O(width)`, not
+    /// `O(width * height)`, so a small header cannot amplify it. Neither are
+    /// buffers the caller supplies (`decode_into`). The cap therefore bounds
+    /// the decode's dimension-driven growth rather than its exact peak RSS.
+    ///
+    /// # Measured cost per pixel
+    ///
+    /// The budget a decode charges depends on the path, because the streaming
+    /// path stores no coefficients at all:
+    ///
+    /// | path | 4:2:0 | 4:4:4 |
+    /// |---|---|---|
+    /// | baseline, streaming (default `decode()`) | 3.00 B/px | 3.00 B/px |
+    /// | baseline, buffered (coefficients, transforms, non-interleaved scans) | 6.03 B/px | 9.05 B/px |
+    /// | progressive | 6.22 B/px | 9.42 B/px |
+    ///
+    /// At the 512 MB default that admits ~179 MP of streaming baseline but
+    /// only ~86 MP of 4:2:0 progressive and ~57 MP of 4:4:4 progressive.
+    /// [`max_pixels`](Self::max_pixels) defaults to 120 MP, so the two
+    /// defaults do not agree: frames between roughly 57 MP and 120 MP pass the
+    /// pixel cap and are then refused by this one. Raise this cap (or lower
+    /// `max_pixels`) if you decode images that large.
+    ///
+    /// Exceeding the cap returns
+    /// [`ErrorKind::ResourceLimitExceeded`](crate::error::ErrorKind) with
+    /// [`zencodec::LimitKind::Memory`].
     #[must_use]
     pub fn max_memory(mut self, bytes: u64) -> Self {
         self.max_memory = bytes;
@@ -689,6 +730,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&preserve),
             self.strictness,
             self.alloc_pref,
@@ -793,6 +835,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -1137,6 +1180,7 @@ impl DecodeConfig {
                     let mut peek = JpegParser::with_strictness(
                         &vec,
                         self.max_pixels,
+                        self.max_memory,
                         None,
                         self.strictness,
                         self.alloc_pref,
@@ -1155,6 +1199,7 @@ impl DecodeConfig {
             let mut parser = JpegParser::with_strictness(
                 &vec,
                 self.max_pixels,
+                self.max_memory,
                 None,
                 self.strictness,
                 self.alloc_pref,
@@ -1296,6 +1341,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -1723,6 +1769,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&preserve),
             self.strictness,
             self.alloc_pref,
@@ -2115,6 +2162,7 @@ impl DecodeConfig {
             let mut parser = parser::JpegParser::with_strictness(
                 data,
                 self.max_pixels,
+                self.max_memory,
                 None,
                 self.strictness,
                 self.alloc_pref,
@@ -2191,6 +2239,7 @@ impl DecodeConfig {
         let mut parser = parser::JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2431,6 +2480,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2494,6 +2544,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2544,6 +2595,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&self.preserve),
             self.strictness,
             self.alloc_pref,
@@ -2607,6 +2659,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2733,6 +2786,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&self.preserve),
             self.strictness,
             self.alloc_pref,

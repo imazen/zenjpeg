@@ -144,6 +144,26 @@ pub(super) struct StreamingBuffers {
     pub rgb: Vec<u8>,
 }
 
+/// Output pixel layout the streaming path will produce:
+/// `(bytes_per_pixel, is_4bpp, swap_rb)`.
+///
+/// Shared with the caller so it can charge the output buffer against the
+/// decode memory budget before [`StreamingBuffers::allocate`] allocates it.
+pub(super) fn output_pixel_layout(
+    geom: &StreamingGeometry,
+    streaming_output_format: Option<PixelFormat>,
+) -> (usize, bool, bool) {
+    if geom.is_grayscale {
+        (1, false, false)
+    } else {
+        match streaming_output_format {
+            Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4, true, true),
+            Some(PixelFormat::Rgba) => (4, true, false),
+            _ => (3, false, false),
+        }
+    }
+}
+
 impl StreamingBuffers {
     /// Allocate every buffer needed for streaming decode.
     ///
@@ -228,15 +248,7 @@ impl StreamingBuffers {
 
         // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted,
         // otherwise 3bpp RGB (grayscale always 1bpp).
-        let (out_bpp, out_4bpp, swap_rb) = if geom.is_grayscale {
-            (1, false, false)
-        } else {
-            match streaming_output_format {
-                Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4, true, true),
-                Some(PixelFormat::Rgba) => (4, true, false),
-                _ => (3, false, false),
-            }
-        };
+        let (out_bpp, out_4bpp, swap_rb) = output_pixel_layout(geom, streaming_output_format);
 
         // Full-image output buffer sized from the (untrusted) SOF dimensions →
         // default fallible.

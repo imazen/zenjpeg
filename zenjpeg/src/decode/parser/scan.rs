@@ -224,6 +224,13 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
+                // Both buffers below are sized purely from the (untrusted) SOF
+                // dimensions — ~129 bytes per block, so a ~1 KB header can ask
+                // for hundreds of MB. Charge the budget before allocating.
+                self.charge_memory(
+                    num_blocks.saturating_mul(DCT_BLOCK_SIZE * 2 + 1),
+                    "DCT coefficient storage",
+                )?;
                 // Full-frame DCT coefficient storage is sized from the
                 // (untrusted) SOF dimensions → default fallible.
                 self.coeffs.push(try_alloc_dct_blocks_pref(
@@ -774,6 +781,20 @@ impl<'a> JpegParser<'a> {
             }
         }
 
+        // Charge the full-frame output buffer before the immutable quant-table
+        // borrows below (charge_memory needs &mut self). Sized from the
+        // (untrusted) SOF dimensions; this IS the streaming path's output
+        // buffer, so `to_pixels` does not charge again for it.
+        {
+            let out_bpp = match self.streaming_output_format {
+                Some(PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba) => 4,
+                _ => 3,
+            };
+            let out_size =
+                checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
+            self.charge_memory(out_size, "pixel output buffer")?;
+        }
+
         // Get quantization tables
         let quant_y = self.quant_tables[self.components[0].quant_table_idx as usize]
             .as_ref()
@@ -850,7 +871,9 @@ impl<'a> JpegParser<'a> {
         };
 
         // Allocate output buffer (3bpp RGB or 4bpp BGRA/RGBA). Sized from the
-        // (untrusted) SOF dimensions → default fallible.
+        // (untrusted) SOF dimensions → default fallible, and charged against
+        // the memory budget. This IS the streaming path's output buffer, so
+        // `to_pixels` does not charge again for it.
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
         let mut rgb: Vec<u8> =
             try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "output buffer")?;
@@ -1084,6 +1107,21 @@ impl<'a> JpegParser<'a> {
             if any_missing {
                 self.warn(DecodeWarning::MissingHuffmanTables)?;
             }
+        }
+
+        // The full-frame output buffer that `StreamingBuffers::allocate` will
+        // create is sized from the (untrusted) SOF dimensions; charge it before
+        // the immutable quant-table borrows below (charge_memory needs
+        // &mut self). This IS the streaming path's output buffer, so
+        // `to_pixels` does not charge again. The per-MCU-row strips `allocate`
+        // also creates are O(width) and are not charged (see
+        // `JpegParser::charge_memory`).
+        {
+            let (out_bpp, _, _) =
+                baseline_streaming::output_pixel_layout(&geom, self.streaming_output_format);
+            let out_size = checked_size_2d(geom.width, geom.height)
+                .and_then(|s| checked_size_2d(s, out_bpp))?;
+            self.charge_memory(out_size, "pixel output buffer")?;
         }
 
         let quant_tables: Vec<&[u16; DCT_BLOCK_SIZE]> = (0..self.num_components as usize)

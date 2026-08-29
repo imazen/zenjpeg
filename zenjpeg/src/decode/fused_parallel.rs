@@ -237,6 +237,18 @@ impl<'a> JpegParser<'a> {
             return Ok(false);
         }
 
+        // Every fused path below allocates one `width * height * 3` output
+        // buffer sized from the (untrusted) SOF dimensions. Charge it once
+        // here, where `&mut self` is available (the four workers take `&self`).
+        // This IS the fused path's output buffer, so `to_pixels` does not
+        // charge again for it; the per-segment strips the workers allocate are
+        // O(width) and are not charged (see `JpegParser::charge_memory`).
+        {
+            let rgb_size = checked_size_2d(self.width as usize, self.height as usize)
+                .and_then(|s| checked_size_2d(s, 3))?;
+            self.charge_memory(rgb_size, "pixel output buffer")?;
+        }
+
         // Select fused path
         let chroma_upsampling = self.chroma_upsampling;
         let idct_method = self.idct_method;
