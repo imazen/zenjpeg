@@ -39,6 +39,43 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`Release` and `Benchmark` were both dead, from the same rot that killed zenyuv CI.**
+  This repo carried FOUR hand-maintained copies of the sibling-clone + manifest-strip
+  recipe (`ci.yml`, `zenyuv-ci.yml`, `release.yml`, `benchmark.yml`). Only `ci.yml` was
+  ever kept current; the other three rotted identically and died at manifest load, and
+  nobody noticed because a per-repo CI check only ever looks at the repo's *newest* run —
+  which is green. `release.yml` and `benchmark.yml` clone three siblings (not
+  `zenanalyze`) and their strip lacked the `-e '/zenpredict.*path/d'` that `ci.yml`'s
+  i686 job has carried, and passed with, the whole time. Since `zenjpeg` path-deps the
+  unpublished `../../zenanalyze/zenpredict`, cargo could not parse the workspace at all:
+
+      error: failed to load manifest for workspace member `.../zenjpeg`
+      Caused by: failed to load manifest for dependency `zenpredict`
+      Caused by: failed to read `.../zenanalyze/zenpredict/Cargo.toml`
+
+  Measured, not inferred: a `workflow_dispatch` of Release on 2026-08-29
+  (run 33264097169) failed at "Run tests" with exactly that, and a scaffolded local
+  repro reproduced it byte for byte. Both workflows now call one composite action,
+  `.github/actions/prepare-zenjpeg-workspace`, which carries the recipe once and ends
+  with a guard that fails loudly if any out-of-checkout path dep survives the strip.
+  Deleting the dep rather than cloning `zenanalyze` is deliberate — `cargo publish`
+  rejects a versionless path dep, and the graph still resolves a single
+  `zenanalyze 0.2.0` through the workspace-root `[patch.crates-io]` git entry (verified
+  with a full `cargo metadata`: 275 packages, no sibling checkout).
+
+- **`Release` could create a GitHub Release for a version it then failed to publish.**
+  On 2026-06-01 (run 26756503782) the job ran the tests, built the docs, created the
+  GitHub Release for v0.8.4, and only then died on its last step with `error: failed to
+  publish zenjpeg v0.8.4 ... Caused by: please provide a non-empty token`. crates.io has
+  0.8.4 only because a human published it by hand afterwards — this workflow has never
+  successfully published anything. Added a `CARGO_REGISTRY_TOKEN` preflight as the
+  job's **first** step, scoped to the real publish path so dry runs and tag-less
+  dispatches are unaffected. **This repository still has no repository secrets at all**
+  (the only org secret visible to it is `CODECOV_TOKEN`), so releasing remains blocked
+  until someone adds `CARGO_REGISTRY_TOKEN` under Settings → Secrets and variables →
+  Actions; the difference is that it now fails in five seconds saying so, instead of
+  twenty minutes in with a release half-made.
+
 - **`decode_into()` silently dropped crop, deblocking and ICC correction.**
   `decode_into` has a "direct" path that decodes straight into the caller's
   buffer, bypassing every post-decode stage, and a fallback that runs the
