@@ -87,10 +87,17 @@ jobs:
 
       - name: Parse benchmark results
         id: parse
+        # Two formats, because the legs do not run the same harness: the
+        # native legs run `cargo bench` (criterion), while the wasm leg runs
+        # examples/wasm_bench.rs, which prints its own format. The old parser
+        # only understood criterion, so the wasm leg silently produced `[]`
+        # and github-action-benchmark then failed with the unhelpful
+        # "No benchmark result was found". Both patterns are checked against
+        # real captured output; an empty parse is now a loud error, not a
+        # confusing one two steps later.
         run: |
           mkdir -p benchmark-results
-
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           import json
           import re
           import os
@@ -98,42 +105,83 @@ jobs:
           arch = "${{ matrix.arch }}"
           results = []
 
-          def parse_criterion_output(filename):
-              with open(filename, 'r') as f:
+          # Nanoseconds per unit. Criterion prints "µs"; Rust's Duration Debug (what the
+          # wasm_bench example uses) prints "µs" too, but "us" is accepted either way.
+          UNITS = {"ns": 1, "us": 1_000, "µs": 1_000, "ms": 1_000_000, "s": 1_000_000_000}
+
+
+          def parse_criterion(content):
+              """cargo bench (criterion) — the native legs.
+
+              encode/rgb/64x64        time:   [101.10 us 101.13 us 101.16 us]
+                                                          ^^^^^^ the median
+              """
+              pattern = r"(\S+)\s+time:\s+\[[\d.]+ \S+ ([\d.]+) (\S+)"
+              n = 0
+              for m in re.finditer(pattern, content):
+                  unit = m.group(3)
+                  if unit not in UNITS:
+                      continue
+                  results.append(
+                      {"name": f"{arch}/{m.group(1)}", "unit": "ns", "value": float(m.group(2)) * UNITS[unit]}
+                  )
+                  n += 1
+              return n
+
+
+          def parse_wasm_bench(content):
+              """examples/wasm_bench.rs — the wasm32 leg, which is not criterion.
+
+              === 64x64 (4096 pixels) ===
+              Encode: 254.806us/iter, 16.07 MP/s, avg size: 687 bytes
+              Decode: 84.963us/iter, 48.21 MP/s
+
+              Named `<arch>/encode/<WxH>` to match the criterion legs' `encode/rgb/<WxH>`.
+              """
+              size = None
+              n = 0
+              for line in content.splitlines():
+                  header = re.match(r"^===\s*(\S+)\s*\(", line)
+                  if header:
+                      size = header.group(1)
+                      continue
+                  m = re.match(r"^(Encode|Decode):\s*([\d.]+)(\S+?)/iter", line)
+                  if m and size:
+                      unit = m.group(3)
+                      if unit not in UNITS:
+                          continue
+                      results.append(
+                          {
+                              "name": f"{arch}/{m.group(1).lower()}/{size}",
+                              "unit": "ns",
+                              "value": float(m.group(2)) * UNITS[unit],
+                          }
+                      )
+                      n += 1
+              return n
+
+
+          if os.path.exists("bench_output.txt"):
+              with open("bench_output.txt", "r") as f:
                   content = f.read()
+              c = parse_criterion(content)
+              w = parse_wasm_bench(content)
+              print(f"criterion lines: {c}, wasm_bench lines: {w}")
 
-              # Match lines like: encode/rgb/512x512    time:   [1.2345 ms 1.2456 ms 1.2567 ms]
-              pattern = r'(\S+)\s+time:\s+\[[\d.]+ \w+ ([\d.]+) (\w+)'
-
-              for match in re.finditer(pattern, content):
-                  name = match.group(1)
-                  value = float(match.group(2))
-                  unit = match.group(3)
-
-                  # Convert to consistent units (nanoseconds)
-                  if unit == 'ms':
-                      value *= 1_000_000
-                  elif unit == 'µs' or unit == 'us':
-                      value *= 1_000
-                  elif unit == 's':
-                      value *= 1_000_000_000
-
-                  # Prefix with architecture for separate tracking
-                  results.append({
-                      'name': f'{arch}/{name}',
-                      'unit': 'ns',
-                      'value': value
-                  })
-
-          if os.path.exists('bench_output.txt'):
-              parse_criterion_output('bench_output.txt')
-
-          with open('benchmark-results/results.json', 'w') as f:
+          os.makedirs("benchmark-results", exist_ok=True)
+          with open("benchmark-results/results.json", "w") as f:
               json.dump(results, f, indent=2)
 
-          print(f"Parsed {len(results)} benchmark results for {arch}")
-          EOF
+          # An empty file makes github-action-benchmark fail with a confusing
+          # "No benchmark result was found"; say why here instead.
+          if not results:
+              raise SystemExit(
+                  f"::error::parsed 0 benchmark results for {arch} from bench_output.txt. "
+                  "The benchmark output format changed and the parser above no longer matches it."
+              )
 
+          print(f"Parsed {len(results)} benchmark results for {arch}")
+          PYEOF
           cat benchmark-results/results.json
 
       - name: Store benchmark results
@@ -143,23 +191,25 @@ jobs:
           output-file-path: benchmark-results/results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          # This repo has no `gh-pages` branch, and the action fetches it
-          # before doing anything -- even when auto-push is false -- so every
-          # native leg died here with:
-          #   Command 'git' failed ... fetch ... gh-pages:gh-pages:
-          #   fatal: couldn't find remote ref gh-pages
-          # That is what has been failing since the last run on 2026-03-31.
+          # This repo has no `gh-pages` branch. Without one the action fails
+          # twice over: it fetches that branch before doing anything
+          # ("fatal: couldn't find remote ref gh-pages"), and `skip-fetch-gh-pages`
+          # alone is not enough because it then runs `git switch gh-pages`
+          # ("fatal: invalid reference: gh-pages"). Both were measured on
+          # 2026-08-29. `external-data-json-path` is the documented way out: with
+          # it set, the action stores results in a file and does not use a git
+          # branch at all.
           #
-          # HONEST LIMITATION: with no gh-pages branch there is no history, so
-          # the alert-threshold comparison below has nothing to compare against
-          # and this step now only validates and formats the current results.
+          # HONEST LIMITATION: this stops the failure, it does not restore
+          # regression tracking. The data file lives only for the life of the
+          # job, so the alert-threshold below has no history to compare against.
           # `auto-push` is dead config too -- this workflow is
           # workflow_dispatch-only, so `github.event_name == 'push'` is never
-          # true. Restoring real regression tracking means creating a gh-pages
-          # branch AND putting back a push trigger; both are owner decisions,
-          # so this change only stops the step from failing. The per-arch
+          # true. Real tracking needs somewhere durable for this file (a
+          # gh-pages branch, or actions/cache) AND a push trigger; both are
+          # owner decisions, so this change does not make them. The per-arch
           # results are still kept by "Upload benchmark artifacts" below.
-          skip-fetch-gh-pages: true
+          external-data-json-path: benchmark-results/history.json
           alert-threshold: '115%'
           comment-on-alert: true
           fail-on-alert: false

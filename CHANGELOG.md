@@ -76,11 +76,23 @@ All notable changes to zenjpeg are documented here. Earlier history
   - `Store benchmark results` died with `fatal: couldn't find remote ref gh-pages` —
     `benchmark-action/github-action-benchmark` fetches that branch before doing
     anything, even with `auto-push` false, and this repo has no `gh-pages` branch.
-    Added `skip-fetch-gh-pages: true`. **This stops the failure; it does not restore
-    regression tracking** — with no gh-pages there is no history to compare against,
-    and `auto-push` is dead config besides (the workflow is `workflow_dispatch`-only,
-    so `github.event_name == 'push'` is never true). Real tracking needs a gh-pages
-    branch *and* a push trigger; both are owner decisions.
+    `skip-fetch-gh-pages: true` was **not** sufficient (measured): the action then
+    fails one step later on `git switch gh-pages` with `fatal: invalid reference:
+    gh-pages`. Switched to `external-data-json-path`, the documented way to make the
+    action store results in a file and not use a git branch at all.
+    **This stops the failure; it does not restore regression tracking** — the data
+    file lives only for the life of the job, so the alert threshold has no history to
+    compare against, and `auto-push` is dead config besides (the workflow is
+    `workflow_dispatch`-only, so `github.event_name == 'push'` is never true). Real
+    tracking needs somewhere durable for that file *and* a push trigger; both are
+    owner decisions.
+  - `Parse benchmark results` understood only criterion output, so the wasm leg — which
+    runs `examples/wasm_bench.rs`, not `cargo bench` — parsed **zero** results and
+    handed `[]` to the action, which reported the unhelpful `No benchmark result was
+    found`. The parser now handles both formats, and an empty parse fails loudly at
+    the parser with the reason instead of two steps later. Both patterns were checked
+    against real captured output from run 33265431868 (8 wasm results, 22 criterion),
+    including the `µs` → ns conversion.
 
 - **`Release` and `Benchmark` were both dead, from the same rot that killed zenyuv CI.**
   This repo carried FOUR hand-maintained copies of the sibling-clone + manifest-strip
