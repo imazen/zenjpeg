@@ -111,8 +111,15 @@ zenyuv = { path = "zenyuv" }
 # so no sibling checkout is required.
 zenanalyze = { version = "0.2.0" }
 # zenanalyze-api: the zero-dep, version-unifying feature contract (Request /
-# Offer / FeatureProvider). The picker (behind `__picker-research`) uses it to
-# reuse a shared feature `Offer` instead of re-analyzing.
+# Offer / FeatureProvider), and this crate's INTERCHANGE BOUNDARY — so a host on
+# any zenanalyze version can hand the picker an Offer. The picker (behind
+# `__picker-research`) reuses that Offer instead of re-analyzing when it can.
+#
+# The plain `zenanalyze` dep above sits alongside it deliberately and is
+# explicitly PERMITTED (owner, 2026-08-28: "a direct dep is okay though, a
+# reanalysis might be needed anyway if the upstream provided features are
+# insufficient") — pick_config, zq and zq_seed all run their own pass when no
+# usable offer is present. Don't 'finish the migration' by deleting it.
 # See `docs/sole-contract.md` in imazen/zenanalyze.
 #
 # Both are crates.io VERSIONS, resolved through the workspace-root
