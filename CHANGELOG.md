@@ -5,6 +5,44 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+
+- **`zenanalyze` / `zenanalyze-api` unified to crates.io versions + one
+  workspace-root `[patch.crates-io]`; the picker's offer reuse is now
+  version-pinned per feature.** Owner directive 2026-08-28: "zenanalyze-api
+  should be the sole contract and intermediary so different zenanalyze versions
+  can compile together" (`docs/sole-contract.md` in imazen/zenanalyze).
+
+  Both were **git-rev pins** — and, oddly, two *different* revs of the same repo
+  (`zenanalyze` 13d40c3, `zenanalyze-api` 47b4d0f5) — with a comment claiming
+  that pinning the same rev across codecs keeps the contract type unified. It
+  does the opposite: Cargo unifies by source, so a rev pin is its own source.
+  zenavif carried 47b4d0f5, zensquoosh 7b84d53c, zenpipe/zencodecs the registry
+  form; any graph combining them resolved several incompatible `Offer` types
+  (zenpipe recorded the E0308 in its manifest). A rev pin also cannot reach
+  `zenanalyze`'s own internal `{ version, path }` dep on the contract, which a
+  root patch rewrites along with everything else.
+
+  The 47b4d0f5 pin was additionally old enough that this crate compiled against
+  a **superseded contract API** (`Request::new(names, analyzer_version,
+  defs_version, config_hash)`), a shape absent from the published crate.
+
+  `pick_config_from_offer` now gates reuse twice: the baked model's
+  `analyzer_version` / `config_hash` stamps must match the offer's `Provenance`
+  (compared unconditionally, exactly as the old key did — an unstamped bake
+  therefore declines reuse and runs its own pass), and then every wanted column
+  must be present at the code version THIS build defines for it, matched on the
+  contract's qualified `name@hex8`. `Select::Features`, never `Select::Names`:
+  these values feed coefficients fit against those exact definitions, so a
+  drifted column must miss rather than be silently substituted. The per-feature
+  gate subsumes the old whole-build `feature_defs_version` stamp at a finer
+  grain — one re-defined column declines reuse instead of one upstream bump
+  invalidating every offer. New test coverage for exactly that case.
+
+  Verified: `cargo test -p zenjpeg --features __picker-research --lib`
+  (1,116 pass).
+
+
 ### QUEUED BREAKING CHANGES (Pattern-B error envelope)
 
 - **BREAKING:** the `zencodec::encode::EncoderConfig` / `EncodeJob` / `Encoder` /

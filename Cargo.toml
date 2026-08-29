@@ -109,14 +109,24 @@ zenyuv = { path = "zenyuv" }
 # removes the retired `composites` feature) isn't published yet — CI that
 # pulls zenjpeg as a path-dep resolves zenanalyze from the same git rev,
 # so no sibling checkout is required.
-zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "13d40c3be60e" }
-# zenanalyze-api: the frozen 1.0, zero-dep feature contract (Request/Offer). The
-# picker (behind `__picker-research`) uses it to reuse a shared feature `Offer`
-# instead of re-analyzing. A LATER rev than `zenanalyze` above because the crate
-# was introduced after 13d40c3 — Cargo checks out the repo at both revs; the
-# zero-dep contract crate doesn't perturb the graph. Pin the SAME rev across all
-# codecs so the frozen 1.0 type unifies in a multi-codec build.
-zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "47b4d0f5f1abfff45a152e9a9f4de82fffd5afa6" }
+zenanalyze = { version = "0.2.0" }
+# zenanalyze-api: the zero-dep, version-unifying feature contract (Request /
+# Offer / FeatureProvider). The picker (behind `__picker-research`) uses it to
+# reuse a shared feature `Offer` instead of re-analyzing.
+# See `docs/sole-contract.md` in imazen/zenanalyze.
+#
+# Both are crates.io VERSIONS, resolved through the workspace-root
+# [patch.crates-io] below. They used to be two DIFFERENT git revs of the same
+# repo (zenanalyze 13d40c3, zenanalyze-api 47b4d0f5), with a comment claiming
+# that pinning the same rev across codecs keeps the contract type unified.
+# It does the opposite: Cargo unifies by source, so a rev pin is its own source
+# — zenavif carried 47b4d0f5, zensquoosh 7b84d53c, zenpipe/zencodecs the
+# registry form, and any graph combining them got several incompatible `Offer`
+# types (zenpipe recorded the E0308). A registry version plus ONE root patch is
+# the form that actually unifies, because the patch rewrites every edge at once
+# — including zenanalyze's own internal `{ version, path }` dep on the contract,
+# which a per-manifest rev pin cannot reach.
+zenanalyze-api = { version = "0.1.0" }
 
 # Testing
 approx = "0.5"
@@ -240,4 +250,13 @@ doc_overindented_list_items = "allow"  # Doc formatting preferences
 manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
-
+# zenanalyze 0.2.x and the zenanalyze-api additions this graph needs
+# (FeatureProvider, Select::Names) are on `main` but not yet on crates.io. ONE
+# patch here at the workspace root rewrites every registry edge, so the whole
+# graph resolves a single zenanalyze and a single zenanalyze-api and the `Offer`
+# contract typechecks across the picker boundary. Never re-pin these as
+# per-manifest git revs — that is what split the ecosystem before. Drop both
+# entries once zenanalyze 0.2.x / zenanalyze-api 0.1.1 publish.
+[patch.crates-io]
+zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
