@@ -707,7 +707,7 @@ with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
 
 0. **`fuzz_differential` will report false crashes on malformed-but-recoverable
-   input (found 2026-08-29, pre-existing).** `fuzz/fuzz_targets/fuzz_differential.rs`
+   input (issue #198, found 2026-08-29, pre-existing).** `fuzz/fuzz_targets/fuzz_differential.rs`
    asserts `max_diff <= 4` between zenjpeg's and zune-jpeg's pixels whenever
    *both* decoders return `Ok`. That bound only describes IDCT rounding, which is
    the only legitimate difference on a **well-formed** stream. On a malformed one
