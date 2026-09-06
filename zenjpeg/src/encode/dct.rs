@@ -425,6 +425,7 @@ pub(crate) mod simd {
     /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8` which uses
     /// native AVX2 intrinsics + FMA. On wasm32 with SIMD128, uses the wasm128
     /// magetypes path directly. Falls back to generic magetypes path otherwise.
+    #[inline]
     pub fn forward_dct_8x8_simd_chained(input: &[f32; 64]) -> [f32; 64] {
         #[cfg(target_arch = "x86_64")]
         if let Some(token) = archmage::X64V3Token::summon() {
