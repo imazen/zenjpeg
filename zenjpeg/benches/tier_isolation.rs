@@ -34,7 +34,6 @@ const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(enabled: bool) -> bool {
-    use archmage::SimdToken;
     TierToken::dangerously_disable_token_process_wide(!enabled).is_ok()
 }
 
@@ -87,6 +86,41 @@ fn bench_tiers(suite: &mut Suite) {
             .into_boxed_slice(),
     );
 
+    // Preserve the encoded fixture used by every decode timing. Repeated
+    // iterations use identical source/configuration and need only one copy.
+    let artifacts = std::path::PathBuf::from(
+        std::env::var_os("CODEC_BENCH_ARTIFACT_DIR").unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+                .join("work/codec-artifacts/zenjpeg-arm-audit")
+                .into_os_string()
+        }),
+    );
+    std::fs::create_dir_all(&artifacts).expect("create benchmark artifact directory");
+    std::fs::write(artifacts.join("q85-420-1mp-neon.jpg"), jpeg).expect("persist benchmark JPEG");
+    set_simd(false);
+    let scalar_jpeg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .encode_bytes(rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .expect("scalar fixture encode");
+    std::fs::write(artifacts.join("q85-420-1mp-scalar.jpg"), &scalar_jpeg)
+        .expect("persist scalar JPEG");
+    let scalar_pixels = zenjpeg::decoder::Decoder::new()
+        .decode(jpeg, Unstoppable)
+        .unwrap();
+    set_simd(true);
+    let neon_pixels = zenjpeg::decoder::Decoder::new()
+        .decode(jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(
+        neon_pixels.pixels_u8(),
+        scalar_pixels.pixels_u8(),
+        "decoder tier pixel parity"
+    );
+    eprintln!(
+        "fixture encoder byte parity: {}; decoder pixel parity passed; artifacts: {}",
+        jpeg == scalar_jpeg.as_slice(),
+        artifacts.display()
+    );
+
     suite.compare("encode_q85_420_1MP", |g| {
         g.throughput(Throughput::Bytes((w * h * 3) as u64));
         for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
@@ -135,7 +169,19 @@ fn bench_tiers(suite: &mut Suite) {
             *v = ((st >> 16) as f32 / 65535.0) * 510.0 - 255.0;
         }
         let blk: &'static [f32; 64] = Box::leak(Box::new(blk));
+        set_simd(true);
+        assert_eq!(
+            zenjpeg::encode::dct::forward_dct_8x8(blk),
+            zenjpeg::encode::dct::forward_dct_8x8_scalar(blk),
+            "explicit NEON and generic-dispatch DCT coefficients"
+        );
         suite.compare("forward_dct_8x8", |g| {
+            g.bench("generic_dispatch", move |b| {
+                b.iter(move || {
+                    set_simd(true);
+                    zenjpeg::encode::dct::forward_dct_8x8_scalar(blk)
+                })
+            });
             for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                 g.bench(arm, move |b| {
                     b.iter(move || {
