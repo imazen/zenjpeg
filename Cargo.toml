@@ -94,7 +94,7 @@ fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # so CI's isolated checkout can resolve it; a committed sibling-path dep breaks
 # every CI job (no siblings in the checkout). For local live-iteration against
 # the sibling, add a gitignored `.cargo/config.toml` patch — do not commit it.
-zensim = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a944420ca0e040ecfcea0f4afa263" }
+zensim = { git = "https://github.com/imazen/zensim", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)

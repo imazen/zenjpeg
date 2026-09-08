@@ -6,6 +6,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- Zq AQ correction preserves unit scales instead of clamping legitimate
+  strengths to 0.20, and the controller now sees the final image strip.
+  Global quality correction no longer panics for a fractional q between 99
+  and 100. Existing no-controller encoding is unaffected.
 - `target_quality::search_target` now selects FLOAT qualities (new
   `TargetOptions::quality_step`, default 0.25; `1.0` restores the old integer
   grid). The previous integer rounding rested on a false premise ("JPEG
@@ -14,6 +18,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   `encode_with_target`'s trial cache is now keyed by `f32` bits.
 
 ### Added
+
+- `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
+  Zq loop to complete Rust candidate scoring/current attribution, with explicit
+  seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
+  byte verification. See `docs/zensim-candidate-binding-2026-09-08.md` for exact
+  scope and evidence; this is not replacement-model qualification.
 
 - **Fuzz build gate + stable crash-seed replay.** This repo had 13 fuzz targets
   and no Fuzz workflow at all. `zenjpeg/fuzz/` is a standalone Cargo workspace

@@ -1513,3 +1513,21 @@ top, not a missing ARM path. `encode/mage_simd.rs` is x86-only by design
 breaks any target depending on it (`cpp_comparison` bench, the `__test-utils`
 integration tests). Pre-existing. `--lib` and `--bench tier_isolation` are
 unaffected.
+
+## Complete Zq candidate binding and controller repairs (2026-09-08)
+
+Read `docs/zensim-candidate-binding-2026-09-08.md` and
+`benchmarks/zensim_candidate_binding_2026-09-08.md` before candidate loop work.
+`__zensim-research` / `zq_rd_probe` use exact bakes, explicit seed q and
+scalar/neutral/active controls through complete Rust `BakeScorer`. Every current
+map is recomputed, including pass zero; unsupported terms/gates/layouts and
+legacy peak bounds fail. No process-global profile/gradient cache is imported.
+The current AQ callback includes the final flush; scaling no longer clamps
+normal strengths to 0.20. Unit scales are byte-neutral, including partial edge
+blocks. The near-q=100 global correction panic is fixed. Named Zq RGB/f32,
+subsampling and strict-bound tests pass. Two correction passes may cost three
+full encodes: use observed work counts, not the older max_passes prose.
+One training-family screen proves exact map/byte/pixel repeat and engagement;
+69 bytes saved accompanies lower quality under D/SSIMULACRA2/Butteraugli. This
+is not an RD win, calibrated targeting or replacement-model qualification.
+Use the shared zensim native targeting owner for the next full experiment.

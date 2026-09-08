@@ -97,6 +97,8 @@ zenresize = { workspace = true, optional = true }
 # Perceptual metric used by Quality::Zq target-perceptual-quality variants
 # (issue #113). Pulled in only when the `target-zq` feature is enabled.
 zensim = { workspace = true, optional = true }
+# Exact runtime identity required by the complete candidate scoring surface.
+zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
 
 # zenpredict (ZNPR v3 runtime) — pulled in only by the
 # `__picker-research` feature for the dev/picker_v0_3_holdout_ab.rs
@@ -181,7 +183,7 @@ ultrahdr-core = { workspace = true }
 # our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
 # `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
-zensim-regress = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a944420ca0e040ecfcea0f4afa263" }
+zensim-regress = { git = "https://github.com/imazen/zensim", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
 zensim = { workspace = true, features = ["classification"] }
 
 [features]
@@ -305,6 +307,8 @@ zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-conv
 # (it deletes the unpublished zenpredict path dep, which would otherwise leave a
 # dangling `dep:zenpredict` reference here — see .github/workflows/ci.yml).
 target-zq = ["dep:zensim", "dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
+# Complete candidate binding in the recovered Zq experiment; explicit opt-in.
+__zensim-research = ["target-zq", "zensim/custom-profiles", "zensim/feature-regime-v2", "dep:zenpredict-serving"]
 # JPEG→JPEG recompression to a target zensim Profile A quality with no size
 # regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
 # core router/strategies/calibration need only the decoder — no heavy deps,
@@ -644,3 +648,7 @@ name = "gray_path_diff"
 
 [[example]]
 name = "gray_decode_bench"
+
+[[example]]
+name = "zq_rd_probe"
+required-features = ["__zensim-research"]

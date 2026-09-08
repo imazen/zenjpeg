@@ -148,13 +148,26 @@ fn zq_with_block_artifact_bound_runs() {
 fn zq_block_artifact_max_overshoot_strict_mode_errors_on_unreachable_ceiling() {
     let (w, h) = (128u32, 128);
     let rgb = synthetic_image(w, h);
-    // Set a very tight ceiling that's basically impossible at low q.
+    // Measure this exact search without a strict failure slack first. A fixed
+    // numeric ceiling can become attainable when the scorer or encoder changes.
     let target = ZqTarget::new(60.0)
-        .with_block_artifact(Some(
-            BlockArtifactBound::new(0.0001).with_max_overshoot(Some(0.0001)),
-        ))
+        .with_block_artifact(Some(BlockArtifactBound::new(0.0)))
         .with_max_passes(2);
     let config = EncoderConfig::ycbcr(Quality::ZqExplicit(target), ChromaSubsampling::Quarter);
+    let mut probe = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    probe.push_packed(&rgb, Unstoppable).unwrap();
+    let (_, measured) = probe.finish_with_metrics().unwrap();
+    assert!(measured.achieved_max_block_artifact.is_finite());
+    assert!(measured.achieved_max_block_artifact > 0.0);
+    // Strict slack only affects finalization, so the candidate search remains
+    // identical and its observed peak exceeds this explicitly measured limit.
+    let strict = target.with_block_artifact(Some(
+        BlockArtifactBound::new(0.0)
+            .with_max_overshoot(Some(measured.achieved_max_block_artifact * 0.5)),
+    ));
+    let config = config.quality(Quality::ZqExplicit(strict));
     let mut enc = config
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -162,7 +175,8 @@ fn zq_block_artifact_max_overshoot_strict_mode_errors_on_unreachable_ceiling() {
     let res = enc.finish_with_metrics();
     assert!(
         res.is_err(),
-        "block_artifact ceiling=0.0001 with strict overshoot=0.0001 should error"
+        "strict bound below measured peak should error; measured {:?}",
+        res.as_ref().map(|(_, metrics)| metrics)
     );
 }
 
