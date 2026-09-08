@@ -50,9 +50,14 @@ impl RestoreModel {
     }
     /// Load from raw f32 little-endian weights (dev format).
     pub fn from_f32_bytes(bytes: &[u8], nf: usize, nc: usize) -> Result<Self, String> {
+        // `array_chunks` over `chunks_exact`: the fixed-size array lets LLVM
+        // prove the four indices in-bounds and drops the per-element bounds
+        // checks (workspace perf note, "fixed-size array pattern").
         let raw: Vec<f32> = bytes
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect();
         AdoptedModel::load_compact(&raw, nf, nc, 1).map(|inner| Self { inner })
     }
