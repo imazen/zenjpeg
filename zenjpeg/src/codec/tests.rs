@@ -167,6 +167,26 @@ mod api_tests {
     }
 
     #[test]
+    fn xyb_decoded_descriptor_is_srgb_while_source_icc_is_retained() {
+        let pixels = vec![Rgb::new(180u8, 95, 42); 16 * 16];
+        let encoded = crate::encode::EncoderConfig::xyb(90, crate::encode::XybSubsampling::BQuarter)
+            .encode(&pixels, 16, 16).unwrap();
+        let mut header = crate::decode::Decoder::new().read_info(&encoded).unwrap();
+        assert!(header.is_xyb);
+        assert!(header.icc_profile.is_some());
+        assert_eq!(decode_descriptor(&[], &header, None), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(decode_descriptor(&[PixelDescriptor::RGBAF32_LINEAR], &header, None),
+            PixelDescriptor::RGBAF32_LINEAR);
+        let decoded = JpegDecoderConfig::new().decode(&encoded).unwrap();
+        assert_eq!(decoded.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(decoded.info().source_color.icc_profile.as_deref(), header.icc_profile.as_deref());
+        // An arbitrary unconverted ICC must not receive the XYB exception.
+        header.is_xyb = false;
+        header.icc_profile = Some(b"invalid unconverted ICC".to_vec());
+        assert_eq!(decode_descriptor(&[], &header, None).transfer(), zenpixels::TransferFunction::Unknown);
+    }
+
+    #[test]
     fn decode_roundtrip() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![

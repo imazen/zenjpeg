@@ -6,6 +6,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- XYB decode now describes its already converted RGB output as sRGB in both
+  buffered and streaming descriptor selection. Source ICC metadata remains
+  intact; pixel conversion and public signatures are unchanged.
 - Zq AQ correction preserves unit scales instead of clamping legitimate
   strengths to 0.20, and the controller now sees the final image strip.
   Global quality correction no longer panics for a fractional q between 99

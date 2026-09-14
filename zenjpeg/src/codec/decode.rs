@@ -1220,12 +1220,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             let jpeg_extras = result.take_extras();
 
             // Derive correct pixel format descriptor from source color metadata.
-            let corrected_cicp = self
-                .config
-                .inner
-                .correct_color
-                .as_ref()
-                .map(|_| zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
+            // XYB inversion already returns sRGB; preserve the source profile
+            // in ImageInfo but describe the pixels after that codec transform.
+            let corrected_cicp = (header.is_xyb || self.config.inner.correct_color.is_some())
+                .then_some(zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
 
             // Build PixelBuffer with zero-copy where possible
             let buf = if wants_f32 {
