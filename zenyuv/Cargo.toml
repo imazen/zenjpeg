@@ -13,6 +13,7 @@ readme = "README.md"
 include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
+imgref = { workspace = true }
 archmage = { workspace = true }
 magetypes = { workspace = true }
 safe_unaligned_simd = { workspace = true }

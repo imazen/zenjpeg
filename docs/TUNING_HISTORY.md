@@ -1529,3 +1529,100 @@ Memory bandwidth reduction per block:
   "invalid Huffman code" parse errors on 80/543 progressive 4:2:0 files.
 - See `docs/TUNING_HISTORY.md` for older fixed bugs.
 
+## Gamma-aware input formats (2026-09-15)
+
+### Reproduction
+
+Base: `8f703a6eeaad080045aa4c1b3713a25df2e15529` (current main on 2026-09-15).
+
+`convert_strip_gamma_aware` passed only bytes per pixel to its chroma helpers.
+Both the zenyuv adapter (4:2:0) and scalar readers (4:2:2 / 4:4:0) interpreted
+those bytes as RGB8. Native-endian linear f32/u16 were read as byte values;
+BGR/BGRA were read in reverse channel order.
+
+```sh
+cargo test --release -p zenjpeg --test bundled sharp_yuv_input_formats --locked
+```
+
+The test-only parent commit reproduces five failures and one pass. On the
+one-pixel 4:2:0 case, maximum decoded-channel differences against equivalent
+RGB8 are 63 for f32, 162 for u16, and 176 for BGR. The same issue reproduces
+with 4:2:2 tested first. RGB8 decoding is an independent `jpeg-decoder` oracle.
+
+### Change
+
+- Pass the actual pixel format and row stride at the internal strip boundary.
+- Read native-endian u16/f32 as linear sRGB and use the existing transfer
+  function, preserving fractional samples. Honor BGR order and ignore alpha.
+- Keep the current zenyuv 4:2:0 algorithm. Add a typed, strided
+  `sharp::rgb_f32_to_yuv420_sharp` entry point with no RGB8/Y8 intermediate.
+  It uses the existing workspace and SIMD Newton kernel and allocates nothing.
+- The encoder supplies at most two temporary RGB f32 rows to that entry point;
+  scratch allocation is fallible. No full-image buffer is added.
+- Keep existing byte entry-point signatures and their optimized byte path.
+  4:2:2/4:4:0 share format-aware readers with their existing scalar math.
+
+Input float layouts retain their SDR linear [0, 1] contract. The new zenyuv
+API takes gamma-encoded RGB in [0, 255] with sRGB transfer already applied by
+the JPEG caller. Y/Cb/Cr planes carry their own strides and explicit matrix/range.
+Independent strips must keep the 2x2 chroma grid aligned.
+
+### Validation
+
+On macOS arm64, Rust 1.93.0:
+
+- 1,111 library tests pass on both base and patch.
+- All 999 active bundled integration tests pass on the patch (122 existing
+  ignored tests remain ignored). This includes six new regression tests;
+  they also pass with `parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert`.
+- zenyuv: 22 existing tests, two new float tests and one doctest pass; three
+  existing ignored tests remain ignored.
+- The JPEG matrix covers RGB/RGBA f32/u16, RGB/RGBA/BGR/BGRA8, both gamma
+  methods, 4:4:4/4:2:2/4:2:0/4:4:0, one-pixel edges, odd dimensions, padding
+  and seven-row pushes. A fractional-input test detects eight-bit rounding.
+- zenyuv's new tests check analytic fractional-colour output, untouched padding,
+  odd edges, and whole-image/two-row-strip identity across supported matrix/range
+  pairs and both iteration counts.
+
+The full `--lib --tests --no-fail-fast` invocation completes all 36 test binaries:
+2,213 tests pass, 124 remain ignored, and one existing test fails in
+`encoder_regression::test_quality_floor`: `baseline_444_opt Q50` scores 44.6
+against a 47.0 floor. The identical failure reproduces on the test-only parent,
+without the source fix. The full suite is therefore not completely passing.
+
+Existing validation failures were not suppressed or changed:
+
+- `cargo fmt -p zenjpeg -- --check`: formatting in the base commit's
+  `zenjpeg/src/codec/tests.rs`. Changed Rust files pass rustfmt checks.
+- Clippy with `-D warnings`: duplicate aarch64 `cfg` on
+  `zenyuv/src/neon_encode.rs:6`, also reproduced on the test-only parent.
+- Consumer builds report the pre-existing unused
+  `upsample_h2v2_libjpeg_row_scalar` function.
+
+The first corpus run could not write the default cache under the local sandbox.
+Rerunning with `CODEC_CORPUS_CACHE` pointing to a writable temporary directory
+and network access resolved those fixture errors. No manifests or test thresholds
+were changed to obtain these results. Ignored C++ parity suites were not run.
+
+### Byte compatibility and timing
+
+All 32 RGB8/RGBA8 comparisons against the unmodified base produce byte-identical
+JPEGs. The matrix covers 4:4:4/4:2:2/4:2:0/4:4:0, both gamma methods, and
+qualities 85 and 99 with auto-optimization and progressive scan search.
+The input is a generated 1440x960 image of coloured patches and fine texture.
+
+Each case uses one warmup and three timed encodes per revision, with the median
+reported. Before/after execution order alternates between cases. Consumer
+harnesses use identical source and matching dependency versions. Positive
+changes below mean the patch took longer.
+
+| Sampling | Median time change across eight cases | Case range |
+|---|---:|---:|
+| 4:4:4 | +0.65% | -2.22% to +3.01% |
+| 4:2:2 | +0.38% | -0.58% to +2.17% |
+| 4:2:0 | -0.26% | -2.31% to +1.42% |
+| 4:4:0 | +1.38% | -1.45% to +2.43% |
+
+These small local timing differences do not establish a speedup or a substantial
+regression. Float-input performance was not measured; the corrupt baseline is
+not an equivalent-output reference for that path.

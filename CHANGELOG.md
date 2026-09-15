@@ -6,6 +6,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- Gamma-aware chroma conversion now interprets linear f32/u16 and BGR/BGRA
+  input layouts correctly. 4:2:0 retains the zenyuv refinement kernel and
+  preserves fractional samples through a float-input path; RGB8/RGBA8 retain
+  their byte path. 4:2:2 and 4:4:0 use format-aware scalar readers.
 - XYB decode now describes its already converted RGB output as sRGB in both
   buffered and streaming descriptor selection. Source ICC metadata remains
   intact; pixel conversion and public signatures are unchanged.

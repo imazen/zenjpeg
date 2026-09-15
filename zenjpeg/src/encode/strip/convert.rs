@@ -858,11 +858,10 @@ impl StripProcessor {
     pub(super) fn convert_strip_gamma_aware(
         &mut self,
         rgb_strip: &[u8],
-        strip_y: usize,
+        _strip_y: usize,
         strip_height: usize,
     ) -> Result<()> {
         let width = self.layout.width;
-        let bpp = self.pixel_format.bytes_per_pixel();
         let use_iterative = self.chroma_downsampling == DownsamplingMethod::GammaAwareIterative;
 
         if self.layout.subsampling == Subsampling::S444 {
@@ -875,47 +874,18 @@ impl StripProcessor {
         let num_pixels = strip_height * width;
         let c_size = c_width * c_strip_height;
 
-        match self.layout.subsampling {
-            Subsampling::S420 => {
-                crate::encode::chroma::gamma_aware_strip_420(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_down[..c_size],
-                    &mut self.cr_down[..c_size],
-                    width,
-                    strip_height,
-                    strip_y,
-                    self.layout.height,
-                    bpp,
-                    use_iterative,
-                );
-            }
-            Subsampling::S422 => {
-                crate::encode::chroma::gamma_aware_strip_422(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_down[..c_size],
-                    &mut self.cr_down[..c_size],
-                    width,
-                    strip_height,
-                    bpp,
-                    use_iterative,
-                );
-            }
-            Subsampling::S440 => {
-                crate::encode::chroma::gamma_aware_strip_440(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_down[..c_size],
-                    &mut self.cr_down[..c_size],
-                    width,
-                    strip_height,
-                    bpp,
-                    use_iterative,
-                );
-            }
-            Subsampling::S444 => unreachable!(), // early return above
-        }
+        crate::encode::chroma::gamma_aware_strip(
+            rgb_strip,
+            width,
+            strip_height,
+            width,
+            self.pixel_format,
+            self.layout.subsampling,
+            use_iterative,
+            &mut self.y_strip[..num_pixels],
+            &mut self.cb_down[..c_size],
+            &mut self.cr_down[..c_size],
+        )?;
 
         // Rearrange Y strip from packed to padded layout
         self.rearrange_y_strip_only(strip_height);
