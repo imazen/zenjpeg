@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- `sharp::rgb_f32_to_yuv420_sharp`: typed, strided gamma-encoded RGB f32 input
+  and Y/Cb/Cr f32 output, using caller-provided planes and the existing Sharp
+  YUV workspace/kernel. No RGB8 or Y8 intermediate and no internal allocation.
+
 ### Docs
 
 - `YuvContext::new` doc: removed the stale first block that described a
