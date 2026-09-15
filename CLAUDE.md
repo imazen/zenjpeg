@@ -702,6 +702,14 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+**Gamma-aware input formats (2026-09-15, investigating):**
+`convert_strip_gamma_aware` in `encode/strip/convert.rs` passes only bytes per
+pixel to `encode/chroma.rs`. The 4:2:0 zenyuv adapter and 4:2:2/4:4:0 scalar
+readers assume RGB8, misreading linear f32/u16 and BGR inputs. Regression:
+`bundled::sharp_yuv_input_formats`, covering both gamma methods, sample layouts,
+odd dimensions, padding and chunking. Preserve the current zenyuv 4:2:0 Newton
+kernel, byte output compatibility and fractional input precision when fixing.
+
 Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
 with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
