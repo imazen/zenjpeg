@@ -16,7 +16,11 @@ All notable changes to zenjpeg are documented here. Earlier history
   through the re-encode, transformed identically, and rebuild the MPF index
   and the GContainer XMP `Item:Length`. Previously the output kept the source
   MPF index and Ultra HDR signalling but dropped the images, so readers saw a
-  gain map with stale offsets and wrong parameters.
+  gain map with stale offsets and wrong parameters. CI gains an `oracle-tools`
+  job (`tests/lossless_oracle.rs`, opt-in via `ZENJPEG_ORACLE_TOOLS=1` / `just
+  oracle`): every transform's output decodes under `djpeg` byte-identically to
+  `jpegtran`'s, and `exiftool` reaches the carried MPF secondary through the
+  rebuilt index.
 - XYB decode now describes its already converted RGB output as sRGB in both
   buffered and streaming descriptor selection. Source ICC metadata remains
   intact; pixel conversion and public signatures are unchanged.
