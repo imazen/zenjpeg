@@ -11,6 +11,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   transpose every coefficient block but copied the source DQT through, so any
   asymmetric table — most camera JPEGs — decoded to wrong pixels after these
   transforms, including via `apply_exif_orientation` (#205).
+- `lossless`: `transform`, `apply_exif_orientation` and `restructure` now carry
+  MPF secondary images (Ultra HDR gain maps, depth maps, MPF thumbnails)
+  through the re-encode, transformed identically, and rebuild the MPF index
+  and the GContainer XMP `Item:Length`. Previously the output kept the source
+  MPF index and Ultra HDR signalling but dropped the images, so readers saw a
+  gain map with stale offsets and wrong parameters.
 - XYB decode now describes its already converted RGB output as sRGB in both
   buffered and streaming descriptor selection. Source ICC metadata remains
   intact; pixel conversion and public signatures are unchanged.

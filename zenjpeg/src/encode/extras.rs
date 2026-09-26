@@ -189,7 +189,7 @@ const MAX_EXTENDED_XMP_CHUNK_BYTES: usize = 65458;
 const MAX_ICC_CHUNK_BYTES: usize = 65519;
 
 /// XMP namespace signature (with null terminator).
-const XMP_NAMESPACE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+pub(crate) const XMP_NAMESPACE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 
 /// Extended XMP namespace signature.
 const XMP_EXTENDED_NAMESPACE: &[u8] = b"http://ns.adobe.com/xmp/extension/\0";
