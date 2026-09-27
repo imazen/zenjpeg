@@ -174,10 +174,13 @@ impl LosslessTransform {
 /// How to handle images with non-MCU-aligned dimensions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EdgeHandling {
-    /// Trim partial MCU blocks (output may be slightly smaller).
-    #[default]
+    /// Explicitly allow trimming partial MCU blocks (output may be smaller).
+    /// MPF transforms require every image to retain the same proportional region.
     TrimPartialBlocks,
-    /// Error if dimensions aren't MCU-aligned.
+    /// Error if this transform would remove pixels. This is the default.
+    /// Partial edges are allowed when the transform leaves them trailing;
+    /// identity and transpose therefore never require MCU alignment.
+    #[default]
     RejectPartialBlocks,
 }
 

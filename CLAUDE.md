@@ -635,6 +635,16 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
 ## Investigation Notes
 
+**Lossless edge policy (#204, 2026-09-27, user-approved):** EdgeHandling,
+TransformConfig and layout now default to RejectPartialBlocks. The EXIF helper
+has an explicit-edge sibling for opt-in trim. `lossless_edges` sweeps all eight
+orientations, five sampling modes, aligned/partial/sub-MCU sizes, cancellation
+and retained pixels. MPF explicit trim checks equal retained fractions on both
+axes, shared by transform, EXIF correction and restructure; mismatched grids
+fail rather than misregister a gain map. CLI tests cover --trim, failure status
+and untouched existing output. This is an intentional behavior change recorded
+in the Unreleased changelog; no release was published.
+
 **Raw gain maps without HDR rendering (2026-09-27):** buffered gain-map
 extraction and its private metadata scanners are unconditional. HDR reconstruction
 and the streaming UltraHdrReader remain feature-gated. Positive XMP+MPF fixtures

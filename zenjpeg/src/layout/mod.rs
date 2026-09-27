@@ -65,7 +65,7 @@ impl LayoutConfig {
     /// Create a layout config with the given encode quality (0-100).
     ///
     /// Defaults: 4:2:0 subsampling, progressive encoding, Robidoux filter,
-    /// trim partial blocks for lossless, fancy upsampling for decode.
+    /// reject pixel-trimming lossless transforms, fancy upsampling for decode.
     pub fn new(quality: impl Into<f32>) -> Self {
         Self {
             quality: quality.into(),
@@ -73,7 +73,7 @@ impl LayoutConfig {
             progressive: true,
             auto_optimize: true,
             filter: zenresize::Filter::default(),
-            edge_handling: EdgeHandling::TrimPartialBlocks,
+            edge_handling: EdgeHandling::RejectPartialBlocks,
             fancy_upsampling: true,
         }
     }
@@ -84,7 +84,7 @@ impl LayoutConfig {
         self
     }
 
-    /// Set edge handling for lossless transforms (default: TrimPartialBlocks).
+    /// Set edge handling for lossless transforms (default: RejectPartialBlocks).
     pub fn with_edge_handling(mut self, eh: EdgeHandling) -> Self {
         self.edge_handling = eh;
         self

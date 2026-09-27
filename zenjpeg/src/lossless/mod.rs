@@ -53,5 +53,5 @@ pub use coeff_transform::{
     BlockTransform, EdgeHandling, LosslessTransform, TransformConfig, transform_coefficients,
 };
 pub use exif::{parse_exif_orientation, set_exif_orientation};
-pub use pipeline::{apply_exif_orientation, transform};
+pub use pipeline::{apply_exif_orientation, apply_exif_orientation_with_edge_handling, transform};
 pub use restructure::{OutputMode, RestartInterval, RestructureConfig, restructure};

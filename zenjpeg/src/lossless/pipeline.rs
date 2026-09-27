@@ -34,7 +34,8 @@ fn build_huffman_table(freq: &[u64; 256]) -> Result<HuffmanEncodeTable> {
 }
 
 use super::coeff_transform::{
-    LosslessTransform, TransformConfig, TransformedCoefficients, transform_coefficients,
+    EdgeHandling, LosslessTransform, TransformConfig, TransformedCoefficients,
+    transform_coefficients,
 };
 use super::exif::{parse_exif_orientation, set_exif_orientation};
 use super::geometry::{McuGeom, ScanEvent, for_each_interleaved_event};
@@ -61,7 +62,7 @@ use super::geometry::{McuGeom, ScanEvent, for_each_interleaved_event};
 ///
 /// let rotated = transform(&jpeg_data, &TransformConfig {
 ///     transform: LosslessTransform::Rotate90,
-///     edge_handling: EdgeHandling::TrimPartialBlocks,
+///     edge_handling: EdgeHandling::RejectPartialBlocks,
 /// }, enough::Unstoppable)?;
 /// ```
 pub fn transform(jpeg_data: &[u8], config: &TransformConfig, stop: impl Stop) -> Result<Vec<u8>> {
@@ -88,13 +89,19 @@ fn transform_with(
 
     // Step 2: Transform coefficients
     let transformed = transform_coefficients(&decoded_coeffs, config)
-        .map_err(|e| Error::io_error(alloc::format!("{e}")))?;
+        .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?;
 
     stop.check()?;
 
     // Step 3: The MPF secondary images get the same transform.
-    let secondaries =
-        transform_secondary_images(extras.as_ref(), config, reset_exif_orientation, stop)?;
+    let secondaries = transform_secondary_images(
+        extras.as_ref(),
+        config,
+        reset_exif_orientation,
+        (decoded_coeffs.width, decoded_coeffs.height),
+        (transformed.width, transformed.height),
+        stop,
+    )?;
 
     // Step 4: Re-encode as JPEG
     let mut segments: Vec<PreservedSegment> =
@@ -112,8 +119,8 @@ fn transform_with(
 /// Carry the MPF secondary images (Ultra HDR gain maps, depth maps, MPF
 /// thumbnails and frames) through a transform. Each secondary is
 /// geometrically bound to the primary, so it receives the **same** transform
-/// through the same pipeline (recursively); its own MCU alignment decides
-/// its own trimming under `config.edge_handling`. With
+/// through the same pipeline (recursively). Explicit trimming is accepted only
+/// when every image retains the same proportional source rectangle. With
 /// [`LosslessTransform::None`] and no EXIF fix-up the bytes pass through
 /// verbatim.
 ///
@@ -124,6 +131,8 @@ pub(super) fn transform_secondary_images(
     extras: Option<&DecodedExtras>,
     config: &TransformConfig,
     reset_exif_orientation: bool,
+    primary_source: (u32, u32),
+    primary_output: (u32, u32),
     stop: &impl Stop,
 ) -> Result<Vec<MpfImage>> {
     let Some(extras) = extras else {
@@ -144,6 +153,40 @@ pub(super) fn transform_secondary_images(
                 ))
             })?
         };
+        if !verbatim && config.edge_handling == EdgeHandling::TrimPartialBlocks {
+            // Trimming removes right/bottom source edges before the same D4
+            // transform. Equal retained fractions on both axes therefore mean
+            // equal normalized crop rectangles. Compare integer products to
+            // avoid rounding away a primary/gain-map registration mismatch.
+            let decoder = DecodeConfig::new();
+            let source = decoder.read_info(&img.data)?.dimensions;
+            let output = decoder.read_info(&data)?.dimensions;
+            let (pw, ph, sw, sh) = if config.transform.swaps_dimensions() {
+                (
+                    primary_source.1,
+                    primary_source.0,
+                    source.height,
+                    source.width,
+                )
+            } else {
+                (
+                    primary_source.0,
+                    primary_source.1,
+                    source.width,
+                    source.height,
+                )
+            };
+            if u64::from(primary_output.0) * u64::from(sw)
+                != u64::from(output.width) * u64::from(pw)
+                || u64::from(primary_output.1) * u64::from(sh)
+                    != u64::from(output.height) * u64::from(ph)
+            {
+                return Err(Error::invalid_config(alloc::format!(
+                    "MPF secondary image #{} would retain a different region than the primary after trimming; use a coordinated crop or RejectPartialBlocks",
+                    img.mpf_index,
+                )));
+            }
+        }
         out.push(MpfImage {
             image_type: img.image_type,
             data,
@@ -580,6 +623,10 @@ pub(super) fn write_dri(output: &mut Vec<u8>, restart_interval: u16) {
 /// Reads the EXIF orientation from the JPEG's metadata, applies the corresponding
 /// lossless transform, and resets the orientation tag to 1 (Normal) in the output.
 ///
+/// Returns an error if the primary or a retained MPF secondary would lose pixels.
+/// Use [`crate::lossless::apply_exif_orientation_with_edge_handling`] to explicitly permit trimming.
+/// This is a behavior change from the previous trimming default (#204).
+///
 /// If the orientation is already 1 (Normal), absent, or unrecognized, the input
 /// is returned unchanged (fast path — no decode/re-encode).
 ///
@@ -592,6 +639,21 @@ pub(super) fn write_dri(output: &mut Vec<u8>, restart_interval: u16) {
 /// let corrected = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
 /// ```
 pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
+    apply_exif_orientation_with_edge_handling(jpeg_data, EdgeHandling::RejectPartialBlocks, stop)
+}
+
+/// Apply EXIF orientation with an explicit partial-MCU policy.
+///
+/// Like [`crate::lossless::apply_exif_orientation`], this resets EXIF orientation after a successful
+/// transform. [`crate::lossless::EdgeHandling::TrimPartialBlocks`] explicitly permits pixel removal.
+/// With MPF images, all images must retain the same proportional source region;
+/// incompatible grids return an error instead of misaligning a gain map.
+/// No output is returned if any required image cannot satisfy the policy.
+pub fn apply_exif_orientation_with_edge_handling(
+    jpeg_data: &[u8],
+    edge_handling: EdgeHandling,
+    stop: impl Stop,
+) -> Result<Vec<u8>> {
     // Step 1: Decode to coefficients + metadata in one pass and read the
     // EXIF orientation (a tag-less or upright file returns unchanged).
     let decoder = DecodeConfig::new().preserve(PreserveConfig::all());
@@ -613,16 +675,23 @@ pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u
     // Step 2: Transform coefficients
     let config = TransformConfig {
         transform: lossless_transform,
-        ..Default::default()
+        edge_handling,
     };
     let transformed = transform_coefficients(&coeffs, &config)
-        .map_err(|e| Error::io_error(alloc::format!("{e}")))?;
+        .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?;
 
     stop.check()?;
 
     // Step 3: The MPF secondaries get the same rotation (and the same EXIF
     // orientation reset, should one carry the tag).
-    let secondaries = transform_secondary_images(extras.as_ref(), &config, true, &stop)?;
+    let secondaries = transform_secondary_images(
+        extras.as_ref(),
+        &config,
+        true,
+        (coeffs.width, coeffs.height),
+        (transformed.width, transformed.height),
+        &stop,
+    )?;
 
     // Step 4: Re-encode, rewriting EXIF orientation to 1 (Normal)
     let mut segments: Vec<PreservedSegment> =
