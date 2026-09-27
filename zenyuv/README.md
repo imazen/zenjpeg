@@ -19,15 +19,15 @@ ctx.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480);
 
 `YuvContext` is reusable across frames. Internal buffers are lazy-allocated on first use -- plain u8 box-average encode allocates nothing.
 
-## Pixel layout: input is packed **R, G, B** (3 bytes per pixel, tightly packed)
+## Byte input layout: packed **R, G, B** (3 bytes per pixel, tightly packed)
 
-The `&[u8]` passed to every encode method is interpreted as **R first, then G, then B** -- byte `i*3+0` is red, `i*3+1` is green, `i*3+2` is blue. There is no BGR variant: passing BGR data produces a swapped-but-silent result (Cb/Cr inverted), not an error. If your source is BGR(A), swizzle to RGB before calling. Both the AVX2 fast path and the scalar/NEON/WASM paths use the identical R,G,B order, so the channel mapping is the same on every CPU.
+The `&[u8]` passed to each `YuvContext` encode method is interpreted as **R first, then G, then B** -- byte `i*3+0` is red, `i*3+1` is green, `i*3+2` is blue. There is no BGR variant: passing BGR data produces a swapped-but-silent result (Cb/Cr inverted), not an error. If your source is BGR(A), swizzle to RGB before calling. Both the AVX2 fast path and the scalar/NEON/WASM paths use the identical R,G,B order, so the channel mapping is the same on every CPU.
 
-**Buffers are tightly packed -- there is no stride parameter.** Each input row is exactly `width * 3` bytes and each output plane row is exactly its plane-width bytes, with no inter-row padding. If you have strided/padded rows (SIMD-aligned buffers, `imgref::ImgRef` with a stride, sub-region crops), pack each row into a contiguous buffer before calling, or call once per contiguous row. A native strided entry point is not part of the current API.
+**Byte-input buffers are tightly packed -- these methods have no stride parameter.** Each input row is exactly `width * 3` bytes and each output plane row is exactly its plane-width bytes, with no inter-row padding. If you have strided/padded rows (SIMD-aligned buffers, `imgref::ImgRef` with a stride, sub-region crops), pack each row into a contiguous buffer before calling, or call once per contiguous row. For typed float input with explicit strides, use the entry point below.
 
 ## API
 
-All public conversion is done through methods on `YuvContext` (no free functions are exported). Every method returns `()` and **panics** (via `assert!` on buffer length) if any output plane is too small for the given dimensions -- see "Buffer sizes & return contract" below. There is no `Result`-returning variant.
+`YuvContext` provides the byte-input conversion methods listed below. Every method returns `()` and **panics** (via `assert!` on buffer length) if any output plane is too small for the given dimensions -- see "Buffer sizes & return contract" below. There is no `Result`-returning variant.
 
 ### Encode methods (RGB -> YCbCr)
 
@@ -43,6 +43,20 @@ All public conversion is done through methods on `YuvContext` (no free functions
 There is currently **no 4:2:2 encode** and **no 4:4:4 `f32` encode** -- only the rows above exist. (4:2:2 and 4:0:0 exist on the decode side; see "Decode".)
 
 The `sharp` module additionally exposes the underlying Sharp YUV free functions for callers that manage their own workspace or pre-seed chroma: `sharp::rgb_to_yuv420_sharp`, `sharp::refine_chroma_420_u8`, `sharp::refine_chroma_420_u8_with_workspace`, `sharp::refine_y_420_u8`, and `sharp::rgb_to_yuv420_sharp_with_workspace` / `sharp::rgb_to_yuv420_sharp_f32`. These take the same packed-RGB input and the same panic-on-undersized-buffer contract.
+
+### Strided float input
+
+`sharp::rgb_f32_to_yuv420_sharp` accepts an `imgref::ImgRef<[f32; 3]>` of
+**gamma-encoded R, G, B in 0.0..=255.0**, plus three `ImgRefMut<f32>` output
+planes and a reusable `SharpYuvWorkspace`. Apply the output transfer function
+(e.g. sRGB) to linear RGB before calling. Samples must be finite and in range.
+This preserves fractional RGB and Y values; the existing `*_f32` methods above
+accept byte input and describe their output type.
+
+Every plane has its own stride in pixels. Output dimensions must match the
+full-resolution Y and half-resolution Cb/Cr sizes below. The function allocates
+nothing and shares the existing chroma-refinement kernel. For streaming, pass
+even-height strips starting at even image rows; the final strip may be odd.
 
 ### Buffer sizes & return contract
 

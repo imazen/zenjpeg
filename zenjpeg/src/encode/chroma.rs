@@ -20,7 +20,177 @@
 #![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
 
 use crate::color::xyb::{linear_to_srgb_fast, srgb_u8_to_linear};
+use crate::error::{Error, Result};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_f32};
 use crate::foundation::consts::{YCBCR_B_TO_Y, YCBCR_G_TO_Y, YCBCR_R_TO_Y};
+use crate::types::{PixelFormat, Subsampling};
+
+/// Sample interpretation for the shared gamma-aware math. RGB8 is encoded
+/// sRGB; u16/f32 are normalized linear sRGB. Alpha and padding are ignored.
+/// The row stride is explicit in pixels; input reads do not require alignment.
+#[derive(Clone, Copy)]
+struct RgbReader {
+    format: PixelFormat,
+    bpp: usize,
+    width: usize,
+    stride: usize,
+}
+
+impl RgbReader {
+    fn new(format: PixelFormat, width: usize, stride: usize) -> Result<Self> {
+        match format {
+            PixelFormat::Rgb
+            | PixelFormat::Rgba
+            | PixelFormat::Bgr
+            | PixelFormat::Bgra
+            | PixelFormat::Bgrx
+            | PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32 => {}
+            _ => {
+                return Err(Error::invalid_color_format(
+                    "gamma-aware downsampling requires RGB input",
+                ));
+            }
+        }
+        Ok(Self {
+            format,
+            bpp: format.bytes_per_pixel(),
+            width,
+            stride,
+        })
+    }
+
+    #[inline]
+    fn offset(self, pixel: usize) -> usize {
+        let pixel = if self.width == self.stride {
+            pixel
+        } else {
+            (pixel / self.width) * self.stride + pixel % self.width
+        };
+        pixel * self.bpp
+    }
+
+    #[inline]
+    fn srgb_rgb(self, data: &[u8], pixel: usize) -> (f32, f32, f32) {
+        match self.format {
+            PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32 => {
+                let (r, g, b) = self.linear_rgb(data, pixel);
+                let encode = super::linear_lut::linear_f32_to_srgb_255_fast;
+                (encode(r), encode(g), encode(b))
+            }
+            _ => {
+                let idx = self.offset(pixel);
+                if matches!(
+                    self.format,
+                    PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx
+                ) {
+                    (data[idx + 2] as f32, data[idx + 1] as f32, data[idx] as f32)
+                } else {
+                    (data[idx] as f32, data[idx + 1] as f32, data[idx + 2] as f32)
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn linear_rgb(self, data: &[u8], pixel: usize) -> (f32, f32, f32) {
+        let idx = self.offset(pixel);
+        match self.format {
+            PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
+                let [r, g, b]: [u16; 3] = bytemuck::pod_read_unaligned(&data[idx..idx + 6]);
+                (r as f32 / 65535.0, g as f32 / 65535.0, b as f32 / 65535.0)
+            }
+            PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
+                let [r, g, b]: [f32; 3] = bytemuck::pod_read_unaligned(&data[idx..idx + 12]);
+                // These layouts describe SDR linear samples in [0, 1].
+                (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+            }
+            _ => {
+                let (r, g, b) = self.srgb_rgb(data, pixel);
+                (
+                    srgb_u8_to_linear(r as u8),
+                    srgb_u8_to_linear(g as u8),
+                    srgb_u8_to_linear(b as u8),
+                )
+            }
+        }
+    }
+}
+
+// The exported byte-only helpers retain their original signatures and RGB8
+// interpretation. They share the same math with the format-aware encoder path.
+impl From<usize> for RgbReader {
+    fn from(bpp: usize) -> Self {
+        Self {
+            format: PixelFormat::Rgb,
+            bpp,
+            width: 1,
+            stride: 1,
+        }
+    }
+}
+
+/// Format-aware encoder boundary. Input is linear sRGB for u16/f32 and
+/// encoded sRGB for byte layouts; planes are packed full-range BT.601 YCbCr.
+/// The input row stride is in pixels, including any padding.
+pub(crate) fn gamma_aware_strip(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    stride_pixels: usize,
+    format: PixelFormat,
+    subsampling: Subsampling,
+    iterative: bool,
+    y: &mut [f32],
+    cb: &mut [f32],
+    cr: &mut [f32],
+) -> Result<()> {
+    if width == 0 || height == 0 || stride_pixels < width {
+        return Err(Error::invalid_dimensions(
+            width as u32,
+            height as u32,
+            "invalid gamma-aware strip dimensions or stride",
+        ));
+    }
+    let reader = RgbReader::new(format, width, stride_pixels)?;
+    let needed = (height - 1)
+        .checked_mul(stride_pixels)
+        .and_then(|n| n.checked_add(width))
+        .and_then(|n| n.checked_mul(reader.bpp))
+        .ok_or_else(|| Error::size_overflow("gamma-aware input"))?;
+    if data.len() < needed {
+        return Err(Error::invalid_buffer_size(needed, data.len()));
+    }
+    let (hf, vf) = match subsampling {
+        Subsampling::S420 => (2, 2),
+        Subsampling::S422 => (2, 1),
+        Subsampling::S440 => (1, 2),
+        Subsampling::S444 => return Err(Error::invalid_color_format("subsampled chroma required")),
+    };
+    let y_size = checked_size_2d(width, height)?;
+    let c_size = checked_size_2d(width.div_ceil(hf), height.div_ceil(vf))?;
+    for (actual, needed) in [(y.len(), y_size), (cb.len(), c_size), (cr.len(), c_size)] {
+        if actual < needed {
+            return Err(Error::invalid_buffer_size(needed, actual));
+        }
+    }
+    match subsampling {
+        Subsampling::S420 => zenyuv_strip_420(data, y, cb, cr, width, height, reader, iterative)?,
+        Subsampling::S422 => {
+            gamma_aware_strip_422_reader(data, y, cb, cr, width, height, reader, iterative)
+        }
+        Subsampling::S440 => {
+            gamma_aware_strip_440_reader(data, y, cb, cr, width, height, reader, iterative)
+        }
+        Subsampling::S444 => unreachable!(),
+    }
+    Ok(())
+}
 
 // ── 4:2:0 strip dispatch (delegates to zenyuv) ─────────────────────────────
 
@@ -50,11 +220,12 @@ pub fn gamma_aware_strip_420(
         strip_height,
         bpp,
         use_iterative,
-    );
+    )
+    .expect("gamma-aware RGB8 strip allocation failed");
 }
 
-/// Delegate to zenyuv for 4:2:0 chroma. Uses the native f32 output path —
-/// no u8 intermediate, no u8→f32 conversion pass.
+/// Delegate 4:2:0 chroma to zenyuv, preserving the byte SIMD path for byte
+/// layouts and fractional RGB/Y samples through the float-input path.
 fn zenyuv_strip_420(
     rgb_strip: &[u8],
     y_strip: &mut [f32],
@@ -62,49 +233,89 @@ fn zenyuv_strip_420(
     cr_down: &mut [f32],
     width: usize,
     strip_height: usize,
-    bpp: usize,
+    bpp: impl Into<RgbReader> + Copy,
     use_iterative: bool,
-) {
-    let num_pixels = width * strip_height;
-    let cw = (width + 1) / 2;
-
-    // Strip alpha if RGBA.
-    let rgb_only: alloc::vec::Vec<u8>;
-    let rgb_input = if bpp == 4 {
-        rgb_only = rgb_strip
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .take(num_pixels)
-            .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
-            .collect();
-        &rgb_only
-    } else {
-        rgb_strip
-    };
-
+) -> Result<()> {
+    let reader = bpp.into();
+    let num_pixels = checked_size_2d(width, strip_height)?;
+    let cw = width.div_ceil(2);
     let config = if use_iterative {
-        zenyuv::SharpYuvConfig::default() // Newton iter=2
+        zenyuv::SharpYuvConfig::default()
     } else {
         zenyuv::SharpYuvConfig {
             max_iterations: 0,
             ..Default::default()
         }
     };
-
     let mut ws = zenyuv::sharp::SharpYuvWorkspace::new(cw);
-    zenyuv::sharp::rgb_to_yuv420_sharp_f32(
-        rgb_input,
-        y_strip,
-        cb_down,
-        cr_down,
-        width,
-        strip_height,
-        zenyuv::Range::Full,
-        zenyuv::Matrix::Bt601,
-        &config,
-        &mut ws,
-    );
+    if matches!(
+        reader.format,
+        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::RgbF32 | PixelFormat::RgbaF32
+    ) {
+        // The byte-input zenyuv API rounds Y to u8. Feed typed float rows to
+        // its float-input API instead. Scratch is bounded to two RGB rows.
+        let mut rows = crate::foundation::alloc::try_alloc_vec::<[f32; 3]>(
+            checked_size_2d(width, strip_height.min(2))?,
+            "gamma-aware RGB rows",
+        )?;
+        for top in (0..strip_height).step_by(2) {
+            let count = (strip_height - top).min(2);
+            for row in 0..count {
+                for x in 0..width {
+                    let (r, g, b) = reader.srgb_rgb(rgb_strip, (top + row) * width + x);
+                    rows[row * width + x] = [r, g, b];
+                }
+            }
+            let chroma = top / 2 * cw;
+            zenyuv::sharp::rgb_f32_to_yuv420_sharp(
+                imgref::ImgRef::new(&rows[..count * width], width, count),
+                imgref::ImgRefMut::new(
+                    &mut y_strip[top * width..(top + count) * width],
+                    width,
+                    count,
+                ),
+                imgref::ImgRefMut::new(&mut cb_down[chroma..chroma + cw], cw, 1),
+                imgref::ImgRefMut::new(&mut cr_down[chroma..chroma + cw], cw, 1),
+                zenyuv::Range::Full,
+                zenyuv::Matrix::Bt601,
+                &config,
+                &mut ws,
+            );
+        }
+    } else {
+        // Preserve the byte SIMD path (including its Y rounding). Repack only
+        // when channel order, alpha/padding or row stride requires it.
+        let mut packed;
+        let rgb_input = if reader.format == PixelFormat::Rgb
+            && reader.bpp == 3
+            && reader.width == reader.stride
+        {
+            rgb_strip
+        } else {
+            packed = crate::foundation::alloc::try_alloc_vec::<u8>(
+                checked_size_2d(num_pixels, 3)?,
+                "gamma-aware RGB8 strip",
+            )?;
+            for i in 0..num_pixels {
+                let (r, g, b) = reader.srgb_rgb(rgb_strip, i);
+                packed[i * 3..i * 3 + 3].copy_from_slice(&[r as u8, g as u8, b as u8]);
+            }
+            &packed
+        };
+        zenyuv::sharp::rgb_to_yuv420_sharp_f32(
+            rgb_input,
+            y_strip,
+            cb_down,
+            cr_down,
+            width,
+            strip_height,
+            zenyuv::Range::Full,
+            zenyuv::Matrix::Bt601,
+            &config,
+            &mut ws,
+        );
+    }
+    Ok(())
 }
 
 // ── 4:2:2 / 4:4:0 strip paths (scalar, not yet in zenyuv) ──────────────────
@@ -118,6 +329,28 @@ pub fn gamma_aware_strip_422(
     width: usize,
     strip_height: usize,
     bpp: usize,
+    use_iterative: bool,
+) {
+    gamma_aware_strip_422_reader(
+        rgb_strip,
+        y_strip,
+        cb_down,
+        cr_down,
+        width,
+        strip_height,
+        bpp,
+        use_iterative,
+    );
+}
+
+fn gamma_aware_strip_422_reader(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: impl Into<RgbReader> + Copy,
     use_iterative: bool,
 ) {
     compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
@@ -146,6 +379,28 @@ pub fn gamma_aware_strip_440(
     bpp: usize,
     use_iterative: bool,
 ) {
+    gamma_aware_strip_440_reader(
+        rgb_strip,
+        y_strip,
+        cb_down,
+        cr_down,
+        width,
+        strip_height,
+        bpp,
+        use_iterative,
+    );
+}
+
+fn gamma_aware_strip_440_reader(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: impl Into<RgbReader> + Copy,
+    use_iterative: bool,
+) {
     compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
     let c_height = (strip_height + 1) / 2;
     for cy in 0..c_height {
@@ -168,15 +423,13 @@ fn compute_y_plane_from_rgb(
     data: &[u8],
     width: usize,
     height: usize,
-    bpp: usize,
+    bpp: impl Into<RgbReader> + Copy,
     y_plane: &mut [f32],
 ) {
+    let reader = bpp.into();
     for y in 0..height {
         for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
+            let (r, g, b) = reader.srgb_rgb(data, y * width + x);
             y_plane[y * width + x] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
         }
     }
@@ -187,20 +440,14 @@ fn gamma_aware_chroma_2x1_strip(
     data: &[u8],
     width: usize,
     _height: usize,
-    bpp: usize,
+    bpp: impl Into<RgbReader> + Copy,
     cx: usize,
     y: usize,
 ) -> (f32, f32) {
+    let reader = bpp.into();
     let x0 = cx * 2;
     let x1 = (x0 + 1).min(width - 1);
-    let get = |x: usize| -> (f32, f32, f32) {
-        let i = (y * width + x) * bpp;
-        (
-            srgb_u8_to_linear(data[i]),
-            srgb_u8_to_linear(data[i + 1]),
-            srgb_u8_to_linear(data[i + 2]),
-        )
-    };
+    let get = |x: usize| -> (f32, f32, f32) { reader.linear_rgb(data, y * width + x) };
     let (lr0, lg0, lb0) = get(x0);
     let (lr1, lg1, lb1) = get(x1);
     let r = linear_to_srgb_fast((lr0 + lr1) * 0.5) * 255.0;
@@ -217,20 +464,14 @@ fn gamma_aware_chroma_1x2_strip(
     data: &[u8],
     width: usize,
     height: usize,
-    bpp: usize,
+    bpp: impl Into<RgbReader> + Copy,
     x: usize,
     cy: usize,
 ) -> (f32, f32) {
+    let reader = bpp.into();
     let y0 = cy * 2;
     let y1 = (y0 + 1).min(height - 1);
-    let get = |y: usize| -> (f32, f32, f32) {
-        let i = (y * width + x) * bpp;
-        (
-            srgb_u8_to_linear(data[i]),
-            srgb_u8_to_linear(data[i + 1]),
-            srgb_u8_to_linear(data[i + 2]),
-        )
-    };
+    let get = |y: usize| -> (f32, f32, f32) { reader.linear_rgb(data, y * width + x) };
     let (lr0, lg0, lb0) = get(y0);
     let (lr1, lg1, lb1) = get(y1);
     let r = linear_to_srgb_fast((lr0 + lr1) * 0.5) * 255.0;
@@ -248,17 +489,15 @@ fn iterative_chroma_2x1_strip(
     y_plane: &[f32],
     width: usize,
     _height: usize,
-    bpp: usize,
+    bpp: impl Into<RgbReader> + Copy,
     cx: usize,
     y: usize,
 ) -> (f32, f32) {
+    let reader = bpp.into();
     let x0 = cx * 2;
     let x1 = (x0 + 1).min(width - 1);
     let y_vals = [y_plane[y * width + x0], y_plane[y * width + x1]];
-    let get_rgb = |x: usize| -> (f32, f32, f32) {
-        let i = (y * width + x) * bpp;
-        (data[i] as f32, data[i + 1] as f32, data[i + 2] as f32)
-    };
+    let get_rgb = |x: usize| -> (f32, f32, f32) { reader.srgb_rgb(data, y * width + x) };
     let orig = [get_rgb(x0), get_rgb(x1)];
     let (mut cb, mut cr) = gamma_aware_chroma_2x1_strip(data, width, _height, bpp, cx, y);
     iterative_refine_n(&y_vals, &orig, &mut cb, &mut cr, 2);
@@ -271,17 +510,15 @@ fn iterative_chroma_1x2_strip(
     y_plane: &[f32],
     width: usize,
     height: usize,
-    bpp: usize,
+    bpp: impl Into<RgbReader> + Copy,
     x: usize,
     cy: usize,
 ) -> (f32, f32) {
+    let reader = bpp.into();
     let y0 = cy * 2;
     let y1 = (y0 + 1).min(height - 1);
     let y_vals = [y_plane[y0 * width + x], y_plane[y1 * width + x]];
-    let get_rgb = |y: usize| -> (f32, f32, f32) {
-        let i = (y * width + x) * bpp;
-        (data[i] as f32, data[i + 1] as f32, data[i + 2] as f32)
-    };
+    let get_rgb = |y: usize| -> (f32, f32, f32) { reader.srgb_rgb(data, y * width + x) };
     let orig = [get_rgb(y0), get_rgb(y1)];
     let (mut cb, mut cr) = gamma_aware_chroma_1x2_strip(data, width, height, bpp, x, cy);
     iterative_refine_n(&y_vals, &orig, &mut cb, &mut cr, 2);
@@ -326,10 +563,6 @@ fn iterative_refine_n(
 }
 
 // ── Whole-image entry points (used by tests/examples, not strip encoder) ────
-
-use crate::error::{Error, Result};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_f32};
-use crate::types::PixelFormat;
 
 fn get_bpp(pixel_format: PixelFormat) -> Result<usize> {
     match pixel_format {

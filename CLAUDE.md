@@ -754,6 +754,8 @@ entries accumulate here.
 
 ### Fixed / Resolved Bugs (historical reference)
 
+- **Gamma-aware input formats (2026-09-15):** preserve linear f32/u16 precision and BGR channel order; see [reproduction and validation](docs/TUNING_HISTORY.md#gamma-aware-input-formats-2026-09-15).
+
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
 - **SA-optimized `PiecewiseV4` quant tables were non-monotonic across quality (issue #12)** — FIXED
