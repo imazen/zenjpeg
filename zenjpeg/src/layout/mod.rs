@@ -466,6 +466,87 @@ mod tests {
     use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout};
     use enough::Unstoppable;
 
+    #[test]
+    fn lossless_layout_assembles_mpf_once() {
+        use crate::container::{marker, mpf, xmp::generate_primary_xmp};
+        use crate::encode::EncoderSegments;
+        let gray: Vec<u8> = (0..32 * 24)
+            .map(|i| ((i * 71 + i / 11) % 256) as u8)
+            .collect();
+        let mut enc = EncoderConfig::grayscale(80)
+            .encode_from_bytes(32, 24, PixelLayout::Gray8Srgb)
+            .unwrap();
+        enc.push_packed(&gray, Unstoppable).unwrap();
+        let secondary = enc.finish().unwrap();
+        let segments = EncoderSegments::new()
+            .set_xmp(&generate_primary_xmp(secondary.len()))
+            .add_gainmap(secondary);
+        let rgb: Vec<u8> = (0..64 * 48 * 3)
+            .map(|i| ((i * 37 + i / 17) % 256) as u8)
+            .collect();
+        let mut enc = EncoderConfig::ycbcr(90, ChromaSubsampling::Quarter)
+            .with_segments(segments)
+            .progressive(true)
+            .encode_from_bytes(64, 48, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&rgb, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        for optimize in [false, true] {
+            let cfg =
+                LayoutConfig::new(90.0_f32).with_edge_handling(EdgeHandling::RejectPartialBlocks);
+            let request = cfg.request(&jpeg).rotate_90();
+            let result = if optimize {
+                request.optimize_for_decode()
+            } else {
+                request
+            }
+            .execute(&Unstoppable)
+            .unwrap();
+            let ranges = marker::find_jpeg_boundaries(&result.data);
+            assert_eq!(ranges.len(), 2, "optimize={optimize}");
+            assert_eq!(
+                marker::iter(&result.data)
+                    .filter(|s| s.payload.starts_with(b"MPF\0"))
+                    .count(),
+                1
+            );
+            let index = mpf::parse_mpf(&result.data).unwrap();
+            assert_eq!(index.len(), 2);
+            assert_eq!(index[0].size as usize, ranges[0].end - ranges[0].start);
+            for (range, dimensions) in ranges.iter().zip([(48, 64), (24, 32)]) {
+                let decoded = DecodeConfig::new()
+                    .decode(&result.data[range.clone()], Unstoppable)
+                    .unwrap();
+                assert_eq!((decoded.width(), decoded.height()), dimensions);
+            }
+        }
+    }
+
+    #[test]
+    fn lossless_layout_reports_trimmed_dimensions() {
+        let jpeg = make_test_jpeg(63, 47);
+        for optimize in [false, true] {
+            let cfg =
+                LayoutConfig::new(85.0_f32).with_edge_handling(EdgeHandling::TrimPartialBlocks);
+            let request = cfg.request(&jpeg).rotate_90();
+            let result = if optimize {
+                request.optimize_for_decode()
+            } else {
+                request
+            }
+            .execute(&Unstoppable)
+            .unwrap();
+            let decoded = DecodeConfig::new()
+                .decode(&result.data, Unstoppable)
+                .unwrap();
+            assert_eq!(
+                (result.width, result.height),
+                (decoded.width(), decoded.height())
+            );
+        }
+    }
+
     /// Create a small test JPEG for layout tests.
     fn make_test_jpeg(width: u32, height: u32) -> Vec<u8> {
         let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
