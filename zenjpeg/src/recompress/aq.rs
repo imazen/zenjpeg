@@ -168,6 +168,12 @@ pub fn build_aq_mask(coeffs: &DecodedCoefficients) -> Option<AqMask> {
 ///
 /// `tail_from` is the first AC zigzag index to zero in a busy block
 /// (e.g. 48 = zero only the top quarter).
+///
+/// This and the two diagnostics below are reachable only through the
+/// `recompress-expert` re-export; under plain `recompress` nothing in-crate
+/// calls them, so dead-code analysis is silenced for that configuration
+/// (#143). Kept unconditionally compiled so the module has one shape.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 pub fn build_aq_mask_busy(coeffs: &DecodedCoefficients, tail_from: usize) -> Option<AqMask> {
     let luma = coeffs.components.first()?;
     let n_blocks = luma.num_blocks();
@@ -193,6 +199,7 @@ pub fn build_aq_mask_busy(coeffs: &DecodedCoefficients, tail_from: usize) -> Opt
 
 /// Fraction of blocks the mask flags as low-activity (any non-zero
 /// mask bit). Useful for sanity checks.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 pub fn mask_low_activity_fraction(mask: &AqMask) -> f32 {
     if mask.is_empty() {
         return 0.0;
@@ -204,6 +211,7 @@ pub fn mask_low_activity_fraction(mask: &AqMask) -> f32 {
 /// Histogram of activity tiers across all luma blocks. Returns counts
 /// in order `[VeryFlat, Flat, MidDetail, Detailed]`. Useful for
 /// diagnostics and benchmark reporting.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 pub fn tier_histogram(coeffs: &DecodedCoefficients) -> [u32; 4] {
     let mut hist = [0u32; 4];
     let Some(luma) = coeffs.components.first() else {

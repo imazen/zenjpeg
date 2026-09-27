@@ -1,0 +1,8 @@
+# arm B clamp grid (registered rule: largest L with zero regressions)
+# anchor_mean	4.5304	anchor_conv	559596	cells	559596
+L	regressions	converged	mean_encodes	improvement_pct
+25	11	559585	3.7253	17.77
+20	5	559591	3.8665	14.65
+18	0	559596	3.9195	13.48
+15	0	559596	4.0050	11.60
+12	0	559596	4.1135	9.20

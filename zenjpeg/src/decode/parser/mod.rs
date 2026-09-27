@@ -60,6 +60,55 @@ pub(super) struct CompInfo {
     pub(super) is_full_res: bool,
 }
 
+/// Per-component block grid for a **non-interleaved** scan (`Ns == 1`).
+///
+/// ISO/IEC 10918-1 A.2.2: when a scan carries one component the MCU *is* one
+/// data unit, and the scan contains `ceil(x_i/8) * ceil(y_i/8)` data units in
+/// raster order over that component's own grid — where `x_i`/`y_i` are the
+/// component's dimensions from A.1.1. That count is **not** the interleaved
+/// MCU grid: at 88x54 4:2:0 the luma true grid is 11x7 while the MCU-padded
+/// grid is 12x8.
+///
+/// Storage stays MCU-padded (`mcu_cols * h_samp` stride) because the output
+/// path indexes it that way, so iteration uses the true extents and indexing
+/// uses the padded stride.
+pub(super) struct ComponentBlockGrid {
+    /// Data-unit rows the scan actually contains (`ceil(y_i/8)`).
+    pub(super) comp_blocks_v: usize,
+    /// Data units per row the scan actually contains (`ceil(x_i/8)`).
+    pub(super) comp_blocks_h: usize,
+    /// Storage stride — MCU-padded to match the output path (`mcu_cols * h_samp`).
+    pub(super) padded_blocks_h: usize,
+}
+
+/// Build the [`ComponentBlockGrid`] for one component of a non-interleaved scan.
+///
+/// `max_h_samp`/`max_v_samp` are the **frame**-level maxima (A.1.1), not the
+/// scan's, and `mcu_cols` is the frame's interleaved MCU column count.
+pub(super) fn component_block_grid(
+    components: &[Component],
+    comp_idx: usize,
+    width: u32,
+    height: u32,
+    mcu_cols: usize,
+    max_h_samp: u8,
+    max_v_samp: u8,
+) -> ComponentBlockGrid {
+    let h_samp = components[comp_idx].h_samp_factor as usize;
+    let v_samp = components[comp_idx].v_samp_factor as usize;
+    let width = width as usize;
+    let height = height as usize;
+    let max_h = max_h_samp as usize;
+    let max_v = max_v_samp as usize;
+    let scaled_w = (width * h_samp).div_ceil(max_h);
+    let scaled_h = (height * v_samp).div_ceil(max_v);
+    ComponentBlockGrid {
+        comp_blocks_v: scaled_h.div_ceil(8),
+        comp_blocks_h: scaled_w.div_ceil(8),
+        padded_blocks_h: mcu_cols * h_samp,
+    }
+}
+
 /// Parsed JPEG scan data needed to construct a scanline reader.
 ///
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
@@ -174,6 +223,12 @@ pub(super) struct JpegParser<'a> {
     // Security limits
     pub(super) max_pixels: u64,
 
+    /// Ceiling for the decode's header-dimension-scaled allocations, in bytes
+    /// (`u64::MAX` = unlimited). See [`JpegParser::charge_memory`].
+    pub(super) max_memory: u64,
+    /// Bytes charged against [`Self::max_memory`] so far.
+    pub(super) memory_used: u64,
+
     // Extras preservation
     preserve_config: Option<PreserveConfig>,
     extras: Option<DecodedExtras>,
@@ -248,17 +303,66 @@ impl<'a> JpegParser<'a> {
         Self::with_strictness(
             data,
             max_pixels,
+            u64::MAX,
             preserve_config,
             Strictness::default(),
             zencodec::AllocPreference::CodecDefault,
         )
     }
 
+    /// Charge `bytes` against the decode's memory budget **before** allocating.
+    ///
+    /// This is the enforcement point for
+    /// [`Decoder::max_memory`](crate::decode::Decoder::max_memory). It is
+    /// applied at every allocation whose size is derived from the
+    /// header-declared frame dimensions — the ones an attacker controls with a
+    /// tiny file. Concretely: full-frame DCT coefficient storage (baseline,
+    /// arithmetic and progressive), the per-block coefficient-count and
+    /// nonzero-bitmap side tables, and the full-frame pixel output buffers,
+    /// including the fused-parallel ones.
+    ///
+    /// Deliberately **not** charged: per-MCU-row strip scratch, which is
+    /// `O(width)` rather than `O(width * height)` and so cannot be amplified
+    /// into a large allocation by a small header, and buffers the *caller*
+    /// supplies (`decode_into`). The budget therefore bounds the decode's
+    /// dimension-driven growth, not its exact peak RSS.
+    ///
+    /// Charges accumulate for the whole decode and are never released, so a
+    /// multi-scan file cannot spend the budget repeatedly.
+    ///
+    /// Returns [`ErrorKind::ResourceLimitExceeded`](crate::error::ErrorKind)
+    /// with [`zencodec::LimitKind::Memory`] once the running total would pass
+    /// the ceiling.
+    pub(super) fn charge_memory(&mut self, bytes: usize, context: &'static str) -> Result<()> {
+        // `0` means unlimited, matching `max_pixels` (see `read_frame_header`).
+        if self.max_memory == 0 || self.max_memory == u64::MAX {
+            return Ok(());
+        }
+        let bytes = bytes as u64;
+        let total = self
+            .memory_used
+            .checked_add(bytes)
+            .ok_or_else(|| Error::size_overflow(context))?;
+        if total > self.max_memory {
+            return Err(Error::resource_limit_exceeded(
+                zencodec::LimitKind::Memory,
+                total,
+                self.max_memory,
+            ));
+        }
+        self.memory_used = total;
+        Ok(())
+    }
+
     /// Create a new parser with explicit strictness level and allocation
     /// preference.
+    ///
+    /// `max_memory` is the ceiling for header-dimension-scaled allocations;
+    /// pass `u64::MAX` for unlimited. See [`JpegParser::charge_memory`].
     pub(super) fn with_strictness(
         data: &'a [u8],
         max_pixels: u64,
+        max_memory: u64,
         preserve_config: Option<&PreserveConfig>,
         strictness: Strictness,
         alloc_pref: zencodec::AllocPreference,
@@ -307,6 +411,8 @@ impl<'a> JpegParser<'a> {
             idct_method: super::IdctMethod::default(),
             icc_profile,
             max_pixels,
+            max_memory,
+            memory_used: 0,
             preserve_config,
             extras,
             mpf_header_pos: 0,
@@ -776,18 +882,6 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
-                MARKER_DNL => {
-                    // Define Number of Lines - update height if it was 0 in SOF
-                    self.parse_dnl()?;
-                }
-                MARKER_DQT => self.parse_quant_table()?,
-                MARKER_DHT => self.parse_huffman_table()?,
-                MARKER_DAC => self.parse_dac()?,
-                MARKER_DRI => self.parse_restart_interval()?,
-                // Stray restart markers between scans — some encoders write a
-                // trailing RST after the final MCU interval. These are standalone
-                // 2-byte markers with no length field, so just skip them.
-                0xD0..=0xD7 => {}
                 MARKER_EOI => {
                     // Validate that we have a valid height (either from SOF or DNL)
                     if self.height == 0 {
@@ -799,8 +893,44 @@ impl<'a> JpegParser<'a> {
                     self.extract_mpf_secondary_images()?;
                     break;
                 }
-                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
-                _ => self.skip_segment()?,
+                // Every other marker carries a table / metadata segment. Their
+                // parse errors funnel through one recovery below so that a
+                // stream cut INSIDE such a segment (between scans) gets the
+                // same treatment as a cut at the marker boundary above: no
+                // scan had started, so nothing partial exists to report (#92).
+                // Before this, a prefix ending mid-DHT/mid-DQT errored while
+                // both the shorter prefix (ending after the previous scan)
+                // and the longer one (ending in the next scan's data) decoded
+                // — a consumer re-decoding a growing prefix saw the image
+                // flicker back into an error.
+                _ => {
+                    let segment = match marker {
+                        // Define Number of Lines - update height if it was 0 in SOF
+                        MARKER_DNL => self.parse_dnl(),
+                        MARKER_DQT => self.parse_quant_table(),
+                        MARKER_DHT => self.parse_huffman_table(),
+                        MARKER_DAC => self.parse_dac(),
+                        MARKER_DRI => self.parse_restart_interval(),
+                        // Stray restart markers between scans — some encoders
+                        // write a trailing RST after the final MCU interval.
+                        // These are standalone 2-byte markers with no length
+                        // field, so just skip them.
+                        0xD0..=0xD7 => Ok(()),
+                        MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker),
+                        _ => self.skip_segment(),
+                    };
+                    if let Err(e) = segment {
+                        if self.strictness.recovers_data_errors()
+                            && scans_decoded > 0
+                            && matches!(e.kind(), ErrorKind::TruncatedData { .. })
+                        {
+                            self.warnings
+                                .push(DecodeWarning::TruncatedBetweenScans { scans_decoded });
+                            break;
+                        }
+                        return Err(e);
+                    }
+                }
             }
         }
 

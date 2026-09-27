@@ -52,6 +52,11 @@ fn scan_rst_markers_scalar(data: &[u8], capacity_hint: usize) -> RstScanResult {
     let mut markers = Vec::with_capacity(capacity_hint);
     let mut i = 0;
     let len = data.len();
+    // No terminating marker (a truncated stream): every byte is entropy data.
+    // The loop below cannot examine the last byte as a marker prefix, but
+    // that byte still carries coded bits — reporting `len - 1` made the
+    // fused-parallel path stop one block short of the sequential one (#92).
+    let mut entropy_end = len;
 
     while i + 1 < len {
         if data[i] == 0xFF {
@@ -64,13 +69,20 @@ fn scan_rst_markers_scalar(data: &[u8], capacity_hint: usize) -> RstScanResult {
                 i += 2;
                 continue;
             }
-            // 0xFF 0x00 = stuffed byte, 0xFF 0xFF = fill byte — skip
-            if next == 0x00 || next == 0xFF {
+            // 0xFF 0x00 = stuffed byte — skip both
+            if next == 0x00 {
                 i += 2;
+                continue;
+            }
+            // 0xFF 0xFF = fill byte: any run of 0xFF may precede a marker
+            // (T.81 B.1.1.2), so re-examine the second 0xFF as a prefix.
+            if next == 0xFF {
+                i += 1;
                 continue;
             }
             // Any other marker (EOI, SOS, etc.) — stop scanning
             // RST markers only appear within entropy-coded segments
+            entropy_end = i;
             break;
         }
         i += 1;
@@ -78,7 +90,7 @@ fn scan_rst_markers_scalar(data: &[u8], capacity_hint: usize) -> RstScanResult {
 
     RstScanResult {
         markers,
-        entropy_end: i,
+        entropy_end,
     }
 }
 
@@ -153,7 +165,10 @@ fn scan_rst_markers_avx2(
         i += chunk_size;
     }
 
-    // Handle remaining bytes with scalar
+    // Handle remaining bytes with scalar (same rules as the scalar scanner:
+    // a stream with no terminating marker is entropy data to the last byte,
+    // and a run of 0xFF fill bytes may precede a marker).
+    let mut entropy_end = len;
     while i + 1 < len {
         if data[i] == 0xFF {
             let next = data[i + 1];
@@ -165,11 +180,16 @@ fn scan_rst_markers_avx2(
                 i += 2;
                 continue;
             }
-            if next == 0x00 || next == 0xFF {
+            if next == 0x00 {
                 i += 2;
                 continue;
             }
+            if next == 0xFF {
+                i += 1;
+                continue;
+            }
             // Other marker — stop
+            entropy_end = i;
             break;
         }
         i += 1;
@@ -177,7 +197,7 @@ fn scan_rst_markers_avx2(
 
     RstScanResult {
         markers,
-        entropy_end: i,
+        entropy_end,
     }
 }
 
@@ -222,8 +242,9 @@ mod tests {
         let data = [0x00, 0x01, 0x02, 0x03];
         let result = scan_rst_markers(&data, 0);
         assert!(result.markers.is_empty());
-        // Scanner needs i+1 < len, so stops at i=3 (can't check 2-byte marker)
-        assert_eq!(result.entropy_end, 3);
+        // No terminating marker: every byte is entropy data (the last byte
+        // cannot start a marker, but it still carries coded bits).
+        assert_eq!(result.entropy_end, 4);
     }
 
     #[test]
@@ -233,8 +254,34 @@ mod tests {
         assert_eq!(result.markers.len(), 1);
         assert_eq!(result.markers[0].offset, 2);
         assert_eq!(result.markers[0].rst_num, 0);
-        // After RST at offset 2, scans 0x56, 0x78 — stops at i=5 (i+1=6 not < 6)
-        assert_eq!(result.entropy_end, 5);
+        // After RST at offset 2, 0x56 0x78 run to the end with no marker.
+        assert_eq!(result.entropy_end, 6);
+    }
+
+    /// A run of 0xFF fill bytes may precede a marker (T.81 B.1.1.2); the
+    /// marker after the run must still be found, as the bit reader does.
+    #[test]
+    fn test_fill_bytes_before_rst() {
+        let data = [0x11, 0xFF, 0xFF, 0xD0, 0x22, 0xFF, 0xFF, 0xFF, 0xD9, 0x33];
+        let result = scan_rst_markers(&data, 0);
+        assert_eq!(result.markers.len(), 1);
+        assert_eq!(result.markers[0].offset, 2);
+        assert_eq!(result.markers[0].rst_num, 0);
+        // entropy_end is the last 0xFF before EOI (the one the bit reader
+        // would rewind to); the fill bytes before it carry no data.
+        assert_eq!(result.entropy_end, 7);
+    }
+
+    /// Truncated streams end mid-segment with no marker at all: the last
+    /// byte belongs to the last segment.
+    #[test]
+    fn test_truncated_stream_keeps_last_byte() {
+        let data = [0x11, 0xFF, 0xD0, 0x22, 0x33, 0x44, 0x55];
+        let result = scan_rst_markers(&data, 0);
+        assert_eq!(result.markers.len(), 1);
+        assert_eq!(result.entropy_end, data.len());
+        let (_, ends) = compute_segments(&result.markers, result.entropy_end);
+        assert_eq!(*ends.last().unwrap(), data.len());
     }
 
     #[test]

@@ -120,7 +120,9 @@ pub struct InverseCoeffs {
 pub(crate) const PREC: i32 = 15;
 
 /// Pack a pair of i16 coefficients into a 32-bit value so pmaddwd reads them
-/// as `(low, high)` and computes `a*x + b*y` per i32 lane.
+/// as `(low, high)` and computes `a*x + b*y` per i32 lane. Used by the AVX2
+/// and WASM SIMD128 kernels (NEON multiplies unpacked coefficients).
+#[cfg(any(target_arch = "x86_64", target_arch = "wasm32"))]
 pub(crate) const fn pack_i16_pair(a: i16, b: i16) -> i32 {
     ((a as u16 as u32) | ((b as u16 as u32) << 16)) as i32
 }

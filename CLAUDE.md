@@ -594,6 +594,7 @@ Four levels controlling error tolerance during decode:
 |----------|--------|----------|---------|------------|
 | Non-JFIF markers | Error | Warn | Warn | Warn |
 | Truncated data | Error | Pad zeros | Pad zeros | Pad zeros |
+| AC run past block | Error | Warn (EOB) | Warn (EOB) | Warn (EOB) |
 | Bad restart count | Error | Error | Warn | Resync fwd |
 | RST sequence wrong | Error | Error | Error | Accept any |
 | Zero quant value | Error | Clamp to 1 | Clamp to 1 | Clamp to 1 |
@@ -705,31 +706,31 @@ Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
 with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
 
-1. **SA-optimized quant tables are non-monotonic (2026-02-03, issue #12)** — the anchor
-   tables are non-monotonic across quality levels. Quant values must be non-increasing as
-   quality rises; these climb repeatedly.
-   - **Location (re-verified 2026-07-15):** `encode/tables/sa_piecewise_v4_data.rs`.
-     The old `optimized_tables.rs` no longer exists — the data was *restored* into
-     `sa_piecewise_v4{,_data}.rs` and wired into production as
-     `QuantTableConfig::PiecewiseV4` (`encode/plan.rs:182`), carried over **verbatim**,
-     so the defect shipped with it.
-   - **Measured (2026-07-15, read from the source data):** `ANCHOR_LUMA` DC q5→q100 =
-     15, 15, 28, 20, 24, 12, 14, 18, 23, 26, 30, 12, 6, 7, 5, 3, 8, 5, **37**, 6 — i.e.
-     the old q90=5 / q95=37 / q100=6 wobble is unchanged. `ANCHOR_CB` DC is worse: q100=81,
-     *coarser than q5's 66*. Independently corroborated by #12's own comment (34 size-
-     monotonicity violations q1–q99 vs 0 for Jpegli).
-   - **Root cause:** each anchor was independently SA-optimized, finding a different local
-     optimum; `tables_for_quality` (`sa_piecewise_v4.rs`) just lerps between anchors — no
-     smoothing, no constraint pass, and **no monotonicity test** anywhere in the tables path.
-   - **Impact:** not the default (`QuantTableConfig::default()` is Jpegli), so only callers
-     explicitly selecting `PiecewiseV4` hit it — but it is public and production-wired.
-     `sa_piecewise_v4.rs`'s own header doc recommends it as `EncoderConfig::adaptive`'s
-     default and claims it "beats jpegli on 99/100 quality levels" without mentioning any
-     of this — treat that doc as unreliable.
-   - **Fix:** constrained optimization or a post-smoothing pass over the 20 anchors, plus a
-     monotonicity regression test (natural home: `sa_piecewise_v4.rs`'s test module).
+0. **`fuzz_differential` will report false crashes on malformed-but-recoverable
+   input (issue #198, found 2026-08-29, pre-existing).** `fuzz/fuzz_targets/fuzz_differential.rs`
+   asserts `max_diff <= 4` between zenjpeg's and zune-jpeg's pixels whenever
+   *both* decoders return `Ok`. That bound only describes IDCT rounding, which is
+   the only legitimate difference on a **well-formed** stream. On a malformed one
+   neither decoder is decoding — both are *recovering*, and zenjpeg's recovery is a
+   deliberate four-level ladder (pad-zeros on truncation, EOB on an AC run past the
+   block, RST resync; see `docs/strictness.md`) that no other decoder promises to
+   match. Comparing recovered pixels compares two policies, not two implementations
+   of one contract.
 
-2. **Two `target-zq`-gated research examples don't compile against current APIs (found
+   Demonstrated, not theorized: `fuzz/regression/truncation-ac-overflow-slow-path`
+   is rejected by `Strictness::Strict` ("extraneous bytes between markers"),
+   recovered by both Balanced and zune, and the two recoveries differ by **27**.
+   Any fuzzing session that draws such an input gets a spurious crash report.
+
+   `tests/fuzz_regression.rs` gates its own copy of the comparison on
+   `Strictness::Strict` accepting the input — the same "complete, clean stream"
+   test `fuzz_truncation` already uses — which keeps the assertion at full
+   strength exactly where it is well-defined. The fuzz target itself was left
+   unchanged on purpose (changing a test's assertion is an owner call, not a
+   side effect of adding a CI gate). Apply the same one-line gate there when
+   ready.
+
+1. **Two `target-zq`-gated research examples don't compile against current APIs (found
    2026-07-23, pre-existing).** Neither is part of the normal build/test matrix — both
    require the `target-zq` feature, and per this doc's own Feature Flags section "no CI
    job enables `target-zq`" — but `--all-features` exposes them, and one (below) was
@@ -755,7 +756,32 @@ entries accumulate here.
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
-- Progressive Q10 encoder ~2.8% larger than C++ jpegli (issue #23) — FIXED; issue closed 2026-04-15.
+- **SA-optimized `PiecewiseV4` quant tables were non-monotonic across quality (issue #12)** — FIXED
+  2026-08-27. The raw v4 anchors (each SA-optimized independently) had 1,265 per-cell violations
+  (luma DC q90=5 / q95=37 / q100=6; Cb DC q100=81 coarser than q5's 66), giving 30-34 size-vs-q
+  reversals on a 512² sweep. `encode/tables/sa_piecewise_v4.rs` now passes the raw anchors
+  (`RAW_ANCHOR_*`, kept as provenance) through a compile-time per-cell L2 isotonic (PAV) fit;
+  the public `ANCHOR_*` are the monotone result. Gates: `shipped_anchors_are_non_increasing_per_cell`,
+  `tables_for_quality_is_non_increasing_over_the_whole_q_range`, and the q1-q99 size sweep
+  `tests/piecewise_v4.rs::piecewise_v4_size_is_monotone_in_quality` (0 violations). The raw-anchor
+  pareto figures (+6.602 / +6.09 vs jpegli) have NOT been re-measured post-smoothing; the family
+  stays opt-in (default is Jpegli).
+- **`optimize_huffman(false)` baseline encodes produced undecodable JPEGs on out-of-corpus content**
+  (e.g. frymire at every quality; mozjpeg + zenjpeg decoders both rejected the output) — FIXED
+  2026-08-26 (73c84c50). The corpus-trained builtin Huffman tables lacked codes for 13,238 legal
+  symbols across 324/360 tables; `encode()` emits ZERO bits for a codeless symbol. The frymire
+  hash-lock suite had locked the corrupt bytes (hashes without decoding). `select_tables` now
+  completes every table; every hash-lock encoder test also decodes what it hashes; the locked-values
+  regenerator refuses to lock undecodable bytes. Regen `values_archmage.csv` via the
+  `regen-locked-values` workflow (x86-only hashes).
+- Lossless transform/restructure corruption class (issues #194 + #195: Transpose/Transverse wrong on
+  subsampled chroma; TrimPartialBlocks/progressive restructure corrupt on non-MCU-aligned images) —
+  FIXED 2026-08-26 (c453d299). Four root causes: count-vs-encode traversal divergence (zero-length
+  Huffman codes), emitters rederiving geometry from pixel dims instead of the MCU-padded grids,
+  trim-by-shrinking-dims-only, and progressive tokenizing padded instead of true grids. Regression
+  gates: `tests/lossless_matrix.rs` (5 modes × 5 dim classes × 8 transforms, 4 oracle layers),
+  `tests/lossless_dispatch_parity.rs` (byte-identity across SIMD token tiers),
+  `lossless::tests::trim_sentinel_tests` (padding can never leak into visible region).
   **Verified 2026-07-15**: the 4 `quality_matrix` progressive tests that had been `#[ignore]`d citing
   #23 (444/422/420/440) all pass, and the ignores are removed. Q10 progressive size deltas are now
   +1.4..+2.4% *and* Rust scores +3.1..+4.1 SSIM2 better — i.e. it buys quality, not waste. The
@@ -1487,3 +1513,21 @@ top, not a missing ARM path. `encode/mage_simd.rs` is x86-only by design
 breaks any target depending on it (`cpp_comparison` bench, the `__test-utils`
 integration tests). Pre-existing. `--lib` and `--bench tier_isolation` are
 unaffected.
+
+## Complete Zq candidate binding and controller repairs (2026-09-08)
+
+Read `docs/zensim-candidate-binding-2026-09-08.md` and
+`benchmarks/zensim_candidate_binding_2026-09-08.md` before candidate loop work.
+`__zensim-research` / `zq_rd_probe` use exact bakes, explicit seed q and
+scalar/neutral/active controls through complete Rust `BakeScorer`. Every current
+map is recomputed, including pass zero; unsupported terms/gates/layouts and
+legacy peak bounds fail. No process-global profile/gradient cache is imported.
+The current AQ callback includes the final flush; scaling no longer clamps
+normal strengths to 0.20. Unit scales are byte-neutral, including partial edge
+blocks. The near-q=100 global correction panic is fixed. Named Zq RGB/f32,
+subsampling and strict-bound tests pass. Two correction passes may cost three
+full encodes: use observed work counts, not the older max_passes prose.
+One training-family screen proves exact map/byte/pixel repeat and engagement;
+69 bytes saved accompanies lower quality under D/SSIMULACRA2/Butteraugli. This
+is not an RD win, calibrated targeting or replacement-model qualification.
+Use the shared zensim native targeting owner for the next full experiment.

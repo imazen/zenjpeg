@@ -450,6 +450,7 @@ pub fn upsample_h1v2_i16_libjpeg_strided(
         let far_row = far_y * in_stride;
 
         let bias = if is_upper { 1i16 } else { 2i16 };
+        #[cfg(target_arch = "x86_64")]
         let w = out_width.min(in_width);
 
         #[cfg(target_arch = "x86_64")]
@@ -619,7 +620,6 @@ pub fn upsample_h2v2_libjpeg_row(
         incant!(upsample_h2v2_libjpeg_row_generic(
             near, far, output, in_width, out_width, bias
         ));
-        return;
     }
     #[cfg(target_arch = "x86_64")]
     upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, bias);
@@ -629,7 +629,6 @@ pub fn upsample_h2v2_libjpeg_row(
 /// `upsample_h2v2_libjpeg_row_scalar`, interior columns vectorized in i32x8.
 /// Used on non-x86 (NEON/wasm128); x86 uses the hand AVX2 kernel.
 #[magetypes(v3, neon, wasm128, scalar)]
-#[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "x86_64", allow(dead_code))]
 fn upsample_h2v2_libjpeg_row_generic(
     token: Token,

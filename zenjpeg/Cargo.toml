@@ -97,6 +97,8 @@ zenresize = { workspace = true, optional = true }
 # Perceptual metric used by Quality::Zq target-perceptual-quality variants
 # (issue #113). Pulled in only when the `target-zq` feature is enabled.
 zensim = { workspace = true, optional = true }
+# Exact runtime identity required by the complete candidate scoring surface.
+zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
 
 # zenpredict (ZNPR v3 runtime) — pulled in only by the
 # `__picker-research` feature for the dev/picker_v0_3_holdout_ab.rs
@@ -130,7 +132,7 @@ tempfile = "3"
 # from crates.io, unifying with the workspace `zencodec` dep — no
 # `[patch.crates-io]` needed. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
-zencodec-testkit = "0.1.0"
+zencodec-testkit = ">=0.1.0, <0.3.0"
 
 
 # WASM testing dependencies (browser + Node.js)
@@ -181,7 +183,7 @@ ultrahdr-core = { workspace = true }
 # our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
 # `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
-zensim-regress = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a944420ca0e040ecfcea0f4afa263" }
+zensim-regress = { git = "https://github.com/imazen/zensim", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
 zensim = { workspace = true, features = ["classification"] }
 
 [features]
@@ -261,7 +263,19 @@ __picker-research = ["target-zq"]
 # `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
 # `ultrahdr-core/f16` restores HdrOutputFormat::LinearF16 (ultrahdr-core 0.6.0
 # made it default-off; ReconstructHdr's `wants_f16` output path needs it).
-ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "ultrahdr-core/f16", "dep:half", "dep:zentone"]
+ultrahdr = [
+    "ultrahdr-core/std",
+    "ultrahdr-core/tonemap",
+    "ultrahdr-core/f16",
+    "dep:half",
+    "dep:zentone",
+    # Measured content-light-level for the ReconstructHdr envelope (appendix
+    # AA): the zenpixels measurement owner (`CllMeasure::measure_max`) lives
+    # behind zenpixels-convert's `hdr-experimental` gate (stable math; the
+    # gate covers pre-0.3.0 surface churn).
+    "dep:zenpixels-convert",
+    "zenpixels-convert/hdr-experimental",
+]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
 # zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
 # path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
@@ -274,7 +288,10 @@ ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "ultrahdr-core/f16", "
 # 0.2.13 ships icc-db in its defaults, so any default-features consumer
 # anywhere in a build graph flipped the capability on regardless of zenjpeg's
 # flag.
-zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]
+# `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
+# kernels, which the decoder's auto-orient permute delegates to (#150); it
+# adds no dependency (archmage + magetypes are already mandatory here).
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
 # Target-perceptual-quality encoder — the umbrella for every `zq*` variant.
 #   - `Quality::Zq` / `Quality::ZqExplicit`: closed loop. Iterates
 #     encode + decode + zensim diffmap to land at a perceptual score target
@@ -290,6 +307,8 @@ zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]
 # (it deletes the unpublished zenpredict path dep, which would otherwise leave a
 # dangling `dep:zenpredict` reference here — see .github/workflows/ci.yml).
 target-zq = ["dep:zensim", "dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
+# Complete candidate binding in the recovered Zq experiment; explicit opt-in.
+__zensim-research = ["target-zq", "zensim/custom-profiles", "zensim/feature-regime-v2", "dep:zenpredict-serving"]
 # JPEG→JPEG recompression to a target zensim Profile A quality with no size
 # regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
 # core router/strategies/calibration need only the decoder — no heavy deps,
@@ -381,6 +400,13 @@ name = "decode_zenbench"
 harness = false
 required-features = ["zencodec"]
 
+# Auto-orient permute A/B (#150). No required-features on purpose: run with
+# and without `zencodec` to compare the scalar gather against the
+# zenpixels-convert delegate.
+[[bench]]
+name = "decode_orient_zenbench"
+harness = false
+
 [[bench]]
 name = "huffman_decode"
 harness = false
@@ -448,6 +474,10 @@ required-features = ["__expert"]
 [[example]]
 name = "sweep_cell"
 required-features = ["__expert"]
+
+[[example]]
+name = "zensim_census"
+required-features = ["target-zq"]
 
 [[example]]
 name = "zq_calibrate"
@@ -618,3 +648,7 @@ name = "gray_path_diff"
 
 [[example]]
 name = "gray_decode_bench"
+
+[[example]]
+name = "zq_rd_probe"
+required-features = ["__zensim-research"]

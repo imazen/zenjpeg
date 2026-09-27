@@ -37,8 +37,6 @@
 //! cargo bench -p zenjpeg --bench container_scan
 //! ```
 
-#![allow(clippy::needless_range_loop)]
-
 use enough::Unstoppable;
 use std::path::PathBuf;
 use zenbench::prelude::*;

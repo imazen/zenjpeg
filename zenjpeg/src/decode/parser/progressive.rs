@@ -18,7 +18,7 @@ use crate::types::Component;
 use enough::Stop;
 
 use super::super::{DecodeWarning, Strictness};
-use super::JpegParser;
+use super::{ComponentBlockGrid, JpegParser};
 
 /// Geometry derived from sampling factors, shared across all four scan paths.
 #[derive(Clone, Copy)]
@@ -27,17 +27,6 @@ struct ProgressiveGeometry {
     max_v_samp: u8,
     mcu_cols: usize,
     mcu_rows: usize,
-}
-
-/// Per-component block grid for non-interleaved DC and AC scans.
-struct ComponentBlockGrid {
-    /// Actual coefficient rows in the JPEG bitstream (`ceil(scaled_h/8)`).
-    comp_blocks_v: usize,
-    /// Actual coefficient columns in the JPEG bitstream (`ceil(scaled_w/8)`).
-    comp_blocks_h: usize,
-    /// Storage stride — MCU-padded to match the output path
-    /// (`mcu_cols * h_samp`).
-    padded_blocks_h: usize,
 }
 
 /// Compute MCU geometry and max sampling factors from frame metadata.
@@ -68,6 +57,9 @@ fn compute_progressive_geometry(
 }
 
 /// Build the per-component block grid (actual vs MCU-padded stride).
+///
+/// Thin adapter over [`super::component_block_grid`] — the geometry is shared
+/// with the baseline and arithmetic non-interleaved paths.
 fn component_block_grid(
     components: &[Component],
     comp_idx: usize,
@@ -75,22 +67,15 @@ fn component_block_grid(
     height: u32,
     geom: &ProgressiveGeometry,
 ) -> ComponentBlockGrid {
-    let h_samp = components[comp_idx].h_samp_factor as usize;
-    let v_samp = components[comp_idx].v_samp_factor as usize;
-    let width = width as usize;
-    let height = height as usize;
-    let max_h = geom.max_h_samp as usize;
-    let max_v = geom.max_v_samp as usize;
-    let scaled_w = (width * h_samp + max_h - 1) / max_h;
-    let scaled_h = (height * v_samp + max_v - 1) / max_v;
-    let comp_blocks_h = (scaled_w + 7) / 8;
-    let comp_blocks_v = (scaled_h + 7) / 8;
-    let padded_blocks_h = geom.mcu_cols * h_samp;
-    ComponentBlockGrid {
-        comp_blocks_v,
-        comp_blocks_h,
-        padded_blocks_h,
-    }
+    super::component_block_grid(
+        components,
+        comp_idx,
+        width,
+        height,
+        geom.mcu_cols,
+        geom.max_h_samp,
+        geom.max_v_samp,
+    )
 }
 
 /// Install DC/AC Huffman tables on the entropy decoder for each scan
@@ -181,7 +166,10 @@ fn decode_dc_scan_non_interleaved(
                     buf.extend_from_slice(&decoder.partial_byte_padding_bits());
                 }
                 decoder.align_to_byte();
-                decoder.read_restart_marker(next_restart_num)?;
+                if !decoder.read_restart_marker_tolerant(next_restart_num)? {
+                    had_progressive_truncation = true;
+                    break 'ni_dc;
+                }
                 next_restart_num = (next_restart_num + 1) & 7;
                 decoder.reset_dc();
             }
@@ -250,7 +238,10 @@ fn decode_dc_scan_interleaved(
                     buf.extend_from_slice(&decoder.partial_byte_padding_bits());
                 }
                 decoder.align_to_byte();
-                decoder.read_restart_marker(next_restart_num)?;
+                if !decoder.read_restart_marker_tolerant(next_restart_num)? {
+                    had_progressive_truncation = true;
+                    break 'dc_scan;
+                }
                 next_restart_num = (next_restart_num + 1) & 7;
                 decoder.reset_dc();
             }
@@ -552,6 +543,13 @@ impl<'a> JpegParser<'a> {
             let padded_blocks_h = geom.mcu_cols * h_samp;
             let padded_blocks_v = geom.mcu_rows * v_samp;
             let num_blocks = checked_size_2d(padded_blocks_h, padded_blocks_v)?;
+            // coeffs + coeff_counts + nonzero_bitmaps are all sized purely from
+            // the (untrusted) SOF dimensions — ~137 bytes per block. Charge the
+            // budget before allocating.
+            self.charge_memory(
+                num_blocks.saturating_mul(DCT_BLOCK_SIZE * 2 + 1 + 8),
+                "DCT coefficient storage",
+            )?;
             // Full-frame coefficient storage sized from the (untrusted) SOF
             // dimensions → default fallible.
             self.coeffs.push(try_alloc_dct_blocks_pref(

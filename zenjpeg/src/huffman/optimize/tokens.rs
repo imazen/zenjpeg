@@ -3,7 +3,6 @@
 //! This module provides token types for capturing symbols and extra bits
 //! during a first pass, then replaying them with optimized Huffman tables.
 
-#![allow(clippy::wrong_self_convention)]
 // Dead-code analysis note: several items here are reachable only through
 // the `__test-utils` pub surface (benches, examples, debugging tools) or
 // through target-dependent SIMD dispatch tiers, so the default build

@@ -779,7 +779,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 dst_bytes,
-                stop.clone(),
+                stop,
                 header.num_components,
                 header.is_xyb,
             )
@@ -788,7 +788,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 dst_bytes,
-                Unstoppable,
+                &Unstoppable,
                 header.num_components,
                 header.is_xyb,
             )
@@ -801,7 +801,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 &mut contiguous,
-                stop.clone(),
+                stop,
                 header.num_components,
                 header.is_xyb,
             )
@@ -810,7 +810,7 @@ fn push_decoder_direct<'a>(
                 data_ref,
                 format,
                 &mut contiguous,
-                Unstoppable,
+                &Unstoppable,
                 header.num_components,
                 header.is_xyb,
             )
@@ -1220,12 +1220,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             let jpeg_extras = result.take_extras();
 
             // Derive correct pixel format descriptor from source color metadata.
-            let corrected_cicp = self
-                .config
-                .inner
-                .correct_color
-                .as_ref()
-                .map(|_| zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
+            // XYB inversion already returns sRGB; preserve the source profile
+            // in ImageInfo but describe the pixels after that codec transform.
+            let corrected_cicp = (header.is_xyb || self.config.inner.correct_color.is_some())
+                .then_some(zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
 
             // Build PixelBuffer with zero-copy where possible
             let buf = if wants_f32 {
@@ -1265,7 +1263,9 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                             )
                             .with_transfer(zenpixels::TransferFunction::Linear);
                             let rgb: Vec<Rgb<f32>> = pixels_f32
-                                .chunks_exact(3)
+                                .as_chunks::<3>()
+                                .0
+                                .iter()
                                 .map(|c| Rgb {
                                     r: c[0],
                                     g: c[1],
@@ -1468,16 +1468,37 @@ impl JpegDecoder<'_> {
         let mut info = ImageInfo::new(hdr.width(), hdr.height(), ImageFormat::Jpeg);
         info = populate_info_from_jpeg_extras(info, &extras, self.orientation);
 
-        // Envelope: derived peak (capped at the reconstruction boost) +
-        // mastering display from the alternate-image capacity. Primaries are
-        // the base image's (sRGB/BT.709 — apply_gainmap preserves them).
-        let peak_nits = SDR_WHITE_NITS * capacity_max.min(display_boost);
-        info.source_color.content_light_level =
-            Some(zencodec::ContentLightLevel::new(peak_nits as u16, 0));
+        // Envelope: the CONTENT light level is MEASURED from the
+        // reconstructed pixels via the zenpixels measurement owner
+        // (`CllMeasure::measure_max`, MaxRGB per CTA-861.3, BT.2408 anchor —
+        // appendix AA: the gain map's declared capacity is a range BOUND,
+        // usually wrong about actual content, so deriving CLL from it
+        // over-states the content whenever the range isn't fully used).
+        // MaxFALL comes from the same scan. The mastering display keeps the
+        // capacity-derived peak: it describes what the encoding can EXPRESS
+        // (a capability/config property), not what the content contains.
+        // The f16 output form measures as None (the owner takes f32) and
+        // falls back to the capacity-derived value.
+        let capacity_nits = SDR_WHITE_NITS * capacity_max.min(display_boost);
+        let measured = {
+            use zenpixels_convert::hdr::measure::{CllMeasure, LightLevelMethod};
+            zenpixels::hdr::ContentLightLevel::measure_max(
+                hdr.as_slice(),
+                zenpixels::hdr::DiffuseWhite::BT2408,
+                LightLevelMethod::MaxRgb,
+            )
+        };
+        info.source_color.content_light_level = Some(match measured {
+            Some(cll) => zencodec::ContentLightLevel::new(
+                cll.max_content_light_level,
+                cll.max_frame_average_light_level,
+            ),
+            None => zencodec::ContentLightLevel::new(capacity_nits as u16, 0),
+        });
         info.source_color.mastering_display = Some(zencodec::MasteringDisplay::new(
             [[0.640, 0.330], [0.300, 0.600], [0.150, 0.060]],
             [0.3127, 0.3290],
-            peak_nits,
+            capacity_nits,
             0.005,
         ));
 

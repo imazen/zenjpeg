@@ -251,7 +251,6 @@ mod simd_fused {
     }
 }
 
-
 /// aarch64 fused kernels.
 ///
 /// These mirror `simd_fused`'s x86 bodies but are built on
@@ -848,9 +847,24 @@ mod arm_linear_lut_tests {
             rgb_to_ycbcr_x8_scalar(&rs, &gs, &bs)
         };
         for i in 0..8 {
-            assert!((y[i] - wy[i]).abs() < 1e-3, "Y lane {i}: {} vs {}", y[i], wy[i]);
-            assert!((cb[i] - wcb[i]).abs() < 1e-3, "Cb lane {i}: {} vs {}", cb[i], wcb[i]);
-            assert!((cr[i] - wcr[i]).abs() < 1e-3, "Cr lane {i}: {} vs {}", cr[i], wcr[i]);
+            assert!(
+                (y[i] - wy[i]).abs() < 1e-3,
+                "Y lane {i}: {} vs {}",
+                y[i],
+                wy[i]
+            );
+            assert!(
+                (cb[i] - wcb[i]).abs() < 1e-3,
+                "Cb lane {i}: {} vs {}",
+                cb[i],
+                wcb[i]
+            );
+            assert!(
+                (cr[i] - wcr[i]).abs() < 1e-3,
+                "Cr lane {i}: {} vs {}",
+                cr[i],
+                wcr[i]
+            );
         }
     }
 
@@ -867,9 +881,24 @@ mod arm_linear_lut_tests {
             rgb_to_ycbcr_x8_scalar(&rs, &gs, &bs)
         };
         for i in 0..8 {
-            assert!((y[i] - wy[i]).abs() < 1e-3, "Y lane {i}: {} vs {}", y[i], wy[i]);
-            assert!((cb[i] - wcb[i]).abs() < 1e-3, "Cb lane {i}: {} vs {}", cb[i], wcb[i]);
-            assert!((cr[i] - wcr[i]).abs() < 1e-3, "Cr lane {i}: {} vs {}", cr[i], wcr[i]);
+            assert!(
+                (y[i] - wy[i]).abs() < 1e-3,
+                "Y lane {i}: {} vs {}",
+                y[i],
+                wy[i]
+            );
+            assert!(
+                (cb[i] - wcb[i]).abs() < 1e-3,
+                "Cb lane {i}: {} vs {}",
+                cb[i],
+                wcb[i]
+            );
+            assert!(
+                (cr[i] - wcr[i]).abs() < 1e-3,
+                "Cr lane {i}: {} vs {}",
+                cr[i],
+                wcr[i]
+            );
         }
     }
 }

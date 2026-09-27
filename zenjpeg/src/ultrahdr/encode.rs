@@ -170,8 +170,10 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
 ///
 /// Sampling matches `compute_gainmap_slice`: each gain-map cell `(gx, gy)`
 /// reads the source pixel at `(gx*scale + scale/2, gy*scale + scale/2)`,
-/// clamped to image bounds. Gain-map metadata bounds are accumulated across
-/// the same pixels via `compute_gain_row`'s `observed_min_max` accumulator.
+/// clamped to image bounds. `compute_gain_row`'s `observed_min_max`
+/// accumulator is tracked across the same pixels, but the declared metadata
+/// range is the CONFIG grid the bytes were quantized on — the accumulator
+/// only widens the alternate headroom (see [`build_gainmap_metadata`]).
 fn split_and_compute_gainmap<C: LumaToneMap>(
     hdr: &PixelBuffer,
     curve: &C,
@@ -283,17 +285,38 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
     Ok((sdr_buffer, gainmap, metadata))
 }
 
-/// Build [`GainMapMetadata`] from the configured ranges and the `(min, max)`
-/// gain accumulator returned by `compute_gain_row` across the image. Mirrors
-/// `compute_gainmap_slice`'s metadata construction (clamp to config range,
-/// log2 conversion, ISO 21496-1 fields), kept here so we don't depend on
-/// ultrahdr-core's `pub(crate) metadata_from_arrays`.
+/// Build the [`GainMapMetadata`] that matches gain-map bytes quantized by
+/// `compute_gain_row` on `config`'s boost grid.
+///
+/// **Contract (zenjpeg #193, ultrahdr #33): the declared per-channel
+/// `min`/`max` ARE the dequantization grid.** `compute_gain_row` normalizes
+/// each byte over `log(config.min_boost) ..= log(config.max_boost)`, and
+/// every conformant reader reconstructs
+/// `gain = 2^(min + byte/255 · (max − min))` from the declared range — so
+/// the metadata must declare exactly that grid. Declaring the content's
+/// observed range instead (what this function did before #193) made every
+/// reader dequantize on a narrower grid than the bytes were written on,
+/// reconstructing under-boosted HDR whenever the content's gain range was
+/// narrower than the configured one.
+///
+/// `min_max` — the `(min, max)` gain accumulator `compute_gain_row` fills
+/// across the image — does not feed the declared range. Its `max` only
+/// widens `alternate_hdr_headroom` so full gain application stays reachable
+/// when the content exceeds the configured headroom; a non-finite or
+/// non-positive value (no pixel observed) falls back to the grid top.
+///
+/// Mirrors ultrahdr-core's `pub(crate) metadata_for_config_grid`
+/// (`a09478f0bfaa`), replicated here because it is not exported.
 fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMapMetadata {
-    let actual_min = min_max.0.max(config.min_boost);
-    let actual_max = min_max.1.min(config.max_boost);
+    let observed_max = min_max.1;
+    let observed = if observed_max.is_finite() && observed_max > 0.0 {
+        observed_max.clamp(config.min_boost, config.max_boost)
+    } else {
+        config.max_boost
+    };
     let channel = GainMapChannel {
-        min: (actual_min as f64).log2(),
-        max: (actual_max as f64).log2(),
+        min: (config.min_boost as f64).log2(),
+        max: (config.max_boost as f64).log2(),
         gamma: config.gamma as f64,
         base_offset: config.base_offset as f64,
         alternate_offset: config.alternate_offset as f64,
@@ -301,7 +324,7 @@ fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMa
     let mut metadata = GainMapMetadata::default();
     metadata.channels = [channel; 3];
     metadata.base_hdr_headroom = (config.base_hdr_headroom as f64).log2();
-    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(actual_max) as f64).log2();
+    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(observed) as f64).log2();
     metadata.use_base_color_space = true;
     metadata.backward_direction = false;
     metadata
@@ -434,18 +457,61 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
 /// matrix of knobs use [`encode_ultrahdr`].
 pub fn encode_ultrahdr_luma(hdr: &PixelBuffer) -> Result<Vec<u8>> {
     use crate::encoder::ChromaSubsampling;
-    // BT.2446 Method C: 1000-nit HDR peak → 203-nit SDR reference
-    // (HDR-10 nominal, BT.2408 SDR diffuse white). Reasonable defaults
-    // for general HDR10 content; users with PQ 10000-nit content can call
-    // `encode_ultrahdr_with_curve` with `Bt2446C::new(10000.0, 203.0)`.
+    // BT.2446 Method C over the content's MEASURED light (appendix AA):
+    // the curve consumes the pixels' own luminance per sample, so the two
+    // constructor constants must state FACTS, never an assumed content
+    // peak. `Bt2446C::new(input_scale, sdr_ref)`:
+    //
+    // - `input_scale` is the INPUT NORMALIZATION — "what luma 1.0 means,
+    //   in nits" (the zentone `LumaToneMap` contract). It must state the
+    //   unit convention of the rows the fused splitter feeds, which
+    //   depends on the input transfer (`curve_input_scale_nits`). The
+    //   previous `1000.0` asserted a nominal HDR10 content peak instead —
+    //   config, not measurement (and the old doc advice of `10000.0` for
+    //   PQ content compounded it).
+    // - `sdr_ref = 100.0` is the curve's CALIBRATED SDR reference —
+    //   BT.2446-1 is specified against a ~100-nit SDR display ("typically
+    //   100, or 120 for Method C's super-whites" per zentone's docs),
+    //   under which SDR diffuse white (203 nits in) tone-maps to white
+    //   (~0.91), not mid-gray. The previous `203.0` pasted BT.2408's
+    //   HDR-terms diffuse white into the SDR-reference slot.
+    //
+    // VERSION FACT (pinned by `bt2446c_params_inert_at_zentone_0_1`): the
+    // published zentone 0.1.0 this build resolves RESERVES both params
+    // (`let _ = (hdr_peak_nits, sdr_peak_nits)`) — its curve is
+    // input-relative (1.0 == "HDR peak", percent domain), so this change
+    // is byte-neutral TODAY. The constants go live with zentone's
+    // nits-faithful curve (local zentone 0.2.0); stating the correct
+    // values now means that dependency bump changes rendering because the
+    // CURVE improved, not because stale config constants suddenly started
+    // being believed.
+    let scale = curve_input_scale_nits(hdr);
     encode_ultrahdr_with_curve(
         hdr,
-        &Bt2446C::new(1000.0, 203.0),
+        &Bt2446C::new(scale, 100.0),
         &GainMapConfig::default(),
         &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
         75.0,
         Unstoppable,
     )
+}
+
+/// What luma value `1.0` means, in cd/m², for the linearized rows
+/// [`extract_hdr_row_rgba_linear`] produces from this input — i.e. the
+/// [`LumaToneMap`] input normalization that makes a tone curve see the
+/// content's TRUE (measured) luminance:
+///
+/// - Linear float and 8-bit sRGB rows are SDR-white-relative
+///   (BT.2408: `1.0` = 203 cd/m² — the crate's `LinearFloat` convention).
+/// - PQ rows come out of `pq_eotf` PQ-normalized (`1.0` = 10 000 cd/m²).
+/// - HLG rows come out of `hlg_eotf(·, 1000.0)` in absolute display nits
+///   at the BT.2100 1000-nit reference (scale `1.0`).
+fn curve_input_scale_nits(hdr: &PixelBuffer) -> f32 {
+    match hdr.as_slice().descriptor().transfer() {
+        TransferFunction::Pq => 10_000.0,
+        TransferFunction::Hlg => 1.0,
+        _ => 203.0,
+    }
 }
 
 /// Convert a linear-light f32 RGBA `PixelBuffer` to an sRGB-encoded
@@ -682,4 +748,71 @@ fn encode_sdr_base(
 /// the `At<Error>` location wrapper (ultrahdr-core #31).
 fn ultrahdr_to_zenjpeg_error(e: impl core::fmt::Display) -> Error {
     Error::decode_error(e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buf_with_transfer(transfer: TransferFunction) -> PixelBuffer {
+        let px: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+        let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
+        let desc = zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer);
+        PixelBuffer::from_vec(bytes, 1, 1, desc).expect("fixture")
+    }
+
+    /// Appendix AA: the tone curve's input normalization states the ROW
+    /// convention (what the linearizer's `1.0` means in nits), never an
+    /// assumed content peak. Linear/sRGB rows are SDR-white-relative (203),
+    /// PQ rows PQ-normalized (10 000), HLG rows absolute nits (1.0). The
+    /// old configured `1000.0` matched none of them.
+    #[test]
+    fn curve_input_scale_matches_row_convention() {
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Linear)),
+            203.0
+        );
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Srgb)),
+            203.0
+        );
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Pq)),
+            10_000.0
+        );
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Hlg)),
+            1.0
+        );
+    }
+
+    /// VERSION PIN: the published zentone 0.1.0 this build resolves treats
+    /// `Bt2446C::new`'s two parameters as RESERVED (`let _ = ...`) — its
+    /// curve is input-relative, so every construction behaves identically.
+    /// This pin does two jobs: (1) it documents that the appendix-AA
+    /// constant correction in `encode_ultrahdr_luma` is byte-neutral at
+    /// this zentone version, and (2) it FAILS the moment a zentone bump
+    /// makes the parameters live (the nits-faithful curve in zentone git),
+    /// forcing that bump to be taken consciously: re-verify that
+    /// `curve_input_scale_nits` + the 100-nit SDR reference then map SDR
+    /// diffuse white (input 1.0 = 203 nits) to white (~0.9) in the base —
+    /// the assertion to flip this test to.
+    #[test]
+    fn bt2446c_params_inert_at_zentone_0_1() {
+        use zentone::LumaToneMap as _;
+        let corrected = Bt2446C::new(203.0, 100.0);
+        let legacy = Bt2446C::new(1000.0, 203.0);
+        for y in [0.05_f32, 0.25, 1.0, 4.0, 40.0] {
+            let (c, l) = (corrected.map_luma(y), legacy.map_luma(y));
+            assert!(
+                (c - l).abs() < 1e-7,
+                "zentone made Bt2446C's constructor params LIVE (map_luma({y}): \
+                 corrected {c} vs legacy {l}) — re-verify encode_ultrahdr_luma's \
+                 measured-scale constants and flip this test to assert \
+                 map_luma(1.0) ≈ 0.9 (SDR white → white) per appendix AA"
+            );
+        }
+        // Monotone into the highlights under the pinned semantics too.
+        assert!(corrected.map_luma(4.0) > corrected.map_luma(1.0));
+    }
 }

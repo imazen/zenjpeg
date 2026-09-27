@@ -10,7 +10,7 @@
 #![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
 
 use crate::decode::JbrdScanInfo;
-use crate::error::{Error, Result, ScanRead, ScanResult};
+use crate::error::{Error, ErrorKind, Result, ScanRead, ScanResult};
 use crate::foundation::bitstream::BitReader;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanDecodeTable;
@@ -393,13 +393,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run as usize;
                         if i >= DCT_BLOCK_SIZE {
-                            if self.lenient {
-                                self.had_ac_overflow = true;
-                                break; // Treat as EOB
-                            }
-                            return Err(Error::invalid_jpeg_data(
-                                "AC coefficient index out of bounds",
-                            ));
+                            // Run past the block. Consume the value bits the way
+                            // libjpeg-turbo does (its natural-order table carries 16
+                            // dummy slots for exactly this) and end the block; every
+                            // path reports it and Strict rejects at scan end. The
+                            // fast_ac path always tolerated this silently, so a cut
+                            // that forced the bit-by-bit path here turned a stream
+                            // that decodes in full into an error (#92).
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.read_bits(ac_cat)?;
+                            break;
                         }
 
                         let bits = match self.reader.read_bits(ac_cat)? {
@@ -445,13 +448,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run as usize;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 let bits = match self.reader.read_bits(ac_cat)? {
@@ -566,6 +572,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             coeffs[i] = value;
                             last_nonzero = (i + 1) as u8;
                             i += 1;
+                        } else {
+                            // Same run-past-the-block as the slow paths below:
+                            // the value bits are already consumed (fast_ac packs
+                            // them), so only the report is needed.
+                            self.had_ac_overflow = true;
                         }
                         continue;
                     }
@@ -597,13 +608,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
-                            if self.lenient {
-                                self.had_ac_overflow = true;
-                                break; // Treat as EOB
-                            }
-                            return Err(Error::invalid_jpeg_data(
-                                "AC coefficient index out of bounds",
-                            ));
+                            // Run past the block. Consume the value bits the way
+                            // libjpeg-turbo does (its natural-order table carries 16
+                            // dummy slots for exactly this) and end the block; every
+                            // path reports it and Strict rejects at scan end. The
+                            // fast_ac path always tolerated this silently, so a cut
+                            // that forced the bit-by-bit path here turned a stream
+                            // that decodes in full into an error (#92).
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.read_bits(ac_cat)?;
+                            break;
                         }
 
                         // Fast path: after peek_bits_refill(9) + skip(code_length), we often have
@@ -669,13 +683,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 // Fast path when we have enough bits
@@ -831,6 +848,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             coeffs[i] = value;
                             last_nonzero = (i + 1) as u8;
                             i += 1;
+                        } else {
+                            // Same run-past-the-block as the slow paths below:
+                            // the value bits are already consumed (fast_ac packs
+                            // them), so only the report is needed.
+                            self.had_ac_overflow = true;
                         }
                         continue;
                     }
@@ -859,13 +881,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
-                            if self.lenient {
-                                self.had_ac_overflow = true;
-                                break; // Treat as EOB
-                            }
-                            return Err(Error::invalid_jpeg_data(
-                                "AC coefficient index out of bounds",
-                            ));
+                            // Run past the block. Consume the value bits the way
+                            // libjpeg-turbo does (its natural-order table carries 16
+                            // dummy slots for exactly this) and end the block; every
+                            // path reports it and Strict rejects at scan end. The
+                            // fast_ac path always tolerated this silently, so a cut
+                            // that forced the bit-by-bit path here turned a stream
+                            // that decodes in full into an error (#92).
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.read_bits(ac_cat)?;
+                            break;
                         }
 
                         let bits = if self.reader.bits_available() >= ac_cat {
@@ -913,13 +938,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 let bits = if self.reader.bits_available() >= ac_cat {
@@ -1058,6 +1086,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         coeffs[i] = value;
                         last_nonzero = (i + 1) as u8;
                         i += 1;
+                    } else {
+                        // Same run-past-the-block as the slow paths below:
+                        // the value bits are already consumed (fast_ac packs
+                        // them), so only the report is needed.
+                        self.had_ac_overflow = true;
                     }
                     continue;
                 }
@@ -1088,13 +1121,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 } else {
                     i += run;
                     if i >= DCT_BLOCK_SIZE {
-                        if self.lenient {
-                            self.had_ac_overflow = true;
-                            break; // Treat as EOB
-                        }
-                        return Err(Error::invalid_jpeg_data(
-                            "AC coefficient index out of bounds",
-                        ));
+                        // Run past the block. Consume the value bits the way
+                        // libjpeg-turbo does (its natural-order table carries 16
+                        // dummy slots for exactly this) and end the block; every
+                        // path reports it and Strict rejects at scan end. The
+                        // fast_ac path always tolerated this silently, so a cut
+                        // that forced the bit-by-bit path here turned a stream
+                        // that decodes in full into an error (#92).
+                        self.had_ac_overflow = true;
+                        let _ = self.reader.read_bits(ac_cat)?;
+                        break;
                     }
 
                     // Read value bits - ensure we have enough
@@ -1138,13 +1174,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 if self.reader.bits_available() < ac_cat
@@ -1214,6 +1253,20 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// * `expected_num` - Expected restart marker number (0-7)
     pub fn read_restart_marker(&mut self, expected_num: u8) -> Result<()> {
         self.reader.read_restart_marker(expected_num)
+    }
+
+    /// Like [`read_restart_marker`](Self::read_restart_marker), but a stream
+    /// that ENDS where the marker should be is reported as `Ok(false)` — a
+    /// truncation at a restart-interval boundary — instead of an error. The
+    /// reader is left exhausted, so every block decoded afterwards comes
+    /// back `Truncated` and the caller's normal zero-fill applies. Corruption
+    /// (wrong bytes where the marker should be) is still an error.
+    pub(crate) fn read_restart_marker_tolerant(&mut self, expected_num: u8) -> Result<bool> {
+        match self.reader.read_restart_marker(expected_num) {
+            Ok(()) => Ok(true),
+            Err(e) if matches!(e.kind(), ErrorKind::TruncatedData { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     // ===== Progressive decoding methods =====
@@ -1329,13 +1382,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 k += run as usize;
                 if k > se as usize {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        return Ok(ScanRead::Value(())); // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the band: consume the value bits (libjpeg-turbo
+                    // parity) and end the block; reported on every path, Strict
+                    // rejects at scan end (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(size)?;
+                    return Ok(ScanRead::Value(()));
                 }
 
                 let bits = match self.reader.read_bits(size)? {
@@ -1697,7 +1749,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         buf.extend_from_slice(&self.reader.partial_byte_padding_bits());
                     }
                     self.reader.align_to_byte();
-                    self.reader.read_restart_marker(next_restart_num)?;
+                    if !self.read_restart_marker_tolerant(next_restart_num)? {
+                        // Cut at the restart boundary: the scan is truncated.
+                        return Ok(false);
+                    }
                     next_restart_num = (next_restart_num + 1) & 7;
                     self.prev_dc = [0; 4];
                     eob_run = 0;
@@ -1744,20 +1799,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // available-bits validation (the MSB-aligned zero-padding
                     // still gives a valid fast_lookup index for codes ≤ avail bits).
                     let fast_bits = HuffmanDecodeTable::FAST_BITS as u8;
-                    let bits9;
-                    let partial_peek;
-                    match self.reader.peek_bits_refill(fast_bits) {
-                        Some(b) => {
-                            bits9 = b;
-                            partial_peek = false;
-                        }
+
+                    let (bits9, partial_peek) = match self.reader.peek_bits_refill(fast_bits) {
+                        Some(b) => (b, false),
                         None => {
                             let avail = self.reader.bits_available();
                             if avail == 0 {
                                 return Ok(false);
                             }
-                            bits9 = self.reader.peek_top(fast_bits);
-                            partial_peek = true;
+                            (self.reader.peek_top(fast_bits), true)
                         }
                     };
 
@@ -1976,6 +2026,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut code = 0u32;
         for len in 1..=16usize {
             let bit = self.reader.read_bit_refine();
+            if self.reader.starved() {
+                // The code runs past the end of the data (truncated scan):
+                // finishing it against zeros would fabricate a symbol.
+                return None;
+            }
             code = (code << 1) | (bit as u32);
             if (code as i32) <= ac_table.maxcode[len] {
                 let idx = (code as i32 + ac_table.valoffset[len]) as usize;
@@ -2103,7 +2158,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         buf.extend_from_slice(&self.reader.partial_byte_padding_bits());
                     }
                     self.reader.align_to_byte();
-                    self.reader.read_restart_marker(next_restart_num)?;
+                    if !self.read_restart_marker_tolerant(next_restart_num)? {
+                        // Cut at the restart boundary: the scan is truncated.
+                        return Ok(false);
+                    }
                     next_restart_num = (next_restart_num + 1) & 7;
                     self.prev_dc = [0; 4];
                     eob_run = 0;
@@ -2183,7 +2241,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // Huffman decode with tiered fallback via helper.
                     let symbol = match self.decode_refine_symbol(ac_table) {
                         Some(sym) => sym,
-                        None => break,
+                        None => {
+                            if self.reader.starved() {
+                                return Ok(false);
+                            }
+                            break;
+                        }
                     };
 
                     let run = symbol >> 4;
@@ -2283,6 +2346,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         // NEW_NZ: skip `run` zero positions, then place new coefficient.
                         // Separate path avoids Option wrapping and `size == 0` checks.
                         let sign_bit = self.reader.read_bit_refine();
+                        if self.reader.starved() {
+                            // The sign bit is past the cut: placing `-bit_val`
+                            // on a made-up 0 would be a phantom coefficient.
+                            return Ok(false);
+                        }
                         let new_val = if sign_bit != 0 { bit_val } else { -bit_val };
                         let mut num_zeros_to_skip = run as usize;
 
@@ -2330,7 +2398,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
         }
 
-        Ok(true)
+        // Correction bits read past the cut come back as 0 ("leave the
+        // coefficient alone"), which is exactly the pre-scan state — so the
+        // coefficients are right, but the scan did NOT complete: report it.
+        Ok(!self.reader.starved())
     }
 }
 

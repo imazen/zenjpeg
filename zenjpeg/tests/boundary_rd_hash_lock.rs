@@ -36,7 +36,14 @@ fn gen_checkerboard(w: usize, h: usize, cell: usize) -> Vec<u8> {
 fn encode(rgb: &[u8], w: u32, h: u32, cfg: EncoderConfig) -> Vec<u8> {
     let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
     enc.push_packed(rgb, Unstoppable).unwrap();
-    enc.finish().unwrap()
+    let jpeg = enc.finish().unwrap();
+    // Byte-identity comparisons pass even when BOTH sides are corrupt — every
+    // stream this file hashes must also decode.
+    let decoded = zenjpeg::decoder::Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("hashed stream must decode");
+    assert_eq!((decoded.width, decoded.height), (w, h));
+    jpeg
 }
 
 fn fx_hash(bytes: &[u8]) -> u64 {

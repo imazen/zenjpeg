@@ -126,8 +126,8 @@ fn compute_channel_neon(
     );
 
     // Shift right by PREC and narrow to i16.
-    let shifted_lo = vshrn_n_s32::<{ crate::types::PREC as i32 }>(sum_lo);
-    let shifted_hi = vshrn_n_s32::<{ crate::types::PREC as i32 }>(sum_hi);
+    let shifted_lo = vshrn_n_s32::<{ crate::types::PREC }>(sum_lo);
+    let shifted_hi = vshrn_n_s32::<{ crate::types::PREC }>(sum_hi);
 
     vcombine_s16(shifted_lo, shifted_hi)
 }

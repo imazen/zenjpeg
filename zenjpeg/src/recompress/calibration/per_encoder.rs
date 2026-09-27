@@ -230,6 +230,13 @@ pub fn gexp_lookup(encoder: EncoderClass, source_est: f32, dial: f32) -> Option<
 /// strategy × (source_estimate, target) cell. `None` if this
 /// encoder/strategy has no per-encoder table (caller falls back to the
 /// jpegli `data::lookup_*`).
+///
+/// Not wired into the router yet: `calibration::mod` drives the same
+/// tables through [`invert_dial`] (the inverse direction). Kept as the
+/// forward accessor for the measured per-encoder tables — it is the only
+/// reference to the `*_RATIO` jpegli tables — rather than deleting
+/// measured calibration data (#143).
+#[allow(dead_code)]
 pub fn lookup(
     encoder: EncoderClass,
     strategy: StrategyKind,
@@ -252,7 +259,15 @@ pub fn lookup(
 /// Returns `None` for jpegli — it keeps the richer 15-image
 /// `data::lookup_420/444` calibration.
 fn tables_for(encoder: EncoderClass, strategy: StrategyKind) -> Option<AchievedRatioTables> {
-    let _ = (JPEGLI_PRESERVE_ACHIEVED, JPEGLI_TUNED_ACHIEVED); // keep alive
+    // Keep the measured jpegli tables alive: no jpegli arm below yet (the
+    // jpegli path goes through `data::lookup_*`), but the data is real
+    // calibration output and stays referenced rather than deleted (#143).
+    let _ = (
+        JPEGLI_PRESERVE_ACHIEVED,
+        JPEGLI_PRESERVE_RATIO,
+        JPEGLI_TUNED_ACHIEVED,
+        JPEGLI_TUNED_RATIO,
+    );
     Some(match (encoder, strategy) {
         (EncoderClass::IjgFamily, StrategyKind::Preserve) => {
             (TURBO_PRESERVE_ACHIEVED, TURBO_PRESERVE_RATIO)

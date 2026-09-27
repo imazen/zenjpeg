@@ -1540,6 +1540,13 @@ impl EncoderConfig {
                 "progressive mode requires optimized Huffman tables".into(),
             ));
         }
+        // Custom Huffman tables (e.g. tables harvested from a decoded JPEG,
+        // issue #77) are deliberately NOT completeness-checked here: per-image
+        // optimized tables legitimately cover only the symbols that image
+        // produces, and the DHT must round-trip byte-identically. Safety is
+        // enforced at emission instead — encode_block_to_writer errors on any
+        // codeless symbol rather than writing zero bits (issue #197), and the
+        // XYB custom arms pre-verify their block arrays.
         Ok(())
     }
 

@@ -288,7 +288,7 @@ fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result
 /// Pad packed RGB bytes to RGBA8 with `A=0xFF`. Done in-place via Vec growth.
 fn rgb_to_rgba8(rgb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         out.extend_from_slice(px);
         out.push(0xFF);
     }
@@ -339,13 +339,17 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8], single_channel: Option<bool>) -> Result
         // No metadata: collapse only when provably achromatic (full scan,
         // no sampling).
         None => rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .all(|px| px[0] == px[1] && px[1] == px[2]),
     };
     let (data, channels) = if collapse {
         // BT.709 luma — the same weighting the Gray decode applies.
         (
-            rgb.chunks_exact(3)
+            rgb.as_chunks::<3>()
+                .0
+                .iter()
                 .map(|px| {
                     (0.2126_f32 * f32::from(px[0])
                         + 0.7152 * f32::from(px[1])

@@ -1003,7 +1003,9 @@ pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
     let rgb8 = output.pixels.to_rgb8();
     let bytes = rgb8.as_slice().contiguous_bytes();
     let pixels: Vec<RGB8> = bytes
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     Ok(ImgVec::new(pixels, width, height))
@@ -1250,7 +1252,9 @@ pub fn bytes_to_rgb(data: &[u8], width: usize, height: usize) -> RgbImage {
     );
 
     let pixels: Vec<RGB8> = data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
 

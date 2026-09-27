@@ -1,0 +1,72 @@
+name: Regenerate locked values
+
+# Manual maintenance utility: regenerates tests/locked_values/values_archmage.csv
+# on an x86_64 runner (the archmage-variant hashes cannot be produced on other
+# architectures) and uploads it as an artifact. Download, review the diff,
+# update VALUES_FILE_HASH in tests/bundled/locked_values.rs, and commit.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Justification recorded in the CSV header
+        required: true
+        type: string
+
+jobs:
+  regen:
+    name: Regenerate values_archmage.csv (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The regenerate utility deliberately ends with a panic that prints the
+      # new VALUES_FILE_HASH — the CSV is written before that, so a non-zero
+      # exit here is expected.
+      - name: Regenerate
+        shell: bash
+        run: |
+          REGENERATE_LOCKED_VALUES=1 \
+          LOCKED_VALUES_REASON="${{ inputs.reason }}" \
+          cargo test -p zenjpeg --release --test bundled regenerate_values -- --ignored --nocapture 2>&1 | tee regen.log || true
+          test -s zenjpeg/tests/locked_values/values_archmage.csv
+          grep -q "Regeneration complete" regen.log
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: values_archmage
+          path: |
+            zenjpeg/tests/locked_values/values_archmage.csv
+            regen.log
+          if-no-files-found: error

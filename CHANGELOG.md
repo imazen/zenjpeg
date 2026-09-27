@@ -5,6 +5,504 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+- `lossless`: the dimension-swapping transforms (`Transpose`, `Rotate90`,
+  `Rotate270`, `Transverse`) now write transposed quantization tables. They
+  transpose every coefficient block but copied the source DQT through, so any
+  asymmetric table — most camera JPEGs — decoded to wrong pixels after these
+  transforms, including via `apply_exif_orientation` (#205).
+- XYB decode now describes its already converted RGB output as sRGB in both
+  buffered and streaming descriptor selection. Source ICC metadata remains
+  intact; pixel conversion and public signatures are unchanged.
+- Zq AQ correction preserves unit scales instead of clamping legitimate
+  strengths to 0.20, and the controller now sees the final image strip.
+  Global quality correction no longer panics for a fractional q between 99
+  and 100. Existing no-controller encoding is unaffected.
+- `target_quality::search_target` now selects FLOAT qualities (new
+  `TargetOptions::quality_step`, default 0.25; `1.0` restores the old integer
+  grid). The previous integer rounding rested on a false premise ("JPEG
+  quality is integer-valued") — zenjpeg quality is `f32` end to end — and
+  imposed a ~1-quality quantization floor on target-hitting error.
+  `encode_with_target`'s trial cache is now keyed by `f32` bits.
+
+### Added
+
+- `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
+  Zq loop to complete Rust candidate scoring/current attribution, with explicit
+  seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
+  byte verification. See `docs/zensim-candidate-binding-2026-09-08.md` for exact
+  scope and evidence; this is not replacement-model qualification.
+
+- **Fuzz build gate + stable crash-seed replay.** This repo had 13 fuzz targets
+  and no Fuzz workflow at all. `zenjpeg/fuzz/` is a standalone Cargo workspace
+  excluded from the root, so nothing in `ci.yml` ever compiled a line of it,
+  and it broke silently. Two new pieces close that:
+  - `.github/workflows/fuzz.yml` — Linux-only, `push` + `pull_request`. Job
+    `targets` runs `cargo check --all-targets` in `zenjpeg/fuzz` on **stable**;
+    job `regression` replays the committed crash seeds. `cargo check` rather
+    than `cargo fuzz build` on purpose: `cargo fuzz` needs nightly plus
+    `-Zsanitizer=address` and codegens the whole graph with sanitizer coverage
+    per target, while every rot this class produces is a plain resolution or
+    type error — measured at ~0.2 s warm for all 13 targets here. It clones
+    only `zenanalyze`, the one sibling the fuzz graph path-patches (proven with
+    `cargo metadata`: 62 packages, one external path package), and deliberately
+    does **not** route through zen-workspace's setup action, which rewrites
+    manifests and deletes `patch.crates-io` sections — that would mask the
+    exact failure the gate exists to catch.
+  - `zenjpeg/tests/fuzz_regression.rs` — replays all 10 seeds in
+    `zenjpeg/fuzz/regression/` through **every** entry point the 13 targets
+    drive (decode matrix, limits, push/streaming rows, `read_info`, the
+    truncation prefix sweep, all four container parsers, encode + roundtrip,
+    and the zune-jpeg differential) under the same tight limits, on stable. It
+    rides plain `cargo test -p zenjpeg --tests`, so ci.yml picks it up on all
+    six platforms for free. Asserts the corpus exists, is non-empty, holds
+    non-zero bytes, and that the replay loop actually visited every seed — no
+    `|| true`-shaped escape hatch, so an emptied corpus fails loudly instead of
+    passing vacuously (verified live: pointing it at an empty directory fails
+    both tests).
+  - `just fuzz-check` / `just fuzz-regression` run the two gates locally and
+    are now part of `just ci`.
+
+### Fixed (docs)
+
+- **`Decoder::max_memory`'s "Measured cost per pixel" table now has six measured cells,
+  not five.** The 4:4:4-streaming cell (3.00 B/px) had been read off the charge site
+  (`width * height * out_bpp`, no coefficient storage on that path) rather than measured,
+  so the heading claimed slightly more than the evidence supported. Measured it instead of
+  softening the heading: `tests/decode_memory_limit.rs::streaming_444_charges_three_bytes_per_pixel`
+  binary-searches the smallest `max_memory` that still admits a baseline 4:4:4 decode
+  through the default `decode()`. **The documented 3.00 B/px is confirmed exactly**
+  (589,824 bytes for 512×384). The assertion is `==`, not `<=`, so it fails if the
+  streaming path ever starts charging for coefficient storage it does not use.
+
+  Worth recording: the first version of that test measured **9.42 B/px** — because
+  `EncoderConfig::ycbcr()` emits a *progressive* file by default (verified: the encode
+  emits SOF2/`0xFFC2`) even though `ProgressiveScanMode`'s own `#[default]` is `Baseline`.
+  9.42 is exactly the table's progressive 4:4:4 cell, so the wrong measurement looked like
+  a plausible answer rather than an obvious error — it would have "disproved" a correct
+  number. The test now forces `.progressive(false)` and asserts the fixture is SOF0. That
+  accident independently corroborates the progressive 4:4:4 cell.
+
+### Known issues
+
+- **zenjpeg cannot be published at all right now, and it is not a CI problem.**
+  With the manifest-load rot fixed, `Release`'s `Publish (dry run)` finally ran and
+  reported the real blocker (run 33264805311, 2026-08-29):
+
+      error: failed to verify manifest at `.../zenjpeg/Cargo.toml`
+      Caused by: all dependencies must have a version requirement specified when
+        publishing. dependency `zensim` does not specify a version
+
+  `zensim` is pinned as a git rev with no `version` (workspace root: the rev carrying
+  `ZensimProfile::A`, which the crates.io 0.2.x line dropped). That rev is **zensim
+  0.3.0**, and **crates.io tops out at zensim 0.2.7** — 0.3.0 was never published. So
+  there is no version string that is both true and resolvable: `version = "0.3.0"`
+  publishes a crate nobody can resolve, and `version = "0.2.7"` points consumers at a
+  zensim that lacks the profile the recompressor targets. Note zenjpeg 0.8.4 on
+  crates.io carries `zensim ^0.2` only as a **dev**-dependency; the normal optional
+  `zensim` dep is newer than that release.
+
+  Deliberately **not** worked around. The two ways to make the gate pass — inventing a
+  version, or stripping `zensim` and silently dropping `target-zq` / `recompress-iqa`
+  from the published crate — are a falsehood and a public-API change respectively.
+  Resolving it is a decision for the owner: publish zensim 0.3.0 to crates.io, or
+  decide the published zenjpeg should not carry the zensim-backed features.
+
+### Fixed
+
+- **`Benchmark`'s last two steps had outlived their configuration.** With the manifest
+  fixed, the benchmarks themselves ran clean and two real failures surfaced (run
+  33264806779, fresh logs — the 2026-03-31 logs are long past retention):
+  - `Build WASM benchmark` passed `--features "std,decoder"`, but zenjpeg has neither
+    feature any more (`default = []`), so it failed outright with `error: the package
+    'zenjpeg' does not contain these features: decoder, std`. Dropped the list;
+    verified locally that `--no-default-features` builds the example clean. The same
+    stale invocation appeared twice in `zenjpeg/examples/wasm_bench.rs`'s own doc
+    comment and was corrected there too.
+  - `Store benchmark results` died with `fatal: couldn't find remote ref gh-pages` —
+    `benchmark-action/github-action-benchmark` fetches that branch before doing
+    anything, even with `auto-push` false, and this repo has no `gh-pages` branch.
+    `skip-fetch-gh-pages: true` was **not** sufficient (measured): the action then
+    fails one step later on `git switch gh-pages` with `fatal: invalid reference:
+    gh-pages`. Switched to `external-data-json-path`, the documented way to make the
+    action store results in a file and not use a git branch at all.
+    **This stops the failure; it does not restore regression tracking** — the data
+    file lives only for the life of the job, so the alert threshold has no history to
+    compare against, and `auto-push` is dead config besides (the workflow is
+    `workflow_dispatch`-only, so `github.event_name == 'push'` is never true). Real
+    tracking needs somewhere durable for that file *and* a push trigger; both are
+    owner decisions.
+  - `Parse benchmark results` understood only criterion output, so the wasm leg — which
+    runs `examples/wasm_bench.rs`, not `cargo bench` — parsed **zero** results and
+    handed `[]` to the action, which reported the unhelpful `No benchmark result was
+    found`. The parser now handles both formats, and an empty parse fails loudly at
+    the parser with the reason instead of two steps later. Both patterns were checked
+    against real captured output from run 33265431868 (8 wasm results, 22 criterion),
+    including the `µs` → ns conversion.
+
+- **`Release` and `Benchmark` were both dead, from the same rot that killed zenyuv CI.**
+  This repo carried FOUR hand-maintained copies of the sibling-clone + manifest-strip
+  recipe (`ci.yml`, `zenyuv-ci.yml`, `release.yml`, `benchmark.yml`). Only `ci.yml` was
+  ever kept current; the other three rotted identically and died at manifest load, and
+  nobody noticed because a per-repo CI check only ever looks at the repo's *newest* run —
+  which is green. `release.yml` and `benchmark.yml` clone three siblings (not
+  `zenanalyze`) and their strip lacked the `-e '/zenpredict.*path/d'` that `ci.yml`'s
+  i686 job has carried, and passed with, the whole time. Since `zenjpeg` path-deps the
+  unpublished `../../zenanalyze/zenpredict`, cargo could not parse the workspace at all:
+
+      error: failed to load manifest for workspace member `.../zenjpeg`
+      Caused by: failed to load manifest for dependency `zenpredict`
+      Caused by: failed to read `.../zenanalyze/zenpredict/Cargo.toml`
+
+  Measured, not inferred: a `workflow_dispatch` of Release on 2026-08-29
+  (run 33264097169) failed at "Run tests" with exactly that, and a scaffolded local
+  repro reproduced it byte for byte. Both workflows now call one composite action,
+  `.github/actions/prepare-zenjpeg-workspace`, which carries the recipe once and ends
+  with a guard that fails loudly if any out-of-checkout path dep survives the strip.
+  Deleting the dep rather than cloning `zenanalyze` is deliberate — `cargo publish`
+  rejects a versionless path dep, and the graph still resolves a single
+  `zenanalyze 0.2.0` through the workspace-root `[patch.crates-io]` git entry (verified
+  with a full `cargo metadata`: 275 packages, no sibling checkout).
+
+- **`Release` could create a GitHub Release for a version it then failed to publish.**
+  On 2026-06-01 (run 26756503782) the job ran the tests, built the docs, created the
+  GitHub Release for v0.8.4, and only then died on its last step with `error: failed to
+  publish zenjpeg v0.8.4 ... Caused by: please provide a non-empty token`. crates.io has
+  0.8.4 only because a human published it by hand afterwards — this workflow has never
+  successfully published anything. Added a `CARGO_REGISTRY_TOKEN` preflight as the
+  job's **first** step, scoped to the real publish path so dry runs and tag-less
+  dispatches are unaffected. **This repository still has no repository secrets at all**
+  (the only org secret visible to it is `CODECOV_TOKEN`), so releasing remains blocked
+  until someone adds `CARGO_REGISTRY_TOKEN` under Settings → Secrets and variables →
+  Actions; the difference is that it now fails in five seconds saying so, instead of
+  twenty minutes in with a release half-made.
+
+- **`decode_into()` silently dropped crop, deblocking and ICC correction.**
+  `decode_into` has a "direct" path that decodes straight into the caller's
+  buffer, bypassing every post-decode stage, and a fallback that runs the
+  ordinary `decode()` and copies. The direct-path eligibility check excluded
+  lossless transforms, non-sRGB output targets and the coefficient-domain
+  deblock modes — but not three settings that also live after the decode loop.
+  All three were accepted and then discarded, with no error:
+  - **`crop_region`.** `.crop(..).decode_into(..)` with a destination sized for
+    the full frame wrote and reported the **whole 18432-byte uncropped image**,
+    byte-identical to an uncropped decode, where `.crop(..).decode(..)` returns
+    32x32 / 3072 bytes. With a correctly crop-sized destination it instead
+    failed with an *internal* error (`dst too small for fast i16 subsampled`)
+    — the fast path trying to write the full frame into the caller's smaller
+    buffer.
+  - **`DeblockMode::Boundary4Tap` / `AutoStreamable`.** Only `Knusperli` and
+    `Auto` were excluded. The two streaming-compatible modes were admitted and
+    then not applied: 4819 of 18432 bytes wrong (max delta 10) at Q25 against
+    `decode()`.
+  - **`correct_color`.** The correction runs on the assembled output, so the
+    direct path skipped it — while `codec::info::decode_descriptor` still
+    stamps the result `Cicp::SRGB` whenever `correct_color` is `Some`. A
+    wide-gamut JPEG therefore reached a zencodec sink as source-gamut pixels
+    *labelled sRGB*, which nothing downstream can detect. Measured with a
+    Display-P3-primaries source corrected to sRGB: **17417 of 18432 bytes
+    wrong, max delta 108**. `codec/decode.rs`'s push-decoder path uses
+    `decode_into`, so this was reachable from the zencodec API.
+
+  All three now fall through to `decode_into_via_decode`, which delegates to
+  `decode()` and copies — correct output at the cost of one intermediate
+  buffer, exactly as `Knusperli`/`Auto` already did. The fast path is
+  unchanged for the configurations it was actually valid for.
+
+  Gate: `zenjpeg/tests/decode_into_parity.rs` — `decode_into` must be
+  byte-identical to `decode` for the same configuration, across crop (aligned,
+  unaligned, percent), all five deblock modes, ICC correction, crop+deblock
+  combined, and four pixel formats at two subsamplings. Each stage-specific
+  test is paired with a guard proving the stage changes pixels at all, so none
+  of them can pass vacuously. Mutation-verified: restoring each of the three
+  eligibility conditions fails exactly its own test.
+
+- **`Decoder::max_memory()` was inert — it is now enforced.** The setting had a
+  field, a `Default` (512 MB), a `Debug`, two setters, a getter, two
+  `codec/decode.rs` sites that wrote it, an
+  `enforces_max_memory(true)` capability advertised to zencodec consumers, and
+  a `fuzz_decode_limits` target that set it — and **no reader anywhere in the
+  decode implementation**. `MemoryTracker`, the type built for this, was
+  constructed only in its own unit tests.
+
+  Measured on the pre-fix code path (peak RSS via `/usr/bin/time -l`, release
+  build): a **265-byte** header declaring 15000x8000 (120 MP, exactly the
+  `max_pixels` default, so the pixel cap does not catch it) decoded to a peak
+  of **716 MiB**, against **2.7 MiB** for the same header at 64x64. The
+  `max_memory(64 MB)` in the fuzz target changed nothing.
+
+  `JpegParser` now carries the budget and charges it *before* each allocation
+  whose size comes from the header-declared dimensions: full-frame coefficient
+  storage (baseline, arithmetic, progressive) with its per-block count and
+  nonzero-bitmap side tables, and the full-frame pixel output on every path
+  (streaming, fused parallel, buffered). Charges accumulate across the whole
+  decode, so a multi-scan file cannot spend the budget repeatedly. Exceeding it
+  returns `ErrorKind::ResourceLimitExceeded` with `zencodec::LimitKind::Memory`.
+  `O(width)` per-MCU-row strip scratch is deliberately not charged — a small
+  header cannot amplify it — so the cap bounds dimension-driven growth, not
+  exact peak RSS. `0` and `u64::MAX` both mean unlimited, matching `max_pixels`.
+
+  **Behaviour change the owner should review.** The 512 MB default was
+  previously decorative; it now rejects decodes. Measured budget per pixel:
+
+  | path | 4:2:0 | 4:4:4 |
+  |---|---|---|
+  | baseline, streaming (default `decode()`) | 3.00 B/px | 3.00 B/px |
+  | baseline, buffered (coefficients, transforms, non-interleaved scans) | 6.03 B/px | 9.05 B/px |
+  | progressive | 6.22 B/px | 9.42 B/px |
+
+  So the default admits ~179 MP of streaming baseline but only ~89 MP of 4:2:0
+  buffered, ~86 MP of 4:2:0 progressive and ~57 MP of 4:4:4 progressive —
+  while `max_pixels` still defaults to 120 MP. **The two defaults no longer
+  agree**: frames between roughly 57 MP and 120 MP pass the pixel cap and are
+  then refused by the memory cap. Reconciling them (raising
+  `DEFAULT_MAX_MEMORY`, lowering `DEFAULT_MAX_PIXELS`, or leaving the
+  asymmetry as an explicit policy) is a defaults decision and was left alone
+  here. No test in the suite trips the new cap.
+
+  Gate: `zenjpeg/tests/decode_memory_limit.rs` — 6 tests building the
+  amplification header from scratch in-test (no fixture; it is 265 bytes of
+  markers) across baseline-interleaved, baseline-non-interleaved and
+  progressive, asserting the typed error, that raising the cap admits the same
+  file, that the sentinels mean unlimited, that charges accumulate across
+  scans, and that ordinary images are unaffected. Mutation-verified: making
+  `charge_memory` a no-op reproduces the pre-fix behaviour and fails 4 of the
+  6. `fuzz/fuzz_targets/fuzz_decode_limits.rs` now exercises a real cap.
+
+- **Sequential JPEGs split into non-interleaved scans decoded to garbage.** A
+  frame may legally be written as one scan per component (`Ns=1`, ISO/IEC
+  10918-1 A.2.2): `cjpeg -scans` with a `0;\n1;\n2;` script emits exactly that,
+  and the reference testdata already carried two
+  (`internal/jpegli-cpp/testdata/jxl/flower/flower_small.q85_{420,444}_non_interleaved.jpg`).
+  Every whole-frame decode path treated such a scan as if it were interleaved:
+  - `can_use_streaming()` inspected only frame-level fields, so a three-scan
+    4:2:0 file matched the `(2,2,1,1)` arm. The streaming decoder then read the
+    luma-only scan as though each MCU carried Y+Cb+Cr, left the chroma strips at
+    their allocated zeros, and latched `streaming_rgb` — after which the Cb and
+    Cr scans were decoded into coefficients that the output stage discarded.
+  - `try_fused_parallel_decode()` gated on MCU count and DRI alignment but never
+    on scan shape, so `--features parallel` hit the same wrong reading.
+  - `decode_scan()` and `decode_arithmetic_scan()` walked the frame's
+    MCU-padded grid, but a non-interleaved scan holds `ceil(x_i/8)*ceil(y_i/8)`
+    data units in raster order over the component's own grid — 11x7 rather than
+    12x8 at 88x54 4:2:0.
+
+  Measured before the fix, 88x54 4:2:0/4:2:2/4:4:4 pairs from `cjpeg`: up to
+  **255** channel delta on **99.6%** of output bytes vs libjpeg-turbo's `djpeg`
+  (not a greyscale image — saturated garbage, because Y was descrambled against
+  a zeroed chroma plane). After: byte-identical to `djpeg` on all three, and to
+  the interleaved encoding of the same coefficients.
+
+  The single-component case is the same rule, so this also corrects
+  `grayscale_24x16_sampling2x2.jpg` (a 1-component frame with `Hi=Vi=2`, whose
+  `3x2` true grid is not the MCU grid's `4x2`): **576 of 1152 output bytes were
+  wrong, max delta 246**; now byte-identical to `djpeg`. That is the only
+  existing corpus output this change moves —
+  `grayscale_16x24_sampling2x2.jpg`, `non-interleaved-mcu.jpg`, `mjpeg.jpg`,
+  `blank_800x280.jpg` and `Reconyx_HC500_Hyperfire.jpg` were verified
+  byte-identical to `djpeg` both before and after.
+
+  Gate: `zenjpeg/tests/non_interleaved_scans.rs` — 8 tests over committed
+  `cjpeg`/`djpeg`-verified fixture pairs (4:2:0, 4:2:2, 4:4:4, partially
+  interleaved `{Y}{Cb,Cr}`, arithmetic SOF9, grayscale `Hi=Vi=2`, and a
+  264x264+DRI pair large enough to reach the fused parallel decoder). Each pair
+  is the same source at the same quality and sampling differing only in scan
+  layout, so identical coefficients must give byte-identical pixels; `djpeg`
+  confirms the oracle on every pair. The non-interleaved block geometry is now
+  one shared `parser::component_block_grid` used by the baseline, arithmetic
+  and progressive paths instead of three copies.
+
+- **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` and
+  `zenyuv-ci.yml` keyed their concurrency group on
+  `${{ github.head_ref || github.run_id }}`. `github.head_ref` is populated only
+  for `pull_request` events, so on a push it was empty and the group fell through
+  to `github.run_id` — unique per run, so no two pushes ever shared a group and
+  `cancel-in-progress` could never fire. Measured here, not theorised: three
+  commits pushed 74 seconds apart on 2026-08-28 (20:28:56 / 20:29:44 / 20:30:10)
+  each ran a full matrix to completion with none cancelled, and the same pattern
+  repeated at 17:07–17:09 on 08-27. Both matrices carry `macos-latest` plus
+  `macos-26-intel`, so the waste landed on the scarcest runner pool. Both now key
+  on `${{ github.ref }}`, which is set for both event types (`refs/heads/main` on
+  push, `refs/pull/N/merge` on a PR): PR cancellation is unchanged and
+  consecutive pushes supersede each other. This matches the form `coverage.yml`
+  and `fuzz.yml` already used correctly.
+- **"zenyuv CI" had been red on every leg for 74 days** (2026-06-16 .. 2026-08-29,
+  11 consecutive failed runs), and not from a code regression: all six jobs died at
+  manifest load with `failed to load manifest for workspace member .../zjr-calibrate`
+  → `failed to read .../zenanalyze/zenpredict/Cargo.toml`. `zenyuv-ci.yml` clones no
+  siblings (by design — `zenyuv` is a leaf crate) and reduced the workspace with a
+  **deny-list** sed naming four members to delete, copy-pasted verbatim into all six
+  jobs. Workspace member #5 `zjr-calibrate` path-deps `zenjpeg`, which path-deps the
+  unpublished sibling `../../zenanalyze/zenpredict`; none of the six copies were
+  updated, so cargo could not parse the workspace for `cargo fmt --check` either.
+  Replaced with an **allow-list** — `.github/actions/zenyuv-only-workspace`, one
+  composite action used by all six jobs, that reduces `members` to exactly
+  `["zenyuv"]` and fails loudly if it cannot. Member #6 and everything after it is
+  stripped the day it lands, with no edit to CI.
+
+- **`zenjpeg/fuzz` could not resolve at all** — every fresh resolve died before
+  compiling a line with `failed to select a version for the requirement
+  zenanalyze = "^0.2.0"` (crates.io tops out at 0.1.0). `147444fe` (2026-08-29)
+  moved `zenanalyze` from a git rev pin to a crates.io version resolved through
+  a `[patch.crates-io]` at the **repo-root** manifest — the right shape there —
+  but a `[patch]` table is only read from the workspace root of the build being
+  performed, and `zenjpeg/fuzz` is its own `[workspace]` consuming zenjpeg by
+  `path = ".."` (the member crate), so the root's table never applied. Carried
+  the entry into `zenjpeg/fuzz/Cargo.toml` and refreshed that workspace's stale
+  lock (which still pinned `zenanalyze?rev=13d40c3be60e` and held archmage /
+  magetypes at 0.9.26 against the 0.9.27 floor the current zenanalyze needs).
+  Same failure and fix as zenpipe `7040aa6a` / zenjxl `1ae0da79`.
+
+  Patched **by path**, not git like the root table: the `../../../zenanalyze`
+  checkout is mandatory here regardless, because zenjpeg declares `zenpredict =
+  { path = "../../zenanalyze/zenpredict", optional = true }` and Cargo loads a
+  path dependency's manifest during resolution even when the activating feature
+  is off (verified with a minimal repro). A git patch would fetch a second,
+  independently resolved copy of the same repo alongside it. `zenanalyze-api`
+  is deliberately **not** patched — `cargo metadata` shows no such node in this
+  graph, and an entry for a non-existent edge only emits "patch … was not used
+  in the crate graph" on every invocation. Both notes are recorded in the
+  manifest, along with the removal condition (zenanalyze 0.2.x publishing).
+
+  **All 13 targets compiled clean once resolution was fixed** — no `Limits`-style
+  API drift of the kind that had rotted eight of zenpipe's targets. The
+  resolution failure was the whole of the breakage.
+
+- Stale fuzz docs: `just fuzz` listed only 8 of the 13 targets (`cargo fuzz run`
+  on a name with no `[[bin]]` fails, so the five container/push-decode targets
+  were unrunnable via the recipe), and `zenjpeg/fuzz/README.md`'s target table
+  listed 5. Both now list all 13.
+
+### Changed
+
+- **Third-party lockfile refresh — 45 packages, `Cargo.lock` only.** Run as
+  `cargo update -p …` naming each of the 236 third-party packages individually,
+  with every zen-family crate excluded (`zenpng`, `zensim`, `zenanalyze`,
+  `zenanalyze-api`, `zenpixels*`, `zencodec*`, `zenresize`, `zenblend`,
+  `zenpredict`, `zentone`, `zenyuv`, `zenbench`, `zenjpeg-bench-utils`,
+  `archmage`, `magetypes`, `garb`, `linear-srgb`, `whereat`, `enough`,
+  `almost-enough`, `butteraugli`, `fast-ssim2`, `mozjpeg-rs`, `codec-eval`,
+  `codec-corpus`, `ultrahdr-rs`, `ultrahdr-core`, `jpegli-internals-sys`), so
+  nothing in the sibling graph moved and no manifest requirement changed.
+  No package was removed from the graph.
+
+  The moves that touch arithmetic are the ones worth naming: **`wide` 1.5.0 →
+  1.7.0** and **`safe_arch` 1.1.0 → 1.2.0** (the SIMD primitives under the DCT
+  and colour paths), **`yuv` 0.8.16 → 0.8.17** (the YUV conversion comparison
+  path), and `zune-core` 0.5.1 → 0.5.3 (the reference decoder). Also
+  `thiserror` 2.0.19 → 2.0.20, `imgref` 1.12.2 → 1.12.3, `flate2` 1.1.9 →
+  1.1.10, `crc32fast` 1.5.0 → 1.5.1, `cc` 1.4.0 → 1.4.4, plus
+  wasm-bindgen/clap/syn/zerocopy.
+
+  Verified against the refreshed lock with
+  `--features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert"`:
+  **2465 tests pass, 0 fail** (130 pre-existing `#[ignore]`s that need external
+  corpora, testdata or a C++ jpegli build). The byte-identity gates
+  specifically re-run clean — `boundary_rd_hash_lock`,
+  `libjpeg_idct_all_paths_parity` (the all-SIMD-paths IDCT check, which is
+  exactly what a `wide` bump would break), `lossless_dispatch_parity`,
+  `decode_path_dispatch_parity` and `decode_into_parity` — so the SIMD moves
+  are pixel-neutral here. Four of CI's five clippy invocations,
+  `cargo fmt -p zenjpeg -p zenjpeg-bench-utils --check`, and
+  `cargo hack check -p zenjpeg --rust-version` (MSRV) are all clean.
+
+  Two host-specific limitations, both reproduced identically on the *pre-update*
+  lockfile and therefore not caused by this refresh: `jpegli-internals-sys`
+  ships a GNU-format static archive that will not link on macOS
+  (`ld: archive member 'adaptive_quantization.cc.o' not a mach-o file`), so
+  these runs used the sanctioned `ZENJPEG_SKIP_CPP=1` opt-out and the C++
+  parity suite was not executed on this host; and
+  `cargo clippy -p zenjpeg --lib -- -D warnings` reports
+  `upsample_h2v2_libjpeg_row_scalar` as never used on aarch64, because that
+  function's call sites and its `allow(dead_code)` are both
+  `target_arch = "x86_64"`-gated (`src/decode/upsample.rs:632`). CI's Clippy
+  job runs on `ubuntu-latest`, so neither affects CI.
+
+  Not taken: `bincode` `1.3` → `3.0.0`. It is a dev-dependency used to
+  serialize test data, and 3.0 is two major versions on from 1.3 with a
+  rewritten API — a port, not a routine bump. `moxcms` still resolves two
+  instances (0.8.1 and 0.9.0); the isolated 0.8.1 comes from the `ultrahdr-rs`
+  dev-dep and is already documented at length in the workspace manifest — it is
+  a zen-family constraint and out of scope for a third-party pass.
+
+  The two **nested** tracked lockfiles were refreshed under the same
+  constraint: `zenjpeg/fuzz/Cargo.lock` (30 packages) and `apidoc/Cargo.lock`
+  (22 packages — `camino` 1.2.5, `rustdoc-types`, `serde`, `syn`). The fuzz
+  workspace is the one CI actually compiles (`fuzz.yml`,
+  `working-directory: zenjpeg/fuzz`, `cargo check --all-targets`) and it still
+  checks clean; `apidoc/` is the CI-free snapshot runner and also checks clean.
+
+- **`zencodec` / `zenpixels` / `zenpixels-convert` / `zencodec-testkit`
+  requirements widened to span the published minor and the next.** Five
+  requirement lines across three workspaces:
+
+  | manifest | was | now |
+  |---|---|---|
+  | `Cargo.toml` (workspace dep) | `zencodec "0.1.26"` | `">=0.1.26, <0.3.0"` |
+  | `Cargo.toml` (workspace dep) | `zenpixels "0.2.16"` | `">=0.2.16, <0.4.0"` |
+  | `Cargo.toml` (workspace dep) | `zenpixels-convert "0.2.16"` | `">=0.2.16, <0.4.0"` |
+  | `zenjpeg/Cargo.toml` (dev-dep) | `zencodec-testkit "0.1.0"` | `">=0.1.0, <0.3.0"` |
+  | `zenjpeg/fuzz/Cargo.toml` | `zenpixels "0.2.10"` | `">=0.2.10, <0.4.0"` |
+
+  The fuzz crate keeps its own lower floor (0.2.10) — only the ceiling moves.
+
+  Why: a caret requirement on a `0.x` crate caps at the *next* minor, so a
+  consumer on `0.2.x` and a consumer on `0.3.x` are semver-incompatible and
+  Cargo resolves **two copies**. Two copies of `zenpixels` means `PixelSlice`
+  from one is not `PixelSlice` from the other, and types stop unifying across
+  the crate boundary — the same failure mode the `zenanalyze` rev-pin entry
+  below describes, reached by a different route. zenjpeg sits in a dependency
+  graph with ~20 sibling crates that have already been widened; leaving these
+  five narrow is what would split the graph once `zencodec 0.2.0` exists.
+
+  Verified per workspace, not assumed — `zenjpeg/fuzz` and `apidoc` are their
+  own workspaces and do **not** inherit the root `[patch.crates-io]`:
+  - root: `cargo metadata --locked` rc=0, one `zencodec` (0.1.26), one
+    `zencodec-testkit` (0.1.0), one `zenpixels` (0.2.16), one
+    `zenpixels-convert` (0.2.16)
+  - `zenjpeg/fuzz`: rc=0, one `zencodec` (0.1.26), one `zenpixels` (0.2.16),
+    one `zenpixels-convert` (0.2.16)
+  - `apidoc`: rc=0, no `zen*` packages in its graph at all
+  - all three tracked lockfiles byte-identical before and after — every lock
+    was already at the newest version in the widened range, so resolution does
+    not move.
+
+- **`zenanalyze` / `zenanalyze-api` unified to crates.io versions + one
+  workspace-root `[patch.crates-io]`; the picker's offer reuse is now
+  version-pinned per feature.** Owner directive 2026-08-28: "zenanalyze-api
+  should be the sole contract and intermediary so different zenanalyze versions
+  can compile together" (`docs/sole-contract.md` in imazen/zenanalyze).
+
+  Both were **git-rev pins** — and, oddly, two *different* revs of the same repo
+  (`zenanalyze` 13d40c3, `zenanalyze-api` 47b4d0f5) — with a comment claiming
+  that pinning the same rev across codecs keeps the contract type unified. It
+  does the opposite: Cargo unifies by source, so a rev pin is its own source.
+  zenavif carried 47b4d0f5, zensquoosh 7b84d53c, zenpipe/zencodecs the registry
+  form; any graph combining them resolved several incompatible `Offer` types
+  (zenpipe recorded the E0308 in its manifest). A rev pin also cannot reach
+  `zenanalyze`'s own internal `{ version, path }` dep on the contract, which a
+  root patch rewrites along with everything else.
+
+  The 47b4d0f5 pin was additionally old enough that this crate compiled against
+  a **superseded contract API** (`Request::new(names, analyzer_version,
+  defs_version, config_hash)`), a shape absent from the published crate.
+
+  `pick_config_from_offer` now gates reuse twice: the baked model's
+  `analyzer_version` / `config_hash` stamps must match the offer's `Provenance`
+  (compared unconditionally, exactly as the old key did — an unstamped bake
+  therefore declines reuse and runs its own pass), and then every wanted column
+  must be present at the code version THIS build defines for it, matched on the
+  contract's qualified `name@hex8`. `Select::Features`, never `Select::Names`:
+  these values feed coefficients fit against those exact definitions, so a
+  drifted column must miss rather than be silently substituted. The per-feature
+  gate subsumes the old whole-build `feature_defs_version` stamp at a finer
+  grain — one re-defined column declines reuse instead of one upstream bump
+  invalidating every offer. New test coverage for exactly that case.
+
+  Verified: `cargo test -p zenjpeg --features __picker-research --lib`
+  (1,116 pass).
+
+
 ### QUEUED BREAKING CHANGES (Pattern-B error envelope)
 
 - **BREAKING:** the `zencodec::encode::EncoderConfig` / `EncodeJob` / `Encoder` /
@@ -43,6 +541,27 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- **Ultra HDR measured-nits pass (zensim campaign appendix AA).**
+  (1) `ReconstructHdr`'s envelope `content_light_level` is now MEASURED from
+  the reconstructed pixels via the zenpixels owner
+  (`zenpixels_convert::CllMeasure::measure_max`, MaxRGB per CTA-861.3,
+  BT.2408 anchor) instead of being derived from the gain map's declared
+  capacity — a range bound that over-states content whenever the range isn't
+  fully used — and MaxFALL is filled from the same scan (f16 output keeps the
+  capacity-derived fallback; the mastering-display peak deliberately stays
+  capacity-derived — it describes what the encoding can express).
+  (2) `encode_ultrahdr_luma`'s `Bt2446C` constants now state FACTS — the
+  per-transfer input normalization of the fused splitter's rows
+  (`curve_input_scale_nits`: linear/sRGB → 203, PQ → 10 000, HLG → 1) and the
+  curve's calibrated ~100-nit SDR reference — instead of an assumed
+  1000-nit content peak + a mis-slotted 203-nit "SDR peak". VERSION FACT: the
+  published zentone 0.1.0 this build resolves reserves both params (curve is
+  input-relative), so (2) is byte-neutral today; the
+  `bt2446c_params_inert_at_zentone_0_1` pin fails loudly when a zentone bump
+  makes them live, forcing conscious re-verification. zenpixels /
+  zenpixels-convert min 0.2.16 (+`hdr-experimental` under the `ultrahdr`
+  feature). The declared-grid-vs-quantization-basis defect in the fused
+  metadata is tracked separately (#193) and untouched here.
 - **zencodec encode memory pre-flight now gates on the calibrated peak
   estimate (281c948f).** With `ResourceLimits::max_memory_bytes` set, all
   zencodec encode entry points compare the budget against
@@ -152,6 +671,42 @@ All notable changes to zenjpeg are documented here. Earlier history
   unified at 0.9.0) — this only removes dev-dependency graph bloat. Only the
   `ultrahdr-rs` 0.8.1 instance above remains.
 
+### Changed
+
+- **Auto-orient / explicit-transform permute delegates to
+  `zenpixels_convert::orient::apply_orientation_into`** under the `zencodec`
+  feature (#150), which now also enables zenpixels-convert's `fast-transpose`
+  (AVX2 / NEON transposing kernels for every pixel width; no new dependency —
+  archmage + magetypes are already mandatory). Covers u8 (1/3/4 bpp) and f32
+  (1/3/4 ch) buffers; the scalar gather stays as the fallback for builds
+  without `zencodec` and is held byte-identical to the delegate by
+  `permute_delegation_matches_scalar_gather` (7 transforms × 6 pixel widths ×
+  7 shapes incl. partial tiles). Measured with the new
+  `benches/decode_orient_zenbench.rs` (12 MP, sequential, aarch64 laptop,
+  noisy CV 30–70%, record in `benchmarks/decode_orient_delegation_2026-08-27.txt`):
+  the Rotate90 overhead over an upright decode drops from ≈ +52 ms (RGB8) /
+  +46 ms (BGRA8) to ≈ +4.6 ms / +5 ms — paired CI +9.7–19.1% vs +58–77%
+  before. Rotate180 (memory-bound flip) is roughly unchanged (≈ +31/+35 ms vs
+  +39/+41 ms). Default-feature builds keep the previous scalar permute.
+- **Decode pipeline is monomorphized once, in zenjpeg, instead of once per
+  `Stop` type in every dependent crate** (#190). Every public decode entry
+  point (`decode`, `decode_into`, `decode_rows`, `decode_rows_f32`,
+  `decode_coefficients`, `decode_coefficients_with_jbrd_metadata`,
+  `decode_coefficients_with_extras`, `decode_to_ycbcr_f32`) keeps its
+  `impl Stop` signature but is now a thin shim over a non-generic
+  `&dyn Stop` body (`decode_rows*` also take the row callback as
+  `&mut dyn FnMut`). No public signature changed. Measured with
+  `cargo llvm-lines -p zjpeg` (the in-workspace CLI consumer, dev profile):
+  total 315,269 → 247,052 LLVM lines (−21.6%); `zenjpeg::decode` internals
+  instantiated in the consumer 51,658 lines / 268 fns → 2,680 / 87 (−95%) —
+  previously every consumer got TWO copies of the pipeline (`Unstoppable`
+  and `&Unstoppable`). Cancellation checks are per-row/per-scan so the
+  indirect call is noise. Gate: `tests/decode_cancellation.rs` (a counting
+  token reaches every entry point through the `dyn` boundary; a never-firing
+  token is byte-identical to `Unstoppable`). The `lossless::*` pipeline
+  (`encode_from_coefficients`, `restructure`, `transform`) still instantiates
+  per caller (~4k lines in `zjpeg`) — a follow-up of the same shape.
+
 ### Fixed
 
 - **`quant::identify::jpegli_luma_table` did not reproduce what the encoder
@@ -169,6 +724,294 @@ All notable changes to zenjpeg are documented here. Earlier history
   0.125..0.225 with a distance up to 25% off. The two now agree on every one of
   32,000 sampled (distance, subsampling) points; they disagreed on 160 of them
   before.
+- **`Public API surface` CI job was red on `main`** since 37e44fda added
+  `TargetOptions::seeded_for_image` + `zq_seed::predict_q0_from_image`
+  (user-approved) without regenerating `docs/public-api/zenjpeg.txt`; the
+  snapshot is regenerated. The #92 decoder helpers (`BitReader::starved`,
+  `EntropyDecoder::read_restart_marker_tolerant`) are `pub(crate)` so the
+  `__test-utils` internal surface is unchanged.
+- **Four ways a longer prefix of a decodable stream came back as a
+  *corruption* error** (#92; each found by `fuzz_truncation` on the fixed
+  decoder, each fixed and re-fuzzed until a 200 s / 35k-input session ran
+  clean). (1) `skip_segment` / `process_app_or_com` reported a declared body
+  running past the data as `InvalidJpegData("segment length exceeds data")`,
+  which the between-scans recovery does not cover, so a prefix ending inside
+  a trailing COM/APPn (MPF / Ultra HDR trailers) or a COM between
+  progressive scans errored while shorter and longer prefixes decoded; now
+  `TruncatedData` → `TruncatedBetweenScans` (`Strict` still errors). (2) The
+  same for an over-long DRI body. (3) A restart-marker resync that scanned
+  to the END of the data reported `could not resync to restart marker`; that
+  is a cut, and is now `TruncatedData` (the 4096-byte window running out
+  with data still ahead stays corruption). (4) **AC run past the block was
+  policy-split by decode path**: the fast_ac path silently tolerated
+  `run + index >= 64` (as libjpeg-turbo does — its natural-order table has
+  16 dummy slots for it) while the regular and bit-by-bit paths errored
+  unless `Lenient`, so a cut that starved the 9-bit peek and forced the slow
+  path onto such a symbol errored on a stream that decodes in full. All
+  paths (four baseline block decoders + progressive AC-first) now consume
+  the value bits, end the block, and report `DecodeWarning::AcIndexOverflow`
+  — `Strict` rejects at scan end on EVERY path (it used to pass the fast_ac
+  case silently), `Balanced` now warns instead of erroring on the slow
+  paths. Gates in `tests/decode_truncation.rs`: two every-prefix fixtures
+  with a COM after scan data (`baseline-444-com-before-eoi`,
+  `progressive-420-com-between-scans`) and `fuzz_found_prefix_regressions`
+  over the four fuzz inputs (`fuzz/regression/truncation-*`, 0.5–2.5 KB).
+  The fuzz target's monotone-acceptance check is now the precise contract:
+  a longer prefix must never fail with `TruncatedData`, and on a stream that
+  decodes in full it must not fail at all — a longer prefix of a *mutated*
+  stream may legitimately fail with a corruption error.
+- **A growing-prefix decode could flip from partial image back to error**
+  (#92): under `Balanced`/`Lenient`/`Permissive`, a stream cut *inside* a
+  table or metadata segment between scans (mid-DHT/DQT/DRI/APPn/COM before
+  the next scan) errored with `TruncatedData`, while both the shorter prefix
+  (ending after the previous scan) and the longer one (ending in the next
+  scan's data) decoded. The between-scans recovery now covers segment bodies
+  too, reporting `DecodeWarning::TruncatedBetweenScans { scans_decoded }`
+  exactly as for a cut at the marker boundary (no scan had started). Found by
+  the new `tests/decode_truncation.rs`, which decodes EVERY byte prefix of
+  baseline / restart-interval / progressive / grayscale fixtures and asserts:
+  no panic, header dimensions on every `Ok`, monotone acceptance (a longer
+  prefix of a decodable stream must decode), `Strict`-accepted prefixes are
+  pixel-identical under `Balanced`, and any prefix that lost scan data
+  carries a `Truncated*` warning. Progressive fixtures fail at prefix 364 of
+  881 before the fix.
+- **Truncated scans no longer decode phantom data past the cut** (#92). The
+  bit reader zero-extended past the END OF THE DATA exactly as it does at a
+  marker, so every decode path kept "decoding" the rest of a cut scan out of
+  synthetic zero bits: each block below the cut became whatever symbol the
+  all-zero code maps to (an optimized AC table's `0x01` → a `-1 << al`
+  coefficient in every block; 66k phantom coefficients on one 800×600
+  progressive prefix), and a cut mid-symbol handed the residual bits to the
+  NEXT block as its DC. Now: past the data with no marker the reader serves
+  only the real bits (`BitReader::starved` flags the first read that asked
+  for more), `Truncated` drops the unfinished residue, and the AC-refinement
+  scan returns "not complete" instead of finishing a code/sign bit against
+  zeros. Zero-extension at a *marker* is unchanged (a conformant segment's
+  last symbol still decodes against padding). Consequences that were also
+  bugs: the streaming baseline paths `continue`d past a truncated block and
+  shipped whatever the previous MCU row had left in the strip (now the
+  documented zero block); the speculative padding-block arm rewound on
+  `Truncated` as if the encoder had omitted the block; a cut exactly at a
+  restart-marker boundary errored (`read_restart_marker_tolerant`: a stream
+  that ENDS where the marker belongs is a truncation, wrong bytes there are
+  still corruption); `scan_rst_markers` reported `entropy_end = len - 1` on a
+  marker-less tail (the last byte carries coded bits) and did not re-examine
+  the second `0xFF` of a fill run as a marker prefix; and the fused parallel
+  4:2:0 fancy path (`--features parallel`) left the junction below the cut
+  unblended and, because the last present segment nominally ran to the end
+  of the image, saved a grey row as its boundary — the fused output differed
+  from sequential on the two pixel rows around the cut. Gates, all in
+  `tests/decode_truncation.rs`: coefficient-domain monotone convergence over
+  EVERY byte prefix (a coefficient may never move away from its final value
+  — the phantom-data detector), zero fill two MCU rows below a baseline cut,
+  the issue's 8-chunk progressive-arrival simulation (each arrival strictly
+  improves at least one coefficient, pixel RMS-to-final non-increasing,
+  final arrival byte-identical to one-shot), and fused-parallel vs
+  sequential byte-identity over 257 spread cuts + 512 consecutive cuts
+  through two DRI fixtures; plus `foundation::bitstream::tests` for the
+  reader contract and `rst_scan::tests` for the scanner. This supersedes the
+  issue's proposal 3 (per-scan rollback): a partially received progressive
+  scan now contributes exactly the bits that arrived and nothing invented,
+  which is the libjpeg-turbo partial-scan behaviour the issue called the
+  more expensive option. Hot-path cost: none measured — `decode_zenbench`
+  `progressive_4:2:0_Q85` (10 CID22 512² images, 200 rounds, interleaved
+  with mozjpeg as the reference lane; M-series laptop shared with another
+  build agent, so only the ratio is meaningful): before, zenjpeg 12.6 ±0.5
+  ms at +9.5%..+13.2% vs mozjpeg; after, 11.8 ±0.3 ms at +1.9%..+5.2%.
+
+### Added
+
+- **`recompress` preserve strategy ships the smaller of sequential and
+  progressive** (#143 item 2): `preserve_emit::emit_preserved` serializes
+  the edited coefficients sequentially and, when that lands at or below
+  `ENTROPY_TRIAL_MAX_BYTES` (32 KiB — the same gate as the main encoder's
+  trials; the issue body's 16 KiB was wrong), also serializes the SAME
+  coefficients progressively through the lossless pipeline's emitter
+  (`lossless::restructure::encode_progressive_from_coefficients`, jpegli
+  scan script) and returns the shorter stream. Pure rate decision —
+  coefficients are preserved by construction either way. The edited planes
+  are moved, not cloned, into the trial. Gate:
+  `preserve_emit::smallest_trial_tests::preserve_emit_ships_the_smaller_of_sequential_and_progressive`
+  (identical coefficient planes for both candidates and vs the source; the
+  shipped bytes equal the shorter candidate; progressive wins on all three
+  fixtures, e.g. 1830 → 1118 B). This closes the last open item of #143.
+- **Per-image exact 8-bit DQT downgrade for `allow_16bit_quant_tables(true)`
+  users** (#143 item 1): once every block is quantized, the buffered builder
+  checks each 16-bit table's >255 positions against that table's component
+  blocks (Cb+Cr for a shared chroma table, all three for RGB passthrough);
+  if no nonzero coefficient sits there, the 8-bit clamp is emitted instead —
+  pixel-identical by construction (zero coefficients dequantize to zero
+  under any divisor), 64 fewer DQT bytes per table, and SOF0 when no 16-bit
+  table remains. Tables whose positions ARE used keep 16-bit. Only the
+  buffered (Huffman-optimized, the default) builder can do this; the
+  streaming-through path writes its headers first and keeps the plan's
+  precision. Default configs (`allow_16bit` off) are byte-unchanged. Gates:
+  `dqt_downgrade_is_exactly_the_dominance_check` (unit, every branch) and
+  `tests/dqt_downgrade.rs` (DC-only chroma at Q50 → all-8-bit DQT + SOF0;
+  2×2-cell colour checkerboard → 16-bit kept).
+- **`fuzz_truncation` target** (#92, proposal 6): drives the decoder over
+  several cuts of each input (including one steered by the last byte) and
+  checks the same contract as `tests/decode_truncation.rs` — no panic,
+  header dims, monotone acceptance, Strict==Balanced pixels — plus the
+  `decode_rows` / `decode_coefficients` routes. Wired into `just fuzz` and
+  `fuzz/README.md`. Still open from #92: a rows/bytes-consumed completeness
+  signal (proposal 4) — a public-API decision, see the issue. Proposal 3
+  (per-scan rollback) is superseded by the no-phantom-data fix above.
+
+### Fixed (continued)
+
+- **`QuantTableConfig::PiecewiseV4` anchors were non-monotonic across quality**
+  (#12): the 20 SA-optimized anchors were each optimized independently, so
+  1,265 of the 3,840 `(position, anchor)` cells quantized COARSER at the next
+  higher quality (luma DC q90=5 → q95=37 → q100=6; Cb DC q100=81, coarser than
+  q5's 66), and the lerp inherited the wobble — file size went DOWN with
+  rising q at 30 of 98 steps on a 512² noise+patches sweep (0 for the jpegli
+  tables). The public `ANCHOR_LUMA/CB/CR` are now the raw anchors passed through
+  a compile-time per-cell L2 isotonic regression (pool-adjacent-violators)
+  enforcing non-increasing quant values as q rises; the raw data stays in-tree
+  as `RAW_ANCHOR_*`. **This moves the opt-in tables' bytes:** 67% of cells
+  changed, mean |Δ| 7.8, max |Δ| 113 (the L2-minimal monotone fit). The raw
+  anchors' pareto figures (+6.602 training / +6.09 holdout vs jpegli) have NOT
+  been re-measured on the smoothed tables — the module doc now says so and no
+  longer recommends the family as `adaptive()`'s default. Gates: per-cell and
+  whole-q-range monotonicity unit tests plus the q1–q99 size sweep in
+  `tests/piecewise_v4.rs` (all mutation-verified against the raw anchors).
+  Default behaviour (`QuantTableConfig::Jpegli`) is unaffected.
+- **`recompress` feature lint debt** (#143 item 3): `cargo clippy --features
+  recompress -- -D warnings` had 16 failures nobody saw because no CI job
+  compiled the opt-in module. Items reachable only through the
+  `recompress-expert` re-export (the `aq` diagnostics, `TableId` /
+  `CellEstimate::preferred` / `CellCi::{Tight,Empty}`, `StrategyParams::ci`,
+  `SourceAnalysis` fields, `StrategyOutcome::measured_zensim_a`, the
+  `EmitConfig` builders) now carry
+  `#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]` with a
+  reason; the unwired forward `per_encoder::lookup` is documented as such and
+  the measured jpegli `*_RATIO` tables stay referenced rather than deleted; a
+  stray cast in `tests/recompress_api.rs` and a helper placed after the test
+  module in `preserve_emit.rs` are fixed. CI gains a `Clippy (recompress)` step
+  (plain `recompress`, deliberately without `-expert` so the re-export cannot
+  mask dead code). Items 1 (per-image 8-bit DQT downgrade proof) and 2
+  (`preserve_emit` smallest-trial) of #143 are still open.
+- **`target-zq` bucket detection requested the full `FeatureSet::SUPPORTED`
+  analysis** (#135, as re-scoped in its triage comment): `detect_bucket`
+  (`encode/zq.rs`) now requests `adaptive::BUCKET_FEATURES` — exactly the 12
+  features `infer_bucket` reads — instead of the picker's 108-feature input
+  vector. Bucket output is unchanged (gated by
+  `bucket_features_cover_every_feature_infer_bucket_reads`, which also fails if
+  a feature `infer_bucket` reads is ever dropped from the set). The picker's
+  own `SUPPORTED` request is untouched: narrowing it would misalign the MLP.
+  The issue's original 51-feature / v2.2 framing and its per-call ms savings
+  were measured against a bake that no longer ships and are not carried over.
+- **Ultra HDR fused encode wrote under-boosted files** (#193, the ultrahdr#33
+  defect class): `encode_ultrahdr_with_curve` / `encode_ultrahdr_luma` quantized
+  gain-map bytes on the CONFIG boost grid (`compute_gain_row`) but
+  `build_gainmap_metadata` declared the content's OBSERVED gain range as the
+  per-channel `min`/`max`. Readers dequantize on the declared range, so any
+  image whose gain range was narrower than the configured one reconstructed
+  under-boosted in every conformant reader — with the default grid
+  (`max_boost = 6`) a flat 4× patch came back at 2.9× (−27%). The metadata now
+  declares the config grid; the observed accumulator only widens
+  `alternate_hdr_headroom` (mirror of ultrahdr-core `a09478f0bfaa`).
+  Regression gate: `tests/ultrahdr_gainmap_grid.rs` (declared range == grid
+  structurally, plus a full-weight round-trip peak check). **Interop note:**
+  files written by earlier versions are mis-declared and cannot be repaired by
+  readers (the file does not record the true grid) — re-encode from source.
+- **Three more count/emit divergence bugs in the main encoder** (sweep issue
+  #197, verified by adversarial review; same #194 mechanism): (1) the three
+  XYB/RGB-passthrough frequency-counting passes carried DC prediction across
+  the whole image while their paired emitters reset it at every restart
+  interval — a post-restart DC category the count never saw got no code and
+  was emitted as ZERO bits (undecodable output for XYB + restart markers,
+  the default `restart_mcu_rows(4)` included); counting now mirrors
+  `check_restart` exactly. (2) With `--features parallel`, the emitter alone
+  silently substituted restart interval 64 when the config said 0: RST
+  markers with no DRI header plus histogram/emission divergence. The
+  documented auto-selection now happens ONCE at config computation
+  (`resolve_restart_rows(4, ...)`), so the DRI header, frequency counting,
+  and segmented emission all agree. (3) Custom Huffman tables (harvested-table
+  reuse, #77) still pass through byte-identically, but can no longer
+  silently corrupt: the block-array paths coverage-verify the caller's
+  tables against the exact symbol stream (same traversal as the
+  optimizers), and the streaming emitter errors loudly on any codeless
+  symbol instead of writing zero bits; previously `.huffman(...)` with
+  tables the content exceeds (e.g. Annex K under XYB's SOF1 range)
+  silently produced undecodable streams. The built-in XYB fixed-table families are
+  now completed against the extended range too (the #196 completion had
+  floored DC at category 11). Progressive replay fallbacks that could write
+  zero bits or silently skip promised extra bits on eobruns underrun now
+  return internal errors. Regression gates: `tests/huffman_consistency.rs`
+  (XYB/YCbCr restart matrices with DC-slamming content, decode-validated;
+  parallel restart-0 consistency; custom-table rejection).
+
+- **`optimize_huffman(false)` baseline encodes silently produced undecodable
+  JPEGs on content outside the training-corpus distribution** (found
+  2026-08-26 by the missing-symbol debug_assert added with the #194 fix; the
+  frymire hash-lock suite had locked corrupt bytes for every `huffman=fixed`
+  row — mozjpeg djpeg and zenjpeg's own decoder both reject them). Root
+  cause: the corpus-trained built-in Huffman tables were baked from observed
+  frequencies only, so 324 of 360 tables lacked codes for 13,238 legal
+  baseline symbols (large DC categories, rare run/size pairs), and
+  `HuffmanEncodeTable::encode` emits ZERO bits for a codeless symbol. Fix:
+  `builtin_tables::select_tables` now completes every table — incomplete
+  tables are re-derived from frequencies synthesized to preserve the baked
+  ranking (freq = 2^(24-len), floor 1 for missing legal symbols), so common
+  symbols keep near-identical code lengths and rare symbols get valid long
+  codes. Measured cost on photo-like content: +0.06..+0.5% size (mostly the
+  fuller DHT markers), speed equal-or-faster on every measured cell.
+  Regression gate: `selected_tables_cover_all_legal_symbols` +
+  `audit_builtin_table_symbol_coverage` in `huffman/builtin_tables.rs`.
+- **Hash-lock/byte-identity encoder tests now also decode every stream they
+  hash** (locked_values — check AND regenerator, ycbcr_locked,
+  boundary_rd_hash_lock, parity_reference_locked, encoder_regression
+  dispatch-parity, lossless_dispatch_parity). A hash lock alone blesses
+  whatever bytes the encoder produced — that is exactly how the corrupt
+  fixed-table streams stayed locked-green. The regenerator now refuses to
+  lock undecodable bytes. New `.github/workflows/regen-locked-values.yml`
+  (workflow_dispatch) regenerates `values_archmage.csv` on an x86_64 runner.
+
+- **Lossless transforms/restructure emitted corrupt or silently-wrong JPEGs
+  in four distinct ways** (issues #194, #195; fixed in c453d299, verified
+  against mozjpeg 4.1.5 `jpegtran`/`djpeg`): (1) Huffman frequency counting
+  walked blocks in raster order while entropy encoding walked MCU-interleaved
+  order, so a DC category unique to encode order got a zero-length code and
+  silently desynced the stream — the whole of #194 (Transpose/Transverse on
+  subsampled chroma, 97-99% wrong pixels) plus #195's sequential Rotate90/270
+  "bad Huffman code"; (2) emitters recomputed grid geometry from pixel dims
+  while the decoder produces MCU-padded grids, scrambling blocks via a stride
+  mismatch on non-aligned dimension-swapping transforms; (3)
+  `TrimPartialBlocks` transformed the full padded grid and only shrank the
+  declared dimensions, leaving relocated padding blocks inside the visible
+  region (decoded cleanly, ~87% wrong pixels vs `jpegtran -trim`); (4)
+  progressive restructure tokenized padded grids where T.81 A.2.2
+  non-interleaved scans need exactly ceil(comp_dim/8) data units, producing
+  "extraneous bytes before marker" on every non-MCU-aligned input. Fix: new
+  `lossless/geometry.rs` validates every component grid against the declared
+  dimensions and provides the single interleaved-scan traversal shared by
+  frequency counting and encoding; trims now crop grids per-dimension BEFORE
+  transforming (swap transforms no longer over-trim the dimension that could
+  stay partial); progressive tokenizes true grids. Lossless re-encode of
+  other-than-1/3-component JPEGs (e.g. Adobe CMYK) is now a loud
+  `unsupported_feature` error instead of a silently corrupt scan. After the
+  fix, all 21 #194 cells are pixel-identical to `jpegtran` and trim outputs
+  are pixel-identical to `jpegtran -trim`; the unified traversal is also
+  3-5% faster (transform Rotate90 2000x1333 4:2:0: 37.5 → 35.8 ms median).
+
+### Added (lossless regression coverage, same change)
+
+- `tests/lossless_matrix.rs`: conformance matrix over 5 subsampling modes ×
+  5 dimension-alignment classes × all 8 transforms × both edge modes ×
+  seq/prog output × noisy + flat-chroma content, with four oracle layers
+  (exact coefficient roundtrip, exact D4 Cayley composition, ±measured-envelope
+  spatial placement via box upsampling, jpeg-decoder + zune-jpeg
+  cross-decoder conformance) (c453d299 follow-up).
+- `tests/lossless_dispatch_parity.rs`: the integer-only lossless pipeline must
+  be BYTE-identical across every archmage SIMD token permutation.
+- `lossless::tests::trim_sentinel_tests`: synthetic-coefficient oracle proving
+  trimmed output equals the pre-trimmed twin and padding-block content can
+  never leak into the visible region.
+- `HuffmanEncodeTable::encode` now `debug_assert`s the symbol has a code
+  (zero release cost) — any future count/encode traversal divergence fails
+  loudly in tests instead of silently corrupting the stream.
 
 - **Four `quality_matrix` progressive tests were disabled for a bug that was
   already fixed** (57a15d65). The 4:4:4 / 4:2:2 / 4:2:0 / 4:4:0 progressive tests

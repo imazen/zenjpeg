@@ -26,7 +26,11 @@ type TierToken = archmage::NeonToken;
 type TierToken = archmage::X64V3Token;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-const TIER_NAME: &str = if cfg!(target_arch = "aarch64") { "neon" } else { "v3(avx2)" };
+const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
+    "neon"
+} else {
+    "v3(avx2)"
+};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(on: bool) -> bool {
@@ -34,7 +38,9 @@ fn set_simd(on: bool) -> bool {
     TierToken::dangerously_disable_token_process_wide(!on).is_ok()
 }
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn set_simd(_on: bool) -> bool { false }
+fn set_simd(_on: bool) -> bool {
+    false
+}
 
 const W: usize = 1920;
 const H: usize = 1080;
@@ -48,8 +54,12 @@ fn bench(suite: &mut Suite) {
     eprintln!("[kernel_tiers] comparing {TIER_NAME} vs forced scalar");
 
     let n = W * H;
-    let rgb: &'static [u8] =
-        Box::leak((0..n * 3).map(|i| (i % 251) as u8).collect::<Vec<_>>().into_boxed_slice());
+    let rgb: &'static [u8] = Box::leak(
+        (0..n * 3)
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
 
     // ---- encode: reachable from outside, and the paths with hand-written NEON ----
     use zenyuv::{Matrix, Range, SharpYuvConfig, YuvContext};
@@ -90,12 +100,15 @@ fn bench(suite: &mut Suite) {
         g.throughput(Throughput::Bytes((n * 3) as u64));
         for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
             g.bench(arm, move |b| {
-                b.with_input(move || { set_simd(simd); vec![0u8; n] })
-                    .run(move |mut y| {
-                        let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                        ctx.encode_420_y_only_u8(rgb, &mut y, W, H);
-                        y
-                    })
+                b.with_input(move || {
+                    set_simd(simd);
+                    vec![0u8; n]
+                })
+                .run(move |mut y| {
+                    let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
+                    ctx.encode_420_y_only_u8(rgb, &mut y, W, H);
+                    y
+                })
             });
         }
     });
@@ -109,7 +122,15 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_sharp_420_u8(rgb, &mut y, &mut u, &mut v, W, H, &SharpYuvConfig::default());
+                    ctx.encode_sharp_420_u8(
+                        rgb,
+                        &mut y,
+                        &mut u,
+                        &mut v,
+                        W,
+                        H,
+                        &SharpYuvConfig::default(),
+                    );
                     (y, u, v)
                 })
             });
@@ -123,7 +144,6 @@ fn bench(suite: &mut Suite) {
     // directly and `avx2_decode.rs` has no callers at all. Worth a look from
     // inside the crate; flagged rather than silently skipped.
 
-
     // ---- decode ----
     // Flagged earlier as having no hand-written kernel on ANY architecture:
     // `decode.rs` calls the generic magetypes path directly for all five entry
@@ -133,25 +153,43 @@ fn bench(suite: &mut Suite) {
     // path. Whether that costs anything was unmeasurable until now, because the
     // decode fns are crate-internal; `_dev` exposes them.
     {
-        let yp: &'static [u8] =
-            Box::leak((0..n).map(|i| (i % 251) as u8).collect::<Vec<u8>>().into_boxed_slice());
-        let cp: &'static [u8] =
-            Box::leak((0..n).map(|i| (i % 199) as u8).collect::<Vec<u8>>().into_boxed_slice());
+        let yp: &'static [u8] = Box::leak(
+            (0..n)
+                .map(|i| (i % 251) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        );
+        let cp: &'static [u8] = Box::leak(
+            (0..n)
+                .map(|i| (i % 199) as u8)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice(),
+        );
         macro_rules! dec {
             ($name:expr, $call:expr) => {
                 suite.compare($name, |g| {
                     g.throughput(Throughput::Bytes((n * 3) as u64));
                     for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
                         g.bench(arm, move |b| {
-                            b.with_input(move || { set_simd(simd); vec![0u8; n * 3] })
-                                .run(move |mut out| { $call(&mut out); out })
+                            b.with_input(move || {
+                                set_simd(simd);
+                                vec![0u8; n * 3]
+                            })
+                            .run(move |mut out| {
+                                $call(&mut out);
+                                out
+                            })
                         });
                     }
                 });
             };
         }
-        dec!("yuv444_to_rgb", |o: &mut Vec<u8>| zenyuv::decode::yuv444_to_rgb(yp, cp, cp, o, W, H));
-        dec!("yuv420_to_rgb", |o: &mut Vec<u8>| zenyuv::decode::yuv420_to_rgb(yp, cp, cp, o, W, H));
+        dec!("yuv444_to_rgb", |o: &mut Vec<u8>| {
+            zenyuv::decode::yuv444_to_rgb(yp, cp, cp, o, W, H)
+        });
+        dec!("yuv420_to_rgb", |o: &mut Vec<u8>| {
+            zenyuv::decode::yuv420_to_rgb(yp, cp, cp, o, W, H)
+        });
     }
 
     set_simd(true);

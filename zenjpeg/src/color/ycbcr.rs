@@ -120,7 +120,7 @@ pub fn ycbcr_to_rgb_f32(y: f32, cb: f32, cr: f32) -> (f32, f32, f32) {
 pub fn convert_rgb_to_ycbcr_buffer(buffer: &mut [u8]) {
     assert!(buffer.len() % 3 == 0, "Buffer length must be multiple of 3");
 
-    for chunk in buffer.chunks_exact_mut(3) {
+    for chunk in buffer.as_chunks_mut::<3>().0 {
         let (y, cb, cr) = rgb_to_ycbcr(chunk[0], chunk[1], chunk[2]);
         chunk[0] = y;
         chunk[1] = cb;
@@ -132,7 +132,7 @@ pub fn convert_rgb_to_ycbcr_buffer(buffer: &mut [u8]) {
 pub fn convert_ycbcr_to_rgb_buffer(buffer: &mut [u8]) {
     assert!(buffer.len() % 3 == 0, "Buffer length must be multiple of 3");
 
-    for chunk in buffer.chunks_exact_mut(3) {
+    for chunk in buffer.as_chunks_mut::<3>().0 {
         let (r, g, b) = ycbcr_to_rgb(chunk[0], chunk[1], chunk[2]);
         chunk[0] = r;
         chunk[1] = g;
@@ -737,7 +737,7 @@ pub fn bgra_to_rgba(bgra: &[u8; 4]) -> [u8; 4] {
 /// The buffer length must be a multiple of 3.
 pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
     debug_assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
+    for pixel in data.as_chunks_mut::<3>().0 {
         pixel.swap(0, 2);
     }
 }
@@ -1587,16 +1587,21 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2<const TURBO: bool>(
 
     // Use chunks_exact to let the compiler prove slice lengths, eliminating bounds checks.
     // Input: 3 planes of i16, chunked by 16. Output: interleaved RGB u8, chunked by 48.
-    let y_chunks = y_plane.chunks_exact(16);
-    let remainder_len = y_chunks.remainder().len();
-    for ((y_chunk, cb_chunk), (cr_chunk, rgb_chunk)) in y_chunks
-        .zip(cb_plane.chunks_exact(16))
-        .zip(cr_plane.chunks_exact(16).zip(rgb.chunks_exact_mut(48)))
+    let (y_arrays, y_rem) = y_plane.as_chunks::<16>();
+    let remainder_len = y_rem.len();
+    for ((y_chunk, cb_chunk), (cr_chunk, rgb_chunk)) in
+        y_arrays.iter().zip(cb_plane.as_chunks::<16>().0).zip(
+            cr_plane
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .zip(rgb.as_chunks_mut::<48>().0),
+        )
     {
         let (y_vec, cb_vec, cr_vec) = (
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap()),
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap()),
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap()),
+            safe_simd::_mm256_loadu_si256(y_chunk),
+            safe_simd::_mm256_loadu_si256(cb_chunk),
+            safe_simd::_mm256_loadu_si256(cr_chunk),
         );
 
         // Subtract 128 from Cb and Cr
@@ -1801,15 +1806,20 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2<const TURBO: bool>(
     let alpha_sse = _mm_set1_epi8(-1_i8); // 0xFF
 
     // Process 16 pixels per iteration → 64 output bytes.
-    let y_chunks = y_plane.chunks_exact(16);
-    let remainder_len = y_chunks.remainder().len();
-    for ((y_chunk, cb_chunk), (cr_chunk, out_chunk)) in y_chunks
-        .zip(cb_plane.chunks_exact(16))
-        .zip(cr_plane.chunks_exact(16).zip(rgba.chunks_exact_mut(64)))
+    let (y_arrays, y_rem) = y_plane.as_chunks::<16>();
+    let remainder_len = y_rem.len();
+    for ((y_chunk, cb_chunk), (cr_chunk, out_chunk)) in
+        y_arrays.iter().zip(cb_plane.as_chunks::<16>().0).zip(
+            cr_plane
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .zip(rgba.as_chunks_mut::<64>().0),
+        )
     {
-        let y_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap());
-        let cb_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap());
-        let cr_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap());
+        let y_vec = safe_simd::_mm256_loadu_si256(y_chunk);
+        let cb_vec = safe_simd::_mm256_loadu_si256(cb_chunk);
+        let cr_vec = safe_simd::_mm256_loadu_si256(cr_chunk);
 
         let cb_centered = _mm256_sub_epi16(cb_vec, bias);
         let cr_centered = _mm256_sub_epi16(cr_vec, bias);
@@ -3032,6 +3042,7 @@ mod tests {
 
     /// libjpeg-turbo reference RGB for one centered triple (the exact table
     /// math from `int_ycbcr_vs_libjpeg_turbo_tables`).
+    #[cfg(target_arch = "x86_64")]
     fn turbo_ref_rgb(y: i32, cb: i32, cr: i32) -> (u8, u8, u8) {
         const FIX_1_40200: i64 = 91881;
         const FIX_1_77200: i64 = 116130;

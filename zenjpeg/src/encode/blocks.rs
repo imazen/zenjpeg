@@ -107,6 +107,70 @@ impl HuffmanSymbolFrequencies {
 }
 
 impl ComputedConfig {
+    /// Verify caller-supplied (Custom) Huffman tables cover every symbol the
+    /// given blocks will emit, using the EXACT counting traversals the
+    /// optimizers use (same MCU order and restart-boundary DC resets as the
+    /// emitters). A codeless symbol would otherwise encode as ZERO bits and
+    /// silently corrupt the stream (issue #197). Only invoked on the Custom
+    /// strategy — zero cost for every other path.
+    pub(crate) fn verify_custom_coverage_ycbcr(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+        tables: &HuffmanTableSet,
+    ) -> Result<()> {
+        let freqs = self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color);
+        Self::check_coverage(&freqs.dc_luma, &tables.dc_luma.table, "dc_luma")?;
+        Self::check_coverage(&freqs.ac_luma, &tables.ac_luma.table, "ac_luma")?;
+        if is_color {
+            Self::check_coverage(&freqs.dc_chroma, &tables.dc_chroma.table, "dc_chroma")?;
+            Self::check_coverage(&freqs.ac_chroma, &tables.ac_chroma.table, "ac_chroma")?;
+        }
+        Ok(())
+    }
+
+    /// XYB variant of [`Self::verify_custom_coverage_ycbcr`] — XYB shares one
+    /// (dc, ac) table pair across all components.
+    pub(crate) fn verify_custom_coverage_xyb(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        xyb_full: bool,
+        dc_table: &crate::huffman::optimize::OptimizedTable,
+        ac_table: &crate::huffman::optimize::OptimizedTable,
+    ) -> Result<()> {
+        let freqs = if xyb_full {
+            self.build_optimized_tables_shared_full(x_blocks, y_blocks, b_blocks)?
+                .2
+        } else {
+            self.build_optimized_tables_xyb_raster_with_counts(x_blocks, y_blocks, b_blocks)?
+                .2
+        };
+        Self::check_coverage(&freqs.dc_luma, &dc_table.table, "dc (shared)")?;
+        Self::check_coverage(&freqs.ac_luma, &ac_table.table, "ac (shared)")?;
+        Ok(())
+    }
+
+    fn check_coverage(
+        freq: &FrequencyCounter,
+        table: &HuffmanEncodeTable,
+        name: &str,
+    ) -> Result<()> {
+        for sym in 0..=255u8 {
+            if freq.get_count(sym) > 0 && table.lengths[sym as usize] == 0 {
+                return Err(crate::error::Error::invalid_config(alloc::format!(
+                    "custom Huffman table {name} has no code for symbol \
+                     {sym:#04x}, which this content emits — encoding would \
+                     silently corrupt the stream"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Counts symbol frequencies from quantized blocks (for Huffman optimization).
     pub(crate) fn count_block_frequencies(
         &self,
@@ -357,15 +421,18 @@ impl ComputedConfig {
             Subsampling::S440 => (1, 2),
         };
 
-        // Use parallel encoding when explicitly enabled
+        // Use parallel entropy encoding when explicitly enabled AND restart
+        // markers are in play. Segmented parallel emission joins segments at
+        // RST markers, so with restart_interval == 0 (the documented way to
+        // DISABLE restart markers) the parallel form would emit RST markers
+        // without any DRI header and reset DC prediction where the frequency
+        // count had none — an undecodable/corrupt stream (sweep issue #197).
+        // The old code silently substituted 64 here, at emission only; never
+        // resolve the interval inside the emitter alone. With markers
+        // disabled we fall through to sequential emission instead.
         #[cfg(feature = "parallel")]
-        if self.parallel {
-            // Auto-set restart interval if not specified
-            let restart_interval = if self.restart_interval > 0 {
-                self.restart_interval
-            } else {
-                64 // Default restart interval for parallel encoding
-            };
+        if self.parallel && self.restart_interval > 0 {
+            let restart_interval = self.restart_interval;
             use super::parallel::{
                 ParallelEntropyConfig, parallel_entropy_encode_444,
                 parallel_entropy_encode_subsampled,
@@ -681,6 +748,9 @@ impl ComputedConfig {
         let mut prev_dc_x: i16 = 0;
         let mut prev_dc_y: i16 = 0;
         let mut prev_dc_b: i16 = 0;
+        let restart_interval = self.restart_interval as usize;
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = 0usize;
 
         for mcu_y in 0..mcu_v {
             for mcu_x in 0..mcu_h {
@@ -735,6 +805,19 @@ impl ComputedConfig {
                 };
                 Self::collect_block_frequencies(b_block, prev_dc_b, &mut dc_freq, &mut ac_freq);
                 prev_dc_b = b_block[0];
+
+                // Reset DC prediction at restart boundaries — must mirror the
+                // paired emitter's check_restart() (called after every MCU
+                // except the last) EXACTLY, or post-restart DC diffs produce
+                // categories this count never saw and the optimized table
+                // emits them as zero bits (sweep issue #197, same mechanism
+                // as #194).
+                mcu_idx += 1;
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    prev_dc_x = 0;
+                    prev_dc_y = 0;
+                    prev_dc_b = 0;
+                }
             }
         }
 
@@ -783,6 +866,9 @@ impl ComputedConfig {
         let mut prev_dc_x: i16 = 0;
         let mut prev_dc_y: i16 = 0;
         let mut prev_dc_b: i16 = 0;
+        let restart_interval = self.restart_interval as usize;
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = 0usize;
 
         for mcu_y in 0..mcu_v {
             for mcu_x in 0..mcu_h {
@@ -831,6 +917,19 @@ impl ComputedConfig {
                 };
                 Self::collect_block_frequencies(b_block, prev_dc_b, &mut dc_freq, &mut ac_freq);
                 prev_dc_b = b_block[0];
+
+                // Reset DC prediction at restart boundaries — must mirror the
+                // paired emitter's check_restart() (called after every MCU
+                // except the last) EXACTLY, or post-restart DC diffs produce
+                // categories this count never saw and the optimized table
+                // emits them as zero bits (sweep issue #197, same mechanism
+                // as #194).
+                mcu_idx += 1;
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    prev_dc_x = 0;
+                    prev_dc_y = 0;
+                    prev_dc_b = 0;
+                }
             }
         }
 
@@ -873,6 +972,9 @@ impl ComputedConfig {
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
         let mut prev_dc = [0i16; 3];
+        let restart_interval = self.restart_interval as usize;
+        let total_mcus = blocks_w * blocks_h;
+        let mut mcu_idx = 0usize;
 
         for by in 0..blocks_h {
             for bx in 0..blocks_w {
@@ -887,6 +989,17 @@ impl ComputedConfig {
                         &mut ac_freq,
                     );
                     prev_dc[comp_idx] = block[0];
+                }
+
+                // Reset DC prediction at restart boundaries — must mirror the
+                // paired emitter's check_restart() (called after every MCU
+                // except the last) EXACTLY, or post-restart DC diffs produce
+                // categories this count never saw and the optimized table
+                // emits them as zero bits (sweep issue #197, same mechanism
+                // as #194).
+                mcu_idx += 1;
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    prev_dc = [0i16; 3];
                 }
             }
         }

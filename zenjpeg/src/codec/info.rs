@@ -67,13 +67,22 @@ pub(super) fn decode_descriptor(
 ) -> PixelDescriptor {
     let base = select_decode_descriptor(preferred, header.num_components);
     let sc = source_color_from_header(header);
-    let corrected_cicp =
-        correct_color.map(|_| zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
-    zencodec::helpers::descriptor_for_decoded_pixels_v2(
+    // XYB is inverted to sRGB by the decoder even without optional ICC
+    // correction. The source ICC describes encoded XYB, not the returned RGB.
+    let corrected_cicp = (header.is_xyb || correct_color.is_some())
+        .then_some(zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
+    let decoded = zencodec::helpers::descriptor_for_decoded_pixels_v2(
         base.pixel_format(),
         &sc,
         corrected_cicp.as_ref(),
-    )
+    );
+    if header.is_xyb {
+        // The selected float scanline path returns linear-light RGB; u8
+        // returns sRGB codes. Keep that output transfer after XYB inversion.
+        decoded.with_transfer(base.transfer())
+    } else {
+        decoded
+    }
 }
 
 /// Populate [`ImageInfo`] metadata (ICC / EXIF + orientation / XMP / JFIF

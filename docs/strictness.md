@@ -117,7 +117,7 @@ incompatible JPEG Part 3 extensions"). Both Rust decoders skip them.
 | **Missing Huffman table** | Uses standard tables (compiled in) | Error | **Balanced/Lenient/Permissive**: uses ITU-T T.81 K.3 standard tables, warns. **Strict**: error |
 | **Wrong restart marker** | 3-action resync (discard/scan/leave) | Not explicitly handled | **Lenient**: warn. **Permissive**: resync forward. **Strict/Balanced**: error |
 | **RST sequence wrong** | 3-action resync | Not handled | **Permissive**: accept any RST value. **Others**: error |
-| **AC index overflow** | Implicit (entropy decoder bounds) | Not recovered | **Lenient/Permissive**: treat as EOB, warn |
+| **AC index overflow** | Tolerated silently (`jpeg_natural_order` carries 16 dummy slots; value bits consumed, block ends) | Not recovered | **Balanced/Lenient/Permissive**: consume value bits, treat as EOB, `AcIndexOverflow` warning — on every decode path since #92 (the fast_ac path had tolerated it silently while the bit-by-bit path errored). **Strict**: error |
 | **Invalid Huffman code** | `insufficient_data` flag, fills zeros | Error | **Lenient/Permissive**: treat as EOB, warn |
 | **Padding block decode error** | Fills zeros | Error | **Balanced/Lenient/Permissive**: fills zeros, warns |
 | **Zero quant value** | Allowed (division by zero in dequant) | Allowed | **Permissive only**: clamp to 1. **All others**: fatal |

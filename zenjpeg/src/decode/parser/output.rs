@@ -1425,6 +1425,21 @@ impl<'a> JpegParser<'a> {
             return Err(Error::internal("no decoded data"));
         }
 
+        // Full-frame pixel output, sized from the (untrusted) SOF dimensions.
+        // Charged here rather than at each of the dozen concrete allocation
+        // sites below because they are mutually exclusive alternatives — this
+        // is the one buffer every buffered path produces. The streaming and
+        // fused-parallel results returned above are charged where they are
+        // allocated instead, so neither is counted twice. Transient reformat
+        // scratch (one extra frame during a conversion that cannot be done in
+        // place) is not separately charged.
+        self.charge_memory(
+            width
+                .saturating_mul(height)
+                .saturating_mul(format.bytes_per_pixel()),
+            "pixel output buffer",
+        )?;
+
         // Try parallel fast integer paths first (fall through to sequential if image too small)
         #[cfg(feature = "parallel")]
         if self.num_threads != 1

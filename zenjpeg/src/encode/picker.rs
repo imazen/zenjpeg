@@ -288,15 +288,21 @@ pub(crate) fn pick_config_from_packed(
 /// Predict the RD-optimal config from a shared [`zenanalyze_api::Offer`] — the
 /// version-unifying, cross-codec reuse path.
 ///
-/// Like [`pick_config_from_packed`], but the features arrive keyed by NAME
-/// through the frozen `zenanalyze_api` contract instead of `(u16, f32)` stable
-/// ids. A caller (orchestrator) runs ONE analysis pass, offers it to every codec,
-/// and each reuses it iff the offer's reuse key matches its baked model — same
-/// analyzer `major.minor`, `feature_defs_version`, and analysis `config_hash`
-/// (gamma vs linear-light). On any mismatch (incompatible version/config, or a
-/// feature this picker needs that the offer doesn't carry) this returns `None`,
-/// so the caller falls back to its own pass via [`pick_config`] or its heuristic.
-/// A non-finite target or a bake/predict failure also yields `None`, matching
+/// Like [`pick_config_from_packed`], but the features arrive keyed by qualified
+/// NAME through the `zenanalyze_api` contract instead of `(u16, f32)` stable ids.
+/// A caller (orchestrator) runs ONE analysis pass and offers it to every codec.
+///
+/// Reuse passes two gates. The baked model's own stamps must accept the offer
+/// (`analyzer_version`, analysis `config_hash` — gamma vs linear-light), and then
+/// every wanted column must be present at the CODE version this build defines
+/// for it, matched on the contract's qualified `name@hex8` identity. The second
+/// gate is per feature, so one re-defined column declines reuse rather than one
+/// upstream bump invalidating every offer.
+///
+/// On any mismatch — incompatible version/config, a drifted column, or a feature
+/// this picker needs that the offer doesn't carry — this returns `None`, so the
+/// caller falls back to its own pass via [`pick_config`] or its heuristic. A
+/// non-finite target or a bake/predict failure also yields `None`, matching
 /// [`pick_config`].
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn pick_config_from_offer(
@@ -308,16 +314,51 @@ pub(crate) fn pick_config_from_offer(
     let features = resolve_features()?;
     // The picker's features in training order, as the canonical zenanalyze names
     // (`AnalysisFeature::name()` == the offer's names) — the cross-version key.
-    let names: Vec<&str> = features.iter().map(|f| f.name()).collect();
     let model = Model::from_bytes(PICKER_BAKE).ok()?;
-    let request = zenanalyze_api::Request::new(
-        &names,
-        model.analyzer_version().unwrap_or(""),
-        model.feature_defs_version().unwrap_or(0),
-        model.feature_config_hash().unwrap_or(0),
-    );
-    // Reuse only if the key matches AND every needed name is present; else None.
-    let feat_values = offer.reuse_for(&request)?;
+
+    // Gate 1 — the model's own stamps must accept the offer. The contract no
+    // longer carries a global reuse key (it keys per feature, below), so the
+    // check the old key performed is made explicitly here. Exact string equality
+    // where the old key compared `major.minor`: stricter, so it can only cost an
+    // extra own-pass, never allow a wrong reuse.
+    // Compared unconditionally, exactly as the old reuse key did: a bake that
+    // records no stamp wants `""` / `0`, which no real offer carries, so an
+    // unstamped model declines reuse and runs its own pass. That conservative
+    // default is deliberate — an unstamped bake cannot verify what produced the
+    // offer, so it must not trust it.
+    let provenance = offer.provenance();
+    if provenance.analyzer_version() != model.analyzer_version().unwrap_or("") {
+        return None;
+    }
+    if provenance.config_hash() != model.feature_config_hash().unwrap_or(0) {
+        return None;
+    }
+
+    // Gate 2 — per feature, on its CODE version. Each want is the qualified
+    // `name@hex8` this build produces for that feature, so an offer whose
+    // definition of any column drifted misses and the caller runs its own pass.
+    // `Select::Features` (not `Select::Names`) is mandatory here: these values
+    // feed coefficients fit against those exact definitions, and matching by
+    // bare name would substitute drifted inputs silently. This subsumes the old
+    // whole-build `feature_defs_version` stamp at a finer grain — one re-defined
+    // column misses instead of invalidating every offer from that build.
+    let qualified: Vec<String> = features
+        .iter()
+        .map(|f| {
+            let full = zenanalyze::versioning::feature_version_hash(*f)?;
+            Some(zenanalyze_api::NamedFeature::qualified_for(
+                f.name(),
+                zenanalyze_api::NamedFeature::fold_hash(full),
+            ))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let wants: Vec<zenanalyze_api::NamedFeature<'_>> = qualified
+        .iter()
+        .map(|q| zenanalyze_api::NamedFeature::from_qualified(q))
+        .collect();
+    let feat_values = offer.reuse_for(&zenanalyze_api::Request::new(
+        zenanalyze_api::Select::Features(&wants),
+    ))?;
     // Assemble the 109-input vector — reused feature values (degenerate-guarded
     // identically to build_inputs_from_results) + the target dial.
     let mut x = [0.0f32; N_INPUTS];
@@ -525,17 +566,36 @@ mod tests {
         let results = zenanalyze::analyze_features_rgb8(&rgb, w, h, &query);
 
         let features = resolve_features().expect("features resolve");
-        let names: Vec<&str> = features.iter().map(|f| f.name()).collect();
-        let values: Vec<f32> = features.iter().map(|f| feat_f32(&results, *f)).collect();
         let model = Model::from_bytes(PICKER_BAKE).expect("bake loads");
 
-        // Matching reuse key → reuse → identical pick.
+        // Build the cells an orchestrator running THIS build would offer: each
+        // name qualified with this build's feature code version, which is what
+        // the per-feature gate asks for.
+        let cells: Vec<zenanalyze_api::OwnedFeatureResult> = features
+            .iter()
+            .map(|f| {
+                let full = zenanalyze::versioning::feature_version_hash(*f)
+                    .expect("every picker feature is versioned in this build");
+                let qualified = zenanalyze_api::NamedFeature::qualified_for(
+                    f.name(),
+                    zenanalyze_api::NamedFeature::fold_hash(full),
+                );
+                zenanalyze_api::OwnedFeatureResult::new(&qualified, feat_f32(&results, *f))
+            })
+            .collect();
+        let provenance = |config_hash: u64| {
+            zenanalyze_api::Provenance::new(model.analyzer_version().unwrap_or(""))
+                .with_config(config_hash)
+        };
+        let borrowed: Vec<_> = cells
+            .iter()
+            .map(zenanalyze_api::OwnedFeatureResult::as_ref)
+            .collect();
+
+        // Matching stamps + matching feature versions → reuse → identical pick.
         let offer = zenanalyze_api::Offer::new(
-            &names,
-            &values,
-            model.analyzer_version().unwrap_or(""),
-            model.feature_defs_version().unwrap_or(0),
-            model.feature_config_hash().unwrap_or(0),
+            &borrowed,
+            provenance(model.feature_config_hash().unwrap_or(0)),
         );
         assert_eq!(
             pick_config_from_offer(&offer, 70.0),
@@ -545,15 +605,40 @@ mod tests {
 
         // config_hash mismatch → decline reuse → None.
         let mismatched = zenanalyze_api::Offer::new(
-            &names,
-            &values,
-            model.analyzer_version().unwrap_or(""),
-            model.feature_defs_version().unwrap_or(0),
-            model.feature_config_hash().unwrap_or(0) ^ 0xDEAD,
+            &borrowed,
+            provenance(model.feature_config_hash().unwrap_or(0) ^ 0xDEAD),
         );
         assert!(
             pick_config_from_offer(&mismatched, 70.0).is_none(),
             "config-hash mismatch must decline reuse"
+        );
+
+        // A drifted CODE version on one column → decline reuse → None. This is
+        // the gate `Select::Names` would not give us, and the reason a model must
+        // never request by bare name.
+        let drifted: Vec<zenanalyze_api::OwnedFeatureResult> = cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if i == 0 {
+                    let q = zenanalyze_api::NamedFeature::qualified_for(c.name(), 0xDEAD_BEEF);
+                    zenanalyze_api::OwnedFeatureResult::new(&q, c.value())
+                } else {
+                    c.clone()
+                }
+            })
+            .collect();
+        let drifted_borrowed: Vec<_> = drifted
+            .iter()
+            .map(zenanalyze_api::OwnedFeatureResult::as_ref)
+            .collect();
+        let drifted_offer = zenanalyze_api::Offer::new(
+            &drifted_borrowed,
+            provenance(model.feature_config_hash().unwrap_or(0)),
+        );
+        assert!(
+            pick_config_from_offer(&drifted_offer, 70.0).is_none(),
+            "a drifted feature code version must decline reuse"
         );
     }
 }

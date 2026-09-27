@@ -1,0 +1,86 @@
+name: Prepare the workspace for a zenjpeg-only build
+description: >
+  Clone the sibling repos this workspace path-references, then rewrite the
+  manifests so a checkout without the unpublished siblings resolves. Used by
+  release.yml and benchmark.yml, which build only `-p zenjpeg` and therefore
+  need neither the picker feature set nor the expert-only members.
+
+  WHY THIS IS AN ACTION AND NOT A COPY-PASTED STEP: this repo carried FOUR
+  hand-maintained copies of this recipe — ci.yml, zenyuv-ci.yml, release.yml
+  and benchmark.yml. Only ci.yml was ever kept current. The other three rotted
+  the same way and died at manifest load, none of them noticed, because a
+  per-repo CI check only ever looks at the repo's newest run:
+
+    * zenyuv CI  — red 74 days (2026-06-16 .. 2026-08-29), 11 runs. Fixed
+      separately by .github/actions/zenyuv-only-workspace.
+    * Release    — last run 2026-06-01. Measured broken again on 2026-08-29
+      (dispatch 33264097169) at the "Run tests" step.
+    * Benchmark  — last run 2026-03-31, and broken the same way today.
+
+  The specific rot: `zenjpeg` path-deps `../../zenanalyze/zenpredict`, an
+  unpublished sibling that these two workflows do not clone. Cargo loads the
+  manifest of every workspace member and every path dep of every member before
+  it compiles anything, so the whole workspace fails to parse:
+
+      error: failed to load manifest for workspace member `.../zenjpeg`
+      Caused by: failed to load manifest for dependency `zenpredict`
+      Caused by: failed to read `.../zenanalyze/zenpredict/Cargo.toml`
+
+  The three `zenpredict` / `target-zq` / `__picker-research` lines below are
+  copied from ci.yml's i686 job, which has been carrying them (and passing)
+  the whole time. Deleting the path dep rather than cloning zenanalyze is
+  deliberate: `cargo publish` rejects a path dependency that has no version, so
+  the released package must not carry it, and the graph still resolves a single
+  `zenanalyze 0.2.0` through the workspace-root `[patch.crates-io]` git entry.
+  Verified 2026-08-29 with a full `cargo metadata` on a scaffolded copy: 275
+  packages resolve, `zenanalyze 0.2.0` among them, with no sibling checkout.
+
+  When a member or an unpublished path dep is added, fix it HERE, once.
+
+runs:
+  using: composite
+  steps:
+    - name: Clone sibling repos
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd ..
+        for repo in zencodec zenpng zenflate; do
+          if [ -d "$repo/.git" ]; then
+            echo "Already present: $repo"
+          else
+            git clone --depth 1 "https://github.com/imazen/$repo.git"
+          fi
+        done
+
+    - name: Strip non-CI workspace members and deps
+      shell: bash
+      run: |
+        set -euo pipefail
+        sed \
+          -e '/"internal\/jpegli-internals-sys"/d' \
+          -e '/"zjpeg"/d' \
+          Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+        sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+        sed \
+          -e '/jpegli-internals-sys/d' \
+          -e '/zenresize.*workspace/d' \
+          -e '/zennode.*path/d' \
+          -e 's/^layout = .*/layout = []/' \
+          -e 's/^zennode = .*/zennode = []/' \
+          -e '/zenpredict.*path/d' \
+          -e 's/^target-zq = .*/target-zq = ["dep:zensim"]/' \
+          -e 's/^__picker-research = .*/__picker-research = []/' \
+          -e 's/, features = \["cjpegli-ffi"\]//' \
+          zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+        rm -f Cargo.lock
+
+        # The strip above is line-oriented. If an unpublished path dep ever
+        # survives it, say so here rather than 40 lines later as the cryptic
+        # "failed to load manifest for workspace member" that kept three of
+        # this repo's workflows dead for months.
+        if grep -RIn 'path = "\.\./\.\.' Cargo.toml zenjpeg/Cargo.toml; then
+          echo "::error::a path dependency still points outside the checkout (see the matches above); teach .github/actions/prepare-zenjpeg-workspace to strip it" >&2
+          exit 1
+        fi
+        echo "Workspace prepared; no out-of-checkout path deps remain."

@@ -1041,6 +1041,14 @@ impl StripProcessor {
         self.aq_controller_imcu_idx = 0;
     }
 
+    /// Apply the controller to every quantized iMCU, including the final flush.
+    fn adjust_aq(&mut self, strengths: &mut [f32]) {
+        if let Some(ctrl) = self.aq_controller.as_mut() {
+            ctrl.adjust(strengths, self.aq_controller_imcu_idx);
+            self.aq_controller_imcu_idx += 1;
+        }
+    }
+
     /// Sets trellis quantization configuration.
     ///
     /// When enabled, uses trellis quantization for rate-distortion optimization
@@ -1327,10 +1335,7 @@ impl StripProcessor {
             // which leaves `temp_buffer` untouched — encode is byte-identical
             // to the pre-controller path. Locked-hash regression tests verify
             // this is preserved (see tests/bundled/locked_values.rs).
-            if let Some(ctrl) = self.aq_controller.as_mut() {
-                ctrl.adjust(&mut temp_buffer[..count], self.aq_controller_imcu_idx);
-                self.aq_controller_imcu_idx += 1;
-            }
+            self.adjust_aq(&mut temp_buffer[..count]);
 
             self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
@@ -2100,7 +2105,8 @@ impl StripProcessor {
         if let Some(count) = flush_count {
             // Quantize the last pending iMCU
             if !self.pending.prev_y().is_empty() {
-                let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                self.adjust_aq(&mut temp_buffer[..count]);
                 self.quantize_prev_pending_imcu(&temp_buffer[..count]);
                 self.aq_strengths_buffer = temp_buffer;
             }
@@ -2110,13 +2116,14 @@ impl StripProcessor {
         // (for edge cases where we have blocks but no AQ was returned)
         if !self.pending.current_y().is_empty() {
             // Use default AQ strength for remaining blocks
-            let default_aq = try_alloc_filled(
+            let mut default_aq = try_alloc_filled(
                 self.pending.current_y().len(),
                 0.08f32,
                 "default_aq_strengths",
             )?;
             // Swap so current becomes prev, then quantize
             self.pending.swap();
+            self.adjust_aq(&mut default_aq);
             self.quantize_prev_pending_imcu(&default_aq);
         }
 
@@ -2556,13 +2563,13 @@ mod tests {
                 .expect("process_strip");
         }
 
+        processor.finalize().expect("finalize");
         let log = LOG.with(|l| l.borrow().clone());
         // 64-row 4:2:0 image is 4 iMCU rows (16 px per iMCU). StreamingAQ
         // holds back the first iMCU as lookahead for fuzzy erosion, so
-        // the trailing emission lands at flush time (not exercised by
-        // process_strip alone). What this test pins down: the hook
-        // fires, indices are monotonic from 0, slices are non-empty.
-        assert!(!log.is_empty(), "controller adjust never called");
+        // the trailing emission lands at flush time and must also be controlled.
+        assert_eq!(log.len(), height.div_ceil(strip_h));
+        assert_eq!(log.iter().map(|(_, n)| n).sum::<usize>(), 64);
         for (n, (idx, len)) in log.iter().enumerate() {
             assert_eq!(*idx, n, "imcu_idx must be monotonic from 0");
             assert!(*len > 0, "strength slice must not be empty");

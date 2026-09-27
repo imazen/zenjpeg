@@ -249,7 +249,7 @@ pub fn decode_to_srgb8(jpeg_bytes: &[u8], w: u32, h: u32, apply_cms: bool) -> Re
 
 /// Repack a packed RGB8 byte buffer as `ImgVec<[u8; 3]>` for the metric crates.
 fn pack_rgb8(pixels: &[u8], w: u32, h: u32) -> imgref::ImgVec<[u8; 3]> {
-    let triples: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let triples: Vec<[u8; 3]> = pixels.as_chunks::<3>().0.to_vec();
     imgref::ImgVec::new(triples, w as usize, h as usize)
 }
 
@@ -269,11 +269,15 @@ fn compute_butteraugli(a: &[u8], b: &[u8], w: u32, h: u32) -> Result<f32> {
     use rgb::RGB8;
 
     let a_pix: Vec<RGB8> = a
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     let b_pix: Vec<RGB8> = b
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     let a_img = ImgRef::new(&a_pix, w as usize, h as usize);

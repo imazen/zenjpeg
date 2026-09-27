@@ -1,0 +1,51 @@
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+   Compiling zenjpeg v0.9.0 (/Users/lilith/work/zen/zenjpeg/zenjpeg)
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/lib/libjpegli-static.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/third_party/highway/libhwy.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/lib/libjxl_extras-internal.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: archive `/Users/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build/third_party/liblcms2.a` was built as GNU format, but the target expects Darwin
+  |
+  = help: this often occurs when using BSD-format archive tools on a Linux target; rebuild the archive with the correct format for the target platform
+
+warning: `jpegli-internals-sys` (lib) generated 4 warnings
+   Compiling zenjpeg-bench-utils v0.1.0 (/Users/lilith/work/zen/zenjpeg/zenjpeg-bench-utils)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 10.26s
+     Running benches/tier_isolation.rs (target/release/deps/tier_isolation-e042345c78efbb2d)
+[tier_isolation] comparing neon vs forced scalar
+fixture encoder byte parity: true; decoder pixel parity passed; artifacts: /Users/lilith/work/codec-artifacts/zenjpeg-arm-audit
+[zenbench] calibration: int=0.27ns/iter mem_bw=112.7GiB/s mem_lat=7.4ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.22ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788673784-1172a.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788673784-1172a
+  git: a83e96fdf720552f75b93f63deafeae7dbe036da
+═══════════════════════════════════════════════════════════════
+
+  forward_dct_8x8  200 rounds × 37K calls
+                         mean ±mad ns  95% CI vs base     
+  ├─ generic_dispatch     56.3 ±6.9ns  [55.0–57.6]ns      
+  ├─ neon                 57.7 ±9.9ns  [-4.1%–-1.4%]       [1]
+  ╰─ scalar             194.0 ±18.9ns  [+243.4%–+251.6%]  
+
+  generic_dispatch  ███████████████ 56.3ns
+  neon              ███████████████ 57.7ns
+  scalar            ████████████████████████████████████████████████████ 194.0ns
+  [1] CV=30%
+
+  total: 23.7s  (3 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=forward_dct_8x8 benchmark=generic_dispatch  |  vs_base=baseline  |  min=25.0ns mean=56.3ns median=57.4ns mad=6.9ns  |  n=200 cv=16.3% rounds=200 calls=37037 mean_ci=[55.0ns 57.6ns]
+group=forward_dct_8x8 benchmark=neon  |  vs_base_pct=-2.72 ci=[-4.09% -1.36%] significant=true effect=-0.20 p=0.0000  |  min=24.8ns mean=57.7ns median=53.4ns mad=9.9ns  |  n=200 cv=30.1% rounds=200 calls=37037 mean_ci=[55.4ns 60.2ns] cold=125.0ns
+group=forward_dct_8x8 benchmark=scalar  |  vs_base_pct=+247.45 ci=[+243.41% +251.60%] significant=true effect=10.26 p=0.0000  |  min=86.8ns mean=194.0ns median=197.4ns mad=18.9ns  |  n=200 cv=15.8% rounds=200 calls=37037 mean_ci=[189.7ns 198.2ns] cold=83.0ns

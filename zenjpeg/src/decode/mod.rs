@@ -381,10 +381,57 @@ impl DecodeConfig {
         self
     }
 
-    /// Sets the maximum memory allowed for allocations during decoding.
+    /// Sets the ceiling for the decode's header-dimension-scaled allocations.
     ///
-    /// Default is 512 MB. Set to `usize::MAX` for unlimited.
-    /// This prevents memory exhaustion attacks from malicious images.
+    /// Default is 512 MB; `0` and `u64::MAX` both mean unlimited.
+    ///
+    /// A JPEG header is a few hundred bytes no matter what frame size it
+    /// declares, while the decoder's coefficient storage and pixel output are
+    /// both sized from those declared dimensions — so without this cap a
+    /// 265-byte file declaring 15000x8000 costs ~716 MiB of peak RSS
+    /// (measured). This bounds that amplification.
+    ///
+    /// # What counts against the budget
+    ///
+    /// Every allocation whose size comes from the header-declared dimensions:
+    /// full-frame DCT coefficient storage (baseline, arithmetic, progressive)
+    /// with its per-block count and nonzero-bitmap side tables, and the
+    /// full-frame pixel output buffer on every path (streaming, fused
+    /// parallel, and buffered). Charges accumulate for the whole decode, so a
+    /// multi-scan file cannot spend the budget more than once.
+    ///
+    /// Per-MCU-row strip scratch is **not** counted: it is `O(width)`, not
+    /// `O(width * height)`, so a small header cannot amplify it. Neither are
+    /// buffers the caller supplies (`decode_into`). The cap therefore bounds
+    /// the decode's dimension-driven growth rather than its exact peak RSS.
+    ///
+    /// # Measured cost per pixel
+    ///
+    /// The budget a decode charges depends on the path, because the streaming
+    /// path stores no coefficients at all:
+    ///
+    /// | path | 4:2:0 | 4:4:4 |
+    /// |---|---|---|
+    /// | baseline, streaming (default `decode()`) | 3.00 B/px | 3.00 B/px |
+    /// | baseline, buffered (coefficients, transforms, non-interleaved scans) | 6.03 B/px | 9.05 B/px |
+    /// | progressive | 6.22 B/px | 9.42 B/px |
+    ///
+    /// Each cell is the smallest `max_memory` that still admits the decode, not
+    /// a reading of the charge sites. The 4:4:4 streaming cell is pinned by
+    /// `tests/decode_memory_limit.rs::streaming_444_charges_three_bytes_per_pixel`,
+    /// which binary-searches that threshold; if the streaming path ever starts
+    /// charging for coefficient storage it does not use, that test fails.
+    ///
+    /// At the 512 MB default that admits ~179 MP of streaming baseline but
+    /// only ~86 MP of 4:2:0 progressive and ~57 MP of 4:4:4 progressive.
+    /// [`max_pixels`](Self::max_pixels) defaults to 120 MP, so the two
+    /// defaults do not agree: frames between roughly 57 MP and 120 MP pass the
+    /// pixel cap and are then refused by this one. Raise this cap (or lower
+    /// `max_pixels`) if you decode images that large.
+    ///
+    /// Exceeding the cap returns
+    /// [`ErrorKind::ResourceLimitExceeded`](crate::error::ErrorKind) with
+    /// [`zencodec::LimitKind::Memory`].
     #[must_use]
     pub fn max_memory(mut self, bytes: u64) -> Self {
         self.max_memory = bytes;
@@ -689,6 +736,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&preserve),
             self.strictness,
             self.alloc_pref,
@@ -793,6 +841,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -1137,6 +1186,7 @@ impl DecodeConfig {
                     let mut peek = JpegParser::with_strictness(
                         &vec,
                         self.max_pixels,
+                        self.max_memory,
                         None,
                         self.strictness,
                         self.alloc_pref,
@@ -1155,6 +1205,7 @@ impl DecodeConfig {
             let mut parser = JpegParser::with_strictness(
                 &vec,
                 self.max_pixels,
+                self.max_memory,
                 None,
                 self.strictness,
                 self.alloc_pref,
@@ -1296,6 +1347,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -1641,7 +1693,7 @@ impl DecodeConfig {
         &self,
         data: &[u8],
         transform: crate::lossless::LosslessTransform,
-        stop: impl Stop,
+        stop: &dyn Stop,
     ) -> Result<DecodeResult> {
         let mut upright = self.clone();
         upright.auto_orient = false;
@@ -1651,7 +1703,7 @@ impl DecodeConfig {
         // EXIF extras handling matches the pre-#149 transform path: with
         // auto_orient disabled on the inner decode, the user's own preserve
         // config applies — EXIF is kept only when the caller asked for it.
-        let mut result = upright.decode(data, stop)?;
+        let mut result = upright.decode_dyn(data, stop)?;
         result.apply_pixel_transform(transform);
 
         if let Some(crop_region) = self.crop_region {
@@ -1673,6 +1725,20 @@ impl DecodeConfig {
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        self.decode_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode`](Self::decode).
+    ///
+    /// Every public decode entry point is a thin `impl Stop` shim over a
+    /// `&dyn Stop` body like this one, so the decode pipeline is
+    /// monomorphized ONCE, here in zenjpeg, instead of once per `Stop` type
+    /// in every dependent crate (#190: a 300-line consumer used to pull
+    /// ~50k LLVM lines of decoder internals into its own codegen). The
+    /// cancellation checks are per-row / per-scan, so the indirect call is
+    /// noise. `&dyn Stop: Stop` (via `enough`'s blanket `&T` impl), so the
+    /// parser-level `&impl Stop` helpers instantiate for `&dyn Stop` only.
+    pub(crate) fn decode_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodeResult> {
         // Track whether we force-preserved EXIF just for auto_orient
         let forced_exif = self.auto_orient && !self.preserve.exif;
         let preserve = if self.auto_orient {
@@ -1709,6 +1775,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&preserve),
             self.strictness,
             self.alloc_pref,
@@ -2067,8 +2134,28 @@ impl DecodeConfig {
         dst: &mut [u8],
         stop: impl Stop,
     ) -> Result<usize> {
-        // Eligible direct path: standard RGB-family u8 / gray u8, no transform,
-        // no crop, no Knusperli, default output target.
+        self.decode_into_dyn(data, format, dst, &stop)
+    }
+
+    /// Non-generic body of [`decode_into`](Self::decode_into) (see
+    /// [`decode_dyn`](Self::decode_dyn) for why).
+    fn decode_into_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: &dyn Stop,
+    ) -> Result<usize> {
+        // Eligibility for the direct path, which decodes straight into `dst`
+        // and therefore runs NONE of `decode()`'s post-decode stages.
+        //
+        // Anything this list fails to exclude is silently dropped: the caller
+        // gets pixels that do not match what they configured, with no error to
+        // say so. `decode_into_via_decode` handles every excluded case
+        // correctly by delegating to `decode()` and copying, at the cost of one
+        // intermediate buffer. Correctness first; the fast path is an
+        // optimisation under the "decode_into == decode" contract, gated by
+        // `tests/decode_into_parity.rs`.
         let direct_eligible = matches!(
             format,
             PixelFormat::Rgb
@@ -2079,16 +2166,28 @@ impl DecodeConfig {
                 | PixelFormat::Gray
         ) && self.compute_effective_transform_from_data(data)
             == crate::lossless::LosslessTransform::None
-            && !matches!(
-                self.deblock_mode,
-                DeblockMode::Knusperli | DeblockMode::Auto
-            )
+            // Deblocking is applied after the decode loop, so no mode survives
+            // the direct path — not just the coefficient-domain ones.
+            // `Boundary4Tap`/`AutoStreamable` were previously admitted here and
+            // silently discarded (4819 of 18432 bytes wrong at Q25).
+            && self.deblock_mode == DeblockMode::Off
+            // Crop is applied to the decoded image. The direct path decoded the
+            // WHOLE frame into `dst` and reported the full byte count, so
+            // `.crop(..).decode_into(..)` returned the uncropped image.
+            && self.crop_region.is_none()
+            // ICC correction runs on the assembled output. Dropping it while
+            // `codec::info::decode_descriptor` stamps the result `Cicp::SRGB`
+            // hands the sink source-gamut pixels labelled sRGB — undetectable
+            // downstream (measured: 17417 of 18432 bytes wrong, max delta 108,
+            // for a Display-P3 source corrected to sRGB).
+            && self.correct_color.is_none()
             && self.output_target == OutputTarget::Srgb8;
 
         if direct_eligible {
             let mut parser = parser::JpegParser::with_strictness(
                 data,
                 self.max_pixels,
+                self.max_memory,
                 None,
                 self.strictness,
                 self.alloc_pref,
@@ -2148,7 +2247,7 @@ impl DecodeConfig {
         data: &[u8],
         format: PixelFormat,
         dst: &mut [u8],
-        stop: impl Stop,
+        stop: &dyn Stop,
         num_components: u8,
         is_xyb: bool,
     ) -> Result<usize> {
@@ -2165,6 +2264,7 @@ impl DecodeConfig {
         let mut parser = parser::JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2194,13 +2294,13 @@ impl DecodeConfig {
         data: &[u8],
         format: PixelFormat,
         dst: &mut [u8],
-        stop: impl Stop,
+        stop: &dyn Stop,
     ) -> Result<usize> {
         // Fallback: full decode then memcpy. Allocates an intermediate Vec but
         // exists so callers can rely on `decode_into()` always working.
         let mut cfg = self.clone();
         cfg.output_format = Some(format);
-        let result = cfg.decode(data, stop)?;
+        let result = cfg.decode_dyn(data, stop)?;
         let pixels = result.into_pixels_u8().ok_or_else(|| {
             Error::internal("decode_into requires u8 output (use decode for f32)")
         })?;
@@ -2221,6 +2321,19 @@ impl DecodeConfig {
     where
         F: FnMut(RowSlice<'_>) -> Result<()>,
     {
+        self.decode_rows_dyn(data, format, &mut callback, &stop)
+    }
+
+    /// Non-generic body of [`decode_rows`](Self::decode_rows): the callback
+    /// and the stop token both cross a `dyn` boundary (one indirect call per
+    /// row, see [`decode_dyn`](Self::decode_dyn)).
+    fn decode_rows_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        callback: &mut dyn FnMut(RowSlice<'_>) -> Result<()>,
+        stop: &dyn Stop,
+    ) -> Result<ScanlineInfo> {
         // Validate format is u8-based
         match format {
             PixelFormat::Rgb
@@ -2304,6 +2417,17 @@ impl DecodeConfig {
     where
         F: FnMut(RowSliceF32<'_>) -> Result<()>,
     {
+        self.decode_rows_f32_dyn(data, format, &mut callback, &stop)
+    }
+
+    /// Non-generic body of [`decode_rows_f32`](Self::decode_rows_f32).
+    fn decode_rows_f32_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        callback: &mut dyn FnMut(RowSliceF32<'_>) -> Result<()>,
+        stop: &dyn Stop,
+    ) -> Result<ScanlineInfo> {
         // Validate format is f32-based
         let floats_per_pixel = match format {
             PixelFormat::RgbaF32 => 4,
@@ -2373,9 +2497,15 @@ impl DecodeConfig {
     ///
     /// For analysis of large images, consider streaming APIs.
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
+        self.decode_coefficients_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode_coefficients`](Self::decode_coefficients).
+    fn decode_coefficients_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2426,9 +2556,20 @@ impl DecodeConfig {
         data: &[u8],
         stop: impl Stop,
     ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
+        self.decode_coefficients_with_jbrd_metadata_dyn(data, &stop)
+    }
+
+    /// Non-generic body of
+    /// [`decode_coefficients_with_jbrd_metadata`](Self::decode_coefficients_with_jbrd_metadata).
+    fn decode_coefficients_with_jbrd_metadata_dyn(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2466,9 +2607,20 @@ impl DecodeConfig {
         data: &[u8],
         stop: impl Stop,
     ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
+        self.decode_coefficients_with_extras_dyn(data, &stop)
+    }
+
+    /// Non-generic body of
+    /// [`decode_coefficients_with_extras`](Self::decode_coefficients_with_extras).
+    fn decode_coefficients_with_extras_dyn(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&self.preserve),
             self.strictness,
             self.alloc_pref,
@@ -2524,9 +2676,15 @@ impl DecodeConfig {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
+        self.decode_to_ycbcr_f32_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode_to_ycbcr_f32`](Self::decode_to_ycbcr_f32).
+    fn decode_to_ycbcr_f32_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             None,
             self.strictness,
             self.alloc_pref,
@@ -2653,6 +2811,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
+            self.max_memory,
             Some(&self.preserve),
             self.strictness,
             self.alloc_pref,

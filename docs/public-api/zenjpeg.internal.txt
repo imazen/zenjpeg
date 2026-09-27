@@ -1,5 +1,5 @@
 # zenjpeg public API — doc(hidden) items and excluded-feature surface
-# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__picker-research,__profile,__test-utils,__wasm-simd
+# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__picker-research,__profile,__test-utils,__wasm-simd,__zensim-research,_dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,15 +9,15 @@
 
 ## summary
 #
-#   pub modules                                82
+#   pub modules                                83
 #   pub types (struct/enum/trait/alias)       296
 #   pub consts/statics                        316
-#   free functions                            354
+#   free functions                            367
 #   inherent methods                         1191
 #   struct fields                             755
 #   enum variants                             503
 #   re-exports                                 18
-#   trait roster entries (type × trait)       646
+#   trait roster entries (type × trait)       647
 #   auto-trait-complete types                 131
 #   auto-trait exceptions                       7
 #
@@ -29,7 +29,7 @@
 #   decode                          447
 #   decoder                          54
 #   detect                           40
-#   encode                         1466
+#   encode                         1480
 #   encoder                         134
 #   entropy                         100
 #   foundation                      349
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         12
 
-## items (3337 lines)
+## items (3350 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -448,7 +448,7 @@ pub fn color::xyb::linear_rgb_to_xyb_255(f32, f32, f32) -> (f32, f32, f32)
 pub fn color::xyb::linear_rgb_to_xyb_simd(&mut [[f32; 3]])
 pub fn color::xyb::linear_rgb_to_xyb_simd_255(&mut [[f32; 3]])
 pub fn color::xyb::linear_to_srgb(f32) -> f32
-pub fn color::xyb::linear_to_srgb_fast(f32) -> f32
+pub fn color::xyb::linear_to_srgb_fast(f32) -> f32 [also: encode::linear_lut]
 pub fn color::xyb::linear_to_srgb_u8(f32) -> u8
 pub fn color::xyb::linear_to_srgb_u8_fast(f32) -> u8
 pub fn color::xyb::rgb_buffer_to_scaled_xyb_planes(&[u8], usize, usize) -> (alloc::vec::Vec<f32>, alloc::vec::Vec<f32>, alloc::vec::Vec<f32>)
@@ -1025,6 +1025,18 @@ pub fn encode::internal_params::ColorPath::fmt(&self, &mut core::fmt::Formatter<
 pub fn encode::internal_params::InternalParams::clone(&self) -> encode::internal_params::InternalParams
 pub fn encode::internal_params::InternalParams::default() -> encode::internal_params::InternalParams
 pub fn encode::internal_params::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encode::linear_lut::linear_f32_to_srgb_255_fast(f32) -> f32
+pub fn encode::linear_lut::linear_f32_to_srgb_255_reference(f32) -> f32
+pub fn encode::linear_lut::linear_rgb16_to_ycbcr(u16, u16, u16) -> (f32, f32, f32)
+pub fn encode::linear_lut::linear_rgb16_to_ycbcr_x8(&[u16; 8], &[u16; 8], &[u16; 8]) -> ([f32; 8], [f32; 8], [f32; 8])
+pub fn encode::linear_lut::linear_rgbf32_to_ycbcr_fast(f32, f32, f32) -> (f32, f32, f32)
+pub fn encode::linear_lut::linear_rgbf32_to_ycbcr_lut(f32, f32, f32) -> (f32, f32, f32)
+pub fn encode::linear_lut::linear_rgbf32_to_ycbcr_x8(&[f32; 8], &[f32; 8], &[f32; 8]) -> ([f32; 8], [f32; 8], [f32; 8])
+pub fn encode::linear_lut::linear_to_srgb_255(f32) -> f32
+pub fn encode::linear_lut::linear_to_srgb_255_x8(&[f32; 8]) -> [f32; 8]
+pub fn encode::linear_lut::linear_to_srgb_reference(f32) -> f32
+pub fn encode::linear_lut::linear_u16_to_srgb_255(u16) -> f32
+pub fn encode::linear_lut::linear_u16_to_srgb_255_x8(&[u16; 8]) -> [f32; 8]
 pub fn encode::mage_simd::mage_box_filter_2x2(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
 pub fn encode::mage_simd::mage_fast_exp2_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
 pub fn encode::mage_simd::mage_fast_log2_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
@@ -1497,18 +1509,18 @@ pub fn foundation::simd_types::Block8x8f::get(&self, usize, usize) -> f32
 pub fn foundation::simd_types::Block8x8f::mul(&self, &Self) -> Self
 pub fn foundation::simd_types::Block8x8f::scale(&self, f32) -> Self
 pub fn foundation::simd_types::Block8x8f::set(&mut self, usize, usize, f32)
-pub fn foundation::simd_types::Block8x8f::to_array(&self) -> [f32; 64]
+pub fn foundation::simd_types::Block8x8f::to_array(self) -> [f32; 64]
 pub fn foundation::simd_types::Block8x8i16::clone(&self) -> foundation::simd_types::Block8x8i16
 pub fn foundation::simd_types::Block8x8i16::default() -> Self
 pub fn foundation::simd_types::Block8x8i16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::Block8x8i16::from_array(&[i16; 64]) -> Self
 pub fn foundation::simd_types::Block8x8i16::get(&self, usize, usize) -> i16
-pub fn foundation::simd_types::Block8x8i16::to_array(&self) -> [i16; 64]
+pub fn foundation::simd_types::Block8x8i16::to_array(self) -> [i16; 64]
 pub fn foundation::simd_types::Block8x8i32::clone(&self) -> foundation::simd_types::Block8x8i32
 pub fn foundation::simd_types::Block8x8i32::default() -> Self
 pub fn foundation::simd_types::Block8x8i32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn foundation::simd_types::Block8x8i32::to_i16(&self) -> foundation::simd_types::Block8x8i16
-pub fn foundation::simd_types::Block8x8i32::to_i16_array(&self) -> [i16; 64]
+pub fn foundation::simd_types::Block8x8i32::to_i16(self) -> foundation::simd_types::Block8x8i16
+pub fn foundation::simd_types::Block8x8i32::to_i16_array(self) -> [i16; 64]
 pub fn foundation::simd_types::QuantTableSimd::clone(&self) -> foundation::simd_types::QuantTableSimd
 pub fn foundation::simd_types::QuantTableSimd::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::QuantTableSimd::from_f32_values(&[f32; 64]) -> Self
@@ -1940,6 +1952,7 @@ pub mod encode::exif
 pub mod encode::expert
 pub mod encode::extras
 pub mod encode::internal_params
+pub mod encode::linear_lut
 pub mod encode::mage_simd
 pub mod encode::parallel
 pub mod encode::plan
@@ -3384,7 +3397,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (197 types)
+## trait impls (198 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3567,6 +3580,7 @@ rgb::formats::rgb::Rgb<u8>: encode::byte_encoders::Pixel
 rgb::formats::rgba::Rgba<f32>: encode::byte_encoders::Pixel
 rgb::formats::rgba::Rgba<u16>: encode::byte_encoders::Pixel
 rgb::formats::rgba::Rgba<u8>: encode::byte_encoders::Pixel
+target_quality::TargetSearchResult: TrivialClone
 test_utils::TestImage: Clone, Debug
 test_utils::TestPattern: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 types::ColorSpace: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, TrivialClone

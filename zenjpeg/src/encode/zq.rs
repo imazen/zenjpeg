@@ -399,17 +399,22 @@ pub(crate) fn zq_to_starting_jpegli_q_for_bucket(
 
 use super::aq_controller::AqController;
 
+#[cfg(feature = "__zensim-research")]
+mod candidate;
+
 /// Per-iMCU multiplicative-scale controller. Each iMCU row carries a
 /// row of per-block scale factors that multiply the streaming-AQ output.
 ///
 /// scale = 1.0 → no change. scale < 1.0 → tighter (more bits).
-/// scale > 1.0 → looser (fewer bits). Final AQ is clamped to `[0.0, 0.20]`
-/// by the strip processor.
+/// scale > 1.0 → looser (fewer bits). AQ strength is a nonnegative zero-bias
+/// multiplier, not a value bounded by 0.20. Unit scales preserve it exactly.
 #[allow(dead_code)] // scaffold for future controller wiring
 #[derive(Debug)]
 struct ScalingController {
     /// `scales[imcu_idx]` = per-block scale factors for that iMCU row.
     scales: alloc::vec::Vec<alloc::vec::Vec<f32>>,
+    #[cfg(feature = "__zensim-research")]
+    usage: Option<std::sync::Arc<candidate::ControllerUse>>,
 }
 
 impl AqController for ScalingController {
@@ -420,7 +425,13 @@ impl AqController for ScalingController {
         };
         for (i, s) in strengths.iter_mut().enumerate() {
             let scale = row.get(i).copied().unwrap_or(1.0);
-            *s = (*s * scale).clamp(0.0, 0.20);
+            #[cfg(feature = "__zensim-research")]
+            let before = *s;
+            *s *= scale;
+            #[cfg(feature = "__zensim-research")]
+            if let Some(usage) = &self.usage {
+                usage.record(scale != 1., *s != before);
+            }
         }
     }
 }
@@ -605,8 +616,20 @@ pub(crate) fn run_iteration_loop(
     use crate::encode::{EncoderConfig, Quality};
     use zensim::{Zensim, ZensimProfile};
 
-    let blocks_w = (ctx.width as usize) / 8;
-    let blocks_h = (ctx.height as usize) / 8;
+    #[cfg(feature = "__zensim-research")]
+    let candidate_config = candidate::Config::from_env(&ctx)?;
+    #[cfg(feature = "__zensim-research")]
+    let candidate_seed = candidate_config.as_ref().map(|c| c.seed_q);
+    #[cfg(not(feature = "__zensim-research"))]
+    let candidate_seed: Option<f32> = None;
+    let (blocks_w, blocks_h) = if candidate_seed.is_some() {
+        (
+            (ctx.width as usize).div_ceil(8),
+            (ctx.height as usize).div_ceil(8),
+        )
+    } else {
+        ((ctx.width as usize) / 8, (ctx.height as usize) / 8)
+    };
     if blocks_w == 0 || blocks_h == 0 {
         // Image too small to do per-block correction; fall back to the
         // single-pass starting-q encode.
@@ -635,7 +658,9 @@ pub(crate) fn run_iteration_loop(
     // source fresh (other layouts keep the caller's config), returning None — and
     // keeping the caller's config — on any degenerate input, a non-finite target,
     // or a needed feature missing from this zenanalyze build.
-    apply_picker_warmstart(&mut pass_config, &ctx)?;
+    if candidate_seed.is_none() {
+        apply_picker_warmstart(&mut pass_config, &ctx)?;
+    }
 
     // Vertical sampling factor of the luma plane in iMCUs. Determines
     // how many block rows belong to a single iMCU emission. Covers
@@ -665,10 +690,19 @@ pub(crate) fn run_iteration_loop(
     // through to single-pass — adding each is a small follow-up that
     // mirrors the path taken below.
     let z = Zensim::new(ZensimProfile::codec_target());
-    let pre = match build_source_reference(&z, ctx.layout, ctx.pixels, ctx.width, ctx.height) {
-        Some(p) => p,
-        None => return run_single_pass(&ctx, None),
+    let pre = if candidate_seed.is_none() {
+        match build_source_reference(&z, ctx.layout, ctx.pixels, ctx.width, ctx.height) {
+            Some(p) => Some(p),
+            None => return run_single_pass(&ctx, None),
+        }
+    } else {
+        None
     };
+    #[cfg(feature = "__zensim-research")]
+    let mut candidate = candidate_config
+        .as_ref()
+        .map(|c| candidate::Measurement::new(c, &ctx))
+        .transpose()?;
 
     // Pass 0: streaming-AQ baseline. Substitute Quality::Zq* with a
     // bucket-aware starting jpegli q (avoids recursion AND lands closer
@@ -677,23 +711,33 @@ pub(crate) fn run_iteration_loop(
     // Bucket detection runs the analyzer on the source pixels — same
     // ~1ms cost as `EncoderConfig::adaptive`. Falls through to the
     // bucket-naive lookup if analysis fails (e.g. tiny images).
-    let bucket = detect_bucket(
-        ctx.layout,
-        ctx.pixels,
-        ctx.width,
-        ctx.height,
-        ctx.config.packed_source_features(),
-    );
-    let starting_q = match (ctx.target.target, bucket) {
-        (zq, Some(b)) => zq_to_starting_jpegli_q_for_bucket(zq, b),
-        (zq, None) => zq_to_starting_jpegli_q(zq),
-    };
+    let starting_q = candidate_seed.unwrap_or_else(|| {
+        let bucket = detect_bucket(
+            ctx.layout,
+            ctx.pixels,
+            ctx.width,
+            ctx.height,
+            ctx.config.packed_source_features(),
+        );
+        match (ctx.target.target, bucket) {
+            (zq, Some(b)) => zq_to_starting_jpegli_q_for_bucket(zq, b),
+            (zq, None) => zq_to_starting_jpegli_q(zq),
+        }
+    });
     // pass_config was cloned (and picker-warm-started) above; just set the
     // pass-0 starting q here.
     pass_config = pass_config.quality(Quality::ApproxJpegli(starting_q));
 
     let bytes0 = encode_pass(&pass_config, &ctx, None)?;
-    let (score0, dm0) = measure(&z, &pre, &bytes0, ctx.width, ctx.height)?;
+    let (score0, dm0) = measure(
+        &z,
+        &pre,
+        &bytes0,
+        ctx.width,
+        ctx.height,
+        #[cfg(feature = "__zensim-research")]
+        &mut candidate,
+    )?;
     let max0 = max_block(&dm0);
 
     let mut best_bytes = bytes0.clone();
@@ -715,23 +759,111 @@ pub(crate) fn run_iteration_loop(
         return finalize(best_bytes, score0, max0, passes_used, &ctx.target);
     }
 
-    let mut current_scales = alloc::vec![1.0f32; blocks_w * blocks_h];
-    let mut current_dm = dm0;
-    let mut current_score = score0;
-    let mut current_max = max0;
+    // Latest measured state feeding the redistribution phase — advanced by the
+    // global-q correction below when it runs, else it is just pass 0.
+    let mut latest_dm = dm0;
+    let mut latest_score = score0;
+    let mut latest_max = max0;
+    let mut cur_q = starting_q;
 
-    for _pass in 1..=ctx.target.max_passes {
-        let next = next_scales(
+    // GLOBAL-Q CORRECTION (#113): `next_scales` only REDISTRIBUTES bits across
+    // blocks — it cannot raise the global quality level. When the calibrated
+    // `starting_q` undershoots the floor (common on high-texture content, where
+    // the content-blind q lookup lands under target), redistribution saturates
+    // and the score plateaus below the floor at every pass count. So when pass 0
+    // undershoots the SCORE floor, first spend budget on a global-q secant that
+    // raises q toward the floor; the per-block phase then claws bytes back from
+    // the corrected level. Peak-only infeasibility (score met, max-block over the
+    // ceiling) is left to redistribution — that is what tightens peaks. Fires
+    // only in the undershoot path, so feasible/overshoot cases are unchanged.
+    if latest_score < ctx.target.target {
+        let mut q_prev = cur_q;
+        let mut s_prev = latest_score;
+        while passes_used <= ctx.target.max_passes
+            && latest_score < ctx.target.target
+            && cur_q < 100.0
+        {
+            let slope = latest_score - s_prev;
+            let q_est = if slope.abs() > 1e-3 {
+                cur_q + (ctx.target.target - latest_score) * (cur_q - q_prev) / slope
+            } else {
+                cur_q + 8.0
+            };
+            let q_next = q_est.clamp((cur_q + 1.0).min(100.0), 100.0);
+            pass_config = pass_config.quality(Quality::ApproxJpegli(q_next));
+            let bytes_n = encode_pass(&pass_config, &ctx, None)?;
+            let (score_n, dm_n) = measure(
+                &z,
+                &pre,
+                &bytes_n,
+                ctx.width,
+                ctx.height,
+                #[cfg(feature = "__zensim-research")]
+                &mut candidate,
+            )?;
+            let max_n = max_block(&dm_n);
+            passes_used = passes_used.saturating_add(1);
+            let cand_feasible = is_feasible(score_n, max_n, &ctx.target);
+            // Same best-tracking rule as the redistribution loop: prefer feasible,
+            // then smallest bytes; while infeasible, keep the highest score.
+            let take = match (best_feasible, cand_feasible) {
+                (false, true) => true,
+                (true, false) => false,
+                (true, true) => bytes_n.len() < best_bytes.len(),
+                (false, false) => score_n > best_score,
+            };
+            if take {
+                best_bytes = bytes_n;
+                best_score = score_n;
+                best_max = max_n;
+                best_feasible = cand_feasible;
+            }
+            q_prev = cur_q;
+            s_prev = latest_score;
+            cur_q = q_next;
+            latest_score = score_n;
+            latest_dm = dm_n;
+            latest_max = max_n;
+            if cand_feasible {
+                break; // reached the floor; hand off to redistribution for claw-back
+            }
+        }
+    }
+
+    let mut current_scales = alloc::vec![1.0f32; blocks_w * blocks_h];
+    let mut current_dm = latest_dm;
+    let mut current_score = latest_score;
+    let mut current_max = latest_max;
+
+    while passes_used <= ctx.target.max_passes {
+        #[allow(unused_mut)] // research controls can replace scales with neutral values
+        let mut next = next_scales(
             &current_scales,
             &current_dm,
             current_score,
             current_max,
             &ctx.target,
         );
+        #[cfg(feature = "__zensim-research")]
+        if let Some(c) = &mut candidate {
+            c.prepare_scales(&mut next)?;
+        }
         let schedule = flat_to_imcu_schedule(&next, blocks_w, blocks_h, v_samp);
-        let ctrl: Box<dyn AqController> = Box::new(ScalingController { scales: schedule });
+        let ctrl: Box<dyn AqController> = Box::new(ScalingController {
+            scales: schedule,
+            #[cfg(feature = "__zensim-research")]
+            usage: candidate.as_ref().map(|c| c.controller_use()),
+        });
         let bytes_n = encode_pass(&pass_config, &ctx, Some(ctrl))?;
-        let (score_n, dm_n) = measure(&z, &pre, &bytes_n, ctx.width, ctx.height)?;
+        let (score_n, dm_n) = measure(
+            &z,
+            &pre,
+            &bytes_n,
+            ctx.width,
+            ctx.height,
+            #[cfg(feature = "__zensim-research")]
+            &mut candidate,
+        )?;
         let max_n = max_block(&dm_n);
         passes_used = passes_used.saturating_add(1);
 
@@ -855,10 +987,11 @@ fn encode_pass(
 #[cfg(feature = "target-zq")]
 fn measure(
     z: &zensim::Zensim,
-    pre: &zensim::PrecomputedReference,
+    pre: &Option<zensim::PrecomputedReference>,
     jpeg: &[u8],
     width: u32,
     height: u32,
+    #[cfg(feature = "__zensim-research")] candidate: &mut Option<candidate::Measurement<'_>>,
 ) -> crate::error::Result<(f32, alloc::vec::Vec<f32>)> {
     use enough::Unstoppable;
     use zensim::{DiffmapWeighting, RgbSlice};
@@ -872,6 +1005,13 @@ fn measure(
         .map_err(|e| e.at())?;
     let pixels = dec.into_pixels_u8().ok_or_else(|| {
         crate::error::Error::invalid_config("decoder returned non-u8 pixels".into())
+    })?;
+    #[cfg(feature = "__zensim-research")]
+    if let Some(c) = candidate {
+        return c.measure(jpeg, &pixels);
+    }
+    let pre = pre.as_ref().ok_or_else(|| {
+        crate::error::Error::invalid_config("missing named-profile reference".into())
     })?;
     let chunks: &[[u8; 3]] = bytemuck_chunks(&pixels);
     let dec_slice = RgbSlice::new(chunks, width as usize, height as usize);
@@ -1105,7 +1245,10 @@ fn detect_bucket(
         // still corrects from there.
         return None;
     }
-    let query = zenanalyze::feature::AnalysisQuery::new(zenanalyze::feature::FeatureSet::SUPPORTED);
+    // Request only what `infer_bucket` reads (#135). `FeatureSet::SUPPORTED`
+    // is the PICKER's input vector (108 features, see `picker.rs`); bucket
+    // detection consumes a dozen of them and must not pay for the rest.
+    let query = zenanalyze::feature::AnalysisQuery::new(crate::encode::adaptive::BUCKET_FEATURES);
     let analysis = zenanalyze::analyze_features_rgb8(pixels, width, height, &query);
     Some(crate::encode::adaptive::infer_bucket(&analysis))
 }
@@ -1126,6 +1269,19 @@ fn bytemuck_chunks(pixels: &[u8]) -> &[[u8; 3]] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neutral_aq_scales_preserve_full_strength_range() {
+        let mut controller = ScalingController {
+            scales: vec![vec![1.; 5]],
+            #[cfg(feature = "__zensim-research")]
+            usage: None,
+        };
+        let original = [0., 0.05, 0.20, 0.6, 2.];
+        let mut strengths = original;
+        controller.adjust(&mut strengths, 0);
+        assert_eq!(strengths, original);
+    }
 
     #[test]
     fn zq_target_default_is_sensible() {

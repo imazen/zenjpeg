@@ -1,5 +1,5 @@
 # zenyuv public API — doc(hidden) items and excluded-feature surface
-# excluded features: (none)
+# excluded features: _dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,16 +9,30 @@
 
 ## summary
 #
+#   pub modules                                 1
+#   free functions                             10
 #   inherent methods                            2
 #   trait roster entries (type × trait)         3
 #
 # per-module pub lines:
-#   (root)                            2
+#   (root)                            3
+#   decode                           10
 
-## items (2 lines)
+## items (13 lines)
 
 pub fn Matrix::assert_fields_are_eq(&self)
 pub fn Range::assert_fields_are_eq(&self)
+pub fn decode::yuv400_to_rgb(&[u8], &mut [u8], usize, usize)
+pub fn decode::yuv400_to_rgb_with(&[u8], &mut [u8], usize, usize, Range, Matrix)
+pub fn decode::yuv420_to_rgb(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
+pub fn decode::yuv420_to_rgb_bilinear(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
+pub fn decode::yuv420_to_rgb_bilinear_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
+pub fn decode::yuv420_to_rgb_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
+pub fn decode::yuv422_to_rgb(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
+pub fn decode::yuv422_to_rgb_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
+pub fn decode::yuv444_to_rgb(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
+pub fn decode::yuv444_to_rgb_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
+pub mod decode
 
 ## trait impls (3 types)
 

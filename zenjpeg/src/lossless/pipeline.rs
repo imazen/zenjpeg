@@ -3,7 +3,6 @@
 //! Takes JPEG bytes → Huffman-decodes to coefficients → transforms → re-encodes → JPEG bytes.
 //! No IDCT or forward DCT is performed. Zero generation loss.
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::decode::{DecodeConfig, PreserveConfig};
@@ -36,6 +35,7 @@ use super::coeff_transform::{
     LosslessTransform, TransformConfig, TransformedCoefficients, transform_coefficients,
 };
 use super::exif::{parse_exif_orientation, set_exif_orientation};
+use super::geometry::{McuGeom, ScanEvent, for_each_interleaved_event};
 
 /// Perform a lossless JPEG transform.
 ///
@@ -98,84 +98,103 @@ pub(super) fn encode_from_coefficients(
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
     let num_components = coeffs.components.len();
-    let is_color = num_components >= 3;
+    // The emitter writes luma tables for component 0 and shared chroma tables
+    // for components 1..3. Anything else (e.g. 4-component Adobe CMYK) would
+    // previously have been silently dropped from the scan while still being
+    // declared in the SOF — refuse loudly instead of emitting a corrupt file.
+    if num_components != 1 && num_components != 3 {
+        return Err(Error::unsupported_feature(
+            "lossless re-encode of JPEGs with other than 1 or 3 components",
+        ));
+    }
+    let is_color = num_components == 3;
 
-    // Determine subsampling from component sampling factors
-    let (h_samp, v_samp) = if is_color {
-        (
-            coeffs.components[0].h_samp as usize,
-            coeffs.components[0].v_samp as usize,
-        )
-    } else {
-        (1, 1)
-    };
+    // Validated grid geometry — the single source of truth for the scan
+    // traversal. Fails loudly if any component grid is inconsistent with the
+    // declared dimensions (instead of silently emitting a scrambled stream).
+    let geom = McuGeom::from_components(coeffs.width, coeffs.height, &coeffs.components)?;
 
     // Convert coefficients to block arrays
-    let y_blocks = component_to_blocks(&coeffs.components[0]);
-    let (cb_blocks, cr_blocks) = if is_color {
+    let blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> =
+        coeffs.components.iter().map(component_to_blocks).collect();
+
+    stop.check()?;
+
+    // ---- Pass 1: count symbol frequencies in EXACT encode order ----
+    //
+    // Counting and encoding share `for_each_interleaved_event`, so the
+    // optimized tables cover precisely the symbols the encoder will emit.
+    // (A frequency count taken in any other order can miss a DC category,
+    // and a symbol without a code encodes as zero bits — a silently corrupt
+    // stream. That was issue #194.)
+    let total_mcus = geom.total_mcus();
+    let mut dc_freq = [[0u64; 256]; 2];
+    let mut ac_freq = [[0u64; 256]; 2];
+    {
+        let mut prev_dc = [0i16; 3];
+        let mut restart_counter = restart_interval;
+        for_each_interleaved_event(&geom, |ev| match ev {
+            ScanEvent::Block { comp, idx } => {
+                let t = usize::from(comp != 0);
+                let block = &blocks[comp][idx];
+                let dc_diff = block[0] - prev_dc[comp];
+                prev_dc[comp] = block[0];
+                dc_freq[t][category(dc_diff) as usize] += 1;
+                count_block_ac(block, &mut ac_freq[t]);
+            }
+            ScanEvent::McuEnd { mcu_idx } => {
+                // Match the encoder: no restart after the final MCU.
+                if restart_interval > 0 && mcu_idx + 1 < total_mcus {
+                    restart_counter -= 1;
+                    if restart_counter == 0 {
+                        prev_dc = [0i16; 3];
+                        restart_counter = restart_interval;
+                    }
+                }
+            }
+        });
+    }
+
+    let dc_luma_table = build_huffman_table(&dc_freq[0])?;
+    let ac_luma_table = build_huffman_table(&ac_freq[0])?;
+    let (dc_chroma_table, ac_chroma_table) = if is_color {
         (
-            component_to_blocks(&coeffs.components[1]),
-            component_to_blocks(&coeffs.components[2]),
+            build_huffman_table(&dc_freq[1])?,
+            build_huffman_table(&ac_freq[1])?,
         )
     } else {
-        (vec![], vec![])
+        (
+            HuffmanEncodeTable::std_dc_chrominance().clone(),
+            HuffmanEncodeTable::std_ac_chrominance().clone(),
+        )
     };
 
     stop.check()?;
 
-    // Build optimized Huffman tables from coefficient frequencies.
-    // When restart markers are enabled, DC prediction resets at interval
-    // boundaries, so frequency counting must match the encoder's MCU order.
-    let (dc_luma_table, ac_luma_table, dc_chroma_table, ac_chroma_table) = if restart_interval > 0 {
-        build_tables_with_restart(
-            &y_blocks,
-            &cb_blocks,
-            &cr_blocks,
-            is_color,
-            coeffs.width as usize,
-            coeffs.height as usize,
-            h_samp,
-            v_samp,
-            restart_interval,
-        )?
-    } else {
-        let (dc_luma, ac_luma) = build_tables_from_blocks(&y_blocks)?;
-        let (dc_chroma, ac_chroma) = if is_color {
-            let mut dc_freq = [0u64; 256];
-            let mut ac_freq = [0u64; 256];
-            count_frequencies(&cb_blocks, &mut dc_freq, &mut ac_freq);
-            count_frequencies(&cr_blocks, &mut dc_freq, &mut ac_freq);
-            (
-                build_huffman_table(&dc_freq)?,
-                build_huffman_table(&ac_freq)?,
-            )
-        } else {
-            (
-                HuffmanEncodeTable::std_dc_chrominance().clone(),
-                HuffmanEncodeTable::std_ac_chrominance().clone(),
-            )
-        };
-        (dc_luma, ac_luma, dc_chroma, ac_chroma)
-    };
-
-    stop.check()?;
-
-    // Entropy-encode all blocks
-    let scan_data = encode_scan_data(
-        &y_blocks,
-        &cb_blocks,
-        &cr_blocks,
-        is_color,
-        coeffs.width as usize,
-        coeffs.height as usize,
-        h_samp,
-        v_samp,
-        &dc_luma_table,
-        &ac_luma_table,
-        &dc_chroma_table,
-        &ac_chroma_table,
-        restart_interval,
-    );
+    // ---- Pass 2: entropy-encode, identical traversal ----
+    let total_blocks: usize = blocks.iter().map(|b| b.len()).sum();
+    let mut encoder = EntropyEncoder::with_capacity(total_blocks * 3);
+    encoder.set_dc_table(0, &dc_luma_table);
+    encoder.set_ac_table(0, &ac_luma_table);
+    if is_color {
+        encoder.set_dc_table(1, &dc_chroma_table);
+        encoder.set_ac_table(1, &ac_chroma_table);
+    }
+    if restart_interval > 0 {
+        encoder.set_restart_interval(restart_interval);
+    }
+    for_each_interleaved_event(&geom, |ev| match ev {
+        ScanEvent::Block { comp, idx } => {
+            let t = usize::from(comp != 0);
+            encoder.encode_block(&blocks[comp][idx], comp, t, t);
+        }
+        ScanEvent::McuEnd { mcu_idx } => {
+            if mcu_idx + 1 < total_mcus {
+                encoder.check_restart();
+            }
+        }
+    });
+    let scan_data = encoder.finish();
 
     stop.check()?;
 
@@ -225,189 +244,25 @@ pub(super) fn encode_from_coefficients(
     Ok(output)
 }
 
-/// Build optimized Huffman tables with restart-aware DC prediction.
-///
-/// When restart markers are enabled, DC prediction resets to 0 at each
-/// restart boundary. Frequency counting must match the encoder's MCU
-/// iteration order to produce correct Huffman tables.
-#[allow(clippy::too_many_arguments)]
-fn build_tables_with_restart(
-    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    is_color: bool,
-    width: usize,
-    height: usize,
-    h_samp: usize,
-    v_samp: usize,
-    restart_interval: u16,
-) -> Result<(
-    HuffmanEncodeTable,
-    HuffmanEncodeTable,
-    HuffmanEncodeTable,
-    HuffmanEncodeTable,
-)> {
-    let mut dc_luma_freq = [0u64; 256];
-    let mut ac_luma_freq = [0u64; 256];
-    let mut dc_chroma_freq = [0u64; 256];
-    let mut ac_chroma_freq = [0u64; 256];
-
-    // DC predictors per component
-    let mut prev_dc = [0i16; 4]; // Y=0, Cb=1, Cr=2
-    let mut restart_counter = restart_interval;
-
-    let count_block_ac = |block: &[i16; DCT_BLOCK_SIZE], ac_freq: &mut [u64; 256]| {
-        let mut run = 0u8;
-        for &ac in &block[1..] {
-            if ac == 0 {
-                run += 1;
-            } else {
-                while run >= 16 {
-                    ac_freq[0xF0] += 1;
-                    run -= 16;
-                }
-                let ac_cat = category(ac);
-                ac_freq[((run << 4) | ac_cat) as usize] += 1;
-                run = 0;
+/// Count AC symbol frequencies for one block (run-length/category symbols).
+fn count_block_ac(block: &[i16; DCT_BLOCK_SIZE], ac_freq: &mut [u64; 256]) {
+    let mut run = 0u8;
+    for &ac in &block[1..] {
+        if ac == 0 {
+            run += 1;
+        } else {
+            while run >= 16 {
+                ac_freq[0xF0] += 1; // ZRL
+                run -= 16;
             }
-        }
-        if run > 0 {
-            ac_freq[0x00] += 1;
-        }
-    };
-
-    if h_samp == 1 && v_samp == 1 {
-        let total_mcus = y_blocks.len();
-        for (i, y_block) in y_blocks.iter().enumerate() {
-            // Y DC
-            let dc_diff = y_block[0] - prev_dc[0];
-            prev_dc[0] = y_block[0];
-            dc_luma_freq[category(dc_diff) as usize] += 1;
-            count_block_ac(y_block, &mut ac_luma_freq);
-
-            if is_color {
-                // Cb DC
-                let dc_diff = cb_blocks[i][0] - prev_dc[1];
-                prev_dc[1] = cb_blocks[i][0];
-                dc_chroma_freq[category(dc_diff) as usize] += 1;
-                count_block_ac(&cb_blocks[i], &mut ac_chroma_freq);
-
-                // Cr DC
-                let dc_diff = cr_blocks[i][0] - prev_dc[2];
-                prev_dc[2] = cr_blocks[i][0];
-                dc_chroma_freq[category(dc_diff) as usize] += 1;
-                count_block_ac(&cr_blocks[i], &mut ac_chroma_freq);
-            }
-
-            // Check restart (match encoder: skip on last MCU)
-            if i + 1 < total_mcus {
-                restart_counter -= 1;
-                if restart_counter == 0 {
-                    prev_dc = [0; 4];
-                    restart_counter = restart_interval;
-                }
-            }
-        }
-    } else {
-        let y_blocks_w = (width + 7) / 8;
-        let y_blocks_h = (height + 7) / 8;
-        let c_blocks_w = (y_blocks_w + h_samp - 1) / h_samp;
-        let c_blocks_h = (y_blocks_h + v_samp - 1) / v_samp;
-        let total_mcus = c_blocks_w * c_blocks_h;
-
-        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
-
-        let mut mcu_idx = 0;
-        for mcu_y in 0..c_blocks_h {
-            for mcu_x in 0..c_blocks_w {
-                for dy in 0..v_samp {
-                    for dx in 0..h_samp {
-                        let y_bx = mcu_x * h_samp + dx;
-                        let y_by = mcu_y * v_samp + dy;
-                        let block = if y_bx < y_blocks_w && y_by < y_blocks_h {
-                            &y_blocks[y_by * y_blocks_w + y_bx]
-                        } else {
-                            &ZERO_BLOCK
-                        };
-                        let dc_diff = block[0] - prev_dc[0];
-                        prev_dc[0] = block[0];
-                        dc_luma_freq[category(dc_diff) as usize] += 1;
-                        count_block_ac(block, &mut ac_luma_freq);
-                    }
-                }
-
-                if is_color {
-                    let c_idx = mcu_y * c_blocks_w + mcu_x;
-                    let cb = if c_idx < cb_blocks.len() {
-                        &cb_blocks[c_idx]
-                    } else {
-                        &ZERO_BLOCK
-                    };
-                    let cr = if c_idx < cr_blocks.len() {
-                        &cr_blocks[c_idx]
-                    } else {
-                        &ZERO_BLOCK
-                    };
-
-                    let dc_diff = cb[0] - prev_dc[1];
-                    prev_dc[1] = cb[0];
-                    dc_chroma_freq[category(dc_diff) as usize] += 1;
-                    count_block_ac(cb, &mut ac_chroma_freq);
-
-                    let dc_diff = cr[0] - prev_dc[2];
-                    prev_dc[2] = cr[0];
-                    dc_chroma_freq[category(dc_diff) as usize] += 1;
-                    count_block_ac(cr, &mut ac_chroma_freq);
-                }
-
-                mcu_idx += 1;
-                if mcu_idx < total_mcus {
-                    restart_counter -= 1;
-                    if restart_counter == 0 {
-                        prev_dc = [0; 4];
-                        restart_counter = restart_interval;
-                    }
-                }
-            }
+            let ac_cat = category(ac);
+            ac_freq[((run << 4) | ac_cat) as usize] += 1;
+            run = 0;
         }
     }
-
-    // Build tables from frequencies
-    let dc_luma_table = build_huffman_table(&dc_luma_freq)?;
-    let ac_luma_table = build_huffman_table(&ac_luma_freq)?;
-
-    let (dc_chroma_table, ac_chroma_table) = if is_color {
-        (
-            build_huffman_table(&dc_chroma_freq)?,
-            build_huffman_table(&ac_chroma_freq)?,
-        )
-    } else {
-        (
-            HuffmanEncodeTable::std_dc_chrominance().clone(),
-            HuffmanEncodeTable::std_ac_chrominance().clone(),
-        )
-    };
-
-    Ok((
-        dc_luma_table,
-        ac_luma_table,
-        dc_chroma_table,
-        ac_chroma_table,
-    ))
-}
-
-/// Build optimized Huffman tables from a set of coefficient blocks.
-pub(super) fn build_tables_from_blocks(
-    blocks: &[[i16; DCT_BLOCK_SIZE]],
-) -> Result<(HuffmanEncodeTable, HuffmanEncodeTable)> {
-    let mut dc_freq = [0u64; 256];
-    let mut ac_freq = [0u64; 256];
-    count_frequencies(blocks, &mut dc_freq, &mut ac_freq);
-
-    Ok((
-        build_huffman_table(&dc_freq)?,
-        build_huffman_table(&ac_freq)?,
-    ))
+    if run > 0 {
+        ac_freq[0x00] += 1; // EOB
+    }
 }
 
 /// Convert a `ComponentCoefficients` to a Vec of `[i16; 64]` blocks.
@@ -422,136 +277,6 @@ pub(super) fn component_to_blocks(
         blocks.push(block);
     }
     blocks
-}
-
-/// Count Huffman symbol frequencies for DC and AC coefficients.
-pub(super) fn count_frequencies(
-    blocks: &[[i16; DCT_BLOCK_SIZE]],
-    dc_freq: &mut [u64; 256],
-    ac_freq: &mut [u64; 256],
-) {
-    let mut prev_dc: i16 = 0;
-    for block in blocks {
-        // DC
-        let dc_diff = block[0] - prev_dc;
-        prev_dc = block[0];
-        let dc_cat = category(dc_diff);
-        dc_freq[dc_cat as usize] += 1;
-
-        // AC
-        let mut run = 0u8;
-        for &ac in &block[1..] {
-            if ac == 0 {
-                run += 1;
-            } else {
-                while run >= 16 {
-                    ac_freq[0xF0] += 1; // ZRL
-                    run -= 16;
-                }
-                let ac_cat = category(ac);
-                let symbol = (run << 4) | ac_cat;
-                ac_freq[symbol as usize] += 1;
-                run = 0;
-            }
-        }
-        if run > 0 {
-            ac_freq[0x00] += 1; // EOB
-        }
-    }
-}
-
-/// Encode scan data using the entropy encoder.
-#[allow(clippy::too_many_arguments)]
-fn encode_scan_data(
-    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    is_color: bool,
-    width: usize,
-    height: usize,
-    h_samp: usize,
-    v_samp: usize,
-    dc_luma: &HuffmanEncodeTable,
-    ac_luma: &HuffmanEncodeTable,
-    dc_chroma: &HuffmanEncodeTable,
-    ac_chroma: &HuffmanEncodeTable,
-    restart_interval: u16,
-) -> Vec<u8> {
-    let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
-    let mut encoder = EntropyEncoder::with_capacity(total_blocks * 3);
-
-    encoder.set_dc_table(0, dc_luma);
-    encoder.set_ac_table(0, ac_luma);
-    if is_color {
-        encoder.set_dc_table(1, dc_chroma);
-        encoder.set_ac_table(1, ac_chroma);
-    }
-
-    if restart_interval > 0 {
-        encoder.set_restart_interval(restart_interval);
-    }
-
-    if h_samp == 1 && v_samp == 1 {
-        // 4:4:4 — simple interleaving
-        let total_mcus = y_blocks.len();
-        for (i, y_block) in y_blocks.iter().enumerate() {
-            encoder.encode_block(y_block, 0, 0, 0);
-            if is_color {
-                encoder.encode_block(&cb_blocks[i], 1, 1, 1);
-                encoder.encode_block(&cr_blocks[i], 2, 1, 1);
-            }
-            // Only check restart if not the last MCU
-            if i + 1 < total_mcus {
-                encoder.check_restart();
-            }
-        }
-    } else {
-        // Subsampled — MCU interleaving
-        let y_blocks_w = (width + 7) / 8;
-        let y_blocks_h = (height + 7) / 8;
-        let c_blocks_w = (y_blocks_w + h_samp - 1) / h_samp;
-        let c_blocks_h = (y_blocks_h + v_samp - 1) / v_samp;
-        let total_mcus = c_blocks_w * c_blocks_h;
-
-        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
-
-        let mut mcu_idx = 0;
-        for mcu_y in 0..c_blocks_h {
-            for mcu_x in 0..c_blocks_w {
-                // Y blocks in this MCU
-                for dy in 0..v_samp {
-                    for dx in 0..h_samp {
-                        let y_bx = mcu_x * h_samp + dx;
-                        let y_by = mcu_y * v_samp + dy;
-                        if y_bx < y_blocks_w && y_by < y_blocks_h {
-                            let y_idx = y_by * y_blocks_w + y_bx;
-                            encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
-                        } else {
-                            encoder.encode_block(&ZERO_BLOCK, 0, 0, 0);
-                        }
-                    }
-                }
-                // Cb, Cr blocks
-                if is_color {
-                    let c_idx = mcu_y * c_blocks_w + mcu_x;
-                    if c_idx < cb_blocks.len() {
-                        encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
-                        encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
-                    } else {
-                        encoder.encode_block(&ZERO_BLOCK, 1, 1, 1);
-                        encoder.encode_block(&ZERO_BLOCK, 2, 1, 1);
-                    }
-                }
-                // Only check restart if not the last MCU
-                mcu_idx += 1;
-                if mcu_idx < total_mcus {
-                    encoder.check_restart();
-                }
-            }
-        }
-    }
-
-    encoder.finish()
 }
 
 /// Return the Huffman category for a coefficient value.

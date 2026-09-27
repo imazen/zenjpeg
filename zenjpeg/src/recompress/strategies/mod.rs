@@ -13,6 +13,11 @@ pub mod preserve_emit;
 pub mod tuned;
 
 /// Outcome shared by all recompression strategies.
+///
+/// `measured_zensim_a` is set by every strategy but only read by
+/// `recompress-expert` consumers of the `run_*` entry points; the in-crate
+/// closed loop measures through `refine` instead (#143).
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 #[derive(Debug)]
 pub struct StrategyOutcome {
     /// New JPEG bytes.

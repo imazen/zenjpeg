@@ -4,6 +4,10 @@
 
 ### Docs
 
+- `YuvContext::new` doc: removed the stale first block that described a
+  `max_width × max_strip_height` sizing the constructor never had; the
+  accurate "no buffers until first use, grown on demand" contract stands
+  alone (zenjpeg #156, item 3).
 - README now states the encode input channel order (packed **R, G, B**,
   3 bytes/pixel, tightly packed), documents the actual public method names
   for 4:4:4 / 4:2:0 / f32 / Sharp encode, the panic-on-undersized-buffer

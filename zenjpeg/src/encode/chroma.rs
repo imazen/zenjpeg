@@ -72,7 +72,9 @@ fn zenyuv_strip_420(
     let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_strip
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();

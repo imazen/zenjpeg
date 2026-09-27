@@ -628,10 +628,10 @@ fn parse_subsampling(s: &str) -> Result<ChromaSubsampling, String> {
 }
 
 fn open_tsv(path: &Path) -> Result<File, String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| format!("mkdir {parent:?}: {e}"))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {parent:?}: {e}"))?;
     }
     File::create(path).map_err(|e| format!("create {path:?}: {e}"))
 }
@@ -727,7 +727,7 @@ fn read_png_rgb8(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
             let stride_in = 4 * (width as usize);
             let mut out = Vec::with_capacity(need);
             for row in buf.chunks_exact(stride_in) {
-                for px in row.chunks_exact(4) {
+                for px in row.as_chunks::<4>().0 {
                     out.extend_from_slice(&px[..3]);
                 }
             }

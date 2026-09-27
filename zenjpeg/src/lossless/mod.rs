@@ -22,9 +22,20 @@
 //! ```
 
 mod coeff_transform;
+// Crate-internal handle for the recompress preserve emitter's progressive
+// smallest-trial (#143); NOT part of the public lossless API. `coeff_transform`
+// is a private module, so this re-export IS the only path for
+// recompress/strategies/preserve_emit.rs. It is unused without that feature
+// (hence the cfg) — removing it "as unused" under a default clippy run broke
+// the `recompress` build once (b4ec5574); keep the cfg, not a deletion.
+#[cfg(feature = "recompress")]
+pub(crate) use coeff_transform::TransformedCoefficients;
+// Crate-internal handle for the recompress preserve emitter's progressive
+// smallest-trial (#143); NOT part of the public lossless API.
 mod exif;
+mod geometry;
 mod pipeline;
-mod restructure;
+pub(crate) mod restructure;
 #[cfg(test)]
 mod tests;
 

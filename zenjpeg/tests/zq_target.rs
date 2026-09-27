@@ -148,13 +148,26 @@ fn zq_with_block_artifact_bound_runs() {
 fn zq_block_artifact_max_overshoot_strict_mode_errors_on_unreachable_ceiling() {
     let (w, h) = (128u32, 128);
     let rgb = synthetic_image(w, h);
-    // Set a very tight ceiling that's basically impossible at low q.
+    // Measure this exact search without a strict failure slack first. A fixed
+    // numeric ceiling can become attainable when the scorer or encoder changes.
     let target = ZqTarget::new(60.0)
-        .with_block_artifact(Some(
-            BlockArtifactBound::new(0.0001).with_max_overshoot(Some(0.0001)),
-        ))
+        .with_block_artifact(Some(BlockArtifactBound::new(0.0)))
         .with_max_passes(2);
     let config = EncoderConfig::ycbcr(Quality::ZqExplicit(target), ChromaSubsampling::Quarter);
+    let mut probe = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    probe.push_packed(&rgb, Unstoppable).unwrap();
+    let (_, measured) = probe.finish_with_metrics().unwrap();
+    assert!(measured.achieved_max_block_artifact.is_finite());
+    assert!(measured.achieved_max_block_artifact > 0.0);
+    // Strict slack only affects finalization, so the candidate search remains
+    // identical and its observed peak exceeds this explicitly measured limit.
+    let strict = target.with_block_artifact(Some(
+        BlockArtifactBound::new(0.0)
+            .with_max_overshoot(Some(measured.achieved_max_block_artifact * 0.5)),
+    ));
+    let config = config.quality(Quality::ZqExplicit(strict));
     let mut enc = config
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -162,7 +175,8 @@ fn zq_block_artifact_max_overshoot_strict_mode_errors_on_unreachable_ceiling() {
     let res = enc.finish_with_metrics();
     assert!(
         res.is_err(),
-        "block_artifact ceiling=0.0001 with strict overshoot=0.0001 should error"
+        "strict bound below measured peak should error; measured {:?}",
+        res.as_ref().map(|(_, metrics)| metrics)
     );
 }
 
@@ -430,5 +444,136 @@ fn zq_picker_one_shot_differs_from_iterative_loop() {
     assert!(
         iterative.achieved_score.is_finite(),
         "Zq must take the measuring loop path"
+    );
+}
+
+/// Smooth-gradient sibling of [`synthetic_image`] — easy content with a high
+/// zensim ceiling (the loop reaches most floors in one correction).
+fn smooth_image(w: u32, h: u32) -> Vec<u8> {
+    let (w, h) = (w as usize, h as usize);
+    let mut rgb = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            rgb[idx] = (x * 255 / w) as u8;
+            rgb[idx + 1] = (y * 255 / h) as u8;
+            rgb[idx + 2] = ((x + y) * 255 / (w + h)) as u8;
+        }
+    }
+    rgb
+}
+
+/// Heavier-texture sibling — a denser deterministic-noise field over the ramp,
+/// so the zensim ceiling is lower and the loop has to work harder to lift q.
+fn textured_image(w: u32, h: u32) -> Vec<u8> {
+    let (w, h) = (w as usize, h as usize);
+    let mut rgb = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let r_base = (x * 255 / w) as u8;
+            let g_base = (y * 255 / h) as u8;
+            let b_base = ((x + y) * 255 / (w + h)) as u8;
+            // Denser noise than synthetic_image (applied every pixel, wider range).
+            let n = ((x.wrapping_mul(2654435761))
+                ^ (y.wrapping_mul(40503))
+                ^ ((x + y).wrapping_mul(2246822519))) as u8;
+            rgb[idx] = r_base.wrapping_add(n & 0x7F);
+            rgb[idx + 1] = g_base.wrapping_add((n >> 1) & 0x7F);
+            rgb[idx + 2] = b_base.wrapping_add((n >> 2) & 0x7F);
+        }
+    }
+    rgb
+}
+
+/// 27-cell k2/k3 convergence census for the closed-loop `Quality::Zq` encoder
+/// (the native per-block zensim-diffmap target loop, #113).
+///
+/// A 3-content × 9-target grid (27 cells). `Zq` targets a zensim FLOOR (achieved
+/// ≥ target; overshoot is more quality and is fine), so "converged" = the loop
+/// reaches at least `target − TOL` within the pass budget. Convergence-within-k
+/// is measured by running each cell at a k2 budget (`max_passes=1` → ≤2 total
+/// passes incl. the initial encode) and a k3 budget (`max_passes=2` → ≤3 total)
+/// separately.
+///
+/// Floor targets sit in each content's own reachable range — probed by pushing
+/// the loop toward an unreachable-high floor with a generous budget and reading
+/// the ceiling it lands at — so a non-converging cell is a loop defect, not an
+/// unreachable floor. Generous by design (#113 calibration is approximate); the
+/// gate catches a broken/absent per-block secant, with the full census printed.
+///
+/// The per-block loop REDISTRIBUTES bits but cannot raise the global quality
+/// level, so a calibrated start that undershoots the floor (dense texture) used
+/// to freeze the score below target at any pass count. The global-q correction
+/// (#113, `zq.rs`) fixes that: an undershooting pass 0 now secant-raises q toward
+/// the floor before redistribution. With it, all 27 cells reach the floor within
+/// k3; the few k2 misses are texture cells whose bad calibration start needs two
+/// secant steps to climb. Generous by design (#113 calibration is approximate);
+/// the gate catches a regression in the per-block secant OR the global-q climb.
+#[test]
+fn zq_convergence_census_27_cells_k2_k3() {
+    type Gen = fn(u32, u32) -> Vec<u8>;
+    let contents: [(&str, Gen); 3] = [
+        ("mixed", synthetic_image),
+        ("smooth", smooth_image),
+        ("textured", textured_image),
+    ];
+    const N: usize = 9;
+    const TOL: f32 = 3.0; // floor tolerance: achieved must reach >= target - TOL
+    let (w, h) = (192u32, 192u32);
+
+    let encode = |rgb: &[u8], t: f32, passes: u8| -> (f32, u8) {
+        let target = ZqTarget::new(t).with_max_passes(passes);
+        let config = EncoderConfig::ycbcr(Quality::ZqExplicit(target), ChromaSubsampling::Quarter);
+        let mut enc = config
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation");
+        enc.push_packed(rgb, Unstoppable).expect("push");
+        let (_jpeg, m) = enc.finish_with_metrics().expect("finish_with_metrics");
+        (m.achieved_score, m.passes_used)
+    };
+
+    let (mut k2, mut k3) = (0usize, 0usize);
+    let total = contents.len() * N;
+    for (cname, make) in contents {
+        let rgb = make(w, h);
+        // Probe the ceiling (max reachable floor) with a generous budget.
+        let ceiling = encode(&rgb, 99.0, 4).0;
+        assert!(
+            ceiling.is_finite() && ceiling > 55.0,
+            "{cname}: implausible ceiling {ceiling}"
+        );
+        // 9 floor targets across [ceiling-22, ceiling-2]: reachable, but high
+        // enough that the loop must push quality UP from the calibrated start.
+        for i in 0..N {
+            let t = (ceiling - 22.0) + 20.0 * (i as f32) / (N as f32 - 1.0);
+            let (a2, _) = encode(&rgb, t, 1); // <=2 total passes
+            let (a3, _) = encode(&rgb, t, 2); // <=3 total passes
+            let in2 = a2.is_finite() && a2 >= t - TOL;
+            let in3 = a3.is_finite() && a3 >= t - TOL;
+            if in2 {
+                k2 += 1;
+            }
+            if in3 {
+                k3 += 1;
+            }
+            eprintln!(
+                "census {cname:9} floor={t:>5.1} -> k2={a2:>6.2}({in2}) k3={a3:>6.2}({in3})  (ceil {ceiling:.1})"
+            );
+        }
+    }
+    eprintln!("CENSUS(27): k3(<=3 passes) {k3}/{total} · k2(<=2 passes) {k2}/{total}");
+
+    // Pre-registered gates (generous, #113): the per-block secant reaches the
+    // floor within a 3-pass budget on the clear majority; k2 is the fast-path
+    // yield (calibrated start + one correction).
+    assert!(
+        k3 >= total - 1,
+        "zq loop reached the floor within k3 (≤3 passes) on only {k3}/{total} cells \
+         (the global-q correction should reach every floor; see census)"
+    );
+    assert!(
+        k2 >= (total * 2) / 3,
+        "only {k2}/{total} cells reached the floor within k2 (≤2 passes)"
     );
 }

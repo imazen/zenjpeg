@@ -882,7 +882,7 @@ pub fn try_rgba_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     v.try_reserve_exact(len)
         .map_err(|_| Error::allocation_failed(len, context))?;
 
-    for chunk in data.chunks_exact(4) {
+    for chunk in data.as_chunks::<4>().0 {
         v.push(chunk[0]);
         v.push(chunk[1]);
         v.push(chunk[2]);
@@ -898,7 +898,7 @@ pub fn try_bgr_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     v.try_reserve_exact(data.len())
         .map_err(|_| Error::allocation_failed(data.len(), context))?;
 
-    for chunk in data.chunks_exact(3) {
+    for chunk in data.as_chunks::<3>().0 {
         v.push(chunk[2]);
         v.push(chunk[1]);
         v.push(chunk[0]);
@@ -919,7 +919,7 @@ pub fn try_bgra_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     v.try_reserve_exact(len)
         .map_err(|_| Error::allocation_failed(len, context))?;
 
-    for chunk in data.chunks_exact(4) {
+    for chunk in data.as_chunks::<4>().0 {
         v.push(chunk[2]);
         v.push(chunk[1]);
         v.push(chunk[0]);

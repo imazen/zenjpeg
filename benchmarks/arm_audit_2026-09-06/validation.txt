@@ -1,0 +1,4 @@
+cargo test --locked -p zenjpeg --features _dev --release --lib
+1110 passed; 0 failed; 0 ignored
+Full log: /Users/lilith/tmp/arm-all-2026-09-06/jpeg-inline-tests.log
+SHA256: 3ac4d9c0fbb0a9331c979b199e4ed765ca1521de5bb1de9e3bc7a3de486a707e

@@ -186,8 +186,9 @@ pub(crate) fn yuv420_to_rgb_generic(
 
                 let p = yi * 3;
                 rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
-                rgb[p + 1] =
-                    crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
+                rgb[p + 1] = crate::clamp_round(
+                    y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g,
+                );
                 rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
             }
 

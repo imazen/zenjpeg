@@ -35,7 +35,9 @@ pub fn rgb_to_ycbcr_strided_fast(
     let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();
@@ -83,7 +85,9 @@ pub fn rgb_to_ycbcr_strided_reuse(
     let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();
@@ -125,13 +129,17 @@ pub fn bgr_to_ycbcr_strided_reuse(
 
     let rgb_converted: alloc::vec::Vec<u8> = if bpp == 4 {
         bgr_data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     } else {
         bgr_data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
@@ -167,13 +175,17 @@ pub fn bgr_to_ycbcr_strided_fast(
 
     let rgb_converted: alloc::vec::Vec<u8> = if bpp == 4 {
         bgr_data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     } else {
         bgr_data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
@@ -221,7 +233,9 @@ pub fn rgb_to_ycbcr_420_reuse(
     let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();
@@ -263,13 +277,17 @@ pub fn bgr_to_ycbcr_420_reuse(
 
     let rgb_converted: alloc::vec::Vec<u8> = if bpp == 4 {
         bgr_data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     } else {
         bgr_data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .take(num_pixels)
             .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
