@@ -154,3 +154,92 @@ fn write_u16(data: &mut [u8], offset: usize, value: u16, big_endian: bool) {
     data[offset] = bytes[0];
     data[offset + 1] = bytes[1];
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(big: bool, kind: u16, unsorted: bool) -> Vec<u8> {
+        let mut bytes = b"Exif\0\0".to_vec();
+        let u16_bytes = |v: u16| {
+            if big {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        let u32_bytes = |v: u32| {
+            if big {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        bytes.extend_from_slice(if big { b"MM" } else { b"II" });
+        bytes.extend_from_slice(&u16_bytes(42));
+        bytes.extend_from_slice(&u32_bytes(8));
+        bytes.extend_from_slice(&u16_bytes(if unsorted { 2 } else { 1 }));
+        if unsorted {
+            bytes.extend_from_slice(&u16_bytes(0x0131)); // Software before Orientation
+            bytes.extend_from_slice(&u16_bytes(2));
+            bytes.extend_from_slice(&u32_bytes(4));
+            bytes.extend_from_slice(b"abc\0");
+        }
+        bytes.extend_from_slice(&u16_bytes(0x0112));
+        bytes.extend_from_slice(&u16_bytes(kind));
+        bytes.extend_from_slice(&u32_bytes(1));
+        if kind == 3 {
+            bytes.extend_from_slice(&u16_bytes(6));
+            bytes.extend_from_slice(&[0, 0]);
+        } else {
+            bytes.extend_from_slice(&u32_bytes(6));
+        }
+        bytes.extend_from_slice(&u32_bytes(0));
+        bytes.extend_from_slice(b"opaque-offset-sensitive-bytes");
+        bytes
+    }
+
+    #[test]
+    fn rewrite_orientation_preserves_every_other_byte() {
+        for big in [false, true] {
+            for kind in [3, 4] {
+                for unsorted in [false, true] {
+                    let original = fixture(big, kind, unsorted);
+                    assert_eq!(parse_exif_orientation(&original), Some(6));
+                    let mut rewritten = original.clone();
+                    assert!(set_exif_orientation(&mut rewritten, 1));
+                    assert_eq!(parse_exif_orientation(&rewritten), Some(1));
+                    let value_start = 6 + 8 + 2 + usize::from(unsorted) * 12 + 8;
+                    let size = if kind == 3 { 2 } else { 4 };
+                    assert_eq!(&rewritten[..value_start], &original[..value_start]);
+                    assert_eq!(
+                        &rewritten[value_start + size..],
+                        &original[value_start + size..]
+                    );
+                    assert!(set_exif_orientation(&mut rewritten, 6));
+                    assert_eq!(rewritten, original);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rewrite_orientation_rejects_invalid_input_without_mutation() {
+        for orientation in [0, 9, 255] {
+            let original = fixture(true, 4, false);
+            let mut rewritten = original.clone();
+            assert!(!set_exif_orientation(&mut rewritten, orientation));
+            assert_eq!(rewritten, original);
+        }
+        let original = fixture(false, 2, false); // ASCII is not an orientation
+        let mut rewritten = original.clone();
+        assert!(!set_exif_orientation(&mut rewritten, 1));
+        assert_eq!(rewritten, original);
+        for len in 0..28 {
+            let original = fixture(false, 4, false)[..len].to_vec();
+            let mut rewritten = original.clone();
+            assert!(!set_exif_orientation(&mut rewritten, 1));
+            assert_eq!(rewritten, original);
+        }
+    }
+}
