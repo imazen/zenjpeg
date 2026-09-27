@@ -329,8 +329,22 @@ pub struct TransformedCoefficients {
     pub height: u32,
     /// Per-component transformed coefficient data.
     pub components: Vec<ComponentCoefficients>,
-    /// Quantization tables (unchanged from source).
+    /// Quantization tables in natural (row-major) order. For a transform that
+    /// swaps dimensions (`Transpose`, `Rotate90`, `Rotate270`, `Transverse`)
+    /// each table is transposed along with the coefficient blocks; otherwise
+    /// they are the source tables unchanged.
     pub quant_tables: Vec<Option<[u16; 64]>>,
+}
+
+/// Transpose an 8x8 quantization table stored in natural (row-major) order.
+fn transpose_quant_table(table: &[u16; 64]) -> [u16; 64] {
+    let mut out = [0u16; 64];
+    for r in 0..8 {
+        for c in 0..8 {
+            out[c * 8 + r] = table[r * 8 + c];
+        }
+    }
+    out
 }
 
 /// Transform decoded DCT coefficients losslessly.
@@ -496,11 +510,28 @@ pub fn transform_coefficients(
         });
     }
 
+    // A dimension-swapping transform transposes every 8x8 block, so coefficient
+    // (r, c) moves to (c, r). Dequantization must follow: the table entry that
+    // applies to the moved coefficient is Q[r][c], which after the transpose
+    // lives at (c, r) — i.e. the transposed table. Copying the source tables
+    // through decodes each coefficient with Q[c][r] instead, which is wrong
+    // for every asymmetric table (most camera JPEGs; issue #205). jpegtran
+    // transposes the tables for the same four transforms.
+    let quant_tables = if swaps {
+        coeffs
+            .quant_tables
+            .iter()
+            .map(|t| t.as_ref().map(transpose_quant_table))
+            .collect()
+    } else {
+        coeffs.quant_tables.clone()
+    };
+
     Ok(TransformedCoefficients {
         width: new_width,
         height: new_height,
         components: transformed_components,
-        quant_tables: coeffs.quant_tables.clone(),
+        quant_tables,
     })
 }
 

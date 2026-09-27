@@ -6,6 +6,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- `lossless`: the dimension-swapping transforms (`Transpose`, `Rotate90`,
+  `Rotate270`, `Transverse`) now write transposed quantization tables. They
+  transpose every coefficient block but copied the source DQT through, so any
+  asymmetric table — most camera JPEGs — decoded to wrong pixels after these
+  transforms, including via `apply_exif_orientation` (#205).
 - XYB decode now describes its already converted RGB output as sRGB in both
   buffered and streaming descriptor selection. Source ICC metadata remains
   intact; pixel conversion and public signatures are unchanged.

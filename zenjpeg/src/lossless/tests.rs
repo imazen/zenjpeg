@@ -3818,3 +3818,242 @@ mod trim_sentinel_tests {
         assert_no_sentinel_in_true_region(&out, "Transpose");
     }
 }
+
+// ── Quantization tables under dimension-swapping transforms (issue #205) ─────
+
+/// Walk the marker segments of a JPEG up to SOS, calling `f(marker, offset_of_ff, payload)`
+/// for each. `payload` excludes the 2 length bytes.
+fn for_each_segment(jpeg: &[u8], mut f: impl FnMut(u8, usize, &[u8])) {
+    assert_eq!(&jpeg[..2], &[0xFF, 0xD8], "missing SOI");
+    let mut i = 2;
+    while i + 4 <= jpeg.len() {
+        assert_eq!(jpeg[i], 0xFF, "expected marker at {i}");
+        let marker = jpeg[i + 1];
+        let len = u16::from_be_bytes([jpeg[i + 2], jpeg[i + 3]]) as usize;
+        f(marker, i, &jpeg[i + 4..i + 2 + len]);
+        if marker == 0xDA {
+            break;
+        }
+        i += 2 + len;
+    }
+}
+
+/// Rewrite every 8-bit DQT table in `jpeg` in place so that, in natural order,
+/// `Q[r][c] = f(table_id, r, c)`. Tables are stored in zigzag order in the file.
+fn patch_quant_tables(jpeg: &mut [u8], f: impl Fn(u8, usize, usize) -> u8) {
+    let mut edits: Vec<(usize, u8)> = Vec::new();
+    for_each_segment(jpeg, |marker, off, payload| {
+        if marker != 0xDB {
+            return;
+        }
+        let mut p = 0;
+        while p < payload.len() {
+            let pq_tq = payload[p];
+            assert_eq!(pq_tq >> 4, 0, "8-bit DQT expected");
+            let tq = pq_tq & 0x0F;
+            for k in 0..64 {
+                let n = JPEG_NATURAL_ORDER[k] as usize;
+                edits.push((off + 4 + p + 1 + k, f(tq, n / 8, n % 8)));
+            }
+            p += 65;
+        }
+    });
+    for (pos, v) in edits {
+        jpeg[pos] = v;
+    }
+}
+
+/// Read every DQT table (natural order) as `(table_id, table)`.
+fn read_quant_tables(jpeg: &[u8]) -> Vec<(u8, [u16; 64])> {
+    let mut out = Vec::new();
+    for_each_segment(jpeg, |marker, _off, payload| {
+        if marker != 0xDB {
+            return;
+        }
+        let mut p = 0;
+        while p < payload.len() {
+            let pq = payload[p] >> 4;
+            let tq = payload[p] & 0x0F;
+            let mut t = [0u16; 64];
+            for k in 0..64 {
+                let n = JPEG_NATURAL_ORDER[k] as usize;
+                t[n] = if pq == 0 {
+                    payload[p + 1 + k] as u16
+                } else {
+                    u16::from_be_bytes([payload[p + 1 + 2 * k], payload[p + 2 + 2 * k]])
+                };
+            }
+            out.push((tq, t));
+            p += 1 + if pq == 0 { 64 } else { 128 };
+        }
+    });
+    out
+}
+
+fn max_abs_diff(a: &[u8], b: &[u8]) -> u8 {
+    assert_eq!(a.len(), b.len());
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (*x as i16 - *y as i16).unsigned_abs() as u8)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Regression for issue #205: a dimension-swapping transform (Transpose,
+/// Rotate90, Rotate270, Transverse) transposes each 8x8 coefficient block, so
+/// the output's quantization tables must be transposed too. Camera JPEGs almost
+/// always carry asymmetric tables; with the source tables copied through, every
+/// coefficient is dequantized by `Q[c][r]` instead of `Q[r][c]`.
+///
+/// The fixture is a zenjpeg encode whose DQT bytes are then rewritten to a
+/// deliberately asymmetric table (`Q[r][c] = 1 + r + 2c`, so `Q[r][c] != Q[c][r]`
+/// off the diagonal). Both the reference decode and the transform read the
+/// same patched file, so the comparison is self-consistent.
+fn check_transposing_transforms_transpose_quant_tables(
+    subsampling: crate::encoder::ChromaSubsampling,
+) {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{EncoderConfig, PixelLayout};
+    use crate::lossless::transform;
+    use enough::Unstoppable;
+
+    let (w, h) = (48u32, 32u32);
+    // Low-amplitude texture around mid-grey so the amplified (patched-table)
+    // reconstruction stays inside 0..=255 and clamping cannot hide a mismatch.
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 3) as usize;
+            pixels[i] = (128 + ((x * 3 + y) % 9) as i32 - 4) as u8;
+            pixels[i + 1] = (128 + ((x + y * 5) % 7) as i32 - 3) as u8;
+            pixels[i + 2] = (128 + ((x * y) % 5) as i32 - 2) as u8;
+        }
+    }
+    let mut enc = EncoderConfig::ycbcr(97, subsampling)
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let mut jpeg = enc.finish().unwrap();
+    let q = |r: usize, c: usize| (1 + r + 2 * c) as u8;
+    patch_quant_tables(&mut jpeg, |_tq, r, c| q(r, c));
+    let source_tables = read_quant_tables(&jpeg);
+    assert!(!source_tables.is_empty());
+
+    let (rw, rh, reference) = decode_test(&jpeg, &DecodeConfig::new());
+    assert_eq!((rw, rh), (w, h));
+
+    for t in LosslessTransform::ALL {
+        if t == LosslessTransform::None {
+            continue;
+        }
+        let out = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: t,
+                edge_handling: EdgeHandling::RejectPartialBlocks,
+            },
+            Unstoppable,
+        )
+        .unwrap();
+
+        // Structural: the emitted DQT is transposed exactly when the blocks are.
+        let out_tables = read_quant_tables(&out);
+        assert_eq!(out_tables.len(), source_tables.len(), "{t:?}: table count");
+        for (tq, table) in &out_tables {
+            for r in 0..8 {
+                for c in 0..8 {
+                    let expected = if t.swaps_dimensions() {
+                        q(c, r)
+                    } else {
+                        q(r, c)
+                    };
+                    assert_eq!(
+                        table[r * 8 + c],
+                        expected as u16,
+                        "{t:?} {subsampling:?}: DQT table {tq} entry ({r},{c}) not {}",
+                        if t.swaps_dimensions() {
+                            "transposed"
+                        } else {
+                            "preserved"
+                        }
+                    );
+                }
+            }
+        }
+
+        // Pixels: the transform must match a pixel-domain transform of the
+        // reference decode to within IDCT rounding.
+        let (ow, oh, got) = decode_test(&out, &DecodeConfig::new());
+        let (ew, eh, expected) = pixel_transform(&reference, rw as usize, rh as usize, t);
+        assert_eq!((ow as usize, oh as usize), (ew, eh), "{t:?}: dimensions");
+        let diff = max_abs_diff(&got, &expected);
+        assert!(
+            diff <= 2,
+            "{t:?} {subsampling:?}: max pixel diff {diff} vs pixel-domain transform of the source \
+             (quant tables not transposed with the coefficients?)"
+        );
+    }
+}
+
+#[test]
+fn transposing_transforms_transpose_asymmetric_quant_tables_444_205() {
+    check_transposing_transforms_transpose_quant_tables(crate::encoder::ChromaSubsampling::None);
+}
+
+#[test]
+fn transposing_transforms_transpose_asymmetric_quant_tables_420_205() {
+    check_transposing_transforms_transpose_quant_tables(crate::encoder::ChromaSubsampling::Quarter);
+}
+
+/// Same defect through `apply_exif_orientation`, which is how camera photos
+/// reach the transposing transforms in practice (EXIF orientation 5..=8).
+#[test]
+fn apply_exif_orientation_transposes_asymmetric_quant_tables_205() {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::Orientation;
+    use crate::lossless::apply_exif_orientation;
+    use enough::Unstoppable;
+
+    let (w, h) = (32u32, 48u32);
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 3) as usize;
+            pixels[i] = (128 + ((x * 3 + y) % 9) as i32 - 4) as u8;
+            pixels[i + 1] = (128 + ((x + y * 5) % 7) as i32 - 3) as u8;
+            pixels[i + 2] = (128 + ((x * y) % 5) as i32 - 2) as u8;
+        }
+    }
+    // EXIF 6 = Rotate90 (clockwise) to display upright.
+    let mut jpeg = encode_test_image(w, h, &pixels, Some(Orientation::Rotate90));
+    let q = |r: usize, c: usize| (1 + r + 2 * c) as u8;
+    patch_quant_tables(&mut jpeg, |_tq, r, c| q(r, c));
+
+    // Reference: the raw (un-oriented) decode; the default decode would
+    // already apply the EXIF rotation.
+    let raw = DecodeConfig::new().orientation(crate::decode::OrientationHint::Preserve);
+    let (rw, rh, reference) = decode_test(&jpeg, &raw);
+    assert_eq!((rw, rh), (w, h));
+    let out = apply_exif_orientation(&jpeg, Unstoppable).unwrap();
+    for (_tq, table) in read_quant_tables(&out) {
+        for r in 0..8 {
+            for c in 0..8 {
+                assert_eq!(
+                    table[r * 8 + c],
+                    q(c, r) as u16,
+                    "DQT ({r},{c}) not transposed"
+                );
+            }
+        }
+    }
+    let (ow, oh, got) = decode_test(&out, &DecodeConfig::new());
+    let (ew, eh, expected) = pixel_transform(
+        &reference,
+        rw as usize,
+        rh as usize,
+        LosslessTransform::Rotate90,
+    );
+    assert_eq!((ow as usize, oh as usize), (ew, eh));
+    let diff = max_abs_diff(&got, &expected);
+    assert!(diff <= 2, "apply_exif_orientation: max pixel diff {diff}");
+}
