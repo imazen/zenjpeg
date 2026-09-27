@@ -635,6 +635,13 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
 ## Investigation Notes
 
+**EXIF orientation rewrite (2026-09-27):** `lossless/exif.rs` now delegates to
+the zencodec helper, matching its parser. The previous handwritten writer
+assumed sorted IFDs and SHORT values, corrupting big-endian LONG orientation.
+Regression tests cover both types/orders, unsorted entries, unchanged surrounding
+bytes and malformed input; both tests fail against the previous implementation.
+No TIFF offsets or MakerNote contents are relocated.
+
 **Cross-backend dispatch parity tolerance (2026-04-21):**
 
 `test_dispatch_parity` (zenjpeg/tests/encoder_regression.rs) tolerates up to

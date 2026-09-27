@@ -6,6 +6,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- `lossless::set_exif_orientation` now uses the shared offset-preserving EXIF
+  writer, fixing big-endian LONG values and unsorted directories, and rejecting
+  invalid orientation values and non-integer tags without changing the blob.
 - `lossless`: the dimension-swapping transforms (`Transpose`, `Rotate90`,
   `Rotate270`, `Transverse`) now write transposed quantization tables. They
   transpose every coefficient block but copied the source DQT through, so any

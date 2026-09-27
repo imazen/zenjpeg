@@ -1,19 +1,9 @@
 //! EXIF orientation parsing and rewriting for lossless transforms.
 //!
-//! Parsing delegates to [`zencodec::helpers::parse_exif_orientation`].
-//! Writing uses minimal TIFF IFD parsing to modify the Orientation tag (0x0112)
-//! in raw EXIF segment data in-place.
+//! Parsing and writing delegate to the shared zencodec EXIF helpers.
+//! Rewriting preserves TIFF offsets and every byte outside the inline value.
 
 use super::coeff_transform::LosslessTransform;
-
-/// EXIF Orientation tag number.
-const TAG_ORIENTATION: u16 = 0x0112;
-
-/// Size of `Exif\0\0` prefix in APP1 segment data.
-const EXIF_PREFIX_LEN: usize = 6;
-
-/// Minimum TIFF header size: byte order (2) + magic (2) + IFD offset (4).
-const TIFF_HEADER_LEN: usize = 8;
 
 /// Parse the EXIF orientation value from raw APP1 segment data.
 ///
@@ -31,61 +21,23 @@ pub fn parse_exif_orientation(exif_data: &[u8]) -> Option<u8> {
 /// Overwrites the orientation tag value in-place. If the tag doesn't exist,
 /// the data is returned unchanged (we don't insert new tags).
 ///
+/// Supports SHORT and LONG values in either byte order, including unsorted
+/// directories. Invalid requested values and unusable tags leave the blob unchanged.
 /// Returns `true` if the tag was found and modified, `false` otherwise.
 pub fn set_exif_orientation(exif_data: &mut [u8], orientation: u8) -> bool {
-    if exif_data.len() < EXIF_PREFIX_LEN + TIFF_HEADER_LEN {
+    // Keep this APP1-specific entry point's prefix requirement. The shared
+    // helper also accepts bare TIFF, which is useful in other containers.
+    if !exif_data.starts_with(b"Exif\0\0") {
         return false;
     }
-
-    if &exif_data[..6] != b"Exif\0\0" {
+    let Some(value) = zenpixels::Orientation::from_exif(orientation) else {
         return false;
-    }
-
-    let tiff_start = EXIF_PREFIX_LEN;
-    let tiff = &exif_data[tiff_start..];
-
-    let big_endian = match &tiff[0..2] {
-        b"MM" => true,
-        b"II" => false,
-        _ => return false,
     };
-
-    let magic = read_u16(tiff, 2, big_endian);
-    if magic != 42 {
+    let Some(rewritten) = zencodec::helpers::set_exif_orientation(exif_data, value) else {
         return false;
-    }
-
-    let ifd_offset = read_u32(tiff, 4, big_endian) as usize;
-    if ifd_offset + 2 > tiff.len() {
-        return false;
-    }
-
-    let entry_count = read_u16(tiff, ifd_offset, big_endian) as usize;
-    let entries_start = ifd_offset + 2;
-
-    for i in 0..entry_count {
-        let entry_offset = entries_start + i * 12;
-        if entry_offset + 12 > tiff.len() {
-            break;
-        }
-
-        let tag = read_u16(tiff, entry_offset, big_endian);
-        if tag == TAG_ORIENTATION {
-            // Write the new orientation value at the value/offset field (offset +8)
-            let abs_offset = tiff_start + entry_offset + 8;
-            if abs_offset + 2 > exif_data.len() {
-                return false;
-            }
-            write_u16(exif_data, abs_offset, orientation as u16, big_endian);
-            return true;
-        }
-
-        if tag > TAG_ORIENTATION {
-            break;
-        }
-    }
-
-    false
+    };
+    exif_data.copy_from_slice(&rewritten);
+    true
 }
 
 impl LosslessTransform {
@@ -117,42 +69,6 @@ impl LosslessTransform {
             _ => None,
         }
     }
-}
-
-fn read_u16(data: &[u8], offset: usize, big_endian: bool) -> u16 {
-    if big_endian {
-        u16::from_be_bytes([data[offset], data[offset + 1]])
-    } else {
-        u16::from_le_bytes([data[offset], data[offset + 1]])
-    }
-}
-
-fn read_u32(data: &[u8], offset: usize, big_endian: bool) -> u32 {
-    if big_endian {
-        u32::from_be_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ])
-    } else {
-        u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ])
-    }
-}
-
-fn write_u16(data: &mut [u8], offset: usize, value: u16, big_endian: bool) {
-    let bytes = if big_endian {
-        value.to_be_bytes()
-    } else {
-        value.to_le_bytes()
-    };
-    data[offset] = bytes[0];
-    data[offset + 1] = bytes[1];
 }
 
 #[cfg(test)]
