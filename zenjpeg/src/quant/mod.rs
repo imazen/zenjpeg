@@ -15,6 +15,7 @@
 
 // Adaptive quantization submodule
 pub mod aq;
+pub mod identify;
 
 // Quality conversion between encoders
 pub mod quality_conversion;

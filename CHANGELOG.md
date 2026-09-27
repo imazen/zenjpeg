@@ -709,6 +709,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- **`quant::identify::jpegli_luma_table` did not reproduce what the encoder
+  emits**, so tables zenjpeg itself writes at low distances were not
+  identifiable. Two causes, both found by testing the helper against the
+  encoder's own `generate_quant_table_with_distance` instead of against itself:
+  it omitted the `clamp(1, 32767)` that every emitted table passes through in
+  `quant::create_quant_table`, and it grouped the multiplication as
+  `(base * global_scale) * freq_scale` where the encoder uses
+  `base * (freq_scale * global_scale)` (`f32` multiplication is not
+  associative). Without the clamp the law rounds to **0** below distance 0.23 —
+  a quantizer value that is a division by zero in the decoder and that no
+  encoder may emit — and identification consequently accepted zero-bearing
+  tables as exact jpegli matches while answering real encoder tables in
+  0.125..0.225 with a distance up to 25% off. The two now agree on every one of
+  32,000 sampled (distance, subsampling) points; they disagreed on 160 of them
+  before.
 - **`Public API surface` CI job was red on `main`** since 37e44fda added
   `TargetOptions::seeded_for_image` + `zq_seed::predict_q0_from_image`
   (user-approved) without regenerating `docs/public-api/zenjpeg.txt`; the
