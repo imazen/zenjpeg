@@ -635,6 +635,13 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
 ## Investigation Notes
 
+**Raw gain maps without HDR rendering (2026-09-27):** buffered gain-map
+extraction and its private metadata scanners are unconditional. HDR reconstruction
+and the streaming UltraHdrReader remain feature-gated. Positive XMP+MPF fixtures
+exercise PreserveRaw/Decode with both extras policies and inherited pixel limits.
+This fixes #203 feature-dependent absence; it does not make the legacy extractor
+a strict inventory of arbitrary MPF/ISO-only/extended-XMP containers.
+
 **Lossless layout MPF ownership (2026-09-27):** `layout/mod.rs` must not
 reassemble the gain map after `lossless::transform`/`restructure`: those functions
 own all indexed secondaries. Doing both appended a third image and a duplicate

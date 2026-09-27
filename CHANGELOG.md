@@ -6,6 +6,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- `GainMapHandling::PreserveRaw` and `Decode` now extract recognized Ultra HDR
+  gain maps without the `ultrahdr` rendering feature (#203). Secondary header
+  probing/decoding inherits pixel and memory limits, strictness and cancellation.
 - Lossless layout no longer appends an Ultra HDR gain map twice after the
   lossless pipeline has assembled MPF. Its result dimensions now reflect
   actual partial-MCU trimming, including the decode-optimization path.

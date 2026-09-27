@@ -745,10 +745,12 @@ pub enum GainMapHandling {
     #[default]
     Discard,
 
-    /// Preserve the raw gain map JPEG bytes and parsed XMP metadata.
+    /// Preserve the raw gain map JPEG bytes and dimensions.
     ///
     /// The gain map JPEG is extracted but not decoded to pixels.
     /// Use this when you need to re-embed or forward the gain map.
+    /// This does not require the `ultrahdr` rendering feature.
+    /// XMP preservation is controlled separately by [`PreserveConfig`].
     PreserveRaw,
 
     /// Decode the gain map to pixel data in addition to preserving raw bytes.

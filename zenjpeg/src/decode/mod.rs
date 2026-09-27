@@ -1830,14 +1830,11 @@ impl DecodeConfig {
         let (visible_w, visible_h) = (parser.width, parser.height);
 
         // Extract gain map before pixel conversion (needs parser state)
-        #[cfg(feature = "ultrahdr")]
         let gain_map_result = if self.gain_map != GainMapHandling::Discard {
-            self.extract_gain_map(&mut parser, data)?
+            self.extract_gain_map(&mut parser, data, &stop)?
         } else {
             None
         };
-        #[cfg(not(feature = "ultrahdr"))]
-        let gain_map_result: Option<GainMapResult> = None;
 
         let info = parser.info();
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
@@ -2728,12 +2725,13 @@ impl DecodeConfig {
     /// Extract gain map from UltraHDR image if present.
     ///
     /// Called during `decode()` when `gain_map != Discard`.
-    #[cfg(feature = "ultrahdr")]
     fn extract_gain_map(
         &self,
         parser: &mut JpegParser,
         data: &[u8],
+        stop: &dyn Stop,
     ) -> Result<Option<GainMapResult>> {
+        stop.check()?;
         let (gainmap_range, _metadata) = parser.extract_gainmap_early(data)?;
 
         let (start, end) = match gainmap_range {
@@ -2741,17 +2739,28 @@ impl DecodeConfig {
             None => return Ok(None), // Not an UltraHDR image
         };
 
-        let gainmap_jpeg = data[start..end].to_vec();
+        stop.check()?;
+        let mut gainmap_jpeg = Vec::new();
+        gainmap_jpeg
+            .try_reserve_exact(end - start)
+            .map_err(|_| Error::allocation_failed(end - start, "preserving gain map JPEG"))?;
+        gainmap_jpeg.extend_from_slice(&data[start..end]);
+        let mut decoder = Decoder::new()
+            .max_pixels(self.max_pixels)
+            .max_memory(self.max_memory)
+            .strictness(self.strictness)
+            .auto_orient(false);
+        decoder.alloc_pref = self.alloc_pref;
 
         let (pixels, width, height) = if self.gain_map == GainMapHandling::Decode {
             // Decode the gain map JPEG to pixels
-            let gm_result = Decoder::new().decode(&gainmap_jpeg, enough::Unstoppable)?;
+            let gm_result = decoder.decode(&gainmap_jpeg, stop)?;
             let w = gm_result.width;
             let h = gm_result.height;
             (Some(gm_result.into_pixels_u8().unwrap()), w, h)
         } else {
             // PreserveRaw: just get dimensions from header without decoding pixels
-            let gm_info = Decoder::new().read_info(&gainmap_jpeg)?;
+            let gm_info = decoder.read_info(&gainmap_jpeg)?;
             (None, gm_info.dimensions.width, gm_info.dimensions.height)
         };
 
