@@ -317,6 +317,29 @@ pub fn parse_xmp_full(xmp: &str) -> (Option<zencodec::GainMapParams>, Vec<Contai
 /// form (`attr="…"`) or element form (`<attr>…</attr>`, opening tag may
 /// carry attributes). Element content is returned raw — it may be plain
 /// text or an `rdf:Seq` fragment; [`parse_triple`] handles both.
+/// Rewrite the GContainer directory's `Item:Length` attributes, in document
+/// order, with `lengths` (one per secondary item, in file order). Used when a
+/// container is re-assembled with re-encoded secondaries whose byte lengths
+/// changed. Returns `None` when the packet declares more `Item:Length`
+/// attributes than `lengths` supplies (it describes items the caller does not
+/// have; the caller keeps the packet as-is). Fewer attributes than lengths is
+/// fine — MPF images outside the directory (e.g. thumbnails) simply have none.
+pub(crate) fn rewrite_item_lengths(xmp: &str, lengths: &[usize]) -> Option<String> {
+    const KEY: &str = "Item:Length=\"";
+    let mut out = String::with_capacity(xmp.len() + 16);
+    let mut rest = xmp;
+    let mut next = lengths.iter();
+    while let Some(pos) = rest.find(KEY) {
+        let (head, tail) = rest.split_at(pos + KEY.len());
+        out.push_str(head);
+        let end = tail.find('"')?;
+        out.push_str(&next.next()?.to_string());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
 fn extract_attribute(xmp: &str, attr: &str) -> Option<String> {
     let pattern = format!("{attr}=\"");
     if let Some(start) = xmp.find(&pattern) {
@@ -552,6 +575,33 @@ mod tests {
             big.push_str("                                   ");
         }
         assert!(parse_xmp(&big).is_ok(), "1 MiB XMP must not trip the cap");
+    }
+
+    #[test]
+    fn rewrite_item_lengths_updates_in_document_order() {
+        let xmp = generate_primary_xmp(10000);
+        let out = rewrite_item_lengths(&xmp, &[123]).expect("one item, one length");
+        assert!(out.contains("Item:Length=\"123\""));
+        assert!(!out.contains("Item:Length=\"10000\""));
+        assert_eq!(
+            parse_xmp_full(&out)
+                .1
+                .iter()
+                .filter_map(|i| i.length)
+                .collect::<Vec<_>>(),
+            [123]
+        );
+        // Extra lengths (an MPF image outside the directory) are ignored.
+        assert!(
+            rewrite_item_lengths(&xmp, &[7, 8])
+                .unwrap()
+                .contains("Item:Length=\"7\"")
+        );
+        // More attributes than lengths: the packet describes something the
+        // caller does not have, so it is left to the caller.
+        assert!(rewrite_item_lengths(&xmp, &[]).is_none());
+        // No directory at all: unchanged.
+        assert_eq!(rewrite_item_lengths("<x/>", &[1]).as_deref(), Some("<x/>"));
     }
 
     #[test]

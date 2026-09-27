@@ -391,9 +391,12 @@ fn emit_progressive_trial(
         components,
         quant_tables: new_quant_tables,
     };
+    // No MPF secondaries are carried on this path, so a source MPF index is
+    // dropped rather than emitted with offsets into images that aren't here.
     crate::lossless::restructure::encode_progressive_from_coefficients(
         &tc,
         Some(preserved_segments),
+        &[],
         0,
         &enough::Unstoppable,
     )

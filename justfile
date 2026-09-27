@@ -258,3 +258,8 @@ api-doc-check:
 arm-tiers-macos group="":
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p zenjpeg --features _dev --bench tier_isolation -- --group='{{group}}' --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
+
+# Third-party oracle checks for the lossless pipeline (needs jpegtran, djpeg,
+# exiftool on PATH). The env var is the opt-in the tests look for.
+oracle:
+    ZENJPEG_ORACLE_TOOLS=1 cargo test -p zenjpeg --test lossless_oracle

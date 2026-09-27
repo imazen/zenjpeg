@@ -8,7 +8,17 @@
 //! JPEG stores image data as 8×8 blocks of DCT coefficients. The DCT basis functions
 //! have symmetry properties that allow spatial transforms (flip, rotate, transpose) to
 //! be performed by rearranging blocks on the image grid and selectively negating
-//! coefficients within each block.
+//! coefficients within each block. Dimension-swapping transforms transpose the
+//! quantization tables along with the blocks.
+//!
+//! # Metadata and secondary images
+//!
+//! Every APPn/COM segment of the source is carried through. A Multi-Picture
+//! (MPF) container — an Ultra HDR JPEG with its gain map, a depth map, MPF
+//! thumbnails — is carried as a whole: each secondary image receives the same
+//! transform, the MPF index is rebuilt for the new byte layout, and a GContainer
+//! XMP directory's `Item:Length` values are updated. A secondary that cannot be
+//! transformed is an error rather than a silently dropped or mismatched image.
 //!
 //! # Example
 //!

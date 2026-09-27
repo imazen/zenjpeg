@@ -85,6 +85,57 @@ jobs:
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
 
 
+  # Third-party oracles for the lossless pipeline (libjpeg-turbo jpegtran/djpeg,
+  # exiftool). The tests in zenjpeg/tests/lossless_oracle.rs run only when
+  # ZENJPEG_ORACLE_TOOLS=1 is set — here, and in `just oracle` — and then fail
+  # loudly if a tool is missing.
+  oracle-tools:
+    name: Oracle tools (jpegtran, djpeg, exiftool)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install oracle tools
+        run: sudo apt-get update && sudo apt-get install -y libjpeg-turbo-progs libimage-exiftool-perl
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Oracle tests
+        env:
+          ZENJPEG_ORACLE_TOOLS: "1"
+        run: cargo test -p zenjpeg --release --test lossless_oracle
+
+
   i686:
     name: Test (i686)
     runs-on: ubuntu-latest
