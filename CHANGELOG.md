@@ -6,6 +6,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- Lossless layout no longer appends an Ultra HDR gain map twice after the
+  lossless pipeline has assembled MPF. Its result dimensions now reflect
+  actual partial-MCU trimming, including the decode-optimization path.
 - `lossless::set_exif_orientation` now uses the shared offset-preserving EXIF
   writer, fixing big-endian LONG values and unsorted directories, and rejecting
   invalid orientation values and non-integer tags without changing the blob.

@@ -256,9 +256,6 @@ impl<'a> LayoutRequest<'a> {
         let src_w = info.dimensions.width;
         let src_h = info.dimensions.height;
 
-        // Detect UltraHDR gain map
-        let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
-
         // Resolve any AutoOrient(0) sentinels against source EXIF.
         let mut commands = self.resolve_auto_orient(&info);
 
@@ -286,7 +283,7 @@ impl<'a> LayoutRequest<'a> {
 
         // Try lossless path first
         if let Some(transform) = lossless::detect_lossless(&commands) {
-            let primary = if self.optimize_for_decode {
+            let mut data = if self.optimize_for_decode {
                 // Early exit: if already baseline and decode-ready (small images
                 // don't need DRI; larger ones need MCU-row-aligned DRI).
                 if transform == crate::lossless::LosslessTransform::None
@@ -313,31 +310,10 @@ impl<'a> LayoutRequest<'a> {
                 )?
             };
 
-            // Compute output dimensions
-            let (out_w, out_h) = if transform.swaps_dimensions() {
-                (src_h, src_w)
-            } else {
-                (src_w, src_h)
-            };
-
-            // Transform and reattach gain map if present.
-            // Skip for identity (None) — the input already includes the gain map.
-            let mut data = if transform != crate::lossless::LosslessTransform::None {
-                if let Some(gm_bytes) = gain_map_jpeg {
-                    let gm_fn = if self.optimize_for_decode {
-                        lossless::execute_restructure
-                    } else {
-                        lossless::execute_lossless
-                    };
-                    let gm_transformed =
-                        gm_fn(&gm_bytes, transform, self.config.edge_handling, stop)?;
-                    gainmap::assemble_ultrahdr(primary, gm_transformed)
-                } else {
-                    primary
-                }
-            } else {
-                primary
-            };
+            // The lossless pipeline owns MPF secondary transformation and assembly.
+            // It may also trim partial MCUs; report the actual encoded dimensions.
+            let output_info = decoder.read_info(&data)?;
+            let (out_w, out_h) = (output_info.dimensions.width, output_info.dimensions.height);
 
             // Reset EXIF orientation to 1 when we auto-applied it on the lossless path.
             // The restructure preserves metadata as-is, so we patch the output.
@@ -352,6 +328,9 @@ impl<'a> LayoutRequest<'a> {
                 height: out_h,
             });
         }
+
+        // The pixel path still assembles its separately encoded gain map.
+        let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
 
         // Lossy path: build a concrete Plan from the command list.
         let plan = plan::plan_layout(&commands, src_w, src_h, self.config);

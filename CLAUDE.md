@@ -635,6 +635,13 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
 ## Investigation Notes
 
+**Lossless layout MPF ownership (2026-09-27):** `layout/mod.rs` must not
+reassemble the gain map after `lossless::transform`/`restructure`: those functions
+own all indexed secondaries. Doing both appended a third image and a duplicate
+MPF index. Layout dimensions must come from the emitted header after trimming.
+The two `lossless_layout_*` tests fail before these fixes and cover both normal
+rotation and decode optimization.
+
 **EXIF orientation rewrite (2026-09-27):** `lossless/exif.rs` now delegates to
 the zencodec helper, matching its parser. The previous handwritten writer
 assumed sorted IFDs and SHORT values, corrupting big-endian LONG orientation.
