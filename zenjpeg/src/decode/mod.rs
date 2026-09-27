@@ -2977,6 +2977,85 @@ mod tests {
     use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use enough::Unstoppable;
 
+    fn gain_map_fixture(map_side: u32) -> (Vec<u8>, Vec<u8>) {
+        use crate::encode::EncoderSegments;
+        let encode = |side: u32, segments: EncoderSegments| {
+            let pixels: Vec<u8> = (0..side * side * 3)
+                .map(|i| ((i * 73 + i / 17) % 256) as u8)
+                .collect();
+            let mut encoder = EncoderConfig::ycbcr(90, ChromaSubsampling::None)
+                .with_segments(segments)
+                .encode_from_bytes(side, side, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            encoder.push_packed(&pixels, Unstoppable).unwrap();
+            encoder.finish().unwrap()
+        };
+        let map = encode(map_side, EncoderSegments::new());
+        let primary = encode(
+            16,
+            EncoderSegments::new()
+                .set_xmp(&crate::container::xmp::generate_primary_xmp(map.len()))
+                .add_gainmap(map.clone()),
+        );
+        (primary, map)
+    }
+
+    #[test]
+    fn gain_map_preservation_does_not_require_hdr_rendering() {
+        let (jpeg, map) = gain_map_fixture(8);
+        for preserve in [PreserveConfig::all(), PreserveConfig::none()] {
+            for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+                let result = Decoder::new()
+                    .preserve(preserve.clone())
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let gain_map = result.gain_map.expect("requested gain map must be present");
+                assert_eq!(gain_map.jpeg, map);
+                assert_eq!((gain_map.width, gain_map.height), (8, 8));
+                if mode == GainMapHandling::Decode {
+                    let expected = Decoder::new()
+                        .auto_orient(false)
+                        .decode(&map, Unstoppable)
+                        .unwrap();
+                    assert_eq!(gain_map.pixels.as_deref(), expected.pixels_u8());
+                } else {
+                    assert!(gain_map.pixels.is_none());
+                }
+            }
+        }
+        assert!(
+            Decoder::new()
+                .decode(&jpeg, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+        assert!(
+            Decoder::new()
+                .gain_map(GainMapHandling::PreserveRaw)
+                .decode(&map, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn gain_map_decode_inherits_pixel_limit() {
+        let (jpeg, _) = gain_map_fixture(32);
+        for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+            assert!(
+                Decoder::new()
+                    .max_pixels(256)
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .is_err(),
+                "{mode:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_decoder_creation() {
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
