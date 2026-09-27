@@ -144,6 +144,81 @@ fn mpf_layout(jpeg: &[u8]) -> (usize, usize) {
     (tiff_pos.expect("MPF APP2 present"), eoi + 2)
 }
 
+#[test]
+fn explicit_mpf_trim_rejects_different_retained_regions() {
+    use zenjpeg::lossless::{RestructureConfig, restructure};
+    for (pw, ph, sw, sh) in [(64, 48, 16, 12), (64, 60, 32, 24), (64, 60, 16, 15)] {
+        let (jpeg, _) = synthetic_mpf_jpeg(pw, ph, sw, sh);
+        let config = TransformConfig {
+            transform: LosslessTransform::Rotate90,
+            edge_handling: EdgeHandling::TrimPartialBlocks,
+        };
+        assert!(
+            transform(&jpeg, &config, Unstoppable).is_err(),
+            "{pw}x{ph} + {sw}x{sh}"
+        );
+        assert!(
+            restructure(
+                &jpeg,
+                &RestructureConfig {
+                    transform: Some(config),
+                    ..Default::default()
+                },
+                Unstoppable
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn explicit_mpf_trim_accepts_the_same_retained_region() {
+    use zenjpeg::lossless::{RestructureConfig, restructure};
+    // Both images retain exactly the first 4/5 of their source height.
+    let (jpeg, _) = synthetic_mpf_jpeg(64, 60, 32, 30);
+    let config = TransformConfig {
+        transform: LosslessTransform::Rotate90,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
+    };
+    for out in [
+        transform(&jpeg, &config, Unstoppable).unwrap(),
+        restructure(
+            &jpeg,
+            &RestructureConfig {
+                transform: Some(config),
+                ..Default::default()
+            },
+            Unstoppable,
+        )
+        .unwrap(),
+    ] {
+        let dec = DecodeConfig::new();
+        let (primary, extras) = dec
+            .decode_coefficients_with_extras(&out, Unstoppable)
+            .unwrap();
+        assert_eq!((primary.width, primary.height), (48, 64));
+        let extras = extras.unwrap();
+        let secondary = dec.decode(extras.gainmap().unwrap(), Unstoppable).unwrap();
+        assert_eq!((secondary.width(), secondary.height()), (24, 32));
+    }
+}
+
+#[test]
+fn default_mpf_transform_rejects_partial_secondary() {
+    let (jpeg, _) = synthetic_mpf_jpeg(64, 48, 16, 12);
+    assert!(
+        transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate90,
+                ..Default::default()
+            },
+            Unstoppable
+        )
+        .is_err()
+    );
+}
+
 /// Every lossless transform (including `None`) must carry the MPF secondary
 /// images through, transformed identically, with the MPF index and the
 /// GContainer `Item:Length` rebuilt for the new byte layout. Emitting the
