@@ -8,7 +8,7 @@ use zenjpeg::lossless::{
 };
 
 fn jpeg(w: u32, h: u32, sampling: Option<ChromaSubsampling>, orientation: u8) -> Vec<u8> {
-    let mut exif = b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec();
+    let mut exif = b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec();
     exif.extend_from_slice(&[orientation, 0, 0, 0, 0, 0, 0, 0]);
     let (config, layout, channels) = match sampling {
         Some(s) => (EncoderConfig::ycbcr(90, s), PixelLayout::Rgb8Srgb, 3),
@@ -45,6 +45,14 @@ fn default_orientation_preserves_all_pixels_or_rejects() {
         for (w, h) in [(32, 32), (31, 32), (32, 31), (31, 31), (7, 7)] {
             for orientation in 1..=8 {
                 let input = jpeg(w, h, sampling, orientation);
+                let info = DecodeConfig::new()
+                    .auto_orient(false)
+                    .read_info(&input)
+                    .unwrap();
+                assert_eq!(
+                    zenjpeg::lossless::parse_exif_orientation(info.exif.as_deref().unwrap()),
+                    Some(orientation)
+                );
                 let transform_kind = LosslessTransform::from_exif_orientation(orientation).unwrap();
                 // JPEG perfect-transform rules, expressed independently by EXIF value.
                 let needs_width = matches!(orientation, 2 | 3 | 7 | 8);
@@ -67,7 +75,10 @@ fn default_orientation_preserves_all_pixels_or_rejects() {
                         "{sampling:?} {w}x{h} EXIF {orientation}"
                     );
                     if let Ok(output) = output {
-                        let decoded = DecodeConfig::new().decode(&output, Unstoppable).unwrap();
+                        let decoded = DecodeConfig::new()
+                            .auto_orient(false)
+                            .decode(&output, Unstoppable)
+                            .unwrap();
                         let expected = if transform_kind.swaps_dimensions() {
                             (h, w)
                         } else {
@@ -102,6 +113,57 @@ fn explicit_trim_cannot_emit_an_empty_image() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn explicit_orientation_trim_matches_the_retained_pixels() {
+    use zenjpeg::lossless::apply_exif_orientation_with_edge_handling;
+    let input = jpeg(32, 23, None, 6);
+    assert!(apply_exif_orientation(&input, Unstoppable).is_err());
+    let output = apply_exif_orientation_with_edge_handling(
+        &input,
+        EdgeHandling::TrimPartialBlocks,
+        Unstoppable,
+    )
+    .unwrap();
+    let dec = DecodeConfig::new().auto_orient(false);
+    let original = dec.decode(&input, Unstoppable).unwrap();
+    let upright = dec.decode(&output, Unstoppable).unwrap();
+    assert_eq!((upright.width(), upright.height()), (16, 32));
+    let channels = original.pixels_u8().unwrap().len() / (32 * 23);
+    for sy in 0..16 {
+        for sx in 0..32 {
+            for c in 0..channels {
+                let source = original.pixels_u8().unwrap()[(sy * 32 + sx) * channels + c];
+                let dest = upright.pixels_u8().unwrap()[(sx * 16 + 15 - sy) * channels + c];
+                assert!(source.abs_diff(dest) <= 2);
+            }
+        }
+    }
+    assert_eq!(
+        zenjpeg::lossless::parse_exif_orientation(upright.extras().unwrap().exif().unwrap()),
+        Some(1)
+    );
+    assert_eq!(
+        apply_exif_orientation(&output, Unstoppable).unwrap(),
+        output
+    );
+}
+
+#[test]
+fn rejected_orientation_obeys_cancellation() {
+    struct Cancel;
+    impl enough::Stop for Cancel {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            Err(enough::StopReason::Cancelled)
+        }
+    }
+    let input = jpeg(32, 24, Some(ChromaSubsampling::Quarter), 6);
+    let err = apply_exif_orientation(&input, Cancel).unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        zenjpeg::decoder::ErrorKind::Cancelled(_)
+    ));
 }
 
 #[cfg(feature = "layout")]

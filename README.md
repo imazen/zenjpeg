@@ -367,6 +367,23 @@ let rotated = transform(&jpeg_data, &TransformConfig {
 let oriented = apply_exif_orientation(&jpeg_data, Unstoppable)?;
 ```
 
+Lossless transforms now reject operations that would remove partial MCU edges.
+This includes `EdgeHandling::default()`, `TransformConfig::default()`, EXIF
+orientation correction, and the lossless layout path. Identity and transpose
+still accept partial edges because they do not remove pixels.
+
+To permit pixel removal explicitly, use `EdgeHandling::TrimPartialBlocks` in a
+`TransformConfig`, `LayoutConfig::with_edge_handling`, or
+`lossless::apply_exif_orientation_with_edge_handling(&jpeg_data, edge_handling, stop)`.
+MPF primary/secondary images must retain the same proportional source region;
+incompatible MCU grids return an error even with trimming enabled. The operation
+never silently drops a gain map or falls back to pixel re-encoding.
+
+`zjpeg process --orient auto` and `zjpeg transform --auto-orient` reject trimming
+by default; add `--trim` to opt in. Rejected operations return a failing exit status
+and leave existing output files untouched. Previously these lossless defaults
+could silently remove pixels; callers relying on that behavior must opt in.
+
 All 8 D4 dihedral group elements: `None`, `FlipHorizontal`, `FlipVertical`, `Transpose`, `Rotate90`, `Rotate180`, `Rotate270`, `Transverse`.
 
 ### UltraHDR (requires `ultrahdr` feature)

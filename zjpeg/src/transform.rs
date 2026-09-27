@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zenjpeg::lossless::{self, LosslessTransform, TransformConfig};
+use zenjpeg::lossless::{self, EdgeHandling, LosslessTransform, TransformConfig};
 
 use crate::TransformArgs;
 use crate::batch;
@@ -23,13 +23,20 @@ pub fn run(args: TransformArgs) -> Result<()> {
 
     let is_single = files.len() == 1;
 
+    let mut failures = 0;
     for path in &files {
         match transform_one(path, &args, &output_config, is_single) {
             Ok(()) => {}
-            Err(e) => eprintln!("error: {}: {e:#}", path.display()),
+            Err(e) => {
+                failures += 1;
+                eprintln!("error: {}: {e:#}", path.display());
+            }
         }
     }
 
+    if failures > 0 {
+        anyhow::bail!("{failures} JPEG transform(s) failed");
+    }
     Ok(())
 }
 
@@ -42,14 +49,23 @@ fn transform_one(
     let data =
         std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
 
+    let edge_handling = if args.trim {
+        EdgeHandling::TrimPartialBlocks
+    } else {
+        EdgeHandling::RejectPartialBlocks
+    };
     let output = if args.auto_orient {
-        lossless::apply_exif_orientation(&data, enough::Unstoppable)
-            .map_err(|e| anyhow::anyhow!("orientation failed: {e}"))?
+        lossless::apply_exif_orientation_with_edge_handling(
+            &data,
+            edge_handling,
+            enough::Unstoppable,
+        )
+        .map_err(|e| anyhow::anyhow!("orientation failed: {e}"))?
     } else {
         let xform = determine_transform(args)?;
         let config = TransformConfig {
             transform: xform,
-            ..Default::default()
+            edge_handling,
         };
         lossless::transform(&data, &config, enough::Unstoppable)
             .map_err(|e| anyhow::anyhow!("transform failed: {e}"))?

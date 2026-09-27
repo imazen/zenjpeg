@@ -23,7 +23,8 @@ use zenjpeg::encoder::{
     Quality, QuantTableConfig, XybSubsampling,
 };
 use zenjpeg::lossless::{
-    self, LosslessTransform, OutputMode, RestartInterval, RestructureConfig, TransformConfig,
+    self, EdgeHandling, LosslessTransform, OutputMode, RestartInterval, RestructureConfig,
+    TransformConfig,
 };
 use zenresize::{FitMode, fit_cover_source_crop, fit_dims};
 
@@ -121,6 +122,10 @@ pub fn run(args: ProcessArgs) -> Result<()> {
         }
     }
 
+    let failures = summary.results.iter().filter(|r| r.error.is_some()).count();
+    if failures > 0 {
+        anyhow::bail!("{failures} JPEG operation(s) failed");
+    }
     Ok(())
 }
 
@@ -250,16 +255,25 @@ fn run_lossless(
     output_config: &OutputConfig,
     is_single: bool,
 ) -> Result<(u64, bool)> {
+    let edge_handling = if args.trim {
+        EdgeHandling::TrimPartialBlocks
+    } else {
+        EdgeHandling::RejectPartialBlocks
+    };
     let output = if args.orient == OrientArg::Auto && args.rotate.is_none() && args.flip.is_none() {
         // Pure auto-orient
-        lossless::apply_exif_orientation(data, enough::Unstoppable)
-            .map_err(|e| anyhow::anyhow!("orientation failed: {e}"))?
+        lossless::apply_exif_orientation_with_edge_handling(
+            data,
+            edge_handling,
+            enough::Unstoppable,
+        )
+        .map_err(|e| anyhow::anyhow!("orientation failed: {e}"))?
     } else {
         // Explicit transform (may combine with auto-orient in future)
         let xform = determine_lossless_transform(args)?;
         let config = TransformConfig {
             transform: xform,
-            ..Default::default()
+            edge_handling,
         };
         lossless::transform(data, &config, enough::Unstoppable)
             .map_err(|e| anyhow::anyhow!("transform failed: {e}"))?

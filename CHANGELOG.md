@@ -5,6 +5,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- **Behavior change (#204):** lossless transforms and layout default to
+  `RejectPartialBlocks`. `apply_exif_orientation` returns an error if the primary
+  or a retained MPF secondary would lose pixels. Identity, transpose, and other
+  transforms whose partial edges stay trailing still succeed without trimming.
+  Existing callers relying on trimming must select `TrimPartialBlocks` explicitly.
+- Explicit MPF trimming must retain the same proportional region in every image;
+  inconsistent primary/gain-map crops fail before returning output.
+- `zjpeg process` and `transform` return failure if any file fails, preserving
+  existing output files for rejected transforms.
+
+### Added
+- `lossless::apply_exif_orientation_with_edge_handling` selects edge behavior
+  explicitly while retaining the automatic EXIF reset. `zjpeg process` and
+  `transform` expose the opt-in as `--trim`.
+
 ### Fixed
 - `GainMapHandling::PreserveRaw` and `Decode` now extract recognized Ultra HDR
   gain maps without the `ultrahdr` rendering feature (#203). Secondary header

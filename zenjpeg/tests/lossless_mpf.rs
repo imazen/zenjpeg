@@ -219,6 +219,44 @@ fn default_mpf_transform_rejects_partial_secondary() {
     );
 }
 
+#[test]
+fn exif_orientation_checks_secondary_edges_and_explicit_crop_alignment() {
+    use zenjpeg::lossless::apply_exif_orientation_with_edge_handling;
+    for (ph, sw, sh, trim_ok) in [(48, 16, 12, false), (60, 32, 30, true)] {
+        let (_, map) = synthetic_mpf_jpeg(64, ph, sw, sh);
+        let pixels: Vec<u8> = (0..64 * ph * 3)
+            .map(|i| ((i * 73 + i / 17) % 256) as u8)
+            .collect();
+        let mut encoder = EncoderConfig::ycbcr(90, ChromaSubsampling::Quarter)
+            .with_segments(
+                EncoderSegments::new()
+                    .set_xmp(&generate_primary_xmp(map.len()))
+                    .add_gainmap(map),
+            )
+            .request()
+            .exif(Exif::build().orientation(Orientation::Rotate90))
+            .encode_from_bytes(64, ph, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        encoder.push_packed(&pixels, Unstoppable).unwrap();
+        let input = encoder.finish().unwrap();
+        assert!(apply_exif_orientation(&input, Unstoppable).is_err());
+        let trimmed = apply_exif_orientation_with_edge_handling(
+            &input,
+            EdgeHandling::TrimPartialBlocks,
+            Unstoppable,
+        );
+        assert_eq!(trimmed.is_ok(), trim_ok);
+        if let Ok(trimmed) = trimmed {
+            let result = DecodeConfig::new().decode(&trimmed, Unstoppable).unwrap();
+            assert_eq!((result.width(), result.height()), (48, 64));
+            assert_eq!(
+                zenjpeg::lossless::parse_exif_orientation(result.extras().unwrap().exif().unwrap()),
+                Some(1)
+            );
+        }
+    }
+}
+
 /// Every lossless transform (including `None`) must carry the MPF secondary
 /// images through, transformed identically, with the MPF index and the
 /// GContainer `Item:Length` rebuilt for the new byte layout. Emitting the

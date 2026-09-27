@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1692 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (845 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1693 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (845 hidden + 7231 excluded-feature)
 
 ## summary
 #
@@ -14,7 +14,7 @@
 #   pub types (struct/enum/trait/alias)       146
 #   pub consts/statics                         95
 #   pub macros                                  2
-#   free functions                             65
+#   free functions                             66
 #   inherent methods                          504
 #   struct fields                             385
 #   enum variants                             394
@@ -32,12 +32,12 @@
 #   detect                           56
 #   encoder                         541
 #   heuristics                       24
-#   lossless                         42
+#   lossless                         43
 #   profile                           7
 #   target_quality                   19
 #   zq_seed                           3
 
-## items (1556 lines)
+## items (1557 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -1556,6 +1556,7 @@ pub struct lossless::TransformConfig
 pub lossless::TransformConfig::edge_handling: lossless::EdgeHandling
 pub lossless::TransformConfig::transform: lossless::LosslessTransform
 pub fn lossless::apply_exif_orientation(&[u8], impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn lossless::apply_exif_orientation_with_edge_handling(&[u8], lossless::EdgeHandling, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn lossless::parse_exif_orientation(&[u8]) -> core::option::Option<u8>
 pub fn lossless::restructure(&[u8], &lossless::RestructureConfig, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn lossless::set_exif_orientation(&mut [u8], u8) -> bool

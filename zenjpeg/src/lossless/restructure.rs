@@ -101,7 +101,7 @@ pub fn restructure(
     // Step 2: Optionally transform coefficients
     let coeffs = if let Some(ref transform_config) = config.transform {
         transform_coefficients(&decoded_coeffs, transform_config)
-            .map_err(|e| Error::io_error(alloc::format!("{e}")))?
+            .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?
     } else {
         TransformedCoefficients {
             width: decoded_coeffs.width,
@@ -120,7 +120,14 @@ pub fn restructure(
     // when there is none; their own scan structure is left alone).
     let identity = TransformConfig::default();
     let transform_config = config.transform.as_ref().unwrap_or(&identity);
-    let secondaries = transform_secondary_images(extras.as_ref(), transform_config, false, &stop)?;
+    let secondaries = transform_secondary_images(
+        extras.as_ref(),
+        transform_config,
+        false,
+        (decoded_coeffs.width, decoded_coeffs.height),
+        (coeffs.width, coeffs.height),
+        &stop,
+    )?;
 
     // Step 5: Encode with the requested structure
     let preserved = extras.as_ref().map(|e| e.segments());

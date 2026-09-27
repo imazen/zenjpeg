@@ -120,6 +120,11 @@ pub struct ProcessArgs {
     #[arg(long, value_enum, default_value_t = OrientArg::default())]
     pub orient: OrientArg,
 
+    /// Explicitly allow partial-MCU trimming on the lossless path.
+    /// MPF images must retain matching proportional regions.
+    #[arg(long)]
+    pub trim: bool,
+
     // -- Quality ---------------------------------------------------------
     /// Exact quality target (0-100, bypasses smart detection).
     #[arg(short, long, group = "quality_target")]
@@ -713,6 +718,10 @@ pub struct TransformArgs {
     /// Apply EXIF orientation and reset tag.
     #[arg(long)]
     pub auto_orient: bool,
+
+    /// Explicitly allow partial-MCU trimming; MPF images must retain matching regions.
+    #[arg(long)]
+    pub trim: bool,
 }
 
 // ============================================================================
@@ -825,6 +834,7 @@ fn main() -> Result<()> {
                     rotate: None,
                     flip: None,
                     orient: OrientArg::default(),
+                    trim: false,
                     quality: None,
                     distance: None,
                     search_ssim2: None,
