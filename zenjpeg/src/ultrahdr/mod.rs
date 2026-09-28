@@ -66,6 +66,7 @@ pub use decode::{
 pub use encode::{
     create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_luma, encode_ultrahdr_with_curve,
     encode_ultrahdr_with_tonemapper, encode_with_gainmap, encode_with_gainmap_format,
+    encode_with_gainmap_metadata,
 };
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions).
