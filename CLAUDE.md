@@ -635,6 +635,19 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
 ## Investigation Notes
 
+**Source-aware requantization design (2026-09-27):**
+
+See [docs/recompress/SOURCE_AWARE_QUANTIZATION.md](docs/recompress/SOURCE_AWARE_QUANTIZATION.md)
+for the inspected integration points across jpegli-style, mozjpeg-style, and
+classic Annex K encoding. Recommend an internal final-table adapter evaluated
+first through Preserve's coefficient emitter, then the pixel encoders. Current
+Preserve scales/retargets tables but does not search alignment candidates;
+Tuned discards source-table context. Divisor preservation is exact only with
+retained coefficients and no later lossy optimization. The older generation-
+loss theory's universal integer-multiple optimality and “zero generation loss”
+claims are too strong; the design distinguishes added quantization loss from
+pixel round-trip loss. Code inspection only; no new benchmark claims.
+
 **Cross-backend dispatch parity tolerance (2026-04-21):**
 
 `test_dispatch_parity` (zenjpeg/tests/encoder_regression.rs) tolerates up to

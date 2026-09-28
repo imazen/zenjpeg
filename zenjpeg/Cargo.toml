@@ -604,6 +604,10 @@ name = "deblock_harness"
 
 # --- recompress module examples (moved from the zenjpeg-recompress crate) ---
 [[example]]
+name = "source_aware_rd"
+required-features = ["__test-utils"]
+
+[[example]]
 name = "jxl_phase0_recompress"
 required-features = ["recompress"]
 
