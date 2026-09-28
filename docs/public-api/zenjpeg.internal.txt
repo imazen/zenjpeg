@@ -9,16 +9,16 @@
 
 ## summary
 #
-#   pub modules                                83
-#   pub types (struct/enum/trait/alias)       296
-#   pub consts/statics                        316
-#   free functions                            367
-#   inherent methods                         1191
-#   struct fields                             755
-#   enum variants                             503
+#   pub modules                                84
+#   pub types (struct/enum/trait/alias)       297
+#   pub consts/statics                        320
+#   free functions                            372
+#   inherent methods                         1194
+#   struct fields                             760
+#   enum variants                             506
 #   re-exports                                 18
-#   trait roster entries (type × trait)       647
-#   auto-trait-complete types                 131
+#   trait roster entries (type × trait)       652
+#   auto-trait-complete types                 132
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
@@ -37,14 +37,14 @@
 #   huffman                         306
 #   layout                            3
 #   lossless                          4
-#   quant                           139
+#   quant                           161
 #   recompress                       12
 #   rgb                              11
 #   test_utils                       95
 #   types                           138
 #   ultrahdr                         12
 
-## items (3350 lines)
+## items (3372 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -82,6 +82,7 @@
 #[non_exhaustive] pub enum encode::XybSubsampling [also: encode::encoder_types, encode::v2]
 #[non_exhaustive] pub enum encode::encoder_types::TinyFileMode
 #[non_exhaustive] pub enum quant::Quality [also: encode, encode::encoder_types, encode::v2]
+#[non_exhaustive] pub enum quant::identify::TableId
 #[non_exhaustive] pub enum quant::quality_conversion::QualityComparisonMetric
 #[non_exhaustive] pub enum types::EdgePadding
 #[non_exhaustive] pub enum types::HuffmanMethod
@@ -348,6 +349,9 @@ pub const quant::ZERO_BIAS_OFFSET_XYB_AC: [f32; 3] [also: encode::tables, encode
 pub const quant::ZERO_BIAS_OFFSET_YCBCR_AC: [f32; 3] [also: encode::tables, encoder::tables]
 pub const quant::ZERO_BIAS_OFFSET_YCBCR_DC: [f32; 3] [also: encode::tables, encoder::tables]
 pub const quant::aq::simd::TEST_INPUTS_RATIO: [f32; 16]
+pub const quant::identify::CJPEGLI_SHARES_OUR_QUANT_LAW: bool
+pub const quant::identify::IJG_PRESET_NAMES: [&str; 9]
+pub const quant::identify::NUM_IJG_PRESETS: usize
 pub const test_utils::ESSENTIAL_TEST_FILES: &[&str]
 pub const test_utils::thresholds::DECODE_COEFFICIENTS_MAX_RMS: f64
 pub const test_utils::thresholds::DECODE_LIBJPEG_COMPAT_MAX_RMS: f64
@@ -1776,6 +1780,14 @@ pub fn quant::generate_quant_table_with_distance(f32, usize, types::ColorSpace, 
 pub fn quant::generate_rgb_quant_table(f32, bool) -> types::QuantTable
 pub fn quant::generate_standard_jpeg_table(f32, bool) -> types::QuantTable
 pub fn quant::generate_standard_jpeg_table_ex(f32, bool, bool) -> types::QuantTable
+pub fn quant::identify::TableId::clone(&self) -> quant::identify::TableId
+pub fn quant::identify::TableId::eq(&self, &quant::identify::TableId) -> bool
+pub fn quant::identify::TableId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn quant::identify::distance_from_luma_table(&[u16; 64]) -> core::option::Option<f32>
+pub fn quant::identify::identify_luma_table(&[u16; 64], u16) -> quant::identify::TableId
+pub fn quant::identify::ijg_preset_table(usize, u8, bool) -> [u16; 64]
+pub fn quant::identify::ijg_scale_for_quality(u8) -> u32
+pub fn quant::identify::jpegli_luma_table(f32, bool) -> [u16; 64]
 pub fn quant::quality_conversion::QualityComparisonMetric::assert_fields_are_eq(&self)
 pub fn quant::quality_conversion::QualityComparisonMetric::clone(&self) -> quant::quality_conversion::QualityComparisonMetric
 pub fn quant::quality_conversion::QualityComparisonMetric::default() -> quant::quality_conversion::QualityComparisonMetric
@@ -2007,10 +2019,12 @@ pub mod quant::aq
 pub mod quant::aq::autovec
 pub mod quant::aq::simd
 pub mod quant::aq::streaming
+pub mod quant::identify
 pub mod quant::quality_conversion
 pub mod test_utils
 pub mod test_utils::thresholds
 pub mod types
+pub static quant::identify::IJG_LUMA_BASES: [[u16; 64]; 9]
 pub struct decode::AdobeInfo [also: encode::extras]
 pub struct decode::CoefficientComparison
 pub struct decode::ComponentCoefficients
@@ -3322,6 +3336,14 @@ pub quant::ZeroBiasParams::offset: [f32; 64]
 pub quant::aq::AQStrengthMap::height_blocks: usize
 pub quant::aq::AQStrengthMap::strengths: alloc::vec::Vec<f32>
 pub quant::aq::AQStrengthMap::width_blocks: usize
+pub quant::identify::TableId::IjgPreset
+pub quant::identify::TableId::IjgPreset::exact: bool
+pub quant::identify::TableId::IjgPreset::preset: u8
+pub quant::identify::TableId::IjgPreset::quality: u8
+pub quant::identify::TableId::JpegliDistance
+pub quant::identify::TableId::JpegliDistance::distance: f32
+pub quant::identify::TableId::JpegliDistance::exact: bool
+pub quant::identify::TableId::Unknown
 pub quant::quality_conversion::QualityComparisonMetric::Butteraugli
 pub quant::quality_conversion::QualityComparisonMetric::Dssim
 pub quant::quality_conversion::QualityComparisonMetric::Ssimulacra2
@@ -3397,7 +3419,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (198 types)
+## trait impls (199 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3552,6 +3574,7 @@ quant::DequantBiasStats: Clone, Debug
 quant::ZeroBiasParams: Clone, Debug, Default
 quant::aq::AQStrengthMap: Clone, Debug
 quant::aq::streaming::StreamingAQ: Debug
+quant::identify::TableId: Clone, Copy, Debug, PartialEq, TrivialClone
 quant::quality_conversion::QualityComparisonMetric: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, TrivialClone
 quant::quality_conversion::QualityConversion: Clone, Copy, Debug, TrivialClone
 recompress::Budget: TrivialClone
@@ -3600,7 +3623,7 @@ ultrahdr::UltraHdrMode: TrivialClone
 
 ## auto traits
 
-131 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+132 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 encode::byte_encoders::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encode::byte_encoders::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encode::byte_encoders::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe
