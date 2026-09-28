@@ -78,7 +78,7 @@ moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)
 png = "0.18"
-zenpng = { version = "0.1.1", default-features = false }
+zenpng = { version = ">=0.1.1, <0.3.0", default-features = false }
 zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
 # excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
