@@ -191,7 +191,9 @@ fn test_quality_floor() {
     let _lock = archmage::testing::lock_token_testing();
     let (rgb, w, h) = load_frymire();
 
-    let zensim = zensim::Zensim::new(zensim::ZensimProfile::codec_target()).with_parallel(false);
+    // These stored floors were measured with Profile A, not the moving codec target.
+    #[allow(deprecated)]
+    let zensim = zensim::Zensim::new(zensim::ZensimProfile::A).with_parallel(false);
     let source_pixels: &[[u8; 3]] = bytemuck::cast_slice(&rgb);
     let source = zensim::RgbSlice::new(source_pixels, w as usize, h as usize);
 
