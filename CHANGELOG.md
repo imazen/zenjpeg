@@ -5,6 +5,17 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Read gain-map XMP by namespace and RDF shape; reject duplicate/malformed
+  rendering properties and select lengths from the GainMap item specifically.
+- Add explicit encoded-component metadata filtering, retaining scan bytes and
+  EXIF orientation, validating ICC chunk structure, and dropping private APP/XMP,
+  comments, thumbnails and trailers before reassembly.
+- Add `ultrahdr::encode_with_gainmap_metadata` to retain filtered EXIF/color while
+  regenerating required gain-map signaling. Unsupported preservation requests
+  refuse instead of silently losing metadata. No additional pixel scans.
+- Build against zencodec metadata stack PR #128 (root git patch until release).
+
+
 ### Fixed
 - Gamma-aware chroma conversion now interprets linear f32/u16 and BGR/BGRA
   input layouts correctly. 4:2:0 retains the zenyuv refinement kernel and

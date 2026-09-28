@@ -821,7 +821,7 @@ mod tests {
     fn parse_ddf_container_directory() {
         use crate::container::types::{ItemSemantic, parse_container_items};
 
-        let xmp = r#"<x:xmpmeta>
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GDepth="http://ns.google.com/photos/1.0/depthmap/">
   <rdf:RDF>
     <rdf:Description
       xmlns:Container="http://ns.google.com/photos/dd/1.0/container/"
@@ -866,7 +866,7 @@ mod tests {
         file_data.extend_from_slice(&conf_png);
 
         let xmp = alloc::format!(
-            r#"<x:xmpmeta>
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GDepth="http://ns.google.com/photos/1.0/depthmap/">
   <rdf:RDF>
     <rdf:Description
       xmlns:Container="http://ns.google.com/photos/dd/1.0/container/"
@@ -874,7 +874,7 @@ mod tests {
       GDepth:Format="RangeInverse"
       GDepth:Near="0.2"
       GDepth:Far="50.0"
-      Container:Directory="true">
+      >
       <Container:Directory>
         <rdf:Seq>
           <rdf:li>
@@ -920,12 +920,12 @@ mod tests {
     fn parse_ddf_truncated_file() {
         let primary_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9];
         // File has no appended data, but directory claims 5000 bytes
-        let xmp = r#"<x:xmpmeta>
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GDepth="http://ns.google.com/photos/1.0/depthmap/">
   <rdf:RDF>
     <rdf:Description
       xmlns:Container="http://ns.google.com/photos/dd/1.0/container/"
       xmlns:Item="http://ns.google.com/photos/dd/1.0/item/"
-      Container:Directory="true">
+      >
       <Container:Directory>
         <rdf:Seq>
           <rdf:li>
