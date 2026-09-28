@@ -6,13 +6,13 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenyuv.txt 46 lines (supported surface) | zenyuv.features.txt 0 added (features: std) | zenyuv.internal.txt 16 lines (5 hidden + 11 excluded-feature)
+# files: zenyuv.txt 47 lines (supported surface) | zenyuv.features.txt 0 added (features: std) | zenyuv.internal.txt 16 lines (5 hidden + 11 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 3
 #   pub types (struct/enum/trait/alias)         7
-#   free functions                              6
+#   free functions                              7
 #   inherent methods                           16
 #   struct fields                               6
 #   enum variants                               6
@@ -22,9 +22,9 @@
 # per-module pub lines:
 #   (root)                           16
 #   context                          15
-#   sharp                            13
+#   sharp                            14
 
-## items (42 lines)
+## items (43 lines)
 
 pub mod zenyuv
 pub mod context
@@ -45,6 +45,7 @@ pub fn sharp::SharpYuvWorkspace::new(usize) -> Self
 pub fn sharp::refine_chroma_420_u8(&[u8], &[u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig)
 pub fn sharp::refine_chroma_420_u8_with_workspace(&[u8], &[u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
 pub fn sharp::refine_y_420_u8(&[u8], &mut [u8], &[u8], &[u8], usize, usize, Range, Matrix) -> u64
+pub fn sharp::rgb_f32_to_yuv420_sharp(imgref::ImgRef<'_, [f32; 3]>, imgref::ImgRefMut<'_, f32>, imgref::ImgRefMut<'_, f32>, imgref::ImgRefMut<'_, f32>, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
 pub fn sharp::rgb_to_yuv420_sharp(&[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig)
 pub fn sharp::rgb_to_yuv420_sharp_f32(&[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
 pub fn sharp::rgb_to_yuv420_sharp_with_workspace(&[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
