@@ -35,6 +35,7 @@
 //! `benchmarks/container_scan_2026-04-20.{csv,md}`.
 
 pub mod marker;
+pub mod metadata;
 pub mod mpf;
 pub mod probe;
 pub mod types;

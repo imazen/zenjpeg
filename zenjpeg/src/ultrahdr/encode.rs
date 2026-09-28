@@ -599,6 +599,88 @@ pub fn encode_with_gainmap_format(
     metadata_format: GainMapEncodingFormat,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
+    encode_with_gainmap_metadata(
+        sdr,
+        gainmap,
+        metadata,
+        encoder_config,
+        gainmap_quality,
+        metadata_format,
+        &zencodec::Metadata::none(),
+        &zencodec::MetadataPolicy::ColorAndRotation,
+        stop,
+    )
+}
+
+/// Encode a precomputed gain map while applying an explicit source-metadata policy.
+///
+/// Required gain-map XMP/ISO/MPF is regenerated independently of source XMP.
+/// Retained source XMP refuses (merging arbitrary RDF cannot preserve it exactly).
+/// EXIF and ICC are emitted after filtering. CICP/HDR luminance fields this JPEG
+/// path cannot serialize refuse instead of silently losing display information.
+/// The supplied metadata must describe the supplied base pixels; color conversion
+/// and orientation baking remain explicit caller operations.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_with_gainmap_metadata(
+    sdr: &PixelBuffer,
+    gainmap: &GainMap,
+    metadata: &GainMapMetadata,
+    encoder_config: &EncoderConfig,
+    gainmap_quality: f32,
+    metadata_format: GainMapEncodingFormat,
+    source: &zencodec::Metadata,
+    policy: &zencodec::MetadataPolicy,
+    stop: impl Stop,
+) -> Result<Vec<u8>> {
+    let mut retained = zencodec::display_metadata::filter_for_gain_map(source, metadata, policy)
+        .map_err(ultrahdr_to_zenjpeg_error)?;
+    if retained.xmp.is_some()
+        || retained.content_light_level.is_some()
+        || retained.mastering_display.is_some()
+        || retained
+            .diffuse_white
+            .is_some_and(|w| w != zenpixels::DiffuseWhite::BT2408)
+    {
+        return Err(Error::unsupported_feature(
+            "gain-map JPEG cannot preserve source XMP/HDR fields; resolve them explicitly before encoding",
+        ));
+    }
+    if metadata.backward_direction || !metadata.use_base_color_space {
+        return Err(Error::unsupported_feature(
+            "gain-map XMP requires SDR base and base color space",
+        ));
+    }
+    // JPEG has no CICP carrier. Reuse the same profile synthesizer as the
+    // ordinary zencodec adapter, with no pixel conversion or pixel scan.
+    if let Some(cicp) = retained.cicp
+        && (cicp.matrix_coefficients != 0
+            || !cicp.full_range
+            || cicp.transfer_characteristics != 13)
+    {
+        return Err(Error::unsupported_feature(
+            "SDR gain-map base requires full-range RGB with sRGB transfer",
+        ));
+    }
+    if retained.icc_profile.is_none() {
+        let cicp = if let Some(cicp) = retained.cicp {
+            cicp
+        } else {
+            let primaries = sdr.descriptor().primaries.to_cicp().ok_or_else(|| {
+                Error::unsupported_feature("unknown base primaries require an ICC profile")
+            })?;
+            zencodec::Cicp::new(primaries, 13, 0, true)
+        };
+        use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+        match synthesize_icc_for_cicp(cicp) {
+            SynthesizedIcc::Profile(icc) => retained.icc_profile = Some(icc.as_ref().into()),
+            SynthesizedIcc::NotNeeded => {}
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "cannot represent base color without an ICC profile",
+                ));
+            }
+        }
+    }
     let gainmap_jpeg = encode_gainmap_jpeg(gainmap, gainmap_quality, &stop)?;
     stop.check()?;
 
@@ -614,6 +696,13 @@ pub fn encode_with_gainmap_format(
         gainmap_final,
         crate::encode::extras::MpfImageType::Undefined,
     );
+
+    if let Some(icc) = retained.icc_profile {
+        segments = segments.set_icc(icc.to_vec());
+    }
+    if let Some(exif) = retained.exif {
+        segments = segments.set_exif(exif.to_vec());
+    }
 
     let include_iso = matches!(
         metadata_format,
