@@ -202,38 +202,21 @@ pub struct MpfEntry {
 /// `Item:Semantic`, `Item:Mime`, `Item:Length`, and `Item:Padding`.
 #[must_use]
 pub fn parse_container_items(xmp: &str) -> Vec<ContainerItem> {
-    let mut items = Vec::new();
-    let mut search_from = 0;
-    while let Some(li_start) = xmp[search_from..].find("rdf:li") {
-        let abs_start = search_from + li_start;
-        let block_end = xmp[abs_start..]
-            .find("</rdf:li>")
-            .map(|p| abs_start + p)
-            .or_else(|| {
-                xmp[abs_start + 6..]
-                    .find("rdf:li")
-                    .map(|p| abs_start + 6 + p)
-            })
-            .unwrap_or(xmp.len());
-        let block = &xmp[abs_start..block_end];
-        let semantic =
-            extract_attr_from_block(block, "Item:Semantic").map(|s| ItemSemantic::from_xmp(&s));
-        let mime = extract_attr_from_block(block, "Item:Mime");
-        if let (Some(semantic), Some(mime)) = (semantic, mime) {
-            let length =
-                extract_attr_from_block(block, "Item:Length").and_then(|s| s.parse::<usize>().ok());
-            let padding = extract_attr_from_block(block, "Item:Padding")
-                .and_then(|s| s.parse::<usize>().ok());
-            items.push(ContainerItem {
-                semantic,
-                mime,
-                length,
-                padding,
-            });
-        }
-        search_from = block_end;
-    }
-    items
+    // The public fragment generator omits namespace declarations. Supply its
+    // documented context only for that fragment shape, never for a full packet.
+    let wrapped;
+    let xmp = if xmp.trim_start().starts_with("<Container:Directory") {
+        wrapped = alloc::format!(
+            r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/">{xmp}</rdf:Description></rdf:RDF>"#
+        );
+        wrapped.as_str()
+    } else {
+        xmp
+    };
+    zencodec::xmp::Packet::parse(xmp)
+        .ok()
+        .and_then(|p| super::xmp::checked_container_items(&p).ok())
+        .unwrap_or_default()
 }
 
 /// Generate a `Container:Directory` XML fragment for a list of items.
@@ -248,11 +231,11 @@ pub fn generate_container_directory(items: &[ContainerItem]) -> String {
         xml.push_str("            <Container:Item\n");
         xml.push_str(&alloc::format!(
             "                Item:Semantic=\"{}\"\n",
-            item.semantic.as_xmp_str()
+            escape_xml_attribute(item.semantic.as_xmp_str())
         ));
         xml.push_str(&alloc::format!(
             "                Item:Mime=\"{}\"",
-            item.mime
+            escape_xml_attribute(&item.mime)
         ));
         if let Some(length) = item.length {
             xml.push_str(&alloc::format!(
@@ -271,15 +254,14 @@ pub fn generate_container_directory(items: &[ContainerItem]) -> String {
     xml
 }
 
-fn extract_attr_from_block(block: &str, attr_name: &str) -> Option<String> {
-    let pattern = alloc::format!("{attr_name}=\"");
-    if let Some(start) = block.find(&pattern) {
-        let value_start = start + pattern.len();
-        if let Some(end) = block[value_start..].find('"') {
-            return Some(String::from(&block[value_start..value_start + end]));
-        }
-    }
-    None
+fn escape_xml_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
+        .replace('\r', "&#13;")
+        .replace('\n', "&#10;")
+        .replace('\t', "&#9;")
 }
 
 // ===========================================================================
