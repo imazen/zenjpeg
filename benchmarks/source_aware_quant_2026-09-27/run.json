@@ -1,0 +1,38 @@
+{
+  "argv": [
+    "target/release/examples/source_aware_rd",
+    "--corpus",
+    "/home/lilith/work/codec-corpus/CID22/CID22-512/validation",
+    "--output",
+    "/home/lilith/outputs/zenjpeg/source-aware/2026-09-27-pilot",
+    "--limit",
+    "3",
+    "--sources",
+    "jpegli,moz,classic",
+    "--destinations",
+    "jpegli,moz,classic",
+    "--source-qualities",
+    "80",
+    "--qualities",
+    "45,55,65,75,80,85,95",
+    "--strengths",
+    "1,4"
+  ],
+  "candidate_search": "coefficient MSE / target_step^2 + strength * ln(step/target_step)^2; AC only",
+  "color": "8-bit sRGB PNG inputs; no resizing",
+  "decoder": "zenjpeg via decode_jpeg_with_icc",
+  "git_head": "006d9783d127f908ae24a793960f40612293d097",
+  "git_status": "",
+  "images": [
+    "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png",
+    "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1044329.png",
+    "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png"
+  ],
+  "metric_implementations": "Cargo.lock: fast-ssim2; butteraugli default scalar score",
+  "source_encoder": "zenjpeg mode emulation, not external C encoders",
+  "strengths": [
+    1.0,
+    4.0
+  ],
+  "window": 0.2
+}

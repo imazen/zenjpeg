@@ -2,6 +2,7 @@
 
 Branch: `experiment/source-aware-quant-rd`.
 Design: [SOURCE_AWARE_QUANTIZATION.md](SOURCE_AWARE_QUANTIZATION.md).
+First pilot: [results and next iteration](../../benchmarks/source_aware_quant_2026-09-27/README.md).
 
 ## Goals and current scope
 
@@ -26,6 +27,20 @@ The first iteration is a development example using existing APIs, not a new
 encoder default or stable API. It starts with the pixel paths because exact
 custom tables let all three modes participate without changing the emitter.
 The coefficient-domain experiment remains the next independent control.
+
+Working optimization goals:
+
+1. Lower BD-rate under **both** SSIM2 and Butteraugli against the native
+   `generic` baseline, assessed separately for each destination mode.
+2. Confirm the gain against `exact` too, so table-layout changes cannot be
+   mistaken for a quantization improvement.
+3. For per-image IQA search, satisfy the actual byte ceiling and retain the
+   generic candidate as fallback. Inspect the other metric before accepting a
+   metric-specific winner; a blended scalar must not conceal disagreement.
+4. Report cumulative and generation-reference results, worst image, regression
+   count, overlap coverage and search cost. A mean win alone is insufficient
+   for promotion; choose a regression budget on development data before the
+   holdout run. No threshold has been claimed as met by the pilot.
 
 Build note: the synced lockfile had one stale `zenpredict -> archmage` edge.
 Cargo removed that unused edge; this one-line lockfile correction is included
@@ -96,6 +111,10 @@ diagnostic and must not be presented as end-to-end optimization cost.
   budget, once for SSIM2 and once for Butteraugli; includes both metric scores
   so choosing one metric cannot hide damage to the other. This is a per-image
   search oracle over the measured candidates, not a trained one-shot policy.
+- `joint_choices.csv`: smallest measured output at each generic point's byte
+  ceiling with **both** SSIM2 and Butteraugli no worse than that point. Includes
+  the generic fallback and candidates at other sampled qualities. Generation
+  and cumulative gates are separate; passing one does not imply passing both.
 - `curves_*.svg`: rate–distortion figures, if requested.
 
 BD-rate integrates piecewise-linear **log rate** over overlapping distortion

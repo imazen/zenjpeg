@@ -144,6 +144,32 @@ def goal_choices(out, groups):
             writer.writerows(rows)
 
 
+def joint_choices(out, groups):
+    """Smallest measured output meeting both baseline metric floors."""
+    rows = []
+    for group, variants in sorted(groups.items()):
+        pool = [p for ps in variants.values() for p in ps]
+        for baseline in variants.get("generic", []):
+            for reference in ("generation", "cumulative"):
+                eligible = [p for p in pool if p["bytes"] <= baseline["bytes"]
+                            and p[reference]["ssim2"] >= baseline[reference]["ssim2"]
+                            and p[reference]["butteraugli"] <= baseline[reference]["butteraugli"]]
+                best = min(eligible, key=lambda p: (p["bytes"], -p[reference]["ssim2"], p[reference]["butteraugli"], p["variant"]))
+                rows.append(dict(zip(GROUP_FIELDS, group), reference=reference,
+                                 budget_quality=baseline["quality"], budget_bytes=baseline["bytes"],
+                                 winner=best["variant"], winner_quality=best["quality"], winner_bytes=best["bytes"],
+                                 savings_percent=100 * (1 - best["bytes"] / baseline["bytes"]),
+                                 ssim2_delta=best[reference]["ssim2"] - baseline[reference]["ssim2"],
+                                 butteraugli_delta=best[reference]["butteraugli"] - baseline[reference]["butteraugli"],
+                                 jpeg=best["jpeg"]))
+    if rows:
+        with (out / "joint_choices.csv").open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+    return rows
+
+
 def plots(out, groups):
     import matplotlib
     matplotlib.use("Agg")
@@ -181,6 +207,7 @@ def main():
         writer.writerows(rows)
     write_summary(args.run, rows, (args.run / "COMPLETE").exists())
     goal_choices(args.run, groups)
+    joint_choices(args.run, groups)
     if args.plots:
         plots(args.run, groups)
     print(f"{len(points)} points; {len(rows)} comparisons; {args.run / 'summary.md'}")
