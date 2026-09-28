@@ -75,6 +75,7 @@ members = ["."]
 # = "0.2.0"` requirement resolves on its own then and this whole table goes
 # away. Keep in sync with `../../Cargo.toml`.
 [patch.crates-io]
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "06b5954cbd9d15282509011aab8f8efa0d8973dd" }
 zenanalyze = { path = "../../../zenanalyze" }
 
 [[bin]]

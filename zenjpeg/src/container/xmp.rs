@@ -361,20 +361,23 @@ pub fn parse_xmp_full(xmp: &str) -> (Option<zencodec::GainMapParams>, Vec<Contai
 pub(super) fn checked_container_items(
     packet: &zencodec::xmp::Packet<'_>,
 ) -> Result<Vec<ContainerItem>, XmpError> {
+    checked_items_in_namespace(packet, CONTAINER_NAMESPACE, ITEM_NAMESPACE)
+}
+
+pub(super) fn checked_items_in_namespace(
+    packet: &zencodec::xmp::Packet<'_>,
+    container_ns: &str,
+    item_ns: &str,
+) -> Result<Vec<ContainerItem>, XmpError> {
     packet
-        .resource_sequence(
-            CONTAINER_NAMESPACE,
-            "Directory",
-            CONTAINER_NAMESPACE,
-            "Item",
-        )
+        .resource_sequence(container_ns, "Directory", container_ns, "Item")
         .map_err(|e| XmpError::Invalid(e.to_string()))?
         .into_iter()
         .map(|fields| {
             let value = |name: &str| {
                 fields
                     .iter()
-                    .find(|f| f.namespace() == ITEM_NAMESPACE && f.name() == name)
+                    .find(|f| f.namespace() == item_ns && f.name() == name)
                     .map(|f| f.value())
             };
             let semantic = value("Semantic")

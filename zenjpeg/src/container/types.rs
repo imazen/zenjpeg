@@ -215,7 +215,22 @@ pub fn parse_container_items(xmp: &str) -> Vec<ContainerItem> {
     };
     zencodec::xmp::Packet::parse(xmp)
         .ok()
-        .and_then(|p| super::xmp::checked_container_items(&p).ok())
+        .and_then(|p| {
+            let gain = super::xmp::checked_container_items(&p).ok()?;
+            let depth = super::xmp::checked_items_in_namespace(
+                &p,
+                "http://ns.google.com/photos/dd/1.0/container/",
+                "http://ns.google.com/photos/dd/1.0/item/",
+            )
+            .ok()?;
+            if gain.is_empty() {
+                Some(depth)
+            } else if depth.is_empty() {
+                Some(gain)
+            } else {
+                None
+            }
+        })
         .unwrap_or_default()
 }
 
