@@ -152,6 +152,21 @@ pub struct EntropyDecoderState {
     last_written: u8,
 }
 
+impl EntropyDecoderState {
+    /// Current read position in the byte buffer.
+    #[inline]
+    #[must_use]
+    pub fn position(&self) -> usize {
+        self.reader_state.position()
+    }
+
+    /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
+    #[inline]
+    pub fn advance_buffer_by(&mut self, bytes: usize) {
+        self.reader_state.advance_position_by(bytes);
+    }
+}
+
 impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Creates a new entropy decoder.
     pub fn new(data: &'data [u8]) -> Self {
@@ -166,6 +181,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             had_ac_overflow: false,
             had_invalid_huffman: false,
         }
+    }
+
+    /// Returns true if the reader attempted to read past the end of input data.
+    #[inline]
+    #[must_use]
+    pub fn is_overread(&self) -> bool {
+        self.reader.overread_by() > 0
+    }
+
+    /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
+    #[inline]
+    pub fn advance_buffer_by(&mut self, bytes: usize) {
+        self.reader.advance_position_by(bytes);
     }
 
     /// Enables lenient mode for maximum error recovery.

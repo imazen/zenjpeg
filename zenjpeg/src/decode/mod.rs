@@ -53,7 +53,7 @@ mod extras;
 #[cfg(feature = "parallel")]
 mod fused_parallel;
 mod image;
-mod parser;
+pub(crate) mod parser;
 mod pipeline;
 mod pool;
 mod request;
@@ -1637,7 +1637,7 @@ impl DecodeConfig {
     }
 
     /// Resolves and applies the user's crop region to a scanline reader.
-    fn apply_crop(
+    pub(crate) fn apply_crop(
         &self,
         reader: &mut ScanlineReader<'_>,
         img_w: u32,

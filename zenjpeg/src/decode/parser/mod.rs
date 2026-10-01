@@ -113,7 +113,7 @@ pub(super) fn component_block_grid(
 ///
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
 /// the previous 16-parameter constructor. Created via `JpegParser::into_scan_data()`.
-pub(super) struct ParsedScanData<'a> {
+pub(crate) struct ParsedScanData<'a> {
     pub data: &'a [u8],
     pub width: u32,
     pub height: u32,
@@ -168,16 +168,16 @@ pub(super) enum DecodeMode {
 }
 
 /// Internal JPEG parser state.
-pub(super) struct JpegParser<'a> {
+pub(crate) struct JpegParser<'a> {
     pub(super) data: &'a [u8],
     pub(super) position: usize,
 
     // Frame info
-    pub(super) width: u32,
-    pub(super) height: u32,
-    pub(super) precision: u8,
-    pub(super) num_components: u8,
-    pub(super) mode: JpegMode,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) precision: u8,
+    pub(crate) num_components: u8,
+    pub(crate) mode: JpegMode,
 
     // Component info
     pub(super) components: [Component; MAX_COMPONENTS],
@@ -359,7 +359,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// `max_memory` is the ceiling for header-dimension-scaled allocations;
     /// pass `u64::MAX` for unlimited. See [`JpegParser::charge_memory`].
-    pub(super) fn with_strictness(
+    pub(crate) fn with_strictness(
         data: &'a [u8],
         max_pixels: u64,
         max_memory: u64,
@@ -1097,7 +1097,7 @@ impl<'a> JpegParser<'a> {
     // Info extraction
     // =========================================================================
 
-    pub(super) fn info(&self) -> JpegInfo {
+    pub(crate) fn info(&self) -> JpegInfo {
         let is_xyb = self
             .icc_profile
             .as_ref()
@@ -1167,7 +1167,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// This bundles all the parser fields needed by `ScanlineReader::new()`,
     /// detecting RGB-JPEG and XYB along the way.
-    pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
+    pub(crate) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
         let is_xyb = self.info().is_xyb;
 
         // Extract sampling factors

@@ -469,6 +469,12 @@ impl Error {
         &self.0
     }
 
+    /// Returns true if this is a truncated data error.
+    #[inline]
+    pub fn is_truncated(&self) -> bool {
+        matches!(self.kind(), ErrorKind::TruncatedData { .. })
+    }
+
     /// Consume and return the inner `At<ErrorKind>`.
     #[inline]
     pub fn into_inner(self) -> At<ErrorKind> {

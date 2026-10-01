@@ -395,6 +395,21 @@ pub struct BitReaderState {
     rst_resync_count: u32,
 }
 
+impl BitReaderState {
+    /// Current read position in the byte buffer.
+    #[inline]
+    #[must_use]
+    pub fn position(&self) -> usize {
+        self.position
+    }
+
+    /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
+    #[inline]
+    pub fn advance_position_by(&mut self, bytes: usize) {
+        self.position = self.position.saturating_sub(bytes);
+    }
+}
+
 /// Check if a u32 contains a 0xFF byte using SWAR (SIMD Within A Register).
 /// From Stanford Bithacks: https://graphics.stanford.edu/~seander/bithacks.html
 #[inline(always)]
@@ -843,6 +858,19 @@ impl<'a> BitReader<'a> {
         self.starved = state.starved;
         self.permissive_rst = state.permissive_rst;
         self.rst_resync_count = state.rst_resync_count;
+    }
+
+    /// Number of bytes attempted to read past end of data.
+    #[inline]
+    #[must_use]
+    pub fn overread_by(&self) -> usize {
+        self.overread_by
+    }
+
+    /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
+    #[inline]
+    pub fn advance_position_by(&mut self, bytes: usize) {
+        self.position = self.position.saturating_sub(bytes);
     }
 
     /// Reads and verifies a restart marker.

@@ -355,6 +355,7 @@ pub use codec::{
     JpegEncoder,
     JpegEncoderConfig,
     JpegEncoding,
+    JpegIncrementalDecoder,
     JpegStreamingDecoder,
 };
 

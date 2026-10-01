@@ -187,7 +187,7 @@ impl<'a> ScanlineReader<'a> {
     /// Creates a new scanline reader from parsed JPEG scan data.
     ///
     /// This is called internally by `Decoder::scanline_reader()`.
-    pub(super) fn from_scan_data(
+    pub(crate) fn from_scan_data(
         scan: super::parser::ParsedScanData<'a>,
         chroma_upsampling: super::ChromaUpsampling,
         idct_method: super::IdctMethod,
@@ -212,7 +212,7 @@ impl<'a> ScanlineReader<'a> {
     /// be `'static`.
     ///
     /// `scan_data`'s `.data` field is ignored — `data_cow` is stored instead.
-    pub(super) fn from_scan_data_cow(
+    pub(crate) fn from_scan_data_cow(
         scan: super::parser::ParsedScanData<'_>,
         data_cow: Cow<'a, [u8]>,
         chroma_upsampling: super::ChromaUpsampling,
@@ -1301,6 +1301,165 @@ impl<'a> ScanlineReader<'a> {
         Ok(())
     }
 
+    /// Attempt to decode one MCU row from an incremental scan slice.
+    ///
+    /// If there is enough data in `scan_slice` to complete the MCU row:
+    /// - Decodes blocks, runs IDCT, upsamples chroma, and marks `mcu_row_decoded = true`.
+    /// - Sets `self.decoder_state` position to 0 and returns `Ok(Some(bytes_consumed))`.
+    ///
+    /// If `scan_slice` ran out of data mid-row (or `is_overread()` is true):
+    /// - Rolls back all state cleanly (`decoder_state`, `mcu_count`, `prev_coeff_counts`, `next_restart_num`).
+    /// - Returns `Ok(None)` so the caller can push more input data and retry.
+    pub(crate) fn decode_mcu_row_slice(
+        &mut self,
+        scan_slice: &[u8],
+        is_eof: bool,
+    ) -> Result<Option<usize>> {
+        if self.mcu_row_decoded {
+            return Ok(Some(0));
+        }
+
+        // Save state for clean rollback if data ends mid-row
+        let saved_state = self.decoder_state;
+        let saved_mcu_count = self.mcu_count;
+        let saved_prev_coeff = self.prev_coeff_counts;
+        let saved_restart_num = self.next_restart_num;
+
+        let mut decoder = EntropyDecoder::new(scan_slice);
+
+        // Set up Huffman tables first (before restoring state)
+        for comp_idx in 0..self.num_components as usize {
+            let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
+
+            if let Some(ref table) = self.dc_tables[dc_idx] {
+                decoder.set_dc_table(dc_idx, table);
+            }
+            if let Some(ref table) = self.ac_tables[ac_idx] {
+                decoder.set_ac_table(ac_idx, table);
+            }
+        }
+
+        // Restore full decoder state if we have one
+        if let Some(ref state) = self.decoder_state {
+            decoder.restore_state(*state);
+        }
+
+        let quant_refs = self.resolve_quant_tables()?;
+        let mcu_cols = self.strip.mcu_cols();
+        let is_last_row = self.is_last_mcu_row();
+
+        let mut hit_truncation = false;
+
+        'mcu_loop: for mcu_x in 0..mcu_cols {
+            // Check for restart marker
+            if self.restart_interval > 0
+                && self.mcu_count > 0
+                && self.mcu_count % self.restart_interval as u32 == 0
+            {
+                decoder.align_to_byte();
+                match decoder.read_restart_marker_tolerant(self.next_restart_num) {
+                    Ok(_) => {
+                        self.next_restart_num = (self.next_restart_num + 1) & 7;
+                        decoder.reset_dc();
+                        self.prev_coeff_counts = [64; 4];
+                    }
+                    Err(_) => {
+                        hit_truncation = true;
+                        break 'mcu_loop;
+                    }
+                }
+            }
+
+            let do_idct = self.mcu_row_in_crop(self.current_mcu_row);
+
+            for comp_idx in 0..self.num_components as usize {
+                let h_blocks = self.strip.h_samp[comp_idx] as usize;
+                let v_blocks = self.strip.v_samp[comp_idx] as usize;
+
+                let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
+                let quant = &quant_refs[comp_idx];
+
+                for v in 0..v_blocks {
+                    for h in 0..h_blocks {
+                        let coeff_count = match decoder.decode_block_into(
+                            &mut self.coeffs_buf,
+                            self.prev_coeff_counts[comp_idx],
+                            comp_idx,
+                            dc_idx,
+                            ac_idx,
+                        )? {
+                            ScanRead::Value(c) => c,
+                            ScanRead::Truncated => {
+                                hit_truncation = true;
+                                break 'mcu_loop;
+                            }
+                            ScanRead::EndOfScan => {
+                                if !is_last_row && !is_eof {
+                                    hit_truncation = true;
+                                    break 'mcu_loop;
+                                }
+                                self.prev_coeff_counts[comp_idx] = 64;
+                                self.coeffs_buf = [0i16; 64];
+                                1
+                            }
+                        };
+                        self.prev_coeff_counts[comp_idx] =
+                            self.prev_coeff_counts[comp_idx].max(coeff_count);
+
+                        if do_idct {
+                            self.strip.idct_block(
+                                comp_idx,
+                                mcu_x,
+                                h,
+                                v,
+                                &self.coeffs_buf,
+                                coeff_count,
+                                quant,
+                            );
+                        }
+                    }
+                }
+            }
+
+            self.mcu_count += 1;
+        }
+
+        // If block decoding was truncated or bit reader overread without EOF, we cannot finish this row
+        if hit_truncation || (!is_eof && decoder.is_overread()) {
+            // Roll back all state
+            self.decoder_state = saved_state;
+            self.mcu_count = saved_mcu_count;
+            self.prev_coeff_counts = saved_prev_coeff;
+            self.next_restart_num = saved_restart_num;
+            return Ok(None);
+        }
+
+        // Successfully decoded the row!
+        let mut new_state = decoder.save_state();
+        let start_pos = saved_state.map_or(0, |s| s.position());
+        let end_pos = new_state.position();
+        let bytes_consumed = end_pos.saturating_sub(start_pos);
+        new_state.advance_buffer_by(end_pos);
+        self.decoder_state = Some(new_state);
+
+        if self.mcu_row_in_crop(self.current_mcu_row) {
+            self.strip.truncate_chroma_padding(
+                self.width as usize,
+                self.height as usize,
+                self.current_mcu_row,
+            );
+
+            if self.deblock_mode == DeblockMode::Boundary4Tap {
+                self.apply_boundary_deblock();
+            }
+
+            self.strip.upsample_chroma();
+        }
+
+        self.mcu_row_decoded = true;
+        Ok(Some(bytes_consumed))
+    }
+
     /// Apply boundary 4-tap deblocking to the current MCU row's strip planes.
     ///
     /// Filters each component plane at native resolution:
@@ -1614,6 +1773,7 @@ impl<'a> ScanlineReader<'a> {
         // next MCU row first to get correct bottom chroma interpolation.
         if self.row_in_mcu == self.strip.mcu_height - 1
             && self.strip.needs_vertical_upsample()
+            && self.strip.chroma_upsampling != super::ChromaUpsampling::NearestNeighbor
             && !self.strip.has_deferred_bottom
             && !self.is_last_mcu_row()
             && self.stored_coeffs.is_none()

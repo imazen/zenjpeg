@@ -1644,4 +1644,196 @@ mod pattern_b_envelope_tests {
             Some("zenjpeg")
         );
     }
+
+    #[test]
+    fn incremental_decode_chunk_sizes() {
+        use imgref::{Img, ImgExt as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode, PushStatus};
+
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
+        let width = 64;
+        let height = 64;
+        let pixels: Vec<Rgb<u8>> = (0..width * height)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), width, height);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let jpeg_bytes = encoded.data();
+
+        // 1. One-shot baseline decode for reference
+        let dec_cfg = JpegDecoderConfig::new();
+        let ref_output = dec_cfg
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(jpeg_bytes), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let ps = ref_output.pixels();
+        let ref_bytes: Vec<u8> = (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect();
+
+        // 2. Test multiple chunk sizes down to 1 byte
+        for chunk_size in [jpeg_bytes.len(), 512, 128, 33, 7, 3, 1] {
+            let mut inc = dec_cfg.clone().job().into_incremental_decoder(&[]).unwrap();
+            let mut decoded_rows: Vec<u8> = Vec::new();
+            let mut offset = 0;
+
+            while offset < jpeg_bytes.len() {
+                let end = (offset + chunk_size).min(jpeg_bytes.len());
+                let is_eof = end == jpeg_bytes.len();
+                let outcome = inc.push_chunk(&jpeg_bytes[offset..end], is_eof, None).unwrap();
+                offset = end;
+
+                while let Some((y, strip)) = inc.pull_batch().unwrap() {
+                    assert_eq!(y as usize, decoded_rows.len() / (width * 3));
+                    for r in 0..strip.rows() {
+                        decoded_rows.extend_from_slice(strip.row(r));
+                    }
+                }
+
+                if outcome.status == PushStatus::Complete {
+                    break;
+                }
+            }
+
+            // Pull any remaining batches
+            while let Some((_y, strip)) = inc.pull_batch().unwrap() {
+                for r in 0..strip.rows() {
+                    decoded_rows.extend_from_slice(strip.row(r));
+                }
+            }
+
+            assert!(inc.is_complete(), "decoder must be complete for chunk_size {}", chunk_size);
+            assert_eq!(
+                decoded_rows.len(),
+                ref_bytes.len(),
+                "decoded byte count must match for chunk_size {}",
+                chunk_size
+            );
+            assert_eq!(
+                decoded_rows,
+                ref_bytes,
+                "decoded pixels must match for chunk_size {}",
+                chunk_size
+            );
+        }
+    }
+
+    #[test]
+    fn incremental_decode_baseline_chunk_sizes() {
+        use imgref::{Img, ImgExt as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode, PushStatus};
+
+        let enc = JpegEncoderConfig::new()
+            .with_calibrated_quality(85.0)
+            .with_progressive(false);
+        let width = 64;
+        let height = 64;
+        let pixels: Vec<Rgb<u8>> = (0..width * height)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), width, height);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let jpeg_bytes = encoded.data();
+
+        // 1. One-shot baseline decode for reference
+        let dec_cfg = JpegDecoderConfig::new();
+        let ref_output = dec_cfg
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(jpeg_bytes), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let ps = ref_output.pixels();
+        let ref_bytes: Vec<u8> = (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect();
+
+        // 2. Test multiple chunk sizes down to 1 byte
+        for chunk_size in [jpeg_bytes.len(), 512, 128, 33, 7, 3, 1] {
+            let mut inc = dec_cfg.clone().job().into_incremental_decoder(&[]).unwrap();
+            let mut decoded_rows: Vec<u8> = Vec::new();
+            let mut offset = 0;
+
+            while offset < jpeg_bytes.len() {
+                let end = (offset + chunk_size).min(jpeg_bytes.len());
+                let is_eof = end == jpeg_bytes.len();
+                let outcome = inc.push_chunk(&jpeg_bytes[offset..end], is_eof, None).unwrap();
+                offset = end;
+
+                while let Some((y, strip)) = inc.pull_batch().unwrap() {
+                    assert_eq!(y as usize, decoded_rows.len() / (width * 3));
+                    for r in 0..strip.rows() {
+                        decoded_rows.extend_from_slice(strip.row(r));
+                    }
+                }
+
+                if outcome.status == PushStatus::Complete {
+                    break;
+                }
+            }
+
+            // Pull any remaining batches
+            while let Some((_y, strip)) = inc.pull_batch().unwrap() {
+                for r in 0..strip.rows() {
+                    decoded_rows.extend_from_slice(strip.row(r));
+                }
+            }
+
+            assert!(inc.is_complete(), "decoder must be complete for chunk_size {}", chunk_size);
+            assert_eq!(
+                decoded_rows.len(),
+                ref_bytes.len(),
+                "decoded byte count must match for chunk_size {}",
+                chunk_size
+            );
+            assert_eq!(
+                decoded_rows,
+                ref_bytes,
+                "decoded pixels must match for chunk_size {}",
+                chunk_size
+            );
+        }
+    }
+
+    #[test]
+    fn incremental_decode_dyn_dispatch() {
+        use imgref::{Img, ImgExt as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _, DynIncrementalDecoder, PushStatus};
+
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(75.0);
+        let width = 32;
+        let height = 32;
+        let pixels: Vec<Rgb<u8>> = (0..width * height)
+            .map(|i| Rgb {
+                r: (i * 2 % 256) as u8,
+                g: ((i * 5) % 256) as u8,
+                b: ((i * 11) % 256) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), width, height);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let jpeg_bytes = encoded.data();
+
+        let dec_cfg = JpegDecoderConfig::new();
+        let mut dyn_inc: Box<dyn DynIncrementalDecoder> = dec_cfg.job().dyn_incremental_decoder(&[]).unwrap();
+
+        let outcome = dyn_inc.push_chunk(jpeg_bytes, true, None).unwrap();
+        assert!(outcome.status == PushStatus::OutputReady || outcome.status == PushStatus::Complete);
+
+        let mut total_rows = 0;
+        while let Some((_y, strip)) = dyn_inc.pull_batch().unwrap() {
+            total_rows += strip.rows();
+        }
+        assert_eq!(total_rows, 32);
+        assert!(dyn_inc.is_complete());
+    }
 }
+

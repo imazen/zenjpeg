@@ -14,6 +14,7 @@ use zenpixels::{PixelBuffer, PixelDescriptor};
 use crate::error::{Error, ErrorKind};
 use crate::types::PixelFormat;
 
+use super::incremental::JpegIncrementalDecoder;
 use super::info::{decode_descriptor, populate_info_from_jpeg_extras, to_image_info};
 use super::streaming::JpegStreamingDecoder;
 
@@ -25,6 +26,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = {
         .with_stop(true)
         .with_cheap_probe(true)
         .with_streaming(true)
+        .with_incremental(true)
         .with_native_gray(true)
         .with_native_f32(true)
         .with_enforces_max_pixels(true)
@@ -44,7 +46,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = {
 /// Wraps [`crate::decode::DecodeConfig`] with the zencodec trait interface.
 #[derive(Clone, Debug)]
 pub struct JpegDecoderConfig {
-    inner: crate::decode::DecodeConfig,
+    pub(super) inner: crate::decode::DecodeConfig,
     #[allow(dead_code)]
     limits: ResourceLimits,
     /// How to handle CMYK/YCCK 4-component JPEGs. See [`CmykHandling`].
@@ -438,9 +440,34 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     ) -> Result<Self::AnimationFrameDec, Self::Error> {
         Err(ErrorKind::UnsupportedOperation(UnsupportedOperation::AnimationDecode).into())
     }
+
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<alloc::boxed::Box<dyn zencodec::decode::DynIncrementalDecoder>, zencodec::decode::BoxedError> {
+        let dec = self
+            .into_incremental_decoder(preferred)
+            .map_err(|e| alloc::boxed::Box::new(e) as zencodec::decode::BoxedError)?;
+        Ok(alloc::boxed::Box::new(zencodec::decode::IncrementalDecoderShim(dec)))
+    }
 }
 
 impl JpegDecodeJob {
+    /// Create an incremental (Sans-I/O) decoder.
+    pub fn into_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<JpegIncrementalDecoder, At<CodecError>> {
+        Ok(JpegIncrementalDecoder::new(
+            self.config,
+            self.limits,
+            self.crop_hint,
+            self.orientation,
+            self.policy,
+            self.stop,
+            preferred,
+        ))
+    }
     /// The inner decode config with this job's resource limits applied —
     /// probes must honor `with_limits` exactly like the decode path does
     /// (a 108 MP corpus file probes fine under a raised `max_pixels` but the
@@ -953,7 +980,7 @@ pub(super) fn will_auto_orient(hint: zencodec::OrientationHint) -> bool {
 }
 
 /// Build a DecodeConfig with limit overrides and hints applied.
-fn build_decode_config(
+pub(super) fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
