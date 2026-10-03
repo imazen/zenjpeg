@@ -338,7 +338,9 @@ impl IncrementalDecode for JpegIncrementalDecoder {
         let row_bytes = width * bpp;
         let batch_rows = self.mcu_height;
         let batch_bytes = row_bytes * batch_rows;
-        self.row_buf.resize(batch_bytes, 0);
+        if self.row_buf.len() < batch_bytes {
+            self.row_buf.resize(batch_bytes, 0);
+        }
 
         let ch_type = descriptor.channel_type();
         let ch_layout = descriptor.layout();
