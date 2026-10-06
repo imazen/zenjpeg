@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- No longer enables archmage's `testable_dispatch` for consumers through the
+  workspace dependency, which turned each archmage `summon()` in downstream
+  builds into a cache read. The `kernel_tiers` bench still gets it from `_dev`.
+
 ### Added
 
 - `sharp::rgb_f32_to_yuv420_sharp`: typed, strided gamma-encoded RGB f32 input

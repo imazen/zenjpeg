@@ -2446,7 +2446,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze#47c3c69e383220618166d5bc1e34b25fa6fb8559"
+source = "git+https://github.com/imazen/zenanalyze#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
 dependencies = [
  "archmage 0.9.28",
  "garb",
@@ -2459,7 +2459,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze-api"
 version = "0.1.1"
-source = "git+https://github.com/imazen/zenanalyze#47c3c69e383220618166d5bc1e34b25fa6fb8559"
+source = "git+https://github.com/imazen/zenanalyze#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
 
 [[package]]
 name = "zenbench"

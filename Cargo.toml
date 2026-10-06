@@ -156,8 +156,11 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 # Fast linear-sRGB conversion
 linear-srgb = "0.6.12"
 
-# Token-based safe SIMD intrinsics
-archmage = { version = "0.9.23", features = ["macros", "avx512", "testable_dispatch"] }
+# Token-based safe SIMD intrinsics. Never add `testable_dispatch` here: every
+# member inherits workspace dependency features as a normal dependency, so it
+# would reach every downstream build and turn each archmage `summon()` there
+# into a cache read. Tests get it as a dev-dependency, tier benches via `_dev`.
+archmage = { version = "0.9.23", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
 magetypes = { version = "0.9.23", features = ["avx512"] }
 

@@ -6,6 +6,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Fixed
+- The workspace no longer enables archmage's `testable_dispatch` for every
+  member's normal dependency. Cargo unifies features, so it reached every build
+  that depends on zenjpeg or zenyuv (published 0.8.4 included) and turned each
+  archmage `summon()` there into a cache read, even the x86-64 baseline token's.
+  zenjpeg's unit tests keep it through a dev-dependency, so their token
+  permutations are unchanged; the tier benches keep it through `_dev`.
 - Gamma-aware chroma conversion now interprets linear f32/u16 and BGR/BGRA
   input layouts correctly. 4:2:0 retains the zenyuv refinement kernel and
   preserves fractional samples through a float-input path; RGB8/RGBA8 retain

@@ -111,6 +111,11 @@ zenpredict = { path = "../../zenanalyze/zenpredict", optional = true }
 zenanalyze-api = { workspace = true, optional = true }
 
 [dev-dependencies]
+# The unit tests' `for_each_token_permutation` needs `testable_dispatch` to
+# disable tokens the build guarantees at compile time (SSE2 on x86-64, NEON on
+# aarch64); without it, those permutations are dropped with a warning. As a
+# dev-dependency it stays out of published and downstream builds.
+archmage = { workspace = true, features = ["testable_dispatch"] }
 wide = { workspace = true }
 zenyuv = { workspace = true }
 # Oracle for the color-emit synthesized-ICC test (bundled DISPLAY_P3_V4 const).
