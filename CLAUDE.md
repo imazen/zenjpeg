@@ -1064,6 +1064,12 @@ cargo test --release                    # All non-ignored tests (~340 tests)
 cargo test --release --test <name>      # Specific test file
 ```
 
+**Disk:** `[profile.release]` sets `debug = true`, and plain `cargo test` also links every example
+(132 of them). Built for both default and `--features parallel`, the examples were 31 GB of a 40 GB
+`target/` (measured 2026-10-08; single binaries up to 282 MB). When disk is tight, run the same tests
+with `cargo test --release --lib --tests` plus `--doc`, and catch example/bench compile breakage
+with `cargo check --release --examples --benches`.
+
 ### Full Test Suite (requires C++, testdata, corpus)
 
 Prerequisites:
