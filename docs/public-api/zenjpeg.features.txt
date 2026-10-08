@@ -12,7 +12,7 @@
 #   pub modules                                 4
 #   pub types (struct/enum/trait/alias)        52
 #   pub consts/statics                          4
-#   free functions                             32
+#   free functions                             33
 #   inherent methods                          108
 #   struct fields                              72
 #   enum variants                              80
@@ -27,9 +27,9 @@
 #   encoder                          40
 #   layout                           67
 #   recompress                      158
-#   ultrahdr                         72
+#   ultrahdr                         73
 
-## items (377 lines)
+## items (378 lines)
 
 pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<decoder::TargetColorSpace>) -> Self
 pub fn decoder::DecodeConfig::ultrahdr_reader<'a>(&self, &'a [u8], ultrahdr::UltraHdrReaderConfig) -> encoder::Result<ultrahdr::UltraHdrReader<'a>>
@@ -370,6 +370,7 @@ pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&z
 pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap_metadata(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, &zencodec::metadata::Metadata, &zencodec::metadata::MetadataPolicy, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String
 pub fn ultrahdr::generate_primary_xmp(usize) -> alloc::string::String
 pub fn ultrahdr::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String

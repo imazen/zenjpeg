@@ -52,7 +52,7 @@ bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
-zencodec = { workspace = true }
+zencodec = { workspace = true, features = ["xmp"] }
 zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true, optional = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)

@@ -6,27 +6,27 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1692 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3556 lines (845 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1704 lines (supported surface) | zenjpeg.features.txt 432 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3582 lines (882 hidden + 7232 excluded-feature)
 
 ## summary
 #
-#   pub modules                                19
-#   pub types (struct/enum/trait/alias)       146
+#   pub modules                                20
+#   pub types (struct/enum/trait/alias)       147
 #   pub consts/statics                         95
 #   pub macros                                  2
-#   free functions                             65
+#   free functions                             66
 #   inherent methods                          504
 #   struct fields                             385
-#   enum variants                             394
+#   enum variants                             402
 #   re-exports                                  2
-#   trait roster entries (type × trait)       492
-#   auto-trait-complete types                 106
+#   trait roster entries (type × trait)       499
+#   auto-trait-complete types                 107
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
 #   (root)                           69
 #   blur                              1
-#   container                       276
+#   container                       287
 #   deblock                          16
 #   decoder                         558
 #   detect                           56
@@ -37,7 +37,7 @@
 #   target_quality                   19
 #   zq_seed                           3
 
-## items (1556 lines)
+## items (1567 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -62,6 +62,15 @@ pub container::marker::MarkerSpan::kind: container::marker::MarkerKind
 pub container::marker::MarkerSpan::length: usize
 pub container::marker::MarkerSpan::offset: usize
 pub container::marker::MarkerSpan::payload: &'a [u8]
+pub mod container::metadata
+#[non_exhaustive] pub enum container::metadata::Error
+pub container::metadata::Error::Allocation
+pub container::metadata::Error::DropColorProfile
+pub container::metadata::Error::DropOrientation
+pub container::metadata::Error::InvalidExif
+pub container::metadata::Error::KeepSourceXmp
+pub container::metadata::Error::MalformedJpeg
+pub fn container::metadata::filter_for_gain_map(&[u8], &zencodec::metadata::MetadataPolicy) -> core::result::Result<alloc::vec::Vec<u8>, container::metadata::Error>
 pub mod container::mpf
 pub container::mpf::MpfError::BadEndian([u8; 2])
 pub container::mpf::MpfError::BadEntryOffset
@@ -146,6 +155,7 @@ pub container::types::MpfEntry::image_type: container::types::MpImageType
 pub container::types::MpfEntry::offset: usize
 pub container::types::MpfEntry::size: usize
 pub mod container::xmp
+pub container::xmp::XmpError::Invalid(alloc::string::String)
 pub container::xmp::XmpError::LengthLimit
 pub container::xmp::XmpError::LengthLimit::got: usize
 pub container::xmp::XmpError::LengthLimit::max: usize
@@ -204,6 +214,7 @@ pub container::MpfError::Other(alloc::string::String)
 pub container::MpfError::TooShort
 pub container::MpfError::TooShort::got: usize
 #[non_exhaustive] pub enum container::XmpError [also: container::xmp]
+pub container::XmpError::Invalid(alloc::string::String)
 pub container::XmpError::LengthLimit
 pub container::XmpError::LengthLimit::got: usize
 pub container::XmpError::LengthLimit::max: usize
@@ -1596,11 +1607,12 @@ pub fn zq_seed::predict_q0_from_image(&[u8], u32, u32, f64) -> core::option::Opt
 pub macro profile_block!
 pub macro profile_scope!
 
-## trait impls (122 types)
+## trait impls (123 types)
 
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
 container::marker::MarkerSpan<'a>: Clone, Copy, Debug
+container::metadata::Error: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 container::mpf::MpfError: Debug, Display, Error
 container::probe::ContainerProbe: Clone, Debug, Default
 container::probe::GainMapPresence: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -1723,7 +1735,7 @@ whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder
 
 ## auto traits
 
-106 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+107 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 decoder::DecodeConfig: !RefUnwindSafe !UnwindSafe
 decoder::DecodeInfo: !Freeze
 decoder::DecodePool: !Freeze

@@ -268,5 +268,7 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 # per-manifest git revs — that is what split the ecosystem before. Drop both
 # entries once zenanalyze 0.2.x / zenanalyze-api 0.1.1 publish.
 [patch.crates-io]
+# Metadata audit/namespace reader stack on zencodec PR #125; one source for every edge.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "06b5954cbd9d15282509011aab8f8efa0d8973dd" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
