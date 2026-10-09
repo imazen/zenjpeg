@@ -1529,7 +1529,7 @@ mod push_decode_stride_tests {
         use zencodec::decode::DecoderConfig;
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
 
-        let compute = ComputeEnvironment::new();
+        let compute = ComputeEnvironment::conservative();
         let small = ImageCharacteristics::new(256, 256, PixelDescriptor::RGB8_SRGB);
         let large = ImageCharacteristics::new(2048, 2048, PixelDescriptor::RGB8_SRGB);
 

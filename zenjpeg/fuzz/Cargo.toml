@@ -76,6 +76,9 @@ members = ["."]
 # away. Keep in sync with `../../Cargo.toml`.
 [patch.crates-io]
 zenanalyze = { path = "../../../zenanalyze" }
+# Keep in sync with the repo-root patch table: zencodec's inventory API is on
+# the imazen/zencodec#133 branch until it is released.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 
 [[bin]]
 name = "fuzz_decode"
