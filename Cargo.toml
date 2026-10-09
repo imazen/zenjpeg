@@ -160,9 +160,9 @@ linear-srgb = "0.6.12"
 # member inherits workspace dependency features as a normal dependency, so it
 # would reach every downstream build and turn each archmage `summon()` there
 # into a cache read. Tests get it as a dev-dependency, tier benches via `_dev`.
-archmage = { version = "0.9.23", features = ["macros", "avx512"] }
+archmage = { version = "0.9.30", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
-magetypes = { version = "0.9.23", features = ["avx512"] }
+magetypes = { version = "0.9.30", features = ["avx512"] }
 
 # Error tracing with location tracking
 whereat = "0.1.5"

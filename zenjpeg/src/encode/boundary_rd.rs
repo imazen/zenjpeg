@@ -106,12 +106,12 @@ fn mage_scale_block_x8(token: Token, dct_f32: &Block8x8f) -> [f32; DCT_BLOCK_SIZ
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
-    let scale = f32x8::splat(token, 8.0);
+    let scale = f32x8::splat_t(token, 8.0);
     let mut out = [0.0f32; DCT_BLOCK_SIZE];
 
     // Loop through rows; LLVM unrolls this at #[magetypes] expansion time.
     for row in 0..8 {
-        let v = f32x8::from_array(token, dct_f32.rows[row]);
+        let v = f32x8::from_array_t(token, dct_f32.rows[row]);
         let scaled = v * scale;
         let arr = scaled.to_array();
         let base = row * 8;
@@ -298,10 +298,10 @@ fn mage_boundary_distortion(
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
-    let rec_cur = f32x8::from_array(token, *rec_curr_left);
-    let rec_l = f32x8::from_array(token, *rec_lr);
-    let orig_cur = f32x8::from_array(token, *orig_curr_left);
-    let orig_l = f32x8::from_array(token, *orig_lr);
+    let rec_cur = f32x8::from_array_t(token, *rec_curr_left);
+    let rec_l = f32x8::from_array_t(token, *rec_lr);
+    let orig_cur = f32x8::from_array_t(token, *orig_curr_left);
+    let orig_l = f32x8::from_array_t(token, *orig_lr);
 
     let d_cur = rec_cur - orig_cur;
     let d_left = rec_l - orig_l;
@@ -309,7 +309,7 @@ fn mage_boundary_distortion(
 
     // Fused square+accumulate: sum = d_cur² + d_left² + α·d_seam² (element-wise),
     // then horizontal sum.
-    let alpha_v = f32x8::splat(token, alpha);
+    let alpha_v = f32x8::splat_t(token, alpha);
     let sq_cur = d_cur * d_cur;
     let sq_left = d_left * d_left;
     let sq_seam_a = d_seam.mul_add(alpha_v * d_seam, sq_cur + sq_left);
@@ -340,23 +340,23 @@ fn mage_ac_dct_energy(token: Token, dct_f32: &Block8x8f) -> f32 {
     // Row 0: zero out the DC (position [0][0]) then sum-of-squares.
     let mut row0 = dct_f32.rows[0];
     row0[0] = 0.0;
-    let v0 = f32x8::from_array(token, row0);
+    let v0 = f32x8::from_array_t(token, row0);
     let mut acc = v0 * v0;
 
     // Rows 1..8: full f32x8 square-and-accumulate.
-    let v1 = f32x8::from_array(token, dct_f32.rows[1]);
+    let v1 = f32x8::from_array_t(token, dct_f32.rows[1]);
     acc = v1.mul_add(v1, acc);
-    let v2 = f32x8::from_array(token, dct_f32.rows[2]);
+    let v2 = f32x8::from_array_t(token, dct_f32.rows[2]);
     acc = v2.mul_add(v2, acc);
-    let v3 = f32x8::from_array(token, dct_f32.rows[3]);
+    let v3 = f32x8::from_array_t(token, dct_f32.rows[3]);
     acc = v3.mul_add(v3, acc);
-    let v4 = f32x8::from_array(token, dct_f32.rows[4]);
+    let v4 = f32x8::from_array_t(token, dct_f32.rows[4]);
     acc = v4.mul_add(v4, acc);
-    let v5 = f32x8::from_array(token, dct_f32.rows[5]);
+    let v5 = f32x8::from_array_t(token, dct_f32.rows[5]);
     acc = v5.mul_add(v5, acc);
-    let v6 = f32x8::from_array(token, dct_f32.rows[6]);
+    let v6 = f32x8::from_array_t(token, dct_f32.rows[6]);
     acc = v6.mul_add(v6, acc);
-    let v7 = f32x8::from_array(token, dct_f32.rows[7]);
+    let v7 = f32x8::from_array_t(token, dct_f32.rows[7]);
     acc = v7.mul_add(v7, acc);
 
     acc.reduce_add()

@@ -24,19 +24,19 @@ pub(crate) fn rgb_to_yuv444_generic(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let yr = i32x8::splat(token, coeffs.yr as i32);
-    let yg = i32x8::splat(token, coeffs.yg as i32);
-    let yb = i32x8::splat(token, coeffs.yb as i32);
-    let cb_r = i32x8::splat(token, coeffs.cb_r as i32);
-    let cb_g = i32x8::splat(token, coeffs.cb_g as i32);
-    let cb_b = i32x8::splat(token, coeffs.cb_b as i32);
-    let cr_r = i32x8::splat(token, coeffs.cr_r as i32);
-    let cr_g = i32x8::splat(token, coeffs.cr_g as i32);
-    let cr_b = i32x8::splat(token, coeffs.cr_b as i32);
-    let y_bias = i32x8::splat(token, coeffs.y_bias);
-    let uv_bias = i32x8::splat(token, coeffs.uv_bias);
-    let zero = i32x8::zero(token);
-    let max255 = i32x8::splat(token, 255);
+    let yr = i32x8::splat_t(token, coeffs.yr as i32);
+    let yg = i32x8::splat_t(token, coeffs.yg as i32);
+    let yb = i32x8::splat_t(token, coeffs.yb as i32);
+    let cb_r = i32x8::splat_t(token, coeffs.cb_r as i32);
+    let cb_g = i32x8::splat_t(token, coeffs.cb_g as i32);
+    let cb_b = i32x8::splat_t(token, coeffs.cb_b as i32);
+    let cr_r = i32x8::splat_t(token, coeffs.cr_r as i32);
+    let cr_g = i32x8::splat_t(token, coeffs.cr_g as i32);
+    let cr_b = i32x8::splat_t(token, coeffs.cr_b as i32);
+    let y_bias = i32x8::splat_t(token, coeffs.y_bias);
+    let uv_bias = i32x8::splat_t(token, coeffs.uv_bias);
+    let zero = i32x8::zero_t(token);
+    let max255 = i32x8::splat_t(token, 255);
 
     let chunks = n / 8;
     for c in 0..chunks {
@@ -50,9 +50,9 @@ pub(crate) fn rgb_to_yuv444_generic(
             ga[i] = rgb[p + 1] as i32;
             ba[i] = rgb[p + 2] as i32;
         }
-        let r = i32x8::from_array(token, ra);
-        let g = i32x8::from_array(token, ga);
-        let b = i32x8::from_array(token, ba);
+        let r = i32x8::from_array_t(token, ra);
+        let g = i32x8::from_array_t(token, ga);
+        let b = i32x8::from_array_t(token, ba);
 
         // Integer multiply-accumulate + bias, then arithmetic shift right.
         // Matches AVX2 pmaddwd + srai and NEON vmul + vshrn.
@@ -118,12 +118,12 @@ pub(crate) fn rgb_to_yuv420_generic(
     let n = width * height;
 
     // Y plane: full-resolution, same integer math as 4:4:4.
-    let yr_v = i32x8::splat(token, coeffs.yr as i32);
-    let yg_v = i32x8::splat(token, coeffs.yg as i32);
-    let yb_v = i32x8::splat(token, coeffs.yb as i32);
-    let y_bias_v = i32x8::splat(token, coeffs.y_bias);
-    let zero = i32x8::zero(token);
-    let max255 = i32x8::splat(token, 255);
+    let yr_v = i32x8::splat_t(token, coeffs.yr as i32);
+    let yg_v = i32x8::splat_t(token, coeffs.yg as i32);
+    let yb_v = i32x8::splat_t(token, coeffs.yb as i32);
+    let y_bias_v = i32x8::splat_t(token, coeffs.y_bias);
+    let zero = i32x8::zero_t(token);
+    let max255 = i32x8::splat_t(token, 255);
 
     let chunks = n / 8;
     for c in 0..chunks {
@@ -137,9 +137,9 @@ pub(crate) fn rgb_to_yuv420_generic(
             ga[i] = rgb[p + 1] as i32;
             ba[i] = rgb[p + 2] as i32;
         }
-        let r = i32x8::from_array(token, ra);
-        let g = i32x8::from_array(token, ga);
-        let b = i32x8::from_array(token, ba);
+        let r = i32x8::from_array_t(token, ra);
+        let g = i32x8::from_array_t(token, ga);
+        let b = i32x8::from_array_t(token, ba);
         let y_v =
             ((r * yr_v) + (g * yg_v) + (b * yb_v) + y_bias_v).shr_arithmetic_const::<{ PREC }>();
         let y_i = y_v.max(zero).min(max255).to_array();

@@ -139,8 +139,8 @@ mod simd_fused {
             values[6] as f32,
             values[7] as f32,
         ];
-        let v = mt_f32x8::from_array(token, arr);
-        v * mt_f32x8::splat(token, 1.0 / 65535.0)
+        let v = mt_f32x8::from_array_t(token, arr);
+        v * mt_f32x8::splat_t(token, 1.0 / 65535.0)
     }
 
     /// Apply sRGB transfer and x255 scaling to an f32x8 of linear [0,1] values.
@@ -148,7 +148,7 @@ mod simd_fused {
     #[rite]
     fn linear_to_srgb_255_simd(token: X64V3Token, linear: mt_f32x8) -> mt_f32x8 {
         let srgb_arr = linear_srgb::tokens::x8::linear_to_srgb_v3(token, linear.to_array());
-        mt_f32x8::from_array(token, srgb_arr) * mt_f32x8::splat(token, 255.0)
+        mt_f32x8::from_array_t(token, srgb_arr) * mt_f32x8::splat_t(token, 255.0)
     }
 
     /// Fused linear u16->sRGB->x255 for 8 values.
@@ -161,9 +161,9 @@ mod simd_fused {
     /// Fused linear f32->Reinhard->sRGB->x255 for 8 values.
     #[arcane]
     pub(super) fn linear_to_srgb_255_x8_v3(token: X64V3Token, x: &[f32; 8]) -> [f32; 8] {
-        let zero = mt_f32x8::zero(token);
-        let one = mt_f32x8::splat(token, 1.0);
-        let v = mt_f32x8::from_array(token, *x).max(zero);
+        let zero = mt_f32x8::zero_t(token);
+        let one = mt_f32x8::splat_t(token, 1.0);
+        let v = mt_f32x8::from_array_t(token, *x).max(zero);
 
         // Reinhard tone mapping for HDR values: x / (1 + x)
         // For values <= 1.0, use as-is
@@ -189,16 +189,16 @@ mod simd_fused {
         let b = linear_to_srgb_255_simd(token, u16x8_to_linear_f32(token, b));
 
         // BT.601 RGB->YCbCr matrix multiply in SIMD
-        let kr_y = mt_f32x8::splat(token, YCBCR_R_TO_Y);
-        let kg_y = mt_f32x8::splat(token, YCBCR_G_TO_Y);
-        let kb_y = mt_f32x8::splat(token, YCBCR_B_TO_Y);
-        let kr_cb = mt_f32x8::splat(token, YCBCR_R_TO_CB);
-        let kg_cb = mt_f32x8::splat(token, YCBCR_G_TO_CB);
-        let kb_cb = mt_f32x8::splat(token, YCBCR_B_TO_CB);
-        let kr_cr = mt_f32x8::splat(token, YCBCR_R_TO_CR);
-        let kg_cr = mt_f32x8::splat(token, YCBCR_G_TO_CR);
-        let kb_cr = mt_f32x8::splat(token, YCBCR_B_TO_CR);
-        let offset = mt_f32x8::splat(token, CHROMA_OFFSET);
+        let kr_y = mt_f32x8::splat_t(token, YCBCR_R_TO_Y);
+        let kg_y = mt_f32x8::splat_t(token, YCBCR_G_TO_Y);
+        let kb_y = mt_f32x8::splat_t(token, YCBCR_B_TO_Y);
+        let kr_cb = mt_f32x8::splat_t(token, YCBCR_R_TO_CB);
+        let kg_cb = mt_f32x8::splat_t(token, YCBCR_G_TO_CB);
+        let kb_cb = mt_f32x8::splat_t(token, YCBCR_B_TO_CB);
+        let kr_cr = mt_f32x8::splat_t(token, YCBCR_R_TO_CR);
+        let kg_cr = mt_f32x8::splat_t(token, YCBCR_G_TO_CR);
+        let kb_cr = mt_f32x8::splat_t(token, YCBCR_B_TO_CR);
+        let offset = mt_f32x8::splat_t(token, CHROMA_OFFSET);
 
         let y = kr_y.mul_add(r, kg_y.mul_add(g, kb_y * b));
         let cb = kr_cb.mul_add(r, kg_cb.mul_add(g, kb_cb * b)) + offset;
@@ -215,12 +215,12 @@ mod simd_fused {
         g: &[f32; 8],
         b: &[f32; 8],
     ) -> ([f32; 8], [f32; 8], [f32; 8]) {
-        let zero = mt_f32x8::zero(token);
-        let one = mt_f32x8::splat(token, 1.0);
+        let zero = mt_f32x8::zero_t(token);
+        let one = mt_f32x8::splat_t(token, 1.0);
 
         // Reinhard tone mapping + sRGB for each channel
         let process = |x: &[f32; 8]| -> mt_f32x8 {
-            let v = mt_f32x8::from_array(token, *x).max(zero);
+            let v = mt_f32x8::from_array_t(token, *x).max(zero);
             let reinhard = v / (one + v);
             let mask = v.simd_gt(one);
             let clamped = mt_f32x8::blend(mask, reinhard, v);
@@ -232,16 +232,16 @@ mod simd_fused {
         let b = process(b);
 
         // BT.601 RGB->YCbCr
-        let kr_y = mt_f32x8::splat(token, YCBCR_R_TO_Y);
-        let kg_y = mt_f32x8::splat(token, YCBCR_G_TO_Y);
-        let kb_y = mt_f32x8::splat(token, YCBCR_B_TO_Y);
-        let kr_cb = mt_f32x8::splat(token, YCBCR_R_TO_CB);
-        let kg_cb = mt_f32x8::splat(token, YCBCR_G_TO_CB);
-        let kb_cb = mt_f32x8::splat(token, YCBCR_B_TO_CB);
-        let kr_cr = mt_f32x8::splat(token, YCBCR_R_TO_CR);
-        let kg_cr = mt_f32x8::splat(token, YCBCR_G_TO_CR);
-        let kb_cr = mt_f32x8::splat(token, YCBCR_B_TO_CR);
-        let offset = mt_f32x8::splat(token, CHROMA_OFFSET);
+        let kr_y = mt_f32x8::splat_t(token, YCBCR_R_TO_Y);
+        let kg_y = mt_f32x8::splat_t(token, YCBCR_G_TO_Y);
+        let kb_y = mt_f32x8::splat_t(token, YCBCR_B_TO_Y);
+        let kr_cb = mt_f32x8::splat_t(token, YCBCR_R_TO_CB);
+        let kg_cb = mt_f32x8::splat_t(token, YCBCR_G_TO_CB);
+        let kb_cb = mt_f32x8::splat_t(token, YCBCR_B_TO_CB);
+        let kr_cr = mt_f32x8::splat_t(token, YCBCR_R_TO_CR);
+        let kg_cr = mt_f32x8::splat_t(token, YCBCR_G_TO_CR);
+        let kb_cr = mt_f32x8::splat_t(token, YCBCR_B_TO_CR);
+        let offset = mt_f32x8::splat_t(token, CHROMA_OFFSET);
 
         let y = kr_y.mul_add(r, kg_y.mul_add(g, kb_y * b));
         let cb = kr_cb.mul_add(r, kg_cb.mul_add(g, kb_cb * b)) + offset;

@@ -82,14 +82,14 @@ mod simd {
 
         // BTranspose<2> and IDCT1D<2> on [o0, o1]
         let o1b = o1 + o0;
-        let sqrt2 = f32x8::splat(token, SQRT2);
+        let sqrt2 = f32x8::splat_t(token, SQRT2);
         let o0b = o0 * sqrt2;
         let o00 = o0b + o1b;
         let o01 = o0b - o1b;
 
         // MultiplyAndAdd<4>
-        let wc4_0 = f32x8::splat(token, WC4[0]);
-        let wc4_1 = f32x8::splat(token, WC4[1]);
+        let wc4_0 = f32x8::splat_t(token, WC4[0]);
+        let wc4_1 = f32x8::splat_t(token, WC4[1]);
         let prod0 = wc4_0 * o00;
         let prod1 = wc4_1 * o01;
         let r0 = e00 + prod0;
@@ -126,10 +126,10 @@ mod simd {
 
         // MultiplyAndAdd<8>
         let wc8 = [
-            f32x8::splat(token, WC8[0]),
-            f32x8::splat(token, WC8[1]),
-            f32x8::splat(token, WC8[2]),
-            f32x8::splat(token, WC8[3]),
+            f32x8::splat_t(token, WC8[0]),
+            f32x8::splat_t(token, WC8[1]),
+            f32x8::splat_t(token, WC8[2]),
+            f32x8::splat_t(token, WC8[3]),
         ];
 
         let prod8_0 = wc8[0] * r0o;
@@ -227,7 +227,7 @@ mod simd {
         type f32x8 = GenericF32x8<Token>;
 
         // Load input as rows
-        let mut rows = f32x8::load_8x8(token, input);
+        let mut rows = f32x8::load_8x8_t(token, input);
 
         // Transpose: rows -> cols for parallel row IDCT
         f32x8::transpose_8x8(&mut rows);
@@ -243,7 +243,7 @@ mod simd {
         let final_rows = idct_1d_vec_generic(token, rows_for_col);
 
         // Apply 1/8 scaling and store
-        let scale = f32x8::splat(token, 1.0 / 8.0);
+        let scale = f32x8::splat_t(token, 1.0 / 8.0);
         let scaled: [f32x8; 8] = core::array::from_fn(|i| final_rows[i] * scale);
 
         let mut output = [0.0f32; 64];
@@ -263,7 +263,7 @@ mod simd {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
-        let mut rows = f32x8::load_8x8(token, input);
+        let mut rows = f32x8::load_8x8_t(token, input);
         f32x8::transpose_8x8(&mut rows);
         f32x8::store_8x8(&rows, output);
     }

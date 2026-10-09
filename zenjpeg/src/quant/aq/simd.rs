@@ -35,7 +35,7 @@ use magetypes::simd::generic::f32x8 as GenericF32x8;
 /// Load 8 f32s into GenericF32x8. Panics if slice is too short.
 #[inline(always)]
 fn load_f32x8<T: F32x8Backend>(token: T, slice: &[f32], offset: usize) -> GenericF32x8<T> {
-    GenericF32x8::<T>::load(token, slice[offset..offset + 8].try_into().unwrap())
+    GenericF32x8::<T>::load_t(token, slice[offset..offset + 8].try_into().unwrap())
 }
 
 /// Store GenericF32x8 to slice. Panics if slice is too short.
@@ -102,15 +102,15 @@ fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(
     token: T,
     vals: GenericF32x8<T>,
 ) -> GenericF32x8<T> {
-    let v = vals.max(GenericF32x8::<T>::zero(token));
+    let v = vals.max(GenericF32x8::<T>::zero_t(token));
     let v2 = v * v;
 
     let num = v2.mul_add(
-        GenericF32x8::<T>::splat(token, K_NUM_MUL_RATIO),
-        GenericF32x8::<T>::splat(token, K_NUM_OFFSET_RATIO),
+        GenericF32x8::<T>::splat_t(token, K_NUM_MUL_RATIO),
+        GenericF32x8::<T>::splat_t(token, K_NUM_OFFSET_RATIO),
     );
-    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO))
-        .mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
+    let den = (v * GenericF32x8::<T>::splat_t(token, K_DEN_MUL_RATIO))
+        .mul_add(v2, GenericF32x8::<T>::splat_t(token, K_VOFFSET_RATIO));
 
     // den is always positive due to K_VOFFSET_RATIO > 0, no need for safe_den check
     den / num
@@ -123,15 +123,15 @@ fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(
     token: T,
     vals: GenericF32x8<T>,
 ) -> GenericF32x8<T> {
-    let v = vals.max(GenericF32x8::<T>::zero(token));
+    let v = vals.max(GenericF32x8::<T>::zero_t(token));
     let v2 = v * v;
 
     let num = v2.mul_add(
-        GenericF32x8::<T>::splat(token, K_NUM_MUL_RATIO),
-        GenericF32x8::<T>::splat(token, K_NUM_OFFSET_RATIO),
+        GenericF32x8::<T>::splat_t(token, K_NUM_MUL_RATIO),
+        GenericF32x8::<T>::splat_t(token, K_NUM_OFFSET_RATIO),
     );
-    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO))
-        .mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
+    let den = (v * GenericF32x8::<T>::splat_t(token, K_DEN_MUL_RATIO))
+        .mul_add(v2, GenericF32x8::<T>::splat_t(token, K_VOFFSET_RATIO));
 
     num / den
 }
@@ -140,9 +140,9 @@ fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(
 /// Processes 8 f32 values at once. Generic over SIMD backend.
 #[inline(always)]
 fn masking_sqrt_x8_generic<T: F32x8Backend>(token: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
-    let k_mul_sqrt = GenericF32x8::<T>::splat(token, (K_MASKING_MUL * 1e8_f32).sqrt());
-    let k_offset = GenericF32x8::<T>::splat(token, K_MASKING_LOG_OFFSET);
-    GenericF32x8::<T>::splat(token, 0.25) * v.mul_add(k_mul_sqrt, k_offset).sqrt()
+    let k_mul_sqrt = GenericF32x8::<T>::splat_t(token, (K_MASKING_MUL * 1e8_f32).sqrt());
+    let k_offset = GenericF32x8::<T>::splat_t(token, K_MASKING_LOG_OFFSET);
+    GenericF32x8::<T>::splat_t(token, 0.25) * v.mul_add(k_mul_sqrt, k_offset).sqrt()
 }
 
 // ============================================================================
@@ -166,19 +166,19 @@ fn pre_erosion_pixel_x8_generic<T: F32x8Backend>(
     bottom: GenericF32x8<T>,
 ) -> GenericF32x8<T> {
     // base = 0.25 * (left + right + top + bottom)
-    let base = GenericF32x8::<T>::splat(token, 0.25) * (left + right + top + bottom);
+    let base = GenericF32x8::<T>::splat_t(token, 0.25) * (left + right + top + bottom);
 
     // ratio = ratio_of_derivatives(pixel + gamma_offset, false)
     let ratio = ratio_of_derivatives_x8_generic(
         token,
-        pixels + GenericF32x8::<T>::splat(token, GAMMA_OFFSET),
+        pixels + GenericF32x8::<T>::splat_t(token, GAMMA_OFFSET),
     );
 
     // diff = ratio * (pixel - base)
     let diff = ratio * (pixels - base);
 
     // diff_sq = min(diff * diff, LIMIT)
-    let diff_sq = (diff * diff).min(GenericF32x8::<T>::splat(token, LIMIT));
+    let diff_sq = (diff * diff).min(GenericF32x8::<T>::splat_t(token, LIMIT));
 
     // masked = masking_sqrt(diff_sq)
     masking_sqrt_x8_generic(token, diff_sq)
@@ -230,7 +230,7 @@ fn pre_erosion_row_impl(
         // Load neighbors with boundary handling
         let left = if x == 0 {
             // First chunk: first pixel uses itself as left neighbor
-            f32x8::from_array(
+            f32x8::from_array_t(
                 token,
                 [
                     row[0],
@@ -250,7 +250,7 @@ fn pre_erosion_row_impl(
         let right = if x + 8 >= width {
             // Last chunk: last pixel uses itself as right neighbor
             let last = width - 1;
-            f32x8::from_array(
+            f32x8::from_array_t(
                 token,
                 [
                     row[(x + 1).min(last)],
@@ -590,8 +590,8 @@ fn gamma_modulation_sum_8x8_generic<T: F32x8Backend>(
     _img_width: usize,
     img_height: usize,
 ) -> f32 {
-    let bias = GenericF32x8::<T>::splat(token, K_BIAS);
-    let mut sum = GenericF32x8::<T>::zero(token);
+    let bias = GenericF32x8::<T>::splat_t(token, K_BIAS);
+    let mut sum = GenericF32x8::<T>::zero_t(token);
 
     // The buffer is guaranteed to have 8 columns per block row due to MCU-aligned
     // allocation. For edge blocks, the extra columns contain replicated edge values,
@@ -630,10 +630,10 @@ fn hf_modulation_sum_8x8_generic<T: F32x8Backend>(
 ) -> f32 {
     // Mask to zero out the 8th element for horizontal differences
     let mask_first_7 =
-        GenericF32x8::<T>::from_array(token, [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
+        GenericF32x8::<T>::from_array_t(token, [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
 
-    let mut h_sum = GenericF32x8::<T>::zero(token);
-    let mut v_sum = GenericF32x8::<T>::zero(token);
+    let mut h_sum = GenericF32x8::<T>::zero_t(token);
+    let mut v_sum = GenericF32x8::<T>::zero_t(token);
 
     // The buffer is guaranteed to have 8 columns per block row due to MCU-aligned
     // allocation. For edge blocks, the extra columns contain replicated edge values,
@@ -885,10 +885,10 @@ fn weighted_min4_of_9_simd<T: F32x8Backend>(
 
     // Now v[0..4] contains the 4 smallest values
     // Compute weighted sum using FMA
-    let mul0 = GenericF32x8::<T>::splat(token, FUZZY_MUL0);
-    let mul1 = GenericF32x8::<T>::splat(token, FUZZY_MUL1);
-    let mul2 = GenericF32x8::<T>::splat(token, FUZZY_MUL2);
-    let mul3 = GenericF32x8::<T>::splat(token, FUZZY_MUL3);
+    let mul0 = GenericF32x8::<T>::splat_t(token, FUZZY_MUL0);
+    let mul1 = GenericF32x8::<T>::splat_t(token, FUZZY_MUL1);
+    let mul2 = GenericF32x8::<T>::splat_t(token, FUZZY_MUL2);
+    let mul3 = GenericF32x8::<T>::splat_t(token, FUZZY_MUL3);
 
     mul0 * v[0] + mul1 * v[1] + mul2 * v[2] + mul3 * v[3]
 }
@@ -1070,7 +1070,7 @@ fn gather_neighbor_circular<T: F32x8Backend>(
         let idx = row_offset + px;
         if idx < buffer.len() { buffer[idx] } else { 0.0 }
     });
-    GenericF32x8::<T>::from_array(token, vals)
+    GenericF32x8::<T>::from_array_t(token, vals)
 }
 
 /// Compute fuzzy erosion for 8 blocks using SIMD sorting network.
@@ -1129,7 +1129,7 @@ fn compute_fuzzy_erosion_blocks_simd_impl(
         // Base cx values for 8 consecutive blocks (stride 2 in pre-erosion space)
         let base_cx: [isize; 8] = std::array::from_fn(|i| ((bx + i - start) * 2) as isize);
 
-        let mut sum = f32x8::zero(token);
+        let mut sum = f32x8::zero_t(token);
 
         // Process 4 sub-pixels per block: (dx, dy) in {0,1} x {0,1}
         for dy in 0..2isize {
@@ -2785,7 +2785,7 @@ fn test_ratio_of_derivatives_x8(input: [f32; 8]) -> [f32; 8] {
     fn test_ratio_of_derivatives_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
-        let v = f32x8::from_array(token, input);
+        let v = f32x8::from_array_t(token, input);
         ratio_of_derivatives_x8_generic(token, v).to_array()
     }
     inner(input)
@@ -2802,7 +2802,7 @@ fn test_ratio_of_derivatives_inv_x8(input: [f32; 8]) -> [f32; 8] {
     fn test_ratio_of_derivatives_inv_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
-        let v = f32x8::from_array(token, input);
+        let v = f32x8::from_array_t(token, input);
         ratio_of_derivatives_inv_x8_generic(token, v).to_array()
     }
     inner(input)
@@ -2819,7 +2819,7 @@ fn test_masking_sqrt_x8(input: [f32; 8]) -> [f32; 8] {
     fn test_masking_sqrt_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
-        let v = f32x8::from_array(token, input);
+        let v = f32x8::from_array_t(token, input);
         masking_sqrt_x8_generic(token, v).to_array()
     }
     inner(input)
@@ -2859,11 +2859,11 @@ fn test_pre_erosion_pixel_x8(
         type f32x8 = GenericF32x8<Token>;
         pre_erosion_pixel_x8_generic(
             token,
-            f32x8::from_array(token, pixels),
-            f32x8::from_array(token, left),
-            f32x8::from_array(token, right),
-            f32x8::from_array(token, top),
-            f32x8::from_array(token, bottom),
+            f32x8::from_array_t(token, pixels),
+            f32x8::from_array_t(token, left),
+            f32x8::from_array_t(token, right),
+            f32x8::from_array_t(token, top),
+            f32x8::from_array_t(token, bottom),
         )
         .to_array()
     }

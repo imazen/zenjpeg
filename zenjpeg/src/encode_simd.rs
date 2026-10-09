@@ -49,7 +49,7 @@ use crate::foundation::consts::{
 /// Load 8 f32s into GenericF32x8. Panics if slice is too short.
 #[inline(always)]
 fn load_f32x8<T: F32x8Backend>(token: T, slice: &[f32], offset: usize) -> GenericF32x8<T> {
-    GenericF32x8::<T>::load(token, slice[offset..offset + 8].try_into().unwrap())
+    GenericF32x8::<T>::load_t(token, slice[offset..offset + 8].try_into().unwrap())
 }
 
 /// Store GenericF32x8 to slice. Panics if slice is too short.
@@ -92,7 +92,7 @@ fn downsample_2x2_simd_inplace_impl(
     let new_height = (height + 1) / 2;
     debug_assert!(result.len() >= new_width * new_height);
 
-    let scale = f32x8::splat(token, 0.25);
+    let scale = f32x8::splat_t(token, 0.25);
     // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
     // would read past the row boundary into the next row, so we use scalar path
     // for any columns where input x + 15 >= width (i.e., last 8 output columns when width % 16 >= 1).
@@ -116,10 +116,10 @@ fn downsample_2x2_simd_inplace_impl(
             let (p00_arr, p10_arr) = gather_even_odd_x8(plane, row0_idx, width);
             let (p01_arr, p11_arr) = gather_even_odd_x8(plane, row1_idx, width);
 
-            let p00 = f32x8::from_array(token, p00_arr);
-            let p10 = f32x8::from_array(token, p10_arr);
-            let p01 = f32x8::from_array(token, p01_arr);
-            let p11 = f32x8::from_array(token, p11_arr);
+            let p00 = f32x8::from_array_t(token, p00_arr);
+            let p10 = f32x8::from_array_t(token, p10_arr);
+            let p01 = f32x8::from_array_t(token, p01_arr);
+            let p11 = f32x8::from_array_t(token, p11_arr);
 
             // Box filter: (p00 + p10 + p01 + p11) * 0.25
             let sum = p00 + p10 + p01 + p11;
@@ -167,7 +167,7 @@ fn downsample_2x1_simd_inplace_impl(
     let new_width = (width + 1) / 2;
     debug_assert!(result.len() >= new_width * height);
 
-    let scale = f32x8::splat(token, 0.5);
+    let scale = f32x8::splat_t(token, 0.5);
     // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
     // would read past the row boundary, so use scalar path for edge columns.
     let safe_chunks = if width >= 16 { (width - 15) / 16 } else { 0 };
@@ -183,8 +183,8 @@ fn downsample_2x1_simd_inplace_impl(
 
             // Gather even/odd pixels from the row
             let (p0_arr, p1_arr) = gather_even_odd_x8(plane, in_row_start + in_x, width);
-            let p0 = f32x8::from_array(token, p0_arr);
-            let p1 = f32x8::from_array(token, p1_arr);
+            let p0 = f32x8::from_array_t(token, p0_arr);
+            let p1 = f32x8::from_array_t(token, p1_arr);
 
             // Box filter: (p0 + p1) * 0.5
             let avg = (p0 + p1) * scale;
@@ -229,7 +229,7 @@ fn downsample_1x2_simd_inplace_impl(
     let new_height = (height + 1) / 2;
     debug_assert!(result.len() >= width * new_height);
 
-    let scale = f32x8::splat(token, 0.5);
+    let scale = f32x8::splat_t(token, 0.5);
     let chunks = width / 8;
 
     for y in 0..new_height {
@@ -707,8 +707,8 @@ fn extract_block_xyb_simd_impl(
 
     let is_interior = px_start + 8 <= width && py_start + 8 <= height;
 
-    let scale = f32x8::splat(token, 255.0);
-    let level_shift = f32x8::splat(token, 128.0);
+    let scale = f32x8::splat_t(token, 255.0);
+    let level_shift = f32x8::splat_t(token, 128.0);
     let mut block = [0.0f32; 64];
 
     if is_interior {

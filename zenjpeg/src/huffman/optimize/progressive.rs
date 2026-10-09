@@ -56,15 +56,15 @@ mod refine_mask_dispatch {
         #[allow(non_camel_case_types)]
         type i16x8 = GenericI16x8<Token>;
 
-        let thresh_al = i16x8::splat(token, 1i16 << al);
-        let thresh_ah = i16x8::splat(token, 1i16 << ah);
+        let thresh_al = i16x8::splat_t(token, 1i16 << al);
+        let thresh_ah = i16x8::splat_t(token, 1i16 << ah);
 
         let mut any_nz_mask: u64 = 0;
         let mut was_nz_mask: u64 = 0;
 
         for chunk in 0..8 {
             let start = chunk * 8;
-            let v = i16x8::load(token, coeffs[start..start + 8].try_into().unwrap());
+            let v = i16x8::load_t(token, coeffs[start..start + 8].try_into().unwrap());
             let absv = v.abs();
             let any_nz = absv.simd_ge(thresh_al);
             let was_nz = absv.simd_ge(thresh_ah);

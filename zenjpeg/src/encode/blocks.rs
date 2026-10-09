@@ -679,13 +679,13 @@ pub(crate) fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
 fn mage_build_nonzero_mask(_token: archmage::X64V3Token, coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
     use magetypes::simd::i16x8 as mi16x8;
     let token = _token;
-    let zero = mi16x8::zero(token);
+    let zero = mi16x8::zero_t(token);
     let mut nonzero_mask: u64 = 0;
 
     // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
     for chunk in 0..8 {
         let start = chunk * 8;
-        let v = mi16x8::load(token, coeffs[start..start + 8].try_into().unwrap());
+        let v = mi16x8::load_t(token, coeffs[start..start + 8].try_into().unwrap());
         let is_zero = v.simd_eq(zero);
         let zero_bits = is_zero.bitmask() as u8;
         let nonzero_bits = !zero_bits;

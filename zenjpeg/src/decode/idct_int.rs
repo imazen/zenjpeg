@@ -1217,20 +1217,20 @@ mod wide_simd {
 
         // Load 8 rows as i32x8 vectors
         let mut rows: [i32x8; 8] = core::array::from_fn(|i| {
-            i32x8::from_array(
+            i32x8::from_array_t(
                 token,
                 *<&[i32; 8]>::try_from(&in_vector[i * 8..(i + 1) * 8]).unwrap(),
             )
         });
 
         // First pass (columns) - process all 8 columns in parallel
-        idct_pass_generic(token, &mut rows, i32x8::splat(token, 512), 10);
+        idct_pass_generic(token, &mut rows, i32x8::splat_t(token, 512), 10);
 
         // Transpose using to_array/from_array (no native i32x8 transpose)
         transpose_i32x8(token, &mut rows);
 
         // Second pass (rows)
-        idct_pass_generic(token, &mut rows, i32x8::splat(token, SCALE_BITS), 17);
+        idct_pass_generic(token, &mut rows, i32x8::splat_t(token, SCALE_BITS), 17);
 
         // Transpose back to row-major order
         transpose_i32x8(token, &mut rows);
@@ -1257,7 +1257,7 @@ mod wide_simd {
     ) {
         let r: [[i32; 8]; 8] = core::array::from_fn(|i| rows[i].to_array());
         for i in 0..8 {
-            rows[i] = GenericI32x8::<T>::from_array(token, core::array::from_fn(|j| r[j][i]));
+            rows[i] = GenericI32x8::<T>::from_array_t(token, core::array::from_fn(|j| r[j][i]));
         }
     }
 
@@ -1277,9 +1277,9 @@ mod wide_simd {
         type i32x8<U> = GenericI32x8<U>;
 
         // Even part (rows 0, 2, 4, 6)
-        let p1 = (rows[2] + rows[6]) * i32x8::splat(token, C2217);
-        let t2 = p1 + rows[6] * i32x8::splat(token, CN7567);
-        let t3 = p1 + rows[2] * i32x8::splat(token, C3135);
+        let p1 = (rows[2] + rows[6]) * i32x8::splat_t(token, C2217);
+        let t2 = p1 + rows[6] * i32x8::splat_t(token, CN7567);
+        let t3 = p1 + rows[2] * i32x8::splat_t(token, C3135);
 
         let t0 = (rows[0] + rows[4]).shl_const::<12>();
         let t1 = (rows[0] - rows[4]).shl_const::<12>();
@@ -1294,17 +1294,17 @@ mod wide_simd {
         let p4 = rows[5] + rows[1];
         let p1_odd = rows[7] + rows[1];
         let p2_odd = rows[5] + rows[3];
-        let p5 = (p3 + p4) * i32x8::splat(token, C4816);
+        let p5 = (p3 + p4) * i32x8::splat_t(token, C4816);
 
-        let mut t0 = rows[7] * i32x8::splat(token, C1223);
-        let mut t1 = rows[5] * i32x8::splat(token, C8410);
-        let mut t2 = rows[3] * i32x8::splat(token, C12586);
-        let mut t3 = rows[1] * i32x8::splat(token, C6149);
+        let mut t0 = rows[7] * i32x8::splat_t(token, C1223);
+        let mut t1 = rows[5] * i32x8::splat_t(token, C8410);
+        let mut t2 = rows[3] * i32x8::splat_t(token, C12586);
+        let mut t3 = rows[1] * i32x8::splat_t(token, C6149);
 
-        let p1_final = p5 + p1_odd * i32x8::splat(token, CN3685);
-        let p2_final = p5 + p2_odd * i32x8::splat(token, CN10497);
-        let p3_final = p3 * i32x8::splat(token, CN8034);
-        let p4_final = p4 * i32x8::splat(token, CN1597);
+        let p1_final = p5 + p1_odd * i32x8::splat_t(token, CN3685);
+        let p2_final = p5 + p2_odd * i32x8::splat_t(token, CN10497);
+        let p3_final = p3 * i32x8::splat_t(token, CN8034);
+        let p4_final = p4 * i32x8::splat_t(token, CN1597);
 
         t3 = t3 + p1_final + p4_final;
         t2 = t2 + p2_final + p3_final;
@@ -1515,15 +1515,15 @@ fn idct_int_wide_unclamped_impl(
     type i32x8 = GenericI32x8<Token>;
 
     let mut rows: [i32x8; 8] = core::array::from_fn(|i| {
-        i32x8::from_array(
+        i32x8::from_array_t(
             token,
             *<&[i32; 8]>::try_from(&in_vector[i * 8..(i + 1) * 8]).unwrap(),
         )
     });
 
-    wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat(token, 512), 10);
+    wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat_t(token, 512), 10);
     wide_simd::transpose_i32x8(token, &mut rows);
-    wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat(token, SCALE_BITS), 17);
+    wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat_t(token, SCALE_BITS), 17);
     wide_simd::transpose_i32x8(token, &mut rows);
 
     // Store WITHOUT clamping — single bounds check for all strided writes
@@ -1759,8 +1759,10 @@ fn islow_rows_fit_i16<T: magetypes::simd::backends::I32x8Backend>(
         .map(|r| *r ^ r.shr_arithmetic_const::<31>())
         .reduce(|a, b| a | b)
         .expect("rows is non-empty");
-    let over = acc & GenericI32x8::<T>::splat(token, !0x7FFF);
-    !over.simd_ne(GenericI32x8::<T>::splat(token, 0)).any_true()
+    let over = acc & GenericI32x8::<T>::splat_t(token, !0x7FFF);
+    !over
+        .simd_ne(GenericI32x8::<T>::splat_t(token, 0))
+        .any_true()
 }
 
 /// One islow pass over 8 lanes (the exact `idct_int_libjpeg` butterfly).
@@ -1782,9 +1784,9 @@ fn islow_pass_generic<T: magetypes::simd::backends::I32x8Backend>(
     // Even part
     let z2 = rows[2];
     let z3 = rows[6];
-    let z1 = (z2 + z3) * i32x8::splat(token, LJ32_0_541196100);
-    let tmp2 = z1 + z3 * i32x8::splat(token, -LJ32_1_847759065);
-    let tmp3 = z1 + z2 * i32x8::splat(token, LJ32_0_765366865);
+    let z1 = (z2 + z3) * i32x8::splat_t(token, LJ32_0_541196100);
+    let tmp2 = z1 + z3 * i32x8::splat_t(token, -LJ32_1_847759065);
+    let tmp3 = z1 + z2 * i32x8::splat_t(token, LJ32_0_765366865);
 
     let tmp0 = (rows[0] + rows[4]).shl_const::<13>();
     let tmp1 = (rows[0] - rows[4]).shl_const::<13>();
@@ -1804,16 +1806,16 @@ fn islow_pass_generic<T: magetypes::simd::backends::I32x8Backend>(
     let z2 = t1 + t2;
     let z3 = t0 + t2;
     let z4 = t1 + t3;
-    let z5 = (z3 + z4) * i32x8::splat(token, LJ32_1_175875602);
+    let z5 = (z3 + z4) * i32x8::splat_t(token, LJ32_1_175875602);
 
-    let t0 = t0 * i32x8::splat(token, LJ32_0_298631336);
-    let t1 = t1 * i32x8::splat(token, LJ32_2_053119869);
-    let t2 = t2 * i32x8::splat(token, LJ32_3_072711026);
-    let t3 = t3 * i32x8::splat(token, LJ32_1_501321110);
-    let z1 = z1 * i32x8::splat(token, -LJ32_0_899976223);
-    let z2 = z2 * i32x8::splat(token, -LJ32_2_562915447);
-    let z3 = z3 * i32x8::splat(token, -LJ32_1_961570560) + z5;
-    let z4 = z4 * i32x8::splat(token, -LJ32_0_390180644) + z5;
+    let t0 = t0 * i32x8::splat_t(token, LJ32_0_298631336);
+    let t1 = t1 * i32x8::splat_t(token, LJ32_2_053119869);
+    let t2 = t2 * i32x8::splat_t(token, LJ32_3_072711026);
+    let t3 = t3 * i32x8::splat_t(token, LJ32_1_501321110);
+    let z1 = z1 * i32x8::splat_t(token, -LJ32_0_899976223);
+    let z2 = z2 * i32x8::splat_t(token, -LJ32_2_562915447);
+    let z3 = z3 * i32x8::splat_t(token, -LJ32_1_961570560) + z5;
+    let z4 = z4 * i32x8::splat_t(token, -LJ32_0_390180644) + z5;
 
     let t0 = t0 + z1 + z3;
     let t1 = t1 + z2 + z4;
@@ -1859,7 +1861,7 @@ fn idct_libjpeg_wide_impl(
     type i32x8 = GenericI32x8<Token>;
 
     let mut rows: [i32x8; 8] = core::array::from_fn(|i| {
-        i32x8::from_array(
+        i32x8::from_array_t(
             token,
             *<&[i32; 8]>::try_from(&in_vector[i * 8..(i + 1) * 8]).unwrap(),
         )
@@ -1869,13 +1871,13 @@ fn idct_libjpeg_wide_impl(
     if !islow_rows_fit_i16(token, &rows) {
         return false;
     }
-    islow_pass_generic(token, &mut rows, i32x8::splat(token, LJ32_PASS1_BIAS), 11);
+    islow_pass_generic(token, &mut rows, i32x8::splat_t(token, LJ32_PASS1_BIAS), 11);
     // Guard 2: pass-1 outputs must fit i16 or pass-2 products can exceed i32.
     if !islow_rows_fit_i16(token, &rows) {
         return false;
     }
     wide_simd::transpose_i32x8(token, &mut rows);
-    islow_pass_generic(token, &mut rows, i32x8::splat(token, LJ32_PASS2_BIAS), 18);
+    islow_pass_generic(token, &mut rows, i32x8::splat_t(token, LJ32_PASS2_BIAS), 18);
     wide_simd::transpose_i32x8(token, &mut rows);
 
     let min_len = stride * 7 + 8;

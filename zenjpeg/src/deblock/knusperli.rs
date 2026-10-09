@@ -222,9 +222,9 @@ fn correct_h_row_impl(token: Token, blocks: &[f32], offsets: &mut [f32], blocks_
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
-    let alpha_v = f32x8::from_array(token, ALPHA_SQRT2);
-    let sign_v = f32x8::from_array(token, SIGN_ALT);
-    let idx_sq_v = f32x8::from_array(token, IDX_SQ);
+    let alpha_v = f32x8::from_array_t(token, ALPHA_SQRT2);
+    let sign_v = f32x8::from_array_t(token, SIGN_ALT);
+    let idx_sq_v = f32x8::from_array_t(token, IDX_SQ);
 
     for bx in 0..blocks_wide.saturating_sub(1) {
         let bi = bx * 64;
@@ -233,8 +233,8 @@ fn correct_h_row_impl(token: Token, blocks: &[f32], offsets: &mut [f32], blocks_
         for v in 0..4 {
             let row = v * 8;
 
-            let gi = f32x8::load(token, blocks[bi + row..bi + row + 8].try_into().unwrap());
-            let gj = f32x8::load(token, blocks[bj + row..bj + row + 8].try_into().unwrap());
+            let gi = f32x8::load_t(token, blocks[bi + row..bi + row + 8].try_into().unwrap());
+            let gj = f32x8::load_t(token, blocks[bj + row..bj + row + 8].try_into().unwrap());
 
             let (delta, hf) = compute_delta_hf(gi, gj, alpha_v, sign_v, idx_sq_v);
 
@@ -282,9 +282,9 @@ fn correct_v_between_impl(
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
-    let alpha_v = f32x8::from_array(token, ALPHA_SQRT2);
-    let sign_v = f32x8::from_array(token, SIGN_ALT);
-    let idx_sq_v = f32x8::from_array(token, IDX_SQ);
+    let alpha_v = f32x8::from_array_t(token, ALPHA_SQRT2);
+    let sign_v = f32x8::from_array_t(token, SIGN_ALT);
+    let idx_sq_v = f32x8::from_array_t(token, IDX_SQ);
 
     for bx in 0..blocks_wide {
         let off = bx * 64;
@@ -297,8 +297,8 @@ fn correct_v_between_impl(
                 gj_arr[v] = bot[off + v * 8 + u];
             }
 
-            let gi = f32x8::from_array(token, gi_arr);
-            let gj = f32x8::from_array(token, gj_arr);
+            let gi = f32x8::from_array_t(token, gi_arr);
+            let gj = f32x8::from_array_t(token, gj_arr);
 
             let (delta, hf) = compute_delta_hf(gi, gj, alpha_v, sign_v, idx_sq_v);
 
@@ -387,9 +387,9 @@ fn finalize_row_impl(
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
-    let scale_v = f32x8::splat(token, OFFSET_SCALE);
-    let half = f32x8::splat(token, 0.5);
-    let level_shift = f32x8::splat(token, 128.0);
+    let scale_v = f32x8::splat_t(token, OFFSET_SCALE);
+    let half = f32x8::splat_t(token, 0.5);
+    let level_shift = f32x8::splat_t(token, 128.0);
 
     let mut block = [0.0f32; 64];
 
@@ -397,9 +397,10 @@ fn finalize_row_impl(
         let off = bx * 64;
 
         for k in (0..64).step_by(8) {
-            let mid = f32x8::load(token, blocks[off + k..off + k + 8].try_into().unwrap());
-            let correction = f32x8::load(token, offsets[off + k..off + k + 8].try_into().unwrap());
-            let q = f32x8::load(token, quant_f32[k..k + 8].try_into().unwrap());
+            let mid = f32x8::load_t(token, blocks[off + k..off + k + 8].try_into().unwrap());
+            let correction =
+                f32x8::load_t(token, offsets[off + k..off + k + 8].try_into().unwrap());
+            let q = f32x8::load_t(token, quant_f32[k..k + 8].try_into().unwrap());
             let half_q = q * half;
 
             let corrected = mid + correction * scale_v;
@@ -411,7 +412,7 @@ fn finalize_row_impl(
         let pixels = inverse_dct_8x8(&block);
 
         for row in 0..8 {
-            let src = f32x8::load(token, pixels[row * 8..(row + 1) * 8].try_into().unwrap());
+            let src = f32x8::load_t(token, pixels[row * 8..(row + 1) * 8].try_into().unwrap());
             let shifted = src + level_shift;
             let dst = (by * 8 + row) * pw + bx * 8;
             shifted.store(<&mut [f32; 8]>::try_from(&mut plane[dst..dst + 8]).unwrap());

@@ -5,6 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+- Migrated to magetypes/archmage 0.9.30 `_t` SIMD constructors (`splat_t`,
+  `zero_t`, `load_t`, `from_array_t`, `from_slice_t`, `load_8x8_t`); a
+  mechanical rename with no behavior change.
+
 ### Fixed
 - The workspace no longer enables archmage's `testable_dispatch` for every
   member's normal dependency. Cargo unifies features, so it reached every build

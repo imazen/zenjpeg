@@ -384,13 +384,13 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
     let num_pixels = y_plane.len();
 
     // BT.601 coefficients
-    let cr_to_r = f32x8::splat(token, 1.402);
-    let cb_to_g = f32x8::splat(token, -0.344136);
-    let cr_to_g = f32x8::splat(token, -0.714136);
-    let cb_to_b = f32x8::splat(token, 1.772);
-    let offset = f32x8::splat(token, 128.0);
-    let zero = f32x8::splat(token, 0.0);
-    let max_val = f32x8::splat(token, 255.0);
+    let cr_to_r = f32x8::splat_t(token, 1.402);
+    let cb_to_g = f32x8::splat_t(token, -0.344136);
+    let cr_to_g = f32x8::splat_t(token, -0.714136);
+    let cb_to_b = f32x8::splat_t(token, 1.772);
+    let offset = f32x8::splat_t(token, 128.0);
+    let zero = f32x8::splat_t(token, 0.0);
+    let max_val = f32x8::splat_t(token, 255.0);
 
     let chunks = num_pixels / 8;
 
@@ -398,9 +398,9 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
         let i = chunk * 8;
 
         // Load 8 values from each plane
-        let y = f32x8::from_array(token, *<&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap());
-        let cb = f32x8::from_array(token, *<&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap());
-        let cr = f32x8::from_array(token, *<&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap());
+        let y = f32x8::from_array_t(token, *<&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap());
+        let cb = f32x8::from_array_t(token, *<&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap());
+        let cr = f32x8::from_array_t(token, *<&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap());
 
         let y_off = y + offset;
 
@@ -480,26 +480,26 @@ fn ycbcr_planes_f32_to_rgb_f32_impl(
 
     let num_pixels = y_plane.len();
 
-    let cr_to_r = f32x8::splat(token, 1.402);
-    let cb_to_g = f32x8::splat(token, -0.344136);
-    let cr_to_g = f32x8::splat(token, -0.714136);
-    let cb_to_b = f32x8::splat(token, 1.772);
-    let offset = f32x8::splat(token, 128.0);
-    let scale = f32x8::splat(token, 1.0 / 255.0);
+    let cr_to_r = f32x8::splat_t(token, 1.402);
+    let cb_to_g = f32x8::splat_t(token, -0.344136);
+    let cr_to_g = f32x8::splat_t(token, -0.714136);
+    let cb_to_b = f32x8::splat_t(token, 1.772);
+    let offset = f32x8::splat_t(token, 128.0);
+    let scale = f32x8::splat_t(token, 1.0 / 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let y = f32x8::from_array(
+        let y = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
         );
-        let cb = f32x8::from_array(
+        let cb = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap(),
         );
-        let cr = f32x8::from_array(
+        let cr = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap(),
         );
@@ -556,14 +556,14 @@ fn gray_f32_to_rgb_u8_impl(token: Token, y_plane: &[f32], rgb: &mut [u8]) {
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
     let num_pixels = y_plane.len();
-    let offset = f32x8::splat(token, 128.0);
-    let zero = f32x8::splat(token, 0.0);
-    let max_val = f32x8::splat(token, 255.0);
+    let offset = f32x8::splat_t(token, 128.0);
+    let zero = f32x8::splat_t(token, 0.0);
+    let max_val = f32x8::splat_t(token, 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(
+        let y = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
         );
@@ -608,13 +608,13 @@ fn gray_f32_to_rgb_f32_impl(token: Token, y_plane: &[f32], rgb: &mut [f32]) {
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
     let num_pixels = y_plane.len();
-    let offset = f32x8::splat(token, 128.0);
-    let scale = f32x8::splat(token, 1.0 / 255.0);
+    let offset = f32x8::splat_t(token, 128.0);
+    let scale = f32x8::splat_t(token, 1.0 / 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(
+        let y = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
         );
@@ -655,14 +655,14 @@ fn gray_f32_to_gray_u8_impl(token: Token, y_plane: &[f32], output: &mut [u8]) {
     debug_assert_eq!(y_plane.len(), output.len());
 
     let num_pixels = y_plane.len();
-    let offset = f32x8::splat(token, 128.0);
-    let zero = f32x8::splat(token, 0.0);
-    let max_val = f32x8::splat(token, 255.0);
+    let offset = f32x8::splat_t(token, 128.0);
+    let zero = f32x8::splat_t(token, 0.0);
+    let max_val = f32x8::splat_t(token, 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(
+        let y = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
         );
@@ -699,13 +699,13 @@ fn gray_f32_to_gray_f32_impl(token: Token, y_plane: &[f32], output: &mut [f32]) 
     debug_assert_eq!(y_plane.len(), output.len());
 
     let num_pixels = y_plane.len();
-    let offset = f32x8::splat(token, 128.0);
-    let scale = f32x8::splat(token, 1.0 / 255.0);
+    let offset = f32x8::splat_t(token, 128.0);
+    let scale = f32x8::splat_t(token, 1.0 / 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(
+        let y = f32x8::from_array_t(
             token,
             *<&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
         );
@@ -1181,21 +1181,21 @@ fn ycbcr_to_rgb_i16_x8_generic(
     #[allow(non_camel_case_types)]
     type i32x4 = GenericI32x4<Token>;
 
-    let y_coeff = i32x4::splat(token, Y_CF_INT);
-    let rounding = i32x4::splat(token, YUV_ROUND);
-    let bias = i32x4::splat(token, 128);
-    let zero = i32x4::zero(token);
-    let max255 = i32x4::splat(token, 255);
+    let y_coeff = i32x4::splat_t(token, Y_CF_INT);
+    let rounding = i32x4::splat_t(token, YUV_ROUND);
+    let bias = i32x4::splat_t(token, 128);
+    let zero = i32x4::zero_t(token);
+    let max255 = i32x4::splat_t(token, 255);
 
-    let cr_to_r = i32x4::splat(token, CR_TO_R_INT);
-    let cr_to_g = i32x4::splat(token, CR_TO_G_INT);
-    let cb_to_g = i32x4::splat(token, CB_TO_G_INT);
-    let cb_to_b = i32x4::splat(token, CB_TO_B_INT);
+    let cr_to_r = i32x4::splat_t(token, CR_TO_R_INT);
+    let cr_to_g = i32x4::splat_t(token, CR_TO_G_INT);
+    let cb_to_g = i32x4::splat_t(token, CB_TO_G_INT);
+    let cb_to_b = i32x4::splat_t(token, CB_TO_B_INT);
 
     // Process 8 pixels in two 4-wide passes
     for half in 0..2 {
         let off = half * 4;
-        let y4 = i32x4::from_array(
+        let y4 = i32x4::from_array_t(
             token,
             [
                 i32::from(y[off]),
@@ -1204,7 +1204,7 @@ fn ycbcr_to_rgb_i16_x8_generic(
                 i32::from(y[off + 3]),
             ],
         );
-        let cb4 = i32x4::from_array(
+        let cb4 = i32x4::from_array_t(
             token,
             [
                 i32::from(cb[off]),
@@ -1213,7 +1213,7 @@ fn ycbcr_to_rgb_i16_x8_generic(
                 i32::from(cb[off + 3]),
             ],
         ) - bias;
-        let cr4 = i32x4::from_array(
+        let cr4 = i32x4::from_array_t(
             token,
             [
                 i32::from(cr[off]),
@@ -2126,16 +2126,16 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
     #[allow(non_camel_case_types)]
     type i32x4 = GenericI32x4<Token>;
 
-    let y_coeff = i32x4::splat(token, Y_CF_INT);
-    let rounding = i32x4::splat(token, YUV_ROUND);
-    let bias = i32x4::splat(token, 128);
-    let zero = i32x4::zero(token);
-    let max255 = i32x4::splat(token, 255);
+    let y_coeff = i32x4::splat_t(token, Y_CF_INT);
+    let rounding = i32x4::splat_t(token, YUV_ROUND);
+    let bias = i32x4::splat_t(token, 128);
+    let zero = i32x4::zero_t(token);
+    let max255 = i32x4::splat_t(token, 255);
 
-    let cr_to_r = i32x4::splat(token, CR_TO_R_INT);
-    let cr_to_g = i32x4::splat(token, CR_TO_G_INT);
-    let cb_to_g = i32x4::splat(token, CB_TO_G_INT);
-    let cb_to_b = i32x4::splat(token, CB_TO_B_INT);
+    let cr_to_r = i32x4::splat_t(token, CR_TO_R_INT);
+    let cr_to_g = i32x4::splat_t(token, CR_TO_G_INT);
+    let cb_to_g = i32x4::splat_t(token, CB_TO_G_INT);
+    let cb_to_b = i32x4::splat_t(token, CB_TO_B_INT);
 
     let chroma_width = (width + 1) / 2;
     // Process 4 chroma pixels (8 output pixels) at a time.
@@ -2144,7 +2144,7 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
     let chunks = safe_chroma / 4;
     for chunk in 0..chunks {
         let cx_base = chunk * 4;
-        let cb4 = i32x4::from_array(
+        let cb4 = i32x4::from_array_t(
             token,
             [
                 i32::from(cb_row[cx_base]),
@@ -2153,7 +2153,7 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
                 i32::from(cb_row[cx_base + 3]),
             ],
         ) - bias;
-        let cr4 = i32x4::from_array(
+        let cr4 = i32x4::from_array_t(
             token,
             [
                 i32::from(cr_row[cx_base]),
@@ -2172,7 +2172,7 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
 
         // Left pixels (even indices)
         let px_base = cx_base * 2;
-        let y_left = i32x4::from_array(
+        let y_left = i32x4::from_array_t(
             token,
             [
                 i32::from(y_row[px_base]),
@@ -2196,7 +2196,7 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
             .min(max255);
 
         // Right pixels (odd indices)
-        let y_right = i32x4::from_array(
+        let y_right = i32x4::from_array_t(
             token,
             [
                 i32::from(y_row[px_base + 1]),

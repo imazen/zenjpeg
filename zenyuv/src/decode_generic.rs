@@ -24,15 +24,15 @@ pub(crate) fn yuv444_to_rgb_generic(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let y_coeff = f32x8::splat(token, coeffs.y_coeff);
-    let cr_to_r = f32x8::splat(token, coeffs.cr_to_r);
-    let cr_to_g = f32x8::splat(token, coeffs.cr_to_g);
-    let cb_to_g = f32x8::splat(token, coeffs.cb_to_g);
-    let cb_to_b = f32x8::splat(token, coeffs.cb_to_b);
-    let y_off = f32x8::splat(token, coeffs.y_offset);
-    let uv_off = f32x8::splat(token, coeffs.uv_offset);
-    let zero = i32x8::zero(token);
-    let max255 = i32x8::splat(token, 255);
+    let y_coeff = f32x8::splat_t(token, coeffs.y_coeff);
+    let cr_to_r = f32x8::splat_t(token, coeffs.cr_to_r);
+    let cr_to_g = f32x8::splat_t(token, coeffs.cr_to_g);
+    let cb_to_g = f32x8::splat_t(token, coeffs.cb_to_g);
+    let cb_to_b = f32x8::splat_t(token, coeffs.cb_to_b);
+    let y_off = f32x8::splat_t(token, coeffs.y_offset);
+    let uv_off = f32x8::splat_t(token, coeffs.uv_offset);
+    let zero = i32x8::zero_t(token);
+    let max255 = i32x8::splat_t(token, 255);
 
     let chunks = n / 8;
     for c in 0..chunks {
@@ -45,9 +45,9 @@ pub(crate) fn yuv444_to_rgb_generic(
             cba[i] = cb_plane[base + i] as f32;
             cra[i] = cr_plane[base + i] as f32;
         }
-        let y_v = f32x8::from_array(token, ya);
-        let cb_v = f32x8::from_array(token, cba);
-        let cr_v = f32x8::from_array(token, cra);
+        let y_v = f32x8::from_array_t(token, ya);
+        let cb_v = f32x8::from_array_t(token, cba);
+        let cr_v = f32x8::from_array_t(token, cra);
 
         let y_scaled = (y_v + y_off) * y_coeff;
         let cb_shifted = cb_v + uv_off;
@@ -312,10 +312,10 @@ pub(crate) fn yuv400_to_rgb_generic(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let y_coeff = f32x8::splat(token, coeffs.y_coeff);
-    let y_off = f32x8::splat(token, coeffs.y_offset);
-    let zero = i32x8::zero(token);
-    let max255 = i32x8::splat(token, 255);
+    let y_coeff = f32x8::splat_t(token, coeffs.y_coeff);
+    let y_off = f32x8::splat_t(token, coeffs.y_offset);
+    let zero = i32x8::zero_t(token);
+    let max255 = i32x8::splat_t(token, 255);
 
     let chunks = n / 8;
     for c in 0..chunks {
@@ -324,7 +324,7 @@ pub(crate) fn yuv400_to_rgb_generic(
         for i in 0..8 {
             ya[i] = y_plane[base + i] as f32;
         }
-        let y_v = f32x8::from_array(token, ya);
+        let y_v = f32x8::from_array_t(token, ya);
         let gray = ((y_v + y_off) * y_coeff)
             .to_i32_round()
             .max(zero)

@@ -1147,45 +1147,45 @@ fn sharp_iterate_simd(
     let n = cb_f.len();
     let chunks = n / 8;
 
-    let uv_center_v = f32x8::splat(token, inv.uv_offset.abs());
-    let y_coeff_v = f32x8::splat(token, inv.y_coeff);
-    let y_off_v = f32x8::splat(token, inv.y_offset);
-    let cr_to_r_v = f32x8::splat(token, inv.cr_to_r);
-    let cr_to_g_v = f32x8::splat(token, inv.cr_to_g);
-    let cb_to_g_v = f32x8::splat(token, inv.cb_to_g);
-    let cb_to_b_v = f32x8::splat(token, inv.cb_to_b);
-    let zero_v = f32x8::splat(token, 0.0);
-    let max_v = f32x8::splat(token, 255.0);
+    let uv_center_v = f32x8::splat_t(token, inv.uv_offset.abs());
+    let y_coeff_v = f32x8::splat_t(token, inv.y_coeff);
+    let y_off_v = f32x8::splat_t(token, inv.y_offset);
+    let cr_to_r_v = f32x8::splat_t(token, inv.cr_to_r);
+    let cr_to_g_v = f32x8::splat_t(token, inv.cr_to_g);
+    let cb_to_g_v = f32x8::splat_t(token, inv.cb_to_g);
+    let cb_to_b_v = f32x8::splat_t(token, inv.cb_to_b);
+    let zero_v = f32x8::splat_t(token, 0.0);
+    let max_v = f32x8::splat_t(token, 255.0);
 
     let cb_denom = 4.0 * (inv.cb_to_g * inv.cb_to_g + inv.cb_to_b * inv.cb_to_b);
     let cr_denom = 4.0 * (inv.cr_to_r * inv.cr_to_r + inv.cr_to_g * inv.cr_to_g);
-    let cb_inv_denom_v = f32x8::splat(token, 1.0 / cb_denom);
-    let cr_inv_denom_v = f32x8::splat(token, 1.0 / cr_denom);
+    let cb_inv_denom_v = f32x8::splat_t(token, 1.0 / cb_denom);
+    let cr_inv_denom_v = f32x8::splat_t(token, 1.0 / cr_denom);
 
     for _ in 0..max_iterations {
         // SIMD: 8 blocks at a time.
         for c in 0..chunks {
             let base = c * 8;
-            let cb_v = f32x8::from_slice(token, &cb_f[base..]);
-            let cr_v = f32x8::from_slice(token, &cr_f[base..]);
+            let cb_v = f32x8::from_slice_t(token, &cb_f[base..]);
+            let cr_v = f32x8::from_slice_t(token, &cr_f[base..]);
             let cb_c = cb_v - uv_center_v;
             let cr_c = cr_v - uv_center_v;
-            let mut cb_num = f32x8::splat(token, 0.0);
-            let mut cr_num = f32x8::splat(token, 0.0);
+            let mut cb_num = f32x8::splat_t(token, 0.0);
+            let mut cr_num = f32x8::splat_t(token, 0.0);
 
             // 4 pixel positions, unrolled. Each loads 8 values from the SoA arrays.
             macro_rules! pixel {
                 ($y:expr, $or:expr, $og:expr, $ob:expr) => {{
-                    let yv = f32x8::from_slice(token, &$y[base..]);
+                    let yv = f32x8::from_slice_t(token, &$y[base..]);
                     let y_adj = y_coeff_v * (yv + y_off_v);
                     let rec_r = (y_adj + cr_to_r_v * cr_c).max(zero_v).min(max_v);
                     let rec_g = (y_adj + cr_to_g_v * cr_c + cb_to_g_v * cb_c)
                         .max(zero_v)
                         .min(max_v);
                     let rec_b = (y_adj + cb_to_b_v * cb_c).max(zero_v).min(max_v);
-                    let or_v = f32x8::from_slice(token, &$or[base..]);
-                    let og_v = f32x8::from_slice(token, &$og[base..]);
-                    let ob_v = f32x8::from_slice(token, &$ob[base..]);
+                    let or_v = f32x8::from_slice_t(token, &$or[base..]);
+                    let og_v = f32x8::from_slice_t(token, &$og[base..]);
+                    let ob_v = f32x8::from_slice_t(token, &$ob[base..]);
                     let er = or_v - rec_r;
                     let eg = og_v - rec_g;
                     let eb = ob_v - rec_b;

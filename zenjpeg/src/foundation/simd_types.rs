@@ -364,15 +364,15 @@ fn mage_quantize_block_zigzag(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let aq_m = f32x8::splat(token, aq_strength);
-    let zero_i32 = i32x8::zero(token);
+    let aq_m = f32x8::splat_t(token, aq_strength);
+    let zero_i32 = i32x8::zero_t(token);
     let mut result = [0i16; 64];
 
     for row in 0..8 {
-        let block_m = f32x8::from_array(token, block.rows[row]);
-        let mul_m = f32x8::from_array(token, mul_rows[row]);
-        let offset_m = f32x8::from_array(token, zero_bias.offset_rows[row]);
-        let bias_mul_m = f32x8::from_array(token, zero_bias.mul_rows[row]);
+        let block_m = f32x8::from_array_t(token, block.rows[row]);
+        let mul_m = f32x8::from_array_t(token, mul_rows[row]);
+        let offset_m = f32x8::from_array_t(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = f32x8::from_array_t(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
@@ -413,15 +413,15 @@ fn mage_quantize_block(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let aq_m = f32x8::splat(token, aq_strength);
-    let zero_i32 = i32x8::zero(token);
+    let aq_m = f32x8::splat_t(token, aq_strength);
+    let zero_i32 = i32x8::zero_t(token);
     let mut result = [0i16; 64];
 
     for row in 0..8 {
-        let block_m = f32x8::from_array(token, block.rows[row]);
-        let mul_m = f32x8::from_array(token, mul_rows[row]);
-        let offset_m = f32x8::from_array(token, zero_bias.offset_rows[row]);
-        let bias_mul_m = f32x8::from_array(token, zero_bias.mul_rows[row]);
+        let block_m = f32x8::from_array_t(token, block.rows[row]);
+        let mul_m = f32x8::from_array_t(token, mul_rows[row]);
+        let offset_m = f32x8::from_array_t(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = f32x8::from_array_t(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);

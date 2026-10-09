@@ -265,7 +265,7 @@ pub(crate) mod simd {
     #[allow(dead_code)] // Called by test-only transpose_8x8_simd
     #[arcane]
     fn mage_transpose_8x8(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
-        let mut rows = mf32x8::load_8x8(token, input);
+        let mut rows = mf32x8::load_8x8_t(token, input);
         mf32x8::transpose_8x8(&mut rows);
         mf32x8::store_8x8(&rows, output);
     }
@@ -278,7 +278,7 @@ pub(crate) mod simd {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
-        let mut rows = f32x8::load_8x8(token, input);
+        let mut rows = f32x8::load_8x8_t(token, input);
         f32x8::transpose_8x8(&mut rows);
         f32x8::store_8x8(&rows, output);
     }
@@ -292,9 +292,9 @@ pub(crate) mod simd {
         #[allow(non_camel_case_types)]
         type f32x8<U> = GenericF32x8<U>;
 
-        let wc4_0 = f32x8::splat(token, 0.541196100146197);
-        let wc4_1 = f32x8::splat(token, 1.3065629648763764);
-        let sqrt2 = f32x8::splat(token, 1.41421356237);
+        let wc4_0 = f32x8::splat_t(token, 0.541196100146197);
+        let wc4_1 = f32x8::splat_t(token, 1.3065629648763764);
+        let sqrt2 = f32x8::splat_t(token, 1.41421356237);
 
         // AddReverse<2>
         let t0 = m[0] + m[3];
@@ -332,11 +332,11 @@ pub(crate) mod simd {
         #[allow(non_camel_case_types)]
         type f32x8<U> = GenericF32x8<U>;
 
-        let wc8_0 = f32x8::splat(token, 0.5097955791041592);
-        let wc8_1 = f32x8::splat(token, 0.6013448869350453);
-        let wc8_2 = f32x8::splat(token, 0.8999762231364156);
-        let wc8_3 = f32x8::splat(token, 2.5629154477415055);
-        let sqrt2 = f32x8::splat(token, 1.41421356237);
+        let wc8_0 = f32x8::splat_t(token, 0.5097955791041592);
+        let wc8_1 = f32x8::splat_t(token, 0.6013448869350453);
+        let wc8_2 = f32x8::splat_t(token, 0.8999762231364156);
+        let wc8_3 = f32x8::splat_t(token, 2.5629154477415055);
+        let sqrt2 = f32x8::splat_t(token, 1.41421356237);
 
         // AddReverse<4>
         let t0 = m[0] + m[7];
@@ -380,7 +380,7 @@ pub(crate) mod simd {
         token: T,
         v: [GenericF32x8<T>; 8],
     ) -> [GenericF32x8<T>; 8] {
-        let scale = GenericF32x8::<T>::splat(token, 1.0 / 8.0);
+        let scale = GenericF32x8::<T>::splat_t(token, 1.0 / 8.0);
         [
             v[0] * scale,
             v[1] * scale,
@@ -407,7 +407,7 @@ pub(crate) mod simd {
         type f32x8 = GenericF32x8<Token>;
 
         // Load all 8 rows
-        let mut rows = f32x8::load_8x8(token, input);
+        let mut rows = f32x8::load_8x8_t(token, input);
 
         // Transpose to column-major
         f32x8::transpose_8x8(&mut rows);
@@ -497,7 +497,7 @@ pub(crate) mod simd {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
-        let mut rows = f32x8::load_8x8(token, input);
+        let mut rows = f32x8::load_8x8_t(token, input);
         f32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;
@@ -566,7 +566,7 @@ pub(crate) mod simd {
         type f32x8 = GenericF32x8<Token>;
 
         let mut rows: [f32x8; 8] =
-            core::array::from_fn(|i| f32x8::from_array(token, input.rows[i]));
+            core::array::from_fn(|i| f32x8::from_array_t(token, input.rows[i]));
         f32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;
@@ -620,13 +620,13 @@ pub(crate) mod simd {
     #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     fn dct1d_8_mage(m: &mut [mf32x8; 8], token: archmage::X64V3Token) {
-        let wc4_0 = mf32x8::splat(token, 0.541196100146197);
-        let wc4_1 = mf32x8::splat(token, 1.3065629648763764);
-        let wc8_0 = mf32x8::splat(token, 0.5097955791041592);
-        let wc8_1 = mf32x8::splat(token, 0.6013448869350453);
-        let wc8_2 = mf32x8::splat(token, 0.8999762231364156);
-        let wc8_3 = mf32x8::splat(token, 2.5629154477415055);
-        let sqrt2 = mf32x8::splat(token, 1.41421356237);
+        let wc4_0 = mf32x8::splat_t(token, 0.541196100146197);
+        let wc4_1 = mf32x8::splat_t(token, 1.3065629648763764);
+        let wc8_0 = mf32x8::splat_t(token, 0.5097955791041592);
+        let wc8_1 = mf32x8::splat_t(token, 0.6013448869350453);
+        let wc8_2 = mf32x8::splat_t(token, 0.8999762231364156);
+        let wc8_3 = mf32x8::splat_t(token, 2.5629154477415055);
+        let sqrt2 = mf32x8::splat_t(token, 1.41421356237);
 
         // AddReverse<4>
         let t0 = m[0] + m[7];
@@ -678,9 +678,9 @@ pub(crate) mod simd {
     #[inline(always)]
     pub(crate) fn forward_dct_8x8_mage(input: &[f32; 64], output: &mut [f32; 64]) {
         let token = archmage::X64V3Token::summon().unwrap();
-        let scale = mf32x8::splat(token, 1.0 / 8.0);
+        let scale = mf32x8::splat_t(token, 1.0 / 8.0);
 
-        let mut reg = mf32x8::load_8x8(token, input);
+        let mut reg = mf32x8::load_8x8_t(token, input);
 
         // Transpose → row DCT → scale
         mf32x8::transpose_8x8(&mut reg);

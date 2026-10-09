@@ -455,24 +455,24 @@ fn generic_linear_rgb_to_scaled_xyb<T: magetypes::simd::backends::F32x8Convert>(
     let bias_val = XYB_OPSIN_ABSORBANCE_BIAS[0];
     let neg_bias_cbrt_val = -cbrtf_fast(bias_val);
 
-    let r = f32x8::<T>::from_array(token, r_arr);
-    let g = f32x8::<T>::from_array(token, g_arr);
-    let b_in = f32x8::<T>::from_array(token, b_arr);
+    let r = f32x8::<T>::from_array_t(token, r_arr);
+    let g = f32x8::<T>::from_array_t(token, g_arr);
+    let b_in = f32x8::<T>::from_array_t(token, b_arr);
 
     // Opsin absorbance matrix (real FMA on supporting hardware)
-    let m00 = f32x8::<T>::splat(token, m[0]);
-    let m01 = f32x8::<T>::splat(token, m[1]);
-    let m02 = f32x8::<T>::splat(token, m[2]);
-    let m10 = f32x8::<T>::splat(token, m[3]);
-    let m11 = f32x8::<T>::splat(token, m[4]);
-    let m12 = f32x8::<T>::splat(token, m[5]);
-    let m20 = f32x8::<T>::splat(token, m[6]);
-    let m21 = f32x8::<T>::splat(token, m[7]);
-    let m22 = f32x8::<T>::splat(token, m[8]);
-    let bias = f32x8::<T>::splat(token, bias_val);
-    let zero = f32x8::<T>::splat(token, 0.0);
-    let neg_bias_cbrt = f32x8::<T>::splat(token, neg_bias_cbrt_val);
-    let half = f32x8::<T>::splat(token, 0.5);
+    let m00 = f32x8::<T>::splat_t(token, m[0]);
+    let m01 = f32x8::<T>::splat_t(token, m[1]);
+    let m02 = f32x8::<T>::splat_t(token, m[2]);
+    let m10 = f32x8::<T>::splat_t(token, m[3]);
+    let m11 = f32x8::<T>::splat_t(token, m[4]);
+    let m12 = f32x8::<T>::splat_t(token, m[5]);
+    let m20 = f32x8::<T>::splat_t(token, m[6]);
+    let m21 = f32x8::<T>::splat_t(token, m[7]);
+    let m22 = f32x8::<T>::splat_t(token, m[8]);
+    let bias = f32x8::<T>::splat_t(token, bias_val);
+    let zero = f32x8::<T>::splat_t(token, 0.0);
+    let neg_bias_cbrt = f32x8::<T>::splat_t(token, neg_bias_cbrt_val);
+    let half = f32x8::<T>::splat_t(token, 0.5);
 
     let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias)));
     let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias)));
@@ -494,12 +494,12 @@ fn generic_linear_rgb_to_scaled_xyb<T: magetypes::simd::backends::F32x8Convert>(
 
     // Scale for JPEG
     // IMPORTANT: B channel formula is (b - y + offset) * scale, NOT b * scale + offset
-    let scale_x = f32x8::<T>::splat(token, SCALED_XYB_SCALE[0]);
-    let scale_y = f32x8::<T>::splat(token, SCALED_XYB_SCALE[1]);
-    let scale_b = f32x8::<T>::splat(token, SCALED_XYB_SCALE[2]);
-    let offset_x = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[0]);
-    let offset_y = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[1]);
-    let offset_b = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[2]);
+    let scale_x = f32x8::<T>::splat_t(token, SCALED_XYB_SCALE[0]);
+    let scale_y = f32x8::<T>::splat_t(token, SCALED_XYB_SCALE[1]);
+    let scale_b = f32x8::<T>::splat_t(token, SCALED_XYB_SCALE[2]);
+    let offset_x = f32x8::<T>::splat_t(token, SCALED_XYB_OFFSET[0]);
+    let offset_y = f32x8::<T>::splat_t(token, SCALED_XYB_OFFSET[1]);
+    let offset_b = f32x8::<T>::splat_t(token, SCALED_XYB_OFFSET[2]);
 
     let sx = (x_xyb + offset_x) * scale_x;
     let sy = (y_xyb + offset_y) * scale_y;
@@ -524,19 +524,19 @@ fn generic_linear_rgb_to_xyb_inplace<T: magetypes::simd::backends::F32x8Convert>
     let bias_val = XYB_OPSIN_ABSORBANCE_BIAS[0];
     let neg_bias_cbrt_val = -cbrtf_fast(bias_val);
 
-    let m00 = f32x8::<T>::splat(token, m[0]);
-    let m01 = f32x8::<T>::splat(token, m[1]);
-    let m02 = f32x8::<T>::splat(token, m[2]);
-    let m10 = f32x8::<T>::splat(token, m[3]);
-    let m11 = f32x8::<T>::splat(token, m[4]);
-    let m12 = f32x8::<T>::splat(token, m[5]);
-    let m20 = f32x8::<T>::splat(token, m[6]);
-    let m21 = f32x8::<T>::splat(token, m[7]);
-    let m22 = f32x8::<T>::splat(token, m[8]);
-    let bias = f32x8::<T>::splat(token, bias_val);
-    let zero = f32x8::<T>::splat(token, 0.0);
-    let neg_bias_cbrt = f32x8::<T>::splat(token, neg_bias_cbrt_val);
-    let half = f32x8::<T>::splat(token, 0.5);
+    let m00 = f32x8::<T>::splat_t(token, m[0]);
+    let m01 = f32x8::<T>::splat_t(token, m[1]);
+    let m02 = f32x8::<T>::splat_t(token, m[2]);
+    let m10 = f32x8::<T>::splat_t(token, m[3]);
+    let m11 = f32x8::<T>::splat_t(token, m[4]);
+    let m12 = f32x8::<T>::splat_t(token, m[5]);
+    let m20 = f32x8::<T>::splat_t(token, m[6]);
+    let m21 = f32x8::<T>::splat_t(token, m[7]);
+    let m22 = f32x8::<T>::splat_t(token, m[8]);
+    let bias = f32x8::<T>::splat_t(token, bias_val);
+    let zero = f32x8::<T>::splat_t(token, 0.0);
+    let neg_bias_cbrt = f32x8::<T>::splat_t(token, neg_bias_cbrt_val);
+    let half = f32x8::<T>::splat_t(token, 0.5);
 
     let chunks_8 = pixels.len() / 8;
     for chunk_idx in 0..chunks_8 {
@@ -552,9 +552,9 @@ fn generic_linear_rgb_to_xyb_inplace<T: magetypes::simd::backends::F32x8Convert>
             b_arr[i] = p[2];
         }
 
-        let r = f32x8::<T>::from_array(token, r_arr);
-        let g = f32x8::<T>::from_array(token, g_arr);
-        let b_in = f32x8::<T>::from_array(token, b_arr);
+        let r = f32x8::<T>::from_array_t(token, r_arr);
+        let g = f32x8::<T>::from_array_t(token, g_arr);
+        let b_in = f32x8::<T>::from_array_t(token, b_arr);
 
         let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias)));
         let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias)));
@@ -1075,8 +1075,8 @@ fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert
     type f32x8<T> = GenericF32x8<T>;
 
     // Step 1: (v + 128) / 255  →  scaled_xyb
-    let offset128 = f32x8::<T>::splat(token, 128.0);
-    let inv_255 = f32x8::<T>::splat(token, 1.0 / 255.0);
+    let offset128 = f32x8::<T>::splat_t(token, 128.0);
+    let inv_255 = f32x8::<T>::splat_t(token, 1.0 / 255.0);
     let sx = (p0 + offset128) * inv_255;
     let sy = (p1 + offset128) * inv_255;
     let sb = (p2 + offset128) * inv_255;
@@ -1084,12 +1084,12 @@ fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert
     // Step 2: unscale_xyb: y = sy/scale_y - off_y;
     //                      x = sx/scale_x - off_x;
     //                      b = sb/scale_b - off_b + y
-    let inv_scale_x = f32x8::<T>::splat(token, 1.0 / SCALED_XYB_SCALE[0]);
-    let inv_scale_y = f32x8::<T>::splat(token, 1.0 / SCALED_XYB_SCALE[1]);
-    let inv_scale_b = f32x8::<T>::splat(token, 1.0 / SCALED_XYB_SCALE[2]);
-    let off_x = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[0]);
-    let off_y = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[1]);
-    let off_b = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[2]);
+    let inv_scale_x = f32x8::<T>::splat_t(token, 1.0 / SCALED_XYB_SCALE[0]);
+    let inv_scale_y = f32x8::<T>::splat_t(token, 1.0 / SCALED_XYB_SCALE[1]);
+    let inv_scale_b = f32x8::<T>::splat_t(token, 1.0 / SCALED_XYB_SCALE[2]);
+    let off_x = f32x8::<T>::splat_t(token, SCALED_XYB_OFFSET[0]);
+    let off_y = f32x8::<T>::splat_t(token, SCALED_XYB_OFFSET[1]);
+    let off_b = f32x8::<T>::splat_t(token, SCALED_XYB_OFFSET[2]);
 
     let y = sy * inv_scale_y - off_y;
     let x = sx * inv_scale_x - off_x;
@@ -1099,10 +1099,10 @@ fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert
     //   cbrt_r = y + x - neg_bias; cbrt_g = y - x - neg_bias; cbrt_b = b - neg_bias
     //   opsin_r = mixed_cube(cbrt_r), etc.
     //   opsin -= bias (per channel)
-    let neg_bias_r = f32x8::<T>::splat(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[0]);
-    let neg_bias_g = f32x8::<T>::splat(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[1]);
-    let neg_bias_b = f32x8::<T>::splat(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[2]);
-    let bias_val = f32x8::<T>::splat(token, XYB_OPSIN_ABSORBANCE_BIAS[0]);
+    let neg_bias_r = f32x8::<T>::splat_t(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[0]);
+    let neg_bias_g = f32x8::<T>::splat_t(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[1]);
+    let neg_bias_b = f32x8::<T>::splat_t(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[2]);
+    let bias_val = f32x8::<T>::splat_t(token, XYB_OPSIN_ABSORBANCE_BIAS[0]);
 
     let cbrt_r = y + x - neg_bias_r;
     let cbrt_g = y - x - neg_bias_g;
@@ -1114,15 +1114,15 @@ fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert
 
     // Step 4: inverse opsin matrix (3x3)
     let inv = &XYB_OPSIN_INVERSE_MATRIX;
-    let m00 = f32x8::<T>::splat(token, inv[0]);
-    let m01 = f32x8::<T>::splat(token, inv[1]);
-    let m02 = f32x8::<T>::splat(token, inv[2]);
-    let m10 = f32x8::<T>::splat(token, inv[3]);
-    let m11 = f32x8::<T>::splat(token, inv[4]);
-    let m12 = f32x8::<T>::splat(token, inv[5]);
-    let m20 = f32x8::<T>::splat(token, inv[6]);
-    let m21 = f32x8::<T>::splat(token, inv[7]);
-    let m22 = f32x8::<T>::splat(token, inv[8]);
+    let m00 = f32x8::<T>::splat_t(token, inv[0]);
+    let m01 = f32x8::<T>::splat_t(token, inv[1]);
+    let m02 = f32x8::<T>::splat_t(token, inv[2]);
+    let m10 = f32x8::<T>::splat_t(token, inv[3]);
+    let m11 = f32x8::<T>::splat_t(token, inv[4]);
+    let m12 = f32x8::<T>::splat_t(token, inv[5]);
+    let m20 = f32x8::<T>::splat_t(token, inv[6]);
+    let m21 = f32x8::<T>::splat_t(token, inv[7]);
+    let m22 = f32x8::<T>::splat_t(token, inv[8]);
 
     let r = m00.mul_add(opsin_r, m01.mul_add(opsin_g, m02 * opsin_b));
     let g = m10.mul_add(opsin_r, m11.mul_add(opsin_g, m12 * opsin_b));
@@ -1164,7 +1164,7 @@ fn xyb_planes_to_srgb_u8_impl(
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let p0 = f32x8::from_array(
+        let p0 = f32x8::from_array_t(
             token,
             [
                 plane0[base],
@@ -1177,7 +1177,7 @@ fn xyb_planes_to_srgb_u8_impl(
                 plane0[base + 7],
             ],
         );
-        let p1 = f32x8::from_array(
+        let p1 = f32x8::from_array_t(
             token,
             [
                 plane1[base],
@@ -1190,7 +1190,7 @@ fn xyb_planes_to_srgb_u8_impl(
                 plane1[base + 7],
             ],
         );
-        let p2 = f32x8::from_array(
+        let p2 = f32x8::from_array_t(
             token,
             [
                 plane2[base],
@@ -1258,7 +1258,7 @@ fn xyb_planes_to_srgb_f32_impl(
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let p0 = f32x8::from_array(
+        let p0 = f32x8::from_array_t(
             token,
             [
                 plane0[base],
@@ -1271,7 +1271,7 @@ fn xyb_planes_to_srgb_f32_impl(
                 plane0[base + 7],
             ],
         );
-        let p1 = f32x8::from_array(
+        let p1 = f32x8::from_array_t(
             token,
             [
                 plane1[base],
@@ -1284,7 +1284,7 @@ fn xyb_planes_to_srgb_f32_impl(
                 plane1[base + 7],
             ],
         );
-        let p2 = f32x8::from_array(
+        let p2 = f32x8::from_array_t(
             token,
             [
                 plane2[base],

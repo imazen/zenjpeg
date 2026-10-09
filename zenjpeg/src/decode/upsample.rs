@@ -342,9 +342,9 @@ fn upsample_h2v1_generic_impl(
     if in_width == 0 || in_height == 0 {
         return;
     }
-    let three = i32x8::splat(token, 3);
-    let one = i32x8::splat(token, 1);
-    let two = i32x8::splat(token, 2);
+    let three = i32x8::splat_t(token, 3);
+    let one = i32x8::splat_t(token, 1);
+    let two = i32x8::splat_t(token, 2);
     for out_y in 0..out_height {
         let in_y = out_y.min(in_height.saturating_sub(1));
         let out_row = out_y * out_stride;
@@ -362,15 +362,15 @@ fn upsample_h2v1_generic_impl(
         // Needs input[x-1 ..= x+8] and output[2x ..= 2x+15] in bounds.
         let mut x = 1usize;
         while x + 9 <= in_width && 2 * x + 15 < out_width {
-            let prev = i32x8::from_array(
+            let prev = i32x8::from_array_t(
                 token,
                 core::array::from_fn(|i| input[in_row + x - 1 + i] as i32),
             );
-            let curr = i32x8::from_array(
+            let curr = i32x8::from_array_t(
                 token,
                 core::array::from_fn(|i| input[in_row + x + i] as i32),
             );
-            let next = i32x8::from_array(
+            let next = i32x8::from_array_t(
                 token,
                 core::array::from_fn(|i| input[in_row + x + 1 + i] as i32),
             );
@@ -663,9 +663,9 @@ fn upsample_h2v2_libjpeg_row_generic(
 
     // Interior, SIMD in chunks of 8 input positions from x=1.
     // colsum[i] = near[i]*3 + far[i]; needs i in [x-1 ..= x+8].
-    let three = i32x8::splat(token, 3);
-    let vbl = i32x8::splat(token, bias_left);
-    let vbr = i32x8::splat(token, bias_right);
+    let three = i32x8::splat_t(token, 3);
+    let vbl = i32x8::splat_t(token, bias_left);
+    let vbr = i32x8::splat_t(token, bias_right);
     let mut x = 1usize;
     while x + 9 <= in_width && 2 * x + 15 < out_width {
         // Load colsum ONCE for the [x-1 ..= x+8] window (10 values), reading
@@ -677,9 +677,9 @@ fn upsample_h2v2_libjpeg_row_generic(
         // already beats scalar; h2v2's 2 planes × 3 windows did not.)
         let cw: [i32; 10] =
             core::array::from_fn(|i| near[x - 1 + i] as i32 * 3 + far[x - 1 + i] as i32);
-        let prev_cs = i32x8::from_array(token, core::array::from_fn(|i| cw[i]));
-        let this_cs = i32x8::from_array(token, core::array::from_fn(|i| cw[1 + i]));
-        let next_cs = i32x8::from_array(token, core::array::from_fn(|i| cw[2 + i]));
+        let prev_cs = i32x8::from_array_t(token, core::array::from_fn(|i| cw[i]));
+        let this_cs = i32x8::from_array_t(token, core::array::from_fn(|i| cw[1 + i]));
+        let next_cs = i32x8::from_array_t(token, core::array::from_fn(|i| cw[2 + i]));
         let this3 = this_cs * three;
         let left = (this3 + prev_cs + vbl)
             .shr_arithmetic_const::<4>()

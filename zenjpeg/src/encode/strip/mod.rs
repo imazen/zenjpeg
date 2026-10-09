@@ -263,11 +263,11 @@ fn extract_block_impl(
         strip.len(),
     );
 
-    let level_shift = f32x8::splat(token, 128.0);
+    let level_shift = f32x8::splat_t(token, 128.0);
     let mut rows = [[0.0f32; 8]; 8];
     for dy in 0..8 {
         let row_start = (y_start + dy) * strip_width + x_start;
-        let src = f32x8::load(token, strip[row_start..row_start + 8].try_into().unwrap());
+        let src = f32x8::load_t(token, strip[row_start..row_start + 8].try_into().unwrap());
         rows[dy] = (src - level_shift).to_array();
     }
 
