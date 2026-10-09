@@ -105,6 +105,11 @@ pub use extras::{
     QualityScale, SegmentType, StandardProfile,
 };
 
+// Segment classification and the MPF index parser, for the structural
+// inventory walker (codec/inventory.rs).
+#[cfg(feature = "zencodec")]
+pub(crate) use extras::{detect_segment_type, parse_mpf_directory};
+
 // Re-export depth map types for public API
 #[allow(unused_imports)]
 pub use depth::{
@@ -2865,7 +2870,7 @@ impl DecodeConfig {
 ///
 /// Looks for APP1 segments containing EXIF data and reads the orientation tag.
 /// Returns `Some(1..=8)` if found, `None` otherwise.
-fn find_exif_orientation(data: &[u8]) -> Option<u8> {
+pub(crate) fn find_exif_orientation(data: &[u8]) -> Option<u8> {
     const EXIF_PREFIX: &[u8] = b"Exif\0\0";
 
     if data.len() < 4 {
