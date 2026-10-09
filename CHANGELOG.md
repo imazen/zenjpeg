@@ -42,6 +42,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `JpegDecodeJob` implements zencodec's `DecodeJob::inventory` and declares
+  `DecodeCapabilities::inventory` (zencodec#133). It returns a byte-exact
+  map of the file as the zencodec decode path reads it: every marker
+  segment, scan, fill and stray byte, JFIF thumbnail, MPF image, GContainer
+  item and Samsung SEF trailer, each with what the decoder does with it.
+  Fuzz target `fuzz_inventory`; `just inventory-oracle` cross-checks the
+  offsets against ExifTool. Builds against zencodec's `feat/inventory`
+  branch through `[patch.crates-io]` until that is released. (aa444b2d)
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
