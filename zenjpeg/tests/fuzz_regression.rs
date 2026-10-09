@@ -569,6 +569,32 @@ fn run_container_xmp(data: &[u8]) {
     core::hint::black_box(&items);
 }
 
+/// `fuzz_inventory`: the structural inventory under every job configuration
+/// that changes it must cover the input exactly and validate.
+#[cfg(feature = "zencodec")]
+fn run_inventory(data: &[u8]) {
+    use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+    let jobs = [
+        zenjpeg::JpegDecoderConfig::new().job(),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Correct),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::Components),
+    ];
+    for job in jobs {
+        let inv = job
+            .inventory(data)
+            .expect("inventory")
+            .expect("zenjpeg declares the inventory capability");
+        assert_eq!(inv.input_len(), data.len() as u64);
+        if let Err(e) = inv.validate() {
+            panic!("invalid inventory: {e}\n{inv}");
+        }
+    }
+}
+
 // ── encode entry points ──────────────────────────────────────────────────
 
 /// `fuzz_encode` and `fuzz_roundtrip`.
@@ -709,6 +735,8 @@ fn regression_seeds_do_not_panic() {
         run_container_mpf(&data);
         run_container_probe(&data);
         run_container_xmp(&data);
+        #[cfg(feature = "zencodec")]
+        run_inventory(&data);
         run_encode_and_roundtrip(&data);
 
         replayed += 1;

@@ -31,9 +31,9 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.28"
+version = "0.9.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "802588500749f8792342d51afe283f42a7ab6baeb3c5334b62c3c48855a2ec20"
+checksum = "15785ee3576fbd41276a25f063b1e6b5bf323af9b4924632e25a8de6a3065f06"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -42,13 +42,13 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.28"
+version = "0.9.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6e6c957fc425c4e22da4abc86b3341df09672079df466de138b6b0608a6cfd2"
+checksum = "ce7707714970d5cf476caccbae2d282000c6c14ca5aada878e722a10d8e1c153"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -74,7 +74,7 @@ checksum = "fc0e56a716f1e132ff6bf4bdac1c944a3fcdc1cae65f70a4a2a1ac3b401d2d1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -235,11 +235,12 @@ checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
 
 [[package]]
 name = "magetypes"
-version = "0.9.28"
+version = "0.9.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b3e01b6a29880b694607d95eb01da6bf71a291c545a560c5255c26e02a35413"
+checksum = "5726fd3335b1d2814036c420a5c8d105abcc0e0b43eebb477e48f8c725fc8fb2"
 dependencies = [
  "archmage",
+ "libm",
  "rustversion",
 ]
 
@@ -344,9 +345,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.4"
+version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
+checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -370,7 +371,7 @@ checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -446,9 +447,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4b0d4108a8f062c85090bf8d0e6dd00fea976ffacc0e4f3cb6b03284a75531"
+version = "0.1.27"
+source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#21383d660a9e0ef9bf3c0b928a42cd1abde91a4e"
 dependencies = [
  "almost-enough",
  "enough",
@@ -489,6 +489,7 @@ dependencies = [
  "arbitrary",
  "enough",
  "libfuzzer-sys",
+ "zencodec",
  "zenjpeg",
  "zenpixels",
  "zune-core",
@@ -531,6 +532,7 @@ name = "zenyuv"
 version = "0.1.3"
 dependencies = [
  "archmage",
+ "imgref",
  "libm",
  "linear-srgb",
  "magetypes",
