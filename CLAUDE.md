@@ -1060,7 +1060,7 @@ but `false` for XYB (where SOF1 is forced for DC categories, not quant precision
 
 ### Default Tests (no external dependencies)
 ```bash
-cargo test --release                    # All non-ignored tests (~340 tests)
+cargo test --release                    # All workspace members: 2,449 run + 208 ignored (2026-10-08)
 cargo test --release --test <name>      # Specific test file
 ```
 
@@ -1097,7 +1097,7 @@ cargo test --release --features ffi-tests -- --ignored
 
 | Category | Command | Notes |
 |----------|---------|-------|
-| Unit tests | `cargo test --release --lib` | 324 tests, no deps |
+| Unit tests | `cargo test --release --lib` | 1,264 + 4 ignored across members (zenjpeg: 1,200 + 1), 2026-10-08; no deps |
 | Integration | `cargo test --release` | Includes strip parity |
 | C++ parity | `cargo test --release -- --ignored` | Needs C++ build |
 | Corpus | `--features corpus-tests -- --ignored` | Needs image corpus |
