@@ -292,9 +292,9 @@ impl Corpus {
                 out.push(found);
                 continue;
             };
-            let mut stack = vec![d];
+            let mut stack = vec![(d, 0usize)];
             let mut pngs = Vec::new();
-            while let Some(dir) = stack.pop() {
+            while let Some((dir, depth)) = stack.pop() {
                 let rd = match std::fs::read_dir(&dir) {
                     Ok(rd) => rd,
                     Err(_) => {
@@ -312,7 +312,13 @@ impl Corpus {
                     };
                     let p = ent.path();
                     match p.metadata() {
-                        Ok(m) if m.is_dir() => stack.push(p),
+                        Ok(m) if m.is_dir() => {
+                            if depth < MAX_SCAN_DEPTH {
+                                stack.push((p, depth + 1));
+                            } else {
+                                failures += 1;
+                            }
+                        }
                         Ok(_) => {
                             if p.extension().is_some_and(|e| e == "png") {
                                 pngs.push(p);
@@ -353,11 +359,16 @@ impl Corpus {
 /// (`top`-relative name, bytes) plus the count of traversal failures —
 /// unreadable subdirectory, unreadable directory entry, unreadable file,
 /// or a dir that yields zero usable inputs.
+/// Deepest directory nesting a corpus scan will follow. Real corpus trees
+/// are a few levels deep; this bound exists to break symlink cycles — an
+/// entry past the cap counts as a failure, never a silent skip.
+const MAX_SCAN_DEPTH: usize = 32;
+
 fn scan_jpeg_dir(top: &str, root: &std::path::Path) -> (Vec<(String, Vec<u8>)>, usize) {
     let mut out = Vec::new();
     let mut failures = 0usize;
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
         let rd = match std::fs::read_dir(&dir) {
             Ok(rd) => rd,
             Err(_) => {
@@ -375,7 +386,13 @@ fn scan_jpeg_dir(top: &str, root: &std::path::Path) -> (Vec<(String, Vec<u8>)>, 
             };
             let p = ent.path();
             match p.metadata() {
-                Ok(m) if m.is_dir() => stack.push(p),
+                Ok(m) if m.is_dir() => {
+                    if depth < MAX_SCAN_DEPTH {
+                        stack.push((p, depth + 1));
+                    } else {
+                        failures += 1;
+                    }
+                }
                 Ok(_) => {
                     if p.extension().and_then(|e| e.to_str()).is_some_and(|s| {
                         s.eq_ignore_ascii_case("jpg") || s.eq_ignore_ascii_case("jpeg")
