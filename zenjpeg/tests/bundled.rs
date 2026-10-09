@@ -168,6 +168,8 @@ mod icc_extraction;
 mod idct_comparison;
 #[path = "bundled/imageflow_corpus_zensim.rs"]
 mod imageflow_corpus_zensim;
+#[path = "bundled/inventory_corpus.rs"]
+mod inventory_corpus;
 #[path = "bundled/issue27_progressive_dc_pt.rs"]
 mod issue27_progressive_dc_pt;
 #[path = "bundled/issue7_repro.rs"]
