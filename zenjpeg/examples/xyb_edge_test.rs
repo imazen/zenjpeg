@@ -29,7 +29,9 @@ fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
 
 fn bytes_to_linear(data: &[u8], width: usize, height: usize) -> LinearRgbImage {
     let pixels: Vec<[f32; 3]> = data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|rgb| {
             [
                 srgb_u8_to_linear(rgb[0]),

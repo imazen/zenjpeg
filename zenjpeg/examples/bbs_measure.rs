@@ -145,7 +145,9 @@ fn decode_jpeg_rgb(data: &[u8]) -> (Vec<RGB<u8>>, usize, usize) {
     let info = decoder.info().expect("jpeg info missing");
     let (w, h) = (info.width as usize, info.height as usize);
     let rgb: Vec<RGB<u8>> = pixels
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB {
             r: c[0],
             g: c[1],

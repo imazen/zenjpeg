@@ -2906,7 +2906,9 @@ fn run_measurements(
                 use rgb::RGB8;
                 let px: Vec<RGB8> = img
                     .pixels
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|c| RGB8 {
                         r: c[0],
                         g: c[1],
