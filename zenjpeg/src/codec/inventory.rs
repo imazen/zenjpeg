@@ -1696,10 +1696,13 @@ impl Walk<'_> {
                                 ));
                             }
                             None => {
+                                // parse_exif_orientation found a tag the
+                                // entry search does not locate to the byte.
                                 decided[i] = Some((
-                                    Disposition::Metadata(MetadataKind::Orientation),
+                                    Disposition::Skipped,
                                     Some(
-                                        "its orientation is applied to the pixels; \
+                                        "find_exif_orientation applies an orientation from this \
+                                         segment, at an entry the inventory does not locate; \
                                          ImageInfo::exif carries the first EXIF segment"
                                             .into(),
                                     ),
@@ -1769,23 +1772,6 @@ impl Walk<'_> {
             self.set(a.node, d, detail);
         }
 
-        if let Some(at) = orientation_from_inside {
-            // The orientation walk desynchronised (a single fill byte) and
-            // found an APP1 EXIF header inside another part.
-            if let Some(node) = (st.nodes.clone()).rev().find(|&n| {
-                self.node(n).range.start <= at as u64 && (at as u64) < self.node(n).range.end
-            }) {
-                self.set(node, Disposition::Metadata(MetadataKind::Orientation), None);
-                self.append_detail(
-                    node,
-                    &format!(
-                        "find_exif_orientation reads an EXIF orientation from bytes at offset {at} \
-                         inside this part"
-                    ),
-                );
-            }
-        }
-
         if !decode_ok {
             // Nothing reaches the caller from a failed decode, except what
             // `probe()` reads before the frame header.
@@ -1803,6 +1789,59 @@ impl Walk<'_> {
         }
         for (node, p) in extra {
             self.add(Some(node), p)?;
+        }
+        if let Some(at) = orientation_from_inside {
+            self.orientation_inside(st, at)?;
+        }
+        Ok(())
+    }
+
+    /// The orientation walk desynchronised (a single fill byte is enough)
+    /// and read an APP1 EXIF header at `at`, inside another part. The part
+    /// keeps its disposition; the 12-byte orientation entry the decoder
+    /// applies becomes a `Field` child of the innermost part around it.
+    fn orientation_inside(&mut self, st: &Stream, at: usize) -> Result<(), InventoryError> {
+        let data = self.data;
+        let entry = be16(data, at + 2).and_then(|n| {
+            let payload = data.get(at + 4..at + 2 + n as usize)?;
+            let r = exif_orientation_entry(payload)?;
+            Some(at + 4 + r.start..at + 4 + r.end)
+        });
+        let nodes = st.nodes.start..self.ids.len();
+        let around = |w: &Self, r: &Range<usize>| {
+            nodes.clone().rev().find(|&n| {
+                let p = &w.node(n).range;
+                p.start <= r.start as u64 && r.end as u64 <= p.end
+            })
+        };
+        if let Some(r) = entry
+            && let Some(node) = around(self, &r)
+            && self.inv.children(Some(self.ids[node])).iter().all(|&c| {
+                let c = &self.inv.parts()[c.index()].range;
+                c.end <= r.start as u64 || c.start >= r.end as u64
+            })
+        {
+            self.add(
+                Some(node),
+                part(
+                    PartKind::Field,
+                    PartTag::Code(0x0112),
+                    r,
+                    Disposition::Metadata(MetadataKind::Orientation),
+                )
+                .with_detail(format!(
+                    "EXIF orientation entry of an APP1 lookalike at offset {at}: \
+                     find_exif_orientation applies it to the pixels"
+                )),
+            )?;
+        } else if let Some(node) = around(self, &(at..at + 1)) {
+            self.append_detail(
+                node,
+                &format!(
+                    "find_exif_orientation applies an EXIF orientation read from an APP1 \
+                     lookalike at offset {at} inside this part"
+                ),
+            );
         }
         Ok(())
     }

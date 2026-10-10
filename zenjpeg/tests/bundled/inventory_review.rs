@@ -299,3 +299,43 @@ fn extended_xmp_guid_and_length_are_dropped() {
         );
     }
 }
+
+/// Finding 4: one fill byte desynchronises `find_exif_orientation` into a
+/// COM payload holding an APP1 EXIF lookalike. The COM stays `Skipped`; only
+/// the 12-byte orientation entry the decoder applies is consumed.
+#[test]
+fn orientation_lookalike_inside_another_part_is_a_field() {
+    use zencodec::OrientationHint;
+    let orig = load(TESTORIG);
+    let mut exif = b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01".to_vec();
+    exif.extend([0x01, 0x12, 0x00, 0x03, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]);
+    let mut com = b"SECRET-COMMENT-TEXT ".to_vec();
+    com.extend(seg(0xE1, &exif));
+    com.extend(b" MORE-SECRET-TEXT");
+    let mut ins = vec![0xFF]; // one fill byte
+    ins.extend(seg(0xFE, &com));
+    let d = insert(&orig, 2, &ins);
+    let correct = || job().with_orientation(OrientationHint::Correct);
+    let out = decode(correct(), &d).unwrap();
+    assert_eq!(
+        (out.width(), out.height()),
+        (149, 227),
+        "orientation 6 applied"
+    );
+
+    let i = inv(&correct(), &d);
+    // COM at 3: marker, length, then the text; the lookalike APP1 at 27.
+    let text = leaf_at(&i, 3 + 4 + 2);
+    assert_eq!(text.disposition, D::Skipped, "{}", show(text));
+    let lookalike = 3 + 4 + 20;
+    let entry = lookalike + 4 + 6 + 8 + 2;
+    let p = leaf_at(&i, entry);
+    assert_eq!(
+        p.disposition,
+        D::Metadata(zencodec::inventory::MetadataKind::Orientation),
+        "{}",
+        show(p)
+    );
+    assert_eq!(p.range, entry as u64..entry as u64 + 12, "{}", show(p));
+    assert_eq!(leaf_at(&i, entry + 12).disposition, D::Skipped);
+}
