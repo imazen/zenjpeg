@@ -12,6 +12,7 @@ use zenjpeg::{JpegDecodeJob, JpegDecoderConfig};
 
 const TESTORIG: (&str, &str) = ("jpeg-conformance", "valid/testorig.jpg");
 const ARI: (&str, &str) = ("jpeg-conformance", "valid/testimgari.jpg");
+const PROG: (&str, &str) = ("jpeg-conformance", "valid/progressive3.jpg");
 const UHDR: (&str, &str) = (
     "ultrahdr-conformance",
     "valid/jpeg/awesome-gain-maps/rgba_uhdr.jpg",
@@ -338,4 +339,201 @@ fn orientation_lookalike_inside_another_part_is_a_field() {
     );
     assert_eq!(p.range, entry as u64..entry as u64 + 12, "{}", show(p));
     assert_eq!(leaf_at(&i, entry + 12).disposition, D::Skipped);
+}
+
+/// The scan-data part's disposition (every test file here has one scan
+/// part or more; the first is enough).
+fn scan_disposition(i: &Inventory) -> D {
+    i.parts()
+        .iter()
+        .find(|p| p.kind == zencodec::inventory::PartKind::ScanData)
+        .expect("scan data")
+        .disposition
+}
+
+/// Finding 7: the job's policy, inner strictness and dimension limits
+/// decide whether the decode fails, and the inventory follows them.
+#[test]
+fn job_policy_strictness_and_limits_are_followed() {
+    use zencodec::decode::DecodePolicy;
+    let orig = load(TESTORIG);
+
+    // One stray byte between APP0 and DQT: a warning, an error when Strict.
+    let d = insert(&orig, 20, &[0x00]);
+    let strict = || job().with_policy(DecodePolicy::strict());
+    assert!(decode(job(), &d).is_ok());
+    assert!(decode(strict(), &d).is_err());
+    assert_eq!(scan_disposition(&inv(&job(), &d)), D::ImageData);
+    assert_eq!(scan_disposition(&inv(&strict(), &d)), D::Skipped);
+    // `allow_truncated: false` alone also makes the decode Strict.
+    let mut no_trunc = DecodePolicy::none();
+    no_trunc.allow_truncated = Some(false);
+    assert!(decode(job().with_policy(no_trunc), &d).is_err());
+    assert_eq!(
+        scan_disposition(&inv(&job().with_policy(no_trunc), &d)),
+        D::Skipped
+    );
+
+    // APP15 with length 1 before the frame header: Permissive skips it.
+    let d = insert(&orig, 20, &[0xFF, 0xEF, 0x00, 0x01]);
+    let mut cfg = JpegDecoderConfig::new();
+    let permissive = cfg.inner().clone().permissive();
+    *cfg.inner_mut() = permissive;
+    assert!(decode(job(), &d).is_err());
+    assert!(decode(cfg.clone().job(), &d).is_ok());
+    assert_eq!(scan_disposition(&inv(&job(), &d)), D::Skipped);
+    assert_eq!(scan_disposition(&inv(&cfg.job(), &d)), D::ImageData);
+
+    // A zero quantization value: clamped, an error when Strict.
+    let mut d = orig.clone();
+    assert_eq!(&d[20..22], &[0xFF, 0xDB]);
+    d[20 + 5 + 10] = 0;
+    assert!(decode(job(), &d).is_ok());
+    assert!(decode(strict(), &d).is_err());
+    assert_eq!(scan_disposition(&inv(&job(), &d)), D::ImageData);
+    assert_eq!(scan_disposition(&inv(&strict(), &d)), D::Skipped);
+
+    // allow_progressive = false refuses a progressive frame in decode();
+    // probe() still reads the header.
+    let p = load(PROG);
+    let mut pol = DecodePolicy::none();
+    pol.allow_progressive = Some(false);
+    assert!(decode(job().with_policy(pol), &p).is_err());
+    let i = inv(&job().with_policy(pol), &p);
+    assert_eq!(scan_disposition(&i), D::Skipped);
+    assert!(
+        i.parts()[0].disposition.is_consumed(),
+        "SOI: probe reads it"
+    );
+
+    // max_width below the frame width.
+    let width = job().probe(&p).unwrap().width;
+    let lim = zencodec::ResourceLimits::none().with_max_width(width - 1);
+    assert!(decode(job().with_limits(lim.clone()), &p).is_err());
+    assert_eq!(
+        scan_disposition(&inv(&job().with_limits(lim), &p)),
+        D::Skipped
+    );
+}
+
+/// Finding 6: a malformed segment after the only scan of a sequential
+/// frame without a restart interval certainly stops the decode.
+#[test]
+fn failure_after_a_sequential_scan_is_certain() {
+    let orig = load(TESTORIG);
+    let eoi = orig.len() - 2;
+    for ins in [vec![0xFF, 0xEF, 0x00, 0x01], seg(0xC4, &[0x20; 17])] {
+        let d = insert(&orig, eoi, &ins);
+        assert!(decode(job(), &d).is_err());
+        let i = inv(&job(), &d);
+        assert_eq!(scan_disposition(&i), D::Skipped);
+        // Only what probe() reads before the frame header stays consumed.
+        assert_eq!(&orig[158..160], &[0xFF, 0xC0]);
+        let sof_end = 160 + u16::from_be_bytes([orig[160], orig[161]]) as u64;
+        for p in i.parts().iter().filter(|p| p.range.end > sof_end) {
+            assert!(!p.disposition.is_consumed(), "{}", show(p));
+        }
+    }
+}
+
+fn decode_f32(data: &[u8]) -> Vec<u8> {
+    let out = job()
+        .decoder(
+            Cow::Owned(data.to_vec()),
+            &[zenpixels::PixelDescriptor::RGBF32_LINEAR],
+        )
+        .unwrap()
+        .decode()
+        .unwrap();
+    pixels(&out)
+}
+
+fn adobe(transform: u8) -> Vec<u8> {
+    seg(
+        0xEE,
+        &[b'A', b'd', b'o', b'b', b'e', 0, 0x64, 0, 0, 0, 0, transform],
+    )
+}
+
+/// Finding 5: a baseline 4:2:0 frame decoded to the default u8 RGB output
+/// dequantises and converts colour during its scan; an f32 output does
+/// both at the end. Post-scan DQT and APP14 matter only to the second, and
+/// the parts say so.
+#[test]
+fn post_scan_tables_depend_on_the_output_path() {
+    let orig = load(TESTORIG);
+    let eoi = orig.len() - 2;
+    let base = pixels(&decode(job(), &orig).unwrap());
+
+    // A DQT after the scan redefining table 0.
+    let mut q = vec![0x00];
+    q.extend([1u8; 64]);
+    let d = insert(&orig, eoi, &seg(0xDB, &q));
+    assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
+    assert_ne!(decode_f32(&d), decode_f32(&orig));
+    let i = inv(&job(), &d);
+    let late = leaf_at(&i, eoi + 5);
+    assert_eq!(late.disposition, D::Dropped, "{}", show(late));
+    assert!(
+        late.detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("coefficients"),
+        "{}",
+        show(late)
+    );
+    // testorig's own table 0 (DQT at 20) is what the default output uses.
+    let own = leaf_at(&i, 20 + 5);
+    assert_eq!(own.disposition, D::Structure, "{}", show(own));
+    assert!(
+        own.detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("default u8 RGB"),
+        "{}",
+        show(own)
+    );
+
+    // An APP14 after the scan.
+    let d = insert(&orig, eoi, &adobe(0));
+    assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
+    assert_ne!(decode_f32(&d), decode_f32(&orig));
+    let i = inv(&job(), &d);
+    let p = leaf_at(&i, eoi + 4);
+    assert_eq!(p.disposition, D::Dropped, "{}", show(p));
+
+    // APP14 t=0 after SOI, t=1 before EOI: the early one is applied.
+    let early = insert(&orig, 2, &adobe(0));
+    let early_px = pixels(&decode(job(), &early).unwrap());
+    let both = insert(&early, early.len() - 2, &adobe(1));
+    assert_eq!(pixels(&decode(job(), &both).unwrap()), early_px);
+    let i = inv(&job(), &both);
+    let first = leaf_at(&i, 4);
+    assert_eq!(
+        first.disposition,
+        D::Metadata(zencodec::inventory::MetadataKind::Colour),
+        "{}",
+        show(first)
+    );
+    assert!(!first.detail.as_deref().unwrap_or("").contains("superseded"));
+    let second = leaf_at(&i, both.len() - 2 - 16 + 4);
+    assert_eq!(second.disposition, D::Dropped, "{}", show(second));
+}
+
+/// Finding 5, control: a progressive frame always converts at the end, so
+/// a DQT after its scans is the table in effect.
+#[test]
+fn post_scan_dqt_of_a_progressive_frame_is_used() {
+    let orig = load(PROG);
+    let eoi = orig.len() - 2;
+    let mut q = vec![0x00];
+    q.extend([1u8; 64]);
+    let d = insert(&orig, eoi, &seg(0xDB, &q));
+    assert_ne!(
+        pixels(&decode(job(), &d).unwrap()),
+        pixels(&decode(job(), &orig).unwrap())
+    );
+    let i = inv(&job(), &d);
+    let p = leaf_at(&i, eoi + 5);
+    assert_eq!(p.disposition, D::Structure, "{}", show(p));
 }

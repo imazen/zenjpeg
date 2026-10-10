@@ -308,7 +308,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     }
 
     /// A byte-exact map of `data` as this job's decode path reads it; see
-    /// `codec/inventory.rs` for what each disposition means here.
+    /// `codec/inventory.rs` for what each disposition means here. It follows
+    /// the job's policy and strictness, orientation hint, gain-map render
+    /// and pixel, width and height limits, and assumes `max_memory_bytes`
+    /// is large enough for the decode. Where the decode depends on the
+    /// output format the caller later asks for, dispositions describe the
+    /// default output and the part's detail names the difference.
     fn inventory(
         &self,
         data: &[u8],
@@ -323,6 +328,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                         | zencodec::GainMapRender::ReconstructHdr { .. }
                 ),
             max_pixels: self.limit_adjusted_inner().get_max_pixels(),
+            // `probe()` reads the header with the inner config;
+            // `build_decode_config` raises the decode to Strict.
+            probe_strictness: self.config.inner.strictness,
+            decode_strictness: match &self.policy {
+                Some(p) if p.strict == Some(true) || p.allow_truncated == Some(false) => {
+                    crate::decode::Strictness::Strict
+                }
+                _ => self.config.inner.strictness,
+            },
+            allow_progressive: self
+                .policy
+                .as_ref()
+                .is_none_or(|p| p.resolve_progressive(true)),
+            max_width: self.limits.max_width,
+            max_height: self.limits.max_height,
         };
         match super::inventory::inventory(data, opts) {
             Ok(inv) => Ok(Some(inv)),

@@ -120,16 +120,29 @@ fn check_coverage(valid: &[u8], junk_unconsumed: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn decodes(data: &[u8]) -> bool {
+/// The zencodec decode's verdict: `Ok` or the error text.
+fn decode_verdict(data: &[u8]) -> Result<(), String> {
     std::panic::catch_unwind(|| {
         JpegDecoderConfig::new()
             .job()
             .decoder(Cow::Borrowed(data), &[])
             .and_then(|d| d.decode())
-            .is_ok()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     })
-    .unwrap_or(false)
+    .unwrap_or_else(|_| Err("panic".into()))
 }
+
+/// Decode errors raised inside entropy-coded data, which the walker does
+/// not decode.
+const ENTROPY_LEVEL: &[&str] = &[
+    "invalid Huffman table 0: invalid code",
+    "DC Huffman category out of range",
+    "could not resync to restart marker",
+    "restart marker",
+    "AC coefficient index",
+    "arithmetic",
+];
 
 #[test]
 fn inventory_covers_every_corpus_jpeg() {
@@ -169,7 +182,8 @@ fn inventory_covers_every_corpus_jpeg() {
                 }
             }
         }
-        if decodes(&data) {
+        let verdict = decode_verdict(&data);
+        if verdict.is_ok() {
             decoded += 1;
             let checked = if has_eoi {
                 zencodec_testkit::check_inventory(JpegDecoderConfig::new(), &data)
@@ -187,14 +201,36 @@ fn inventory_covers_every_corpus_jpeg() {
             if let Err(e) = check_coverage(&data, has_eoi) {
                 failures.push(format!("{name}: {e}"));
             }
-            // Did the walker see the failure coming?
-            if let Ok(inv) = inventory_of(&data)
-                && !inv
-                    .parts()
-                    .iter()
-                    .any(|p| p.disposition == Disposition::ImageData)
-            {
+            // Did the walker see the failure coming? Then nothing past the
+            // header probe() reads is consumed (no image data at all).
+            // Otherwise the failure must be one the walker cannot see: in
+            // entropy-coded data, or past a scan coded with a restart
+            // interval (where the decoder may resync over later parts).
+            if !has_image_data {
                 rejected_known += 1;
+            } else {
+                let why = verdict.err().unwrap_or_default();
+                let uncertain = inv.parts().iter().any(|p| {
+                    p.detail
+                        .as_deref()
+                        .is_some_and(|d| d.contains("if the decoder reaches it"))
+                });
+                let entropy = ENTROPY_LEVEL.iter().any(|e| why.contains(e));
+                println!(
+                    "rejected, not flagged ({}): {name}: {why}",
+                    if entropy {
+                        "entropy"
+                    } else if uncertain {
+                        "after a restart interval"
+                    } else {
+                        "UNCLASSIFIED"
+                    }
+                );
+                if !entropy && !uncertain {
+                    failures.push(format!(
+                        "{name}: rejected ({why}) but the inventory has image data"
+                    ));
+                }
             }
         }
     }

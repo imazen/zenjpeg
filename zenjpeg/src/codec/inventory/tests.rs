@@ -241,6 +241,11 @@ fn opts() -> Options {
         auto_orient: false,
         gain_map_decoded: false,
         max_pixels: 0,
+        probe_strictness: crate::decode::Strictness::default(),
+        decode_strictness: crate::decode::Strictness::default(),
+        allow_progressive: true,
+        max_width: None,
+        max_height: None,
     }
 }
 

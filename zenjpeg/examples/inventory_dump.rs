@@ -4,18 +4,42 @@
 //! cargo run --release --features zencodec --example inventory_dump -- [--count] FILE...
 //! ```
 //!
-//! `--sizes` prints the in-memory size of a part. `--count` prints only the part count and the bytes per disposition, which
+//! `--render base|components|reconstruct` sets the job's `GainMapRender`
+//! for the inventory and for a zencodec decode it then also runs.
+//! `--decode` also runs the native decoder (`DecodeConfig::new()`, the
+//! default strictness) and prints its result and warnings next to the
+//! inventory. `--sizes` prints the in-memory size of a part. `--count` prints only the part count and the bytes per disposition, which
 //! is what a memory measurement under `/usr/bin/time -v` wants.
 
-use zencodec::decode::{DecodeJob, DecoderConfig};
+use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjpeg::JpegDecoderConfig;
 
 fn main() {
     let mut count_only = false;
+    let mut with_decode = false;
+    let mut render = None;
+    let mut want_render = false;
     let mut files = Vec::new();
     for arg in std::env::args().skip(1) {
-        if arg == "--count" {
+        if want_render {
+            want_render = false;
+            render = Some(match arg.as_str() {
+                "base" => zencodec::GainMapRender::BaseOnly,
+                "components" => zencodec::GainMapRender::Components,
+                "reconstruct" => zencodec::GainMapRender::ReconstructHdr {
+                    target_headroom: None,
+                },
+                other => {
+                    eprintln!("unknown --render {other}");
+                    std::process::exit(2);
+                }
+            });
+        } else if arg == "--render" {
+            want_render = true;
+        } else if arg == "--count" {
             count_only = true;
+        } else if arg == "--decode" {
+            with_decode = true;
         } else if arg == "--sizes" {
             println!(
                 "size_of Part = {}, PartId = {}",
@@ -40,8 +64,41 @@ fn main() {
                 continue;
             }
         };
+        if with_decode {
+            match zenjpeg::decoder::DecodeConfig::new().decode(&data, enough::Unstoppable) {
+                Ok(r) => println!(
+                    "{file}: native decode ok {}x{}, warnings {:?}",
+                    r.width(),
+                    r.height(),
+                    r.warnings()
+                ),
+                Err(e) => println!("{file}: native decode error: {e}"),
+            }
+        }
+        let job = || {
+            let job = JpegDecoderConfig::new().job();
+            match render {
+                Some(r) => job.with_gain_map_render(r),
+                None => job,
+            }
+        };
+        if let Some(r) = render {
+            let out = job()
+                .decoder(std::borrow::Cow::Borrowed(&data), &[])
+                .and_then(|d| d.decode());
+            match out {
+                Ok(o) => println!(
+                    "{file}: zencodec decode ({r:?}) ok {}x{}, gain map {:?}",
+                    o.width(),
+                    o.height(),
+                    o.extras::<zencodec::decode::DecodedGainMap>()
+                        .map(|g| (g.width(), g.height()))
+                ),
+                Err(e) => println!("{file}: zencodec decode ({r:?}) error: {e}"),
+            }
+        }
         let start = std::time::Instant::now();
-        let result = JpegDecoderConfig::new().job().inventory(&data);
+        let result = job().inventory(&data);
         let elapsed = start.elapsed().as_secs_f64();
         match result {
             Ok(Some(inv)) => {

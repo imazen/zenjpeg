@@ -22,11 +22,56 @@
 //! is `Skipped`, with a detail naming the native accessor.
 //!
 //! Failures the walker can see without entropy decoding (no SOI, an
-//! unsupported or invalid frame header, a malformed segment length, 12-bit
-//! precision, DNL mode) make the decode fail; parts the failing decode would
-//! have consumed are then `Skipped`, except those `probe` still reads. Entropy
-//! errors inside scan data are invisible here: scan data is `ImageData`
-//! whenever the container is sound.
+//! unsupported or invalid frame header, a malformed segment, 12-bit
+//! precision, DNL mode, a 2-component frame) make the decode fail; parts
+//! the failing decode would have consumed are then `Skipped`, except those
+//! `probe` still reads. Entropy errors inside scan data are invisible here:
+//! scan data is `ImageData` whenever the container is sound.
+//!
+//! # Job settings
+//!
+//! The walker follows what the job sets that changes the outcome:
+//!
+//! - strictness: `probe()` parses the header with the inner config's
+//!   strictness; `decode()` with the same, raised to `Strict` by a
+//!   `DecodePolicy` with `strict` or `allow_truncated: false`. Strict turns
+//!   every decoder warning the walker can see into a failure (stray bytes,
+//!   truncation, a scan-header or DRI length mismatch, a zero quantization
+//!   value, a DNL height conflict, a missing Huffman table); Permissive
+//!   skips header segments the parser rejects, and segments shorter than
+//!   their length word, by their length;
+//! - `DecodePolicy::allow_progressive`, `ResourceLimits::max_pixels`,
+//!   `max_width` and `max_height`;
+//! - the `OrientationHint` (which EXIF orientation reaches the pixels) and
+//!   the `GainMapRender` (whether the gain map is decoded).
+//!
+//! It assumes `ResourceLimits::max_memory_bytes` is large enough: whether a
+//! decode fits depends on the decode path's allocations, which the walker
+//! does not model.
+//!
+//! # A failure after the first scan
+//!
+//! After a scan coded with a restart interval, a non-Strict decoder that
+//! misses an RSTn scans up to 4096 bytes forward for the next one, over
+//! other markers (`resync_to_restart`, foundation/bitstream.rs), so it may
+//! never reach a later part. A container-level failure there is reported
+//! on the part only ("the decode fails here if the decoder reaches it")
+//! and demotes nothing. Everywhere else the decoder reaches the next
+//! marker after a scan, so the failure is certain.
+//!
+//! # Output paths
+//!
+//! The parts a decode uses can depend on the output the caller asks for,
+//! which `inventory()` does not see. A baseline frame that
+//! `can_use_streaming` accepts (1 or 3 components, standard sampling, not
+//! XYB), decoded to u8 RGB-family output, dequantises and converts colour
+//! during its first all-component scan, with the quantisation tables and
+//! APP14 transform in effect then, and ignores its other scans; every other
+//! output (f32, Gray, CMYK, other formats, dequant bias, Knusperli
+//! deblocking) and every other frame stores coefficients and converts at
+//! the end, with what is in effect then. Dispositions follow the default
+//! decode (no preferred descriptors: RGB8 for 3 components, GRAY8 for 1),
+//! and a part the other path treats differently says so in its detail.
 
 use alloc::format;
 use alloc::string::String;
@@ -40,7 +85,7 @@ use zencodec::inventory::{
 };
 
 use crate::decode::{
-    DecodedExtras, MpfImageType, SegmentType, detect_segment_type, parse_mpf_directory,
+    DecodedExtras, MpfImageType, SegmentType, Strictness, detect_segment_type, parse_mpf_directory,
 };
 
 /// What the decode job is configured to do, where it changes a disposition.
@@ -55,6 +100,18 @@ pub(crate) struct Options {
     /// The decoder's pixel cap (`0` = unlimited), checked against the frame
     /// header the way `parse_frame_header` does.
     pub(crate) max_pixels: u64,
+    /// The strictness `probe()` parses the header with: the inner config's.
+    pub(crate) probe_strictness: Strictness,
+    /// The strictness `decode()` runs at: the inner config's, raised to
+    /// `Strict` by a `DecodePolicy` with `strict` or `allow_truncated: false`.
+    pub(crate) decode_strictness: Strictness,
+    /// `DecodePolicy::allow_progressive` (default true); `decode()` refuses
+    /// SOF2/SOF10 frames when false.
+    pub(crate) allow_progressive: bool,
+    /// `ResourceLimits::max_width` / `max_height`, checked by `decode()`
+    /// against the frame header.
+    pub(crate) max_width: Option<u32>,
+    pub(crate) max_height: Option<u32>,
 }
 
 /// Map `data` as the zencodec decode path reads it.
@@ -92,7 +149,7 @@ pub(crate) fn inventory(data: &[u8], opts: Options) -> Result<Inventory, Invento
                     ),
                 )?;
             }
-            let mut st = w.walk_stream(None, start, len)?;
+            let mut st = w.walk_stream(None, start, len, Rules::primary(&opts))?;
             if start > 0 {
                 st.probe_fatal = true;
                 st.decode_fatal = true;
@@ -210,9 +267,96 @@ struct Frame {
     ids: [u8; 4],
     /// Quantisation table index per component.
     qidx: [u8; 4],
+    /// Sampling factors per component, `h << 4 | v`.
+    samp: [u8; 4],
     /// The SOF marker: 0xC0/C1 sequential and 0xC2 progressive Huffman,
     /// 0xC9/CA arithmetic.
     mode: u8,
+}
+
+/// The decode paths that use a definition or a part, as bits.
+///
+/// `STREAM`: `can_use_streaming` (decode/parser/scan.rs) frames decoded to
+/// u8 RGB-family output dequantise and colour-convert during their first
+/// scan that holds every component (baseline_streaming.rs), with the tables
+/// and APP14 transform in effect then. `COEFF`: every other output (f32,
+/// Gray, CMYK, other formats, dequant bias, Knusperli deblocking;
+/// `DecodeConfig::decode`) and every other frame store coefficients and
+/// convert at the end, with the tables and transform in effect then.
+const STREAM: u8 = 1;
+const COEFF: u8 = 2;
+const BOTH: u8 = STREAM | COEFF;
+
+impl Frame {
+    /// `can_use_streaming` for this frame's all-component scan.
+    fn streams(&self, xyb: bool) -> bool {
+        let standard = match self.components {
+            1 => self.samp[0] == 0x11,
+            3 => {
+                let [y, cb, cr, _] = self.samp;
+                cb == cr && cb == 0x11 && matches!(y, 0x11 | 0x22 | 0x21)
+            }
+            _ => false,
+        };
+        matches!(self.mode, 0xC0 | 0xC1) && standard && !xyb
+    }
+}
+
+/// Which path the default zencodec decode (no preferred descriptors) takes,
+/// and the other one an explicit output format can select.
+#[derive(Clone, Copy)]
+struct Paths {
+    default: u8,
+    other: u8,
+}
+
+impl Paths {
+    /// Default output: RGB8 for 3 components (streaming when eligible),
+    /// GRAY8 for 1 (coefficients; RGB-family output streams instead).
+    fn of(frame: Option<Frame>, all_component_scan: bool, xyb: bool) -> Self {
+        match frame {
+            Some(f) if all_component_scan && f.streams(xyb) && f.components == 3 => Self {
+                default: STREAM,
+                other: COEFF,
+            },
+            Some(f) if all_component_scan && f.streams(xyb) => Self {
+                default: COEFF,
+                other: STREAM,
+            },
+            _ => Self {
+                default: COEFF,
+                other: 0,
+            },
+        }
+    }
+
+    /// What the default and the other output paths do with a quantisation
+    /// table (or APP14) used on `paths`, when they disagree.
+    fn note(self, paths: u8) -> Option<&'static str> {
+        let (d, o) = (paths & self.default != 0, paths & self.other != 0);
+        if self.other == 0 || d == o {
+            return None;
+        }
+        Some(match (self.default, d) {
+            (STREAM, true) => {
+                "used by the default u8 RGB output, converted during the scan; an output that \
+                 needs coefficients (f32, Gray, CMYK, dequant bias) converts at the end and \
+                 uses what is in effect then instead"
+            }
+            (STREAM, false) => {
+                "unused by the default u8 RGB output, converted during the scan; used when the \
+                 output needs coefficients (f32, Gray, CMYK, dequant bias), converted at the end"
+            }
+            (_, true) => {
+                "used by the default Gray output, converted at the end; u8 RGB-family output \
+                 converts during the scan and uses what is in effect then instead"
+            }
+            _ => {
+                "unused by the default Gray output, converted at the end; used by u8 \
+                 RGB-family output, converted during the scan"
+            }
+        })
+    }
 }
 
 /// What a [`Def`] defines: a table slot, a DAC conditioning entry or the
@@ -242,14 +386,21 @@ impl core::fmt::Display for DefKind {
     }
 }
 
-/// A definition in effect, and whether a scan (or the final
-/// dequantisation) has used it.
-#[derive(Clone)]
+/// A definition in effect; `used` indexes its record in `Defs::used` once
+/// a decode path uses it.
 struct Def {
     node: usize,
     range: Range<usize>,
     what: DefKind,
-    used: bool,
+    used: Option<usize>,
+}
+
+/// A definition some decode path uses, and which ([`STREAM`], [`COEFF`]).
+struct Used {
+    node: usize,
+    range: Range<usize>,
+    what: DefKind,
+    paths: u8,
 }
 
 /// A segment that defines something: its definitions tile `area`.
@@ -272,8 +423,8 @@ struct Defs {
     dri: Option<Def>,
     dac_dc: [Option<Def>; 4],
     dac_ac: [Option<Def>; 4],
-    /// Every definition a scan used, recorded once.
-    used: Vec<Def>,
+    /// Every definition a decode path used, recorded once.
+    used: Vec<Used>,
     segs: Vec<DefSeg>,
 }
 
@@ -308,28 +459,51 @@ impl Defs {
                 node,
                 range,
                 what,
-                used: false,
+                used: None,
             });
         }
     }
 
-    fn mark(&mut self, k: DefKind) {
-        let fresh = match self.slot(k) {
-            Some(Some(d)) if !d.used => {
-                d.used = true;
-                Some(d.clone())
-            }
-            _ => None,
+    /// The definition in effect for `k` is used on `paths`.
+    fn mark(&mut self, k: DefKind, paths: u8) {
+        let n = self.used.len();
+        let (at, fresh) = match self.slot(k) {
+            Some(Some(d)) => match d.used {
+                Some(at) => (at, None),
+                None => {
+                    d.used = Some(n);
+                    let u = Used {
+                        node: d.node,
+                        range: d.range.clone(),
+                        what: d.what,
+                        paths: 0,
+                    };
+                    (n, Some(u))
+                }
+            },
+            _ => return,
         };
-        if let Some(d) = fresh {
-            self.used.push(d);
+        if let Some(u) = fresh {
+            self.used.push(u);
         }
+        self.used[at].paths |= paths;
+    }
+
+    /// Whether a sequential Huffman scan selects a table no DHT defined
+    /// (`parse_scan` warns `MissingHuffmanTables` and uses the K.3 tables).
+    fn missing_huffman(&self, spec: &[u8], permissive: bool) -> bool {
+        let comps = &spec[..spec.len().saturating_sub(3)];
+        comps.as_chunks::<2>().0.iter().any(|&[_, tables]| {
+            let (td, ta) = scan_tables(tables, permissive);
+            let (td, ta) = (td.min(3) as usize, ta.min(3) as usize);
+            self.dc[td].is_none() || self.ac[ta].is_none()
+        })
     }
 
     /// The quantisation tables every frame component refers to.
-    fn mark_quant(&mut self, f: &Frame) {
+    fn mark_quant(&mut self, f: &Frame, paths: u8) {
         for c in 0..f.components as usize {
-            self.mark(DefKind::Quant(f.qidx[c]));
+            self.mark(DefKind::Quant(f.qidx[c]), paths);
         }
     }
 }
@@ -347,6 +521,11 @@ struct Stream {
     probe_fatal: bool,
     /// `decode()` fails for a container-level reason.
     decode_fatal: bool,
+    /// The decode paths this stream's frame can take.
+    paths: Paths,
+    /// Start of the first scan header that holds every frame component:
+    /// the one the streaming path decodes.
+    stream_scan: Option<usize>,
 }
 
 /// A length-bearing segment starting at `pos`.
@@ -357,6 +536,78 @@ enum SegEnd {
     TooShort(usize),
     /// The length field or the declared body runs past the data.
     Truncated,
+}
+
+/// How the consumers read one stream, where it changes the outcome.
+#[derive(Clone, Copy)]
+struct Rules {
+    /// `probe()`'s strictness; `None` for an embedded image nothing probes.
+    probe: Option<Strictness>,
+    decode: Strictness,
+    max_pixels: u64,
+    allow_progressive: bool,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+}
+
+impl Rules {
+    fn primary(o: &Options) -> Self {
+        Self {
+            probe: Some(o.probe_strictness),
+            decode: o.decode_strictness,
+            max_pixels: o.max_pixels,
+            allow_progressive: o.allow_progressive,
+            max_width: o.max_width,
+            max_height: o.max_height,
+        }
+    }
+
+    /// An embedded image: the gain map is decoded by `decode_gainmap_jpeg`
+    /// with a default `Decoder` (Balanced, default limits, no policy).
+    fn embedded() -> Self {
+        Self {
+            probe: None,
+            decode: Strictness::default(),
+            max_pixels: crate::foundation::alloc::DEFAULT_MAX_PIXELS,
+            allow_progressive: true,
+            max_width: None,
+            max_height: None,
+        }
+    }
+}
+
+/// The strictness levels at which a container-level problem stops the
+/// decoder.
+#[derive(Clone, Copy)]
+enum Fails {
+    Always,
+    /// Only `Strict`: a warning (`JpegParser::warn`) there, an error here.
+    Strict,
+    /// Every level but `Permissive`, which skips the segment by its length.
+    UnlessPermissive,
+}
+
+impl Fails {
+    fn at(self, s: Strictness) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Strict => s.is_strict(),
+            Self::UnlessPermissive => !s.is_permissive(),
+        }
+    }
+}
+
+/// Where a failing part sits.
+#[derive(Clone, Copy)]
+struct At {
+    /// `probe()` reads it (before the first frame header).
+    header: bool,
+    /// The decoder certainly reaches it, given that it gets this far. Not
+    /// so after a scan coded with a restart interval at a non-Strict level:
+    /// when an interval ends without its RSTn, `resync_to_restart`
+    /// (foundation/bitstream.rs) scans up to 4096 bytes forward for any
+    /// RSTn, over other markers, and the decoder resumes there.
+    certain: bool,
 }
 
 fn part(kind: PartKind, tag: PartTag, r: Range<usize>, d: Disposition) -> Part {
@@ -442,58 +693,150 @@ fn scan_end(data: &[u8], start: usize, limit: usize) -> usize {
     limit
 }
 
-/// The decoder's verdict on a DQT body (`JpegParser::parse_quant_table`).
-fn check_dqt(body: &[u8]) -> Result<(), &'static str> {
-    let mut rest = body;
-    while let Some((&info, tail)) = rest.split_first() {
+/// Why the decoder rejects a table segment: how many tables (or DAC
+/// entries) it stored before the bad one, why, and whether it simply ran
+/// out of the bytes it was given (a length mismatch inside the declared
+/// body; a cut, in the bytes left of a truncated segment).
+#[derive(Clone, Copy)]
+struct Bad {
+    stored: usize,
+    why: &'static str,
+    ran_out: bool,
+}
+
+fn bad(stored: usize, why: &'static str) -> Result<(), Bad> {
+    Err(Bad {
+        stored,
+        why,
+        ran_out: false,
+    })
+}
+
+fn ran_out(stored: usize, why: &'static str) -> Result<(), Bad> {
+    Err(Bad {
+        stored,
+        why,
+        ran_out: true,
+    })
+}
+
+/// The decoder's verdict on a DQT segment (`JpegParser::parse_quant_table`):
+/// `declared` bytes of tables by the length field, read from `avail` (the
+/// data from the start of the body on, which a cut can leave shorter).
+fn check_dqt(avail: &[u8], declared: usize) -> Result<(), Bad> {
+    let (mut at, mut k) = (0, 0);
+    while at < declared {
+        let Some(&info) = avail.get(at) else {
+            return ran_out(k, "truncated");
+        };
         if info >> 4 > 1 {
-            return Err("invalid quantization table precision");
+            return bad(k, "invalid quantization table precision");
         }
         if info & 0x0F >= 4 {
-            return Err("quantization table index out of range");
+            return bad(k, "quantization table index out of range");
         }
         let n = if info >> 4 == 0 { 64 } else { 128 };
-        if tail.len() < n {
-            return Err("DQT length mismatch");
+        if declared - at - 1 < n {
+            return bad(k, "DQT length mismatch");
         }
-        rest = &tail[n..];
+        if avail.len() < at + 1 + n {
+            return ran_out(k, "truncated");
+        }
+        at += 1 + n;
+        k += 1;
     }
     Ok(())
 }
 
-/// The decoder's verdict on a DHT body (`JpegParser::parse_huffman_table`),
-/// including the code-length check `HuffmanDecodeTable` makes.
-fn check_dht(body: &[u8]) -> Result<(), &'static str> {
-    use crate::huffman::HuffmanDecodeTable;
+/// Whether a valid DQT body holds a zero quantization value, which the
+/// decoder clamps to 1 with a warning (an error when `Strict`).
+fn has_zero_quant(body: &[u8]) -> bool {
     let mut rest = body;
     while let Some((&info, tail)) = rest.split_first() {
+        let wide = info >> 4 == 1;
+        let n = if wide { 128 } else { 64 };
+        let Some(values) = tail.get(..n) else {
+            return false;
+        };
+        let zero = if wide {
+            values.as_chunks::<2>().0.iter().any(|v| *v == [0, 0])
+        } else {
+            values.contains(&0)
+        };
+        if zero {
+            return true;
+        }
+        rest = &tail[n..];
+    }
+    false
+}
+
+/// The decoder's verdict on a DHT segment (`JpegParser::parse_huffman_table`),
+/// including the code-length check `HuffmanDecodeTable` makes. Arguments
+/// as for [`check_dqt`]: the parser reads a table's counts and symbols
+/// before it compares them with the declared length, so a short length
+/// field makes it read on into whatever follows.
+fn check_dht(avail: &[u8], declared: usize) -> Result<(), Bad> {
+    use crate::huffman::HuffmanDecodeTable;
+    let (mut at, mut k) = (0, 0);
+    while at < declared {
+        let Some(&info) = avail.get(at) else {
+            return ran_out(k, "truncated");
+        };
         if info >> 4 > 1 {
-            return Err("invalid Huffman table class");
+            return bad(k, "invalid Huffman table class");
         }
         if info & 0x0F >= 4 {
-            return Err("Huffman table index out of range");
+            return bad(k, "Huffman table index out of range");
         }
-        let Some(bits) = tail.get(..16) else {
-            return Err("DHT length mismatch");
+        let Some(bits) = avail.get(at + 1..at + 17) else {
+            return ran_out(k, "truncated");
         };
         let mut counts = [0u8; 16];
         counts.copy_from_slice(bits);
         let n: usize = counts.iter().map(|&b| b as usize).sum();
         if n > 256 {
-            return Err("Huffman symbol count exceeds 256");
+            return bad(k, "Huffman symbol count exceeds 256");
         }
-        let Some(values) = tail.get(16..16 + n) else {
-            return Err("DHT length mismatch");
+        let Some(values) = avail.get(at + 17..at + 17 + n) else {
+            return ran_out(k, "truncated");
         };
+        if at + 17 + n > declared {
+            return bad(k, "DHT length mismatch");
+        }
         let built = if info >> 4 == 0 {
             HuffmanDecodeTable::from_bits_values(&counts, values).map(|_| ())
         } else {
             HuffmanDecodeTable::from_bits_values_ac(&counts, values).map(|_| ())
         };
         if built.is_err() {
-            return Err("invalid Huffman code lengths");
+            return bad(k, "invalid Huffman code lengths");
         }
-        rest = &tail[16 + n..];
+        at += 17 + n;
+        k += 1;
+    }
+    Ok(())
+}
+
+/// The decoder's verdict on DAC entries (`JpegParser::parse_dac`): two
+/// bytes per entry while two declared bytes remain.
+fn check_dac(avail: &[u8], declared: usize) -> Result<(), Bad> {
+    let (mut at, mut k) = (0, 0);
+    while at + 2 <= declared {
+        let Some(&info) = avail.get(at) else {
+            return ran_out(k, "truncated");
+        };
+        if info & 0x0F >= 4 {
+            return bad(k, "invalid DAC conditioning table");
+        }
+        let Some(&cs) = avail.get(at + 1) else {
+            return ran_out(k, "truncated");
+        };
+        if info >> 4 == 0 && cs & 0x0F > cs >> 4 {
+            return bad(k, "invalid DAC conditioning table");
+        }
+        at += 2;
+        k += 1;
     }
     Ok(())
 }
@@ -697,14 +1040,13 @@ fn table_ranges(marker: u8, body: &[u8], base: usize) -> Vec<(u8, Range<usize>)>
     out
 }
 
-/// Mark what a scan uses: every frame component's quantisation table (the
-/// sequential path dequantises during the scan), the restart interval, and
-/// the entropy-coding tables or conditioning entries its coding reads. `spec`
-/// is the SOS body after the component count: the component selectors, then
-/// Ss, Se, Ah/Al.
-fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8]) {
-    defs.mark_quant(f);
-    defs.mark(DefKind::Restart);
+/// Mark what a scan uses on every path: the restart interval, and the
+/// entropy-coding tables or conditioning entries its coding reads. `spec`
+/// is the SOS body after the component count: the component selectors,
+/// then Ss, Se, Ah/Al. Quantisation tables are marked by the caller: the
+/// streaming path at its scan, the coefficient path at the end.
+fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8], permissive: bool) {
+    defs.mark(DefKind::Restart, BOTH);
     let (comps, params) = spec.split_at(spec.len().saturating_sub(3));
     let (Some(&ss), Some(&ahal)) = (params.first(), params.get(2)) else {
         return;
@@ -723,19 +1065,26 @@ fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8]) {
         _ => (ss == 0 && first, ss > 0),
     };
     for &[_, tables] in comps.as_chunks::<2>().0 {
-        let (td, ta) = (tables >> 4, tables & 0x0F);
+        let (td, ta) = scan_tables(tables, permissive);
         let (dc, ac) = if arithmetic {
             (DefKind::DacDc(td), DefKind::DacAc(ta))
         } else {
             (DefKind::Dc(td), DefKind::Ac(ta))
         };
         if need_dc {
-            defs.mark(dc);
+            defs.mark(dc, BOTH);
         }
         if need_ac {
-            defs.mark(ac);
+            defs.mark(ac, BOTH);
         }
     }
+}
+
+/// A scan component's (DC, AC) table selectors; Permissive clamps an
+/// out-of-range one to 0 (`parse_scan`).
+fn scan_tables(tables: u8, permissive: bool) -> (u8, u8) {
+    let clamp = |t: u8| if permissive && t >= 4 { 0 } else { t };
+    (clamp(tables >> 4), clamp(tables & 0x0F))
 }
 
 /// Offset of the segment `find_exif_orientation` (decode/mod.rs) takes the
@@ -865,6 +1214,33 @@ impl Walk<'_> {
         self.inv.set_detail(self.ids[node], detail);
     }
 
+    /// A container-level problem at `node` that stops the decoder at the
+    /// strictness levels `f` names. When it is certain the decoder reaches
+    /// it, the stream's decode (and, in the header, `probe()`) fails;
+    /// otherwise only the part says so.
+    fn fail(&mut self, st: &mut Stream, rules: Rules, node: usize, at: At, f: Fails, why: &str) {
+        if at.header && rules.probe.is_some_and(|s| f.at(s)) {
+            st.probe_fatal = true;
+        }
+        if !f.at(rules.decode) {
+            return;
+        }
+        if at.certain {
+            if !st.decode_fatal {
+                self.append_detail(node, &format!("decode fails here: {why}"));
+            }
+            st.decode_fatal = true;
+        } else {
+            self.append_detail(
+                node,
+                &format!(
+                    "the decode fails here if the decoder reaches it ({why}); an earlier scan \
+                     coded with a restart interval may resync past this part"
+                ),
+            );
+        }
+    }
+
     fn seg_end(&self, pos: usize, limit: usize) -> SegEnd {
         let Some(n) = be16(&self.data[..limit], pos + 2) else {
             return SegEnd::Truncated;
@@ -888,6 +1264,7 @@ impl Walk<'_> {
         parent: Option<usize>,
         start: usize,
         limit: usize,
+        rules: Rules,
     ) -> Result<Stream, InventoryError> {
         let data = self.data;
         let first = self.ids.len();
@@ -899,47 +1276,48 @@ impl Walk<'_> {
             apps: Vec::new(),
             probe_fatal: false,
             decode_fatal: false,
+            paths: Paths {
+                default: COEFF,
+                other: 0,
+            },
+            stream_scan: None,
         };
         self.add(
             parent,
             seg(MARKER_SOI, start..start + 2, Disposition::Structure),
         )?;
+        // Scan-data parts: (node, scan header offset).
+        let mut scan_parts: Vec<(usize, usize)> = Vec::new();
         let mut pos = start + 2;
         let mut phase = Phase::Header;
         let mut scans = 0u32;
         let mut seen_sos = false;
-        let mut height_known = false;
+        // The image height in effect (SOF, or a DNL when SOF left it 0).
+        let mut height = 0u16;
         let mut defs = Defs::default();
-
-        // A container-level failure: the decoder errors at this part. Before
-        // the first scan that is certain. After it, the decoder resumes
-        // wherever its entropy decoder stopped in the previous scan, which
-        // the walker cannot know, so the rest of the stream keeps its
-        // dispositions and only this part says it would fail.
-        let fatal =
-            |w: &mut Self, st: &mut Stream, node: usize, scans: u32, phase: Phase, why: &str| {
-                if phase == Phase::Header {
-                    st.probe_fatal = true;
-                }
-                if phase == Phase::Header || scans == 0 {
-                    if !st.decode_fatal {
-                        w.append_detail(node, &format!("decode fails here: {why}"));
-                    }
-                    st.decode_fatal = true;
-                } else {
-                    w.append_detail(
-                        node,
-                        &format!("the decode fails here if the decoder reaches it: {why}"),
-                    );
-                }
-            };
+        // The restart interval in effect, and whether a scan was coded with
+        // a nonzero one (see `At::certain`).
+        let mut restart = 0u16;
+        let mut resync_risk = false;
+        let at = |phase: Phase, scans: u32, resync_risk: bool| At {
+            header: phase == Phase::Header,
+            certain: phase == Phase::Header
+                || scans == 0
+                || !resync_risk
+                || rules.decode.is_strict(),
+        };
+        // Failures `probe()` never meets: it stops at the frame header.
+        let decode_only = |phase: Phase, scans: u32, resync_risk: bool| At {
+            header: false,
+            ..at(phase, scans, resync_risk)
+        };
 
         while pos < limit && phase != Phase::Done {
             // `JpegParser::read_marker`: skip to the next 0xFF,
             // warning about the bytes in between, then skip fill bytes.
             let next_ff = memchr::memchr(0xFF, &data[pos..limit]).map_or(limit, |r| pos + r);
             if next_ff > pos {
-                self.add_repeated(
+                let node = self.add_repeated(
                     parent,
                     gap(pos..next_ff, Disposition::Malformed),
                     Repeat::Stray,
@@ -954,6 +1332,15 @@ impl Walk<'_> {
                 if pos >= limit {
                     break;
                 }
+                // `read_marker` warns once it reaches the next 0xFF.
+                self.fail(
+                    &mut st,
+                    rules,
+                    node,
+                    at(phase, scans, resync_risk),
+                    Fails::Strict,
+                    "extraneous bytes between markers",
+                );
             }
             let fill_start = pos;
             while pos + 1 < limit && data[pos + 1] == 0xFF {
@@ -973,16 +1360,20 @@ impl Walk<'_> {
                     gap(pos..limit, Disposition::Malformed)
                         .with_detail("truncated: marker prefix at the end of the data"),
                 )?;
-                if phase == Phase::Header || scans == 0 {
-                    fatal(
-                        self,
-                        &mut st,
-                        node,
-                        scans,
-                        phase,
-                        "truncated before any scan",
-                    );
-                }
+                // After a scan, a cut is recovered as the end of the image.
+                let f = if phase == Phase::Header || scans == 0 {
+                    Fails::Always
+                } else {
+                    Fails::Strict
+                };
+                self.fail(
+                    &mut st,
+                    rules,
+                    node,
+                    at(phase, scans, resync_risk),
+                    f,
+                    "truncated",
+                );
                 break;
             }
             let m = data[pos + 1];
@@ -1003,27 +1394,24 @@ impl Walk<'_> {
                 let node = self.add(parent, seg(m, pos..pos + 2, Disposition::Structure))?;
                 if phase == Phase::Header {
                     // `read_header`: EOI before SOF is an error.
-                    fatal(
-                        self,
+                    self.fail(
                         &mut st,
+                        rules,
                         node,
-                        scans,
-                        phase,
+                        at(phase, scans, resync_risk),
+                        Fails::Always,
                         "EOI before any frame header",
                     );
-                } else if !height_known {
+                } else if height == 0 {
                     // `JpegParser::decode`: EOI with height 0 is an error.
-                    fatal(
-                        self,
+                    self.fail(
                         &mut st,
+                        rules,
                         node,
-                        scans,
-                        phase,
+                        at(phase, scans, resync_risk),
+                        Fails::Always,
                         "image height is 0 and no DNL set it",
                     );
-                }
-                if let Some(f) = st.frame {
-                    defs.mark_quant(&f);
                 }
                 pos += 2;
                 st.eoi_end = Some(pos);
@@ -1062,32 +1450,67 @@ impl Walk<'_> {
                 let Some(hdr_end) = hdr_end.filter(|&e| e <= limit) else {
                     // A cut inside the scan header is recovered as a
                     // truncated scan (`JpegParser::decode`, SOS arm).
-                    self.add(
+                    let node = self.add(
                         parent,
                         seg(m, pos..limit, Disposition::Structure)
                             .with_detail("truncated scan header; the decoder stops here"),
                     )?;
+                    self.fail(
+                        &mut st,
+                        rules,
+                        node,
+                        at(phase, scans, resync_risk),
+                        Fails::Strict,
+                        "truncated scan header",
+                    );
                     break;
                 };
                 let ns = data[pos + 4];
                 let declared = be16(data, pos + 2).unwrap_or(0);
-                let mut detail = None;
-                if declared as usize != 6 + 2 * ns as usize {
-                    detail = Some(format!(
-                        "declared length {declared} ignored; the decoder reads {} bytes",
-                        6 + 2 * ns as usize
-                    ));
-                }
                 let node = self.add(parent, seg(m, pos..hdr_end, Disposition::Structure))?;
-                if let Some(d) = detail {
-                    self.append_detail(node, &d);
+                let here = at(phase, scans, resync_risk);
+                if declared as usize != 6 + 2 * ns as usize {
+                    self.append_detail(
+                        node,
+                        &format!(
+                            "declared length {declared} ignored; the decoder reads {} bytes",
+                            6 + 2 * ns as usize
+                        ),
+                    );
+                    self.fail(
+                        &mut st,
+                        rules,
+                        node,
+                        here,
+                        Fails::Strict,
+                        "scan header length mismatch",
+                    );
                 }
-                if let Some(why) = check_sos(data, pos, ns, st.frame) {
-                    fatal(self, &mut st, node, scans, phase, why);
+                let permissive = rules.decode.is_permissive();
+                if let Some((f, why)) = check_sos(data, pos, ns, st.frame) {
+                    self.fail(&mut st, rules, node, here, f, why);
                 }
                 if let Some(f) = st.frame {
-                    mark_scan_uses(&mut defs, &f, &data[pos + 5..hdr_end]);
+                    let spec = &data[pos + 5..hdr_end];
+                    if matches!(f.mode, 0xC0 | 0xC1) && defs.missing_huffman(spec, permissive) {
+                        // `parse_scan`: K.3 tables stand in, with a warning.
+                        self.fail(
+                            &mut st,
+                            rules,
+                            node,
+                            here,
+                            Fails::Strict,
+                            "missing Huffman table",
+                        );
+                    }
+                    mark_scan_uses(&mut defs, &f, spec, permissive);
+                    if ns == f.components && st.stream_scan.is_none() {
+                        // The streaming path's scan: it dequantises here.
+                        st.stream_scan = Some(pos);
+                        defs.mark_quant(&f, STREAM);
+                    }
                 }
+                resync_risk |= restart > 0;
                 let end = scan_end(data, hdr_end, limit);
                 if end > hdr_end {
                     let mut scan = part(
@@ -1103,12 +1526,23 @@ impl Walk<'_> {
                         "bytes after the last MCU are not distinguished (that needs a Huffman \
                          decode)"
                     });
-                    self.add(parent, scan)?;
+                    let scan_node = self.add(parent, scan)?;
+                    scan_parts.push((scan_node, pos));
+                    if end == limit {
+                        self.fail(
+                            &mut st,
+                            rules,
+                            scan_node,
+                            here,
+                            Fails::Strict,
+                            "scan data truncated",
+                        );
+                    }
                 }
                 scans += 1;
                 seen_sos = true;
                 if scans >= MAX_SCANS {
-                    fatal(self, &mut st, node, scans, phase, "too many scans");
+                    self.fail(&mut st, rules, node, here, Fails::Always, "too many scans");
                 }
                 pos = end;
                 continue;
@@ -1155,16 +1589,25 @@ impl Walk<'_> {
                         seg(m, pos..end, Disposition::Malformed)
                             .with_detail("segment length below 2"),
                     )?;
-                    fatal(
-                        self,
+                    // `parse_frame_header` always fails; `skip_segment`,
+                    // `process_app_or_com` and `parse_dnl` skip it when
+                    // Permissive, resuming after the length word.
+                    let sof = phase == Phase::Header && sof_kind(m).is_some();
+                    let f = if sof {
+                        Fails::Always
+                    } else {
+                        Fails::UnlessPermissive
+                    };
+                    self.fail(
                         &mut st,
+                        rules,
                         node,
-                        scans,
-                        phase,
+                        at(phase, scans, resync_risk),
+                        f,
                         "segment length too short",
                     );
                     pos = end;
-                    if phase == Phase::Header {
+                    if sof {
                         phase = Phase::Body;
                     }
                     continue;
@@ -1175,17 +1618,24 @@ impl Walk<'_> {
                         seg(m, pos..limit, Disposition::Malformed)
                             .with_detail("truncated: the declared segment runs past the data"),
                     )?;
+                    // The table parsers read entry by entry, so a bad entry in
+                    // the bytes that are there fails before the cut does.
+                    let avail = data.get(pos + 4..limit).unwrap_or(&[]);
+                    let declared =
+                        be16(&data[..limit], pos + 2).map_or(0, |n| (n as usize).saturating_sub(2));
+                    let content = match m {
+                        MARKER_DQT => check_dqt(avail, declared),
+                        MARKER_DHT => check_dht(avail, declared),
+                        MARKER_DAC => check_dac(avail, declared),
+                        _ => Ok(()),
+                    };
                     // Between scans a cut is recovered (`JpegParser::decode`).
-                    if phase == Phase::Header || scans == 0 {
-                        fatal(
-                            self,
-                            &mut st,
-                            node,
-                            scans,
-                            phase,
-                            "truncated before any scan",
-                        );
-                    }
+                    let (f, why) = match content {
+                        Err(b) if !b.ran_out => (Fails::Always, b.why),
+                        _ if phase == Phase::Header || scans == 0 => (Fails::Always, "truncated"),
+                        _ => (Fails::Strict, "truncated"),
+                    };
+                    self.fail(&mut st, rules, node, at(phase, scans, resync_risk), f, why);
                     break;
                 }
             };
@@ -1214,27 +1664,52 @@ impl Walk<'_> {
                 }
                 MARKER_DQT | MARKER_DHT => {
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
+                    let here = at(phase, scans, resync_risk);
+                    let avail = &data[payload.start..limit];
                     let verdict = if m == MARKER_DQT {
-                        check_dqt(body)
+                        check_dqt(avail, body.len())
                     } else {
-                        check_dht(body)
+                        check_dht(avail, body.len())
                     };
-                    if let Err(why) = verdict {
-                        self.set(node, Disposition::Malformed, None);
-                        fatal(self, &mut st, node, scans, phase, why);
-                    } else {
-                        // Each table replaces the one in the same slot.
-                        for (info, r) in table_ranges(m, body, payload.start) {
-                            let i = info & 0x0F;
-                            let what = if m == MARKER_DQT {
-                                DefKind::Quant(i)
-                            } else if info >> 4 == 0 {
-                                DefKind::Dc(i)
+                    let ranges = table_ranges(m, body, payload.start);
+                    // The tables before a bad one are stored before the
+                    // parser fails; Permissive then skips the rest of the
+                    // segment by its length, but only in the header.
+                    let valid = match verdict {
+                        Ok(()) => ranges.len(),
+                        Err(b) => {
+                            self.set(node, Disposition::Malformed, None);
+                            let f = if phase == Phase::Header {
+                                Fails::UnlessPermissive
                             } else {
-                                DefKind::Ac(i)
+                                Fails::Always
                             };
-                            defs.define(node, r, what);
+                            self.fail(&mut st, rules, node, here, f, b.why);
+                            b.stored
                         }
+                    };
+                    if m == MARKER_DQT && verdict.is_ok() && has_zero_quant(body) {
+                        // Clamped to 1 with a warning; `Strict` fails.
+                        self.fail(
+                            &mut st,
+                            rules,
+                            node,
+                            here,
+                            Fails::Strict,
+                            "zero quantization value",
+                        );
+                    }
+                    // Each table replaces the one in the same slot.
+                    for (info, r) in ranges.into_iter().take(valid) {
+                        let i = info & 0x0F;
+                        let what = if m == MARKER_DQT {
+                            DefKind::Quant(i)
+                        } else if info >> 4 == 0 {
+                            DefKind::Dc(i)
+                        } else {
+                            DefKind::Ac(i)
+                        };
+                        defs.define(node, r, what);
                     }
                 }
                 MARKER_DAC => {
@@ -1242,20 +1717,26 @@ impl Walk<'_> {
                     // table's (L, U), any other class an AC table's Kx. Each
                     // entry replaces the one for the same table.
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
-                    for (k, &[info, cs]) in body.as_chunks::<2>().0.iter().enumerate() {
+                    let mut entries = body.as_chunks::<2>().0;
+                    if let Err(b) = check_dac(body, body.len()) {
+                        self.set(node, Disposition::Malformed, None);
+                        let f = if phase == Phase::Header {
+                            Fails::UnlessPermissive
+                        } else {
+                            Fails::Always
+                        };
+                        self.fail(
+                            &mut st,
+                            rules,
+                            node,
+                            at(phase, scans, resync_risk),
+                            f,
+                            b.why,
+                        );
+                        entries = &entries[..b.stored];
+                    }
+                    for (k, &[info, _]) in entries.iter().enumerate() {
                         let idx = info & 0x0F;
-                        if idx >= 4 || (info >> 4 == 0 && cs & 0x0F > cs >> 4) {
-                            self.set(node, Disposition::Malformed, None);
-                            fatal(
-                                self,
-                                &mut st,
-                                node,
-                                scans,
-                                phase,
-                                "invalid DAC conditioning table",
-                            );
-                            break;
-                        }
                         let what = if info >> 4 == 0 {
                             DefKind::DacDc(idx)
                         } else {
@@ -1268,6 +1749,17 @@ impl Walk<'_> {
                 MARKER_DRI => {
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
                     defs.define(node, pos + 4..pos + 6, DefKind::Restart);
+                    restart = be16(data, pos + 4).unwrap_or(0);
+                    if be16(data, pos + 2) != Some(4) {
+                        self.fail(
+                            &mut st,
+                            rules,
+                            node,
+                            at(phase, scans, resync_risk),
+                            Fails::Strict,
+                            "DRI length is not 4",
+                        );
+                    }
                     if end > pos + 6 {
                         // `parse_restart_interval` skips what a length above 4 declares.
                         self.add(
@@ -1279,13 +1771,22 @@ impl Walk<'_> {
                     }
                 }
                 MARKER_DNL if phase == Phase::Body => {
-                    // `parse_dnl`: the length must be 4.
+                    // `parse_dnl`: the length must be 4 (Permissive skips it).
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
+                    let here = at(phase, scans, resync_risk);
+                    let lines = be16(data, pos + 4).unwrap_or(0);
                     if end - pos != 6 {
                         self.set(node, Disposition::Malformed, None);
-                        fatal(self, &mut st, node, scans, phase, "DNL length is not 4");
-                    } else if height_known {
-                        // `parse_dnl` only sets the height when SOF left it 0.
+                        self.fail(
+                            &mut st,
+                            rules,
+                            node,
+                            here,
+                            Fails::UnlessPermissive,
+                            "DNL length is not 4",
+                        );
+                    } else if height > 0 {
+                        // `parse_dnl` only sets the height when it is 0.
                         self.set(
                             node,
                             Disposition::Dropped,
@@ -1294,8 +1795,18 @@ impl Walk<'_> {
                                     .into(),
                             ),
                         );
-                    } else if be16(data, pos + 4).is_some_and(|h| h > 0) {
-                        height_known = true;
+                        if lines != height {
+                            self.fail(
+                                &mut st,
+                                rules,
+                                node,
+                                here,
+                                Fails::Strict,
+                                "DNL height conflicts with the frame height",
+                            );
+                        }
+                    } else {
+                        height = lines;
                     }
                 }
                 _ if phase == Phase::Header && sof_kind(m).is_some() => {
@@ -1303,6 +1814,8 @@ impl Walk<'_> {
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
                     st.sof_end = Some(end);
                     phase = Phase::Body;
+                    let header = at(Phase::Header, 0, false);
+                    let decode = decode_only(Phase::Header, 0, false);
                     if !supported {
                         // `read_header` rejects SOF3/SOF7/SOF11.
                         self.set(
@@ -1310,45 +1823,53 @@ impl Walk<'_> {
                             Disposition::Skipped,
                             Some(format!("lossless JPEG ({name}) is not supported")),
                         );
-                        fatal(
-                            self,
+                        self.fail(
                             &mut st,
+                            rules,
                             node,
-                            scans,
-                            Phase::Header,
+                            header,
+                            Fails::Always,
                             "unsupported frame type",
                         );
                     } else {
-                        match check_sof(body, self.opts.max_pixels) {
+                        match check_sof(body, rules.max_pixels) {
                             Err(why) => {
                                 self.set(node, Disposition::Malformed, None);
-                                fatal(self, &mut st, node, scans, Phase::Header, why);
+                                self.fail(&mut st, rules, node, header, Fails::Always, why);
                             }
                             Ok(f) => {
                                 st.frame = Some(Frame { mode: m, ..f.frame });
-                                height_known = f.height > 0;
-                                if f.height == 0 {
+                                height = f.height;
+                                let too_big = rules
+                                    .max_width
+                                    .is_some_and(|w| u32::from(f.width) > w)
+                                    || rules.max_height.is_some_and(|h| u32::from(f.height) > h);
+                                let why = if f.height == 0 {
                                     // `read_info` rejects DNL mode
                                     // and every scan decoder does too.
-                                    fatal(
-                                        self,
-                                        &mut st,
-                                        node,
-                                        scans,
-                                        Phase::Header,
-                                        "DNL mode (height 0) is not supported",
-                                    );
+                                    Some((header, "DNL mode (height 0) is not supported"))
+                                } else if too_big {
+                                    // `decode()` checks the frame against
+                                    // `ResourceLimits::max_width`/`max_height`.
+                                    Some((
+                                        decode,
+                                        "the frame exceeds the job's max_width/max_height",
+                                    ))
+                                } else if !rules.allow_progressive && matches!(m, 0xC2 | 0xCA) {
+                                    Some((decode, "progressive JPEG rejected by the decode policy"))
                                 } else if f.precision != 8 {
                                     // `JpegParser::decode`: probe() reports the
                                     // header, decode() refuses the precision.
-                                    fatal(
-                                        self,
-                                        &mut st,
-                                        node,
-                                        scans,
-                                        Phase::Body,
-                                        "12-bit precision is not supported",
-                                    );
+                                    Some((decode, "12-bit precision is not supported"))
+                                } else if f.frame.components == 2 {
+                                    // The output stage (decode/parser/output.rs)
+                                    // converts 1, 3 and 4 components only.
+                                    Some((decode, "no colour conversion for 2 components"))
+                                } else {
+                                    None
+                                };
+                                if let Some((here, why)) = why {
+                                    self.fail(&mut st, rules, node, here, Fails::Always, why);
                                 }
                             }
                         }
@@ -1392,16 +1913,46 @@ impl Walk<'_> {
         if st.eoi_end.is_none() && phase == Phase::Body && scans == 0 && !st.decode_fatal {
             st.decode_fatal = true;
         }
-        self.settle_defs(&mut defs)?;
+        if st.eoi_end.is_none() && phase == Phase::Body && scans > 0 && rules.decode.is_strict() {
+            // `TruncatedBetweenScans` / `TruncatedScan` are errors when Strict.
+            st.decode_fatal = true;
+        }
+        // The coefficient path dequantises at the end of the decode.
+        if let Some(f) = st.frame {
+            defs.mark_quant(&f, COEFF);
+        }
+        let xyb = crate::color::icc::extract_icc_profile(&data[start..limit])
+            .is_some_and(|p| crate::color::icc::is_xyb_profile(&p));
+        st.paths = Paths::of(st.frame, st.stream_scan.is_some(), xyb);
+        if st.paths.default == STREAM {
+            // `to_pixels` returns the streaming result: every other scan is
+            // decoded into coefficients that the default output never uses.
+            for &(node, at) in &scan_parts {
+                if Some(at) != st.stream_scan {
+                    self.set(
+                        node,
+                        Disposition::Dropped,
+                        Some(String::from(
+                            "decoded, but unused by the default u8 RGB output, which comes \
+                             from the frame's first all-component scan; used when the output \
+                             needs coefficients (f32, Gray, CMYK, dequant bias)",
+                        )),
+                    );
+                }
+            }
+        }
+        self.settle_defs(&mut defs, st.paths)?;
         st.nodes = first..self.ids.len();
         Ok(st)
     }
 
-    /// Definitions no scan used: overwritten before use, never referenced,
-    /// or of a kind the frame's coding does not use. A segment whose every
-    /// definition is unused is `Dropped`; one that mixes both gets a child
-    /// per used definition and one per run of unused ones.
-    fn settle_defs(&mut self, defs: &mut Defs) -> Result<(), InventoryError> {
+    /// Definitions the default decode path never used: overwritten before
+    /// use, never referenced, or of a kind the frame's coding does not use.
+    /// A segment whose every definition is unused is `Dropped`; one that
+    /// mixes both gets a child per used definition and one per run of
+    /// unused ones. Where the other output path disagrees (quantisation
+    /// tables only), the part says so.
+    fn settle_defs(&mut self, defs: &mut Defs, paths: Paths) -> Result<(), InventoryError> {
         const WHY: &str = "no scan uses it before it is redefined, or nothing refers to it";
         defs.used.sort_by_key(|d| (d.node, d.range.start));
         let mut u = 0;
@@ -1413,23 +1964,59 @@ impl Walk<'_> {
             while u < defs.used.len() && defs.used[u].node == s.node {
                 u += 1;
             }
-            let used = &defs.used[from..u];
-            if self.node(s.node).disposition != Disposition::Structure
-                || used.len() == s.count as usize
-            {
+            let recorded = &defs.used[from..u];
+            let on_default = |d: &Used| d.paths & paths.default != 0;
+            let used = recorded.iter().filter(|d| on_default(d)).count();
+            // A Malformed segment the Permissive header parser skipped
+            // after storing its first tables: those that a scan uses get
+            // children; the segment stays Malformed.
+            let malformed = match self.node(s.node).disposition {
+                Disposition::Structure => false,
+                Disposition::Malformed => true,
+                _ => continue,
+            };
+            let notes: Vec<&str> = recorded
+                .iter()
+                .filter_map(|d| paths.note(d.paths))
+                .collect();
+            if used == s.count as usize && !malformed {
+                if let Some(note) = notes.first() {
+                    self.append_detail(s.node, note);
+                }
                 continue;
             }
-            if used.is_empty() {
-                let what = if s.count == 1 {
-                    format!("{}", s.first)
-                } else {
-                    format!("{} definitions, the first {}", s.count, s.first)
-                };
-                self.set(s.node, Disposition::Dropped, Some(format!("{what}: {WHY}")));
+            if recorded.is_empty() {
+                if !malformed {
+                    let what = if s.count == 1 {
+                        format!("{}", s.first)
+                    } else {
+                        format!("{} definitions, the first {}", s.count, s.first)
+                    };
+                    self.set(s.node, Disposition::Dropped, Some(format!("{what}: {WHY}")));
+                }
                 continue;
+            }
+            if used == 0 && s.count == 1 && !malformed {
+                // One definition, used only by the other output path.
+                let note = notes.first().copied().unwrap_or(WHY);
+                self.set(
+                    s.node,
+                    Disposition::Dropped,
+                    Some(format!("{}: {note}", s.first)),
+                );
+                continue;
+            }
+            if used == 0 && !malformed {
+                self.set(
+                    s.node,
+                    Disposition::Dropped,
+                    Some(String::from(
+                        "the default output path uses none of its definitions",
+                    )),
+                );
             }
             let mut at = s.area.start;
-            for d in used {
+            for d in recorded {
                 if d.range.start > at {
                     self.add(
                         Some(s.node),
@@ -1443,15 +2030,19 @@ impl Walk<'_> {
                     )?;
                 }
                 let tag = PartTag::Code(u32::from(self.data[d.range.start]));
+                let disposition = if on_default(d) {
+                    Disposition::Structure
+                } else {
+                    Disposition::Dropped
+                };
+                let detail = match paths.note(d.paths) {
+                    Some(note) => format!("{}: {note}", d.what),
+                    None => format!("{}", d.what),
+                };
                 self.add(
                     Some(s.node),
-                    part(
-                        PartKind::Attribute,
-                        tag,
-                        d.range.clone(),
-                        Disposition::Structure,
-                    )
-                    .with_detail(format!("{}", d.what)),
+                    part(PartKind::Attribute, tag, d.range.clone(), disposition)
+                        .with_detail(detail),
                 )?;
                 at = d.range.end;
             }
@@ -1564,58 +2155,94 @@ impl Walk<'_> {
             }
         }
         if decode_ok {
-            // APP14 Adobe: every one is parsed, the last one parsed sets the
-            // colour transform (`process_app_or_com`).
-            let adobe: Vec<usize> = (0..st.apps.len())
+            // APP14 Adobe: every valid one parsed sets the colour transform
+            // (`process_app_or_com`). The streaming path converts colour
+            // during its scan, with the transform in effect then; the
+            // coefficient path at the end, with the last one parsed.
+            let valid: Vec<usize> = (0..st.apps.len())
                 .filter(|&i| {
-                    st.apps[i].marker == MARKER_APP14 && st.apps[i].ty == SegmentType::Adobe
+                    let a = &st.apps[i];
+                    a.marker == MARKER_APP14 && a.ty == SegmentType::Adobe && a.payload.len() >= 12
                 })
                 .collect();
-            let valid: Vec<usize> = adobe
-                .iter()
-                .copied()
-                .filter(|&i| st.apps[i].payload.len() >= 12)
-                .collect();
+            let pick = |paths: u8| match paths {
+                STREAM => valid.iter().copied().rfind(|&i| {
+                    st.stream_scan
+                        .is_some_and(|at| st.apps[i].payload.start < at)
+                }),
+                COEFF => valid.last().copied(),
+                _ => None,
+            };
+            let (default_pick, other_pick) = (pick(st.paths.default), pick(st.paths.other));
             let components = st.frame.map_or(0, |f| f.components);
-            for &i in &adobe {
-                let a = &st.apps[i];
-                if a.payload.len() < 12 {
-                    decide(
-                        &mut decided[i],
-                        Disposition::Dropped,
-                        Some("too short to carry a colour transform".into()),
-                    );
-                } else if Some(&i) != valid.last() {
-                    decide(
-                        &mut decided[i],
-                        Disposition::Dropped,
-                        Some("superseded by a later APP14 Adobe segment".into()),
-                    );
-                } else if (3..=4).contains(&components) {
-                    let transform = data[a.payload.start + 11];
-                    if a.payload.len() > 12 {
-                        extra.push((
-                            a.node,
-                            gap(a.payload.start + 12..a.payload.end, Disposition::Unreferenced)
-                                .with_detail("bytes after the APP14 fields; the decoder reads only the transform"),
-                        ));
-                    }
-                    decide(
-                        &mut decided[i],
-                        Disposition::Metadata(MetadataKind::Colour),
-                        Some(format!(
-                            "colour transform {transform} applied to the pixels"
-                        )),
-                    );
-                } else {
-                    decide(
-                        &mut decided[i],
-                        Disposition::Dropped,
-                        Some(format!(
-                            "colour transform unused for a {components}-component frame"
-                        )),
-                    );
+            for (i, a) in st.apps.iter().enumerate() {
+                if a.marker != MARKER_APP14 || a.ty != SegmentType::Adobe {
+                    continue;
                 }
+                let (d, why) = if a.payload.len() < 12 {
+                    (
+                        Disposition::Dropped,
+                        String::from("too short to carry a colour transform"),
+                    )
+                } else if !(3..=4).contains(&components) {
+                    (
+                        Disposition::Dropped,
+                        format!("colour transform unused for a {components}-component frame"),
+                    )
+                } else {
+                    let paths = if Some(i) == default_pick {
+                        st.paths.default
+                    } else {
+                        0
+                    } | if Some(i) == other_pick {
+                        st.paths.other
+                    } else {
+                        0
+                    };
+                    let note = st.paths.note(paths);
+                    if Some(i) == default_pick {
+                        if a.payload.len() > 12 {
+                            extra.push((
+                                a.node,
+                                gap(
+                                    a.payload.start + 12..a.payload.end,
+                                    Disposition::Unreferenced,
+                                )
+                                .with_detail(
+                                    "bytes after the APP14 fields; the decoder reads only the \
+                                         transform",
+                                ),
+                            ));
+                        }
+                        let transform = data[a.payload.start + 11];
+                        let mut why = format!("colour transform {transform} applied to the pixels");
+                        if let Some(note) = note {
+                            why = format!("{why}; {note}");
+                        }
+                        (Disposition::Metadata(MetadataKind::Colour), why)
+                    } else if let Some(note) = note {
+                        (Disposition::Dropped, String::from(note))
+                    } else if st.paths.default == STREAM
+                        && st.stream_scan.is_some_and(|at| a.payload.start > at)
+                    {
+                        (
+                            Disposition::Dropped,
+                            String::from(
+                                "after the scan the default u8 RGB output converts colour in; an \
+                                 output that needs coefficients uses a later APP14 Adobe segment",
+                            ),
+                        )
+                    } else {
+                        (
+                            Disposition::Dropped,
+                            String::from(
+                                "superseded: a later APP14 Adobe segment sets the transform \
+                                 before the colour conversion",
+                            ),
+                        )
+                    }
+                };
+                decide(&mut decided[i], d, Some(why));
             }
             // MPF: the first segment is the index the decoder follows.
             if let Some(i) = (0..st.apps.len()).find(|&i| st.apps[i].ty == SegmentType::Mpf) {
@@ -2049,7 +2676,7 @@ impl Walk<'_> {
         }
         let node = self.add(None, p)?;
         if is_jpeg {
-            let st = self.walk_stream(Some(node), r.start, r.end)?;
+            let st = self.walk_stream(Some(node), r.start, r.end, Rules::embedded())?;
             self.resolve(
                 &st,
                 View {
@@ -2313,6 +2940,7 @@ impl Walk<'_> {
 
 struct SofInfo {
     frame: Frame,
+    width: u16,
     height: u16,
     precision: u8,
 }
@@ -2359,9 +2987,11 @@ fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
     }
     let mut ids = [0u8; 4];
     let mut qidx = [0u8; 4];
+    let mut samp = [0u8; 4];
     for (c, id) in ids.iter_mut().enumerate().take(nc as usize) {
         let at = 6 + 3 * c;
         *id = body[at];
+        samp[c] = body[at + 1];
         let (h, v) = (body[at + 1] >> 4, body[at + 1] & 0x0F);
         if h == 0 || v == 0 || h > 4 || v > 4 {
             return Err("invalid sampling factor");
@@ -2376,53 +3006,64 @@ fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
             components: nc,
             ids,
             qidx,
+            samp,
             mode: 0,
         },
+        width,
         height,
         precision,
     })
 }
 
-/// The decoder's verdict on a scan header (`parse_scan`), at the
-/// default strictness. `None` when it is accepted.
-fn check_sos(data: &[u8], pos: usize, ns: u8, frame: Option<Frame>) -> Option<&'static str> {
+/// The decoder's verdict on a scan header (`parse_scan`): the first
+/// problem, and the strictness levels it fails at.
+fn check_sos(
+    data: &[u8],
+    pos: usize,
+    ns: u8,
+    frame: Option<Frame>,
+) -> Option<(Fails, &'static str)> {
+    let fail = |why| Some((Fails::Always, why));
     let Some(frame) = frame else {
-        return Some("no frame header");
+        return fail("no frame header");
     };
     if ns == 0 {
-        return Some("scan with zero components");
+        return fail("scan with zero components");
     }
     if ns > frame.components {
-        return Some("scan has more components than the frame");
+        return fail("scan has more components than the frame");
     }
     let mut seen = [false; 4];
+    let mut bad_table = false;
     for c in 0..ns as usize {
         let at = pos + 5 + 2 * c;
         let (id, tables) = (data[at], data[at + 1]);
-        if tables >> 4 >= 4 || tables & 0x0F >= 4 {
-            return Some("Huffman table index out of range");
+        // Permissive clamps an out-of-range selector to 0 and goes on.
+        bad_table |= tables >> 4 >= 4 || tables & 0x0F >= 4;
+        if bad_table {
+            return Some((Fails::UnlessPermissive, "Huffman table index out of range"));
         }
         let Some(idx) = frame.ids[..frame.components as usize]
             .iter()
             .position(|&x| x == id)
         else {
-            return Some("unknown component in scan");
+            return fail("unknown component in scan");
         };
         if seen[idx] {
-            return Some("duplicate component in scan");
+            return fail("duplicate component in scan");
         }
         seen[idx] = true;
     }
     let at = pos + 5 + 2 * ns as usize;
     let (ss, se, ahal) = (data[at], data[at + 1], data[at + 2]);
     if ss > 63 || se > 63 {
-        return Some("spectral selection beyond 63");
+        return fail("spectral selection beyond 63");
     }
     if ss > se {
-        return Some("spectral selection start exceeds end");
+        return fail("spectral selection start exceeds end");
     }
     if ahal >> 4 > 13 || ahal & 0x0F > 13 {
-        return Some("successive approximation out of range");
+        return fail("successive approximation out of range");
     }
     None
 }
