@@ -1,6 +1,6 @@
 # zenjpeg development commands
 
-# Run all 13 fuzz targets for 60 seconds each (needs nightly + cargo-fuzz).
+# Run all 14 fuzz targets for 60 seconds each (needs nightly + cargo-fuzz).
 # Keep this list in sync with zenjpeg/fuzz/Cargo.toml's [[bin]] entries —
 # `cargo fuzz run` on a name with no [[bin]] fails, and the five container /
 # push-decode targets were missing here until 2026-08-29.
@@ -18,6 +18,7 @@ fuzz SECONDS="60":
     cd zenjpeg && cargo +nightly fuzz run fuzz_container_mpf -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_container_xmp -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_container_probe -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_inventory -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
 
 # Compile every fuzz target on stable — the same gate .github/workflows/fuzz.yml
 # runs. `zenjpeg/fuzz` is its own workspace, so nothing at the repo root ever
@@ -30,6 +31,11 @@ fuzz-check:
 # Neither nightly nor cargo-fuzz required.
 fuzz-regression:
     cargo test -p zenjpeg --test fuzz_regression -- --nocapture
+
+# Cross-check the structural inventory (DecodeJob::inventory) against ExifTool's
+# segment map on real codec-corpus files. Needs exiftool on PATH.
+inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" cargo test --release -p zenjpeg --features zencodec --test inventory_oracle -- --nocapture
 
 # Run all lib tests
 test:

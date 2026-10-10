@@ -30,6 +30,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = {
         .with_enforces_max_pixels(true)
         .with_enforces_max_memory(true)
         .with_enforces_max_input_bytes(true)
+        .with_inventory(true)
         .with_threads_supported_range(1, if cfg!(feature = "parallel") { 32 } else { 1 });
     // Ultra HDR gain maps: with the `ultrahdr` feature zenjpeg both surfaces
     // the gain map (GainMapRender::Components) and applies it itself
@@ -306,6 +307,52 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         self
     }
 
+    /// A byte-exact map of `data` as this job's decode path reads it; see
+    /// `codec/inventory.rs` for what each disposition means here. It follows
+    /// the job's policy and strictness, orientation hint, gain-map render
+    /// and pixel, width and height limits, and assumes `max_memory_bytes`
+    /// is large enough for the decode. Where the decode depends on the
+    /// output format the caller later asks for, dispositions describe the
+    /// default output and the part's detail names the difference.
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, Self::Error> {
+        self.check_input_size(data)?;
+        let opts = super::inventory::Options {
+            auto_orient: will_auto_orient(self.orientation),
+            render: self.inventory_render(data),
+            max_pixels: self.limit_adjusted_inner().get_max_pixels(),
+            // `probe()` reads the header with the inner config;
+            // `build_decode_config` raises the decode to Strict.
+            probe_strictness: self.config.inner.strictness,
+            decode_strictness: match &self.policy {
+                Some(p) if p.strict == Some(true) || p.allow_truncated == Some(false) => {
+                    crate::decode::Strictness::Strict
+                }
+                _ => self.config.inner.strictness,
+            },
+            allow_progressive: self
+                .policy
+                .as_ref()
+                .is_none_or(|p| p.resolve_progressive(true)),
+            max_width: self.limits.max_width,
+            max_height: self.limits.max_height,
+        };
+        match super::inventory::inventory(data, opts) {
+            Ok(inv) => Ok(Some(inv)),
+            Err(zencodec::inventory::InventoryError::TooManyParts { max }) => {
+                Err(Error::resource_limit_exceeded(
+                    zencodec::LimitKind::Memory,
+                    u64::from(max) + 1,
+                    u64::from(max),
+                )
+                .into())
+            }
+            Err(_) => Err(Error::internal("inventory walker produced an invalid part").into()),
+        }
+    }
+
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
         {
             // Check input size limits
@@ -454,6 +501,32 @@ impl JpegDecodeJob {
             cfg = cfg.max_memory(bytes);
         }
         cfg
+    }
+
+    /// The job's `GainMapRender` as the decode acts on it (see `decode`).
+    fn inventory_render(&self, data: &[u8]) -> super::inventory::Render {
+        use super::inventory::Render;
+        match self.gain_map_render {
+            zencodec::GainMapRender::BaseOnly => Render::Base,
+            #[cfg(feature = "ultrahdr")]
+            zencodec::GainMapRender::Components => Render::Components,
+            // `decode` takes the dedicated path only when the XMP
+            // `read_info` returns carries `hdrgm:`.
+            #[cfg(feature = "ultrahdr")]
+            zencodec::GainMapRender::ReconstructHdr { .. } => Render::Reconstruct {
+                hdrgm: self
+                    .config
+                    .inner
+                    .read_info(data)
+                    .ok()
+                    .and_then(|i| i.xmp)
+                    .is_some_and(|x| x.contains("hdrgm:")),
+            },
+            _ => {
+                let _ = data;
+                Render::Refused
+            }
+        }
     }
 
     /// Check input data size against limits.

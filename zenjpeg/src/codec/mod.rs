@@ -34,6 +34,7 @@
 mod decode;
 mod encode;
 mod info;
+mod inventory;
 mod streaming;
 
 #[cfg(test)]

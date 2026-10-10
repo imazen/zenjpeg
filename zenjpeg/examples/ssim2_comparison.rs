@@ -107,7 +107,9 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 /// Convert sRGB u8 bytes to LinearRgbImage (linear f32)
 fn bytes_to_linear_rgb(bytes: &[u8], width: usize, height: usize) -> LinearRgbImage {
     let pixels: Vec<[f32; 3]> = bytes
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             [
                 srgb_u8_to_linear(c[0]),

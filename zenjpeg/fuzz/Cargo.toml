@@ -17,9 +17,14 @@ zune-core = "0.5"
 
 zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
 
+# For the `DecodeJob` / `DecoderConfig` traits the inventory target calls.
+zencodec = ">=0.1.26, <0.3.0"
+
 [dependencies.zenjpeg]
 path = ".."
-features = ["zencodec"]
+# `ultrahdr` so the inventory target's Components / ReconstructHdr jobs
+# exercise the gain-map role (without it both are refused).
+features = ["zencodec", "ultrahdr"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -76,6 +81,9 @@ members = ["."]
 # away. Keep in sync with `../../Cargo.toml`.
 [patch.crates-io]
 zenanalyze = { path = "../../../zenanalyze" }
+# Keep in sync with the repo-root patch table: zencodec's inventory API is on
+# the imazen/zencodec#133 branch until it is released.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 
 [[bin]]
 name = "fuzz_decode"
@@ -164,6 +172,13 @@ bench = false
 [[bin]]
 name = "fuzz_container_probe"
 path = "fuzz_targets/fuzz_container_probe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_inventory"
+path = "fuzz_targets/fuzz_inventory.rs"
 test = false
 doc = false
 bench = false

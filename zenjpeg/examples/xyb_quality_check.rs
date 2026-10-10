@@ -112,7 +112,9 @@ fn main() {
         // Butteraugli (should be used for XYB but we're comparing raw data)
         let params = ButteraugliParams::default();
         let orig_pixels: Vec<rgb::RGB8> = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
             .collect();
         let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
@@ -120,7 +122,9 @@ fn main() {
         let rust_pixels: Vec<rgb::RGB8> = rust_decoded
             .pixels_u8()
             .unwrap()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
             .collect();
         let rust_img = imgref::Img::new(&rust_pixels[..], width, height);
@@ -129,14 +133,18 @@ fn main() {
             .score;
 
         let orig_pixels2: Vec<rgb::RGB8> = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
             .collect();
         let orig_img2 = imgref::Img::new(&orig_pixels2[..], width, height);
         let cpp_pixels: Vec<rgb::RGB8> = cpp_decoded
             .pixels_u8()
             .unwrap()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
             .collect();
         let cpp_img = imgref::Img::new(&cpp_pixels[..], width, height);

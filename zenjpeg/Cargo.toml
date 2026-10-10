@@ -449,6 +449,11 @@ harness = false
 [lints]
 workspace = true
 
+# Structural inventory dump (`DecodeJob::inventory`).
+[[example]]
+name = "inventory_dump"
+required-features = ["zencodec"]
+
 # Examples that require test-utils feature
 [[example]]
 name = "generate_cpp_reference"

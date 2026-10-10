@@ -569,6 +569,55 @@ fn run_container_xmp(data: &[u8]) {
     core::hint::black_box(&items);
 }
 
+/// `fuzz_inventory`: the structural inventory under every job configuration
+/// that changes it must cover the input exactly and validate.
+#[cfg(feature = "zencodec")]
+fn run_inventory(data: &[u8]) {
+    use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+    let mut permissive = zenjpeg::JpegDecoderConfig::new();
+    let inner = permissive.inner().clone().permissive();
+    *permissive.inner_mut() = inner;
+    let jobs = [
+        zenjpeg::JpegDecoderConfig::new().job(),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Correct),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::Components),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                target_headroom: None,
+            }),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_policy(zencodec::decode::DecodePolicy::strict()),
+        permissive.job(),
+    ];
+    let mut layout: Option<Vec<core::ops::Range<u64>>> = None;
+    for job in jobs {
+        let inv = job
+            .inventory(data)
+            .expect("inventory")
+            .expect("zenjpeg declares the inventory capability");
+        assert_eq!(inv.input_len(), data.len() as u64);
+        if let Err(e) = inv.validate() {
+            panic!("invalid inventory: {e}\n{inv}");
+        }
+        let ranges: Vec<_> = inv
+            .parts()
+            .iter()
+            .filter(|p| p.parent.is_none())
+            .map(|p| p.range.clone())
+            .collect();
+        match &layout {
+            None => layout = Some(ranges),
+            Some(first) => assert_eq!(first, &ranges, "job options changed the top-level layout"),
+        }
+    }
+}
+
 // ── encode entry points ──────────────────────────────────────────────────
 
 /// `fuzz_encode` and `fuzz_roundtrip`.
@@ -709,6 +758,8 @@ fn regression_seeds_do_not_panic() {
         run_container_mpf(&data);
         run_container_probe(&data);
         run_container_xmp(&data);
+        #[cfg(feature = "zencodec")]
+        run_inventory(&data);
         run_encode_and_roundtrip(&data);
 
         replayed += 1;

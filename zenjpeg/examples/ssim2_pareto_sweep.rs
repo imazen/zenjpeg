@@ -548,7 +548,7 @@ fn analyze_angular_buckets(
             bin_label,
             cpp_bpps.len(),
             cpp_avg,
-            &best_name,
+            best_name,
             best_avg,
             savings_str,
             wins_str,

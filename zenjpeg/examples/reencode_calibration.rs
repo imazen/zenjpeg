@@ -1486,7 +1486,7 @@ fn main() {
             .join(", ")
     );
     println!("Source qualities: {src_qualities:?}");
-    println!("Zen qualities: {:?}", &ZEN_QUALITIES);
+    println!("Zen qualities: {:?}", ZEN_QUALITIES);
     if args.preset_offsets {
         println!(
             "Presets: {}",
@@ -1498,7 +1498,7 @@ fn main() {
         );
     }
     if args.resize {
-        println!("Resize ratios: {:?}", &RESIZE_RATIOS);
+        println!("Resize ratios: {:?}", RESIZE_RATIOS);
     }
     println!("Estimated re-encodes: ~{est_encodes}");
     println!();

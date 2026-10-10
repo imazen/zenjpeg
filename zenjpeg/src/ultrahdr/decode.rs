@@ -50,14 +50,8 @@ impl UltraHdrExtras for DecodedExtras {
 
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
         // First try primary XMP (legacy format: all metadata in primary).
-        // Field shape changed in 0.5: gain ranges live on channel records now,
-        // not on a flat `gain_map_max: [f32; 3]`.
-        if let Some(xmp) = self.xmp()
-            && let Ok((metadata, len)) = parse_xmp(xmp)
-            && (metadata.channels.iter().any(|c| c.max != 0.0)
-                || metadata.alternate_hdr_headroom != 0.0)
-        {
-            return Some(Ok((metadata, len)));
+        if let Some(found) = primary_xmp_gain_map(self) {
+            return Some(Ok(found));
         }
 
         // Then try gain map JPEG's XMP (modern format: metadata in secondary)
@@ -372,10 +366,20 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8], single_channel: Option<bool>) -> Result
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
-fn extract_xmp_from_jpeg(jpeg: &[u8]) -> Option<String> {
-    let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
-    let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
-    let xmp_start = idx + xmp_ns.len();
+pub(crate) fn extract_xmp_from_jpeg(jpeg: &[u8]) -> Option<String> {
+    let segment = xmp_segment_range(jpeg)?;
+    let xmp_bytes = jpeg.get(segment.start + 4 + XMP_NS.len()..segment.end)?;
+    String::from_utf8(xmp_bytes.to_vec()).ok()
+}
+
+const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+
+/// The APP1 segment (marker included) that [`extract_xmp_from_jpeg`] reads:
+/// the one around the first occurrence of the XMP namespace, when `FF E1`
+/// and a length that covers the namespace precede it.
+pub(crate) fn xmp_segment_range(jpeg: &[u8]) -> Option<core::ops::Range<usize>> {
+    let idx = jpeg.windows(XMP_NS.len()).position(|w| w == XMP_NS)?;
+    let xmp_start = idx + XMP_NS.len();
     // Find the APP1 marker to get the segment length
     // Walk backwards from idx to find FF E1
     let marker_pos = idx.checked_sub(4)?;
@@ -384,8 +388,20 @@ fn extract_xmp_from_jpeg(jpeg: &[u8]) -> Option<String> {
     }
     let length = u16::from_be_bytes([jpeg[marker_pos + 2], jpeg[marker_pos + 3]]) as usize;
     let xmp_end = marker_pos + 2 + length;
-    let xmp_bytes = jpeg.get(xmp_start..xmp_end)?;
-    String::from_utf8(xmp_bytes.to_vec()).ok()
+    jpeg.get(xmp_start..xmp_end)?;
+    Some(marker_pos..xmp_end)
+}
+
+/// `ultrahdr_metadata()`'s first branch: gain-map parameters from the
+/// primary XMP, when it carries non-default ones.
+pub(crate) fn primary_xmp_gain_map(
+    extras: &DecodedExtras,
+) -> Option<(GainMapMetadata, Option<usize>)> {
+    // Field shape changed in 0.5: gain ranges live on channel records now,
+    // not on a flat `gain_map_max: [f32; 3]`.
+    let (metadata, len) = parse_xmp(extras.xmp()?).ok()?;
+    (metadata.channels.iter().any(|c| c.max != 0.0) || metadata.alternate_hdr_headroom != 0.0)
+        .then_some((metadata, len))
 }
 
 /// Convert an ultrahdr_core error to a zenjpeg Error.

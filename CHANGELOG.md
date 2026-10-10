@@ -53,6 +53,26 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `JpegDecodeJob` implements zencodec's `DecodeJob::inventory` and declares
+  `DecodeCapabilities::inventory` (zencodec#133). It returns a byte-exact
+  map of the file as the zencodec decode path reads it: every marker
+  segment, scan, fill and stray byte, JFIF thumbnail, MPF image, GContainer
+  item and Samsung SEF trailer, each with what the decoder does with it.
+  Tables and segments that are overwritten or never used are reported as
+  dropped, and bytes after a unit's internal end (JFIF thumbnail, APP14 and
+  MPF tails, ICC past its declared size) as their own parts.
+  Fuzz target `fuzz_inventory`; `just inventory-oracle` cross-checks the
+  offsets against ExifTool. Builds against zencodec's `feat/inventory`
+  branch through `[patch.crates-io]` until that is released. (aa444b2d)
+  Review round 1: the gain-map role follows `ultrahdr_metadata()` and
+  `gainmap()`; a count-only Huffman pass splits bytes after a scan's last
+  MCU (and before each RSTn) out of the scan data; DAC entries, MPF index
+  holes and extended-XMP headers are their own parts; the job's strictness,
+  policy, limits and output path are followed. (62b7e7b5, c8e70083,
+  4a889024, c5dafa31, bca48b52, 06eda96a)
+  Review round 2: progressive AC-first scans are counted the way
+  `decode_ac_first_scan_tracked` decodes them (#224), and junk of 8 bytes or
+  more before an RSTn or after a scan's last MCU fails a Strict decode.
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
