@@ -7,7 +7,9 @@
 //! - The inventory covers exactly the input and passes `validate()`:
 //!   top-level parts tile the input, children stay inside their parents,
 //!   siblings never overlap, declared bodies are tiled.
-//! - The configuration changes dispositions only, never the part layout.
+//! - The configuration changes dispositions, and auto-orient may add the
+//!   EXIF Orientation entry as a child part, but never the top-level
+//!   layout.
 
 #![no_main]
 
@@ -40,10 +42,15 @@ fuzz_target!(|data: &[u8]| {
         if let Err(e) = inv.validate() {
             panic!("invalid inventory: {e}\n{inv}");
         }
-        let ranges: Vec<_> = inv.parts().iter().map(|p| p.range.clone()).collect();
+        let ranges: Vec<_> = inv
+            .parts()
+            .iter()
+            .filter(|p| p.parent.is_none())
+            .map(|p| p.range.clone())
+            .collect();
         match &layout {
             None => layout = Some(ranges),
-            Some(first) => assert_eq!(first, &ranges, "job options changed the part layout"),
+            Some(first) => assert_eq!(first, &ranges, "job options changed the top-level layout"),
         }
     }
 });
