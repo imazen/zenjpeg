@@ -36,8 +36,7 @@ use core::ops::Range;
 
 use zencodec::ImageFormat;
 use zencodec::inventory::{
-    DEFAULT_MAX_PARTS, Disposition, Inventory, InventoryError, MetadataKind, Part, PartKind,
-    PartTag,
+    Disposition, Inventory, InventoryError, MetadataKind, Part, PartId, PartKind, PartTag,
 };
 
 use crate::decode::{
@@ -62,8 +61,10 @@ pub(crate) struct Options {
 pub(crate) fn inventory(data: &[u8], opts: Options) -> Result<Inventory, InventoryError> {
     let mut w = Walk {
         data,
-        nodes: Vec::new(),
+        inv: Inventory::new(ImageFormat::Jpeg, data.len() as u64),
+        ids: Vec::new(),
         opts,
+        repeats: [(None, 0); REPEAT_KINDS],
     };
     let len = data.len();
     let soi = if data.starts_with(&[0xFF, MARKER_SOI]) {
@@ -138,16 +139,30 @@ const XMP_EXT_NS_LEN: usize = b"http://ns.adobe.com/xmp/extension/\0".len();
 const ICC_SIG_LEN: usize = b"ICC_PROFILE\0".len();
 const ISO_21496_1: &[u8] = b"urn:iso:std:iso:ts:21496:-1\0";
 
-struct Node {
-    parent: Option<usize>,
-    part: Part,
-}
-
+/// Parts go straight into the inventory; walker code refers to them by
+/// push index, and `ids` maps an index to its `PartId`.
 struct Walk<'a> {
     data: &'a [u8],
-    nodes: Vec<Node>,
+    inv: Inventory,
+    ids: Vec<PartId>,
     opts: Options,
+    /// Per [`Repeat`] kind: the first part of that kind (the one carrying
+    /// the detail) and how many more followed.
+    repeats: [(Option<usize>, u32); REPEAT_KINDS],
 }
+
+/// Gaps and standalone markers that a crafted file can repeat once per
+/// byte or two. Only the first of each kind carries a detail, so a flood of
+/// them costs no string per part.
+#[derive(Clone, Copy)]
+enum Repeat {
+    Stray,
+    Fill,
+    FfZero,
+    HeaderMarker,
+    Restart,
+}
+const REPEAT_KINDS: usize = 5;
 
 /// Which consumers resolve a stream's metadata.
 #[derive(Clone, Copy)]
@@ -200,51 +215,121 @@ struct Frame {
     mode: u8,
 }
 
-/// A table or parameter definition, and whether a scan (or the final
-/// dequantisation) uses it before it is redefined.
+/// What a [`Def`] defines: a table slot, a DAC conditioning entry or the
+/// restart interval.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DefKind {
+    Quant(u8),
+    Dc(u8),
+    Ac(u8),
+    Restart,
+    /// DAC DC conditioning (L, U) for an arithmetic DC table.
+    DacDc(u8),
+    /// DAC AC conditioning (Kx) for an arithmetic AC table.
+    DacAc(u8),
+}
+
+impl core::fmt::Display for DefKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Quant(i) => write!(f, "quantization table {i}"),
+            Self::Dc(i) => write!(f, "DC Huffman table {i}"),
+            Self::Ac(i) => write!(f, "AC Huffman table {i}"),
+            Self::Restart => f.write_str("restart interval"),
+            Self::DacDc(i) => write!(f, "DC conditioning {i}"),
+            Self::DacAc(i) => write!(f, "AC conditioning {i}"),
+        }
+    }
+}
+
+/// A definition in effect, and whether a scan (or the final
+/// dequantisation) has used it.
+#[derive(Clone)]
 struct Def {
     node: usize,
     range: Range<usize>,
-    what: String,
+    what: DefKind,
     used: bool,
 }
 
+/// A segment that defines something: its definitions tile `area`.
+struct DefSeg {
+    node: usize,
+    area: Range<usize>,
+    count: u32,
+    first: DefKind,
+}
+
 /// The definitions in effect, for marking units that are overwritten or
-/// never used (`Dropped`).
+/// never used (`Dropped`). Memory is bounded by the number of segments and
+/// scans, not by the number of tables a segment packs: a replaced
+/// definition that was never used leaves nothing behind but its bytes.
 #[derive(Default)]
 struct Defs {
-    all: Vec<Def>,
-    q: [Option<usize>; 4],
-    dc: [Option<usize>; 4],
-    ac: [Option<usize>; 4],
-    dri: Option<usize>,
-    dac: Vec<usize>,
+    q: [Option<Def>; 4],
+    dc: [Option<Def>; 4],
+    ac: [Option<Def>; 4],
+    dri: Option<Def>,
+    dac_dc: [Option<Def>; 4],
+    dac_ac: [Option<Def>; 4],
+    /// Every definition a scan used, recorded once.
+    used: Vec<Def>,
+    segs: Vec<DefSeg>,
 }
 
 impl Defs {
-    fn define(&mut self, node: usize, range: Range<usize>, what: String) -> usize {
-        self.all.push(Def {
-            node,
-            range,
-            what,
-            used: false,
-        });
-        self.all.len() - 1
+    fn slot(&mut self, k: DefKind) -> Option<&mut Option<Def>> {
+        match k {
+            DefKind::Quant(i) => self.q.get_mut(i as usize),
+            DefKind::Dc(i) => self.dc.get_mut(i as usize),
+            DefKind::Ac(i) => self.ac.get_mut(i as usize),
+            DefKind::Restart => Some(&mut self.dri),
+            DefKind::DacDc(i) => self.dac_dc.get_mut(i as usize),
+            DefKind::DacAc(i) => self.dac_ac.get_mut(i as usize),
+        }
     }
 
-    fn mark(&mut self, d: Option<usize>) {
-        if let Some(d) = d
-            && let Some(def) = self.all.get_mut(d)
-        {
-            def.used = true;
+    /// Record a definition in segment `node`; it replaces the one in its slot.
+    fn define(&mut self, node: usize, range: Range<usize>, what: DefKind) {
+        match self.segs.last_mut() {
+            Some(s) if s.node == node => {
+                s.area.end = range.end;
+                s.count += 1;
+            }
+            _ => self.segs.push(DefSeg {
+                node,
+                area: range.clone(),
+                count: 1,
+                first: what,
+            }),
+        }
+        if let Some(slot) = self.slot(what) {
+            *slot = Some(Def {
+                node,
+                range,
+                what,
+                used: false,
+            });
+        }
+    }
+
+    fn mark(&mut self, k: DefKind) {
+        let fresh = match self.slot(k) {
+            Some(Some(d)) if !d.used => {
+                d.used = true;
+                Some(d.clone())
+            }
+            _ => None,
+        };
+        if let Some(d) = fresh {
+            self.used.push(d);
         }
     }
 
     /// The quantisation tables every frame component refers to.
     fn mark_quant(&mut self, f: &Frame) {
         for c in 0..f.components as usize {
-            let q = self.q.get(f.qidx[c] as usize).copied().flatten();
-            self.mark(q);
+            self.mark(DefKind::Quant(f.qidx[c]));
         }
     }
 }
@@ -299,7 +384,7 @@ fn find_soi(data: &[u8]) -> Option<usize> {
 }
 
 /// A label copied from the start of a payload: bytes up to the first NUL,
-/// at most [`MAX_LABEL`], with non-printable bytes escaped.
+/// with non-printable bytes escaped, at most [`MAX_LABEL`] characters.
 fn label_of(payload: &[u8]) -> Option<String> {
     let end = payload
         .iter()
@@ -309,12 +394,16 @@ fn label_of(payload: &[u8]) -> Option<String> {
     if end == 0 {
         return None;
     }
-    let mut s = String::with_capacity(end);
+    let mut s = String::with_capacity(end.min(MAX_LABEL));
     for &b in &payload[..end] {
-        if (0x20..0x7F).contains(&b) && b != b'\\' {
+        let printable = (0x20..0x7F).contains(&b) && b != b'\\';
+        if s.len() + if printable { 1 } else { 4 } > MAX_LABEL {
+            break;
+        }
+        if printable {
             s.push(b as char);
         } else {
-            s.push_str(&format!("\\x{b:02x}"));
+            let _ = core::fmt::Write::write_fmt(&mut s, format_args!("\\x{b:02x}"));
         }
     }
     Some(s)
@@ -588,36 +677,41 @@ fn table_ranges(marker: u8, body: &[u8], base: usize) -> Vec<(u8, Range<usize>)>
 
 /// Mark what a scan uses: every frame component's quantisation table (the
 /// sequential path dequantises during the scan), the restart interval, and
-/// the entropy-coding tables its coding needs. `spec` is the SOS body after
-/// the component count: the component selectors, then Ss, Se, Ah/Al.
+/// the entropy-coding tables or conditioning entries its coding reads. `spec`
+/// is the SOS body after the component count: the component selectors, then
+/// Ss, Se, Ah/Al.
 fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8]) {
     defs.mark_quant(f);
-    let dri = defs.dri;
-    defs.mark(dri);
+    defs.mark(DefKind::Restart);
     let (comps, params) = spec.split_at(spec.len().saturating_sub(3));
-    if matches!(f.mode, 0xC9 | 0xCA) {
-        // Arithmetic coding uses conditioning tables, never Huffman tables.
-        for d in defs.dac.clone() {
-            defs.mark(Some(d));
-        }
-        return;
-    }
     let (Some(&ss), Some(&ahal)) = (params.first(), params.get(2)) else {
         return;
     };
-    let progressive = f.mode == 0xC2;
-    // Progressive: DC first scans use the DC table, DC refinement uses no
-    // table, AC scans (first and refinement) use the AC table.
-    let need_dc = !progressive || (ss == 0 && ahal >> 4 == 0);
-    let need_ac = !progressive || ss > 0;
+    let first = ahal >> 4 == 0;
+    let arithmetic = matches!(f.mode, 0xC9 | 0xCA);
+    let (need_dc, need_ac) = match f.mode {
+        // Sequential: every block decodes DC then AC.
+        0xC0 | 0xC1 | 0xC9 => (true, true),
+        // Progressive arithmetic (entropy/arithmetic.rs): DC first scans read
+        // the DC conditioning, AC first scans the AC conditioning (Kx);
+        // refinement scans use fixed or per-scan statistics only.
+        0xCA => (ss == 0 && first, ss > 0 && first),
+        // Progressive Huffman: DC first scans use the DC table, DC refinement
+        // uses none, AC scans (first and refinement) use the AC table.
+        _ => (ss == 0 && first, ss > 0),
+    };
     for &[_, tables] in comps.as_chunks::<2>().0 {
+        let (td, ta) = (tables >> 4, tables & 0x0F);
+        let (dc, ac) = if arithmetic {
+            (DefKind::DacDc(td), DefKind::DacAc(ta))
+        } else {
+            (DefKind::Dc(td), DefKind::Ac(ta))
+        };
         if need_dc {
-            let d = defs.dc.get((tables >> 4) as usize).copied().flatten();
-            defs.mark(d);
+            defs.mark(dc);
         }
         if need_ac {
-            let d = defs.ac.get((tables & 0x0F) as usize).copied().flatten();
-            defs.mark(d);
+            defs.mark(ac);
         }
     }
 }
@@ -699,31 +793,54 @@ fn decide(slot: &mut Decided, d: Disposition, detail: Option<String>) {
 
 impl Walk<'_> {
     fn add(&mut self, parent: Option<usize>, part: Part) -> Result<usize, InventoryError> {
-        if self.nodes.len() >= DEFAULT_MAX_PARTS as usize {
-            return Err(InventoryError::TooManyParts {
-                max: DEFAULT_MAX_PARTS,
-            });
+        let parent = parent.map(|p| self.ids[p]);
+        let id = self.inv.push(parent, part)?;
+        self.ids.push(id);
+        Ok(self.ids.len() - 1)
+    }
+
+    /// Add a part of a [`Repeat`] kind; only the first one gets `detail`.
+    fn add_repeated(
+        &mut self,
+        parent: Option<usize>,
+        part: Part,
+        kind: Repeat,
+        detail: impl FnOnce() -> String,
+    ) -> Result<usize, InventoryError> {
+        let first = self.repeats[kind as usize].0.is_none();
+        let part = if first {
+            part.with_detail(detail())
+        } else {
+            part
+        };
+        let node = self.add(parent, part)?;
+        let slot = &mut self.repeats[kind as usize];
+        if first {
+            slot.0 = Some(node);
+        } else {
+            slot.1 += 1;
         }
-        self.nodes.push(Node { parent, part });
-        Ok(self.nodes.len() - 1)
+        Ok(node)
+    }
+
+    fn node(&self, node: usize) -> &Part {
+        &self.inv.parts()[node]
     }
 
     fn set(&mut self, node: usize, d: Disposition, detail: Option<String>) {
-        if let Some(n) = self.nodes.get_mut(node) {
-            n.part.disposition = d;
-            if detail.is_some() {
-                n.part.detail = detail;
-            }
+        let id = self.ids[node];
+        self.inv.set_disposition(id, d);
+        if let Some(detail) = detail {
+            self.inv.set_detail(id, detail);
         }
     }
 
     fn append_detail(&mut self, node: usize, more: &str) {
-        if let Some(n) = self.nodes.get_mut(node) {
-            n.part.detail = Some(match n.part.detail.take() {
-                Some(d) => format!("{d}; {more}"),
-                None => String::from(more),
-            });
-        }
+        let detail = match &self.node(node).detail {
+            Some(d) => format!("{d}; {more}"),
+            None => String::from(more),
+        };
+        self.inv.set_detail(self.ids[node], detail);
     }
 
     fn seg_end(&self, pos: usize, limit: usize) -> SegEnd {
@@ -751,7 +868,7 @@ impl Walk<'_> {
         limit: usize,
     ) -> Result<Stream, InventoryError> {
         let data = self.data;
-        let first = self.nodes.len();
+        let first = self.ids.len();
         let mut st = Stream {
             nodes: first..first,
             eoi_end: None,
@@ -800,13 +917,16 @@ impl Walk<'_> {
             // warning about the bytes in between, then skip fill bytes.
             let next_ff = memchr::memchr(0xFF, &data[pos..limit]).map_or(limit, |r| pos + r);
             if next_ff > pos {
-                let n = next_ff - pos;
-                self.add(
+                self.add_repeated(
                     parent,
-                    gap(pos..next_ff, Disposition::Malformed).with_detail(format!(
-                        "{n} stray byte(s) outside any segment; the decoder skips them \
-                         (ExtraneousBytesSkipped)"
-                    )),
+                    gap(pos..next_ff, Disposition::Malformed),
+                    Repeat::Stray,
+                    || {
+                        String::from(
+                            "stray bytes outside any segment; the decoder skips them \
+                             (ExtraneousBytesSkipped)",
+                        )
+                    },
                 )?;
                 pos = next_ff;
                 if pos >= limit {
@@ -818,9 +938,11 @@ impl Walk<'_> {
                 pos += 1;
             }
             if pos > fill_start {
-                self.add(
+                self.add_repeated(
                     parent,
-                    gap(fill_start..pos, Disposition::Padding).with_detail("fill bytes"),
+                    gap(fill_start..pos, Disposition::Padding),
+                    Repeat::Fill,
+                    || String::from("fill bytes"),
                 )?;
             }
             if pos + 1 >= limit {
@@ -844,10 +966,11 @@ impl Walk<'_> {
             let m = data[pos + 1];
             if m == 0x00 {
                 // `read_marker`: FF 00 outside a scan is skipped like stray bytes.
-                self.add(
+                self.add_repeated(
                     parent,
-                    gap(pos..pos + 2, Disposition::Malformed)
-                        .with_detail("FF 00 outside entropy-coded data; the decoder skips it"),
+                    gap(pos..pos + 2, Disposition::Malformed),
+                    Repeat::FfZero,
+                    || String::from("FF 00 outside entropy-coded data; the decoder skips it"),
                 )?;
                 pos += 2;
                 continue;
@@ -887,14 +1010,22 @@ impl Walk<'_> {
             }
             if (0xD0..=0xD7).contains(&m) || (m == MARKER_TEM && phase == Phase::Header) {
                 // `read_header` ignores RSTn/TEM; `decode` ignores RSTn between scans.
-                let why = if phase == Phase::Header {
-                    "standalone marker before the frame header; the decoder ignores it"
+                let (kind, why) = if phase == Phase::Header {
+                    (
+                        Repeat::HeaderMarker,
+                        "standalone marker before the frame header; the decoder ignores it",
+                    )
                 } else {
-                    "restart marker between scans; the decoder ignores it"
+                    (
+                        Repeat::Restart,
+                        "restart marker between scans; the decoder ignores it",
+                    )
                 };
-                self.add(
+                self.add_repeated(
                     parent,
-                    seg(m, pos..pos + 2, Disposition::Skipped).with_detail(why),
+                    seg(m, pos..pos + 2, Disposition::Skipped),
+                    kind,
+                    || String::from(why),
                 )?;
                 pos += 2;
                 continue;
@@ -1072,30 +1203,26 @@ impl Walk<'_> {
                     } else {
                         // Each table replaces the one in the same slot.
                         for (info, r) in table_ranges(m, body, payload.start) {
-                            let idx = (info & 0x0F) as usize;
-                            let (what, kind) = if m == MARKER_DQT {
-                                (format!("quantization table {idx}"), 0)
+                            let i = info & 0x0F;
+                            let what = if m == MARKER_DQT {
+                                DefKind::Quant(i)
                             } else if info >> 4 == 0 {
-                                (format!("DC Huffman table {idx}"), 1)
+                                DefKind::Dc(i)
                             } else {
-                                (format!("AC Huffman table {idx}"), 2)
+                                DefKind::Ac(i)
                             };
-                            let d = defs.define(node, r, what);
-                            let slot = match kind {
-                                0 => &mut defs.q,
-                                1 => &mut defs.dc,
-                                _ => &mut defs.ac,
-                            };
-                            if let Some(s) = slot.get_mut(idx) {
-                                *s = Some(d);
-                            }
+                            defs.define(node, r, what);
                         }
                     }
                 }
                 MARKER_DAC => {
+                    // `parse_dac`: two bytes per entry; class 0 sets a DC
+                    // table's (L, U), any other class an AC table's Kx. Each
+                    // entry replaces the one for the same table.
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
-                    for &[info, cs] in body.as_chunks::<2>().0 {
-                        if info & 0x0F >= 4 || (info >> 4 == 0 && cs & 0x0F > cs >> 4) {
+                    for (k, &[info, cs]) in body.as_chunks::<2>().0.iter().enumerate() {
+                        let idx = info & 0x0F;
+                        if idx >= 4 || (info >> 4 == 0 && cs & 0x0F > cs >> 4) {
                             self.set(node, Disposition::Malformed, None);
                             fatal(
                                 self,
@@ -1107,14 +1234,18 @@ impl Walk<'_> {
                             );
                             break;
                         }
+                        let what = if info >> 4 == 0 {
+                            DefKind::DacDc(idx)
+                        } else {
+                            DefKind::DacAc(idx)
+                        };
+                        let at = payload.start + 2 * k;
+                        defs.define(node, at..at + 2, what);
                     }
-                    let d = defs.define(node, payload.clone(), "arithmetic conditioning".into());
-                    defs.dac.push(d);
                 }
                 MARKER_DRI => {
                     let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
-                    let d = defs.define(node, payload.clone(), "restart interval".into());
-                    defs.dri = Some(d);
+                    defs.define(node, pos + 4..pos + 6, DefKind::Restart);
                     if end > pos + 6 {
                         // `parse_restart_interval` skips what a length above 4 declares.
                         self.add(
@@ -1239,62 +1370,80 @@ impl Walk<'_> {
         if st.eoi_end.is_none() && phase == Phase::Body && scans == 0 && !st.decode_fatal {
             st.decode_fatal = true;
         }
-        self.settle_defs(&defs)?;
-        st.nodes = first..self.nodes.len();
+        self.settle_defs(&mut defs)?;
+        st.nodes = first..self.ids.len();
         Ok(st)
     }
 
     /// Definitions no scan used: overwritten before use, never referenced,
     /// or of a kind the frame's coding does not use. A segment whose every
     /// definition is unused is `Dropped`; one that mixes both gets a child
-    /// per definition.
-    fn settle_defs(&mut self, defs: &Defs) -> Result<(), InventoryError> {
+    /// per used definition and one per run of unused ones.
+    fn settle_defs(&mut self, defs: &mut Defs) -> Result<(), InventoryError> {
         const WHY: &str = "no scan uses it before it is redefined, or nothing refers to it";
-        let mut i = 0;
-        while i < defs.all.len() {
-            let node = defs.all[i].node;
-            let mut j = i;
-            while j < defs.all.len() && defs.all[j].node == node {
-                j += 1;
+        defs.used.sort_by_key(|d| (d.node, d.range.start));
+        let mut u = 0;
+        for s in &defs.segs {
+            while u < defs.used.len() && defs.used[u].node < s.node {
+                u += 1;
             }
-            let group = &defs.all[i..j];
-            i = j;
-            if self.nodes.get(node).map(|n| n.part.disposition) != Some(Disposition::Structure) {
+            let from = u;
+            while u < defs.used.len() && defs.used[u].node == s.node {
+                u += 1;
+            }
+            let used = &defs.used[from..u];
+            if self.node(s.node).disposition != Disposition::Structure
+                || used.len() == s.count as usize
+            {
                 continue;
             }
-            let unused = group.iter().filter(|d| !d.used).count();
-            if unused == 0 {
+            if used.is_empty() {
+                let what = if s.count == 1 {
+                    format!("{}", s.first)
+                } else {
+                    format!("{} definitions, the first {}", s.count, s.first)
+                };
+                self.set(s.node, Disposition::Dropped, Some(format!("{what}: {WHY}")));
                 continue;
             }
-            if unused == group.len() {
-                let names: Vec<&str> = group.iter().map(|d| d.what.as_str()).collect();
-                self.set(
-                    node,
-                    Disposition::Dropped,
-                    Some(format!("{}: {WHY}", names.join(", "))),
-                );
-                continue;
-            }
-            for d in group {
+            let mut at = s.area.start;
+            for d in used {
+                if d.range.start > at {
+                    self.add(
+                        Some(s.node),
+                        part(
+                            PartKind::Attribute,
+                            PartTag::None,
+                            at..d.range.start,
+                            Disposition::Dropped,
+                        )
+                        .with_detail(format!("unused definitions: {WHY}")),
+                    )?;
+                }
                 let tag = PartTag::Code(u32::from(self.data[d.range.start]));
-                let p = if d.used {
+                self.add(
+                    Some(s.node),
                     part(
                         PartKind::Attribute,
                         tag,
                         d.range.clone(),
                         Disposition::Structure,
                     )
-                    .with_detail(d.what.clone())
-                } else {
+                    .with_detail(format!("{}", d.what)),
+                )?;
+                at = d.range.end;
+            }
+            if at < s.area.end {
+                self.add(
+                    Some(s.node),
                     part(
                         PartKind::Attribute,
-                        tag,
-                        d.range.clone(),
+                        PartTag::None,
+                        at..s.area.end,
                         Disposition::Dropped,
                     )
-                    .with_detail(format!("{}: {WHY}", d.what))
-                };
-                self.add(Some(node), p)?;
+                    .with_detail(format!("unused definitions: {WHY}")),
+                )?;
             }
         }
         Ok(())
@@ -1572,8 +1721,7 @@ impl Walk<'_> {
             // The orientation walk desynchronised (a single fill byte) and
             // found an APP1 EXIF header inside another part.
             if let Some(node) = (st.nodes.clone()).rev().find(|&n| {
-                self.nodes[n].part.range.start <= at as u64
-                    && (at as u64) < self.nodes[n].part.range.end
+                self.node(n).range.start <= at as u64 && (at as u64) < self.node(n).range.end
             }) {
                 self.set(node, Disposition::Metadata(MetadataKind::Orientation), None);
                 self.append_detail(
@@ -1591,13 +1739,13 @@ impl Walk<'_> {
             // `probe()` reads before the frame header.
             let keep_until = if probe_ok { st.sof_end.unwrap_or(0) } else { 0 };
             for n in st.nodes.clone() {
-                let p = &self.nodes[n].part;
+                let p = self.node(n);
                 if matches!(
                     p.disposition,
                     Disposition::Structure | Disposition::ImageData
                 ) && p.range.end > keep_until as u64
                 {
-                    self.nodes[n].part.disposition = Disposition::Skipped;
+                    self.inv.set_disposition(self.ids[n], Disposition::Skipped);
                 }
             }
         }
@@ -1774,7 +1922,7 @@ impl Walk<'_> {
     /// Map an embedded image's resolved parts to what its role makes of them.
     fn apply_role(&mut self, nodes: Range<usize>, role: Role) {
         for n in nodes {
-            let d = self.nodes[n].part.disposition;
+            let d = self.node(n).disposition;
             let (new, detail) = match (role, d) {
                 (Role::GainMap, Disposition::Structure | Disposition::ImageData) => {
                     (Disposition::Metadata(MetadataKind::GainMap), None)
@@ -1820,7 +1968,7 @@ impl Walk<'_> {
                 },
             )?;
             // Every part of this stream, including children `resolve` added.
-            let all = st.nodes.start..self.nodes.len();
+            let all = st.nodes.start..self.ids.len();
             self.apply_role(all, role);
         }
         Ok(node)
@@ -2046,24 +2194,28 @@ impl Walk<'_> {
         Ok(())
     }
 
-    fn finish(self) -> Result<Inventory, InventoryError> {
-        let mut inv = Inventory::new(ImageFormat::Jpeg, self.data.len() as u64);
-        let mut ids = Vec::with_capacity(self.nodes.len());
-        let mut bodies = Vec::new();
-        for n in self.nodes {
-            let parent = n.parent.and_then(|p| ids.get(p).copied());
-            let has_body = n.part.body.is_some();
-            let id = inv.push(parent, n.part)?;
-            if has_body {
-                bodies.push(id);
+    fn finish(mut self) -> Result<Inventory, InventoryError> {
+        for (first, more) in self.repeats {
+            if let Some(first) = first
+                && more > 0
+            {
+                self.append_detail(
+                    first,
+                    &format!("{more} more parts like this one carry no detail"),
+                );
             }
-            ids.push(id);
         }
+        let bodies: Vec<PartId> = self
+            .ids
+            .iter()
+            .copied()
+            .filter(|id| self.inv.parts()[id.index()].body.is_some())
+            .collect();
         for id in bodies {
-            inv.fill_gaps(Some(id), Disposition::Unreferenced)?;
+            self.inv.fill_gaps(Some(id), Disposition::Unreferenced)?;
         }
-        inv.fill_gaps(None, Disposition::Trailing)?;
-        Ok(inv)
+        self.inv.fill_gaps(None, Disposition::Trailing)?;
+        Ok(self.inv)
     }
 }
 
