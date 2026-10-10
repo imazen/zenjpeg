@@ -120,6 +120,17 @@ fn check_coverage(valid: &[u8], junk_unconsumed: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// The default zencodec decode's pixels, row by row (`None` on failure).
+fn decoded_pixels(data: &[u8]) -> Option<Vec<u8>> {
+    let out = JpegDecoderConfig::new()
+        .job()
+        .decoder(Cow::Borrowed(data), &[])
+        .and_then(|d| d.decode())
+        .ok()?;
+    let ps = out.pixels();
+    Some((0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect())
+}
+
 /// The zencodec decode's verdict: `Ok` or the error text.
 fn decode_verdict(data: &[u8]) -> Result<(), String> {
     std::panic::catch_unwind(|| {
@@ -154,6 +165,7 @@ fn inventory_covers_every_corpus_jpeg() {
     );
     let (mut decoded, mut rejected, mut rejected_known) = (0usize, 0usize, 0usize);
     let mut unterminated = 0usize;
+    let mut with_tails = 0usize;
     let mut failures = Vec::new();
     for path in &files {
         let data = fs::read(path).unwrap();
@@ -185,6 +197,35 @@ fn inventory_covers_every_corpus_jpeg() {
         let verdict = decode_verdict(&data);
         if verdict.is_ok() {
             decoded += 1;
+            // The count-only entropy pass: deleting every scan tail it
+            // reports leaves the pixels unchanged.
+            let tails: Vec<std::ops::Range<usize>> = inv
+                .parts()
+                .iter()
+                .filter(|p| {
+                    p.disposition == Disposition::Unreferenced
+                        && p.parent.is_some_and(|q| {
+                            inv.parts()[q.index()].kind == zencodec::inventory::PartKind::ScanData
+                        })
+                })
+                .map(|p| p.range.start as usize..p.range.end as usize)
+                .collect();
+            if !tails.is_empty() {
+                with_tails += 1;
+                println!("scan tails {tails:?}: {name}");
+                let mut cut = Vec::with_capacity(data.len());
+                let mut at = 0;
+                for r in &tails {
+                    cut.extend_from_slice(&data[at..r.start]);
+                    at = r.end;
+                }
+                cut.extend_from_slice(&data[at..]);
+                if decoded_pixels(&cut) != decoded_pixels(&data) {
+                    failures.push(format!(
+                        "{name}: deleting the scan tails changes the pixels"
+                    ));
+                }
+            }
             let checked = if has_eoi {
                 zencodec_testkit::check_inventory(JpegDecoderConfig::new(), &data)
                     .map_err(|e| e.to_string())
@@ -236,8 +277,8 @@ fn inventory_covers_every_corpus_jpeg() {
     }
     println!(
         "inventory corpus: {} files; {decoded} decode (check_inventory), {rejected} rejected \
-         ({rejected_known} of them flagged by the walker without entropy decoding); \
-         {unterminated} have no EOI (appended-junk check skipped)",
+         ({rejected_known} of them flagged by the walker); {unterminated} have no EOI \
+         (appended-junk check skipped); {with_tails} decodable files have scan tails",
         files.len()
     );
     assert!(

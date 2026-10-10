@@ -22,7 +22,9 @@ zencodec = ">=0.1.26, <0.3.0"
 
 [dependencies.zenjpeg]
 path = ".."
-features = ["zencodec"]
+# `ultrahdr` so the inventory target's Components / ReconstructHdr jobs
+# exercise the gain-map role (without it both are refused).
+features = ["zencodec", "ultrahdr"]
 
 # Prevent this from interfering with workspaces
 [workspace]

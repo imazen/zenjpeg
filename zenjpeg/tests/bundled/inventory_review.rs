@@ -537,3 +537,571 @@ fn post_scan_dqt_of_a_progressive_frame_is_used() {
     let p = leaf_at(&i, eoi + 5);
     assert_eq!(p.disposition, D::Structure, "{}", show(p));
 }
+
+fn render_job(r: zencodec::GainMapRender) -> JpegDecodeJob {
+    job().with_gain_map_render(r)
+}
+
+const RECONSTRUCT: zencodec::GainMapRender = zencodec::GainMapRender::ReconstructHdr {
+    target_headroom: None,
+};
+
+/// Parts the inventory reports as the decoded gain map.
+fn gain_map_parts(i: &Inventory) -> Vec<&Part> {
+    i.parts()
+        .iter()
+        .filter(|p| p.disposition == D::Metadata(zencodec::inventory::MetadataKind::GainMap))
+        .collect()
+}
+
+fn decoded_gain_map(out: &DecodeOutput) -> Option<(u32, u32)> {
+    out.extras::<zencodec::decode::DecodedGainMap>()
+        .map(|g| (g.width(), g.height()))
+}
+
+/// End of the primary image: a plain marker walk, enough for these files.
+fn primary_eoi_end(d: &[u8]) -> usize {
+    let mut i = 2;
+    while i + 1 < d.len() {
+        if d[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+        let m = d[i + 1];
+        if m == 0xFF {
+            i += 1;
+            continue;
+        }
+        if m == 0x00 || (0xD0..=0xD7).contains(&m) {
+            i += 2;
+            continue;
+        }
+        if m == 0xD9 {
+            return i + 2;
+        }
+        let l = (d[i + 2] as usize) << 8 | d[i + 3] as usize;
+        i += 2 + l;
+        if m == 0xDA {
+            while i + 1 < d.len()
+                && !(d[i] == 0xFF && d[i + 1] != 0 && !(0xD0..=0xD7).contains(&d[i + 1]))
+            {
+                i += 1;
+            }
+        }
+    }
+    panic!("no EOI")
+}
+
+/// Finding 1, the base case: rgba_uhdr.jpg keeps its hdrgm parameters in
+/// the gain-map image's XMP. Components and ReconstructHdr decode the gain
+/// map, and read that XMP packet; BaseOnly does neither.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn gain_map_and_its_xmp_follow_the_decode() {
+    let d = load(UHDR);
+    let eoi = primary_eoi_end(&d);
+    let gm_xmp = eoi + 2; // the gain map's APP1 right after its SOI
+    assert_eq!(&d[gm_xmp..gm_xmp + 2], &[0xFF, 0xE1]);
+    for r in [zencodec::GainMapRender::Components, RECONSTRUCT] {
+        let out = decode(render_job(r), &d).unwrap();
+        if r == zencodec::GainMapRender::Components {
+            assert!(decoded_gain_map(&out).is_some());
+        }
+        let i = inv(&render_job(r), &d);
+        let p = leaf_at(&i, eoi);
+        assert_eq!(
+            p.disposition,
+            D::Metadata(zencodec::inventory::MetadataKind::GainMap),
+            "{}",
+            show(p)
+        );
+        let x = leaf_at(&i, gm_xmp + 40);
+        assert_eq!(
+            x.disposition,
+            D::Metadata(zencodec::inventory::MetadataKind::GainMap),
+            "{}",
+            show(x)
+        );
+    }
+    let i = inv(&job(), &d);
+    assert!(gain_map_parts(&i).is_empty());
+}
+
+/// Finding 1 (review r02): with both XMP namespaces corrupted there are no
+/// parameters, so Components decodes no gain map and ReconstructHdr
+/// decodes the base only; the inventory claims no gain map.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn no_hdrgm_parameters_no_gain_map() {
+    let mut d = load(UHDR);
+    let mut at = 0;
+    while let Some(j) = find(&d[at..], XMP_NS) {
+        let j = at + j;
+        d[j + 21] = b'q'; // "xap" -> "xaq"
+        at = j + 1;
+    }
+    assert!(find(&d, XMP_NS).is_none());
+    for r in [zencodec::GainMapRender::Components, RECONSTRUCT] {
+        let out = decode(render_job(r), &d).unwrap();
+        assert!(decoded_gain_map(&out).is_none());
+        let i = inv(&render_job(r), &d);
+        assert!(gain_map_parts(&i).is_empty(), "{r:?}: {i}");
+    }
+}
+
+/// Finding 1 (review r03): when the primary XMP carries non-default hdrgm
+/// values, the gain map's own XMP is never read (changing it leaves the
+/// decoded metadata unchanged) and is Dropped.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn gain_map_xmp_unread_when_the_primary_has_parameters() {
+    let orig = load(UHDR);
+    let anchor = b"hdrgm:Version=\"1.0\"";
+    let at = find(&orig, anchor).unwrap() + anchor.len();
+    let add = b" hdrgm:GainMapMax=\"2.5\" hdrgm:HDRCapacityMax=\"2.5\"";
+    let mut a = insert(&orig, at, add);
+    // The primary XMP APP1 starts at 2; the MPF offsets after it move too,
+    // but they are relative to the MPF header, which moves with them.
+    let l = u16::from_be_bytes([a[4], a[5]]) as usize + add.len();
+    a[4..6].copy_from_slice(&(l as u16).to_be_bytes());
+    let gm = primary_eoi_end(&a);
+    let mut b = a.clone();
+    let rel = find(&b[gm..], b"GainMapMax=\"5.62238\"").unwrap();
+    b[gm + rel + 12..gm + rel + 19].copy_from_slice(b"1.11111");
+    let c = zencodec::GainMapRender::Components;
+    let ma = format!(
+        "{:?}",
+        decode(render_job(c), &a)
+            .unwrap()
+            .extras::<zencodec::decode::DecodedGainMap>()
+            .unwrap()
+            .metadata
+    );
+    let mb = format!(
+        "{:?}",
+        decode(render_job(c), &b)
+            .unwrap()
+            .extras::<zencodec::decode::DecodedGainMap>()
+            .unwrap()
+            .metadata
+    );
+    assert_eq!(ma, mb, "the gain-map XMP is not read");
+    let i = inv(&render_job(c), &b);
+    let x = leaf_at(&i, gm + rel);
+    assert_eq!(x.disposition, D::Dropped, "{}", show(x));
+    assert!(!gain_map_parts(&i).is_empty());
+}
+
+/// Finding 9 (review r04): a crafted SEF footer whose one entry points back
+/// to the primary EOI no longer swallows the decoded gain map: MPF images
+/// are placed first, SEF blocks only in space still free.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn sef_trailer_does_not_swallow_the_gain_map() {
+    let mut d = load(UHDR);
+    let eoi = primary_eoi_end(&d);
+    let dir_pos = d.len();
+    let noff = (dir_pos - eoi) as u32;
+    let mut dir = b"SEFH".to_vec();
+    dir.extend(107u32.to_le_bytes());
+    dir.extend(1u32.to_le_bytes());
+    dir.extend([0, 0, 0x01, 0x0A]);
+    dir.extend(noff.to_le_bytes());
+    dir.extend(8u32.to_le_bytes());
+    let dl = dir.len() as u32;
+    d.extend(dir);
+    d.extend(dl.to_le_bytes());
+    d.extend(b"SEFT");
+    let c = zencodec::GainMapRender::Components;
+    assert!(decoded_gain_map(&decode(render_job(c), &d).unwrap()).is_some());
+    let i = inv(&render_job(c), &d);
+    let p = leaf_at(&i, eoi + 100);
+    assert_eq!(
+        p.disposition,
+        D::Metadata(zencodec::inventory::MetadataKind::GainMap),
+        "{}",
+        show(p)
+    );
+}
+
+/// Finding 1 (review r05): the decoder takes the first extracted Undefined
+/// MPF image wherever it lies. Here entry 1 points into an APP15 inside the
+/// primary (holding the real gain map) and entry 2 after EOI (another
+/// JPEG): entry 1 is the gain map, nested in the APP15; entry 2 is not.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn the_first_extracted_undefined_entry_is_the_gain_map() {
+    let orig = load(UHDR);
+    let eoi = primary_eoi_end(&orig);
+    let gm = orig[eoi..].to_vec();
+    let other = load(TESTORIG);
+    let (p0, pend) = mpf_payload(&orig);
+    let mpf_seg_start = p0 - 4;
+    let tiff = p0 + 4;
+    let build = |rel1: u32, rel2: u32, primary_len: u32| {
+        let mut p = b"MPF\0MM\0\x2a\0\0\0\x08".to_vec();
+        p.extend([0, 3]);
+        p.extend([0xB0, 0x00, 0, 7, 0, 0, 0, 4]);
+        p.extend(b"0100");
+        p.extend([0xB0, 0x01, 0, 4, 0, 0, 0, 1, 0, 0, 0, 3]);
+        p.extend([0xB0, 0x02, 0, 7, 0, 0, 0, 48, 0, 0, 0, 50]);
+        p.extend([0, 0, 0, 0]);
+        p.extend([0x20, 0x03, 0x00, 0x00]);
+        p.extend(primary_len.to_be_bytes());
+        p.extend([0, 0, 0, 0, 0, 0, 0, 0]);
+        p.extend([0, 0, 0, 0]);
+        p.extend((gm.len() as u32).to_be_bytes());
+        p.extend(rel1.to_be_bytes());
+        p.extend([0, 0, 0, 0]);
+        p.extend([0, 0, 0, 0]);
+        p.extend((other.len() as u32).to_be_bytes());
+        p.extend(rel2.to_be_bytes());
+        p.extend([0, 0, 0, 0]);
+        seg(0xE2, &p)
+    };
+    let app15 = seg(0xEF, &gm);
+    let mpf_len = build(0, 0, 0).len();
+    let app15_payload = mpf_seg_start + mpf_len + 4;
+    let primary_len = (eoi - (pend - mpf_seg_start) + mpf_len + app15.len()) as u32;
+    let after = primary_len as usize;
+    let mut d = orig[..mpf_seg_start].to_vec();
+    d.extend(build(
+        (app15_payload - tiff) as u32,
+        (after - tiff) as u32,
+        primary_len,
+    ));
+    d.extend(&app15);
+    d.extend(&orig[pend..eoi]);
+    assert_eq!(d.len(), after);
+    d.extend(&other);
+
+    let c = zencodec::GainMapRender::Components;
+    let dims = decoded_gain_map(&decode(render_job(c), &d).unwrap());
+    assert!(dims.is_some() && dims != Some((227, 149)), "{dims:?}");
+    let i = inv(&render_job(c), &d);
+    let inside = leaf_at(&i, app15_payload + 100);
+    assert_eq!(
+        inside.disposition,
+        D::Metadata(zencodec::inventory::MetadataKind::GainMap),
+        "{}",
+        show(inside)
+    );
+    let outside = leaf_at(&i, after + 100);
+    assert_ne!(
+        outside.disposition,
+        D::Metadata(zencodec::inventory::MetadataKind::GainMap),
+        "{}",
+        show(outside)
+    );
+}
+
+/// Finding 1 (review r20): an extended-XMP chunk inside the gain map is
+/// never read (`extract_xmp_from_jpeg` reads the standard packet only).
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn gain_map_extended_xmp_is_dropped() {
+    let orig = load(UHDR);
+    let eoi = primary_eoi_end(&orig);
+    let (p0, _) = mpf_payload(&orig);
+    let e1 = p0 + 4 + 50 + 16;
+    let mut ext = b"http://ns.adobe.com/xmp/extension/\0".to_vec();
+    ext.extend(b"0123456789ABCDEF0123456789ABCDEF");
+    ext.extend(20u32.to_be_bytes());
+    ext.extend(0u32.to_be_bytes());
+    let mk = |body: &[u8]| {
+        let mut e = ext.clone();
+        e.extend(body);
+        let s = seg(0xE1, &e);
+        let gx = eoi + 2;
+        let gl = u16::from_be_bytes([orig[gx + 2], orig[gx + 3]]) as usize;
+        let at = gx + 2 + gl;
+        let mut d = insert(&orig, at, &s);
+        let s1 = be32(&d, e1 + 4);
+        put32(&mut d, e1 + 4, s1 + s.len() as u32);
+        (d, at)
+    };
+    let (a, at) = mk(b"<!--SECRET-ONE-----");
+    let (b, _) = mk(b"<!--SECRET-TWO-----");
+    let c = zencodec::GainMapRender::Components;
+    let oa = decode(render_job(c), &a).unwrap();
+    let ob = decode(render_job(c), &b).unwrap();
+    let meta = |o: &DecodeOutput| {
+        format!(
+            "{:?}",
+            o.extras::<zencodec::decode::DecodedGainMap>()
+                .map(|g| &g.metadata)
+        )
+    };
+    assert_eq!(meta(&oa), meta(&ob));
+    let i = inv(&render_job(c), &a);
+    let p = leaf_at(&i, at + 4 + 40);
+    assert_eq!(p.disposition, D::Dropped, "{}", show(p));
+}
+
+/// Decoder issue (filed separately): Components fails the whole decode on
+/// a plain JPEG whose XMP has no hdrgm. Whatever the decoder does, the
+/// inventory must agree on whether image data reaches the caller.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn components_on_plain_xmp_agrees_with_the_decoder() {
+    let orig = load(TESTORIG);
+    let mut x = XMP_NS.to_vec();
+    x.extend(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>");
+    let d = insert(&orig, 20, &seg(0xE1, &x));
+    let c = zencodec::GainMapRender::Components;
+    let ok = decode(render_job(c), &d).is_ok();
+    let i = inv(&render_job(c), &d);
+    assert_eq!(scan_disposition(&i) == D::ImageData, ok);
+}
+
+/// ISO 21496-1: no zencodec decode or probe path reads the APP2 payload.
+/// Two payloads give identical BaseOnly, Components and ReconstructHdr
+/// output, and the segment stays Unknown.
+#[cfg(feature = "ultrahdr")]
+#[test]
+fn iso_21496_payload_is_not_read() {
+    let orig = load(UHDR);
+    let iso = |fill: u8| {
+        let mut p = b"urn:iso:std:iso:ts:21496:-1\0".to_vec();
+        p.extend([0, 0, 0, 0]);
+        p.extend([fill; 40]);
+        insert(&orig, 2, &seg(0xE2, &p))
+    };
+    let (a, b) = (iso(b'A'), iso(b'B'));
+    for r in [
+        zencodec::GainMapRender::BaseOnly,
+        zencodec::GainMapRender::Components,
+        RECONSTRUCT,
+    ] {
+        let (oa, ob) = (
+            decode(render_job(r), &a).unwrap(),
+            decode(render_job(r), &b).unwrap(),
+        );
+        assert_eq!(pixels(&oa), pixels(&ob), "{r:?}");
+        assert_eq!(
+            format!("{:?}", oa.info()),
+            format!("{:?}", ob.info()),
+            "{r:?}"
+        );
+        let gm = |o: &DecodeOutput| {
+            o.extras::<zencodec::decode::DecodedGainMap>()
+                .map(|g| (format!("{:?}", g.metadata), pixels_of(g)))
+        };
+        assert_eq!(gm(&oa), gm(&ob), "{r:?}");
+        let i = inv(&render_job(r), &a);
+        let p = leaf_at(&i, 2 + 10);
+        assert_eq!(p.disposition, D::Unknown, "{}", show(p));
+    }
+}
+
+#[cfg(feature = "ultrahdr")]
+fn pixels_of(g: &zencodec::decode::DecodedGainMap) -> Vec<u8> {
+    let ps = g.pixels.as_slice();
+    (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect()
+}
+
+/// The container probe (`zenjpeg::container::probe`) and the inventory
+/// agree on where the XMP, MPF and ISO segments and the embedded images are,
+/// on every Ultra HDR conformance file.
+#[test]
+fn container_probe_agrees_with_the_inventory() {
+    use zenjpeg::container::{Wants, probe};
+    let dir = codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)")
+        .get("ultrahdr-conformance")
+        .expect("ultrahdr-conformance");
+    let mut files = Vec::new();
+    let mut stack = vec![dir];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jpg")) {
+                files.push(p);
+            }
+        }
+    }
+    assert!(files.len() > 20, "{}", files.len());
+    let wants =
+        Wants::IMAGE_RANGES | Wants::XMP_LOCATION | Wants::MPF_LOCATION | Wants::ISO_GAINMAP;
+    let mut checked = 0;
+    for f in &files {
+        let d = std::fs::read(f).unwrap();
+        let pr = probe(&d, wants);
+        let i = inv(&job(), &d);
+        let top_segment = |r: &std::ops::Range<u32>| {
+            i.parts().iter().find(|p| {
+                p.parent.is_none()
+                    && p.kind == zencodec::inventory::PartKind::Segment
+                    && p.range.start <= r.start as u64
+                    && r.end as u64 <= p.range.end
+            })
+        };
+        for (what, r) in [
+            ("xmp", pr.xmp()),
+            ("mpf", pr.mpf()),
+            ("iso", pr.iso_gainmap()),
+        ] {
+            if let Some(r) = r {
+                let p = top_segment(r).unwrap_or_else(|| {
+                    panic!("{}: probe {what} {r:?} has no segment", f.display())
+                });
+                // Where the decode succeeds, the probe's XMP is reported.
+                if what == "xmp" && f.to_string_lossy().contains("/valid/") {
+                    assert_eq!(
+                        p.disposition,
+                        D::Metadata(zencodec::inventory::MetadataKind::Xmp),
+                        "{}",
+                        f.display()
+                    );
+                }
+                checked += 1;
+            }
+        }
+        // Every image after the primary that the probe finds is a part.
+        for r in pr.image_ranges().iter().skip(1) {
+            let found = i.parts().iter().any(|p| {
+                p.kind == zencodec::inventory::PartKind::EmbeddedImage
+                    && p.range.start == r.start as u64
+                    && p.range.end == r.end as u64
+            });
+            assert!(
+                found,
+                "{}: probe image {r:?} has no embedded-image part\n{i}",
+                f.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 40, "{checked}");
+}
+
+/// Scan-data parts the count-only entropy pass counted to the last MCU.
+fn counted_scans(i: &Inventory) -> Vec<std::ops::Range<usize>> {
+    i.parts()
+        .iter()
+        .filter(|p| {
+            p.kind == zencodec::inventory::PartKind::ScanData
+                && p.detail
+                    .as_deref()
+                    .is_some_and(|d| d.contains("counted to the last MCU"))
+        })
+        .map(|p| p.range.start as usize..p.range.end as usize)
+        .collect()
+}
+
+fn unreferenced_in_scans(i: &Inventory) -> Vec<String> {
+    i.parts()
+        .iter()
+        .filter(|p| {
+            p.disposition == D::Unreferenced
+                && p.parent.is_some_and(|q| {
+                    i.parts()[q.index()].kind == zencodec::inventory::PartKind::ScanData
+                })
+        })
+        .map(show)
+        .collect()
+}
+
+/// Count-only entropy pass: bytes after a baseline scan's last MCU are an
+/// `Unreferenced` child of the scan data, starting exactly where the
+/// original data ends; a one-byte shift either way is caught.
+#[test]
+fn scan_tail_after_the_last_mcu_is_unreferenced() {
+    let orig = load(TESTORIG);
+    let eoi = orig.len() - 2; // testorig: scan data 623..5768, then EOI
+    assert_eq!(&orig[eoi..], &[0xFF, 0xD9]);
+    let base = pixels(&decode(job(), &orig).unwrap());
+    let i0 = inv(&job(), &orig);
+    assert_eq!(counted_scans(&i0), vec![623..eoi]);
+    assert!(unreferenced_in_scans(&i0).is_empty());
+
+    for tail in [&b"SECRET-AFTER-LAST-MCU"[..], &b"X"[..]] {
+        let d = insert(&orig, eoi, tail);
+        assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
+        let i = inv(&job(), &d);
+        let p = leaf_at(&i, eoi);
+        assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
+        assert_eq!(
+            p.range,
+            eoi as u64..(eoi + tail.len()) as u64,
+            "{}",
+            show(p)
+        );
+        assert_eq!(leaf_at(&i, eoi - 1).disposition, D::ImageData);
+    }
+
+    // One data byte short: the bits run out (the decoder pads with zero
+    // bits), so there is no tail and the scan no longer counts to its end.
+    let mut d = orig.clone();
+    d.remove(eoi - 1);
+    let i = inv(&job(), &d);
+    assert!(
+        unreferenced_in_scans(&i).is_empty(),
+        "{:?}",
+        unreferenced_in_scans(&i)
+    );
+    assert!(counted_scans(&i).is_empty());
+}
+
+/// Junk planted at the end of every counted scan of a progressive file and
+/// of restart-interval files changes no pixel and is found, exactly.
+#[test]
+fn planted_scan_tails_change_nothing_and_are_found() {
+    let files = [
+        PROG,
+        ("jpeg-conformance", "valid/restarts.jpg"),
+        ("jpeg-conformance", "valid/rst_1block.jpg"),
+        ("jpeg-conformance", "valid/progressive_rst_420.jpg"),
+        ("jpeg-conformance", "valid/non-interleaved-mcu.jpg"),
+    ];
+    let junk = b"JUNK!JUNK";
+    let mut planted = 0;
+    for file in files {
+        let orig = load(file);
+        let base = pixels(&decode(job(), &orig).unwrap());
+        let i0 = inv(&job(), &orig);
+        assert!(
+            unreferenced_in_scans(&i0).is_empty(),
+            "{file:?}: {:?}",
+            unreferenced_in_scans(&i0)
+        );
+        for scan in counted_scans(&i0) {
+            let d = insert(&orig, scan.end, junk);
+            assert_eq!(
+                pixels(&decode(job(), &d).unwrap()),
+                base,
+                "{file:?} at {}",
+                scan.end
+            );
+            let i = inv(&job(), &d);
+            let p = leaf_at(&i, scan.end);
+            assert_eq!(p.disposition, D::Unreferenced, "{file:?}: {}", show(p));
+            assert_eq!(p.range.start, scan.end as u64, "{file:?}: {}", show(p));
+            planted += 1;
+        }
+    }
+    assert!(planted >= 8, "{planted}");
+}
+
+/// Junk between a restart interval's data and its RSTn: the decoder drains
+/// it; the inventory makes it an `Unreferenced` child.
+#[test]
+fn junk_before_an_rst_marker_is_unreferenced() {
+    let orig = load(("jpeg-conformance", "valid/restarts.jpg"));
+    let base = pixels(&decode(job(), &orig).unwrap());
+    let i0 = inv(&job(), &orig);
+    let scan = counted_scans(&i0)[0].clone();
+    let rst = scan.start
+        + orig[scan.clone()]
+            .windows(2)
+            .position(|w| w[0] == 0xFF && (0xD0..=0xD7).contains(&w[1]))
+            .expect("an RSTn inside the scan");
+    let d = insert(&orig, rst, b"JUNK");
+    assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
+    let i = inv(&job(), &d);
+    let p = leaf_at(&i, rst);
+    assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
+    assert_eq!(p.range, rst as u64..rst as u64 + 4, "{}", show(p));
+}

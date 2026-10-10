@@ -321,12 +321,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         self.check_input_size(data)?;
         let opts = super::inventory::Options {
             auto_orient: will_auto_orient(self.orientation),
-            gain_map_decoded: cfg!(feature = "ultrahdr")
-                && matches!(
-                    self.gain_map_render,
-                    zencodec::GainMapRender::Components
-                        | zencodec::GainMapRender::ReconstructHdr { .. }
-                ),
+            render: self.inventory_render(data),
             max_pixels: self.limit_adjusted_inner().get_max_pixels(),
             // `probe()` reads the header with the inner config;
             // `build_decode_config` raises the decode to Strict.
@@ -506,6 +501,32 @@ impl JpegDecodeJob {
             cfg = cfg.max_memory(bytes);
         }
         cfg
+    }
+
+    /// The job's `GainMapRender` as the decode acts on it (see `decode`).
+    fn inventory_render(&self, data: &[u8]) -> super::inventory::Render {
+        use super::inventory::Render;
+        match self.gain_map_render {
+            zencodec::GainMapRender::BaseOnly => Render::Base,
+            #[cfg(feature = "ultrahdr")]
+            zencodec::GainMapRender::Components => Render::Components,
+            // `decode` takes the dedicated path only when the XMP
+            // `read_info` returns carries `hdrgm:`.
+            #[cfg(feature = "ultrahdr")]
+            zencodec::GainMapRender::ReconstructHdr { .. } => Render::Reconstruct {
+                hdrgm: self
+                    .config
+                    .inner
+                    .read_info(data)
+                    .ok()
+                    .and_then(|i| i.xmp)
+                    .is_some_and(|x| x.contains("hdrgm:")),
+            },
+            _ => {
+                let _ = data;
+                Render::Refused
+            }
+        }
     }
 
     /// Check input data size against limits.

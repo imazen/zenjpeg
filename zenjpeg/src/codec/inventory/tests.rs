@@ -239,7 +239,7 @@ fn everything() -> Fixture {
 fn opts() -> Options {
     Options {
         auto_orient: false,
-        gain_map_decoded: false,
+        render: super::Render::Base,
         max_pixels: 0,
         probe_strictness: crate::decode::Strictness::default(),
         decode_strictness: crate::decode::Strictness::default(),
@@ -573,22 +573,28 @@ fn encoder_output_passes_check_inventory() {
     }
 }
 
-/// With `GainMapRender::Components` the gain map is decoded, so its image is
-/// gain-map metadata; its own XMP may be read for hdrgm parameters.
+/// `GainMapRender::Components` on the fixture: its gain map's own XMP is
+/// `<x:xmpmeta/>`, so `ultrahdr_metadata()` returns an error and the
+/// decode fails (`decode_gain_map_components` propagates it). The
+/// inventory follows the decoder: no gain map, no image data.
 #[cfg(feature = "ultrahdr")]
 #[test]
-fn decoded_gain_map_is_gain_map_metadata() {
+fn components_decode_of_the_fixture_fails_and_the_inventory_follows() {
     let f = everything();
-    let job = JpegDecoderConfig::new()
-        .job()
-        .with_gain_map_render(zencodec::GainMapRender::Components);
-    let inv = job.inventory(&f.bytes).unwrap().unwrap();
+    let job = || {
+        JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::Components)
+    };
+    let decoded = job()
+        .decoder(alloc::borrow::Cow::Borrowed(&f.bytes[..]), &[])
+        .and_then(|d| d.decode());
+    assert!(decoded.is_err());
+    let inv = job().inventory(&f.bytes).unwrap().unwrap();
     inv.validate().unwrap();
-    let gm = f.at("gainmap");
     for p in inv.parts() {
-        if p.range.start >= gm.start && p.range.end <= gm.end {
-            assert_eq!(p.disposition, D::Metadata(M::GainMap), "{inv}");
-        }
+        assert_ne!(p.disposition, D::Metadata(M::GainMap), "{inv}");
+        assert_ne!(p.disposition, D::ImageData, "{inv}");
     }
 }
 

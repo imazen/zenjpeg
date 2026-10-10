@@ -312,15 +312,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "safe_arch"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
 name = "safe_unaligned_simd"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -391,18 +382,22 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "ultrahdr-core"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d65bd22a90785bb7360076b599ffbc201aef2c5817d2e5f37f37357829d476e"
+checksum = "af411a89dd994324c442cea3fa0ded10aac0550cadb9a5cb2ba03c9596a4ed05"
 dependencies = [
+ "archmage",
  "bytemuck",
  "enough",
  "half",
  "linear-srgb",
+ "magetypes",
  "thiserror",
- "wide",
+ "whereat",
  "zencodec",
  "zenpixels",
+ "zenpixels-convert",
+ "zentone",
 ]
 
 [[package]]
@@ -416,16 +411,6 @@ name = "whereat"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab90f361db038ba3135da12c938c328fb43a012992101879e3d6ebccb4d7eba8"
-
-[[package]]
-name = "wide"
-version = "1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf05ca94c9fba0c51316899caa1d1e74a064fc310a5efa7375e614343d415be"
-dependencies = [
- "bytemuck",
- "safe_arch",
-]
 
 [[package]]
 name = "winarm-cpufeatures"
@@ -448,7 +433,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#29dad801303742892107881224652bfe7ac28689"
+source = "git+https://github.com/imazen/zencodec?branch=feat%2Finventory#b631eb286576df9179facdc0f2bfb2124c55e178"
 dependencies = [
  "almost-enough",
  "enough",
@@ -465,6 +450,7 @@ dependencies = [
  "bytemuck",
  "enough",
  "garb",
+ "half",
  "imgref",
  "linear-srgb",
  "magetypes",
@@ -479,6 +465,7 @@ dependencies = [
  "zencodec",
  "zenpixels",
  "zenpixels-convert",
+ "zentone",
  "zenyuv",
 ]
 
@@ -525,6 +512,18 @@ dependencies = [
  "paste",
  "whereat",
  "zenpixels",
+]
+
+[[package]]
+name = "zentone"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c602cc9010340287fd4ffcb2cd1ae9f6a665d37db59f0b9578352788cf8b304"
+dependencies = [
+ "archmage",
+ "libm",
+ "linear-srgb",
+ "magetypes",
 ]
 
 [[package]]

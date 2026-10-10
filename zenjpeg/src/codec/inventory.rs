@@ -94,9 +94,8 @@ pub(crate) struct Options {
     /// The job applies EXIF orientation to the pixels (`OrientationHint`
     /// `Correct*`), so `find_exif_orientation` reads an EXIF segment.
     pub(crate) auto_orient: bool,
-    /// The job decodes the Ultra HDR gain-map image
-    /// (`GainMapRender::Components` or `ReconstructHdr`, `ultrahdr` feature).
-    pub(crate) gain_map_decoded: bool,
+    /// How the job renders an Ultra HDR gain map.
+    pub(crate) render: Render,
     /// The decoder's pixel cap (`0` = unlimited), checked against the frame
     /// header the way `parse_frame_header` does.
     pub(crate) max_pixels: u64,
@@ -112,6 +111,23 @@ pub(crate) struct Options {
     /// against the frame header.
     pub(crate) max_width: Option<u32>,
     pub(crate) max_height: Option<u32>,
+}
+
+/// The job's `GainMapRender`, as far as it changes what the decode reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Render {
+    /// `BaseOnly`: the gain-map image is never decoded.
+    Base,
+    /// `Components`: `decode_gain_map_components` (codec/decode.rs) runs
+    /// after the base decode.
+    Components,
+    /// `ReconstructHdr`. `hdrgm`: the XMP `read_info` returns contains
+    /// `hdrgm:`, which is what sends the decode down
+    /// `decode_reconstruct_hdr`; otherwise it decodes the base image only.
+    Reconstruct { hdrgm: bool },
+    /// The decode refuses the mode: `Components` or `ReconstructHdr`
+    /// without the `ultrahdr` feature, or a mode it does not recognize.
+    Refused,
 }
 
 /// Map `data` as the zencodec decode path reads it.
@@ -154,6 +170,27 @@ pub(crate) fn inventory(data: &[u8], opts: Options) -> Result<Inventory, Invento
                 st.probe_fatal = true;
                 st.decode_fatal = true;
             }
+            if opts.render == Render::Refused && !st.decode_fatal {
+                w.append_detail(
+                    st.nodes.start,
+                    "decode fails: the job's GainMapRender needs the ultrahdr feature, or is \
+                     not recognized",
+                );
+                st.decode_fatal = true;
+            }
+            let (mpf_node, images) = match st.eoi_end {
+                Some(eoi_end) => mpf_images(data, &st, eoi_end),
+                None => (None, Vec::new()),
+            };
+            let gain_map = if st.decode_fatal {
+                GainMap::None
+            } else {
+                w.gain_map_use(&st, &images)
+            };
+            if let GainMap::Fails(why) = gain_map {
+                w.append_detail(st.nodes.start, &format!("decode fails: {why}"));
+                st.decode_fatal = true;
+            }
             w.resolve(
                 &st,
                 View {
@@ -163,7 +200,7 @@ pub(crate) fn inventory(data: &[u8], opts: Options) -> Result<Inventory, Invento
                 },
             )?;
             if let Some(eoi_end) = st.eoi_end {
-                w.after_eoi(&st, eoi_end)?;
+                w.after_eoi(&st, eoi_end, mpf_node, &images, gain_map)?;
             }
         }
     }
@@ -232,6 +269,72 @@ struct View {
     auto_orient: bool,
 }
 
+/// An MPF image entry `extract_mpf_secondary_images` considers.
+struct MpfImage {
+    idx: usize,
+    ty: MpfImageType,
+    size: u32,
+    offset: u32,
+    /// Absolute range (`start..start` when the offset overflows).
+    range: Range<usize>,
+    /// In the data and starting with SOI: copied to `secondary_images`.
+    extracted: bool,
+}
+
+/// What the job's decode does with the Ultra HDR gain map.
+#[derive(Clone, Copy)]
+enum GainMap {
+    /// Not decoded.
+    None,
+    /// MPF image `idx` is decoded; `xmp_at`: the start of the APP1 inside
+    /// it that supplies the parameters, when that is where they come from.
+    Decoded { idx: usize, xmp_at: Option<usize> },
+    /// The decode fails.
+    Fails(&'static str),
+}
+
+/// The MPF images the decode extracts at the primary EOI
+/// (`extract_mpf_secondary_images`, decode/parser/mod.rs) from the first
+/// MPF segment: every entry but the first and `BaselinePrimary` ones,
+/// offset 0 meaning "right after EOI" and others relative to the TIFF
+/// header after `MPF\0`, extracted when the range lies in the data and
+/// starts with SOI, wherever that is (inside the primary too).
+fn mpf_images(data: &[u8], st: &Stream, eoi_end: usize) -> (Option<usize>, Vec<MpfImage>) {
+    let Some(mpf) = st.apps.iter().find(|a| a.ty == SegmentType::Mpf) else {
+        return (None, Vec::new());
+    };
+    let body = &data[mpf.payload.clone()];
+    let dir = mpf_read_ranges(body).and_then(|_| parse_mpf_directory(body));
+    let Some(dir) = dir else {
+        return (Some(mpf.node), Vec::new());
+    };
+    let base = mpf.payload.start + 4;
+    let mut out = Vec::new();
+    for (idx, entry) in dir.images.iter().enumerate() {
+        if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
+            continue;
+        }
+        let start = if entry.offset == 0 {
+            Some(eoi_end)
+        } else {
+            base.checked_add(entry.offset as usize)
+        };
+        let range = start.map_or(0..0, |s| s..s.saturating_add(entry.size as usize));
+        let extracted = data
+            .get(range.clone())
+            .is_some_and(|b| b.starts_with(&[0xFF, MARKER_SOI]));
+        out.push(MpfImage {
+            idx,
+            ty: entry.image_type,
+            size: entry.size,
+            offset: entry.offset,
+            range,
+            extracted,
+        });
+    }
+    (Some(mpf.node), out)
+}
+
 /// How an embedded image is used.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -269,6 +372,8 @@ struct Frame {
     qidx: [u8; 4],
     /// Sampling factors per component, `h << 4 | v`.
     samp: [u8; 4],
+    width: u16,
+    height: u16,
     /// The SOF marker: 0xC0/C1 sequential and 0xC2 progressive Huffman,
     /// 0xC9/CA arithmetic.
     mode: u8,
@@ -585,6 +690,8 @@ enum Fails {
     Strict,
     /// Every level but `Permissive`, which skips the segment by its length.
     UnlessPermissive,
+    /// `Strict` and `Balanced`; `Lenient` and `Permissive` recover.
+    UnlessLenient,
 }
 
 impl Fails {
@@ -593,6 +700,7 @@ impl Fails {
             Self::Always => true,
             Self::Strict => s.is_strict(),
             Self::UnlessPermissive => !s.is_permissive(),
+            Self::UnlessLenient => !s.lenient_entropy_recovery(),
         }
     }
 }
@@ -669,9 +777,10 @@ fn le32(data: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-/// End of the entropy-coded data starting at `start`: the next `0xFF` that
-/// is not stuffing (`FF 00`) or a restart marker (`FF D0..D7`). Same rule as
-/// the container iterator's `skip_entropy_scan`.
+/// End of the entropy-coded data starting at `start`: the first `0xFF` of
+/// a run that ends in neither stuffing (`00`) nor a restart marker
+/// (`D0..D7`). A run of fill bytes before `00` is one stuffed data byte to
+/// the decoder (`BitReader::read_byte_slow`).
 fn scan_end(data: &[u8], start: usize, limit: usize) -> usize {
     let mut pos = start;
     while pos < limit {
@@ -679,15 +788,17 @@ fn scan_end(data: &[u8], start: usize, limit: usize) -> usize {
             return limit;
         };
         let ff = pos + rel;
-        match data.get(ff + 1) {
-            Some(&next) if ff + 1 < limit => {
-                if next == 0x00 || (0xD0..=0xD7).contains(&next) {
-                    pos = ff + 2;
-                } else {
-                    return ff;
-                }
-            }
-            _ => return limit,
+        let mut q = ff + 1;
+        while q < limit && data[q] == 0xFF {
+            q += 1;
+        }
+        if q >= limit {
+            return limit;
+        }
+        if data[q] == 0x00 || (0xD0..=0xD7).contains(&data[q]) {
+            pos = q + 1;
+        } else {
+            return ff;
         }
     }
     limit
@@ -695,8 +806,7 @@ fn scan_end(data: &[u8], start: usize, limit: usize) -> usize {
 
 /// Why the decoder rejects a table segment: how many tables (or DAC
 /// entries) it stored before the bad one, why, and whether it simply ran
-/// out of the bytes it was given (a length mismatch inside the declared
-/// body; a cut, in the bytes left of a truncated segment).
+/// out of bytes (a cut, in the bytes left of a truncated segment).
 #[derive(Clone, Copy)]
 struct Bad {
     stored: usize,
@@ -1060,9 +1170,13 @@ fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8], permissive: bool) {
         // the DC conditioning, AC first scans the AC conditioning (Kx);
         // refinement scans use fixed or per-scan statistics only.
         0xCA => (ss == 0 && first, ss > 0 && first),
-        // Progressive Huffman: DC first scans use the DC table, DC refinement
-        // uses none, AC scans (first and refinement) use the AC table.
-        _ => (ss == 0 && first, ss > 0),
+        // Progressive Huffman (`decode_progressive_scan`: a DC scan has
+        // Ss = Se = 0): DC first scans use the DC table, DC refinement uses
+        // none, AC scans (first and refinement) use the AC table.
+        _ => {
+            let dc_scan = ss == 0 && params.get(1) == Some(&0);
+            (dc_scan && first, !dc_scan)
+        }
     };
     for &[_, tables] in comps.as_chunks::<2>().0 {
         let (td, ta) = scan_tables(tables, permissive);
@@ -1078,6 +1192,109 @@ fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8], permissive: bool) {
             defs.mark(ac, BOTH);
         }
     }
+}
+
+/// A Huffman table a scan reads.
+enum Table {
+    Owned(crate::huffman::HuffmanDecodeTable),
+    Standard(&'static crate::huffman::HuffmanDecodeTable),
+}
+
+impl Table {
+    fn get(&self) -> &crate::huffman::HuffmanDecodeTable {
+        match self {
+            Self::Owned(t) => t,
+            Self::Standard(t) => t,
+        }
+    }
+
+    /// The DHT definition in effect for the slot, or the K.3 table the
+    /// decoder falls back to (`install_progressive_huffman_tables`).
+    fn of(data: &[u8], def: Option<&Def>, ac: bool, idx: u8) -> Option<Self> {
+        use crate::huffman::HuffmanDecodeTable as H;
+        let Some(d) = def else {
+            return Some(Self::Standard(match (ac, idx) {
+                (false, 0) => H::std_dc_luminance(),
+                (false, _) => H::std_dc_chrominance(),
+                (true, 0) => H::std_ac_luminance(),
+                (true, _) => H::std_ac_chrominance(),
+            }));
+        };
+        let b = data.get(d.range.clone())?;
+        let counts: [u8; 16] = b.get(1..17)?.try_into().ok()?;
+        H::from_bits_values(&counts, b.get(17..)?)
+            .ok()
+            .map(Self::Owned)
+    }
+}
+
+/// Run the count-only entropy pass over a Huffman scan (`spec`: the SOS
+/// body after the component count).
+#[allow(clippy::too_many_arguments)]
+fn count_scan(
+    data: &[u8],
+    f: &Frame,
+    defs: &Defs,
+    spec: &[u8],
+    start: usize,
+    end: usize,
+    restart: u16,
+    permissive: bool,
+) -> Option<entropy::Count> {
+    let (comps, params) = spec.split_at(spec.len().checked_sub(3)?);
+    let (&ss, &se, &ahal) = (params.first()?, params.get(1)?, params.get(2)?);
+    let nc = f.components as usize;
+    let mut tables: Vec<(Table, Table, u8, u8)> = Vec::with_capacity(4);
+    for &[id, sel] in comps.as_chunks::<2>().0 {
+        let ci = f.ids[..nc].iter().position(|&x| x == id)?;
+        let (td, ta) = scan_tables(sel, permissive);
+        let (td, ta) = (td.min(3), ta.min(3));
+        let dc = Table::of(data, defs.dc[td as usize].as_ref(), false, td)?;
+        let ac = Table::of(data, defs.ac[ta as usize].as_ref(), true, ta)?;
+        tables.push((dc, ac, f.samp[ci] >> 4, f.samp[ci] & 0x0F));
+    }
+    let comps: Vec<entropy::ScanComp<'_>> = tables
+        .iter()
+        .map(|(dc, ac, h, v)| entropy::ScanComp {
+            h: *h,
+            v: *v,
+            dc: dc.get(),
+            ac: ac.get(),
+        })
+        .collect();
+    let hmax = f.samp[..nc].iter().map(|s| s >> 4).max()?;
+    let vmax = f.samp[..nc].iter().map(|s| s & 0x0F).max()?;
+    let scan = entropy::Scan {
+        comps: &comps,
+        hmax,
+        vmax,
+        width: u32::from(f.width),
+        height: u32::from(f.height),
+        progressive: f.mode == 0xC2,
+        ss,
+        se,
+        ah: ahal >> 4,
+        restart,
+    };
+    Some(entropy::count(data, start, end, &scan))
+}
+
+/// Whether bytes the decoder skips between markers hold anything but
+/// `FF` runs and stuffed `FF 00` pairs (which `read_marker` skips without
+/// a warning).
+fn data_has_stray(b: &[u8]) -> bool {
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != 0xFF {
+            return true;
+        }
+        while i < b.len() && b[i] == 0xFF {
+            i += 1;
+        }
+        // The byte after a run: 00 (skipped) or a marker code.
+        i += 1;
+    }
+    false
 }
 
 /// A scan component's (DC, AC) table selectors; Permissive clamps an
@@ -1239,6 +1456,147 @@ impl Walk<'_> {
                 ),
             );
         }
+    }
+
+    /// The details, children and failures the count-only entropy pass
+    /// gives a scan-data part `hdr_end..end` (`limit`: where the stream's
+    /// data ends).
+    #[allow(clippy::too_many_arguments)]
+    fn settle_scan(
+        &mut self,
+        st: &mut Stream,
+        rules: Rules,
+        node: usize,
+        here: At,
+        end: usize,
+        limit: usize,
+        counted: Option<&entropy::Count>,
+    ) -> Result<(), InventoryError> {
+        use entropy::End;
+        let truncated = end == limit;
+        let Some(c) = counted else {
+            self.append_detail(
+                node,
+                if truncated {
+                    "no marker after the entropy-coded data (truncated; the decoder pads); bytes \
+                     after the last MCU are not distinguished"
+                } else {
+                    "bytes after the last MCU are not distinguished: AC refinement and \
+                     arithmetic-coded scans are not counted"
+                },
+            );
+            if truncated {
+                self.fail(st, rules, node, here, Fails::Strict, "scan data truncated");
+            }
+            return Ok(());
+        };
+        match c.end {
+            End::Complete => self.append_detail(
+                node,
+                "entropy-coded data counted to the last MCU (count-only Huffman pass)",
+            ),
+            End::Exhausted => {
+                self.append_detail(
+                    node,
+                    "the entropy-coded data runs out before the last MCU; the decoder pads the \
+                     rest with zero bits",
+                );
+                if truncated {
+                    self.fail(st, rules, node, here, Fails::Strict, "scan data truncated");
+                }
+            }
+            End::Resync { at } => {
+                self.append_detail(
+                    node,
+                    &format!(
+                        "a restart interval ends where its RSTn should be, but the marker at {at} \
+                         is not it: a non-Strict decoder scans forward for any RSTn"
+                    ),
+                );
+                self.fail(
+                    st,
+                    rules,
+                    node,
+                    here,
+                    Fails::Strict,
+                    "expected restart marker not found",
+                );
+            }
+            End::InvalidCode { at } => {
+                let why = format!("invalid Huffman code near offset {at}");
+                self.append_detail(node, &why);
+                self.fail(
+                    st,
+                    rules,
+                    node,
+                    here,
+                    Fails::UnlessLenient,
+                    "invalid Huffman code",
+                );
+            }
+            End::BadDcCategory { at } => {
+                self.append_detail(node, &format!("DC category above 16 near offset {at}"));
+                self.fail(st, rules, node, here, Fails::Always, "DC category above 16");
+            }
+            End::Unsupported => self.append_detail(
+                node,
+                "bytes after the last MCU are not distinguished: this scan is not counted",
+            ),
+        }
+        if c.ac_overflow {
+            self.fail(
+                st,
+                rules,
+                node,
+                here,
+                Fails::Strict,
+                "AC coefficient run past the block",
+            );
+        }
+        if c.rst_mismatch {
+            self.fail(
+                st,
+                rules,
+                node,
+                here,
+                Fails::Strict,
+                "restart marker sequence mismatch",
+            );
+        }
+        for (r, after_last) in &c.tails {
+            let detail = if *after_last {
+                "after the last MCU's entropy-coded data: never decoded; the decoder skips it as \
+                 stray bytes before the next marker (Strict may reject them, depending on how \
+                 far its bit reader read ahead)"
+            } else {
+                "after a restart interval's entropy-coded data, before its RSTn: never decoded; \
+                 the decoder skips it"
+            };
+            self.add(
+                Some(node),
+                gap(r.clone(), Disposition::Unreferenced).with_detail(detail),
+            )?;
+        }
+        if let Some(at) = c.stop_at {
+            let child = self.add(
+                Some(node),
+                gap(at..end, Disposition::Malformed).with_detail(
+                    "the decoder ends the scan at this restart marker (no interval expects it), \
+                     ignores the marker and skips what follows as stray bytes",
+                ),
+            )?;
+            if data_has_stray(&self.data[at..end]) {
+                self.fail(
+                    st,
+                    rules,
+                    child,
+                    here,
+                    Fails::Strict,
+                    "extraneous bytes between markers",
+                );
+            }
+        }
+        Ok(())
     }
 
     fn seg_end(&self, pos: usize, limit: usize) -> SegEnd {
@@ -1487,8 +1845,10 @@ impl Walk<'_> {
                     );
                 }
                 let permissive = rules.decode.is_permissive();
+                let mut sos_ok = true;
                 if let Some((f, why)) = check_sos(data, pos, ns, st.frame) {
                     self.fail(&mut st, rules, node, here, f, why);
+                    sos_ok = !f.at(rules.decode);
                 }
                 if let Some(f) = st.frame {
                     let spec = &data[pos + 5..hdr_end];
@@ -1510,34 +1870,39 @@ impl Walk<'_> {
                         defs.mark_quant(&f, STREAM);
                     }
                 }
-                resync_risk |= restart > 0;
                 let end = scan_end(data, hdr_end, limit);
+                let counted = match st.frame {
+                    Some(f) if sos_ok && matches!(f.mode, 0xC0 | 0xC1 | 0xC2) => {
+                        let spec = &data[pos + 5..hdr_end];
+                        count_scan(data, &f, &defs, spec, hdr_end, end, restart, permissive)
+                    }
+                    _ => None,
+                };
+                // Without a count, or when an interval missed its RSTn,
+                // the decoder may resync past later parts.
+                resync_risk |= match counted.as_ref().map(|c| c.end) {
+                    Some(entropy::End::Complete | entropy::End::Exhausted) => false,
+                    Some(entropy::End::Resync { .. }) => true,
+                    _ => restart > 0,
+                };
                 if end > hdr_end {
-                    let mut scan = part(
+                    let scan = part(
                         PartKind::ScanData,
                         PartTag::None,
                         hdr_end..end,
                         Disposition::ImageData,
                     );
-                    scan = scan.with_detail(if end == limit {
-                        "no marker after the entropy-coded data (truncated; the decoder pads); \
-                         bytes after the last MCU are not distinguished"
-                    } else {
-                        "bytes after the last MCU are not distinguished (that needs a Huffman \
-                         decode)"
-                    });
                     let scan_node = self.add(parent, scan)?;
                     scan_parts.push((scan_node, pos));
-                    if end == limit {
-                        self.fail(
-                            &mut st,
-                            rules,
-                            scan_node,
-                            here,
-                            Fails::Strict,
-                            "scan data truncated",
-                        );
-                    }
+                    self.settle_scan(
+                        &mut st,
+                        rules,
+                        scan_node,
+                        here,
+                        end,
+                        limit,
+                        counted.as_ref(),
+                    )?;
                 }
                 scans += 1;
                 seen_sos = true;
@@ -2601,7 +2966,12 @@ impl Walk<'_> {
                 return if a.marker == 0xE2 && body.starts_with(ISO_21496_1) {
                     (
                         Disposition::Unknown,
-                        Some("ISO 21496-1 gain-map metadata; the decoder does not parse it".into()),
+                        Some(
+                            "ISO 21496-1 gain-map metadata; no zencodec decode or probe path \
+                             reads it: gain-map parameters come from hdrgm XMP \
+                             (UltraHdrExtras::ultrahdr_metadata)"
+                                .into(),
+                        ),
                     )
                 } else {
                     (Disposition::Unknown, None)
@@ -2637,10 +3007,15 @@ impl Walk<'_> {
         (d, Some(why))
     }
 
-    /// Map an embedded image's resolved parts to what its role makes of them.
-    fn apply_role(&mut self, nodes: Range<usize>, role: Role) {
+    /// Map an embedded image's resolved parts to what its role makes of
+    /// them. `xmp_at`: where the APP1 that `extract_xmp_from_jpeg` reads for
+    /// the gain-map parameters starts, when the decode takes them from it.
+    fn apply_role(&mut self, nodes: Range<usize>, role: Role, xmp_at: Option<usize>) {
         for n in nodes {
-            let d = self.node(n).disposition;
+            let p = self.node(n);
+            let d = p.disposition;
+            let is_xmp_segment =
+                p.kind == PartKind::Segment && Some(p.range.start) == xmp_at.map(|a| a as u64);
             let (new, detail) = match (role, d) {
                 (Role::GainMap, Disposition::Structure | Disposition::ImageData) => {
                     (Disposition::Metadata(MetadataKind::GainMap), None)
@@ -2648,9 +3023,19 @@ impl Walk<'_> {
                 (Role::GainMap, Disposition::Metadata(MetadataKind::Colour)) => {
                     (Disposition::Metadata(MetadataKind::GainMap), None)
                 }
-                (Role::GainMap, Disposition::Metadata(MetadataKind::Xmp)) => (
+                (Role::GainMap, Disposition::Metadata(MetadataKind::Xmp)) if is_xmp_segment => (
                     Disposition::Metadata(MetadataKind::GainMap),
-                    Some("read for hdrgm parameters when the primary XMP carries none"),
+                    Some(
+                        "the gain-map parameters: ultrahdr_metadata() reads this packet \
+                         (extract_xmp_from_jpeg) because the primary XMP carries none",
+                    ),
+                ),
+                (Role::GainMap, Disposition::Metadata(MetadataKind::Xmp)) => (
+                    Disposition::Dropped,
+                    Some(
+                        "the gain-map decode keeps only pixels; ultrahdr_metadata() reads the \
+                         primary XMP, or the first standard XMP packet of this image only",
+                    ),
                 ),
                 (Role::GainMap, Disposition::Metadata(_)) => (
                     Disposition::Dropped,
@@ -2663,18 +3048,21 @@ impl Walk<'_> {
         }
     }
 
-    /// Add an embedded image at `r` and walk it when it starts with SOI.
+    /// Add an embedded image at `r` under `parent` and walk it when it
+    /// starts with SOI.
     fn embedded(
         &mut self,
+        parent: Option<usize>,
         mut p: Part,
         r: Range<usize>,
         role: Role,
+        xmp_at: Option<usize>,
     ) -> Result<usize, InventoryError> {
         let is_jpeg = self.data.get(r.start..r.start + 2) == Some(&[0xFF, MARKER_SOI][..]);
         if is_jpeg {
             p = p.with_body(r.start as u64..r.end as u64);
         }
-        let node = self.add(None, p)?;
+        let node = self.add(parent, p)?;
         if is_jpeg {
             let st = self.walk_stream(Some(node), r.start, r.end, Rules::embedded())?;
             self.resolve(
@@ -2687,14 +3075,118 @@ impl Walk<'_> {
             )?;
             // Every part of this stream, including children `resolve` added.
             let all = st.nodes.start..self.ids.len();
-            self.apply_role(all, role);
+            self.apply_role(all, role, xmp_at);
         }
         Ok(node)
     }
 
-    /// Everything after the primary EOI: the Samsung SEF trailer, MPF images
-    /// and GContainer items, in that order of precedence.
-    fn after_eoi(&mut self, st: &Stream, eoi_end: usize) -> Result<(), InventoryError> {
+    /// Whether the container-level walk of the image at `r` finds the
+    /// failures that would make `decode_gainmap_jpeg` fail (a default
+    /// `Decoder`). Entropy-level failures stay invisible, as for the
+    /// primary image. Walks a scratch inventory that is then dropped.
+    fn stream_decodes(&self, r: Range<usize>) -> bool {
+        let mut w = Walk {
+            data: self.data,
+            inv: Inventory::new(ImageFormat::Jpeg, self.data.len() as u64),
+            ids: Vec::new(),
+            opts: self.opts,
+            repeats: [(None, 0); REPEAT_KINDS],
+        };
+        w.walk_stream(None, r.start, r.end, Rules::embedded())
+            .is_ok_and(|st| !st.decode_fatal)
+    }
+
+    /// What the job's decode does with the Ultra HDR gain map, decided by
+    /// the calls the decode itself makes: `ultrahdr_metadata()` and
+    /// `gainmap()` on extras built the way the decoder builds them (every
+    /// XMP segment, and the first extracted `Undefined` MPF image), and the
+    /// `decode_gainmap()` outcome approximated by [`Self::stream_decodes`].
+    #[cfg(feature = "ultrahdr")]
+    fn gain_map_use(&self, st: &Stream, images: &[MpfImage]) -> GainMap {
+        use crate::ultrahdr::UltraHdrExtras;
+        let required = match self.opts.render {
+            Render::Components => false,
+            Render::Reconstruct { hdrgm: true } => true,
+            _ => return GainMap::None,
+        };
+        let data = self.data;
+        let mut ex = DecodedExtras::new();
+        for a in &st.apps {
+            if matches!(a.ty, SegmentType::Xmp | SegmentType::XmpExtended) {
+                ex.add_segment(a.marker, data[a.payload.clone()].to_vec(), a.ty);
+            }
+        }
+        let candidate = images
+            .iter()
+            .find(|m| m.extracted && m.ty == MpfImageType::Undefined);
+        if let Some(m) = candidate {
+            ex.add_secondary_image(m.idx, m.ty, data[m.range.clone()].to_vec());
+        }
+        match ex.ultrahdr_metadata() {
+            None if required => {
+                GainMap::Fails("ReconstructHdr: ultrahdr_metadata() finds no gain-map parameters")
+            }
+            None => GainMap::None,
+            Some(Err(_)) => GainMap::Fails(
+                "ultrahdr_metadata() returns an error (no hdrgm parameters in the XMP it reads)",
+            ),
+            Some(Ok(_)) => match candidate {
+                None if required => GainMap::Fails(
+                    "ReconstructHdr: the MPF index names no extracted gain-map image",
+                ),
+                None => GainMap::None,
+                Some(m) if !self.stream_decodes(m.range.clone()) => {
+                    GainMap::Fails("the gain-map image fails to decode")
+                }
+                Some(m) => {
+                    let gm = &data[m.range.clone()];
+                    let from_gain_map = crate::ultrahdr::primary_xmp_gain_map(&ex).is_none()
+                        && crate::ultrahdr::extract_xmp_from_jpeg(gm).is_some();
+                    GainMap::Decoded {
+                        idx: m.idx,
+                        xmp_at: from_gain_map
+                            .then(|| crate::ultrahdr::xmp_segment_range(gm))
+                            .flatten()
+                            .map(|r| m.range.start + r.start),
+                    }
+                }
+            },
+        }
+    }
+
+    #[cfg(not(feature = "ultrahdr"))]
+    fn gain_map_use(&self, _st: &Stream, _images: &[MpfImage]) -> GainMap {
+        GainMap::None
+    }
+
+    /// The innermost part of the primary stream that holds all of `r` and
+    /// has no child overlapping it: where an MPF image inside the primary
+    /// is nested.
+    fn host_for(&self, st: &Stream, r: &Range<usize>) -> Option<usize> {
+        let (a, b) = (r.start as u64, r.end as u64);
+        let host = (st.nodes.start..self.ids.len()).rev().find(|&n| {
+            let p = &self.node(n).range;
+            p.start <= a && b <= p.end
+        })?;
+        let clear = self.inv.children(Some(self.ids[host])).iter().all(|&c| {
+            let c = &self.inv.parts()[c.index()].range;
+            c.end <= a || c.start >= b
+        });
+        clear.then_some(host)
+    }
+
+    /// Everything after the primary EOI, in the order the decoder's
+    /// precedence gives it: MPF images (which the decode extracts wherever
+    /// they lie, inside the primary too), then the Samsung SEF trailer and
+    /// GContainer items in the space still free.
+    fn after_eoi(
+        &mut self,
+        st: &Stream,
+        eoi_end: usize,
+        mpf_node: Option<usize>,
+        images: &[MpfImage],
+        gain_map: GainMap,
+    ) -> Result<(), InventoryError> {
         let data = self.data;
         let len = data.len();
         let mut placed: Vec<Range<usize>> = Vec::new();
@@ -2705,16 +3197,113 @@ impl Walk<'_> {
                 && placed.iter().all(|p| r.end <= p.start || r.start >= p.end)
         };
         let decode_ok = !st.decode_fatal;
+        let (gain_map_idx, xmp_at) = match gain_map {
+            GainMap::Decoded { idx, xmp_at } => (Some(idx), xmp_at),
+            _ => (None, None),
+        };
 
-        // Samsung SEF trailer (the layout ExifTool's Samsung module reads).
+        // MPF images (`extract_mpf_secondary_images`).
+        let mut notes: Vec<String> = Vec::new();
+        let mut mpf_parts: Vec<(Range<usize>, usize)> = Vec::new();
+        for m in images {
+            let idx = m.idx;
+            let type_code = m.ty.type_code();
+            let r = m.range.clone();
+            let role = if decode_ok && gain_map_idx == Some(idx) {
+                Role::GainMap
+            } else {
+                Role::Unread
+            };
+            let in_data = r.end <= len && r.start < r.end;
+            let (d, why) = if role == Role::GainMap {
+                (
+                    Disposition::Metadata(MetadataKind::GainMap),
+                    "decoded as the Ultra HDR gain map",
+                )
+            } else if !in_data {
+                (Disposition::Skipped, "lies outside the data; not extracted")
+            } else if !m.extracted {
+                (
+                    Disposition::Skipped,
+                    "does not start with SOI; the decoder ignores it",
+                )
+            } else if !decode_ok {
+                (Disposition::Skipped, "not read: the decode fails")
+            } else {
+                (
+                    Disposition::Skipped,
+                    "copied to native DecodedExtras::secondary_images only",
+                )
+            };
+            if !in_data {
+                notes.push(format!(
+                    "entry {idx} ({} bytes at relative offset {}) {why}",
+                    m.size, m.offset
+                ));
+                continue;
+            }
+            let p = part(
+                PartKind::EmbeddedImage,
+                PartTag::Code(idx as u32),
+                r.clone(),
+                d,
+            )
+            .with_label("MPF")
+            .with_detail(format!("MPF image {idx}, type {type_code:#08x}; {why}"));
+            let at = if role == Role::GainMap { xmp_at } else { None };
+            if free(&placed, &r) {
+                let node = self.embedded(None, p, r.clone(), role, at)?;
+                mpf_parts.push((r.clone(), node));
+                placed.push(r);
+            } else if r.end <= eoi_end
+                && let Some(host) = self.host_for(st, &r)
+            {
+                // Inside the primary: the bytes are both the part around
+                // them and this image.
+                let node = self.embedded(Some(host), p, r.clone(), role, at)?;
+                mpf_parts.push((r.clone(), node));
+            } else {
+                notes.push(format!(
+                    "entry {idx} at {}..{} {why}; it overlaps other parts, so it has no part \
+                     of its own",
+                    r.start, r.end
+                ));
+            }
+        }
+        if !notes.is_empty()
+            && let Some(node) = mpf_node
+        {
+            self.append_detail(node, &notes.join("; "));
+        }
+
+        // Samsung SEF trailer (the layout ExifTool's Samsung module reads),
+        // in the space MPF images leave free.
         let mut seft_node = None;
-        if let Some(t) = samsung_trailer(data, eoi_end) {
+        if let Some(t) = samsung_trailer(data, eoi_end)
+            && free(&placed, &t.directory)
+        {
+            let floor = placed
+                .iter()
+                .map(|p| p.end)
+                .filter(|&e| e <= t.directory.start)
+                .max()
+                .unwrap_or(eoi_end);
+            let blocks: Vec<_> = t
+                .blocks
+                .into_iter()
+                .filter(|(r, _, _)| r.start >= floor && free(&placed, r))
+                .collect();
+            let start = blocks
+                .iter()
+                .map(|(r, _, _)| r.start)
+                .min()
+                .unwrap_or(t.directory.start);
             let node = self.add(
                 None,
                 part(
                     PartKind::Trailer,
                     PartTag::None,
-                    t.range.clone(),
+                    start..len,
                     Disposition::Skipped,
                 )
                 .with_label("SEFT")
@@ -2723,7 +3312,7 @@ impl Walk<'_> {
                     t.count
                 )),
             )?;
-            for (r, ty, name) in t.blocks {
+            for (r, ty, name) in blocks {
                 let mut p = part(
                     PartKind::Chunk,
                     PartTag::Code(u32::from(ty)),
@@ -2745,85 +3334,9 @@ impl Walk<'_> {
                 )
                 .with_label("SEFH"),
             )?;
-            placed.push(t.range);
+            placed.push(start..len);
             seft_node = Some(node);
         }
-
-        // MPF secondary images (`extract_mpf_secondary_images`): offsets are
-        // relative to the TIFF header after the first MPF segment's `MPF\0`;
-        // offset 0 means "right after the primary EOI".
-        let mpf = st.apps.iter().find(|a| a.ty == SegmentType::Mpf);
-        let mut mpf_images: Vec<(Range<usize>, usize)> = Vec::new();
-        let mut gain_map_taken = false;
-        if let Some(mpf) = mpf
-            && mpf_read_ranges(&data[mpf.payload.clone()]).is_some()
-            && let Some(dir) = parse_mpf_directory(&data[mpf.payload.clone()])
-        {
-            let base = mpf.payload.start + 4;
-            let mut notes: Vec<String> = Vec::new();
-            for (idx, entry) in dir.images.iter().enumerate() {
-                if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
-                    continue;
-                }
-                let start = if entry.offset == 0 {
-                    Some(eoi_end)
-                } else {
-                    base.checked_add(entry.offset as usize)
-                };
-                let r = start.and_then(|s| Some(s..s.checked_add(entry.size as usize)?));
-                let Some(r) = r.filter(|r| free(&placed, r)) else {
-                    notes.push(format!(
-                        "entry {idx} ({} bytes at relative offset {}) lies outside the data after \
-                         EOI or overlaps another part",
-                        entry.size, entry.offset
-                    ));
-                    continue;
-                };
-                let is_jpeg = data.get(r.start..r.start + 2) == Some(&[0xFF, MARKER_SOI][..]);
-                let extracted = decode_ok && is_jpeg;
-                let type_code = entry.image_type.type_code();
-                let is_gain_map = extracted && entry.image_type == MpfImageType::Undefined;
-                let role = if is_gain_map && !gain_map_taken && self.opts.gain_map_decoded {
-                    Role::GainMap
-                } else {
-                    Role::Unread
-                };
-                gain_map_taken |= is_gain_map;
-                let (d, why) = match (role, extracted) {
-                    (Role::GainMap, _) => (
-                        Disposition::Metadata(MetadataKind::GainMap),
-                        String::from("decoded as the Ultra HDR gain map"),
-                    ),
-                    (_, true) => (
-                        Disposition::Skipped,
-                        String::from("copied to native DecodedExtras::secondary_images only"),
-                    ),
-                    (_, false) if !is_jpeg => (
-                        Disposition::Skipped,
-                        String::from("does not start with SOI; the decoder ignores it"),
-                    ),
-                    _ => (
-                        Disposition::Skipped,
-                        String::from("not read: the decode fails"),
-                    ),
-                };
-                let p = part(
-                    PartKind::EmbeddedImage,
-                    PartTag::Code(idx as u32),
-                    r.clone(),
-                    d,
-                )
-                .with_label("MPF")
-                .with_detail(format!("MPF image {idx}, type {type_code:#08x}; {why}"));
-                let node = self.embedded(p, r.clone(), role)?;
-                mpf_images.push((r.clone(), node));
-                placed.push(r);
-            }
-            if !notes.is_empty() {
-                self.append_detail(mpf.node, &notes.join("; "));
-            }
-        }
-
         // GContainer items named by the primary XMP packet
         // (`Container:Directory`): packed in order after the primary image
         // plus its `Item:Padding`. Only the standard packet is read, and only
@@ -2867,7 +3380,7 @@ impl Walk<'_> {
                 let r = cursor..cursor.saturating_add(length);
                 cursor = r.end;
                 let semantic = String::from(item.semantic.as_xmp_str());
-                if let Some(&(_, n)) = mpf_images.iter().find(|(m, _)| *m == r) {
+                if let Some(&(_, n)) = mpf_parts.iter().find(|(m, _)| *m == r) {
                     self.append_detail(
                         n,
                         &format!("also GContainer item {semantic} ({})", item.mime),
@@ -2904,7 +3417,7 @@ impl Walk<'_> {
                 .with_label(semantic)
                 .with_detail(detail);
                 if item.mime == "image/jpeg" {
-                    self.embedded(p, r.clone(), Role::Unread)?;
+                    self.embedded(None, p, r.clone(), Role::Unread, None)?;
                 } else {
                     self.add(None, p)?;
                 }
@@ -3007,6 +3520,8 @@ fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
             ids,
             qidx,
             samp,
+            width,
+            height,
             mode: 0,
         },
         width,
@@ -3065,11 +3580,14 @@ fn check_sos(
     if ahal >> 4 > 13 || ahal & 0x0F > 13 {
         return fail("successive approximation out of range");
     }
+    // `decode_progressive_scan`: only DC scans (Ss = Se = 0) may interleave.
+    if frame.mode == 0xC2 && !(ss == 0 && se == 0) && ns != 1 {
+        return fail("progressive AC scan must have a single component");
+    }
     None
 }
 
 struct SamsungTrailer {
-    range: Range<usize>,
     directory: Range<usize>,
     count: u32,
     /// `(range, type, name)` of each valid data block, non-overlapping.
@@ -3095,7 +3613,6 @@ fn samsung_trailer(data: &[u8], min_start: usize) -> Option<SamsungTrailer> {
     if 12usize.checked_add((count as usize).checked_mul(12)?)? > dir_len {
         return None;
     }
-    let mut first_block = 0usize;
     let mut blocks: Vec<(Range<usize>, u16, Option<String>)> = Vec::new();
     for i in 0..count as usize {
         let e = dir_pos + 12 + 12 * i;
@@ -3113,7 +3630,6 @@ fn samsung_trailer(data: &[u8], min_start: usize) -> Option<SamsungTrailer> {
             .filter(|&n| n.checked_add(8).is_some_and(|e| e <= size))
             .and_then(|n| data.get(start + 8..start + 8 + n))
             .and_then(label_of);
-        first_block = first_block.max(noff);
         blocks.push((r, ty, name));
     }
     // Keep the blocks that do not overlap an earlier-starting one.
@@ -3127,12 +3643,13 @@ fn samsung_trailer(data: &[u8], min_start: usize) -> Option<SamsungTrailer> {
         keep
     });
     Some(SamsungTrailer {
-        range: dir_pos - first_block..len,
         directory: dir_pos..len,
         count,
         blocks,
     })
 }
+
+mod entropy;
 
 #[cfg(test)]
 mod tests;

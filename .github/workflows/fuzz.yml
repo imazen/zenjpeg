@@ -149,5 +149,7 @@ jobs:
         with:
           key: fuzz-regression
 
+      # `zencodec` compiles in the inventory replay (`run_inventory`),
+      # `ultrahdr` its gain-map jobs.
       - name: Replay committed crash seeds
-        run: cargo test -p zenjpeg --test fuzz_regression -- --nocapture
+        run: cargo test -p zenjpeg --test fuzz_regression --features zencodec,ultrahdr -- --nocapture
