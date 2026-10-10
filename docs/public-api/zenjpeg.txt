@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1692 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3579 lines (880 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1700 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3579 lines (880 hidden + 7231 excluded-feature)
 
 ## summary
 #
@@ -16,8 +16,8 @@
 #   pub macros                                  2
 #   free functions                             65
 #   inherent methods                          504
-#   struct fields                             385
-#   enum variants                             394
+#   struct fields                             389
+#   enum variants                             398
 #   re-exports                                  2
 #   trait roster entries (type × trait)       492
 #   auto-trait-complete types                 106
@@ -26,7 +26,7 @@
 # per-module pub lines:
 #   (root)                           69
 #   blur                              1
-#   container                       276
+#   container                       284
 #   deblock                          16
 #   decoder                         558
 #   detect                           56
@@ -37,7 +37,7 @@
 #   target_quality                   19
 #   zq_seed                           3
 
-## items (1556 lines)
+## items (1564 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -73,7 +73,11 @@ pub container::mpf::MpfError::BadIfdOffset::offset: usize
 pub container::mpf::MpfError::BadIfdOffset::payload_len: usize
 pub container::mpf::MpfError::NoImages
 pub container::mpf::MpfError::NotFound
+#[non_exhaustive] pub container::mpf::MpfError::OffsetOverflow
+pub container::mpf::MpfError::OffsetOverflow::data_offset: usize
+pub container::mpf::MpfError::OffsetOverflow::tiff_header_pos: usize
 pub container::mpf::MpfError::Other(alloc::string::String)
+pub container::mpf::MpfError::OutOfMemory
 pub container::mpf::MpfError::TooShort
 pub container::mpf::MpfError::TooShort::got: usize
 pub const container::mpf::MAX_MPF_ENTRIES: usize
@@ -200,7 +204,11 @@ pub container::MpfError::BadIfdOffset::offset: usize
 pub container::MpfError::BadIfdOffset::payload_len: usize
 pub container::MpfError::NoImages
 pub container::MpfError::NotFound
+#[non_exhaustive] pub container::MpfError::OffsetOverflow
+pub container::MpfError::OffsetOverflow::data_offset: usize
+pub container::MpfError::OffsetOverflow::tiff_header_pos: usize
 pub container::MpfError::Other(alloc::string::String)
+pub container::MpfError::OutOfMemory
 pub container::MpfError::TooShort
 pub container::MpfError::TooShort::got: usize
 #[non_exhaustive] pub enum container::XmpError [also: container::xmp]

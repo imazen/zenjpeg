@@ -22,6 +22,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- `container::mpf::parse_mpf_segment` no longer overflows on offsets taken
+  from the file: an MPF entry whose absolute offset `tiff_header_pos +
+  data_offset` does not fit in `usize` is the new `MpfError::OffsetOverflow`
+  (it was a debug-build panic, or a wrapped offset in release), and the MP
+  Entry array probe treats an offset near `usize::MAX` as no entry. Reachable
+  on 32-bit targets from file data, and on any target when a caller passes a
+  large `tiff_header_pos`. The entry list is allocated fallibly; a failure is
+  the new `MpfError::OutOfMemory`. (commit: added at landing)
 - The workspace no longer enables archmage's `testable_dispatch` for every
   member's normal dependency. Cargo unifies features, so it reached every build
   that depends on zenjpeg or zenyuv (published 0.8.4 included) and turned each
