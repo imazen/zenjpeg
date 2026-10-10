@@ -70,12 +70,15 @@ pub(super) enum End {
     /// non-Strict decoder scans forward for any RSTn (`resync_to_restart`),
     /// a Strict one fails.
     Resync { at: usize },
-    /// A Huffman code at `at` matches no symbol: Balanced and Strict
-    /// decoders fail, Lenient and Permissive end the block there.
+    /// A Huffman code at `at` matches no symbol, more than 16 bytes before
+    /// the next marker: Balanced and Strict decoders fail, Lenient and
+    /// Permissive end the block there.
     InvalidCode { at: usize },
     /// A DC category above 16 at `at`: every decoder fails.
     BadDcCategory { at: usize },
-    /// Not counted: AC refinement scans, or geometry the decoder rejects.
+    /// Not counted: AC refinement scans, geometry the decoder rejects, or
+    /// an invalid code within 16 bytes of a marker (whether the decoder
+    /// fails or ends the scan depends on how far it read ahead).
     Unsupported,
 }
 
@@ -331,7 +334,16 @@ pub(super) fn count(data: &[u8], start: usize, limit: usize, scan: &Scan<'_, '_>
         let last = interval_end >= mcus;
         match stopped {
             Some(Stop::Invalid(at)) => {
-                out.end = End::InvalidCode { at };
+                // `decode_huffman_symbol_lenient` takes an invalid code as
+                // the end of the scan once its read-ahead (up to 8 bytes
+                // in the bit buffer) has reached a marker. Near a marker
+                // the outcome depends on how far it read, so claim nothing.
+                let next = next_marker(data, bits.pos, limit).map_or(limit, |(first, _, _)| first);
+                out.end = if next.saturating_sub(bits.pos) <= 16 {
+                    End::Unsupported
+                } else {
+                    End::InvalidCode { at }
+                };
                 return out;
             }
             Some(Stop::BadDc(at)) => {

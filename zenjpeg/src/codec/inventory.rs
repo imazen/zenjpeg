@@ -1563,6 +1563,20 @@ impl Walk<'_> {
                 "restart marker sequence mismatch",
             );
         }
+        // Tails only where the count is clean: an irregular scan (AC runs
+        // past the block, out-of-sequence RSTn, a resync, an invalid code)
+        // may be read differently by the decoder's recovery paths.
+        let clean =
+            matches!(c.end, End::Complete | End::Exhausted) && !c.ac_overflow && !c.rst_mismatch;
+        if !clean {
+            if !c.tails.is_empty() || c.stop_at.is_some() {
+                self.append_detail(
+                    node,
+                    "bytes after the last MCU are not distinguished: the count is irregular",
+                );
+            }
+            return Ok(());
+        }
         for (r, after_last) in &c.tails {
             let detail = if *after_last {
                 "after the last MCU's entropy-coded data: never decoded; the decoder skips it as \
