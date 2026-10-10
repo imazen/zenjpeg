@@ -31,6 +31,13 @@ fuzz-check:
 fuzz-regression:
     cargo test -p zenjpeg --test fuzz_regression -- --nocapture
 
+# Colour-model oracles: libjpeg-turbo (Pillow), IJG djpeg and jpegli djpegli
+# decode the colour-model fixtures; each must match its documented rule and
+# zenjpeg's pixels (tests/colorspace_oracles.rs), including on the fused and
+# threaded paths (`parallel`). Every tool is required.
+colorspace-oracles DJPEGLI="internal/jpegli-cpp/build/tools/djpegli":
+    ZENJPEG_DJPEGLI="$(realpath {{DJPEGLI}})" cargo test --release -p zenjpeg --features __oracle-tests,parallel --test colorspace_oracles -- --nocapture
+
 # Path reach for tests/colorspace_paths.rs (scripts/colorspace_mutation_reach.py):
 # copies the working copy's tracked files to $MUTANT_ROOT/<UTC stamp>/tree (kept,
 # so every log's line numbers stay checkable), corrupts one conversion site at a
