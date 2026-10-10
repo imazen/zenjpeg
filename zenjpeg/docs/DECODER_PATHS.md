@@ -262,6 +262,9 @@ between SOF and SOS still makes an RGB-signalled frame XYB.
 | libjpeg-turbo (browsers, Pillow) | same | first SOS (an APP14 between SOF and SOS counts) |
 | IJG libjpeg 9 (`djpeg`) | IDs 1,2,3 / 'R','G','B' first, then JFIF, then APP14 | first SOS |
 
+`tests/colorspace_oracles.rs` (`just colorspace-oracles`) checks each of
+those decoders against its rule on the same fixtures.
+
 ### One kernel family for planes → pixels
 
 The integer paths that walk MCU rows or strips (streaming baseline, fused

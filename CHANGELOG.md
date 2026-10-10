@@ -478,6 +478,15 @@ All notable changes to zenjpeg are documented here. Earlier history
   replace with released versions before publishing. The existing queued API
   breaks relative to crates.io 0.8.4 remain listed separately.
 
+- `__oracle-tests` (internal feature) and `just colorspace-oracles`:
+  libjpeg-turbo (Pillow), IJG libjpeg 9 `djpeg` and jpegli `djpegli` decode
+  the colour-model fixtures; each must interpret them by its documented rule
+  and match zenjpeg's decode of that interpretation within a measured bound
+  the test prints (0 for libjpeg-turbo, 1 where zenjpeg's per-component f32
+  path serves the layout; 0 for IJG on RGB, 1 on YCbCr; 1 for jpegli against
+  `dequant_bias(true)`). zenjpeg's decode of each
+  fixture must equal its decode of the twin jpegli's rule picks. CI compiles
+  the test under clippy; running it needs the tools.
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
