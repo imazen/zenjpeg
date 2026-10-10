@@ -33,7 +33,9 @@ use super::rst_scan::compute_segments;
 /// Max chroma strip width for stack-allocated scratch in triangle upsampling.
 /// Covers images up to 8192px wide (chroma width 4096 at 4:2:0).
 const MAX_UPSAMPLE_SCRATCH: usize = 4096;
+use super::color_model::ChromaLayout;
 use super::{ChromaUpsampling, DecodeWarning, IdctMethod};
+use crate::color::planes::{Layout8, RowKernel};
 
 use super::parser::JpegParser;
 
@@ -70,6 +72,19 @@ type FusedDecodeResult = Result<(FusedResult, bool, bool, Option<u32>, bool, u32
 /// Result of fused parallel decode — always single-pass RGB.
 pub(super) struct FusedResult(pub Vec<u8>);
 
+/// The fused kernel serving a frame (see `try_fused_parallel_decode`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FusedKernel {
+    /// Grayscale or 4:4:4: one block per component per MCU.
+    Full,
+    /// 4:2:2 / 4:2:0, nearest-neighbour: chroma replicated by the row kernel.
+    Box,
+    /// 4:2:2, triangle filter: horizontal-only upsampling.
+    H2v1,
+    /// 4:2:0, triangle filter: extended chroma strips plus a boundary fix-up.
+    Fancy,
+}
+
 /// Warnings collected from a single segment decode.
 struct SegmentWarnings {
     had_ac_overflow: bool,
@@ -101,9 +116,6 @@ impl<'a> JpegParser<'a> {
         }
 
         let num_comps = self.num_components as usize;
-        if num_comps != 1 && num_comps != 3 {
-            return Ok(false);
-        }
         // Like the streaming path, this renders the WHOLE frame from ONE scan by
         // walking the frame's interleaved MCU grid. That only reads the
         // bitstream correctly when the scan carries every frame component
@@ -112,6 +124,29 @@ impl<'a> JpegParser<'a> {
         if scan_components.len() != num_comps {
             return Ok(false);
         }
+
+        // The fused kernel and its row conversion follow from the colour model
+        // and sampling shape decided at SOF, before anything is charged or
+        // allocated: grayscale and 4:4:4 (1x1 chroma) take the 4:4:4 kernel;
+        // 4:2:2 / 4:2:0 take the box kernel for nearest-neighbour and the h2v1
+        // / fancy kernels for the triangle filter. Every other model or shape
+        // (XYB, CMYK, oversampled grayscale, 4:4:0, 4:1:1, fractional or
+        // asymmetric sampling) stays on the sequential paths.
+        let Some(layout) = self.plan().mcu_kernel() else {
+            return Ok(false);
+        };
+        let fused = match (layout, self.chroma_upsampling) {
+            (ChromaLayout::Gray | ChromaLayout::S444, _) => FusedKernel::Full,
+            (ChromaLayout::H2V1 | ChromaLayout::H2V2, ChromaUpsampling::NearestNeighbor) => {
+                FusedKernel::Box
+            }
+            (ChromaLayout::H2V1, ChromaUpsampling::Triangle) => FusedKernel::H2v1,
+            (ChromaLayout::H2V2, ChromaUpsampling::Triangle) => FusedKernel::Fancy,
+            _ => return Ok(false),
+        };
+        let Some(kernel) = self.color_model.row_kernel(Layout8::Rgb, self.idct_method) else {
+            return Ok(false);
+        };
 
         // Calculate MCU grid
         let max_h_samp = (0..num_comps)
@@ -123,6 +158,16 @@ impl<'a> JpegParser<'a> {
             .max()
             .unwrap_or(1) as usize;
         let mcu_width = max_h_samp * 8;
+        // The kernels below re-derive the chroma ratio from the component
+        // factors; the gate admitted only shapes where that is exact.
+        debug_assert!(
+            num_comps == 1
+                || (
+                    max_h_samp / self.components[1].h_samp_factor as usize,
+                    max_v_samp / self.components[1].v_samp_factor as usize
+                ) == self.shape.chroma_ratios(),
+            "fused gate admitted a shape whose ratios disagree with FrameShape"
+        );
         let mcu_height = max_v_samp * 8;
         let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
         let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
@@ -209,34 +254,6 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Determine subsampling
-        let is_subsampled = num_comps == 3
-            && (self.components[1].h_samp_factor != self.components[0].h_samp_factor
-                || self.components[1].v_samp_factor != self.components[0].v_samp_factor);
-
-        // decode_fused_444 assumes 1 block per component per MCU (8×8 MCUs).
-        // Bail out for non-standard same-sampling like all-1×2 or all-2×2 where
-        // MCUs contain multiple blocks per component. These are extremely rare;
-        // the sequential coefficient path handles them correctly.
-        let is_nonstandard_444 = !is_subsampled
-            && num_comps == 3
-            && (self.components[0].h_samp_factor != 1 || self.components[0].v_samp_factor != 1);
-        if is_nonstandard_444 {
-            return Ok(false);
-        }
-
-        // Non-uniform chroma subsampling (Cb and Cr have different sampling
-        // factors, e.g. `cjpeg -sample 2x2,2x1,1x2`). All fused decode paths
-        // here assume Cb and Cr share the same chroma strip layout. The
-        // sequential f32 generic path in `output.rs` handles per-component
-        // sampling correctly; fall through to it.
-        let cb_cr_asymmetric = num_comps == 3
-            && (self.components[1].h_samp_factor != self.components[2].h_samp_factor
-                || self.components[1].v_samp_factor != self.components[2].v_samp_factor);
-        if cb_cr_asymmetric {
-            return Ok(false);
-        }
-
         // Every fused path below allocates one `width * height * 3` output
         // buffer sized from the (untrusted) SOF dimensions. Charge it once
         // here, where `&mut self` is available (the four workers take `&self`).
@@ -249,12 +266,11 @@ impl<'a> JpegParser<'a> {
             self.charge_memory(rgb_size, "pixel output buffer")?;
         }
 
-        // Select fused path
+        // Run the selected fused kernel.
         let chroma_upsampling = self.chroma_upsampling;
         let idct_method = self.idct_method;
-        let (result, any_ac, any_huff, first_trunc, any_pad, total_mcus) = if !is_subsampled {
-            // 4:4:4 or grayscale — single pass
-            self.decode_fused_444(
+        let (result, any_ac, any_huff, first_trunc, any_pad, total_mcus) = match fused {
+            FusedKernel::Full => self.decode_fused_444(
                 scan_components,
                 scan_data,
                 &seg_starts,
@@ -267,10 +283,9 @@ impl<'a> JpegParser<'a> {
                 ri,
                 group_stride,
                 idct_method,
-            )?
-        } else if matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor) {
-            // 4:2:0 + box filter — single pass (no vertical context needed)
-            self.decode_fused_subsampled_box(
+                kernel,
+            )?,
+            FusedKernel::Box => self.decode_fused_subsampled_box(
                 scan_components,
                 scan_data,
                 &seg_starts,
@@ -284,52 +299,40 @@ impl<'a> JpegParser<'a> {
                 group_stride,
                 chroma_upsampling,
                 idct_method,
-            )?
-        } else {
-            // Subsampled + fancy upsample
-            let y_h = self.components[0].h_samp_factor as usize;
-            let y_v = self.components[0].v_samp_factor as usize;
-            let c_h = self.components[1].h_samp_factor as usize;
-            let c_v = self.components[1].v_samp_factor as usize;
-            let h_ratio = y_h / c_h.max(1);
-            let v_ratio = y_v / c_v.max(1);
-            if h_ratio == 2 && v_ratio == 2 {
-                // h2v2 (4:2:0) — extended chroma strips with boundary fixup
-                self.decode_fused_subsampled_fancy(
-                    scan_components,
-                    scan_data,
-                    &seg_starts,
-                    &seg_ends,
-                    num_segments,
-                    mcu_cols,
-                    mcu_rows,
-                    max_h_samp,
-                    max_v_samp,
-                    ri,
-                    group_stride,
-                    chroma_upsampling,
-                    idct_method,
-                )?
-            } else if h_ratio == 2 && v_ratio == 1 {
-                // h2v1 (4:2:2) — horizontal-only upsample, no vertical context
-                self.decode_fused_subsampled_h2v1(
-                    scan_components,
-                    scan_data,
-                    &seg_starts,
-                    &seg_ends,
-                    num_segments,
-                    mcu_cols,
-                    mcu_rows,
-                    max_h_samp,
-                    max_v_samp,
-                    ri,
-                    group_stride,
-                    chroma_upsampling,
-                    idct_method,
-                )?
-            } else {
-                return Ok(false); // Fall through to sequential for rare modes
-            }
+                kernel,
+            )?,
+            FusedKernel::Fancy => self.decode_fused_subsampled_fancy(
+                scan_components,
+                scan_data,
+                &seg_starts,
+                &seg_ends,
+                num_segments,
+                mcu_cols,
+                mcu_rows,
+                max_h_samp,
+                max_v_samp,
+                ri,
+                group_stride,
+                chroma_upsampling,
+                idct_method,
+                kernel,
+            )?,
+            FusedKernel::H2v1 => self.decode_fused_subsampled_h2v1(
+                scan_components,
+                scan_data,
+                &seg_starts,
+                &seg_ends,
+                num_segments,
+                mcu_cols,
+                mcu_rows,
+                max_h_samp,
+                max_v_samp,
+                ri,
+                group_stride,
+                chroma_upsampling,
+                idct_method,
+                kernel,
+            )?,
         };
 
         // Advance position past entropy data
@@ -472,7 +475,10 @@ impl<'a> JpegParser<'a> {
         ri: usize,
         group_stride: usize,
         idct_method: IdctMethod,
+        kernel: RowKernel,
     ) -> FusedDecodeResult {
+        // Rows below are addressed at 3 bytes per pixel.
+        debug_assert_eq!(kernel.layout(), Layout8::Rgb);
         let width = self.width as usize;
         let height = self.height as usize;
         let num_comps = self.num_components as usize;
@@ -588,6 +594,35 @@ impl<'a> JpegParser<'a> {
                     Vec::new()
                 };
 
+                // One MCU row of strips → RGB rows `first..first + rows` of
+                // this chunk. Grayscale passes no chroma planes.
+                let flush_rows = |y_strip: &[i16],
+                                  cb_strip: &[i16],
+                                  cr_strip: &[i16],
+                                  first: usize,
+                                  rows: usize,
+                                  rgb_chunk: &mut [u8]| {
+                    let cols = width.min(strip_width);
+                    for py in 0..rows {
+                        let s = py * strip_width;
+                        let o = (first + py) * rgb_row_bytes;
+                        if o + cols * 3 > rgb_chunk.len() {
+                            break;
+                        }
+                        let (c1, c2) = if num_comps == 1 {
+                            (&[][..], &[][..])
+                        } else {
+                            (&cb_strip[s..], &cr_strip[s..])
+                        };
+                        kernel.row(
+                            &y_strip[s..s + cols],
+                            c1,
+                            c2,
+                            &mut rgb_chunk[o..o + cols * 3],
+                        );
+                    }
+                };
+
                 for raw_idx in first_raw..last_raw_excl {
                     let seg_data = &scan_data[seg_starts[raw_idx]..seg_ends[raw_idx]];
                     let (mcu_start, mcu_end) =
@@ -615,33 +650,14 @@ impl<'a> JpegParser<'a> {
                             let pixel_row_start =
                                 (current_mcu_row * 8).saturating_sub(group_first_pixel_row);
                             let pixel_rows_this = 8.min(height.saturating_sub(current_mcu_row * 8));
-                            let cols_this = width.min(strip_width);
-
-                            for py in 0..pixel_rows_this {
-                                let strip_off = py * strip_width;
-                                let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
-                                if rgb_off + cols_this * 3 > rgb_chunk.len() {
-                                    break;
-                                }
-
-                                if num_comps == 1 {
-                                    for px in 0..cols_this {
-                                        let val = y_strip[strip_off + px].clamp(0, 255) as u8;
-                                        let idx = rgb_off + px * 3;
-                                        rgb_chunk[idx] = val;
-                                        rgb_chunk[idx + 1] = val;
-                                        rgb_chunk[idx + 2] = val;
-                                    }
-                                } else {
-                                    crate::color::ycbcr_planes_i16_to_rgb_u8(
-                                        &y_strip[strip_off..strip_off + cols_this],
-                                        &cb_strip[strip_off..strip_off + cols_this],
-                                        &cr_strip[strip_off..strip_off + cols_this],
-                                        &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                                        idct_method == IdctMethod::Libjpeg,
-                                    );
-                                }
-                            }
+                            flush_rows(
+                                &y_strip,
+                                &cb_strip,
+                                &cr_strip,
+                                pixel_row_start,
+                                pixel_rows_this,
+                                rgb_chunk,
+                            );
 
                             current_mcu_row = mcu_row;
                         }
@@ -732,33 +748,14 @@ impl<'a> JpegParser<'a> {
                         let pixel_row_start =
                             (current_mcu_row * 8).saturating_sub(group_first_pixel_row);
                         let pixel_rows_this = 8.min(height.saturating_sub(current_mcu_row * 8));
-                        let cols_this = width.min(strip_width);
-
-                        for py in 0..pixel_rows_this {
-                            let strip_off = py * strip_width;
-                            let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
-                            if rgb_off + cols_this * 3 > rgb_chunk.len() {
-                                break;
-                            }
-
-                            if num_comps == 1 {
-                                for px in 0..cols_this {
-                                    let val = y_strip[strip_off + px].clamp(0, 255) as u8;
-                                    let idx = rgb_off + px * 3;
-                                    rgb_chunk[idx] = val;
-                                    rgb_chunk[idx + 1] = val;
-                                    rgb_chunk[idx + 2] = val;
-                                }
-                            } else {
-                                crate::color::ycbcr_planes_i16_to_rgb_u8(
-                                    &y_strip[strip_off..strip_off + cols_this],
-                                    &cb_strip[strip_off..strip_off + cols_this],
-                                    &cr_strip[strip_off..strip_off + cols_this],
-                                    &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                                    idct_method == IdctMethod::Libjpeg,
-                                );
-                            }
-                        }
+                        flush_rows(
+                            &y_strip,
+                            &cb_strip,
+                            &cr_strip,
+                            pixel_row_start,
+                            pixel_rows_this,
+                            rgb_chunk,
+                        );
                     }
 
                     had_ac_overflow |= decoder.had_ac_overflow;
@@ -806,9 +803,10 @@ impl<'a> JpegParser<'a> {
         group_stride: usize,
         _chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
+        kernel: RowKernel,
     ) -> FusedDecodeResult {
-        use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
-
+        // Rows below are addressed at 3 bytes per pixel.
+        debug_assert_eq!(kernel.layout(), Layout8::Rgb);
         let width = self.width as usize;
         let height = self.height as usize;
         let total_mcus = mcu_cols * mcu_rows;
@@ -938,13 +936,11 @@ impl<'a> JpegParser<'a> {
                         if rgb_off + cols_this * 3 > rgb_chunk.len() {
                             break;
                         }
-                        fused_h2v2_box_ycbcr_to_rgb_u8(
+                        kernel.row_h2(
                             &y_strip[y_off..y_off + cols_this],
                             &cb_strip[c_off..],
                             &cr_strip[c_off..],
                             &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                            cols_this,
-                            idct_method == IdctMethod::Libjpeg,
                         );
                     }
                 };
@@ -1128,7 +1124,10 @@ impl<'a> JpegParser<'a> {
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
+        kernel: RowKernel,
     ) -> FusedDecodeResult {
+        // Rows below are addressed at 3 bytes per pixel.
+        debug_assert_eq!(kernel.layout(), Layout8::Rgb);
         use super::upsample::{
             upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
         };
@@ -1271,9 +1270,11 @@ impl<'a> JpegParser<'a> {
                         .min(height.saturating_sub(current_mcu_row * mcu_pixel_height));
 
                     // Fused h2v1: upsample+convert per row, no plane materialize
-                    // (Triangle only — NearestNeighbor stays on upsample_fn).
+                    // (Triangle YCbCr only — NearestNeighbor and RGB frames
+                    // stay on upsample_fn + the row kernel).
                     #[cfg(target_arch = "x86_64")]
                     if matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+                        && kernel.ycbcr_rgb()
                         && let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
                     {
                         for py in 0..pixel_rows_this {
@@ -1338,12 +1339,11 @@ impl<'a> JpegParser<'a> {
                         if rgb_off + y_cols_this * 3 > rgb_chunk.len() {
                             break;
                         }
-                        crate::color::ycbcr_planes_i16_to_rgb_u8(
+                        kernel.row(
                             &y_strip[y_off..y_off + y_cols_this],
-                            &cb_up[c_off..c_off + y_cols_this],
-                            &cr_up[c_off..c_off + y_cols_this],
+                            &cb_up[c_off..],
+                            &cr_up[c_off..],
                             &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
-                            idct_method == IdctMethod::Libjpeg,
                         );
                     }
                 };
@@ -1541,7 +1541,10 @@ impl<'a> JpegParser<'a> {
         group_stride: usize,
         _chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
+        kernel: RowKernel,
     ) -> FusedDecodeResult {
+        // Rows below are addressed at 3 bytes per pixel.
+        debug_assert_eq!(kernel.layout(), Layout8::Rgb);
         use super::upsample::upsample_h2v2_i16_libjpeg;
 
         let width = self.width as usize;
@@ -1766,9 +1769,12 @@ impl<'a> JpegParser<'a> {
                             mcu_pixel_height.min(height.saturating_sub(mcu_row * mcu_pixel_height));
 
                         // Fused h2v2: shared colsums + upsample→RGB fused rows
-                        // (same kernel as the sequential streaming strip path).
+                        // (same kernel as the sequential streaming strip path;
+                        // YCbCr only, RGB frames take upsample + row kernel).
                         #[cfg(target_arch = "x86_64")]
-                        if let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
+                        if kernel.ycbcr_rgb()
+                            && let Some(token) =
+                                <archmage::X64V3Token as archmage::SimdToken>::summon()
                         {
                             super::parser::baseline_streaming::output_fancy_strip_fused(
                                 token,
@@ -1814,12 +1820,11 @@ impl<'a> JpegParser<'a> {
                             if rgb_off + y_cols_this_image * 3 > rgb_chunk.len() {
                                 break;
                             }
-                            crate::color::ycbcr_planes_i16_to_rgb_u8(
+                            kernel.row(
                                 &y_strip[y_off..y_off + y_cols_this_image],
-                                &cb_up[chroma_off..chroma_off + y_cols_this_image],
-                                &cr_up[chroma_off..chroma_off + y_cols_this_image],
+                                &cb_up[chroma_off..],
+                                &cr_up[chroma_off..],
                                 &mut rgb_chunk[rgb_off..rgb_off + y_cols_this_image * 3],
-                                idct_method == IdctMethod::Libjpeg,
                             );
                         }
                     };
@@ -2168,8 +2173,6 @@ impl<'a> JpegParser<'a> {
         {
             use super::upsample::upsample_h2v2_libjpeg_row;
 
-            let is_rgb_jpeg = self.is_rgb_jpeg();
-
             for i in 0..seg_boundaries.len().saturating_sub(1) {
                 let prev_seg = &seg_boundaries[i];
                 let next_seg = &seg_boundaries[i + 1];
@@ -2206,21 +2209,12 @@ impl<'a> JpegParser<'a> {
                     );
                     let rgb_off = bot_pixel_row * rgb_row_bytes;
                     if rgb_off + y_cols_this_image * 3 <= rgb.len() {
-                        if is_rgb_jpeg {
-                            for px in 0..y_cols_this_image {
-                                rgb[rgb_off + px * 3] = prev_seg.last_y_row[px].clamp(0, 255) as u8;
-                                rgb[rgb_off + px * 3 + 1] = cb_row[px].clamp(0, 255) as u8;
-                                rgb[rgb_off + px * 3 + 2] = cr_row[px].clamp(0, 255) as u8;
-                            }
-                        } else {
-                            crate::color::ycbcr_planes_i16_to_rgb_u8(
-                                &prev_seg.last_y_row[..y_cols_this_image],
-                                &cb_row[..y_cols_this_image],
-                                &cr_row[..y_cols_this_image],
-                                &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
-                                idct_method == IdctMethod::Libjpeg,
-                            );
-                        }
+                        kernel.row(
+                            &prev_seg.last_y_row[..y_cols_this_image],
+                            &cb_row,
+                            &cr_row,
+                            &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                        );
                     }
                 }
 
@@ -2248,22 +2242,12 @@ impl<'a> JpegParser<'a> {
                     );
                     let rgb_off = top_pixel_row * rgb_row_bytes;
                     if rgb_off + y_cols_this_image * 3 <= rgb.len() {
-                        if is_rgb_jpeg {
-                            for px in 0..y_cols_this_image {
-                                rgb[rgb_off + px * 3] =
-                                    next_seg.first_y_row[px].clamp(0, 255) as u8;
-                                rgb[rgb_off + px * 3 + 1] = cb_row[px].clamp(0, 255) as u8;
-                                rgb[rgb_off + px * 3 + 2] = cr_row[px].clamp(0, 255) as u8;
-                            }
-                        } else {
-                            crate::color::ycbcr_planes_i16_to_rgb_u8(
-                                &next_seg.first_y_row[..y_cols_this_image],
-                                &cb_row[..y_cols_this_image],
-                                &cr_row[..y_cols_this_image],
-                                &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
-                                idct_method == IdctMethod::Libjpeg,
-                            );
-                        }
+                        kernel.row(
+                            &next_seg.first_y_row[..y_cols_this_image],
+                            &cb_row,
+                            &cr_row,
+                            &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                        );
                     }
                 }
             }
@@ -2358,6 +2342,12 @@ pub(super) struct WaveParallelState {
     pub permissive_rst: bool,
     pub strict: bool,
     pub idct_method: IdctMethod,
+    /// The frame's colour model and its planes → RGB rows kernel (wave box
+    /// output).
+    pub color_model: super::color_model::ColorModel,
+    /// The sampling shape classified at SOF.
+    pub shape: super::color_model::FrameShape,
+    pub kernel: RowKernel,
 
     // Wave parameters
     pub wave_size: usize,
@@ -2367,6 +2357,19 @@ pub(super) struct WaveParallelState {
 }
 
 impl WaveParallelState {
+    /// The frame's chroma subsampling, for reporting, from the shape
+    /// classified at SOF. Wave-only readers serve H2V1 and H2V2 frames
+    /// (`PathPlan::mcu_kernel`); planar waves also 4:4:4 and gray.
+    pub(super) fn subsampling(&self) -> crate::types::Subsampling {
+        use super::color_model::ChromaLayout;
+        use crate::types::Subsampling;
+        match self.shape.chroma {
+            ChromaLayout::H2V2 => Subsampling::S420,
+            ChromaLayout::H2V1 => Subsampling::S422,
+            ChromaLayout::H1V2 => Subsampling::S440,
+            ChromaLayout::Gray | ChromaLayout::S444 | ChromaLayout::Other => Subsampling::S444,
+        }
+    }
     /// Create wave state from parsed scan data and RST scan results.
     ///
     /// `scan_comps` is the (comp_idx, dc_table, ac_table) mapping from the SOS header.
@@ -2380,11 +2383,13 @@ impl WaveParallelState {
         ac_tables: Vec<Option<HuffmanDecodeTable>>,
         strictness: super::Strictness,
         idct_method: IdctMethod,
+        kernel: RowKernel,
         wave_size: usize,
     ) -> Self {
         let width = scan_data.width as usize;
         let height = scan_data.height as usize;
         let num_comps = scan_data.num_components as usize;
+        debug_assert_eq!(kernel.layout(), Layout8::Rgb);
 
         let max_h_samp = scan_data.h_samp[..num_comps]
             .iter()
@@ -2467,7 +2472,10 @@ impl WaveParallelState {
             lenient,
             permissive_rst,
             strict,
-            idct_method,
+            idct_method: idct_method.for_components(num_comps),
+            color_model: scan_data.color_model,
+            shape: scan_data.shape,
+            kernel,
             wave_size,
             num_segments,
             mcu_pixel_height: mcu_height,
@@ -2488,8 +2496,6 @@ impl WaveParallelState {
         seg_range_end: usize,
         wave_buf: &mut [u8],
     ) -> Result<usize> {
-        use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
-
         let wave_count = seg_range_end - seg_range_start;
         if wave_count == 0 {
             return Ok(0);
@@ -2578,13 +2584,11 @@ impl WaveParallelState {
                         if rgb_off + cols_this * 3 > rgb_chunk.len() {
                             break;
                         }
-                        fused_h2v2_box_ycbcr_to_rgb_u8(
+                        self.kernel.row_h2(
                             &y_strip[y_off..y_off + cols_this],
                             &cb_strip[c_off..],
                             &cr_strip[c_off..],
                             &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                            cols_this,
-                            self.idct_method == IdctMethod::Libjpeg,
                         );
                     }
                 };
@@ -2879,6 +2883,16 @@ impl WaveParallelState {
                 let mcu_pixel_height = self.mcu_pixel_height;
                 let max_v = self.max_v_samp;
                 let chroma_out_width = self.chroma_width();
+                // Subsampled chroma's padding columns repeat the last real
+                // column, as the strip's `truncate_chroma_padding` makes them.
+                let chroma_real_width = match self.subsampling() {
+                    crate::types::Subsampling::S444 => chroma_out_width,
+                    _ => {
+                        let max_h = self.comp_h_samps.iter().copied().max().unwrap_or(1);
+                        let c_h = self.comp_h_samps.get(1).copied().unwrap_or(1).max(1);
+                        img_width.div_ceil(max_h / c_h)
+                    }
+                };
 
                 // Main decode loop
                 for mcu_idx in mcu_start..mcu_end {
@@ -2908,6 +2922,7 @@ impl WaveParallelState {
                                 cb_out,
                                 cr_out,
                                 chroma_out_width,
+                                chroma_real_width,
                                 img_height,
                                 max_v,
                                 seg_first_chroma_row,
@@ -3030,6 +3045,7 @@ impl WaveParallelState {
                         cb_out,
                         cr_out,
                         chroma_out_width,
+                        chroma_real_width,
                         img_height,
                         max_v,
                         seg_first_chroma_row,
@@ -3095,7 +3111,10 @@ fn flush_planar_luma(
     }
 }
 
-/// Flush chroma strip rows to the planar output buffers.
+/// Flush chroma strip rows to the planar output buffers. Columns from
+/// `chroma_real_width` on (the MCU padding of subsampled chroma) repeat the
+/// last real column, as the sequential strip's `truncate_chroma_padding`
+/// makes them, so native i16 reads agree for every column at any thread count.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 fn flush_planar_chroma(
@@ -3107,6 +3126,7 @@ fn flush_planar_chroma(
     cb_out: &mut [i16],
     cr_out: &mut [i16],
     chroma_out_width: usize,
+    chroma_real_width: usize,
     img_height: usize,
     max_v_samp: usize,
     seg_first_chroma_row: usize,
@@ -3125,6 +3145,12 @@ fn flush_planar_chroma(
         }
         cb_out[dst_off..dst_off + cols_c].copy_from_slice(&cb_strip[src_off..src_off + cols_c]);
         cr_out[dst_off..dst_off + cols_c].copy_from_slice(&cr_strip[src_off..src_off + cols_c]);
+        let real = chroma_real_width.min(cols_c);
+        if real > 0 && real < cols_c {
+            let (cb_last, cr_last) = (cb_out[dst_off + real - 1], cr_out[dst_off + real - 1]);
+            cb_out[dst_off + real..dst_off + cols_c].fill(cb_last);
+            cr_out[dst_off + real..dst_off + cols_c].fill(cr_last);
+        }
     }
 }
 

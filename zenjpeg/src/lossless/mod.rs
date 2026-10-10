@@ -78,6 +78,7 @@ pub(crate) use pipeline::Carry;
 mod exif;
 mod geometry;
 mod pipeline;
+pub(crate) mod placement;
 pub(crate) mod restructure;
 #[cfg(test)]
 mod tests;

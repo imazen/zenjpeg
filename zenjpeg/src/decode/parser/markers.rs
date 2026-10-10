@@ -2,9 +2,8 @@
 //!
 //! This module handles parsing of JPEG marker segments during header reading.
 
-use crate::decode::extras::{
-    AdobeColorTransform, SegmentType, detect_segment_type, should_preserve_segment,
-};
+use crate::decode::color_model::{ColorModel, FrameShape};
+use crate::decode::extras::{SegmentType, detect_segment_type, should_preserve_segment};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
@@ -76,7 +75,7 @@ impl<'a> JpegParser<'a> {
                 }
                 // Standalone markers (no length field) — skip silently.
                 // RST0-RST7 and TEM can appear as stray bytes in corrupted files.
-                0xD0..=0xD7 | 0x01 => {}
+                m if is_standalone_marker(m) => {}
                 _ => self.parse_header_marker(|s| s.skip_segment())?,
             }
         }
@@ -195,6 +194,19 @@ impl<'a> JpegParser<'a> {
             }
             self.components[i].quant_table_idx = quant_idx;
         }
+
+        // The colour model and sampling shape are decided here, once, from
+        // the markers seen before SOF (jpegli `ProcessSOF`). Every entry point
+        // reads the header up to SOF, so they all see the same decision.
+        let components = &self.components[..self.num_components as usize];
+        let icc_is_xyb = self
+            .icc_profile
+            .as_deref()
+            .is_some_and(crate::color::icc::is_xyb_profile);
+        self.color_model = ColorModel::decide(components, self.color_markers, icc_is_xyb);
+        self.shape = FrameShape::classify(components);
+        self.interleaved = self.num_components == 1
+            || peek_first_scan_components(self.data, self.position) == Some(self.num_components);
 
         // 1-component sources always use the libjpeg-exact IDCT kernel
         // (#154): no chroma exists for the jpegli tuning to matter, and the
@@ -562,11 +574,16 @@ impl<'a> JpegParser<'a> {
             ));
         }
 
-        // Always check for APP14 Adobe marker (needed for CMYK/YCCK detection)
-        if marker == MARKER_APP14 && self.position + data_len <= self.data.len() {
+        // JFIF APP0 and Adobe APP14 decide the colour model at SOF (jpegli
+        // `ProcessAPP`: "JFIF" with a payload of at least 14 bytes; "Adobe"
+        // with at least 12, transform byte at offset 11). The last one wins.
+        {
             let data = &self.data[self.position..self.position + data_len];
-            if let Some(transform) = parse_adobe_app14(data) {
-                self.adobe_transform = Some(transform);
+            if marker == MARKER_APP0 && data.len() >= 14 && data.starts_with(b"JFIF") {
+                self.color_markers.saw_jfif = true;
+            }
+            if marker == MARKER_APP14 && data.len() >= 12 && data.starts_with(b"Adobe") {
+                self.color_markers.adobe_transform = Some(data[11]);
             }
         }
 
@@ -593,24 +610,40 @@ impl<'a> JpegParser<'a> {
     }
 }
 
-/// Parse Adobe APP14 segment to extract color transform.
-/// Format: "Adobe\0" + version (2 bytes) + flags0 (2) + flags1 (2) + color_transform (1)
-fn parse_adobe_app14(data: &[u8]) -> Option<AdobeColorTransform> {
-    const ADOBE_SIG: &[u8] = b"Adobe";
-    if data.len() < ADOBE_SIG.len() + 7 {
-        return None;
-    }
-    if !data.starts_with(ADOBE_SIG) {
-        return None;
-    }
+/// Markers without a length field between SOI and EOI (T.81 B.1.1.3): TEM
+/// and RST0-7. Every walker of the header and the inter-scan markers
+/// (`read_header`, the `decode()` loop, `find_scan_info`, the SOS peek)
+/// classifies markers with this rule, so they agree on which SOS comes first:
+/// a TEM read as a length segment hides the bytes after it from one walker
+/// and not the others. jpegli and IJG libjpeg treat TEM the same way.
+pub(super) const fn is_standalone_marker(marker: u8) -> bool {
+    matches!(marker, 0x01 | 0xD0..=0xD7)
+}
 
-    let offset = ADOBE_SIG.len();
-    let color_transform_byte = data[offset + 6];
-
-    Some(match color_transform_byte {
-        0 => AdobeColorTransform::Unknown, // CMYK (raw, values often inverted)
-        1 => AdobeColorTransform::YCbCr,   // Standard YCbCr
-        2 => AdobeColorTransform::Ycck,    // YCCK
-        _ => AdobeColorTransform::Unknown,
-    })
+/// The component count of the first SOS at or after `pos`, found by walking
+/// the marker segments without consuming them (fill bytes and stray bytes
+/// between segments are skipped, as the parser does). `None` if the data ends
+/// or a segment length is malformed before an SOS.
+fn peek_first_scan_components(data: &[u8], mut pos: usize) -> Option<u8> {
+    loop {
+        while *data.get(pos)? != 0xFF {
+            pos += 1;
+        }
+        while *data.get(pos + 1)? == 0xFF {
+            pos += 1;
+        }
+        match *data.get(pos + 1)? {
+            0x00 => pos += 2,
+            m if is_standalone_marker(m) => pos += 2,
+            0xDA => return data.get(pos + 4).copied(),
+            0xD9 => return None,
+            _ => {
+                let len = u16::from_be_bytes([*data.get(pos + 2)?, *data.get(pos + 3)?]) as usize;
+                if len < 2 {
+                    return None;
+                }
+                pos += 2 + len;
+            }
+        }
+    }
 }

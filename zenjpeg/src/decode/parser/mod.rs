@@ -11,26 +11,28 @@
 
 mod arithmetic_scan;
 pub(crate) mod baseline_streaming;
+mod fast_integer;
 mod markers;
 mod output;
 pub(crate) mod output_helpers;
 mod progressive;
 mod scan;
 
+use super::color_model::{ColorMarkers, ColorModel, FrameShape, PathPlan};
 use super::extras::MpfImageTypeExt;
-use super::extras::{
-    AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image,
-};
+use super::extras::{DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image};
 use super::{DecodeWarning, JpegInfo, Strictness};
 
 /// Information about a scan needed for scanline reading.
 struct ScanInfo {
     /// Huffman table mapping: (dc_table_idx, ac_table_idx) per component
     table_mapping: [(usize, usize); 3],
+    /// Components in this scan (Ns).
+    num_components: u8,
     /// Position in data where entropy-coded scan data begins
     data_start: usize,
 }
-use crate::color::icc::{extract_icc_profile, is_xyb_profile};
+use crate::color::icc::extract_icc_profile;
 use crate::error::{Error, ErrorKind, Result};
 use crate::foundation::alloc::{MAX_SCANS, checked_size_2d, try_with_capacity};
 use crate::foundation::consts::{
@@ -39,7 +41,7 @@ use crate::foundation::consts::{
     MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
-use crate::types::{ColorSpace, Component, Dimensions, JpegMode};
+use crate::types::{Component, Dimensions, JpegMode};
 use enough::Stop;
 
 /// Pre-computed component info for decoding efficiency.
@@ -126,8 +128,12 @@ pub(super) struct ParsedScanData<'a> {
     pub table_mapping: [(usize, usize); 3],
     pub scan_data_start: usize,
     pub restart_interval: u16,
-    pub is_xyb: bool,
-    pub is_rgb: bool,
+    /// The frame's colour model and sampling shape, decided at SOF.
+    pub color_model: ColorModel,
+    pub shape: FrameShape,
+    /// Whether the first scan carries every component (see
+    /// [`PathPlan::interleaved`]).
+    pub interleaved: bool,
 }
 
 impl<'a> ParsedScanData<'a> {
@@ -151,8 +157,9 @@ impl<'a> ParsedScanData<'a> {
             table_mapping: self.table_mapping,
             scan_data_start: self.scan_data_start,
             restart_interval: self.restart_interval,
-            is_xyb: self.is_xyb,
-            is_rgb: self.is_rgb,
+            color_model: self.color_model,
+            shape: self.shape,
+            interleaved: self.interleaved,
         }
     }
 }
@@ -234,8 +241,22 @@ pub(super) struct JpegParser<'a> {
     /// Position of MPF TIFF header (after "MPF\0") for calculating absolute offsets
     mpf_header_pos: usize,
 
-    /// Adobe APP14 color transform (for CMYK/YCCK detection)
-    pub(super) adobe_transform: Option<AdobeColorTransform>,
+    /// JFIF / Adobe APP14 markers seen so far. Consulted once, when SOF is
+    /// parsed, to decide [`Self::color_model`]; never read afterwards.
+    pub(super) color_markers: ColorMarkers,
+
+    /// The frame's colour model, decided when SOF is parsed (jpegli
+    /// `ProcessSOF`). Every path reads this; none re-derives it.
+    pub(super) color_model: ColorModel,
+
+    /// The frame's sampling shape, classified when SOF is parsed.
+    pub(super) shape: FrameShape,
+
+    /// Whether the first scan carries every component, read (without
+    /// consuming it) when SOF is parsed. A sequential frame whose first scan
+    /// does not is non-interleaved: one scan per component, which no
+    /// MCU-walking path can stream.
+    pub(super) interleaved: bool,
 
     /// Strictness level for error handling
     pub(super) strictness: Strictness,
@@ -415,7 +436,10 @@ impl<'a> JpegParser<'a> {
             preserve_config,
             extras,
             mpf_header_pos: 0,
-            adobe_transform: None,
+            color_markers: ColorMarkers::default(),
+            color_model: ColorModel::Unknown,
+            shape: FrameShape::classify(&[]),
+            interleaved: true,
             strictness,
             alloc_pref,
             num_threads: 0,
@@ -828,8 +852,10 @@ impl<'a> JpegParser<'a> {
     ///
     /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode(&mut self, stop: &impl Stop) -> Result<()> {
-        // First read header
+        // First read header. The colour markers start empty again, so the
+        // SOF decision on this pass sees exactly the markers before SOF.
         self.position = 2; // Skip SOI
+        self.color_markers = ColorMarkers::default();
         self.read_header()?;
 
         // Reject non-8-bit precision before attempting decode.
@@ -943,10 +969,10 @@ impl<'a> JpegParser<'a> {
                         MARKER_DAC => self.parse_dac(),
                         MARKER_DRI => self.parse_restart_interval(),
                         // Stray restart markers between scans — some encoders
-                        // write a trailing RST after the final MCU interval.
-                        // These are standalone 2-byte markers with no length
-                        // field, so just skip them.
-                        0xD0..=0xD7 | 0x01 => Ok(()),
+                        // write a trailing RST after the final MCU interval —
+                        // and TEM: standalone 2-byte markers with no length
+                        // field (`is_standalone_marker`), so just skip them.
+                        m if markers::is_standalone_marker(m) => Ok(()),
                         MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker),
                         _ => self.skip_segment(),
                     };
@@ -1049,6 +1075,7 @@ impl<'a> JpegParser<'a> {
 
                     return Ok(ScanInfo {
                         table_mapping,
+                        num_components,
                         data_start: self.position,
                     });
                 }
@@ -1059,6 +1086,7 @@ impl<'a> JpegParser<'a> {
                 MARKER_EOI => {
                     return Err(Error::invalid_jpeg_data("unexpected EOI before SOS"));
                 }
+                m if markers::is_standalone_marker(m) => {}
                 _ => self.skip_segment()?,
             }
         }
@@ -1143,31 +1171,8 @@ impl<'a> JpegParser<'a> {
     // =========================================================================
 
     pub(super) fn info(&self) -> JpegInfo {
-        let is_xyb = self
-            .icc_profile
-            .as_ref()
-            .map(|p| is_xyb_profile(p))
-            .unwrap_or(false);
-
-        // Detect color space from component count and IDs
-        let color_space = if is_xyb {
-            // XYB uses RGB component IDs (82, 71, 66) but is actually XYB color space
-            ColorSpace::Xyb
-        } else if self.num_components == 1 {
-            ColorSpace::Grayscale
-        } else if self.num_components == 3 {
-            // Check for RGB component IDs
-            let ids: Vec<u8> = self.components[..3].iter().map(|c| c.id).collect();
-            if ids == *b"RGB" {
-                ColorSpace::Rgb
-            } else {
-                ColorSpace::YCbCr
-            }
-        } else if self.num_components == 4 {
-            ColorSpace::Cmyk
-        } else {
-            ColorSpace::Unknown
-        };
+        let color_space = self.color_model.color_space();
+        let is_xyb = self.color_model == ColorModel::Xyb;
 
         // Extract metadata from extras if available
         let (icc_profile, exif, xmp, jfif) = if let Some(ref extras) = self.extras {
@@ -1211,10 +1216,8 @@ impl<'a> JpegParser<'a> {
     /// Extract scan data for constructing a scanline reader.
     ///
     /// This bundles all the parser fields needed by `ScanlineReader::new()`,
-    /// detecting RGB-JPEG and XYB along the way.
+    /// including the colour model decided at SOF.
     pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
-        let is_xyb = self.info().is_xyb;
-
         // Extract sampling factors
         let h_samp = if is_grayscale {
             [self.components[0].h_samp_factor, 1, 1]
@@ -1248,9 +1251,17 @@ impl<'a> JpegParser<'a> {
 
         // Find SOS marker to get table mapping and scan data position
         let scan_info = self.find_scan_info()?;
-
-        // Detect RGB JPEGs
-        let is_rgb = self.is_rgb_colorspace();
+        // The SOS peek at SOF decided `interleaved`, and with it the route
+        // that led here; it walks the same markers with the same rule
+        // (`is_standalone_marker`), so it saw this scan. Refuse rather than
+        // walk a non-interleaved scan as interleaved MCUs if they ever differ.
+        let interleaved =
+            self.num_components == 1 || scan_info.num_components == self.num_components;
+        if interleaved != self.interleaved {
+            return Err(Error::invalid_jpeg_data(
+                "first scan's component count disagrees with the header walk",
+            ));
+        }
 
         Ok(ParsedScanData {
             data: self.data,
@@ -1266,28 +1277,18 @@ impl<'a> JpegParser<'a> {
             table_mapping: scan_info.table_mapping,
             scan_data_start: scan_info.data_start,
             restart_interval: self.restart_interval,
-            is_xyb,
-            is_rgb,
+            color_model: self.color_model,
+            shape: self.shape,
+            interleaved: self.interleaved,
         })
     }
 
-    /// Whether this is an RGB JPEG (Adobe APP14 transform=0, or literal R/G/B
-    /// component IDs) — the decoder skips the YCbCr→RGB matrix for these. Shared
-    /// by `into_scan_data` (streaming) and the coefficient-centric buffered
-    /// reader so both classify color space identically.
-    pub(super) fn is_rgb_colorspace(&self) -> bool {
-        if self.num_components != 3 {
-            return false;
-        }
-        match self.adobe_transform {
-            Some(AdobeColorTransform::Unknown) => true,
-            Some(AdobeColorTransform::YCbCr) => false,
-            None => {
-                self.components[0].id == b'R'
-                    && self.components[1].id == b'G'
-                    && self.components[2].id == b'B'
-            }
-            _ => false,
+    /// Which decode paths may serve this frame (see [`PathPlan`]).
+    pub(super) fn plan(&self) -> PathPlan {
+        PathPlan {
+            model: self.color_model,
+            shape: self.shape,
+            interleaved: self.interleaved,
         }
     }
 
@@ -1513,10 +1514,6 @@ impl JpegParser<'_> {
     /// libjpeg-exact kernel (#154): the gray plane must be identical across
     /// decode paths, and there is no chroma for the jpegli tuning to matter.
     pub(crate) fn apply_idct_method(&mut self, method: super::IdctMethod) {
-        self.idct_method = if self.num_components == 1 {
-            super::IdctMethod::Libjpeg
-        } else {
-            method
-        };
+        self.idct_method = method.for_components(self.num_components as usize);
     }
 }

@@ -7,7 +7,7 @@
 //! so every output format is native.
 //!
 //! Wired for 3-component color with symmetric Cb/Cr sampling: 4:4:4, 4:2:2,
-//! 4:2:0 and 4:4:0 (see `Decoder::coeff_strip_compatible`). CMYK, the
+//! 4:2:0 and 4:4:0 (see `PathPlan::strip` in `decode::color_model`). CMYK, the
 //! exotic-sampling normalization, and asymmetric chroma stay on the RGB
 //! buffered path.
 //!

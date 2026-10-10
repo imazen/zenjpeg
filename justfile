@@ -31,6 +31,24 @@ fuzz-check:
 fuzz-regression:
     cargo test -p zenjpeg --test fuzz_regression -- --nocapture
 
+# Path reach for tests/colorspace_paths.rs (scripts/colorspace_mutation_reach.py):
+# copies the working copy's tracked files to $MUTANT_ROOT/<UTC stamp>/tree (kept,
+# so every log's line numbers stay checkable), corrupts one conversion site at a
+# time and writes logs, per-site diffs and results to .../out.
+# `just colorspace-mutation-reach list` lists the sites; `START END` runs a range.
+colorspace-mutation-reach *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="${MUTANT_ROOT:-$HOME/tmp/zenjpeg-mutation}/$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$root/tree/internal" "$root/out"
+    if [ -d .jj ]; then jj file list; else git ls-files; fi \
+        | grep -vx 'internal/jpegli-cpp' | rsync -a --files-from=- ./ "$root/tree/"
+    ln -s "$(realpath internal/jpegli-cpp)" "$root/tree/internal/jpegli-cpp"
+    if [ -d ../zenanalyze ]; then ln -s "$(realpath ../zenanalyze)" "$root/zenanalyze"; fi
+    if [ -d .jj ]; then jj log -r @ --no-graph -T 'commit_id ++ "\n"'; else git rev-parse HEAD; fi > "$root/out/SOURCE"
+    echo "tree: $root/tree  results: $root/out"
+    python3 scripts/colorspace_mutation_reach.py "$root/tree" "$root/out" {{ARGS}}
+
 # Run all lib tests
 test:
     cargo test -p zenjpeg --lib

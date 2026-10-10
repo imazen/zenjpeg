@@ -6,10 +6,11 @@
 //! - [`setup_entropy_decoder`]: configure entropy decoder with Huffman tables
 //! - [`select_upsample_fn`]: pick chroma upsample kernel
 //! - [`decode_mcu_row`]: entropy + dequant + IDCT for one MCU row
-//! - [`output_mcu_row`]: YCbCr → RGB/BGRA conversion for one MCU row
+//! - [`output_mcu_row`]: planes → pixels (the frame's [`RowKernel`]) for one MCU row
 //!
-//! Each helper is `#[inline]` so the per-MCU and per-block hot paths
-//! remain inlined into the parent loop with no added call overhead.
+//! The per-MCU and per-block helpers are `#[inline(always)]` so those hot
+//! paths stay inlined into the parent loop. [`output_mcu_row`] is the
+//! exception: it runs once per MCU row and is kept out of line (see its doc).
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
@@ -24,8 +25,7 @@ use super::super::idct_int::{idct_int_dc_only, idct_int_dc_only_w16, idct_int_ti
 use super::super::upsample::upsample_h2v2_strip_ext;
 use super::super::{ChromaUpsampling, DecodeWarning, IdctMethod};
 use super::JpegParser;
-use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
-use crate::types::PixelFormat;
+use crate::color::planes::{Layout8, RowKernel};
 
 /// MCU and strip geometry derived from sampling factors and image dimensions.
 pub(super) struct StreamingGeometry {
@@ -48,6 +48,16 @@ pub(super) struct StreamingGeometry {
 }
 
 impl StreamingGeometry {
+    /// Nearest-neighbour 4:2:2 / 4:2:0: chroma rows convert straight from the
+    /// half-width strip ([`RowKernel::row_h2`]), as the fused and wave paths
+    /// do, with no upsampled buffers.
+    pub(super) fn uses_box(&self, chroma_upsampling: ChromaUpsampling) -> bool {
+        !self.is_grayscale
+            && self.h_ratio == 2
+            && matches!(self.v_ratio, 1 | 2)
+            && matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor)
+    }
+
     /// Compute geometry from parser fields. `width`/`height`/`num_components`
     /// and `components` come from the parser; the geometry never mutates them.
     pub(super) fn from_parser(parser: &JpegParser<'_>) -> Self {
@@ -90,16 +100,14 @@ impl StreamingGeometry {
             (c_h, c_v, mcu_cols * c_h * 8, c_v * 8)
         };
 
-        let h_ratio = if is_grayscale {
-            1
-        } else {
-            max_h_samp / c_h_samp
-        };
-        let v_ratio = if is_grayscale {
-            1
-        } else {
-            max_v_samp / c_v_samp
-        };
+        // The streaming gate (`PathPlan::mcu_kernel`, plus 4:4:0 through
+        // `PathPlan::streaming_h1v2`) admits only shapes whose ratio is exact;
+        // take it from the one classification.
+        debug_assert!(parser.plan().mcu_kernel().is_some() || parser.plan().streaming_h1v2());
+        let (h_ratio, v_ratio) = parser.shape.chroma_ratios();
+        debug_assert!(
+            is_grayscale || (h_ratio, v_ratio) == (max_h_samp / c_h_samp, max_v_samp / c_v_samp)
+        );
 
         Self {
             width,
@@ -139,34 +147,10 @@ pub(super) struct StreamingBuffers {
     pub need_fancy: bool,
     /// Extended chroma row count (data + 1 above + 1 below for fancy, else data).
     pub ext_height: usize,
-    /// `out_bpp` — bytes per output pixel (1, 3, or 4).
+    /// Bytes per output pixel (the row kernel's layout).
     pub out_bpp: usize,
-    /// Whether output is 4bpp (BGRA/RGBA).
-    pub out_4bpp: bool,
-    /// Whether to swap R/B channels (true = BGRA, false = RGBA).
-    pub swap_rb: bool,
-    /// Final RGB/BGRA/gray output buffer.
+    /// Final output buffer, in the row kernel's layout.
     pub rgb: Vec<u8>,
-}
-
-/// Output pixel layout the streaming path will produce:
-/// `(bytes_per_pixel, is_4bpp, swap_rb)`.
-///
-/// Shared with the caller so it can charge the output buffer against the
-/// decode memory budget before [`StreamingBuffers::allocate`] allocates it.
-pub(super) fn output_pixel_layout(
-    geom: &StreamingGeometry,
-    streaming_output_format: Option<PixelFormat>,
-) -> (usize, bool, bool) {
-    if geom.is_grayscale {
-        (1, false, false)
-    } else {
-        match streaming_output_format {
-            Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4, true, true),
-            Some(PixelFormat::Rgba) => (4, true, false),
-            _ => (3, false, false),
-        }
-    }
 }
 
 impl StreamingBuffers {
@@ -178,7 +162,7 @@ impl StreamingBuffers {
     pub(super) fn allocate(
         geom: &StreamingGeometry,
         chroma_upsampling: ChromaUpsampling,
-        streaming_output_format: Option<PixelFormat>,
+        layout: Layout8,
         alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         // Fancy h2v2 needs double-buffered Y and chroma strips (1-row lag for context)
@@ -232,11 +216,14 @@ impl StreamingBuffers {
         // (Fancy h2v2 emits only the data rows; context rows are consumed
         // inside the strip driver, never emitted.)
         let upsample_out_height = geom.y_strip_height;
-        let up_size = if (!geom.is_grayscale && geom.h_ratio == 2) || need_fancy {
-            geom.y_strip_width * upsample_out_height
-        } else {
-            0
-        };
+        let up_size =
+            if (!geom.is_grayscale && geom.h_ratio == 2 && !geom.uses_box(chroma_upsampling))
+                || need_fancy
+            {
+                geom.y_strip_width * upsample_out_height
+            } else {
+                0
+            };
         let cb_up: Vec<i16> = if up_size > 0 {
             try_alloc_maybeuninit_pref(alloc_pref, false, up_size, "Cb upsampled")?
         } else {
@@ -258,9 +245,7 @@ impl StreamingBuffers {
             Vec::new()
         };
 
-        // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted,
-        // otherwise 3bpp RGB (grayscale always 1bpp).
-        let (out_bpp, out_4bpp, swap_rb) = output_pixel_layout(geom, streaming_output_format);
+        let out_bpp = layout.bytes_per_pixel();
 
         // Full-image output buffer sized from the (untrusted) SOF dimensions →
         // default fallible.
@@ -282,8 +267,6 @@ impl StreamingBuffers {
             need_fancy,
             ext_height,
             out_bpp,
-            out_4bpp,
-            swap_rb,
             rgb,
         })
     }
@@ -358,7 +341,7 @@ pub(super) fn select_upsample_fn(
     }
     use crate::decode::upsample::{
         upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
-        upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_libjpeg_turbo,
+        upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_libjpeg_turbo,
     };
     Ok(Some(match (geom.h_ratio, geom.v_ratio) {
         (2, 2) => match chroma_upsampling {
@@ -373,7 +356,8 @@ pub(super) fn select_upsample_fn(
         },
         (2, 1) => match chroma_upsampling {
             ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
-            ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
+            // Nearest 4:2:2 takes the box path (`uses_box`).
+            ChromaUpsampling::NearestNeighbor => unreachable!(),
         },
         (1, 2) => match chroma_upsampling {
             ChromaUpsampling::Triangle => upsample_h1v2_i16_libjpeg,
@@ -551,10 +535,16 @@ pub(super) fn decode_mcu_row(
 ///
 /// `chroma_row_skip` is the number of upsampled rows to skip at the start
 /// of the chroma buffer (to skip context row output in fancy mode).
-/// When `out_4bpp` is true, writes BGRA/RGBA (4 bytes/pixel) with alpha=255;
-/// `swap_rb` controls B,G,R,A vs R,G,B,A order.
+///
+/// Out of line on purpose: it runs once per MCU row, and inlining it into
+/// `run_fancy_h2v2_loop` changed the register allocation of the inlined
+/// entropy decoder (one more instruction per decoded AC coefficient, +2.0%
+/// decode Ir on a 2048² 4:2:0 baseline file; 2026-10-10, callgrind,
+/// `valgrind_decode`). Kept out of line it measured -1.25% vs the
+/// pre-`RowKernel` code there, and -0.01% on the 4:2:2 baseline file
+/// (`run_simple_loop`).
 #[allow(clippy::too_many_arguments)]
-#[inline(always)]
+#[inline(never)]
 pub(super) fn output_mcu_row(
     mcu_y: usize,
     y_strip: &[i16],
@@ -563,63 +553,25 @@ pub(super) fn output_mcu_row(
     cb_up: &[i16],
     cr_up: &[i16],
     chroma_row_skip: usize,
-    rgb: &mut [u8],
+    out: &mut [u8],
     width: usize,
     height: usize,
-    is_rgb: bool,
-    out_4bpp: bool,
-    swap_rb: bool,
-    turbo_color: bool,
+    kernel: RowKernel,
 ) {
-    let bpp = if out_4bpp { 4 } else { 3 };
+    let row_bytes = width * kernel.layout().bytes_per_pixel();
     let y_start = mcu_y * y_strip_height;
     let rows = y_strip_height.min(height.saturating_sub(y_start));
     let cols = width.min(y_strip_width);
     for row in 0..rows {
         let y_off = row * y_strip_width;
         let up_off = (chroma_row_skip + row) * y_strip_width;
-        let rgb_off = (y_start + row) * width * bpp;
-        if is_rgb {
-            // RGB JPEG: interleave planes without YCbCr→RGB matrix
-            if out_4bpp {
-                for px in 0..cols {
-                    let o = rgb_off + px * 4;
-                    if swap_rb {
-                        rgb[o] = cr_up[up_off + px].clamp(0, 255) as u8;
-                        rgb[o + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                        rgb[o + 2] = y_strip[y_off + px].clamp(0, 255) as u8;
-                    } else {
-                        rgb[o] = y_strip[y_off + px].clamp(0, 255) as u8;
-                        rgb[o + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                        rgb[o + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
-                    }
-                    rgb[o + 3] = 255;
-                }
-            } else {
-                for px in 0..cols {
-                    rgb[rgb_off + px * 3] = y_strip[y_off + px].clamp(0, 255) as u8;
-                    rgb[rgb_off + px * 3 + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                    rgb[rgb_off + px * 3 + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
-                }
-            }
-        } else if out_4bpp {
-            ycbcr_planes_i16_to_xrgba_u8(
-                &y_strip[y_off..y_off + cols],
-                &cb_up[up_off..up_off + cols],
-                &cr_up[up_off..up_off + cols],
-                &mut rgb[rgb_off..rgb_off + cols * 4],
-                swap_rb,
-                turbo_color,
-            );
-        } else {
-            ycbcr_planes_i16_to_rgb_u8(
-                &y_strip[y_off..y_off + cols],
-                &cb_up[up_off..up_off + cols],
-                &cr_up[up_off..up_off + cols],
-                &mut rgb[rgb_off..rgb_off + cols * 3],
-                turbo_color,
-            );
-        }
+        let o = (y_start + row) * row_bytes;
+        kernel.row(
+            &y_strip[y_off..y_off + cols],
+            &cb_up[up_off..],
+            &cr_up[up_off..],
+            &mut out[o..o + row_bytes],
+        );
     }
 }
 
@@ -760,8 +712,6 @@ fn output_fancy_h1v2_strip(
     height: usize,
     y_start: usize,
     rows: usize,
-    out_4bpp: bool,
-    swap_rb: bool,
 ) {
     use crate::decode::upsample::upsample_h1v2_row_ext;
 
@@ -770,7 +720,7 @@ fn output_fancy_h1v2_strip(
     // The fused upsample+convert row kernel is AVX2; other targets
     // upsample then convert through `output_mcu_row`.
     #[cfg(target_arch = "x86_64")]
-    let fused = inputs.idct_v3.is_some() && !inputs.is_rgb && !out_4bpp && !swap_rb;
+    let fused = inputs.idct_v3.is_some() && inputs.kernel.ycbcr_rgb();
     #[cfg(not(target_arch = "x86_64"))]
     let (fused, _) = (false, y_start);
 
@@ -837,10 +787,7 @@ fn output_fancy_h1v2_strip(
             rgb,
             width,
             height,
-            inputs.is_rgb,
-            out_4bpp,
-            swap_rb,
-            inputs.turbo_color,
+            inputs.kernel,
         );
     }
 }
@@ -859,8 +806,10 @@ pub(super) struct LoopInputs<'a, 'b> {
     /// straight to the AVX2 kernels — no per-block `summon()`/dispatch.
     #[cfg(target_arch = "x86_64")]
     pub idct_v3: Option<archmage::X64V3Token>,
-    pub is_rgb: bool,
-    /// libjpeg-turbo-exact YCbCr→RGB (IdctMethod::Libjpeg).
+    /// Planes → pixels for the frame's colour model and the output layout.
+    pub kernel: RowKernel,
+    /// `IdctMethod::Libjpeg`: libjpeg-turbo-exact IDCT, h2v2 upsampling bias
+    /// and (for a YCbCr kernel) colour; the kernel carries the same flag.
     pub turbo_color: bool,
 }
 
@@ -1005,13 +954,10 @@ pub(super) fn run_fancy_h2v2_loop(
                     geom.height,
                     y_start,
                     rows,
-                    bufs.out_4bpp,
-                    bufs.swap_rb,
                 );
             } else {
                 #[cfg(target_arch = "x86_64")]
-                let can_fuse =
-                    inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
+                let can_fuse = inputs.idct_v3.is_some() && inputs.kernel.ycbcr_rgb();
                 #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
                 let mut used_fused = false;
                 #[cfg(target_arch = "x86_64")]
@@ -1070,10 +1016,7 @@ pub(super) fn run_fancy_h2v2_loop(
                         &mut bufs.rgb,
                         geom.width,
                         geom.height,
-                        inputs.is_rgb,
-                        bufs.out_4bpp,
-                        bufs.swap_rb,
-                        inputs.turbo_color,
+                        inputs.kernel,
                     );
                 }
             }
@@ -1145,13 +1088,10 @@ pub(super) fn run_fancy_h2v2_loop(
                 geom.height,
                 y_start,
                 rows,
-                bufs.out_4bpp,
-                bufs.swap_rb,
             );
         } else {
             #[cfg(target_arch = "x86_64")]
-            let can_fuse =
-                inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
+            let can_fuse = inputs.idct_v3.is_some() && inputs.kernel.ycbcr_rgb();
             #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
             let mut used_fused = false;
             #[cfg(target_arch = "x86_64")]
@@ -1210,10 +1150,7 @@ pub(super) fn run_fancy_h2v2_loop(
                     &mut bufs.rgb,
                     geom.width,
                     geom.height,
-                    inputs.is_rgb,
-                    bufs.out_4bpp,
-                    bufs.swap_rb,
-                    inputs.turbo_color,
+                    inputs.kernel,
                 );
             }
         }
@@ -1235,8 +1172,6 @@ pub(super) fn run_simple_loop(
     c_data_offset: usize,
     stop: &impl enough::Stop,
 ) -> Result<()> {
-    use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
-
     let mcu_rows = geom.mcu_rows;
     let mcu_cols = geom.mcu_cols;
     let c_strip_width = geom.c_strip_width;
@@ -1248,10 +1183,8 @@ pub(super) fn run_simple_loop(
     let width = geom.width;
     let height = geom.height;
     let is_grayscale = geom.is_grayscale;
-    let out_bpp = bufs.out_bpp;
-    let out_4bpp = bufs.out_4bpp;
-    let swap_rb = bufs.swap_rb;
-    let is_rgb = inputs.is_rgb;
+    let row_bytes = width * bufs.out_bpp;
+    let kernel = inputs.kernel;
 
     for mcu_y in 0..mcu_rows {
         if stop.should_stop() {
@@ -1274,119 +1207,28 @@ pub(super) fn run_simple_loop(
             is_grayscale,
         )?;
 
-        if is_grayscale {
+        if is_grayscale || use_fused_box {
+            // Grayscale, or nearest-neighbour 4:2:2 / 4:2:0: each chroma row
+            // covers `v_ratio` luma rows and the kernel replicates each chroma
+            // sample across two pixels.
             let y_start = mcu_y * y_strip_height;
             let rows = y_strip_height.min(height.saturating_sub(y_start));
             let cols = width.min(y_strip_width);
-            if out_4bpp {
-                // Grayscale → BGRA/RGBA: write [v, v, v, 0xFF] per pixel.
-                // 16-pixel chunks for auto-vectorization, remainder scalar.
-                for row in 0..rows {
-                    let strip_off = row * y_strip_width;
-                    let out_off = (y_start + row) * width * 4;
-                    let src = &bufs.y_strip_a[strip_off..strip_off + cols];
-                    let dst = &mut bufs.rgb[out_off..out_off + cols * 4];
-                    let chunks = cols / 16;
-                    for c in 0..chunks {
-                        let si = c * 16;
-                        let di = c * 64;
-                        let s: &[i16; 16] = src[si..si + 16].try_into().unwrap();
-                        let d: &mut [u8; 64] = (&mut dst[di..di + 64]).try_into().unwrap();
-                        for i in 0..16 {
-                            let v = s[i].clamp(0, 255) as u8;
-                            d[i * 4] = v;
-                            d[i * 4 + 1] = v;
-                            d[i * 4 + 2] = v;
-                            d[i * 4 + 3] = 255;
-                        }
-                    }
-                    for px in chunks * 16..cols {
-                        let v = src[px].clamp(0, 255) as u8;
-                        let o = px * 4;
-                        dst[o] = v;
-                        dst[o + 1] = v;
-                        dst[o + 2] = v;
-                        dst[o + 3] = 255;
-                    }
-                }
-            } else {
-                // Grayscale → 1bpp gray output
-                for row in 0..rows {
-                    let strip_off = row * y_strip_width;
-                    let out_off = (y_start + row) * width;
-                    for px in 0..cols {
-                        bufs.rgb[out_off + px] = bufs.y_strip_a[strip_off + px].clamp(0, 255) as u8;
-                    }
-                }
-            }
-        } else if use_fused_box {
-            let y_start = mcu_y * y_strip_height;
-            let y_rows = y_strip_height.min(height.saturating_sub(y_start));
-            let c_rows = c_strip_height;
-            let cols = width.min(y_strip_width);
-            for row in 0..y_rows {
-                let c_row = (row / 2).min(c_rows.saturating_sub(1));
+            for row in 0..rows {
                 let y_off = row * y_strip_width;
-                let c_off = c_row * c_strip_width;
-                let rgb_off = (y_start + row) * width * out_bpp;
-                if is_rgb && out_4bpp {
-                    for px in 0..cols {
-                        let cx = px / 2;
-                        let o = rgb_off + px * 4;
-                        if swap_rb {
-                            bufs.rgb[o] = bufs.cr_a[c_off + cx].clamp(0, 255) as u8;
-                            bufs.rgb[o + 1] = bufs.cb_a[c_off + cx].clamp(0, 255) as u8;
-                            bufs.rgb[o + 2] = bufs.y_strip_a[y_off + px].clamp(0, 255) as u8;
-                        } else {
-                            bufs.rgb[o] = bufs.y_strip_a[y_off + px].clamp(0, 255) as u8;
-                            bufs.rgb[o + 1] = bufs.cb_a[c_off + cx].clamp(0, 255) as u8;
-                            bufs.rgb[o + 2] = bufs.cr_a[c_off + cx].clamp(0, 255) as u8;
-                        }
-                        bufs.rgb[o + 3] = 255;
-                    }
-                } else if is_rgb {
-                    for px in 0..cols {
-                        let cx = px / 2;
-                        bufs.rgb[rgb_off + px * 3] = bufs.y_strip_a[y_off + px].clamp(0, 255) as u8;
-                        bufs.rgb[rgb_off + px * 3 + 1] = bufs.cb_a[c_off + cx].clamp(0, 255) as u8;
-                        bufs.rgb[rgb_off + px * 3 + 2] = bufs.cr_a[c_off + cx].clamp(0, 255) as u8;
-                    }
-                } else if out_4bpp {
-                    // No fused h2v2 box→4bpp SIMD kernel yet.
-                    // Expand chroma inline (box upsample: duplicate each
-                    // sample to 2 pixels) then call the SIMD xrgba function.
-                    // This is a cold path (NearestNeighbor + 4bpp).
-                    let chroma_w = (cols + 1) / 2;
-                    let needed = cols;
-                    // Reuse cb_up/cr_up scratch buffers (already allocated
-                    // with at least y_strip_width per row)
-                    for px in 0..chroma_w {
-                        let val_cb = bufs.cb_a[c_off + px];
-                        let val_cr = bufs.cr_a[c_off + px];
-                        let x0 = px * 2;
-                        bufs.cb_up[x0] = val_cb;
-                        bufs.cr_up[x0] = val_cr;
-                        if x0 + 1 < needed {
-                            bufs.cb_up[x0 + 1] = val_cb;
-                            bufs.cr_up[x0 + 1] = val_cr;
-                        }
-                    }
-                    ycbcr_planes_i16_to_xrgba_u8(
-                        &bufs.y_strip_a[y_off..y_off + cols],
-                        &bufs.cb_up[..cols],
-                        &bufs.cr_up[..cols],
-                        &mut bufs.rgb[rgb_off..rgb_off + cols * 4],
-                        swap_rb,
-                        inputs.turbo_color,
-                    );
+                let o = (y_start + row) * row_bytes;
+                let y_row = &bufs.y_strip_a[y_off..y_off + cols];
+                let out = &mut bufs.rgb[o..o + row_bytes];
+                if is_grayscale {
+                    kernel.row(y_row, &[], &[], out);
                 } else {
-                    fused_h2v2_box_ycbcr_to_rgb_u8(
-                        &bufs.y_strip_a[y_off..y_off + cols],
-                        &bufs.cb_a[c_off..c_off + (cols + 1) / 2],
-                        &bufs.cr_a[c_off..c_off + (cols + 1) / 2],
-                        &mut bufs.rgb[rgb_off..rgb_off + cols * 3],
-                        cols,
-                        inputs.turbo_color,
+                    let c_row = row / geom.v_ratio;
+                    let c_off = c_row.min(c_strip_height.saturating_sub(1)) * c_strip_width;
+                    kernel.row_h2(
+                        y_row,
+                        &bufs.cb_a[c_off..c_off + c_strip_width],
+                        &bufs.cr_a[c_off..c_off + c_strip_width],
+                        out,
                     );
                 }
             }
@@ -1407,9 +1249,7 @@ pub(super) fn run_simple_loop(
             // chroma planes are never materialized.
             #[cfg(target_arch = "x86_64")]
             let can_fuse = inputs.idct_v3.is_some()
-                && !is_rgb
-                && !out_4bpp
-                && !swap_rb
+                && kernel.ycbcr_rgb()
                 && chroma_upsampling == ChromaUpsampling::Triangle
                 && geom.h_ratio == 2
                 && geom.v_ratio == 1;
@@ -1451,13 +1291,10 @@ pub(super) fn run_simple_loop(
                 used_fused = true;
             }
             if !used_fused {
-                use crate::decode::upsample::{
-                    upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
-                };
-                let upsample = match chroma_upsampling {
-                    ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg_strided,
-                    ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
-                };
+                // Only triangle reaches here: nearest-neighbour 4:2:2 takes the
+                // box branch above (`StreamingGeometry::uses_box`).
+                debug_assert!(matches!(chroma_upsampling, ChromaUpsampling::Triangle));
+                use crate::decode::upsample::upsample_h2v1_i16_libjpeg_strided as upsample;
                 upsample(
                     &bufs.cb_a[..c_strip_width * c_strip_height],
                     real_cw,
@@ -1489,10 +1326,7 @@ pub(super) fn run_simple_loop(
                     &mut bufs.rgb,
                     width,
                     height,
-                    is_rgb,
-                    out_4bpp,
-                    swap_rb,
-                    inputs.turbo_color,
+                    kernel,
                 );
             }
         }

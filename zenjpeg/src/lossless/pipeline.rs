@@ -135,9 +135,12 @@ fn transform_with(
         }
     };
 
-    // Step 4: Re-encode as JPEG
+    // Step 4: Re-encode as JPEG, each preserved segment on its source side
+    // of SOF (`placement`).
     let mut segments: Vec<PreservedSegment> =
         extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    // Source positions, taken before the EXIF edit changes a payload.
+    let after_sof = super::placement::after_sof_flags(jpeg_data, &segments);
     if reset_exif_orientation {
         for seg in &mut segments {
             if seg.segment_type == SegmentType::Exif {
@@ -145,7 +148,8 @@ fn transform_with(
             }
         }
     }
-    encode_from_coefficients(&transformed, Some(&segments), &carry, 0, stop)
+    let preserved = super::placement::Placed::new(&segments, &after_sof);
+    encode_from_coefficients(&transformed, Some(preserved), &carry, 0, stop)
 }
 
 /// Each carried secondary is decoded and re-encoded at its declared size, so
@@ -605,7 +609,7 @@ fn refuse_nested(jpeg_data: &[u8], extras: Option<&DecodedExtras>) -> Result<()>
 /// in the primary length once it is known.
 pub(super) fn write_preserved_segments(
     output: &mut Vec<u8>,
-    preserved: Option<&[PreservedSegment]>,
+    preserved: Option<super::placement::Placed<'_>>,
     carry: &Carry<'_>,
 ) -> Result<Option<usize>> {
     let secondaries = carry.images.as_slice();
@@ -618,8 +622,10 @@ pub(super) fn write_preserved_segments(
             mpf_at = Some(off);
         }
     };
+    // Only the segments that sat before SOF in the source; those after SOF
+    // go after the frame header (`write_after_sof_segments`).
     if let Some(segments) = preserved {
-        for seg in segments {
+        for seg in segments.side(false) {
             match seg.segment_type {
                 SegmentType::Mpf => place_mpf(output),
                 SegmentType::Xmp if !secondaries.is_empty() => {
@@ -661,6 +667,24 @@ pub(super) fn write_preserved_segments(
     }
     place_mpf(output);
     Ok(mpf_at)
+}
+
+/// Write the preserved segments the source placed between SOF and the first
+/// SOS, right after the output's frame header: a JFIF or Adobe segment there
+/// does not decide the colour model, so moving it before SOF would change how
+/// the output decodes (`placement`). A source MPF index is never copied (see
+/// [`write_preserved_segments`]).
+pub(super) fn write_after_sof_segments(
+    output: &mut Vec<u8>,
+    preserved: Option<super::placement::Placed<'_>>,
+) {
+    if let Some(segments) = preserved {
+        for seg in segments.side(true) {
+            if seg.segment_type != SegmentType::Mpf {
+                write_marker_segment(output, seg.marker, &seg.data);
+            }
+        }
+    }
 }
 
 /// Complete a container assembled with [`write_preserved_segments`]: after the
@@ -740,7 +764,7 @@ fn mpf_sizes(secondaries: &[MpfImage]) -> Vec<(u32, crate::encode::extras::MpfIm
 /// - Optional restart markers at specified MCU intervals
 pub(super) fn encode_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[PreservedSegment]>,
+    preserved_segments: Option<super::placement::Placed<'_>>,
     carry: &Carry<'_>,
     restart_interval: u16,
     stop: &impl Stop,
@@ -866,6 +890,10 @@ pub(super) fn encode_from_coefficients(
 
     // SOF0 - Start of Frame (baseline)
     write_sof(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+
+    // Preserved segments the source placed after SOF stay there: a JFIF or
+    // Adobe segment there does not decide the colour model (`placement`).
+    write_after_sof_segments(&mut output, preserved_segments);
 
     // DHT - Huffman tables
     write_huffman_table(&mut output, 0x00, &dc_luma_table); // DC luma, table 0
@@ -1158,13 +1186,16 @@ pub fn apply_exif_orientation_with_edge_handling(
     // Step 4: Re-encode, rewriting EXIF orientation to 1 (Normal)
     let mut segments: Vec<PreservedSegment> =
         extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    // Source positions, taken before the EXIF edit changes a payload.
+    let after_sof = super::placement::after_sof_flags(jpeg_data, &segments);
     for seg in &mut segments {
         if seg.segment_type == SegmentType::Exif {
             set_exif_orientation(&mut seg.data, 1);
         }
     }
 
-    encode_from_coefficients(&transformed, Some(&segments), &carry, 0, &stop)
+    let preserved = super::placement::Placed::new(&segments, &after_sof);
+    encode_from_coefficients(&transformed, Some(preserved), &carry, 0, &stop)
 }
 
 #[cfg(test)]

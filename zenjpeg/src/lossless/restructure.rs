@@ -20,7 +20,8 @@ use super::coeff_transform::{TransformConfig, TransformedCoefficients, transform
 use super::geometry::McuGeom;
 use super::pipeline::{
     coefficient_out_of_range, component_to_blocks, encode_from_coefficients, finish_container,
-    transform_secondary_images, write_preserved_segments, write_quant_tables,
+    transform_secondary_images, write_after_sof_segments, write_preserved_segments,
+    write_quant_tables,
 };
 
 /// Output scan structure for restructured JPEG.
@@ -131,8 +132,11 @@ pub fn restructure(
         &stop,
     )?;
 
-    // Step 5: Encode with the requested structure
-    let preserved = extras.as_ref().map(|e| e.segments());
+    // Step 5: Encode with the requested structure, each preserved segment on
+    // its source side of SOF (`placement`)
+    let segments = extras.as_ref().map(|e| e.segments()).unwrap_or(&[]);
+    let after_sof = super::placement::after_sof_flags(jpeg_data, segments);
+    let preserved = Some(super::placement::Placed::new(segments, &after_sof));
 
     match config.output_mode {
         OutputMode::Sequential => {
@@ -294,7 +298,7 @@ fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<Progres
 /// optimized tables.
 pub(crate) fn encode_progressive_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[crate::decode::PreservedSegment]>,
+    preserved_segments: Option<super::placement::Placed<'_>>,
     carry: &super::pipeline::Carry<'_>,
     _restart_interval: u16,
     stop: &impl Stop,
@@ -419,6 +423,9 @@ pub(crate) fn encode_progressive_from_coefficients(
 
     // SOF2 (progressive)
     write_sof2(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+
+    // Preserved segments the source placed after SOF stay there (`placement`)
+    write_after_sof_segments(&mut output, preserved_segments);
 
     // DHT — DC tables initially
     write_progressive_dc_tables(&mut output, &tables, num_dc_tables);

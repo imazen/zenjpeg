@@ -42,7 +42,7 @@ use crate::recompress::measure::{BlockErrorMap, MeasureCtx};
 use crate::recompress::router::StrategyParams;
 use crate::recompress::source::SourceAnalysis;
 use crate::recompress::strategies::preserve::prepare_preserve;
-use crate::recompress::strategies::preserve_emit::{AqMask, EmitConfig, emit_preserved};
+use crate::recompress::strategies::preserve_emit::{AqMask, EmitConfig, emit_preserved_placed};
 
 /// Minimum measured overshoot (`a_hat − target`, zensim-A) before a
 /// refinement pass is attempted. Mirrors the Preserve strategy's
@@ -147,7 +147,12 @@ pub(crate) fn refine_preserve(
             aq_mask: Some(mask_from_depths(&depths)),
             preserved_segments: prepared.preserved_segments.clone(),
         };
-        let Ok(bytes) = emit_preserved(&prepared.coeffs, prepared.subsampling, &cfg) else {
+        let Ok(bytes) = emit_preserved_placed(
+            &prepared.coeffs,
+            prepared.subsampling,
+            &cfg,
+            &prepared.preserved_after_sof,
+        ) else {
             break;
         };
         let Ok((g, new_map)) = ctx.score_with_blocks(&bytes) else {
