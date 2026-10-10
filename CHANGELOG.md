@@ -70,6 +70,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   holes and extended-XMP headers are their own parts; the job's strictness,
   policy, limits and output path are followed. (62b7e7b5, c8e70083,
   4a889024, c5dafa31, bca48b52, 06eda96a)
+  Review round 2: progressive AC-first scans are counted the way
+  `decode_ac_first_scan_tracked` decodes them (#224), and junk of 8 bytes or
+  more before an RSTn or after a scan's last MCU fails a Strict decode.
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal

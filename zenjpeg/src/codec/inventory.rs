@@ -1226,9 +1226,13 @@ impl Table {
         };
         let b = data.get(d.range.clone())?;
         let counts: [u8; 16] = b.get(1..17)?.try_into().ok()?;
-        H::from_bits_values(&counts, b.get(17..)?)
-            .ok()
-            .map(|t| Self::Owned(Box::new(t)))
+        // As `parse_huffman_table` builds them: AC tables carry `fast_ac`.
+        let built = if ac {
+            H::from_bits_values_ac(&counts, b.get(17..)?)
+        } else {
+            H::from_bits_values(&counts, b.get(17..)?)
+        };
+        built.ok().map(|t| Self::Owned(Box::new(t)))
     }
 }
 
@@ -1281,6 +1285,30 @@ fn count_scan(
         restart,
     };
     Some(entropy::count(data, start, end, &scan))
+}
+
+/// What follows the first `n` data bytes of `b` (a stuffed `FF 00`, with
+/// any fill bytes before its `00`, is one data byte), or `None` when `b`
+/// holds fewer.
+fn after_data_bytes(b: &[u8], n: usize) -> Option<&[u8]> {
+    let mut i = 0;
+    for _ in 0..n {
+        if i >= b.len() {
+            return None;
+        }
+        if b[i] == 0xFF {
+            let run = i;
+            while i < b.len() && b[i] == 0xFF {
+                i += 1;
+            }
+            if b.get(i) != Some(&0x00) {
+                // A marker: the decoder's read-ahead stops before it.
+                return Some(&b[run..]);
+            }
+        }
+        i += 1;
+    }
+    Some(&b[i.min(b.len())..])
 }
 
 /// Whether bytes the decoder skips between markers hold anything but
@@ -1582,18 +1610,55 @@ impl Walk<'_> {
             return Ok(());
         }
         for (r, after_last) in &c.tails {
-            let detail = if *after_last {
-                "after the last MCU's entropy-coded data: never decoded; the decoder skips it as \
-                 stray bytes before the next marker (Strict may reject them, depending on how \
-                 far its bit reader read ahead)"
+            // `BitReader::refill` keeps at most 7 data bytes in its 64-bit
+            // buffer past the last consumed bit, so what lies further is
+            // what the decoder meets next.
+            let beyond = after_data_bytes(&self.data[r.clone()], 7);
+            let (detail, strict_fails) = if *after_last {
+                let fails = beyond.is_some_and(data_has_stray);
+                let detail = if fails {
+                    "after the last MCU's entropy-coded data: never decoded; the decoder skips it \
+                     as stray bytes before the next marker, which a Strict decode rejects \
+                     (ExtraneousBytesSkipped)"
+                } else {
+                    "after the last MCU's entropy-coded data: never decoded; the decoder skips it \
+                     as stray bytes before the next marker (Strict may reject them, depending on \
+                     how far its bit reader read ahead)"
+                };
+                (detail, fails)
+            } else if c.drains_before_rst {
+                (
+                    "after a restart interval's entropy-coded data, before its RSTn: never \
+                     decoded; the decoder drains it before reading the RSTn",
+                    false,
+                )
             } else {
-                "after a restart interval's entropy-coded data, before its RSTn: never decoded; \
-                 the decoder skips it"
+                // `read_restart_marker` reads at the bit reader's position;
+                // only a non-Strict decoder resyncs forward to the RSTn.
+                let fails = beyond.is_some_and(|b| !b.is_empty());
+                let detail = if fails {
+                    "after a restart interval's entropy-coded data, before its RSTn: never \
+                     decoded; a non-Strict decoder resyncs to the RSTn, a Strict one fails \
+                     reading the marker inside it"
+                } else {
+                    "after a restart interval's entropy-coded data, before its RSTn: never \
+                     decoded; a non-Strict decoder skips it (Strict may reject it, depending on \
+                     how far its bit reader read ahead)"
+                };
+                (detail, fails)
             };
-            self.add(
+            let child = self.add(
                 Some(node),
                 gap(r.clone(), Disposition::Unreferenced).with_detail(detail),
             )?;
+            if strict_fails {
+                let why = if *after_last {
+                    "extraneous bytes between markers"
+                } else {
+                    "expected restart marker not found"
+                };
+                self.fail(st, rules, child, here, Fails::Strict, why);
+            }
         }
         if let Some(at) = c.stop_at {
             let child = self.add(

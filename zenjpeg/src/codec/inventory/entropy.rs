@@ -96,8 +96,13 @@ pub(super) struct Count {
     /// follows as stray bytes.
     pub stop_at: Option<usize>,
     /// A run past the end of a block (`AcIndexOverflow`, an error when
-    /// Strict).
+    /// Strict). Progressive AC-first scans never report it.
     pub ac_overflow: bool,
+    /// Whether the decoder drains the bytes before each RSTn
+    /// (`decode_ac_first_scan_tracked`) instead of reading the RSTn at its
+    /// bit reader's position, which a Strict decode rejects when junk sits
+    /// there.
+    pub drains_before_rst: bool,
     /// An RSTn with the wrong number (`RestartMarkerResync`, an error when
     /// Strict; other levels accept it).
     pub rst_mismatch: bool,
@@ -109,10 +114,15 @@ enum Stop {
     Out,
     Invalid(usize),
     BadDc(usize),
+    /// A progressive AC-first block met a code that matches no symbol:
+    /// `decode_ac_first_scan_tracked` ends the block without consuming
+    /// it, so every later block of the interval reads nothing.
+    Stall,
 }
 
 /// Reads bits a byte at a time, the way `BitReader::read_byte_slow`
 /// unstuffs them, and remembers where the last bit it handed out came from.
+#[derive(Clone)]
 struct Bits<'a> {
     data: &'a [u8],
     /// Next byte to load.
@@ -207,6 +217,23 @@ impl<'a> Bits<'a> {
         Ok(())
     }
 
+    /// The next `n` bits without consuming them, as the decoder's bit
+    /// buffer shows them: zero bits past a marker, `None` past the end of
+    /// the data.
+    fn peek(&self, n: u8) -> Option<u32> {
+        let mut c = self.clone();
+        let mut v = 0;
+        for _ in 0..n {
+            v <<= 1;
+            match c.bit() {
+                Ok(b) => v |= b,
+                Err(_) if c.marker.is_some() => {}
+                Err(_) => return None,
+            }
+        }
+        Some(v)
+    }
+
     fn value(&mut self, n: u8) -> Result<u32, Stop> {
         let mut v = 0;
         for _ in 0..n {
@@ -275,6 +302,7 @@ pub(super) fn count(data: &[u8], start: usize, limit: usize, scan: &Scan<'_, '_>
         tails: Vec::new(),
         stop_at: None,
         ac_overflow: false,
+        drains_before_rst: scan.progressive && !(scan.ss == 0 && scan.se == 0),
         rst_mismatch: false,
     };
     // `decode_progressive_scan`: a DC scan has Ss = Se = 0, every other
@@ -330,6 +358,11 @@ pub(super) fn count(data: &[u8], start: usize, limit: usize, scan: &Scan<'_, '_>
             mcu += 1;
         }
         let last = interval_end >= mcus;
+        if matches!(stopped, Some(Stop::Stall)) {
+            // Nothing more is read in this interval: its data ends here.
+            mcu = interval_end;
+            stopped = None;
+        }
         match stopped {
             Some(Stop::Invalid(at)) => {
                 // `decode_huffman_symbol_lenient` takes an invalid code as
@@ -378,7 +411,7 @@ pub(super) fn count(data: &[u8], start: usize, limit: usize, scan: &Scan<'_, '_>
                     }
                 }
             }
-            None => {}
+            Some(Stop::Stall) | None => {}
         }
         // The interval's data is complete: what follows up to the next
         // marker is never decoded. After the last MCU that is everything
@@ -430,29 +463,63 @@ fn block(
             }
             return dc(bits, c.dc);
         }
-        // AC first scan.
+        // AC first scan, as `decode_ac_first_scan_tracked` decodes it
+        // (entropy/decoder.rs): the table's own `fast_ac` and
+        // `fast_lookup` on a FAST_BITS peek, then `decode_slow` on 16 bits.
         if *eobrun > 0 {
             *eobrun -= 1;
             return Ok(());
         }
+        let fast = HuffmanDecodeTable::FAST_BITS as u8;
+        let se = u32::from(scan.se);
         let mut k = u32::from(scan.ss);
-        while k <= u32::from(scan.se) {
-            let rs = bits.symbol(c.ac)?;
-            let (r, s) = (rs >> 4, rs & 0x0F);
-            if s == 0 {
-                if r < 15 {
-                    // EOBn: this block and 2^r - 1 + extra bits more.
-                    *eobrun = (1u64 << r) - 1 + u64::from(bits.value(r)?);
-                    break;
+        while k <= se {
+            // Past the end of the data the decoder takes a partial peek;
+            // the bits have run out either way.
+            let peek = bits.peek(fast).ok_or(Stop::Out)?;
+            if let Some(entry) = c.ac.fast_ac_array().map(|a| a[peek as usize])
+                && entry != 0
+            {
+                // Symbol and value bits in one: a run past Se has read them.
+                bits.bits((entry & 0xF) as u8)?;
+                k += ((entry >> 4) & 0xF) as u32;
+                if k > se {
+                    return Ok(());
                 }
-                k += 16;
+                k += 1;
                 continue;
             }
+            let lookup = c.ac.fast_lookup[peek as usize];
+            let rs = if lookup >= 0 {
+                bits.bits((lookup >> 8) as u8)?;
+                (lookup & 0xFF) as u8
+            } else {
+                let peek16 = bits.peek(16).ok_or(Stop::Out)?;
+                match c.ac.decode_slow(peek16 as i32) {
+                    Some((sym, len)) => {
+                        bits.bits(len)?;
+                        sym
+                    }
+                    // An invalid code ends the block, unconsumed.
+                    None => return Err(Stop::Stall),
+                }
+            };
+            let (r, s) = (rs >> 4, rs & 0x0F);
+            if s == 0 {
+                if r == 15 {
+                    k += 16;
+                    continue;
+                }
+                if r > 0 {
+                    // EOBn: this block and 2^r - 1 + extra bits more.
+                    *eobrun = (1u64 << r) - 1 + u64::from(bits.value(r)?);
+                }
+                return Ok(());
+            }
             k += u32::from(r);
-            if k > u32::from(scan.se) {
-                // Run past the band: the value bits are read, the block ends.
-                *ac_overflow = true;
-                return bits.bits(s);
+            if k > se {
+                // Run past the band: the block ends, its value bits unread.
+                return Ok(());
             }
             bits.bits(s)?;
             k += 1;

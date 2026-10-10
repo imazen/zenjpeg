@@ -1105,3 +1105,217 @@ fn junk_before_an_rst_marker_is_unreferenced() {
     assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
     assert_eq!(p.range, rst as u64..rst as u64 + 4, "{}", show(p));
 }
+
+// ── Review round 2 ─────────────────────────────────────────────────────
+
+const LEVELS: [&str; 4] = ["balanced", "strict", "lenient", "permissive"];
+
+/// A job at a decoder strictness level (Strict through the decode policy,
+/// the others through the inner config).
+fn level_job(level: &str) -> JpegDecodeJob {
+    let inner = |f: fn(zenjpeg::decode::DecodeConfig) -> zenjpeg::decode::DecodeConfig| {
+        let mut cfg = JpegDecoderConfig::new();
+        let c = f(cfg.inner().clone());
+        *cfg.inner_mut() = c;
+        cfg.job()
+    };
+    match level {
+        "strict" => {
+            let mut p = zencodec::decode::DecodePolicy::none();
+            p.strict = Some(true);
+            job().with_policy(p)
+        }
+        "lenient" => inner(|c| c.lenient()),
+        "permissive" => inner(|c| c.permissive()),
+        _ => job(),
+    }
+}
+
+fn level_pixels(level: &str, d: &[u8]) -> Option<Vec<u8>> {
+    decode(level_job(level), d).ok().map(|o| pixels(&o))
+}
+
+fn any_scan_consumed(i: &Inventory) -> bool {
+    i.parts()
+        .iter()
+        .any(|p| p.kind == zencodec::inventory::PartKind::ScanData && p.disposition.is_consumed())
+}
+
+/// 8 (or `w`) x 8 progressive grey: a DC-first scan (`dc`: its data byte)
+/// and an AC-first scan over 1..=5 whose data is `ac`. The AC table has
+/// EOB (`0`) and 0xF1 (`100000000`).
+fn tiny_progressive(w: u8, dc: u8, ac: &[u8]) -> Vec<u8> {
+    let mut f = vec![0xFF, 0xD8];
+    let mut q = vec![0x00];
+    q.extend([1u8; 64]);
+    f.extend(seg(0xDB, &q));
+    let mut dht = vec![0x00];
+    let mut b = [0u8; 16];
+    b[0] = 1;
+    dht.extend(b);
+    dht.push(0x00);
+    dht.push(0x10);
+    let mut b2 = [0u8; 16];
+    b2[0] = 1;
+    b2[8] = 1;
+    dht.extend(b2);
+    dht.extend([0x00, 0xF1]);
+    f.extend(seg(0xC4, &dht));
+    f.extend(seg(0xC2, &[8, 0, 8, 0, w, 1, 1, 0x11, 0]));
+    f.extend(seg(0xDA, &[1, 1, 0x00, 0, 0, 0x00]));
+    f.push(dc);
+    f.extend(seg(0xDA, &[1, 1, 0x00, 1, 5, 0x00]));
+    f.extend(ac);
+    f.extend([0xFF, 0xD9]);
+    f
+}
+
+/// At every level, the decode succeeds exactly when the inventory keeps
+/// scan data consumed.
+fn agrees_at_every_level(tag: &str, d: &[u8]) {
+    for level in LEVELS {
+        let ok = level_pixels(level, d).is_some();
+        let i = inv(&level_job(level), d);
+        assert_eq!(ok, any_scan_consumed(&i), "{tag} at {level}:\n{i}");
+    }
+}
+
+/// Finding R2-1: progressive AC-first scans follow
+/// `decode_ac_first_scan_tracked`. A run past Se taken by the slow path
+/// reads no value bits and is no Strict failure (s04, s13); an invalid
+/// code ends the interval's data, at no level a failure (s05).
+#[test]
+fn progressive_ac_first_follows_the_decoder() {
+    // s04: 0xF1 (run past Se = 5) plus padding.
+    agrees_at_every_level("s04", &tiny_progressive(8, 0x7F, &[0x80, 0x7F]));
+    // s13: 16x8, block 0 is 0xF1 by the slow path, block 1 an EOB.
+    let mut ac = vec![0x80, 0x3F, 0xFF, 0x00, 0xC0];
+    ac.extend([0x00; 24]);
+    let d = tiny_progressive(16, 0x3F, &ac);
+    agrees_at_every_level("s13", &d);
+    // s05: an invalid code (16+ one bits) more than 16 bytes before EOI.
+    let mut ac = vec![0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00];
+    ac.extend([0x00; 24]);
+    agrees_at_every_level("s05 synthetic", &tiny_progressive(8, 0x7F, &ac));
+    // s05 in progressive3.jpg: the invalid code mid-way through every
+    // counted AC-first scan.
+    let orig = load(PROG);
+    let mut planted = 0;
+    for scan in counted_scans(&inv(&job(), &orig)) {
+        let (ss, ahal) = (orig[scan.start - 3], orig[scan.start - 1]);
+        if ss == 0 || ahal >> 4 != 0 || scan.len() < 80 {
+            continue;
+        }
+        let mid = scan.start + scan.len() / 2;
+        let d = insert(&orig, mid, &[0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00]);
+        agrees_at_every_level(&format!("s05 progressive3 at {mid}"), &d);
+        planted += 1;
+    }
+    assert!(planted >= 4, "{planted}");
+}
+
+/// Finding R2-1 (s10): after an invalid code in an AC-first scan nothing
+/// more of the scan is decoded; those bytes are not image data at any
+/// level, and rewriting them changes no pixel.
+#[test]
+fn bytes_after_an_ac_first_invalid_code_are_not_image_data() {
+    let orig = load(PROG);
+    let (scan, mid) = (9310usize..22329usize, 15819usize);
+    assert_eq!(
+        counted_scans(&inv(&job(), &orig))
+            .iter()
+            .filter(|s| **s == scan)
+            .count(),
+        1
+    );
+    let ins = [0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00];
+    let a = insert(&orig, mid, &ins);
+    let mut b = a.clone();
+    let (from, to) = (mid + ins.len() + 16, scan.end + ins.len() - 16);
+    for k in from..to {
+        if b[k] != 0xFF && b[k - 1] != 0xFF {
+            b[k] = if b[k] == b'Q' { b'R' } else { b'Q' };
+        }
+    }
+    for level in LEVELS {
+        assert_eq!(level_pixels(level, &a), level_pixels(level, &b), "{level}");
+        let i = inv(&level_job(level), &a);
+        let p = leaf_at(&i, from + 100);
+        assert_eq!(p.disposition, D::Unreferenced, "{level}: {}", show(p));
+    }
+}
+
+/// Finding R2-2 (s02, s08): junk before an RSTn. Sequential and DC scans
+/// read the RSTn at the bit reader's position, which holds at most 7 data
+/// bytes past the last consumed bit: from 8 bytes on, a Strict decode
+/// fails there, and the inventory says so. AC-first scans drain first.
+/// Shorter runs, and every non-Strict level, keep pixels and agree.
+#[test]
+fn junk_before_rst_follows_strict() {
+    let mut files = vec![
+        load(("jpeg-conformance", "valid/restarts.jpg")),
+        load(("jpeg-conformance", "valid/rst_1block.jpg")),
+    ];
+    for progressive in [true, false] {
+        files.push(encoded_with_restarts(progressive));
+    }
+    let mut checked = 0;
+    for orig in &files {
+        let i0 = inv(&job(), orig);
+        for scan in counted_scans(&i0) {
+            let Some(rst) = scan
+                .clone()
+                .find(|&k| orig[k] == 0xFF && (0xD0..=0xD7).contains(&orig[k + 1]))
+            else {
+                continue;
+            };
+            for n in [1usize, 4, 8, 9, 30] {
+                let junk: Vec<u8> = (0..n).map(|k| b'A' + (k % 26) as u8).collect();
+                let d = insert(orig, rst, &junk);
+                for level in LEVELS {
+                    let i = inv(&level_job(level), &d);
+                    let ok = level_pixels(level, &d);
+                    if level != "strict" {
+                        assert_eq!(ok, level_pixels(level, orig), "{level} n {n}");
+                    }
+                    if level != "strict" || n >= 8 {
+                        assert_eq!(
+                            ok.is_some(),
+                            any_scan_consumed(&i),
+                            "{level} n {n} at {rst}:\n{i}"
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+            // After the last MCU: 8 bytes or more of junk fail Strict.
+            let d = insert(orig, scan.end, b"abcdefghijkl");
+            let i = inv(&level_job("strict"), &d);
+            assert_eq!(level_pixels("strict", &d).is_some(), any_scan_consumed(&i));
+        }
+    }
+    assert!(checked >= 100, "{checked}");
+}
+
+/// A 128x128 4:2:0 file with RSTn markers in every scan, from zenjpeg's
+/// own encoder.
+fn encoded_with_restarts(progressive: bool) -> Vec<u8> {
+    use enough::Unstoppable;
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    let (w, h) = (128u32, 128u32);
+    let mut px = vec![0u8; (w * h * 3) as usize];
+    let mut s = 12345u32;
+    for v in px.iter_mut() {
+        s = s.wrapping_mul(1103515245).wrapping_add(12345);
+        *v = (s >> 16) as u8;
+    }
+    let config = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter)
+        .progressive(progressive)
+        .restart_mcu_rows(1)
+        .force_restart_markers(true);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&px, Unstoppable).unwrap();
+    enc.finish().unwrap()
+}
