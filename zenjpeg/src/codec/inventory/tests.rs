@@ -338,6 +338,14 @@ fn everything_fixture_part_list_is_pinned() {
             D::Metadata(M::Xmp),
             l("http://ns.adobe.com/xmp/extension/"),
         ),
+        // Its GUID and full length: never read.
+        (
+            K::Attribute,
+            PartTag::None,
+            r(f.at("xmp_ext").start + 39, f.at("xmp_ext").start + 75),
+            D::Dropped,
+            None,
+        ),
         (
             K::Segment,
             mk(0xE2),
@@ -353,6 +361,20 @@ fn everything_fixture_part_list_is_pinned() {
             l("ICC_PROFILE"),
         ),
         (K::Segment, mk(0xE2), f.at("mpf"), D::Structure, l("MPF")),
+    ];
+    // What `parse_mpf_directory` never reads: the TIFF magic, the 10 bytes
+    // after the B000 and B001 tags, the B002 type, the next-IFD pointer.
+    let mpf_body = f.at("mpf").start + 4;
+    for (a, b) in [(6, 8), (16, 26), (28, 38), (40, 42), (50, 54)] {
+        expected.push((
+            K::Gap,
+            PartTag::None,
+            r(mpf_body + a, mpf_body + b),
+            D::Unreferenced,
+            None,
+        ));
+    }
+    expected.extend([
         (
             K::Segment,
             mk(0xE2),
@@ -421,7 +443,7 @@ fn everything_fixture_part_list_is_pinned() {
             D::Skipped,
             l("MPF"),
         ),
-    ];
+    ]);
     expected.extend(gain_map_parts);
     expected.extend([
         (

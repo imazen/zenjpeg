@@ -498,10 +498,17 @@ fn check_dht(body: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// How far into an MPF APP2 body `parse_mpf_directory` reads: the IFD
-/// entries it walks (or scans) to find the MP Entry tag, and the MP entry
-/// array. `None` when it finds no MP Entry, so nothing is extracted.
-fn mpf_read_end(d: &[u8]) -> Option<usize> {
+/// The byte ranges of an MPF APP2 body that `parse_mpf_directory`
+/// (decode/extras.rs) reads, in body offsets: `MPF\0` and the byte-order
+/// mark, the IFD offset, the IFD entry count, the tag of every IFD entry it
+/// steps over and the count and offset of the MP Entry tag (B002) — or the
+/// window its non-standard-spacing fallback scans — and the 16-byte MP
+/// entries. `None` when it finds no MP Entry, so nothing is extracted.
+///
+/// Arithmetic is checked, so a crafted offset that would overflow a 32-bit
+/// `usize` inside `parse_mpf_directory` yields `None` here first; the walker
+/// calls `parse_mpf_directory` only when this returns `Some`.
+fn mpf_read_ranges(d: &[u8]) -> Option<Vec<Range<usize>>> {
     if d.len() < 12 || !d.starts_with(b"MPF\0") {
         return None;
     }
@@ -523,36 +530,51 @@ fn mpf_read_end(d: &[u8]) -> Option<usize> {
             u32::from_be_bytes(b)
         })
     };
+    let mut read = vec![0..6, 8..12];
     let ifd = 4usize.checked_add(r32(8)? as usize)?;
     let n = r16(ifd)? as usize;
-    let mut end = ifd + 2;
+    read.push(ifd..ifd + 2);
     let mut mp = None;
     for i in 0..n {
-        let e = ifd + 2 + i * 12;
-        if d.len() < e + 12 {
+        let e = ifd.checked_add(2)?.checked_add(i.checked_mul(12)?)?;
+        if d.len() < e.checked_add(12)? {
             break;
         }
-        end = e + 12;
+        read.push(e..e + 2);
         if r16(e)? == 0xB002 {
-            mp = Some((r32(e + 8)? as usize + 4, r32(e + 4)? as usize));
+            read.push(e + 4..e + 12);
+            mp = Some(((r32(e + 8)? as usize).checked_add(4)?, r32(e + 4)? as usize));
             break;
         }
     }
     if mp.is_none() {
-        // The non-standard-spacing fallback scans up to 256 bytes.
+        // The fallback reads a two-byte tag candidate at every position of
+        // a window of up to 256 bytes, and the type of each candidate.
         let tag: [u8; 2] = if le { [0x02, 0xB0] } else { [0xB0, 0x02] };
-        let scan_end = (ifd + 2 + 256).min(d.len().saturating_sub(12));
-        for p in ifd + 2..scan_end {
-            if d[p..p + 2] == tag && r16(p + 2) == Some(7) {
-                mp = Some((r32(p + 8)? as usize + 4, r32(p + 4)? as usize));
-                end = end.max(p + 12);
-                break;
+        let start = ifd + 2;
+        let scan_end = start.saturating_add(256).min(d.len().saturating_sub(12));
+        let mut window_end = scan_end + 1;
+        for p in start..scan_end {
+            if d[p..p + 2] == tag {
+                read.push(p + 2..p + 4);
+                if r16(p + 2) == Some(7) {
+                    read.push(p + 4..p + 12);
+                    mp = Some(((r32(p + 8)? as usize).checked_add(4)?, r32(p + 4)? as usize));
+                    window_end = p + 2;
+                    break;
+                }
             }
+        }
+        if start < scan_end {
+            read.push(start..window_end);
         }
     }
     let (off, count) = mp?;
     let images = (count / 16).min(d.len().saturating_sub(off) / 16).min(256);
-    Some(end.max(off.saturating_add(images * 16)).min(d.len()))
+    if images > 0 {
+        read.push(off..off + images * 16);
+    }
+    Some(read)
 }
 
 /// The IFD0 Orientation entry (12 bytes) in an APP1 `Exif\0\0` body.
@@ -1605,25 +1627,29 @@ impl Walk<'_> {
                     );
                 } else {
                     let a = &st.apps[i];
-                    match mpf_read_end(&data[a.payload.clone()]) {
+                    match mpf_read_ranges(&data[a.payload.clone()]) {
                         None => decide(
                             &mut decided[i],
                             Disposition::Dropped,
                             Some("the MPF index does not parse; no image is extracted".into()),
                         ),
-                        Some(end) => {
-                            if a.payload.start + end < a.payload.end {
-                                extra.push((
-                                    a.node,
-                                    gap(
-                                        a.payload.start + end..a.payload.end,
-                                        Disposition::Unreferenced,
-                                    )
-                                    .with_detail(
-                                        "bytes the MPF index parser does not read (for example \
-                                             MP attribute IFDs)",
-                                    ),
-                                ));
+                        Some(mut read) => {
+                            // Every hole between what the parser reads.
+                            read.sort_by_key(|r| r.start);
+                            let mut at = 0;
+                            let len = a.payload.len();
+                            for r in read.iter().chain(core::iter::once(&(len..len))) {
+                                if r.start > at {
+                                    extra.push((
+                                        a.node,
+                                        gap(
+                                            a.payload.start + at..a.payload.start + r.start,
+                                            Disposition::Unreferenced,
+                                        )
+                                        .with_detail("bytes the MPF index parser does not read"),
+                                    ));
+                                }
+                                at = at.max(r.end);
                             }
                             decide(&mut decided[i], Disposition::Structure, None);
                         }
@@ -1708,6 +1734,32 @@ impl Walk<'_> {
         }
 
         icc_past_declared_size(data, &st.apps, &mut decided, &mut extra);
+
+        // Extended XMP: `reassemble_xmp` reads each chunk's offset (its sort
+        // key) and data, never the GUID or the full length before them.
+        for (i, a) in st.apps.iter().enumerate() {
+            if a.ty == SegmentType::XmpExtended
+                && matches!(
+                    decided[i],
+                    Some((Disposition::Metadata(MetadataKind::Xmp), _))
+                )
+            {
+                let at = a.payload.start + XMP_EXT_NS_LEN;
+                extra.push((
+                    a.node,
+                    part(
+                        PartKind::Attribute,
+                        PartTag::None,
+                        at..at + 36,
+                        Disposition::Dropped,
+                    )
+                    .with_detail(
+                        "extended-XMP GUID and full length; reassemble_xmp reads only each \
+                         chunk's offset and data",
+                    ),
+                ));
+            }
+        }
 
         for (i, a) in st.apps.iter().enumerate() {
             let (d, detail) = match decided[i].take() {
@@ -2038,6 +2090,7 @@ impl Walk<'_> {
         let mut mpf_images: Vec<(Range<usize>, usize)> = Vec::new();
         let mut gain_map_taken = false;
         if let Some(mpf) = mpf
+            && mpf_read_ranges(&data[mpf.payload.clone()]).is_some()
             && let Some(dir) = parse_mpf_directory(&data[mpf.payload.clone()])
         {
             let base = mpf.payload.start + 4;
