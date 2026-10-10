@@ -6,6 +6,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- Progressive encode's token replay batches its bit-writes: Huffman code
+  and sign bit now emit as one write, refinement bits append in packed
+  <=24-bit chunks instead of one call per bit, and first-scan tokens use
+  `write_code_and_extra`. Measured `profile_encode` -2.4% instructions on
+  top of the ScanTokenInfo hoist; output remains bit-identical.
 - Progressive AC refinement tokenization holds the active scan's
   `ScanTokenInfo` outside `scan_info` for the scan's duration instead of
   re-acquiring `last_mut()` per emitted token, refinement bit, EOB run and

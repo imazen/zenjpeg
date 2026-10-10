@@ -776,12 +776,11 @@ impl<'a> EntropyEncoder<'a> {
                 }
             } else {
                 let (code, len) = ac_table.encode(token.symbol);
-                self.writer.write_bits(code, len);
-
-                // Write extra bits if any
                 if token.num_extra > 0 {
                     self.writer
-                        .write_bits(token.extra_bits as u32, token.num_extra);
+                        .write_code_and_extra(code, len, token.extra_bits, token.num_extra);
+                } else {
+                    self.writer.write_bits(code, len);
                 }
             }
         }
@@ -867,7 +866,21 @@ impl<'a> EntropyEncoder<'a> {
             } else {
                 // Write the Huffman code for the masked symbol
                 let (code, len) = ac_table.encode(masked_symbol);
-                self.writer.write_bits(code, len);
+
+                // Write sign bit FIRST for newly-nonzero coefficients
+                // Per JPEG spec and libjpeg-turbo: Huffman code, then sign, then refinement bits
+                // Newly-nonzero symbols have category 1 (low nibble = 1 or 3 before masking)
+                let is_newly_nonzero = (masked_symbol & 0x0F) == 1 && masked_symbol != 0xF0;
+                if is_newly_nonzero {
+                    // Sign is encoded in bit 1 of the original symbol:
+                    // - 0x?1 = negative (bit 1 = 0)
+                    // - 0x?3 = positive (bit 1 = 1)
+                    // This matches C++: bits = (t.symbol >> 1) & 1;
+                    let sign = ((ref_token.symbol >> 1) & 1) as u32;
+                    self.writer.write_bits((code << 1) | sign, len + 1);
+                } else {
+                    self.writer.write_bits(code, len);
+                }
 
                 // For EOB runs > 1, write the extra bits. The just-written
                 // symbol PROMISED run_bits extra bits — silently skipping them
@@ -884,26 +897,22 @@ impl<'a> EntropyEncoder<'a> {
                     eobrun_idx += 1;
                 }
 
-                // Write sign bit FIRST for newly-nonzero coefficients
-                // Per JPEG spec and libjpeg-turbo: Huffman code, then sign, then refinement bits
-                // Newly-nonzero symbols have category 1 (low nibble = 1 or 3 before masking)
-                let is_newly_nonzero = (masked_symbol & 0x0F) == 1 && masked_symbol != 0xF0;
-                if is_newly_nonzero {
-                    // Sign is encoded in bit 1 of the original symbol:
-                    // - 0x?1 = negative (bit 1 = 0)
-                    // - 0x?3 = positive (bit 1 = 1)
-                    // This matches C++: bits = (t.symbol >> 1) & 1;
-                    let sign = ((ref_token.symbol >> 1) & 1) as u32;
-                    self.writer.write_bits(sign, 1);
-                }
-
                 // Write refinement bits AFTER sign bit
                 // These are correction bits for previously-nonzero coefficients
                 // Get slice upfront to eliminate per-bit bounds checks
                 let num_refbits = ref_token.refbits as usize;
                 let refbits_end = (refbit_idx + num_refbits).min(scan_info.refbits.len());
-                for &bit in &scan_info.refbits[refbit_idx..refbits_end] {
-                    self.writer.write_bits(bit as u32, 1);
+                let mut pos = refbit_idx;
+                while pos < refbits_end {
+                    // write_bits accepts at most 24 bits per call; pack the
+                    // refbits slice into MSB-first chunks to batch the writes.
+                    let take = (refbits_end - pos).min(24);
+                    let mut packed = 0u32;
+                    for &bit in &scan_info.refbits[pos..pos + take] {
+                        packed = (packed << 1) | (bit as u32);
+                    }
+                    self.writer.write_bits(packed, take as u8);
+                    pos += take;
                 }
                 refbit_idx = refbits_end;
             }

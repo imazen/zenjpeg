@@ -1,0 +1,35 @@
+# candidate 004: replay bit-write batching — measurements
+# code: this commit's zenjpeg/src/entropy/encoder.rs diff vs
+#   parent 7e47b3e0 (landed main)
+# author-side matched pair, same toolchain/env/host for both builds
+# canonical numbers come from the adversarial reviewer's own builds
+# companions: .meta (commands/provenance)
+
+profile_encode total Ir:   56,282,030,576 -> 54,945,744,502   (-2.372%)
+valgrind_decode total Ir:     105,360,347 ->    105,355,955   (-0.004%, noise)
+
+Self-cost Ir changes (callgrind_annotate, per-function attribution):
+  write_ac_refinement_tokens bitstream-inlined: 4,367,085,000 -> 1,544,746,450
+  write_ac_first_tokens     bitstream-inlined: 1,769,832,350 ->   697,697,850
+  write_ac_refinement_tokens own-body:         2,946,256,300 -> 4,266,494,600
+    (refbit pack loop replaces part of the saved per-bit writes)
+  write_ac_first_tokens     own-body:          1,223,242,050 -> 2,406,375,900
+  flush_bytes total:                           1,304,806,450 -> 1,309,881,500
+
+perf_manifest byte-identity (full corpus, #corpus ok):
+  default  35,376 rows sha256 a1bcc4e5eb5c1e1d1ecb1a7b10e452e92da7b15e738b736cf961b61d49ffbd63
+  parallel 42,948 rows sha256 6abcd4a40cb47e7a1643ae169c5cdccf0ae487052ea05cf880b191887edbb39a
+  (both byte-identical to the landed-main emits)
+
+profile_encode whole-process wall, 3 interleaved pairs (s; n=3, directional
+only — no wall claim is made):
+  baseline 5.37 5.49 5.56 -> median 5.49
+  candidate 4.94 5.12 5.11 -> median 5.12
+
+run-heavy resource lines:
+  baseline callgrind encode: done rc=0 195s | peak-RSS 0.10GiB | min-avail 15118MiB | peak-load 6.99
+  candidate callgrind encode: done rc=0 189s | peak-RSS 0.09GiB | min-avail 14595MiB | peak-load 2.47
+  candidate callgrind decode: done rc=0 4s   | peak-RSS 0.46GiB | min-avail 17165MiB | peak-load 3.22
+  manifest emit default:      done rc=0 371s | peak-RSS 1.13GiB | min-avail 13622MiB | peak-load 16.33
+  manifest emit parallel:     done rc=0 481s | peak-RSS 1.22GiB | min-avail 13468MiB | peak-load 5.55
+  wall pair loop:             done rc=0 31s  | peak-RSS 0.06GiB | min-avail 16529MiB | peak-load 4.01

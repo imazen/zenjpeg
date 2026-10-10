@@ -1,0 +1,23 @@
+code commit measured: this commit (jj change-id for candidate 004; only
+  zenjpeg/src/entropy/encoder.rs differs vs parent)
+parent: 7e47b3e077927134abf2c6b37291582feabcae61 (landed 003 = main@origin)
+host: Ryzen 9 7950X (Zen 4), WSL2, 32 logical CPUs, valgrind 3.18.1
+compilers: rustc 1.99.0 (b940084d7), both builds
+date: 2026-10-10 (UTC)
+build: cargo build --locked --release -p zenjpeg [--features parallel] --example <bin>;
+  committed release profile, locked deps, default runtime dispatch, no native CPU flags
+
+commands (each under: flock $H/heavy.lock run-heavy --mem 12G --;
+$H = ~/tmp/handoff/zenjpeg-perf):
+  valgrind --tool=callgrind --callgrind-out-file=<out> \
+    target/release/examples/profile_encode
+  valgrind --tool=callgrind --callgrind-out-file=<out> \
+    target/release/examples/valgrind_decode jpegli \
+    $H/reviewer-baseline/photo-baseline-st.jpg
+  target/release/examples/perf_manifest emit --out <name>.tsv
+    (default build and --features parallel build)
+  for i in 1 2 3: /usr/bin/time <base-bin> && /usr/bin/time <cand-bin>
+
+raw profiles: ~/tmp/zenjpeg-perf/cg-004/{encode-landed,encode-cand,decode-cand}.out
+manifests: ~/tmp/zenjpeg-perf/gates-004-manifest-{default,parallel}.tsv
+baseline manifests: landed-main emits in reviews/003-scaninfo-hoist/reviewer/
