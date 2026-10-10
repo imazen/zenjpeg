@@ -498,6 +498,45 @@ fn everything_fixture_passes_check_inventory() {
     zencodec_testkit::check_inventory(JpegDecoderConfig::new(), &tiny_jpeg()).unwrap();
 }
 
+/// `check_inventory` on zenjpeg's own zencodec encoder output (what
+/// `check_all` would run), baseline and progressive, with embedded EXIF and
+/// XMP coming back as metadata.
+#[test]
+fn encoder_output_passes_check_inventory() {
+    use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
+    use zencodec::{Metadata, MetadataPolicy};
+    use zenpixels::{PixelDescriptor, PixelSlice};
+    let (w, h) = (40u32, 24u32);
+    let px: Vec<u8> = (0..w * h * 3).map(|i| (i * 37 % 251) as u8).collect();
+    let tiff = b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0".to_vec();
+    let meta = Metadata::none()
+        .with_exif(tiff)
+        .with_xmp(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>".to_vec());
+    for progressive in [false, true] {
+        let slice =
+            PixelSlice::new(&px, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+        let bytes = crate::JpegEncoderConfig::new()
+            .with_progressive(progressive)
+            .job()
+            .with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(slice)
+            .unwrap()
+            .into_vec();
+        zencodec_testkit::check_inventory(JpegDecoderConfig::new(), &bytes).unwrap();
+        let inv = inventory(&bytes, opts()).unwrap();
+        for kind in [M::Exif, M::Xmp] {
+            assert!(
+                inv.parts()
+                    .iter()
+                    .any(|p| p.disposition == D::Metadata(kind)),
+                "{inv}"
+            );
+        }
+    }
+}
+
 /// With `GainMapRender::Components` the gain map is decoded, so its image is
 /// gain-map metadata; its own XMP may be read for hdrgm parameters.
 #[cfg(feature = "ultrahdr")]
