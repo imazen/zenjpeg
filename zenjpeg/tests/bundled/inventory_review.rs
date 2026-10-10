@@ -87,16 +87,16 @@ fn leaf_at(inv: &Inventory, off: usize) -> &Part {
     let parts = inv.parts();
     let depth = |p: &Part| {
         let mut d = 0;
-        let mut q = p.parent;
+        let mut q = p.parent();
         while let Some(id) = q {
             d += 1;
-            q = parts[id.index()].parent;
+            q = parts[id.index()].parent();
         }
         d
     };
     parts
         .iter()
-        .filter(|p| p.range.start <= off as u64 && (off as u64) < p.range.end)
+        .filter(|p| p.range().start <= off as u64 && (off as u64) < p.range().end)
         .max_by_key(|p| depth(p))
         .unwrap_or_else(|| panic!("no part covers {off}"))
 }
@@ -104,13 +104,13 @@ fn leaf_at(inv: &Inventory, off: usize) -> &Part {
 fn show(p: &Part) -> String {
     format!(
         "{} {} {}..{} {} label={:?} detail={:?}",
-        p.kind.name(),
-        p.tag,
-        p.range.start,
-        p.range.end,
-        p.disposition,
-        p.label,
-        p.detail
+        p.kind().name(),
+        p.tag(),
+        p.range().start,
+        p.range().end,
+        p.disposition(),
+        p.label(),
+        p.detail()
     )
 }
 
@@ -138,8 +138,8 @@ fn dac_entries_are_definitions_per_table() {
     assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
     let i = inv(&job(), &d);
     let p = leaf_at(&i, 177 + 6);
-    assert_eq!(p.disposition, D::Dropped, "{}", show(p));
-    assert_eq!(p.range, 177..177 + 4 + body.len() as u64, "{}", show(p));
+    assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
+    assert_eq!(p.range(), 177..177 + 4 + body.len() as u64, "{}", show(p));
 
     // After the file's DAC: five unused AC-table-2 entries, then AC table 0
     // with the file's own Kx (pixels unchanged), which replaces the file's
@@ -153,16 +153,16 @@ fn dac_entries_are_definitions_per_table() {
     assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
     let i = inv(&job(), &d);
     let planted = leaf_at(&i, 189 + 4);
-    assert_eq!(planted.disposition, D::Dropped, "{}", show(planted));
-    assert_eq!(planted.range, 193..203, "{}", show(planted));
+    assert_eq!(planted.disposition(), D::Dropped, "{}", show(planted));
+    assert_eq!(planted.range(), 193..203, "{}", show(planted));
     let used = leaf_at(&i, 203);
-    assert_eq!(used.disposition, D::Structure, "{}", show(used));
-    assert_eq!(used.range, 203..205, "{}", show(used));
+    assert_eq!(used.disposition(), D::Structure, "{}", show(used));
+    assert_eq!(used.range(), 203..205, "{}", show(used));
     // The file's AC0 entry (bytes 183..185) is replaced before the scan.
     let replaced = leaf_at(&i, 183);
-    assert_eq!(replaced.disposition, D::Dropped, "{}", show(replaced));
-    assert_eq!(replaced.range, 183..185, "{}", show(replaced));
-    assert_eq!(leaf_at(&i, 181).disposition, D::Structure);
+    assert_eq!(replaced.disposition(), D::Dropped, "{}", show(replaced));
+    assert_eq!(replaced.range(), 183..185, "{}", show(replaced));
+    assert_eq!(leaf_at(&i, 181).disposition(), D::Structure);
 }
 
 /// Finding 11: a flood of repeated gaps or standalone markers carries one
@@ -179,17 +179,19 @@ fn repeated_gaps_carry_one_detail() {
     let tem: Vec<&Part> = i
         .parts()
         .iter()
-        .filter(|p| p.range.end - p.range.start == 2 && p.range.start < 2002 && p.range.start >= 2)
+        .filter(|p| {
+            p.range().end - p.range().start == 2 && p.range().start < 2002 && p.range().start >= 2
+        })
         .collect();
     assert_eq!(tem.len(), 1000);
-    let with_detail: Vec<&&Part> = tem.iter().filter(|p| p.detail.is_some()).collect();
+    let with_detail: Vec<&&Part> = tem.iter().filter(|p| p.detail().is_some()).collect();
     assert_eq!(
         with_detail.len(),
         1,
         "{:?}",
         with_detail.iter().map(|p| show(p)).collect::<Vec<_>>()
     );
-    let note = with_detail[0].detail.as_deref().unwrap_or("");
+    let note = with_detail[0].detail().unwrap_or("");
     assert!(note.contains("999 more"), "{note}");
 }
 
@@ -236,14 +238,14 @@ fn mpf_index_holes_are_unreferenced() {
     let i = inv(&job(), &d);
     for at in [entries, entries + 3, entries + k - 1] {
         let p = leaf_at(&i, at);
-        assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
+        assert_eq!(p.disposition(), D::Unreferenced, "{}", show(p));
     }
     // The TIFF magic after the byte-order mark is never read either.
     let p = leaf_at(&i, tiff + 2);
-    assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
+    assert_eq!(p.disposition(), D::Unreferenced, "{}", show(p));
     // The IFD offset and the MP entries are read.
-    assert_eq!(leaf_at(&i, tiff + 4).disposition, D::Structure);
-    assert_eq!(leaf_at(&i, e0).disposition, D::Structure);
+    assert_eq!(leaf_at(&i, tiff + 4).disposition(), D::Structure);
+    assert_eq!(leaf_at(&i, e0).disposition(), D::Structure);
 }
 
 /// Finding 12: an MPF IFD offset near `u32::MAX` would overflow a 32-bit
@@ -255,7 +257,7 @@ fn mpf_ifd_offset_near_u32_max_is_rejected_before_parsing() {
     put32(&mut d, p0 + 8, u32::MAX);
     let i = inv(&job(), &d);
     let p = leaf_at(&i, p0);
-    assert_eq!(p.disposition, D::Dropped, "{}", show(p));
+    assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
 }
 
 /// Finding 8: an extended-XMP chunk's GUID and full length are never read
@@ -287,13 +289,13 @@ fn extended_xmp_guid_and_length_are_dropped() {
     let i = inv(&job(), &d);
     for at in [ext_payload + guid_at, ext_payload + guid_at + 35] {
         let p = leaf_at(&i, at);
-        assert_eq!(p.disposition, D::Dropped, "{}", show(p));
+        assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
     }
     // The offset field and the data are read.
     for at in [ext_payload + guid_at + 36, ext_payload + guid_at + 40] {
         let p = leaf_at(&i, at);
         assert_eq!(
-            p.disposition,
+            p.disposition(),
             D::Metadata(zencodec::inventory::MetadataKind::Xmp),
             "{}",
             show(p)
@@ -327,18 +329,18 @@ fn orientation_lookalike_inside_another_part_is_a_field() {
     let i = inv(&correct(), &d);
     // COM at 3: marker, length, then the text; the lookalike APP1 at 27.
     let text = leaf_at(&i, 3 + 4 + 2);
-    assert_eq!(text.disposition, D::Skipped, "{}", show(text));
+    assert_eq!(text.disposition(), D::Skipped, "{}", show(text));
     let lookalike = 3 + 4 + 20;
     let entry = lookalike + 4 + 6 + 8 + 2;
     let p = leaf_at(&i, entry);
     assert_eq!(
-        p.disposition,
+        p.disposition(),
         D::Metadata(zencodec::inventory::MetadataKind::Orientation),
         "{}",
         show(p)
     );
-    assert_eq!(p.range, entry as u64..entry as u64 + 12, "{}", show(p));
-    assert_eq!(leaf_at(&i, entry + 12).disposition, D::Skipped);
+    assert_eq!(p.range(), entry as u64..entry as u64 + 12, "{}", show(p));
+    assert_eq!(leaf_at(&i, entry + 12).disposition(), D::Skipped);
 }
 
 /// The scan-data part's disposition (every test file here has one scan
@@ -346,9 +348,9 @@ fn orientation_lookalike_inside_another_part_is_a_field() {
 fn scan_disposition(i: &Inventory) -> D {
     i.parts()
         .iter()
-        .find(|p| p.kind == zencodec::inventory::PartKind::ScanData)
+        .find(|p| p.kind() == zencodec::inventory::PartKind::ScanData)
         .expect("scan data")
-        .disposition
+        .disposition()
 }
 
 /// Finding 7: the job's policy, inner strictness and dimension limits
@@ -402,7 +404,7 @@ fn job_policy_strictness_and_limits_are_followed() {
     let i = inv(&job().with_policy(pol), &p);
     assert_eq!(scan_disposition(&i), D::Skipped);
     assert!(
-        i.parts()[0].disposition.is_consumed(),
+        i.parts()[0].disposition().is_consumed(),
         "SOI: probe reads it"
     );
 
@@ -430,8 +432,8 @@ fn failure_after_a_sequential_scan_is_certain() {
         // Only what probe() reads before the frame header stays consumed.
         assert_eq!(&orig[158..160], &[0xFF, 0xC0]);
         let sof_end = 160 + u16::from_be_bytes([orig[160], orig[161]]) as u64;
-        for p in i.parts().iter().filter(|p| p.range.end > sof_end) {
-            assert!(!p.disposition.is_consumed(), "{}", show(p));
+        for p in i.parts().iter().filter(|p| p.range().end > sof_end) {
+            assert!(!p.disposition().is_consumed(), "{}", show(p));
         }
     }
 }
@@ -473,9 +475,9 @@ fn post_scan_tables_depend_on_the_output_path() {
     assert_ne!(decode_f32(&d), decode_f32(&orig));
     let i = inv(&job(), &d);
     let late = leaf_at(&i, eoi + 5);
-    assert_eq!(late.disposition, D::Dropped, "{}", show(late));
+    assert_eq!(late.disposition(), D::Dropped, "{}", show(late));
     assert!(
-        late.detail
+        late.detail()
             .as_deref()
             .unwrap_or("")
             .contains("coefficients"),
@@ -484,9 +486,9 @@ fn post_scan_tables_depend_on_the_output_path() {
     );
     // testorig's own table 0 (DQT at 20) is what the default output uses.
     let own = leaf_at(&i, 20 + 5);
-    assert_eq!(own.disposition, D::Structure, "{}", show(own));
+    assert_eq!(own.disposition(), D::Structure, "{}", show(own));
     assert!(
-        own.detail
+        own.detail()
             .as_deref()
             .unwrap_or("")
             .contains("default u8 RGB"),
@@ -500,7 +502,7 @@ fn post_scan_tables_depend_on_the_output_path() {
     assert_ne!(decode_f32(&d), decode_f32(&orig));
     let i = inv(&job(), &d);
     let p = leaf_at(&i, eoi + 4);
-    assert_eq!(p.disposition, D::Dropped, "{}", show(p));
+    assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
 
     // APP14 t=0 after SOI, t=1 before EOI: the early one is applied.
     let early = insert(&orig, 2, &adobe(0));
@@ -510,14 +512,14 @@ fn post_scan_tables_depend_on_the_output_path() {
     let i = inv(&job(), &both);
     let first = leaf_at(&i, 4);
     assert_eq!(
-        first.disposition,
+        first.disposition(),
         D::Metadata(zencodec::inventory::MetadataKind::Colour),
         "{}",
         show(first)
     );
-    assert!(!first.detail.as_deref().unwrap_or("").contains("superseded"));
+    assert!(!first.detail().unwrap_or("").contains("superseded"));
     let second = leaf_at(&i, both.len() - 2 - 16 + 4);
-    assert_eq!(second.disposition, D::Dropped, "{}", show(second));
+    assert_eq!(second.disposition(), D::Dropped, "{}", show(second));
 }
 
 /// Finding 5, control: a progressive frame always converts at the end, so
@@ -535,7 +537,7 @@ fn post_scan_dqt_of_a_progressive_frame_is_used() {
     );
     let i = inv(&job(), &d);
     let p = leaf_at(&i, eoi + 5);
-    assert_eq!(p.disposition, D::Structure, "{}", show(p));
+    assert_eq!(p.disposition(), D::Structure, "{}", show(p));
 }
 
 fn render_job(r: zencodec::GainMapRender) -> JpegDecodeJob {
@@ -550,7 +552,7 @@ const RECONSTRUCT: zencodec::GainMapRender = zencodec::GainMapRender::Reconstruc
 fn gain_map_parts(i: &Inventory) -> Vec<&Part> {
     i.parts()
         .iter()
-        .filter(|p| p.disposition == D::Metadata(zencodec::inventory::MetadataKind::GainMap))
+        .filter(|p| p.disposition() == D::Metadata(zencodec::inventory::MetadataKind::GainMap))
         .collect()
 }
 
@@ -610,14 +612,14 @@ fn gain_map_and_its_xmp_follow_the_decode() {
         let i = inv(&render_job(r), &d);
         let p = leaf_at(&i, eoi);
         assert_eq!(
-            p.disposition,
+            p.disposition(),
             D::Metadata(zencodec::inventory::MetadataKind::GainMap),
             "{}",
             show(p)
         );
         let x = leaf_at(&i, gm_xmp + 40);
         assert_eq!(
-            x.disposition,
+            x.disposition(),
             D::Metadata(zencodec::inventory::MetadataKind::GainMap),
             "{}",
             show(x)
@@ -688,7 +690,7 @@ fn gain_map_xmp_unread_when_the_primary_has_parameters() {
     assert_eq!(ma, mb, "the gain-map XMP is not read");
     let i = inv(&render_job(c), &b);
     let x = leaf_at(&i, gm + rel);
-    assert_eq!(x.disposition, D::Dropped, "{}", show(x));
+    assert_eq!(x.disposition(), D::Dropped, "{}", show(x));
     assert!(!gain_map_parts(&i).is_empty());
 }
 
@@ -717,7 +719,7 @@ fn sef_trailer_does_not_swallow_the_gain_map() {
     let i = inv(&render_job(c), &d);
     let p = leaf_at(&i, eoi + 100);
     assert_eq!(
-        p.disposition,
+        p.disposition(),
         D::Metadata(zencodec::inventory::MetadataKind::GainMap),
         "{}",
         show(p)
@@ -781,14 +783,14 @@ fn the_first_extracted_undefined_entry_is_the_gain_map() {
     let i = inv(&render_job(c), &d);
     let inside = leaf_at(&i, app15_payload + 100);
     assert_eq!(
-        inside.disposition,
+        inside.disposition(),
         D::Metadata(zencodec::inventory::MetadataKind::GainMap),
         "{}",
         show(inside)
     );
     let outside = leaf_at(&i, after + 100);
     assert_ne!(
-        outside.disposition,
+        outside.disposition(),
         D::Metadata(zencodec::inventory::MetadataKind::GainMap),
         "{}",
         show(outside)
@@ -835,7 +837,7 @@ fn gain_map_extended_xmp_is_dropped() {
     assert_eq!(meta(&oa), meta(&ob));
     let i = inv(&render_job(c), &a);
     let p = leaf_at(&i, at + 4 + 40);
-    assert_eq!(p.disposition, D::Dropped, "{}", show(p));
+    assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
 }
 
 /// Decoder issue (filed separately): Components fails the whole decode on
@@ -890,7 +892,7 @@ fn iso_21496_payload_is_not_read() {
         assert_eq!(gm(&oa), gm(&ob), "{r:?}");
         let i = inv(&render_job(r), &a);
         let p = leaf_at(&i, 2 + 10);
-        assert_eq!(p.disposition, D::Unknown, "{}", show(p));
+        assert_eq!(p.disposition(), D::Unknown, "{}", show(p));
     }
 }
 
@@ -932,10 +934,10 @@ fn container_probe_agrees_with_the_inventory() {
         let i = inv(&job(), &d);
         let top_segment = |r: &std::ops::Range<u32>| {
             i.parts().iter().find(|p| {
-                p.parent.is_none()
-                    && p.kind == zencodec::inventory::PartKind::Segment
-                    && p.range.start <= r.start as u64
-                    && r.end as u64 <= p.range.end
+                p.parent().is_none()
+                    && p.kind() == zencodec::inventory::PartKind::Segment
+                    && p.range().start <= r.start as u64
+                    && r.end as u64 <= p.range().end
             })
         };
         for (what, r) in [
@@ -950,7 +952,7 @@ fn container_probe_agrees_with_the_inventory() {
                 // Where the decode succeeds, the probe's XMP is reported.
                 if what == "xmp" && f.to_string_lossy().contains("/valid/") {
                     assert_eq!(
-                        p.disposition,
+                        p.disposition(),
                         D::Metadata(zencodec::inventory::MetadataKind::Xmp),
                         "{}",
                         f.display()
@@ -962,9 +964,9 @@ fn container_probe_agrees_with_the_inventory() {
         // Every image after the primary that the probe finds is a part.
         for r in pr.image_ranges().iter().skip(1) {
             let found = i.parts().iter().any(|p| {
-                p.kind == zencodec::inventory::PartKind::EmbeddedImage
-                    && p.range.start == r.start as u64
-                    && p.range.end == r.end as u64
+                p.kind() == zencodec::inventory::PartKind::EmbeddedImage
+                    && p.range().start == r.start as u64
+                    && p.range().end == r.end as u64
             });
             assert!(
                 found,
@@ -982,12 +984,12 @@ fn counted_scans(i: &Inventory) -> Vec<std::ops::Range<usize>> {
     i.parts()
         .iter()
         .filter(|p| {
-            p.kind == zencodec::inventory::PartKind::ScanData
-                && p.detail
+            p.kind() == zencodec::inventory::PartKind::ScanData
+                && p.detail()
                     .as_deref()
                     .is_some_and(|d| d.contains("counted to the last MCU"))
         })
-        .map(|p| p.range.start as usize..p.range.end as usize)
+        .map(|p| p.range().start as usize..p.range().end as usize)
         .collect()
 }
 
@@ -995,9 +997,9 @@ fn unreferenced_in_scans(i: &Inventory) -> Vec<String> {
     i.parts()
         .iter()
         .filter(|p| {
-            p.disposition == D::Unreferenced
-                && p.parent.is_some_and(|q| {
-                    i.parts()[q.index()].kind == zencodec::inventory::PartKind::ScanData
+            p.disposition() == D::Unreferenced
+                && p.parent().is_some_and(|q| {
+                    i.parts()[q.index()].kind() == zencodec::inventory::PartKind::ScanData
                 })
         })
         .map(show)
@@ -1022,14 +1024,14 @@ fn scan_tail_after_the_last_mcu_is_unreferenced() {
         assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
         let i = inv(&job(), &d);
         let p = leaf_at(&i, eoi);
-        assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
+        assert_eq!(p.disposition(), D::Unreferenced, "{}", show(p));
         assert_eq!(
-            p.range,
+            p.range(),
             eoi as u64..(eoi + tail.len()) as u64,
             "{}",
             show(p)
         );
-        assert_eq!(leaf_at(&i, eoi - 1).disposition, D::ImageData);
+        assert_eq!(leaf_at(&i, eoi - 1).disposition(), D::ImageData);
     }
 
     // One data byte short: the bits run out (the decoder pads with zero
@@ -1077,8 +1079,8 @@ fn planted_scan_tails_change_nothing_and_are_found() {
             );
             let i = inv(&job(), &d);
             let p = leaf_at(&i, scan.end);
-            assert_eq!(p.disposition, D::Unreferenced, "{file:?}: {}", show(p));
-            assert_eq!(p.range.start, scan.end as u64, "{file:?}: {}", show(p));
+            assert_eq!(p.disposition(), D::Unreferenced, "{file:?}: {}", show(p));
+            assert_eq!(p.range().start, scan.end as u64, "{file:?}: {}", show(p));
             planted += 1;
         }
     }
@@ -1102,8 +1104,8 @@ fn junk_before_an_rst_marker_is_unreferenced() {
     assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
     let i = inv(&job(), &d);
     let p = leaf_at(&i, rst);
-    assert_eq!(p.disposition, D::Unreferenced, "{}", show(p));
-    assert_eq!(p.range, rst as u64..rst as u64 + 4, "{}", show(p));
+    assert_eq!(p.disposition(), D::Unreferenced, "{}", show(p));
+    assert_eq!(p.range(), rst as u64..rst as u64 + 4, "{}", show(p));
 }
 
 // ── Review round 2 ─────────────────────────────────────────────────────
@@ -1136,9 +1138,9 @@ fn level_pixels(level: &str, d: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn any_scan_consumed(i: &Inventory) -> bool {
-    i.parts()
-        .iter()
-        .any(|p| p.kind == zencodec::inventory::PartKind::ScanData && p.disposition.is_consumed())
+    i.parts().iter().any(|p| {
+        p.kind() == zencodec::inventory::PartKind::ScanData && p.disposition().is_consumed()
+    })
 }
 
 /// 8 (or `w`) x 8 progressive grey: a DC-first scan (`dc`: its data byte)
@@ -1241,7 +1243,7 @@ fn bytes_after_an_ac_first_invalid_code_are_not_image_data() {
         assert_eq!(level_pixels(level, &a), level_pixels(level, &b), "{level}");
         let i = inv(&level_job(level), &a);
         let p = leaf_at(&i, from + 100);
-        assert_eq!(p.disposition, D::Unreferenced, "{level}: {}", show(p));
+        assert_eq!(p.disposition(), D::Unreferenced, "{level}: {}", show(p));
     }
 }
 

@@ -608,8 +608,8 @@ fn run_inventory(data: &[u8]) {
         let ranges: Vec<_> = inv
             .parts()
             .iter()
-            .filter(|p| p.parent.is_none())
-            .map(|p| p.range.clone())
+            .filter(|p| p.parent().is_none())
+            .map(|p| p.range())
             .collect();
         match &layout {
             None => layout = Some(ranges),

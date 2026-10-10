@@ -102,15 +102,17 @@ fn check_coverage(valid: &[u8], junk_unconsumed: bool) -> Result<(), String> {
     let tail = valid.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(parent) = p.parent {
+        if let Some(parent) = p.parent() {
             has_child[parent.index()] = true;
         }
     }
     for (i, p) in inv.parts().iter().enumerate() {
-        if junk_unconsumed && p.range.end > tail && !has_child[i] && p.disposition.is_consumed() {
+        if junk_unconsumed && p.range().end > tail && !has_child[i] && p.disposition().is_consumed()
+        {
             return Err(format!(
                 "appended junk reported as {} at {:?}",
-                p.disposition, p.range
+                p.disposition(),
+                p.range()
             ));
         }
     }
@@ -177,14 +179,13 @@ fn inventory_covers_every_corpus_jpeg() {
                 continue;
             }
         };
-        let has_eoi = inv
-            .parts()
-            .iter()
-            .any(|p| p.parent.is_none() && p.tag == zencodec::inventory::PartTag::Marker(0xD9));
+        let has_eoi = inv.parts().iter().any(|p| {
+            p.parent().is_none() && *p.tag() == zencodec::inventory::PartTag::Marker(0xD9)
+        });
         let has_image_data = inv
             .parts()
             .iter()
-            .any(|p| p.disposition == Disposition::ImageData);
+            .any(|p| p.disposition() == Disposition::ImageData);
         if !has_eoi {
             unterminated += 1;
             if data.windows(2).any(|w| w == [0xFF, 0xD9]) {
@@ -203,12 +204,12 @@ fn inventory_covers_every_corpus_jpeg() {
                 .parts()
                 .iter()
                 .filter(|p| {
-                    p.disposition == Disposition::Unreferenced
-                        && p.parent.is_some_and(|q| {
-                            inv.parts()[q.index()].kind == zencodec::inventory::PartKind::ScanData
+                    p.disposition() == Disposition::Unreferenced
+                        && p.parent().is_some_and(|q| {
+                            inv.parts()[q.index()].kind() == zencodec::inventory::PartKind::ScanData
                         })
                 })
-                .map(|p| p.range.start as usize..p.range.end as usize)
+                .map(|p| p.range().start as usize..p.range().end as usize)
                 .collect();
             if !tails.is_empty() {
                 with_tails += 1;
@@ -252,7 +253,7 @@ fn inventory_covers_every_corpus_jpeg() {
             } else {
                 let why = verdict.err().unwrap_or_default();
                 let uncertain = inv.parts().iter().any(|p| {
-                    p.detail
+                    p.detail()
                         .as_deref()
                         .is_some_and(|d| d.contains("if the decoder reaches it"))
                 });

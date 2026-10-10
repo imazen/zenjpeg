@@ -136,16 +136,16 @@ fn print_level(
 ) {
     for id in inv.children(parent) {
         let Some(p) = inv.get(id) else { continue };
-        let label = p.label.as_deref().unwrap_or("");
-        let detail = p.detail.as_deref().unwrap_or("");
+        let label = p.label().unwrap_or("");
+        let detail = p.detail().unwrap_or("");
         println!(
             "{:indent$}{} {:?} {}..{} {} {label:?} {detail}",
             "",
-            p.kind.name(),
-            p.tag,
-            p.range.start,
-            p.range.end,
-            p.disposition,
+            p.kind().name(),
+            p.tag(),
+            p.range().start,
+            p.range().end,
+            p.disposition(),
             indent = 2 * depth
         );
         print_level(inv, Some(id), depth + 1);

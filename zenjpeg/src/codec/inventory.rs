@@ -1456,7 +1456,7 @@ impl Walk<'_> {
     }
 
     fn append_detail(&mut self, node: usize, more: &str) {
-        let detail = match &self.node(node).detail {
+        let detail = match &self.node(node).detail() {
             Some(d) => format!("{d}; {more}"),
             None => String::from(more),
         };
@@ -2418,7 +2418,7 @@ impl Walk<'_> {
             // A Malformed segment the Permissive header parser skipped
             // after storing its first tables: those that a scan uses get
             // children; the segment stays Malformed.
-            let malformed = match self.node(s.node).disposition {
+            let malformed = match self.node(s.node).disposition() {
                 Disposition::Structure => false,
                 Disposition::Malformed => true,
                 _ => continue,
@@ -2854,9 +2854,9 @@ impl Walk<'_> {
             for n in st.nodes.clone() {
                 let p = self.node(n);
                 if matches!(
-                    p.disposition,
+                    p.disposition(),
                     Disposition::Structure | Disposition::ImageData
-                ) && p.range.end > keep_until as u64
+                ) && p.range().end > keep_until as u64
                 {
                     self.inv.set_disposition(self.ids[n], Disposition::Skipped);
                 }
@@ -2885,14 +2885,14 @@ impl Walk<'_> {
         let nodes = st.nodes.start..self.ids.len();
         let around = |w: &Self, r: &Range<usize>| {
             nodes.clone().rev().find(|&n| {
-                let p = &w.node(n).range;
+                let p = &w.node(n).range();
                 p.start <= r.start as u64 && r.end as u64 <= p.end
             })
         };
         if let Some(r) = entry
             && let Some(node) = around(self, &r)
             && self.inv.children(Some(self.ids[node])).iter().all(|&c| {
-                let c = &self.inv.parts()[c.index()].range;
+                let c = &self.inv.parts()[c.index()].range();
                 c.end <= r.start as u64 || c.start >= r.end as u64
             })
         {
@@ -3096,9 +3096,9 @@ impl Walk<'_> {
     fn apply_role(&mut self, nodes: Range<usize>, role: Role, xmp_at: Option<usize>) {
         for n in nodes {
             let p = self.node(n);
-            let d = p.disposition;
+            let d = p.disposition();
             let is_xmp_segment =
-                p.kind == PartKind::Segment && Some(p.range.start) == xmp_at.map(|a| a as u64);
+                p.kind() == PartKind::Segment && Some(p.range().start) == xmp_at.map(|a| a as u64);
             let (new, detail) = match (role, d) {
                 (Role::GainMap, Disposition::Structure | Disposition::ImageData) => {
                     (Disposition::Metadata(MetadataKind::GainMap), None)
@@ -3249,11 +3249,11 @@ impl Walk<'_> {
     fn host_for(&self, st: &Stream, r: &Range<usize>) -> Option<usize> {
         let (a, b) = (r.start as u64, r.end as u64);
         let host = (st.nodes.start..self.ids.len()).rev().find(|&n| {
-            let p = &self.node(n).range;
+            let p = &self.node(n).range();
             p.start <= a && b <= p.end
         })?;
         let clear = self.inv.children(Some(self.ids[host])).iter().all(|&c| {
-            let c = &self.inv.parts()[c.index()].range;
+            let c = &self.inv.parts()[c.index()].range();
             c.end <= a || c.start >= b
         });
         clear.then_some(host)
@@ -3525,7 +3525,7 @@ impl Walk<'_> {
             .ids
             .iter()
             .copied()
-            .filter(|id| self.inv.parts()[id.index()].body.is_some())
+            .filter(|id| self.inv.parts()[id.index()].body().is_some())
             .collect();
         for id in bodies {
             self.inv.fill_gaps(Some(id), Disposition::Unreferenced)?;

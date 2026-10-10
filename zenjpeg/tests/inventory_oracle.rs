@@ -204,19 +204,25 @@ enum Verdict {
 }
 
 fn judge(inv: &Inventory, b: &Block) -> Verdict {
-    let top: Vec<_> = inv.parts().iter().filter(|p| p.parent.is_none()).collect();
+    let top: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| p.parent().is_none())
+        .collect();
     let (a, e) = (b.start, b.start + b.len);
-    let starts_at = |x: u64| x == inv.input_len() || top.iter().any(|p| p.range.start == x);
-    let ends_at = |x: u64| x == 0 || top.iter().any(|p| p.range.end == x);
+    let starts_at = |x: u64| x == inv.input_len() || top.iter().any(|p| p.range().start == x);
+    let ends_at = |x: u64| x == 0 || top.iter().any(|p| p.range().end == x);
     if b.title == "[JPEG Image Data]" {
         let sos = top
             .iter()
-            .any(|p| p.range.start == a && p.tag == PartTag::Marker(0xDA));
+            .any(|p| p.range().start == a && *p.tag() == PartTag::Marker(0xDA));
         let stray_then_sos = top.iter().any(|p| {
-            p.range.start == a && p.kind == PartKind::Gap && p.disposition == Disposition::Malformed
-        }) && top
-            .iter()
-            .any(|p| p.range.start > a && p.range.start < e && p.tag == PartTag::Marker(0xDA));
+            p.range().start == a
+                && p.kind() == PartKind::Gap
+                && p.disposition() == Disposition::Malformed
+        }) && top.iter().any(|p| {
+            p.range().start > a && p.range().start < e && *p.tag() == PartTag::Marker(0xDA)
+        });
         return if sos && ends_at(e) {
             Verdict::Aligned
         } else if stray_then_sos && ends_at(e) {
@@ -235,7 +241,7 @@ fn judge(inv: &Inventory, b: &Block) -> Verdict {
     if let Some(m) = marker_of(&b.title) {
         return if top
             .iter()
-            .any(|p| p.range == (a..e) && p.tag == PartTag::Marker(m))
+            .any(|p| p.range() == (a..e) && *p.tag() == PartTag::Marker(m))
         {
             Verdict::Exact
         } else {
@@ -245,7 +251,7 @@ fn judge(inv: &Inventory, b: &Block) -> Verdict {
             ))
         };
     }
-    if top.iter().any(|p| p.range == (a..e)) {
+    if top.iter().any(|p| p.range() == (a..e)) {
         Verdict::Exact
     } else if starts_at(a) && ends_at(e) {
         Verdict::Aligned

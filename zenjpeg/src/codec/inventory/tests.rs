@@ -260,11 +260,11 @@ fn flat(inv: &Inventory) -> Vec<(K, PartTag, Range<u64>, D, Option<alloc::string
         for id in inv.children(parent) {
             let p = inv.get(id).unwrap();
             out.push((
-                p.kind,
-                p.tag.clone(),
-                p.range.clone(),
-                p.disposition,
-                p.label.as_ref().map(|l| l.to_string()),
+                p.kind(),
+                p.tag().clone(),
+                p.range(),
+                p.disposition(),
+                p.label().as_ref().map(|l| l.to_string()),
             ));
             walk(inv, Some(id), out);
         }
@@ -566,7 +566,7 @@ fn encoder_output_passes_check_inventory() {
             assert!(
                 inv.parts()
                     .iter()
-                    .any(|p| p.disposition == D::Metadata(kind)),
+                    .any(|p| p.disposition() == D::Metadata(kind)),
                 "{inv}"
             );
         }
@@ -593,8 +593,8 @@ fn components_decode_of_the_fixture_fails_and_the_inventory_follows() {
     let inv = job().inventory(&f.bytes).unwrap().unwrap();
     inv.validate().unwrap();
     for p in inv.parts() {
-        assert_ne!(p.disposition, D::Metadata(M::GainMap), "{inv}");
-        assert_ne!(p.disposition, D::ImageData, "{inv}");
+        assert_ne!(p.disposition(), D::Metadata(M::GainMap), "{inv}");
+        assert_ne!(p.disposition(), D::ImageData, "{inv}");
     }
 }
 
@@ -643,28 +643,28 @@ fn auto_orient_reads_the_first_exif_with_an_orientation() {
     let seg_at = |start: usize| {
         inv.parts()
             .iter()
-            .find(|p| p.range.start == start as u64 && p.kind == K::Segment)
+            .find(|p| p.range().start == start as u64 && p.kind() == K::Segment)
             .unwrap()
     };
-    assert_eq!(seg_at(2).disposition, D::Metadata(M::Exif));
+    assert_eq!(seg_at(2).disposition(), D::Metadata(M::Exif));
     // Only the second segment's orientation entry is consumed.
     let second = seg_at(2 + first.len());
-    assert_eq!(second.disposition, D::Skipped);
+    assert_eq!(second.disposition(), D::Skipped);
     let entry = inv
         .parts()
         .iter()
-        .find(|p| p.disposition == D::Metadata(M::Orientation))
+        .find(|p| p.disposition() == D::Metadata(M::Orientation))
         .unwrap();
-    assert_eq!(entry.tag, PartTag::Code(0x0112));
+    assert_eq!(*entry.tag(), PartTag::Code(0x0112));
     assert_eq!(entry.len(), 12);
-    assert!(entry.range.start >= second.range.start && entry.range.end <= second.range.end);
+    assert!(entry.range().start >= second.range().start && entry.range().end <= second.range().end);
     let inv = inventory(&data, opts()).unwrap();
     assert_eq!(
         inv.parts()
             .iter()
-            .find(|p| p.range.start == (2 + first.len()) as u64)
+            .find(|p| p.range().start == (2 + first.len()) as u64)
             .unwrap()
-            .disposition,
+            .disposition(),
         D::Skipped
     );
 }
@@ -707,23 +707,23 @@ fn unused_units_and_tails_are_not_hidden_in_consumed_parts() {
     let find = |start: usize, kind: K| {
         inv.parts()
             .iter()
-            .find(|p| p.range.start == start as u64 && p.kind == kind)
+            .find(|p| p.range().start == start as u64 && p.kind() == kind)
             .unwrap_or_else(|| panic!("no {kind:?} at {start}\n{inv}"))
     };
-    assert_eq!(find(q_old, K::Segment).disposition, D::Dropped, "{inv}");
+    assert_eq!(find(q_old, K::Segment).disposition(), D::Dropped, "{inv}");
     // The second DQT mixes a used and an unused table: one child each.
-    assert_eq!(find(q_new, K::Segment).disposition, D::Structure);
-    assert_eq!(find(q_new + 4, K::Attribute).disposition, D::Structure);
-    assert_eq!(find(q_new + 4 + 65, K::Attribute).disposition, D::Dropped);
+    assert_eq!(find(q_new, K::Segment).disposition(), D::Structure);
+    assert_eq!(find(q_new + 4, K::Attribute).disposition(), D::Structure);
+    assert_eq!(find(q_new + 4 + 65, K::Attribute).disposition(), D::Dropped);
     // The long DRI is overwritten (Dropped) and its extra bytes are a child.
-    assert_eq!(find(dri_long, K::Segment).disposition, D::Dropped);
-    assert_eq!(find(dri_long + 6, K::Gap).disposition, D::Dropped);
-    assert_eq!(find(dri, K::Segment).disposition, D::Structure);
+    assert_eq!(find(dri_long, K::Segment).disposition(), D::Dropped);
+    assert_eq!(find(dri_long + 6, K::Gap).disposition(), D::Dropped);
+    assert_eq!(find(dri, K::Segment).disposition(), D::Structure);
     // ICC: 4 declared bytes, then a 4-byte tail split out (still forwarded).
-    assert_eq!(find(icc_at, K::Segment).disposition, D::Metadata(M::Icc));
+    assert_eq!(find(icc_at, K::Segment).disposition(), D::Metadata(M::Icc));
     let tail = find(icc_at + 4 + 14 + 4, K::Gap);
     assert_eq!(tail.len(), 4);
-    assert_eq!(tail.disposition, D::Metadata(M::Icc));
+    assert_eq!(tail.disposition(), D::Metadata(M::Icc));
 }
 
 /// After the frame header the decoder reads TEM as if it carried a length
@@ -745,10 +745,10 @@ fn tem_after_the_frame_header_is_read_as_a_length() {
     let tem = inv
         .parts()
         .iter()
-        .find(|p| p.tag == PartTag::Marker(0x01))
+        .find(|p| *p.tag() == PartTag::Marker(0x01))
         .unwrap();
-    assert_eq!(tem.range, tem_at as u64..tem_at as u64 + 8);
-    assert_eq!(tem.disposition, D::Skipped);
+    assert_eq!(tem.range(), tem_at as u64..tem_at as u64 + 8);
+    assert_eq!(tem.disposition(), D::Skipped);
     // The decoder agrees: the image still decodes after skipping 6 bytes.
     JpegDecoderConfig::new()
         .job()
@@ -771,7 +771,7 @@ fn junk_before_soi_and_no_soi() {
     );
     // The decoder rejects the file, so nothing is consumed.
     assert!(
-        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        inv.parts().iter().all(|p| !p.disposition().is_consumed()),
         "{inv}"
     );
     assert!(
@@ -786,7 +786,7 @@ fn junk_before_soi_and_no_soi() {
     let inv = inventory(b"not a jpeg", opts()).unwrap();
     inv.validate().unwrap();
     assert_eq!(inv.parts().len(), 1);
-    assert_eq!(inv.parts()[0].disposition, D::Malformed);
+    assert_eq!(inv.parts()[0].disposition(), D::Malformed);
     inventory(&[], opts()).unwrap().validate().unwrap();
 }
 
@@ -809,13 +809,13 @@ fn twelve_bit_frame_keeps_probe_metadata_only() {
     let find = |t: u8| {
         inv.parts()
             .iter()
-            .find(|p| p.tag == PartTag::Marker(t))
+            .find(|p| *p.tag() == PartTag::Marker(t))
             .unwrap()
     };
-    assert_eq!(find(0xE1).disposition, D::Metadata(M::Exif));
-    assert_eq!(find(0xC1).disposition, D::Structure);
-    assert_eq!(find(0xDA).disposition, D::Skipped);
-    assert!(inv.parts().iter().all(|p| p.disposition != D::ImageData));
+    assert_eq!(find(0xE1).disposition(), D::Metadata(M::Exif));
+    assert_eq!(find(0xC1).disposition(), D::Structure);
+    assert_eq!(find(0xDA).disposition(), D::Skipped);
+    assert!(inv.parts().iter().all(|p| p.disposition() != D::ImageData));
 }
 
 #[test]
@@ -831,12 +831,12 @@ fn lossless_frame_is_skipped() {
     let sof3 = inv
         .parts()
         .iter()
-        .find(|p| p.tag == PartTag::Marker(0xC3))
+        .find(|p| *p.tag() == PartTag::Marker(0xC3))
         .unwrap();
-    assert_eq!(sof3.disposition, D::Skipped);
-    assert!(sof3.detail.as_deref().unwrap().contains("SOF3"));
+    assert_eq!(sof3.disposition(), D::Skipped);
+    assert!(sof3.detail().unwrap().contains("SOF3"));
     assert!(
-        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        inv.parts().iter().all(|p| !p.disposition().is_consumed()),
         "{inv}"
     );
 }
