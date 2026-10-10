@@ -103,7 +103,7 @@ pub(crate) fn inventory(data: &[u8], opts: Options) -> Result<Inventory, Invento
                     embedded: false,
                     auto_orient: opts.auto_orient && start == 0,
                 },
-            );
+            )?;
             if let Some(eoi_end) = st.eoi_end {
                 w.after_eoi(&st, eoi_end)?;
             }
@@ -193,6 +193,60 @@ struct App {
 struct Frame {
     components: u8,
     ids: [u8; 4],
+    /// Quantisation table index per component.
+    qidx: [u8; 4],
+    /// The SOF marker: 0xC0/C1 sequential and 0xC2 progressive Huffman,
+    /// 0xC9/CA arithmetic.
+    mode: u8,
+}
+
+/// A table or parameter definition, and whether a scan (or the final
+/// dequantisation) uses it before it is redefined.
+struct Def {
+    node: usize,
+    range: Range<usize>,
+    what: String,
+    used: bool,
+}
+
+/// The definitions in effect, for marking units that are overwritten or
+/// never used (`Dropped`).
+#[derive(Default)]
+struct Defs {
+    all: Vec<Def>,
+    q: [Option<usize>; 4],
+    dc: [Option<usize>; 4],
+    ac: [Option<usize>; 4],
+    dri: Option<usize>,
+    dac: Vec<usize>,
+}
+
+impl Defs {
+    fn define(&mut self, node: usize, range: Range<usize>, what: String) -> usize {
+        self.all.push(Def {
+            node,
+            range,
+            what,
+            used: false,
+        });
+        self.all.len() - 1
+    }
+
+    fn mark(&mut self, d: Option<usize>) {
+        if let Some(d) = d
+            && let Some(def) = self.all.get_mut(d)
+        {
+            def.used = true;
+        }
+    }
+
+    /// The quantisation tables every frame component refers to.
+    fn mark_quant(&mut self, f: &Frame) {
+        for c in 0..f.components as usize {
+            let q = self.q.get(f.qidx[c] as usize).copied().flatten();
+            self.mark(q);
+        }
+    }
 }
 
 /// What walking one SOI..EOI stream found.
@@ -355,6 +409,219 @@ fn check_dht(body: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// How far into an MPF APP2 body `parse_mpf_directory` reads: the IFD
+/// entries it walks (or scans) to find the MP Entry tag, and the MP entry
+/// array. `None` when it finds no MP Entry, so nothing is extracted.
+fn mpf_read_end(d: &[u8]) -> Option<usize> {
+    if d.len() < 12 || !d.starts_with(b"MPF\0") {
+        return None;
+    }
+    let le = &d[4..6] == b"II";
+    let r16 = |p: usize| {
+        let b = d.get(p..p.checked_add(2)?)?;
+        Some(if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        })
+    };
+    let r32 = |p: usize| {
+        let b = d.get(p..p.checked_add(4)?)?;
+        let b = [b[0], b[1], b[2], b[3]];
+        Some(if le {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        })
+    };
+    let ifd = 4usize.checked_add(r32(8)? as usize)?;
+    let n = r16(ifd)? as usize;
+    let mut end = ifd + 2;
+    let mut mp = None;
+    for i in 0..n {
+        let e = ifd + 2 + i * 12;
+        if d.len() < e + 12 {
+            break;
+        }
+        end = e + 12;
+        if r16(e)? == 0xB002 {
+            mp = Some((r32(e + 8)? as usize + 4, r32(e + 4)? as usize));
+            break;
+        }
+    }
+    if mp.is_none() {
+        // The non-standard-spacing fallback scans up to 256 bytes.
+        let tag: [u8; 2] = if le { [0x02, 0xB0] } else { [0xB0, 0x02] };
+        let scan_end = (ifd + 2 + 256).min(d.len().saturating_sub(12));
+        for p in ifd + 2..scan_end {
+            if d[p..p + 2] == tag && r16(p + 2) == Some(7) {
+                mp = Some((r32(p + 8)? as usize + 4, r32(p + 4)? as usize));
+                end = end.max(p + 12);
+                break;
+            }
+        }
+    }
+    let (off, count) = mp?;
+    let images = (count / 16).min(d.len().saturating_sub(off) / 16).min(256);
+    Some(end.max(off.saturating_add(images * 16)).min(d.len()))
+}
+
+/// The IFD0 Orientation entry (12 bytes) in an APP1 `Exif\0\0` body.
+fn exif_orientation_entry(p: &[u8]) -> Option<Range<usize>> {
+    let t = p.get(6..)?;
+    let be = match t.get(0..2)? {
+        b"MM" => true,
+        b"II" => false,
+        _ => return None,
+    };
+    let r16 = |o: usize| {
+        let b = t.get(o..o.checked_add(2)?)?;
+        Some(if be {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        })
+    };
+    let b = t.get(4..8)?;
+    let b = [b[0], b[1], b[2], b[3]];
+    let ifd = (if be {
+        u32::from_be_bytes(b)
+    } else {
+        u32::from_le_bytes(b)
+    }) as usize;
+    let n = r16(ifd)? as usize;
+    for i in 0..n.min(4096) {
+        let e = ifd.checked_add(2 + 12 * i)?;
+        t.get(e..e + 12)?;
+        if r16(e)? == 0x0112 {
+            return Some(6 + e..6 + e + 12);
+        }
+    }
+    None
+}
+
+/// ICC bytes past the profile's declared size (its first four bytes):
+/// zenjpeg forwards them in `ImageInfo::icc_profile` unchanged, so they stay
+/// `Metadata(Icc)`, but as their own child parts so an audit sees the slack.
+/// Chunks join in sequence-number order, as `reassemble_icc` joins them.
+fn icc_past_declared_size(
+    data: &[u8],
+    apps: &[App],
+    decided: &mut [Decided],
+    extra: &mut Vec<(usize, Part)>,
+) {
+    let mut chunks: Vec<(u8, usize)> = (0..apps.len())
+        .filter(|&i| {
+            apps[i].ty == SegmentType::Icc
+                && matches!(
+                    decided[i],
+                    Some((Disposition::Metadata(MetadataKind::Icc), _))
+                )
+        })
+        .map(|i| (data[apps[i].payload.start + ICC_SIG_LEN], i))
+        .collect();
+    chunks.sort_by_key(|c| c.0);
+    let profile = |i: usize| apps[i].payload.start + ICC_SIG_LEN + 2..apps[i].payload.end;
+    let total: usize = chunks.iter().map(|&(_, i)| profile(i).len()).sum();
+    let head: Vec<u8> = chunks
+        .iter()
+        .flat_map(|&(_, i)| data[profile(i)].iter().copied())
+        .take(4)
+        .collect();
+    let Ok(head) = <[u8; 4]>::try_from(head) else {
+        return;
+    };
+    let declared = u32::from_be_bytes(head) as usize;
+    if declared > total {
+        if let Some(&(_, i)) = chunks.first()
+            && let Some((_, detail)) = decided[i].as_mut()
+        {
+            *detail = Some(format!(
+                "the reassembled profile is {total} bytes; its header declares {declared}"
+            ));
+        }
+        return;
+    }
+    let mut at = 0usize;
+    for &(_, i) in &chunks {
+        let r = profile(i);
+        let (lo, hi) = (declared.max(at), at + r.len());
+        if lo < hi {
+            extra.push((
+                apps[i].node,
+                gap(
+                    r.start + (lo - at)..r.start + (hi - at),
+                    Disposition::Metadata(MetadataKind::Icc),
+                )
+                .with_detail(format!(
+                    "past the ICC profile's declared size ({declared} bytes); forwarded \
+                         unchanged in ImageInfo::icc_profile"
+                )),
+            ));
+        }
+        at = hi;
+    }
+}
+
+/// `(selector byte, byte range)` of each table in a DQT or DHT body the
+/// decoder accepted; `base` is the body's file offset.
+fn table_ranges(marker: u8, body: &[u8], base: usize) -> Vec<(u8, Range<usize>)> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while let Some(&info) = body.get(at) {
+        let len = if marker == MARKER_DQT {
+            1 + if info >> 4 == 0 { 64 } else { 128 }
+        } else {
+            let Some(bits) = body.get(at + 1..at + 17) else {
+                break;
+            };
+            17 + bits.iter().map(|&b| b as usize).sum::<usize>()
+        };
+        if at + len > body.len() {
+            break;
+        }
+        out.push((info, base + at..base + at + len));
+        at += len;
+    }
+    out
+}
+
+/// Mark what a scan uses: every frame component's quantisation table (the
+/// sequential path dequantises during the scan), the restart interval, and
+/// the entropy-coding tables its coding needs. `spec` is the SOS body after
+/// the component count: the component selectors, then Ss, Se, Ah/Al.
+fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8]) {
+    defs.mark_quant(f);
+    let dri = defs.dri;
+    defs.mark(dri);
+    let (comps, params) = spec.split_at(spec.len().saturating_sub(3));
+    if matches!(f.mode, 0xC9 | 0xCA) {
+        // Arithmetic coding uses conditioning tables, never Huffman tables.
+        for d in defs.dac.clone() {
+            defs.mark(Some(d));
+        }
+        return;
+    }
+    let (Some(&ss), Some(&ahal)) = (params.first(), params.get(2)) else {
+        return;
+    };
+    let progressive = f.mode == 0xC2;
+    // Progressive: DC first scans use the DC table, DC refinement uses no
+    // table, AC scans (first and refinement) use the AC table.
+    let need_dc = !progressive || (ss == 0 && ahal >> 4 == 0);
+    let need_ac = !progressive || ss > 0;
+    for &[_, tables] in comps.as_chunks::<2>().0 {
+        if need_dc {
+            let d = defs.dc.get((tables >> 4) as usize).copied().flatten();
+            defs.mark(d);
+        }
+        if need_ac {
+            let d = defs.ac.get((tables & 0x0F) as usize).copied().flatten();
+            defs.mark(d);
+        }
+    }
+}
+
 /// Offset of the segment `find_exif_orientation` (decode/mod.rs) takes the
 /// pixel orientation from. A byte-for-byte copy of its loop, including the
 /// way a single fill byte desynchronises it; the `orientation_segment_agrees`
@@ -503,6 +770,7 @@ impl Walk<'_> {
         let mut scans = 0u32;
         let mut seen_sos = false;
         let mut height_known = false;
+        let mut defs = Defs::default();
 
         // A container-level failure: the decoder errors at this part. Before
         // the first scan that is certain. After it, the decoder resumes
@@ -609,6 +877,9 @@ impl Walk<'_> {
                         "image height is 0 and no DNL set it",
                     );
                 }
+                if let Some(f) = st.frame {
+                    defs.mark_quant(&f);
+                }
                 pos += 2;
                 st.eoi_end = Some(pos);
                 phase = Phase::Done;
@@ -661,6 +932,9 @@ impl Walk<'_> {
                 if let Some(why) = check_sos(data, pos, ns, st.frame) {
                     fatal(self, &mut st, node, scans, phase, why);
                 }
+                if let Some(f) = st.frame {
+                    mark_scan_uses(&mut defs, &f, &data[pos + 5..hdr_end]);
+                }
                 let end = scan_end(data, hdr_end, limit);
                 if end > hdr_end {
                     let mut scan = part(
@@ -669,11 +943,13 @@ impl Walk<'_> {
                         hdr_end..end,
                         Disposition::ImageData,
                     );
-                    if end == limit {
-                        scan = scan.with_detail(
-                            "no marker after the entropy-coded data (truncated; the decoder pads)",
-                        );
-                    }
+                    scan = scan.with_detail(if end == limit {
+                        "no marker after the entropy-coded data (truncated; the decoder pads); \
+                         bytes after the last MCU are not distinguished"
+                    } else {
+                        "bytes after the last MCU are not distinguished (that needs a Huffman \
+                         decode)"
+                    });
                     self.add(parent, scan)?;
                 }
                 scans += 1;
@@ -772,7 +1048,7 @@ impl Walk<'_> {
                     }
                     let node = self.add(parent, p)?;
                     if ty == SegmentType::Jfif {
-                        self.jfif_thumbnail(node, &payload)?;
+                        self.jfif_children(node, &payload)?;
                     }
                     st.apps.push(App {
                         node,
@@ -793,6 +1069,27 @@ impl Walk<'_> {
                     if let Err(why) = verdict {
                         self.set(node, Disposition::Malformed, None);
                         fatal(self, &mut st, node, scans, phase, why);
+                    } else {
+                        // Each table replaces the one in the same slot.
+                        for (info, r) in table_ranges(m, body, payload.start) {
+                            let idx = (info & 0x0F) as usize;
+                            let (what, kind) = if m == MARKER_DQT {
+                                (format!("quantization table {idx}"), 0)
+                            } else if info >> 4 == 0 {
+                                (format!("DC Huffman table {idx}"), 1)
+                            } else {
+                                (format!("AC Huffman table {idx}"), 2)
+                            };
+                            let d = defs.define(node, r, what);
+                            let slot = match kind {
+                                0 => &mut defs.q,
+                                1 => &mut defs.dc,
+                                _ => &mut defs.ac,
+                            };
+                            if let Some(s) = slot.get_mut(idx) {
+                                *s = Some(d);
+                            }
+                        }
                     }
                 }
                 MARKER_DAC => {
@@ -811,9 +1108,22 @@ impl Walk<'_> {
                             break;
                         }
                     }
+                    let d = defs.define(node, payload.clone(), "arithmetic conditioning".into());
+                    defs.dac.push(d);
                 }
                 MARKER_DRI => {
-                    self.add(parent, seg(m, pos..end, Disposition::Structure))?;
+                    let node = self.add(parent, seg(m, pos..end, Disposition::Structure))?;
+                    let d = defs.define(node, payload.clone(), "restart interval".into());
+                    defs.dri = Some(d);
+                    if end > pos + 6 {
+                        // `parse_restart_interval` skips what a length above 4 declares.
+                        self.add(
+                            Some(node),
+                            gap(pos + 6..end, Disposition::Dropped).with_detail(
+                                "bytes after the restart interval; the decoder skips them",
+                            ),
+                        )?;
+                    }
                 }
                 MARKER_DNL if phase == Phase::Body => {
                     // `parse_dnl`: the length must be 4.
@@ -821,6 +1131,16 @@ impl Walk<'_> {
                     if end - pos != 6 {
                         self.set(node, Disposition::Malformed, None);
                         fatal(self, &mut st, node, scans, phase, "DNL length is not 4");
+                    } else if height_known {
+                        // `parse_dnl` only sets the height when SOF left it 0.
+                        self.set(
+                            node,
+                            Disposition::Dropped,
+                            Some(
+                                "the frame header already set the height; the decoder ignores it"
+                                    .into(),
+                            ),
+                        );
                     } else if be16(data, pos + 4).is_some_and(|h| h > 0) {
                         height_known = true;
                     }
@@ -852,7 +1172,7 @@ impl Walk<'_> {
                                 fatal(self, &mut st, node, scans, Phase::Header, why);
                             }
                             Ok(f) => {
-                                st.frame = Some(f.frame);
+                                st.frame = Some(Frame { mode: m, ..f.frame });
                                 height_known = f.height > 0;
                                 if f.height == 0 {
                                     // `read_info` rejects DNL mode
@@ -919,47 +1239,124 @@ impl Walk<'_> {
         if st.eoi_end.is_none() && phase == Phase::Body && scans == 0 && !st.decode_fatal {
             st.decode_fatal = true;
         }
+        self.settle_defs(&defs)?;
         st.nodes = first..self.nodes.len();
         Ok(st)
     }
 
-    /// The uncompressed RGB thumbnail a JFIF APP0 may carry after its fixed
-    /// fields; the decoder never reads it.
-    fn jfif_thumbnail(
-        &mut self,
-        node: usize,
-        payload: &Range<usize>,
-    ) -> Result<(), InventoryError> {
+    /// Definitions no scan used: overwritten before use, never referenced,
+    /// or of a kind the frame's coding does not use. A segment whose every
+    /// definition is unused is `Dropped`; one that mixes both gets a child
+    /// per definition.
+    fn settle_defs(&mut self, defs: &Defs) -> Result<(), InventoryError> {
+        const WHY: &str = "no scan uses it before it is redefined, or nothing refers to it";
+        let mut i = 0;
+        while i < defs.all.len() {
+            let node = defs.all[i].node;
+            let mut j = i;
+            while j < defs.all.len() && defs.all[j].node == node {
+                j += 1;
+            }
+            let group = &defs.all[i..j];
+            i = j;
+            if self.nodes.get(node).map(|n| n.part.disposition) != Some(Disposition::Structure) {
+                continue;
+            }
+            let unused = group.iter().filter(|d| !d.used).count();
+            if unused == 0 {
+                continue;
+            }
+            if unused == group.len() {
+                let names: Vec<&str> = group.iter().map(|d| d.what.as_str()).collect();
+                self.set(
+                    node,
+                    Disposition::Dropped,
+                    Some(format!("{}: {WHY}", names.join(", "))),
+                );
+                continue;
+            }
+            for d in group {
+                let tag = PartTag::Code(u32::from(self.data[d.range.start]));
+                let p = if d.used {
+                    part(
+                        PartKind::Attribute,
+                        tag,
+                        d.range.clone(),
+                        Disposition::Structure,
+                    )
+                    .with_detail(d.what.clone())
+                } else {
+                    part(
+                        PartKind::Attribute,
+                        tag,
+                        d.range.clone(),
+                        Disposition::Dropped,
+                    )
+                    .with_detail(format!("{}: {WHY}", d.what))
+                };
+                self.add(Some(node), p)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The parts of a JFIF APP0 the decoder never reads: it reads the
+    /// signature, version, units and densities (12 bytes, `parse_jfif`), not
+    /// the thumbnail size, the uncompressed RGB thumbnail or anything after.
+    fn jfif_children(&mut self, node: usize, payload: &Range<usize>) -> Result<(), InventoryError> {
         let body = &self.data[payload.clone()];
-        let (Some(&w), Some(&h)) = (body.get(12), body.get(13)) else {
-            return Ok(());
-        };
-        let n = 3 * usize::from(w) * usize::from(h);
-        if n == 0 || 14 + n > body.len() {
+        if body.len() <= 12 {
             return Ok(());
         }
-        let start = payload.start + 14;
-        self.add(
-            Some(node),
-            part(
-                PartKind::EmbeddedImage,
-                PartTag::None,
-                start..start + n,
-                Disposition::Skipped,
-            )
-            .with_detail(format!(
-                "{w}x{h} RGB JFIF thumbnail; the decoder does not read it"
-            )),
-        )?;
+        let base = payload.start;
+        let mut tail = 12;
+        if let (Some(&w), Some(&h)) = (body.get(12), body.get(13)) {
+            self.add(
+                Some(node),
+                part(
+                    PartKind::Attribute,
+                    PartTag::None,
+                    base + 12..base + 14,
+                    Disposition::Skipped,
+                )
+                .with_detail("JFIF thumbnail size; the decoder does not read it"),
+            )?;
+            tail = 14;
+            let n = 3 * usize::from(w) * usize::from(h);
+            if n > 0 && 14 + n <= body.len() {
+                self.add(
+                    Some(node),
+                    part(
+                        PartKind::EmbeddedImage,
+                        PartTag::None,
+                        base + 14..base + 14 + n,
+                        Disposition::Skipped,
+                    )
+                    .with_detail(format!(
+                        "{w}x{h} RGB JFIF thumbnail; the decoder does not read it"
+                    )),
+                )?;
+                tail = 14 + n;
+            }
+        }
+        if tail < body.len() {
+            self.add(
+                Some(node),
+                gap(base + tail..payload.end, Disposition::Unreferenced)
+                    .with_detail("bytes after the JFIF fields and thumbnail"),
+            )?;
+        }
         Ok(())
     }
 
     /// Settle every APPn/COM disposition of `st`, and demote the stream's
     /// structure and image data when the decode fails.
-    fn resolve(&mut self, st: &Stream, view: View) {
+    fn resolve(&mut self, st: &Stream, view: View) -> Result<(), InventoryError> {
         let probe_ok = view.probe && !st.probe_fatal;
         let decode_ok = !st.decode_fatal;
         let mut decided: Vec<Decided> = vec![None; st.apps.len()];
+        // Child parts for bytes inside consumed segments that nothing reads.
+        let mut extra: Vec<(usize, Part)> = Vec::new();
 
         // The metadata both `probe()` and `decode()` report, each over the
         // segments it reads: `probe()` the ones before the first frame header.
@@ -1025,6 +1422,13 @@ impl Walk<'_> {
                     );
                 } else if (3..=4).contains(&components) {
                     let transform = data[a.payload.start + 11];
+                    if a.payload.len() > 12 {
+                        extra.push((
+                            a.node,
+                            gap(a.payload.start + 12..a.payload.end, Disposition::Unreferenced)
+                                .with_detail("bytes after the APP14 fields; the decoder reads only the transform"),
+                        ));
+                    }
                     decide(
                         &mut decided[i],
                         Disposition::Metadata(MetadataKind::Colour),
@@ -1051,7 +1455,30 @@ impl Walk<'_> {
                         Some("MPF index inside an embedded image is not followed".into()),
                     );
                 } else {
-                    decide(&mut decided[i], Disposition::Structure, None);
+                    let a = &st.apps[i];
+                    match mpf_read_end(&data[a.payload.clone()]) {
+                        None => decide(
+                            &mut decided[i],
+                            Disposition::Dropped,
+                            Some("the MPF index does not parse; no image is extracted".into()),
+                        ),
+                        Some(end) => {
+                            if a.payload.start + end < a.payload.end {
+                                extra.push((
+                                    a.node,
+                                    gap(
+                                        a.payload.start + end..a.payload.end,
+                                        Disposition::Unreferenced,
+                                    )
+                                    .with_detail(
+                                        "bytes the MPF index parser does not read (for example \
+                                             MP attribute IFDs)",
+                                    ),
+                                ));
+                            }
+                            decide(&mut decided[i], Disposition::Structure, None);
+                        }
+                    }
                 }
             }
         }
@@ -1070,14 +1497,40 @@ impl Walk<'_> {
                         decided[i],
                         Some((Disposition::Metadata(MetadataKind::Exif), _))
                     ) {
-                        decided[i] = Some((
-                            Disposition::Metadata(MetadataKind::Orientation),
-                            Some(
-                                "its orientation is applied to the pixels; ImageInfo::exif \
-                                 carries the first EXIF segment"
-                                    .into(),
-                            ),
-                        ));
+                        let a = &st.apps[i];
+                        match exif_orientation_entry(&data[a.payload.clone()]) {
+                            Some(r) => {
+                                // Only the orientation entry is consumed.
+                                decided[i] = Some((
+                                    Disposition::Skipped,
+                                    Some(
+                                        "only its orientation entry is read (auto-orient); \
+                                         ImageInfo::exif carries the first EXIF segment"
+                                            .into(),
+                                    ),
+                                ));
+                                extra.push((
+                                    a.node,
+                                    part(
+                                        PartKind::Field,
+                                        PartTag::Code(0x0112),
+                                        a.payload.start + r.start..a.payload.start + r.end,
+                                        Disposition::Metadata(MetadataKind::Orientation),
+                                    )
+                                    .with_detail("EXIF orientation entry, applied to the pixels"),
+                                ));
+                            }
+                            None => {
+                                decided[i] = Some((
+                                    Disposition::Metadata(MetadataKind::Orientation),
+                                    Some(
+                                        "its orientation is applied to the pixels; \
+                                         ImageInfo::exif carries the first EXIF segment"
+                                            .into(),
+                                    ),
+                                ));
+                            }
+                        }
                     }
                 }
                 None => orientation_from_inside = Some(at),
@@ -1104,6 +1557,8 @@ impl Walk<'_> {
                 }
             }
         }
+
+        icc_past_declared_size(data, &st.apps, &mut decided, &mut extra);
 
         for (i, a) in st.apps.iter().enumerate() {
             let (d, detail) = match decided[i].take() {
@@ -1146,6 +1601,10 @@ impl Walk<'_> {
                 }
             }
         }
+        for (node, p) in extra {
+            self.add(Some(node), p)?;
+        }
+        Ok(())
     }
 
     /// EXIF, XMP, ICC and JFIF as one consumer (`probe()` or `decode()`)
@@ -1313,8 +1772,8 @@ impl Walk<'_> {
     }
 
     /// Map an embedded image's resolved parts to what its role makes of them.
-    fn apply_role(&mut self, st: &Stream, role: Role) {
-        for n in st.nodes.clone() {
+    fn apply_role(&mut self, nodes: Range<usize>, role: Role) {
+        for n in nodes {
             let d = self.nodes[n].part.disposition;
             let (new, detail) = match (role, d) {
                 (Role::GainMap, Disposition::Structure | Disposition::ImageData) => {
@@ -1359,8 +1818,10 @@ impl Walk<'_> {
                     embedded: true,
                     auto_orient: false,
                 },
-            );
-            self.apply_role(&st, role);
+            )?;
+            // Every part of this stream, including children `resolve` added.
+            let all = st.nodes.start..self.nodes.len();
+            self.apply_role(all, role);
         }
         Ok(node)
     }
@@ -1653,6 +2114,7 @@ fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
         return Err("SOF marker length mismatch");
     }
     let mut ids = [0u8; 4];
+    let mut qidx = [0u8; 4];
     for (c, id) in ids.iter_mut().enumerate().take(nc as usize) {
         let at = 6 + 3 * c;
         *id = body[at];
@@ -1663,11 +2125,14 @@ fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
         if body[at + 2] >= 4 {
             return Err("quantization table index out of range");
         }
+        qidx[c] = body[at + 2];
     }
     Ok(SofInfo {
         frame: Frame {
             components: nc,
             ids,
+            qidx,
+            mode: 0,
         },
         height,
         precision,

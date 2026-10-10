@@ -300,7 +300,14 @@ fn everything_fixture_part_list_is_pinned() {
             D::Metadata(M::Resolution),
             l("JFIF"),
         ),
-        // The 1x1 RGB thumbnail at the end of the JFIF segment.
+        // The thumbnail size and the 1x1 RGB thumbnail: never read.
+        (
+            K::Attribute,
+            PartTag::None,
+            r(f.at("jfif").end - 5, f.at("jfif").end - 3),
+            D::Skipped,
+            None,
+        ),
         (
             K::EmbeddedImage,
             PartTag::None,
@@ -395,12 +402,14 @@ fn everything_fixture_part_list_is_pinned() {
         (K::Gap, PartTag::None, f.at("fill"), D::Padding, None),
         (K::Segment, mk(0xDB), f.at("dqt"), D::Structure, None),
         (K::Segment, mk(0xC4), f.at("dht"), D::Structure, None),
-        (K::Segment, mk(0xCC), f.at("dac"), D::Structure, None),
+        // Arithmetic conditioning in a Huffman-coded frame: parsed, unused.
+        (K::Segment, mk(0xCC), f.at("dac"), D::Dropped, None),
         (K::Segment, mk(0xDD), f.at("dri"), D::Structure, None),
         (K::Segment, mk(0xC0), f.at("sof0"), D::Structure, None),
         (K::Segment, mk(0xDA), f.at("sos"), D::Structure, None),
         (K::ScanData, PartTag::None, f.at("scan"), D::ImageData, None),
-        (K::Segment, mk(0xDC), f.at("dnl"), D::Structure, None),
+        // SOF already set the height, so the decoder ignores DNL.
+        (K::Segment, mk(0xDC), f.at("dnl"), D::Dropped, None),
         (K::Segment, mk(0xC1), f.at("sof1"), D::Skipped, None),
         (K::Segment, mk(0xFE), f.at("com2"), D::Skipped, l("late")),
         (K::Segment, mk(0xD9), f.at("eoi"), D::Structure, None),
@@ -598,15 +607,24 @@ fn auto_orient_reads_the_first_exif_with_an_orientation() {
     };
     let inv = inventory(&data, o).unwrap();
     inv.validate().unwrap();
-    let at = |start: usize| {
+    let seg_at = |start: usize| {
         inv.parts()
             .iter()
-            .find(|p| p.range.start == start as u64)
+            .find(|p| p.range.start == start as u64 && p.kind == K::Segment)
             .unwrap()
-            .disposition
     };
-    assert_eq!(at(2), D::Metadata(M::Exif));
-    assert_eq!(at(2 + first.len()), D::Metadata(M::Orientation));
+    assert_eq!(seg_at(2).disposition, D::Metadata(M::Exif));
+    // Only the second segment's orientation entry is consumed.
+    let second = seg_at(2 + first.len());
+    assert_eq!(second.disposition, D::Skipped);
+    let entry = inv
+        .parts()
+        .iter()
+        .find(|p| p.disposition == D::Metadata(M::Orientation))
+        .unwrap();
+    assert_eq!(entry.tag, PartTag::Code(0x0112));
+    assert_eq!(entry.len(), 12);
+    assert!(entry.range.start >= second.range.start && entry.range.end <= second.range.end);
     let inv = inventory(&data, opts()).unwrap();
     assert_eq!(
         inv.parts()
@@ -616,6 +634,63 @@ fn auto_orient_reads_the_first_exif_with_an_orientation() {
             .disposition,
         D::Skipped
     );
+}
+
+/// Units that are overwritten before use or that nothing uses are
+/// `Dropped`; bytes after a unit's internal end are their own child part.
+#[test]
+fn unused_units_and_tails_are_not_hidden_in_consumed_parts() {
+    let mut data = vec![0xFF, 0xD8];
+    // ICC chunk whose profile header declares 4 bytes; 4 more follow.
+    let icc_at = data.len();
+    data.extend(segment(0xE2, b"ICC_PROFILE\0\x01\x01\0\0\0\x04tail"));
+    // Quantisation table 0, overwritten before any scan; table 1 never used.
+    let q_old = data.len();
+    data.extend(dqt());
+    let mut both = vec![0x00];
+    both.extend([2u8; 64]);
+    both.push(0x01);
+    both.extend([3u8; 64]);
+    let q_new = data.len();
+    data.extend(segment(0xDB, &both));
+    data.extend(dht());
+    // DRI declaring 2 extra bytes; a second DRI overwrites it before the scan.
+    let dri_long = data.len();
+    data.extend(segment(0xDD, &[0, 1, 0xAA, 0xBB]));
+    let dri = data.len();
+    data.extend(segment(0xDD, &[0, 0]));
+    data.extend(sof(0xC0, 8, 8));
+    data.extend(sos());
+    data.push(0x3F);
+    data.extend([0xFF, 0xD9]);
+    JpegDecoderConfig::new()
+        .job()
+        .decoder(alloc::borrow::Cow::Borrowed(&data[..]), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let inv = inventory(&data, opts()).unwrap();
+    inv.validate().unwrap();
+    let find = |start: usize, kind: K| {
+        inv.parts()
+            .iter()
+            .find(|p| p.range.start == start as u64 && p.kind == kind)
+            .unwrap_or_else(|| panic!("no {kind:?} at {start}\n{inv}"))
+    };
+    assert_eq!(find(q_old, K::Segment).disposition, D::Dropped, "{inv}");
+    // The second DQT mixes a used and an unused table: one child each.
+    assert_eq!(find(q_new, K::Segment).disposition, D::Structure);
+    assert_eq!(find(q_new + 4, K::Attribute).disposition, D::Structure);
+    assert_eq!(find(q_new + 4 + 65, K::Attribute).disposition, D::Dropped);
+    // The long DRI is overwritten (Dropped) and its extra bytes are a child.
+    assert_eq!(find(dri_long, K::Segment).disposition, D::Dropped);
+    assert_eq!(find(dri_long + 6, K::Gap).disposition, D::Dropped);
+    assert_eq!(find(dri, K::Segment).disposition, D::Structure);
+    // ICC: 4 declared bytes, then a 4-byte tail split out (still forwarded).
+    assert_eq!(find(icc_at, K::Segment).disposition, D::Metadata(M::Icc));
+    let tail = find(icc_at + 4 + 14 + 4, K::Gap);
+    assert_eq!(tail.len(), 4);
+    assert_eq!(tail.disposition, D::Metadata(M::Icc));
 }
 
 /// After the frame header the decoder reads TEM as if it carried a length
