@@ -477,6 +477,7 @@ impl BytesEncoder {
         // calling inject_encoder_segments. This ensures the MPF offset calculation
         // includes all metadata that will be in the final output.
         if let Some(mut segments) = self.config.segments.take() {
+            segments = drop_caller_colour_signals(segments, self.config.color_mode);
             // Merge individual metadata into segments if MPF is present
             // (MPF offset calculation needs all data to be accounted for)
             if segments.has_mpf_images() {
@@ -905,6 +906,31 @@ fn inject_xmp_inplace(jpeg: &mut Vec<u8>, xmp_data: &[u8]) {
     }
 
     jpeg.splice(insert_pos..insert_pos, markers);
+}
+
+/// Drop the caller-supplied segments that would contradict the colour model
+/// this encode writes, however they were added (`EncoderSegments::set_jfif`,
+/// `set_printer_dpi`, `add_segment`, or preserved `DecodedExtras`):
+///
+/// - A JFIF APP0 (payload starting with `JFIF`) unless the output is YCbCr or
+///   gray. JFIF means YCbCr to libjpeg-turbo, jpegli and zenjpeg, and
+///   libjpeg-turbo's `jpeg_set_colorspace` writes it only for gray and YCbCr.
+///   The JFIF density goes with it.
+/// - Every Adobe APP14 (payload starting with `Adobe`). For YCbCr and gray
+///   output libjpeg-turbo writes no Adobe segment, and a caller's transform 0
+///   (any Adobe-RGB source, or zenjpeg's own RGB output, re-encoded with
+///   preserved extras) would make the YCbCr data decode as RGB. For RGB and
+///   XYB output the encoder writes its own APP14 (transform 0), so a caller's
+///   copy is a duplicate whose transform may disagree.
+fn drop_caller_colour_signals(
+    segments: super::extras::EncoderSegments,
+    mode: super::encoder_types::ColorMode,
+) -> super::extras::EncoderSegments {
+    let allows_jfif = mode.allows_jfif();
+    segments.remove_where(|s| {
+        (s.marker == 0xE0 && s.data.starts_with(b"JFIF") && !allows_jfif)
+            || (s.marker == 0xEE && s.data.starts_with(b"Adobe"))
+    })
 }
 
 /// Inject encoder segments into a JPEG in-place.
@@ -1502,6 +1528,7 @@ impl YCbCrPlanarEncoder {
         // calling inject_encoder_segments. This ensures the MPF offset calculation
         // includes all metadata that will be in the final output.
         if let Some(mut segments) = self.config.segments.take() {
+            segments = drop_caller_colour_signals(segments, self.config.color_mode);
             // Merge individual metadata into segments if MPF is present
             // (MPF offset calculation needs all data to be accounted for)
             if segments.has_mpf_images() {

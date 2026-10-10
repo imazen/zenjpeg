@@ -565,6 +565,10 @@ impl EncoderSegments {
     }
 
     /// Set JFIF info (density/DPI).
+    ///
+    /// The encoder drops this segment, density included, when the output is
+    /// RGB or XYB: JFIF means YCbCr to every decoder (see
+    /// [`crate::encoder::EncoderConfig::with_segments`]).
     #[must_use]
     pub fn set_jfif(self, info: JfifInfo) -> Self {
         let mut data = Vec::with_capacity(16);
@@ -595,6 +599,9 @@ impl EncoderSegments {
     /// let segments = EncoderSegments::new()
     ///     .set_printer_dpi(300);
     /// ```
+    ///
+    /// Like [`set_jfif`](Self::set_jfif), the segment is dropped for RGB and
+    /// XYB output.
     #[must_use]
     pub fn set_printer_dpi(self, dpi: u16) -> Self {
         self.set_jfif(JfifInfo {

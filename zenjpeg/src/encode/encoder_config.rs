@@ -1937,6 +1937,17 @@ impl EncoderConfig {
     /// Use this to preserve metadata during round-trip encoding or to inject
     /// custom metadata and MPF secondary images.
     ///
+    /// Segments that would contradict the output's colour model are dropped:
+    ///
+    /// - For RGB and XYB output ([`crate::encoder::ColorMode::Rgb`],
+    ///   [`crate::encoder::ColorMode::Xyb`]) any JFIF APP0, with its pixel
+    ///   density: JFIF means YCbCr to libjpeg-turbo, jpegli and zenjpeg, so
+    ///   keeping it would make the file decode as YCbCr. libjpeg-turbo writes no
+    ///   JFIF for RGB output either.
+    /// - For every output, any Adobe APP14: YCbCr and gray output carry none (a
+    ///   preserved transform 0 from an Adobe-RGB source would make YCbCr data
+    ///   decode as RGB), and RGB and XYB output get the encoder's own.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -1959,7 +1970,9 @@ impl EncoderConfig {
 
     /// Add a single segment (convenience method).
     ///
-    /// The segment type is inferred from the marker and data.
+    /// The segment type is inferred from the marker and data. A JFIF APP0 is
+    /// dropped for RGB and XYB output and an Adobe APP14 for every output; see
+    /// [`with_segments`](Self::with_segments).
     #[must_use]
     pub fn add_segment(mut self, marker: u8, data: Vec<u8>) -> Self {
         use super::extras::EncoderSegments;

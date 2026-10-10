@@ -22,6 +22,21 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- RGB and XYB encodes no longer carry a JFIF APP0 from the caller's segments
+  (`EncoderConfig::with_segments`, `add_segment`, `EncoderSegments::set_jfif`
+  / `set_printer_dpi`, or preserved `DecodedExtras`). JFIF means YCbCr to
+  libjpeg-turbo and jpegli (and to zenjpeg's decoder from the colour-model
+  change on), so such a file decoded with the YCbCr matrix applied to R, G, B
+  or XYB planes. The JFIF segment is dropped, and its pixel density with it,
+  as libjpeg-turbo omits JFIF for RGB output. YCbCr and grayscale output keep
+  it.
+- Encodes no longer carry a caller's Adobe APP14 (same segment sources as
+  above). A preserved transform 0, from any Adobe-RGB JPEG or zenjpeg's own
+  RGB output re-encoded with its metadata (`zjpeg optimize` does this), made
+  YCbCr output decode as RGB in jpegli, libjpeg-turbo and zenjpeg.
+  libjpeg-turbo writes Adobe only for RGB/CMYK/YCCK; YCbCr and grayscale
+  output now carry none, and RGB and XYB output carry only the encoder's own
+  APP14 (transform 0) instead of a caller's duplicate.
 - The workspace no longer enables archmage's `testable_dispatch` for every
   member's normal dependency. Cargo unifies features, so it reached every build
   that depends on zenjpeg or zenyuv (published 0.8.4 included) and turned each

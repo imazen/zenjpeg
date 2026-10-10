@@ -358,6 +358,20 @@ impl Default for ColorMode {
     }
 }
 
+impl ColorMode {
+    /// Whether a JFIF APP0 may accompany this output. JFIF means YCbCr (or
+    /// gray) to every decoder: libjpeg-turbo's `default_decompress_parms` and
+    /// jpegli's `ProcessSOF` decode a three-component JFIF frame as YCbCr
+    /// whatever its APP14 or component IDs say, and libjpeg-turbo's
+    /// `jpeg_set_colorspace` writes JFIF only for gray and YCbCr.
+    pub(crate) fn allows_jfif(self) -> bool {
+        match self {
+            ColorMode::YCbCr { .. } | ColorMode::Grayscale => true,
+            ColorMode::Rgb | ColorMode::Xyb { .. } => false,
+        }
+    }
+}
+
 /// YCbCr chroma subsampling (spatial resolution).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
