@@ -61,6 +61,33 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- `extended-metadata` feature: `container::metadata::JpegMetadata` lists every
+  segment and trailer of a JPEG in file order, each with marker, offset,
+  length, borrowed payload and an identification from the ExifTool 6.99 JPEG
+  table (plus MPF, ISO 21496-1, JUMBF and the Samsung trailer). Fixed-layout
+  formats are parsed (SOF/SOS/DRI/DNL, JFIF, JFXX, AVI1, SPIFF, Adobe,
+  Adobe_CM, Ducky, PhotoStudio, GraphicConverter, EPPIM PrintIM, JUMBF
+  headers); PictureInfo and the rest are identified with their bytes;
+  unrecognized segments and trailers stay as opaque items, and unstructurable
+  bytes are reported, never dropped. The accessors (EXIF, XMP, extended XMP,
+  ICC, Photoshop, MPF) read the header (the primary image's segments before
+  its first SOS, or before its EOI when it has none) and return
+  `Result<Option<_>, MetadataError>`; ICC (libjpeg-turbo's chunk checks),
+  extended XMP (XMP Part 3 GUID, length, offset and MD5 checks) and Photoshop
+  resources reassemble with validation within `MetadataLimits`, borrowing
+  when one segment holds the payload. Cross-checked against ExifTool 12.40
+  over the corpus and synthetic seeds; the settled differences are listed in
+  `zenjpeg/docs/METADATA.md`. Not yet wired into `DecodedExtras`, zencodec or
+  the CLI tools. Stable now and once the items are built from the decoder's
+  walker: the items tile the input in file order, each item's kind describes
+  its bytes, and the accessors' results on well-formed files (primary image
+  with one SOI, one frame, no reserved markers (TEM), length words that match
+  their content, no stray bytes). Item boundaries on malformed or unusual
+  layouts, `Unparsed` extents, `primary_image_end` on such files and the
+  items after the primary EOI may change with the walker. Planned changes
+  that are not walker changes may change `mpf()` (an extra MPF directory
+  layout) and `extended_xmp()` (a namespace-aware XMP reader). `container::mpf::MpfError` now derives `Clone`, `PartialEq`
+  and `Eq` (it is wrapped by `MetadataError::Mpf`). (commit: added at landing)
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal

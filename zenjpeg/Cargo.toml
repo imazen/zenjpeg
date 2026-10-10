@@ -208,6 +208,13 @@ parallel = ["dep:rayon"]
 boundary-rd = []
 # Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
 moxcms = ["dep:moxcms"]
+# Public `container::metadata`: every JPEG segment and trailer in file order,
+# identified (ExifTool 6.99 JPEG table + MPF/ISO 21496-1/JUMBF/Samsung),
+# parsed where the format is fixed-layout, opaque otherwise, plus validated
+# ICC / extended-XMP / Photoshop reassembly. The code is always compiled (it
+# is intended to become the crate's one segment walker); this feature only
+# makes it public. No dependencies.
+extended-metadata = []
 # ── Internal / dev-only features (prefixed with __ to signal "don't use") ──
 # FFI tests against C++ jpegli (requires git submodule + cmake + C++ toolchain)
 __ffi-tests = []
@@ -227,6 +234,10 @@ __bdrd-trace = ["boundary-rd"]
 __alloc-instrument = []
 # Test utilities (image generation, quality verification)
 __test-utils = []
+# ExifTool cross-check of `container::metadata` over codec-corpus
+# (tests/extended_metadata_exiftool.rs; needs `exiftool` on PATH, which the
+# test requires rather than skips). Run with `just metadata-oracle`.
+__oracle-exiftool = ["extended-metadata"]
 # Cross-codec uniformity hook: exposes the `InternalParams` knob bundle
 # and `EncoderConfig::with_internal_params(params)` setter so external
 # pipelines (codec calibration sweeps, picker training, learned
@@ -333,6 +344,10 @@ recompress-expert = ["recompress"]
 layout = ["dep:zenresize"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
 # zennode = ["dep:zennode", "zencodec"]
+
+[[test]]
+name = "extended_metadata_exiftool"
+required-features = ["extended-metadata", "__oracle-exiftool"]
 
 [[bench]]
 name = "tier_isolation"
@@ -445,6 +460,11 @@ harness = false
 [[bench]]
 name = "container_scan"
 harness = false
+
+[[bench]]
+name = "metadata_walk"
+harness = false
+required-features = ["extended-metadata"]
 
 [lints]
 workspace = true

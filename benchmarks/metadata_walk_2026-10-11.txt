@@ -1,0 +1,50 @@
+# metadata_walk zenbench raw output (2026-10-11)
+#
+# commit: measured on the source of the commit that adds this file
+#   (`feat(container): extended-metadata segment model`); after the run only
+#   this file, documentation (docs/METADATA.md, doc comments, CHANGELOG) and
+#   tests changed. zenbench's `git: unknown` line
+#   below comes from `git rev-parse` failing in this jj workspace, which has
+#   no `.git` directory.
+# command: cargo bench -p zenjpeg --features extended-metadata --bench metadata_walk
+#   (CARGO_PROFILE_RELEASE_DEBUG=0, TMPDIR on a disk-backed scratch directory,
+#   under a 12 GiB memory cap)
+# measured: rc=0, 749 s wall, peak RSS 0.82GiB, peak load 6.98
+# host: Ryzen 9 7950X (Zen 4) under WSL2, 32 threads, shared with other build jobs
+# the bench binary installs zenbench::AllocProfiler as the global allocator, so every
+#   timing below, including the per-file medians, includes its allocation counting
+# per-file JpegMetadata::parse medians over 2208 files: p50 340 ns, p90 790 ns, p99 42221 ns, max 3137753 ns; median 512.4 ns/KiB
+#
+# zenbench results (complete)
+# git: unknown
+# 2026-10-11T03:07:16Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group=metadata/synthetic_256 benchmark=marker_iter_to_eoi  |  vs_base=baseline  |  min=846.4ns mean=860.9ns median=863.2ns mad=10.0ns  |  throughput=42.04 GiB/s  |  n=4 cv=1.3% rounds=4 calls=802 mean_ci=[852.0ns 869.9ns] cold=1.17µs allocs/iter=0.0 bytes/iter=0
+group=metadata/synthetic_256 benchmark=probe_all  |  vs_base_pct=+108.33 ci=[+103.39% +113.60%] significant=true effect=27.33 p=1.0000  |  min=1.74µs mean=1.79µs median=1.79µs mad=34.8ns  |  throughput=20.18 GiB/s  |  n=4 cv=2.6% rounds=4 calls=802 mean_ci=[1.75µs 1.84µs] cold=2.67µs allocs/iter=0.0 bytes/iter=0
+group=metadata/synthetic_256 benchmark=jpeg_metadata_parse  |  vs_base_pct=+42.88 ci=[+38.80% +47.98%] significant=true effect=13.15 p=1.0000  |  min=1.19µs mean=1.23µs median=1.22µs mad=25.7ns  |  throughput=29.42 GiB/s  |  n=4 cv=3.1% rounds=4 calls=802 mean_ci=[1.20µs 1.27µs] cold=2.63µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/synthetic_256 benchmark=parse_and_reassemble  |  vs_base_pct=+50.18 ci=[+44.40% +58.85%] significant=true effect=8.66 p=1.0000  |  min=1.24µs mean=1.29µs median=1.27µs mad=32.3ns  |  throughput=27.99 GiB/s  |  n=4 cv=5.4% rounds=4 calls=802 mean_ci=[1.25µs 1.36µs] cold=1.50µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/canon_40d_exif benchmark=marker_iter_to_eoi  |  vs_base=baseline  |  min=76.9ns mean=79.0ns median=78.3ns mad=1.3ns  |  throughput=93.83 GiB/s  |  n=4 cv=3.2% rounds=4 calls=2898 mean_ci=[77.3ns 81.4ns] cold=190.0ns allocs/iter=0.0 bytes/iter=0
+group=metadata/canon_40d_exif benchmark=probe_all  |  vs_base_pct=+3258.40 ci=[+3241.56% +3282.87%] significant=true effect=166.18 p=1.0000  |  min=2.63µs mean=2.65µs median=2.65µs mad=8.7ns  |  throughput=2.79 GiB/s  |  n=4 cv=0.8% rounds=4 calls=2898 mean_ci=[2.64µs 2.67µs] cold=4.64µs allocs/iter=0.0 bytes/iter=0
+group=metadata/canon_40d_exif benchmark=jpeg_metadata_parse  |  vs_base_pct=+260.18 ci=[+234.05% +297.20%] significant=true effect=9.41 p=1.0000  |  min=263.5ns mean=284.5ns median=272.5ns mad=11.7ns  |  throughput=26.05 GiB/s  |  n=4 cv=10.8% rounds=4 calls=2898 mean_ci=[264.6ns 313.5ns] cold=580.0ns allocs/iter=1.0 bytes/iter=2816
+group=metadata/canon_40d_exif benchmark=parse_and_reassemble  |  vs_base_pct=+323.18 ci=[+316.89% +329.47%] significant=true effect=50.58 p=1.0000  |  min=328.1ns mean=334.3ns median=333.9ns mad=7.9ns  |  throughput=22.17 GiB/s  |  n=4 cv=2.0% rounds=4 calls=2898 mean_ci=[328.6ns 340.0ns] cold=750.0ns allocs/iter=1.0 bytes/iter=2816
+group=metadata/ycck_icc18_psir benchmark=marker_iter_to_eoi  |  vs_base=baseline  |  min=4.04µs mean=4.27µs median=4.22µs mad=213.9ns  |  throughput=159.67 GiB/s  |  n=4 cv=5.7% rounds=4 calls=107 mean_ci=[4.08µs 4.46µs] cold=4.34µs allocs/iter=0.0 bytes/iter=0
+group=metadata/ycck_icc18_psir benchmark=probe_all  |  vs_base_pct=+136.64 ci=[+131.31% +142.83%] significant=true effect=13.53 p=1.0000  |  min=9.11µs mean=9.81µs median=9.75µs mad=567.6ns  |  throughput=69.43 GiB/s  |  n=4 cv=6.5% rounds=4 calls=107 mean_ci=[9.31µs 10.39µs] cold=11.54µs allocs/iter=0.0 bytes/iter=0
+group=metadata/ycck_icc18_psir benchmark=jpeg_metadata_parse  |  vs_base_pct=+17.38 ci=[+4.81% +38.68%] significant=true effect=0.93 p=1.0000  |  min=4.39µs mean=5.01µs median=4.49µs mad=82.5ns  |  throughput=136.03 GiB/s  |  n=4 cv=22.0% rounds=4 calls=107 mean_ci=[4.42µs 6.12µs] cold=5.25µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/ycck_icc18_psir benchmark=parse_and_reassemble  |  vs_base_pct=+300.34 ci=[+253.90% +380.47%] significant=true effect=5.05 p=1.0000  |  min=14.97µs mean=17.08µs median=15.46µs mad=365.8ns  |  throughput=39.88 GiB/s  |  n=4 cv=21.0% rounds=4 calls=107 mean_ci=[15.09µs 20.70µs] cold=15.96µs allocs/iter=2.0 bytes/iter=559984
+group=metadata/pixel_ultrahdr_mpf benchmark=marker_iter_to_eoi  |  vs_base=baseline  |  min=94.38µs mean=105.71µs median=100.27µs mad=8.72µs  |  throughput=25.69 GiB/s  |  n=4 cv=15.0% rounds=4 calls=22 mean_ci=[94.39µs 119.54µs] cold=170.90µs allocs/iter=0.0 bytes/iter=0
+group=metadata/pixel_ultrahdr_mpf benchmark=probe_all  |  vs_base_pct=+119.10 ci=[+111.29% +124.13%] significant=true effect=5.92 p=1.0000  |  min=185.22µs mean=219.78µs median=218.65µs mad=29.82µs  |  throughput=12.36 GiB/s  |  n=4 cv=13.5% rounds=4 calls=22 mean_ci=[195.27µs 245.41µs] cold=301.01µs allocs/iter=0.0 bytes/iter=0
+group=metadata/pixel_ultrahdr_mpf benchmark=jpeg_metadata_parse  |  vs_base_pct=-16.52 ci=[-38.37% +1.94%] significant=false effect=-1.27 p=1.0000  |  min=75.12µs mean=88.25µs median=87.77µs mad=11.44µs  |  throughput=30.77 GiB/s  |  n=4 cv=12.9% rounds=4 calls=22 mean_ci=[78.98µs 98.00µs] cold=146.63µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/pixel_ultrahdr_mpf benchmark=parse_and_reassemble  |  vs_base_pct=+99.05 ci=[+81.72% +117.79%] significant=true effect=6.03 p=1.0000  |  min=185.22µs mean=210.42µs median=213.16µs mad=15.03µs  |  throughput=12.91 GiB/s  |  n=4 cv=8.9% rounds=4 calls=22 mean_ci=[193.02µs 225.08µs] cold=166.64µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/mountains_extxmp benchmark=marker_iter_to_eoi  |  vs_base=baseline  |  min=232.11µs mean=237.46µs median=236.35µs mad=4.79µs  |  throughput=19.24 GiB/s  |  n=4 cv=2.4% rounds=4 calls=20 mean_ci=[233.12µs 242.28µs] cold=239.60µs allocs/iter=0.0 bytes/iter=0
+group=metadata/mountains_extxmp benchmark=probe_all  |  vs_base_pct=+101.14 ci=[+96.04% +106.23%] significant=true effect=22.03 p=1.0000  |  min=457.92µs mean=477.61µs median=480.58µs mad=10.41µs  |  throughput=9.56 GiB/s  |  n=4 cv=3.0% rounds=4 calls=20 mean_ci=[464.40µs 487.85µs] cold=451.91µs allocs/iter=0.0 bytes/iter=0
+group=metadata/mountains_extxmp benchmark=jpeg_metadata_parse  |  vs_base_pct=+4.97 ci=[-3.46% +13.41%] significant=false effect=0.78 p=1.0000  |  min=230.10µs mean=249.27µs median=249.51µs mad=26.20µs  |  throughput=18.32 GiB/s  |  n=4 cv=8.3% rounds=4 calls=20 mean_ci=[231.35µs 267.18µs] cold=232.03µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/mountains_extxmp benchmark=parse_and_reassemble  |  vs_base_pct=+0.05 ci=[-7.45% +6.86%] significant=false effect=0.01 p=1.0000  |  min=219.26µs mean=237.58µs median=238.13µs mad=17.49µs  |  throughput=19.23 GiB/s  |  n=4 cv=6.6% rounds=4 calls=20 mean_ci=[225.24µs 249.93µs] cold=248.41µs allocs/iter=1.0 bytes/iter=2816
+group=metadata/corpus_2208_files benchmark=marker_iter_to_eoi  |  vs_base=baseline  |  min=10.46ms mean=13.50ms median=10.62ms mad=161.59µs  |  throughput=9.70 GiB/s  |  n=4 cv=43.4% rounds=4 calls=1 mean_ci=[10.51ms 19.36ms] cold=10.46ms allocs/iter=0.0 bytes/iter=0
+group=metadata/corpus_2208_files benchmark=jpeg_metadata_parse  |  vs_base_pct=+20.11 ci=[+18.77% +22.41%] significant=true effect=18.62 p=1.0000  |  min=12.60ms mean=13.12ms median=12.74ms mad=170.49µs  |  throughput=9.98 GiB/s  |  n=4 cv=6.5% rounds=4 calls=1 mean_ci=[12.63ms 13.96ms] cold=12.85ms allocs/iter=2210.0 bytes/iter=7282688 reallocs/iter=105.0

@@ -6,6 +6,8 @@ passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",
     "CODEC_CORPUS_CACHE",
+    # tests/support/metadata_corpus.rs: datasets the i686 job leaves out
+    "METADATA_CORPUS_EXCLUDE",
 ]
 
 # i686 (32-bit x86 Linux)

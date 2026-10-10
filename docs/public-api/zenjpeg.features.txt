@@ -1,5 +1,5 @@
 # zenjpeg public API — additions from non-default features
-# features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec
+# features: boundary-rd,extended-metadata,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,28 +9,241 @@
 
 ## summary
 #
-#   pub modules                                 4
-#   pub types (struct/enum/trait/alias)        52
+#   pub modules                                 5
+#   pub types (struct/enum/trait/alias)        82
 #   pub consts/statics                          4
 #   free functions                             32
-#   inherent methods                          108
-#   struct fields                              72
-#   enum variants                              80
+#   inherent methods                          137
+#   struct fields                             158
+#   enum variants                             146
 #   re-exports                                 25
-#   trait roster entries (type × trait)       172
-#   auto-trait-complete types                  39
+#   trait roster entries (type × trait)       306
+#   auto-trait-complete types                  69
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
 #   (root)                           37
+#   container                       212
 #   decoder                           3
 #   encoder                          40
 #   layout                           67
 #   recompress                      158
 #   ultrahdr                         72
 
-## items (377 lines)
+## items (589 lines)
 
+pub mod container::metadata
+#[non_exhaustive] pub enum container::metadata::ItemKind<'a>
+pub container::metadata::ItemKind::Adobe(container::metadata::Adobe)
+pub container::metadata::ItemKind::AdobeCm(u16)
+pub container::metadata::ItemKind::Afcp
+pub container::metadata::ItemKind::Avi1(container::metadata::Avi1)
+pub container::metadata::ItemKind::CanonVrd
+pub container::metadata::ItemKind::Ciff
+pub container::metadata::ItemKind::Comment
+pub container::metadata::ItemKind::Dac
+pub container::metadata::ItemKind::Dht
+pub container::metadata::ItemKind::Dnl(u16)
+pub container::metadata::ItemKind::Dqt
+pub container::metadata::ItemKind::Dri(u16)
+pub container::metadata::ItemKind::Ducky(container::metadata::Ducky<'a>)
+pub container::metadata::ItemKind::EmbeddedJpeg
+pub container::metadata::ItemKind::Eoi
+pub container::metadata::ItemKind::Eppim(container::metadata::Eppim<'a>)
+pub container::metadata::ItemKind::Exif(&'a [u8])
+pub container::metadata::ItemKind::ExtendedXmp(container::metadata::ExtendedXmpChunk<'a>)
+pub container::metadata::ItemKind::FotoStation(u16)
+pub container::metadata::ItemKind::Fpxr
+pub container::metadata::ItemKind::GainMapIso21496(container::metadata::GainMapIso21496<'a>)
+pub container::metadata::ItemKind::GraphicConverter(u16)
+pub container::metadata::ItemKind::IccProfile(container::metadata::IccChunk<'a>)
+pub container::metadata::ItemKind::Jfif(container::metadata::Jfif<'a>)
+pub container::metadata::ItemKind::Jfxx(container::metadata::Jfxx<'a>)
+pub container::metadata::ItemKind::Jumbf(container::metadata::Jumbf<'a>)
+pub container::metadata::ItemKind::KodakMeta(&'a [u8])
+pub container::metadata::ItemKind::Mie
+pub container::metadata::ItemKind::Mpf(&'a [u8])
+pub container::metadata::ItemKind::Padding
+pub container::metadata::ItemKind::PhotoMechanic
+pub container::metadata::ItemKind::PhotoStudioComment(container::metadata::Utf16Be<'a>)
+pub container::metadata::ItemKind::Photoshop(&'a [u8])
+pub container::metadata::ItemKind::PictureInfo
+pub container::metadata::ItemKind::Restart
+pub container::metadata::ItemKind::RicohRmeta(&'a [u8])
+pub container::metadata::ItemKind::Samsung
+pub container::metadata::ItemKind::Sof(container::metadata::Sof<'a>)
+pub container::metadata::ItemKind::Soi
+pub container::metadata::ItemKind::Sos(container::metadata::Sos<'a>)
+pub container::metadata::ItemKind::Spiff(container::metadata::Spiff)
+pub container::metadata::ItemKind::Unknown
+pub container::metadata::ItemKind::UnknownTrailer
+pub container::metadata::ItemKind::Unparsed(container::metadata::Unparsed)
+pub container::metadata::ItemKind::Xmp(&'a [u8])
+pub fn container::metadata::ItemKind<'_>::name(&self) -> &'static str
+#[non_exhaustive] pub enum container::metadata::MetadataError
+#[non_exhaustive] pub container::metadata::MetadataError::ExtendedXmpChunkPastEnd
+pub container::metadata::MetadataError::ExtendedXmpChunkPastEnd::full_length: u32
+pub container::metadata::MetadataError::ExtendedXmpChunkPastEnd::length: usize
+pub container::metadata::MetadataError::ExtendedXmpChunkPastEnd::offset: u32
+pub container::metadata::MetadataError::ExtendedXmpDigestMismatch
+#[non_exhaustive] pub container::metadata::MetadataError::ExtendedXmpDiscontinuous
+pub container::metadata::MetadataError::ExtendedXmpDiscontinuous::expected: u32
+pub container::metadata::MetadataError::ExtendedXmpDiscontinuous::offset: u32
+#[non_exhaustive] pub container::metadata::MetadataError::ExtendedXmpIncomplete
+pub container::metadata::MetadataError::ExtendedXmpIncomplete::full_length: u32
+pub container::metadata::MetadataError::ExtendedXmpIncomplete::got: u32
+#[non_exhaustive] pub container::metadata::MetadataError::ExtendedXmpLengthMismatch
+pub container::metadata::MetadataError::ExtendedXmpLengthMismatch::expected: u32
+pub container::metadata::MetadataError::ExtendedXmpLengthMismatch::found: u32
+pub container::metadata::MetadataError::ExtendedXmpMissing
+#[non_exhaustive] pub container::metadata::MetadataError::IccChunkCountMismatch
+pub container::metadata::MetadataError::IccChunkCountMismatch::expected: u8
+pub container::metadata::MetadataError::IccChunkCountMismatch::found: u8
+#[non_exhaustive] pub container::metadata::MetadataError::IccDuplicateChunk
+pub container::metadata::MetadataError::IccDuplicateChunk::sequence: u8
+pub container::metadata::MetadataError::IccEmptyProfile
+#[non_exhaustive] pub container::metadata::MetadataError::IccMissingChunk
+pub container::metadata::MetadataError::IccMissingChunk::sequence: u8
+#[non_exhaustive] pub container::metadata::MetadataError::IccSequenceOutOfRange
+pub container::metadata::MetadataError::IccSequenceOutOfRange::count: u8
+pub container::metadata::MetadataError::IccSequenceOutOfRange::sequence: u8
+pub container::metadata::MetadataError::IccZeroChunkCount
+pub container::metadata::MetadataError::ItemLimitReached
+pub container::metadata::MetadataError::Mpf(container::mpf::MpfError)
+pub container::metadata::MetadataError::OutOfMemory
+#[non_exhaustive] pub container::metadata::MetadataError::TooLarge
+pub container::metadata::MetadataError::TooLarge::limit: usize
+pub container::metadata::MetadataError::TooLarge::size: usize
+#[non_exhaustive] pub enum container::metadata::Unparsed
+pub container::metadata::Unparsed::BadLength
+pub container::metadata::Unparsed::ExtraneousBytes
+pub container::metadata::Unparsed::LimitExceeded
+pub container::metadata::Unparsed::NotJpeg
+pub container::metadata::Unparsed::TruncatedSegment
+#[non_exhaustive] pub struct container::metadata::Adobe
+pub container::metadata::Adobe::color_transform: u8
+pub container::metadata::Adobe::dct_encode_version: u16
+pub container::metadata::Adobe::flags0: u16
+pub container::metadata::Adobe::flags1: u16
+#[non_exhaustive] pub struct container::metadata::Avi1
+pub container::metadata::Avi1::interleaved_field: core::option::Option<u8>
+pub struct container::metadata::Ducky<'a>
+pub fn container::metadata::Ducky<'a>::comment(&self) -> core::option::Option<container::metadata::Utf16Be<'a>>
+pub fn container::metadata::Ducky<'a>::copyright(&self) -> core::option::Option<container::metadata::Utf16Be<'a>>
+pub fn container::metadata::Ducky<'a>::quality(&self) -> core::option::Option<u32>
+pub fn container::metadata::Ducky<'a>::records(&self) -> container::metadata::DuckyRecords<'a>
+#[non_exhaustive] pub struct container::metadata::DuckyRecord<'a>
+pub container::metadata::DuckyRecord::data: &'a [u8]
+pub container::metadata::DuckyRecord::tag: u16
+pub struct container::metadata::DuckyRecords<'a>(_)
+#[non_exhaustive] pub struct container::metadata::Eppim<'a>
+pub container::metadata::Eppim::print_im: core::option::Option<&'a [u8]>
+pub container::metadata::Eppim::tiff: &'a [u8]
+pub fn container::metadata::Eppim<'a>::print_im_version(&self) -> core::option::Option<&'a [u8]>
+#[non_exhaustive] pub struct container::metadata::ExtendedXmpChunk<'a>
+pub container::metadata::ExtendedXmpChunk::data: &'a [u8]
+pub container::metadata::ExtendedXmpChunk::full_length: u32
+pub container::metadata::ExtendedXmpChunk::guid: &'a [u8]
+pub container::metadata::ExtendedXmpChunk::offset: u32
+#[non_exhaustive] pub struct container::metadata::FrameComponent
+pub container::metadata::FrameComponent::h: u8
+pub container::metadata::FrameComponent::id: u8
+pub container::metadata::FrameComponent::quant_table: u8
+pub container::metadata::FrameComponent::v: u8
+pub struct container::metadata::FrameComponents<'a>(_)
+#[non_exhaustive] pub struct container::metadata::GainMapIso21496<'a>
+pub container::metadata::GainMapIso21496::data: &'a [u8]
+#[non_exhaustive] pub struct container::metadata::IccChunk<'a>
+pub container::metadata::IccChunk::count: u8
+pub container::metadata::IccChunk::data: &'a [u8]
+pub container::metadata::IccChunk::sequence: u8
+#[non_exhaustive] pub struct container::metadata::Item<'a>
+pub container::metadata::Item::kind: container::metadata::ItemKind<'a>
+pub container::metadata::Item::length: usize
+pub container::metadata::Item::marker: core::option::Option<u8>
+pub container::metadata::Item::offset: usize
+pub container::metadata::Item::payload: &'a [u8]
+#[non_exhaustive] pub struct container::metadata::Jfif<'a>
+pub container::metadata::Jfif::thumbnail: &'a [u8]
+pub container::metadata::Jfif::thumbnail_height: u8
+pub container::metadata::Jfif::thumbnail_width: u8
+pub container::metadata::Jfif::units: u8
+pub container::metadata::Jfif::version_major: u8
+pub container::metadata::Jfif::version_minor: u8
+pub container::metadata::Jfif::x_density: u16
+pub container::metadata::Jfif::y_density: u16
+#[non_exhaustive] pub struct container::metadata::Jfxx<'a>
+pub container::metadata::Jfxx::data: &'a [u8]
+pub container::metadata::Jfxx::extension_code: u8
+pub struct container::metadata::JpegMetadata<'a>
+pub fn container::metadata::JpegMetadata<'a>::exif(&self) -> core::result::Result<core::option::Option<&'a [u8]>, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::extended_xmp(&self) -> core::result::Result<core::option::Option<alloc::borrow::Cow<'a, [u8]>>, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::icc_profile(&self) -> core::result::Result<core::option::Option<alloc::borrow::Cow<'a, [u8]>>, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::items(&self) -> &[container::metadata::Item<'a>]
+pub fn container::metadata::JpegMetadata<'a>::mpf(&self) -> core::result::Result<core::option::Option<alloc::vec::Vec<container::types::MpfEntry>>, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::parse(&'a [u8]) -> core::result::Result<Self, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::parse_with_limits(&'a [u8], container::metadata::MetadataLimits) -> core::result::Result<Self, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::photoshop(&self) -> core::result::Result<core::option::Option<container::metadata::PhotoshopIrb<'a>>, container::metadata::MetadataError>
+pub fn container::metadata::JpegMetadata<'a>::primary_image_end(&self) -> core::option::Option<usize>
+pub fn container::metadata::JpegMetadata<'a>::xmp(&self) -> core::result::Result<core::option::Option<&'a [u8]>, container::metadata::MetadataError>
+#[non_exhaustive] pub struct container::metadata::Jumbf<'a>
+pub container::metadata::Jumbf::box_type: [u8; 4]
+pub container::metadata::Jumbf::data: &'a [u8]
+pub container::metadata::Jumbf::instance: u16
+pub container::metadata::Jumbf::sequence: u32
+pub struct container::metadata::MetadataLimits
+pub fn container::metadata::MetadataLimits::max_items(&self) -> usize
+pub fn container::metadata::MetadataLimits::max_reassembled_bytes(&self) -> usize
+pub fn container::metadata::MetadataLimits::with_max_items(self, usize) -> Self
+pub fn container::metadata::MetadataLimits::with_max_reassembled_bytes(self, usize) -> Self
+pub struct container::metadata::PhotoshopIrb<'a>(_)
+pub fn container::metadata::PhotoshopIrb<'a>::data(&self) -> &[u8]
+pub fn container::metadata::PhotoshopIrb<'a>::into_data(self) -> alloc::borrow::Cow<'a, [u8]>
+pub fn container::metadata::PhotoshopIrb<'a>::iptc(&self) -> core::option::Option<&[u8]>
+pub fn container::metadata::PhotoshopIrb<'a>::resources(&self) -> container::metadata::PhotoshopResources<'_>
+#[non_exhaustive] pub struct container::metadata::PhotoshopResource<'b>
+pub container::metadata::PhotoshopResource::data: &'b [u8]
+pub container::metadata::PhotoshopResource::id: u16
+pub container::metadata::PhotoshopResource::name: &'b [u8]
+pub container::metadata::PhotoshopResource::signature: [u8; 4]
+pub struct container::metadata::PhotoshopResources<'b>(_)
+#[non_exhaustive] pub struct container::metadata::ScanComponent
+pub container::metadata::ScanComponent::ac_table: u8
+pub container::metadata::ScanComponent::dc_table: u8
+pub container::metadata::ScanComponent::selector: u8
+pub struct container::metadata::ScanComponents<'a>(_)
+#[non_exhaustive] pub struct container::metadata::Sof<'a>
+pub container::metadata::Sof::height: u16
+pub container::metadata::Sof::num_components: u8
+pub container::metadata::Sof::precision: u8
+pub container::metadata::Sof::process: u8
+pub container::metadata::Sof::width: u16
+pub fn container::metadata::Sof<'a>::components(&self) -> container::metadata::FrameComponents<'a>
+pub fn container::metadata::Sof<'a>::ycbcr_subsampling(&self) -> core::option::Option<(u8, u8)>
+#[non_exhaustive] pub struct container::metadata::Sos<'a>
+pub container::metadata::Sos::approx_high: u8
+pub container::metadata::Sos::approx_low: u8
+pub container::metadata::Sos::entropy: &'a [u8]
+pub container::metadata::Sos::spectral_end: u8
+pub container::metadata::Sos::spectral_start: u8
+pub fn container::metadata::Sos<'a>::components(&self) -> container::metadata::ScanComponents<'a>
+#[non_exhaustive] pub struct container::metadata::Spiff
+pub container::metadata::Spiff::bits_per_sample: u8
+pub container::metadata::Spiff::color_space: u8
+pub container::metadata::Spiff::compression: u8
+pub container::metadata::Spiff::height: u32
+pub container::metadata::Spiff::horizontal_resolution: u32
+pub container::metadata::Spiff::num_components: u8
+pub container::metadata::Spiff::profile_id: u8
+pub container::metadata::Spiff::resolution_units: u8
+pub container::metadata::Spiff::version_major: u8
+pub container::metadata::Spiff::version_minor: u8
+pub container::metadata::Spiff::vertical_resolution: u32
+pub container::metadata::Spiff::width: u32
+pub struct container::metadata::Utf16Be<'a>(_)
+pub fn container::metadata::Utf16Be<'a>::bytes(&self) -> &'a [u8]
+pub fn container::metadata::Utf16Be<'a>::chars(&self) -> container::metadata::Utf16BeChars<'a>
+pub struct container::metadata::Utf16BeChars<'a>(_)
 pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<decoder::TargetColorSpace>) -> Self
 pub fn decoder::DecodeConfig::ultrahdr_reader<'a>(&self, &'a [u8], ultrahdr::UltraHdrReaderConfig) -> encoder::Result<ultrahdr::UltraHdrReader<'a>>
 pub fn decoder::ScanlineReader<'a>::gain_map_jpeg(&self) -> core::option::Option<&[u8]>
@@ -409,7 +622,7 @@ pub struct JpegStreamingDecoder<'a>
 pub type JpegDecoding = JpegDecoderConfig
 pub type JpegEncoding = JpegEncoderConfig
 
-## trait impls (46 types)
+## trait impls (79 types)
 
 CmykHandling: Clone, Copy, Debug, Default, Eq, PartialEq
 JpegDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
@@ -419,6 +632,39 @@ JpegEncodeJob: zencodec::traits::encoding::EncodeJob
 JpegEncoder: zencodec::traits::encoder::Encoder
 JpegEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
 JpegStreamingDecoder<'_>: zencodec::traits::decoder::StreamingDecode
+container::metadata::Adobe: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Avi1: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Ducky<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::DuckyRecord<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::DuckyRecords<'a>: Clone, Debug, Iterator
+container::metadata::Eppim<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::ExtendedXmpChunk<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::FrameComponent: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::FrameComponents<'_>: Iterator
+container::metadata::FrameComponents<'a>: Clone, Debug
+container::metadata::GainMapIso21496<'a>: Clone, Debug, PartialEq
+container::metadata::IccChunk<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Item<'a>: Clone, Debug, PartialEq
+container::metadata::ItemKind<'a>: Clone, Debug, PartialEq
+container::metadata::Jfif<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Jfxx<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::JpegMetadata<'a>: Clone, Debug
+container::metadata::Jumbf<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::MetadataError: Clone, Debug, Display, Eq, Error, From<container::mpf::MpfError>, PartialEq
+container::metadata::MetadataLimits: Clone, Copy, Debug, Default, Eq, PartialEq
+container::metadata::PhotoshopIrb<'a>: Clone, Debug, Eq, PartialEq
+container::metadata::PhotoshopResource<'b>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::PhotoshopResources<'b>: Clone, Debug, Iterator
+container::metadata::ScanComponent: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::ScanComponents<'_>: Iterator
+container::metadata::ScanComponents<'a>: Clone, Debug
+container::metadata::Sof<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Sos<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Spiff: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Unparsed: Clone, Copy, Debug, Eq, Hash, PartialEq
+container::metadata::Utf16Be<'a>: Clone, Copy, Debug, Eq, PartialEq
+container::metadata::Utf16BeChars<'_>: Iterator
+container::metadata::Utf16BeChars<'a>: Clone, Debug
 decoder::DecodedExtras: ultrahdr::UltraHdrExtras
 encoder::BoundaryRd: Clone, Copy, Debug, Default, PartialEq
 encoder::BoundaryRdConfig: Clone, Copy, Debug, Default, PartialEq
@@ -460,7 +706,7 @@ zenpixels::orientation::Orientation: From<layout::FlipAxis>, From<layout::Rotati
 
 ## auto traits
 
-39 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+69 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 JpegDecodeJob: !RefUnwindSafe !UnwindSafe
 JpegDecoder<'a>: !RefUnwindSafe !UnwindSafe
 JpegDecoderConfig: !RefUnwindSafe !UnwindSafe

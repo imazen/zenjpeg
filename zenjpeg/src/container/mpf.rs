@@ -49,7 +49,7 @@ const TYPE_UNDEFINED: u16 = 7;
 const TYPE_LONG: u16 = 4;
 
 /// Errors that can occur during MPF parsing.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum MpfError {
     /// No APP2 segment with `MPF\0` identifier was found.

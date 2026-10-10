@@ -127,6 +127,7 @@ Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpe
 | `recompress-expert` | no | Exposes `recompress::expert` internals (unstable, not semver-covered) |
 | `target-zq` | no | `Quality::Zq` / `Quality::ZqExplicit` closed-loop perceptual-quality encoder (pulls in `zensim`) |
 | `boundary-rd` | no | Opt-in block-boundary continuity refinement (off by default; output is byte-identical unless enabled) |
+| `extended-metadata` | no | `container::metadata`: every segment and trailer in file order, identified, parsed where fixed-layout, with validated ICC / extended-XMP / Photoshop reassembly ([docs/METADATA.md](docs/METADATA.md)). No dependencies |
 
 The **decoder and trellis quantization are always compiled** — the historical
 `decoder` and `trellis` feature flags are now no-ops kept only so existing

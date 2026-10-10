@@ -19,7 +19,7 @@ zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
 
 [dependencies.zenjpeg]
 path = ".."
-features = ["zencodec"]
+features = ["zencodec", "extended-metadata"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -164,6 +164,13 @@ bench = false
 [[bin]]
 name = "fuzz_container_probe"
 path = "fuzz_targets/fuzz_container_probe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_container_metadata"
+path = "fuzz_targets/fuzz_container_metadata.rs"
 test = false
 doc = false
 bench = false

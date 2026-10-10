@@ -76,7 +76,7 @@ jobs:
         run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,extended-metadata" --lib --tests
 
       - name: Test (no defaults, minimal)
         run: cargo test -p zenjpeg --release --no-default-features --lib --tests
@@ -135,12 +135,16 @@ jobs:
         # work) but image-rs/tests/images is fetched from the separate
         # image-rs/image repo, which the cross container's constrained network
         # times out on. Unrelated to 32-bit correctness.
+        # `extended-metadata` runs the container::metadata corpus tests and the
+        # fuzz replay's shared checker under 32-bit offset arithmetic; the
+        # same image-rs fetch limit leaves that (unpinned) dataset out of them.
         run: |
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests -- \
+          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests --features extended-metadata -- \
             --skip codec_corpus_conformance::test_image_rs_general \
             --skip codec_corpus_conformance::test_image_rs_progressive
         env:
           CODEC_CORPUS_CACHE: /tmp/codec-corpus
+          METADATA_CORPUS_EXCLUDE: image-rs/tests/images/jpg
 
   wasm32:
     name: Build (wasm32-wasip1)
@@ -359,7 +363,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,extended-metadata" -- -D warnings
+
+      - name: Clippy (ExifTool oracle test; compiles without exiftool)
+        run: cargo clippy -p zenjpeg --tests --features __oracle-exiftool -- -D warnings
 
       - name: Clippy (default features)
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings

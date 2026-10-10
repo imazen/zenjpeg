@@ -1,5 +1,5 @@
 # zenjpeg public API — doc(hidden) items and excluded-feature surface
-# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__picker-research,__profile,__test-utils,__wasm-simd,__zensim-research,_dev
+# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__oracle-exiftool,__picker-research,__profile,__test-utils,__wasm-simd,__zensim-research,_dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -13,11 +13,11 @@
 #   pub types (struct/enum/trait/alias)       297
 #   pub consts/statics                        320
 #   free functions                            372
-#   inherent methods                         1194
+#   inherent methods                         1216
 #   struct fields                             760
 #   enum variants                             506
 #   re-exports                                 18
-#   trait roster entries (type × trait)       652
+#   trait roster entries (type × trait)       671
 #   auto-trait-complete types                 132
 #   auto-trait exceptions                       7
 #
@@ -25,7 +25,7 @@
 #   (root)                           76
 #   alloc                             1
 #   color                           117
-#   container                         8
+#   container                        30
 #   decode                          447
 #   decoder                          54
 #   detect                           40
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         12
 
-## items (3372 lines)
+## items (3394 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -500,6 +500,28 @@ pub fn color::ycck_planes_to_cmyk_u8(&[f32], &[f32], &[f32], &[f32], &mut [u8]) 
 pub fn color::ycck_planes_to_rgb_u8(&[f32], &[f32], &[f32], &[f32], &mut [u8]) [also: color::ycbcr]
 pub fn color::ycck_to_rgb(u8, u8, u8, u8) -> (u8, u8, u8) [also: color::ycbcr]
 pub fn container::marker::MarkerKind::assert_fields_are_eq(&self)
+pub fn container::metadata::Adobe::assert_fields_are_eq(&self)
+pub fn container::metadata::Avi1::assert_fields_are_eq(&self)
+pub fn container::metadata::Ducky<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::DuckyRecord<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::Eppim<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::ExtendedXmpChunk<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::FrameComponent::assert_fields_are_eq(&self)
+pub fn container::metadata::IccChunk<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::Jfif<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::Jfxx<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::Jumbf<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::MetadataError::assert_fields_are_eq(&self)
+pub fn container::metadata::MetadataLimits::assert_fields_are_eq(&self)
+pub fn container::metadata::PhotoshopIrb<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::PhotoshopResource<'b>::assert_fields_are_eq(&self)
+pub fn container::metadata::ScanComponent::assert_fields_are_eq(&self)
+pub fn container::metadata::Sof<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::Sos<'a>::assert_fields_are_eq(&self)
+pub fn container::metadata::Spiff::assert_fields_are_eq(&self)
+pub fn container::metadata::Unparsed::assert_fields_are_eq(&self)
+pub fn container::metadata::Utf16Be<'a>::assert_fields_are_eq(&self)
+pub fn container::mpf::MpfError::assert_fields_are_eq(&self)
 pub fn container::probe::GainMapPresence::assert_fields_are_eq(&self)
 pub fn container::probe::ProbeSof::assert_fields_are_eq(&self)
 pub fn container::probe::Wants::assert_fields_are_eq(&self)
@@ -3419,13 +3441,32 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (199 types)
+## trait impls (218 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
 color::icc::TargetColorSpace: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 container::marker::MarkerKind: TrivialClone
 container::marker::MarkerSpan<'a>: TrivialClone
+container::metadata::Adobe: TrivialClone
+container::metadata::Avi1: TrivialClone
+container::metadata::Ducky<'a>: TrivialClone
+container::metadata::DuckyRecord<'a>: TrivialClone
+container::metadata::Eppim<'a>: TrivialClone
+container::metadata::ExtendedXmpChunk<'a>: TrivialClone
+container::metadata::FrameComponent: TrivialClone
+container::metadata::IccChunk<'a>: TrivialClone
+container::metadata::Jfif<'a>: TrivialClone
+container::metadata::Jfxx<'a>: TrivialClone
+container::metadata::Jumbf<'a>: TrivialClone
+container::metadata::MetadataLimits: TrivialClone
+container::metadata::PhotoshopResource<'b>: TrivialClone
+container::metadata::ScanComponent: TrivialClone
+container::metadata::Sof<'a>: TrivialClone
+container::metadata::Sos<'a>: TrivialClone
+container::metadata::Spiff: TrivialClone
+container::metadata::Unparsed: TrivialClone
+container::metadata::Utf16Be<'a>: TrivialClone
 container::probe::GainMapPresence: TrivialClone
 container::probe::ProbeSof: TrivialClone
 container::probe::Wants: TrivialClone

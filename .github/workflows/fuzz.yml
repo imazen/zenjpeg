@@ -150,4 +150,4 @@ jobs:
           key: fuzz-regression
 
       - name: Replay committed crash seeds
-        run: cargo test -p zenjpeg --test fuzz_regression -- --nocapture
+        run: cargo test -p zenjpeg --features extended-metadata --test fuzz_regression -- --nocapture

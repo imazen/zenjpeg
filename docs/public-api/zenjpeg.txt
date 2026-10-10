@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1700 lines (supported surface) | zenjpeg.features.txt 431 added (features: boundary-rd,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3579 lines (880 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1700 lines (supported surface) | zenjpeg.features.txt 676 added (features: boundary-rd,extended-metadata,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3620 lines (921 hidden + 7231 excluded-feature)
 
 ## summary
 #
@@ -19,7 +19,7 @@
 #   struct fields                             389
 #   enum variants                             398
 #   re-exports                                  2
-#   trait roster entries (type × trait)       492
+#   trait roster entries (type × trait)       495
 #   auto-trait-complete types                 106
 #   auto-trait exceptions                      13
 #
@@ -1609,7 +1609,7 @@ pub macro profile_scope!
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
 container::marker::MarkerSpan<'a>: Clone, Copy, Debug
-container::mpf::MpfError: Debug, Display, Error
+container::mpf::MpfError: Clone, Debug, Display, Eq, Error, PartialEq
 container::probe::ContainerProbe: Clone, Debug, Default
 container::probe::GainMapPresence: Clone, Copy, Debug, Default, Eq, PartialEq
 container::probe::ProbeSof: Clone, Copy, Debug, Eq, PartialEq

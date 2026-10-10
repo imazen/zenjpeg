@@ -1342,6 +1342,7 @@ target-zq = ["dep:zensim", "dep:zenpredict", ...] # all Quality::Zq* — see bel
 recompress = []                                # JPEG→JPEG recompression (decoder only, cheap)
 recompress-iqa = ["recompress", "dep:zensim"]  # + closed-loop IQA refinement (Budget::MaxIterations>1)
 recompress-expert = ["recompress"]             # recompress::expert — unstable, not semver-covered
+extended-metadata = []                         # public container::metadata (docs/METADATA.md); code always compiled
 
 # ── Internal / dev-only (`__` prefix = don't use) ──
 __ffi-tests = []                               # C++ parity (needs jpegli submodule + toolchain)
@@ -1354,6 +1355,7 @@ __alloc-instrument = []                        # Vec utilization logging on drop
 __bdrd-trace = ["boundary-rd"]                 # per-block BD-RD refinement trace sink
 __wasm-simd = []                               # WASM SIMD128 tests
 __picker-research = [...]                      # needs sibling ../../zenanalyze/zenpredict checkout
+__oracle-exiftool = ["extended-metadata"]      # ExifTool cross-check test (`just metadata-oracle`; exiftool 12.40 on PATH)
 ```
 
 **Flags that no longer exist** (removed; do not use — they will fail the build,
@@ -1421,6 +1423,11 @@ at runtime via `X64V3Token::summon()` / `X64V4Token::summon()`.
 - `zenjpeg/examples/README.md` - Examples and debugging tools
 - `zenjpeg/docs/ADAPTIVE_QUANTIZATION.md` - AQ algorithm details
 - `zenjpeg/docs/API_DESIGN.md` - Full API surface and proposed enhancements
+- `zenjpeg/docs/METADATA.md` - `container::metadata` (feature `extended-metadata`):
+  segment/trailer model, identification table, reassembly rules, and the ExifTool
+  cross-check (`just metadata-oracle`) with its settled disagreements. ExifTool's
+  `-v3` reads one segment ahead, treats SOS and the JPEG 2000 markers 0x30-0x3F/0x4F
+  as standalone, and needs `FF D8 FF`; compare against it by rule, not file name.
 - `docs/TUNING_HISTORY.md` - Performance tuning data, SIMD analysis, investigation notes, fixed bugs
 - `docs/SECURITY.md` - Security considerations
 

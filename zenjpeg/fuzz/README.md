@@ -19,7 +19,7 @@ sibling checkout on disk.
 
 ## Fuzz Targets
 
-All 13 are compiled by the CI gate on every push.
+All 14 are compiled by the CI gate on every push.
 
 | Target | Description | Priority |
 |--------|-------------|----------|
@@ -30,6 +30,7 @@ All 13 are compiled by the CI gate on every push.
 | `fuzz_decode_paths` | Structured: varies decoder config *and* data via `arbitrary` | High |
 | `fuzz_push_decode` | Streaming `decode_rows` / `decode_rows_f32` row callbacks | High |
 | `fuzz_container_probe` | `container::probe` / `is_ultrahdr`, range + gain-map-presence invariants | High |
+| `fuzz_container_metadata` | `container::metadata` (feature `extended-metadata`): items tile the input, limits hold, trailers and embedded JPEGs consistent, reassembly bounded | High |
 | `fuzz_container_marker` | `container::{iter, primary_bounds, find_jpeg_boundaries}` zero-copy span invariants | Medium |
 | `fuzz_container_mpf` | `container::{parse_mpf, parse_mpf_segment}` + `create_mpf_header` roundtrip | Medium |
 | `fuzz_container_xmp` | `container::{parse_xmp, parse_xmp_full}` on arbitrary UTF-8 | Medium |
@@ -46,6 +47,26 @@ seed through every entry point above, under the same tight limits — so
 run rather than only during hand-run fuzzing. Drop a new
 `cargo fuzz tmin`-minimized crash file in there and it is picked up
 automatically; no registration step.
+
+`seeds/metadata/` holds small synthetic coverage seeds (each under 1 KB)
+written by `make_metadata_seeds.py`, one file per group of
+`container::metadata` paths (every identified APP format, the vendor trailer
+chains, resynchronization, truncation, ICC chunk errors). They are not crash
+repros. `tests/fuzz_regression.rs` replays them with the crash seeds and
+asserts there are 8;
+the unit test `container::metadata::tests::metadata_seeds_reach_every_item_kind`
+asserts they reach every item kind (checked against an exhaustive match, so a
+new kind needs a seed) and the `Unparsed` reasons the
+walk produces on its own (`ExtraneousBytes`, `BadLength`,
+`TruncatedSegment`; `NotJpeg` and `LimitExceeded` come from inputs and
+limits the seeds do not carry). The ExifTool oracle reads them too.
+Regenerate them with `python3 fuzz/make_metadata_seeds.py` after changing a
+layout they encode.
+
+`metadata_checks.rs` holds the `fuzz_container_metadata` assertions. The
+target and `tests/fuzz_regression.rs` both include it with `#[path]`, so a
+seed dropped into `regression/` is replayed against exactly what the fuzzer
+checks.
 
 ## Running
 

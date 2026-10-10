@@ -18,6 +18,9 @@
 //! - [`types`]: shared container types (`ContainerItem`, `MpfEntry`, etc.).
 //! - [`probe`]: single-pass probe returning every requested signal in
 //!   one marker walk.
+//! - `metadata` (feature `extended-metadata`): every segment and trailer
+//!   in file order, identified and parsed or kept opaque, with validated
+//!   reassembly of ICC, extended XMP and Photoshop resources.
 //!
 //! The ISO 21496-1 JPEG APP2 envelope is not a separate module —
 //! [`zencodec::ISO_21496_1_URN`] and [`zencodec::ISO_21496_1_PRIMARY_APP2_BODY`]
@@ -35,6 +38,14 @@
 //! `benchmarks/container_scan_2026-04-20.{csv,md}`.
 
 pub mod marker;
+// The segment model is always compiled so that later changes can route the
+// decoder's metadata readers through it, with its items built from the walker
+// the decoder uses; the `extended-metadata` feature makes it public.
+#[cfg(feature = "extended-metadata")]
+pub mod metadata;
+#[cfg(not(feature = "extended-metadata"))]
+#[allow(dead_code, unused_imports)]
+pub(crate) mod metadata;
 pub mod mpf;
 pub mod probe;
 pub mod types;

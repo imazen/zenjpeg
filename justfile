@@ -1,6 +1,6 @@
 # zenjpeg development commands
 
-# Run all 13 fuzz targets for 60 seconds each (needs nightly + cargo-fuzz).
+# Run all 14 fuzz targets for 60 seconds each (needs nightly + cargo-fuzz).
 # Keep this list in sync with zenjpeg/fuzz/Cargo.toml's [[bin]] entries —
 # `cargo fuzz run` on a name with no [[bin]] fails, and the five container /
 # push-decode targets were missing here until 2026-08-29.
@@ -18,6 +18,7 @@ fuzz SECONDS="60":
     cd zenjpeg && cargo +nightly fuzz run fuzz_container_mpf -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_container_xmp -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_container_probe -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_metadata -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
 
 # Compile every fuzz target on stable — the same gate .github/workflows/fuzz.yml
 # runs. `zenjpeg/fuzz` is its own workspace, so nothing at the repo root ever
@@ -26,10 +27,19 @@ fuzz SECONDS="60":
 fuzz-check:
     cd zenjpeg/fuzz && cargo check --all-targets
 
-# Replay the committed crash seeds in zenjpeg/fuzz/regression/ on stable.
-# Neither nightly nor cargo-fuzz required.
+# Replay the committed crash seeds in zenjpeg/fuzz/regression/ (and the
+# container::metadata coverage seeds in zenjpeg/fuzz/seeds/metadata/) on
+# stable. Neither nightly nor cargo-fuzz required. `extended-metadata` adds
+# the fuzz_container_metadata checks (zenjpeg/fuzz/metadata_checks.rs).
 fuzz-regression:
-    cargo test -p zenjpeg --test fuzz_regression -- --nocapture
+    cargo test -p zenjpeg --features extended-metadata --test fuzz_regression -- --nocapture
+
+# Cross-check container::metadata against ExifTool 12.40 over codec-corpus
+# and the coverage seeds (tests/extended_metadata_exiftool.rs). Requires
+# `exiftool` 12.40 and `perl` on PATH; the test fails, not skips, without
+# them.
+metadata-oracle:
+    cargo test -p zenjpeg --features __oracle-exiftool --test extended_metadata_exiftool -- --nocapture
 
 # Run all lib tests
 test:
