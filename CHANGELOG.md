@@ -6,6 +6,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Changed
+- Progressive AC refinement tokenization holds the active scan's
+  `ScanTokenInfo` outside `scan_info` for the scan's duration instead of
+  re-acquiring `last_mut()` per emitted token, refinement bit, EOB run and
+  restart marker, and appends refinement bits via `extend_from_slice`.
+  Measured `profile_encode` -6.5% instructions (refinement scan -20.4%);
+  encoded output is bit-identical (perf_manifest 35,376/42,948 rows, 0 diffs).
 - Migrated to magetypes/archmage 0.9.30 `_t` SIMD constructors (`splat_t`,
   `zero_t`, `load_t`, `from_array_t`, `from_slice_t`, `load_8x8_t`); a
   mechanical rename with no behavior change.

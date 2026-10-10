@@ -1,0 +1,38 @@
+code commit measured: 9ac022dd50ca7875724765022a491392c61af48d (change nslktlxt;
+  identical source in this commit — later amendments are docs-only)
+parent: fc535f4640c8871aadfc3e50799ad0260c8cd056 (landed 002 = main@origin)
+host: Ryzen 9 7950X (Zen 4), WSL2, 32 logical CPUs, valgrind 3.18.1
+compilers: rustc 1.99.0 (b940084d7) canonical matched pair; earlier 1.98.1 pair noted
+date: 2026-10-10 (UTC)
+build: cargo build --locked --release -p zenjpeg [--features parallel] --example <bin>;
+  committed release profile, locked deps, default runtime dispatch, no native CPU flags
+
+commands (each under: flock $H/heavy.lock run-heavy --mem 12G --;
+$H = ~/tmp/handoff/zenjpeg-perf):
+  valgrind --tool=callgrind --callgrind-out-file=<out> \
+    target/release/examples/profile_encode
+  valgrind --tool=callgrind --callgrind-out-file=<out> \
+    target/release/examples/valgrind_decode jpegli \
+    $H/reviewer-baseline/photo-baseline-st.jpg
+  target/release/examples/perf_manifest emit --out <name>.tsv
+    (default build and --features parallel build)
+
+wall matrix (reviewer commands.tsv):
+  /usr/bin/time -v <bin>/perf_wall[-baseline-<features>] <fixtures-dir> --iters 7
+  /usr/bin/time -v <bin>/reviewer_progressive_wall[-baseline-<features>] <fixtures-dir> --iters 7
+  q85 4:2:0, DRI 4; sizes 64^2 256^2 1024^2 2048^2 4096^2 + 1024^2 flat
+  chroma + 1024^2/2048^2 CLIC photo; six counterbalanced process pairs per
+  harness; 7 timed iterations after warmup; in-memory codec calls (input
+  load/fixture write outside timer; encode allocation inside).
+  modes: default-build ST, parallel-build ST, parallel-build MT (28 workers).
+  repeat/control: 31-iteration same-binary repeat of the flagged cell;
+  separate 32-warmup/1000-encode control built with release debug=0.
+
+canonical raw profiles (reviewer's independent builds):
+  ~/tmp/handoff/zenjpeg-perf/reviews/003-scaninfo-hoist/reviewer/{baseline-,}callgrind-{encode,decode}.out
+author raw profiles: ~/tmp/zenjpeg-perf/cg-003-199/{encode,decode}-{parent,candidate}.out (1.99.0)
+                     ~/tmp/zenjpeg-perf/cg-003/{encode,decode}.out (1.98.1)
+manifests: ~/tmp/zenjpeg-perf/gates-003-manifest-{default,parallel}.tsv
+reviewer manifests: reviews/003-scaninfo-hoist/reviewer/{baseline-,}manifest-{default,parallel}.tsv
+wall raw data: reviews/003-scaninfo-hoist/reviewer/wall-raw.tsv (7,560 timings),
+  wall-summary.tsv; repeat data in small-repeat/ and tiny-steady/

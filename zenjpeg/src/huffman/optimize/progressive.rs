@@ -855,15 +855,36 @@ impl ProgressiveTokenBuffer {
             upper_inclusive & !lower_exclusive
         };
 
+        // Hoist this scan's metadata out of `scan_info` for the duration of
+        // the block loop: every token/bit append below writes through `info`
+        // directly instead of re-acquiring `scan_info.last_mut()` per call.
+        // The entry is pushed back before `end_scan`. All fallible setup above
+        // is complete, so nothing between the pop and the push-back can bail.
+        let mut info = self
+            .scan_info
+            .pop()
+            .expect("start_scan_for_refinement pushed an entry");
+
         for (block_idx, block) in blocks.iter().enumerate() {
             // Restart boundary: flush pending EOB run + refbits, mark position.
             if ri > 0 && block_idx > 0 && block_idx % ri == 0 {
                 if eob_run > 0 || !pending_refbits.is_empty() {
-                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    Self::emit_eob_run_with_refbits(
+                        &mut self.counters,
+                        &mut info,
+                        eob_run,
+                        &pending_refbits,
+                    );
                     pending_refbits.clear();
                     eob_run = 0;
                 }
-                self.mark_restart();
+                // mark_restart() inlined for the hoisted info
+                info.restarts.push(if info.is_refinement() {
+                    info.ref_tokens.len()
+                } else {
+                    self.tokens.len() - info.token_offset
+                });
+                self.reset_dc_pred();
             }
 
             // SIMD pre-pass: build two 64-bit masks over the whole block, then
@@ -886,7 +907,12 @@ impl ProgressiveTokenBuffer {
 
                 // Flush if we hit the maximum EOB run OR refbits limit
                 if eob_run == 0x7FFF || pending_refbits.len() > 255 {
-                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    Self::emit_eob_run_with_refbits(
+                        &mut self.counters,
+                        &mut info,
+                        eob_run,
+                        &pending_refbits,
+                    );
                     pending_refbits.clear();
                     eob_run = 0;
                 }
@@ -895,7 +921,12 @@ impl ProgressiveTokenBuffer {
 
             // Emit pending EOB run
             if eob_run > 0 {
-                self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                Self::emit_eob_run_with_refbits(
+                    &mut self.counters,
+                    &mut info,
+                    eob_run,
+                    &pending_refbits,
+                );
                 pending_refbits.clear();
                 eob_run = 0;
             }
@@ -939,10 +970,8 @@ impl ProgressiveTokenBuffer {
                 let may_emit_zrl = last_newly_nonzero_pos.is_some_and(|last_pos| pos <= last_pos);
                 while run >= 16 && may_emit_zrl {
                     let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
-                    self.push_ref(ref_token);
-                    for &bit in &block_refbits {
-                        self.push_refbit(bit);
-                    }
+                    Self::push_ref_into(&mut self.counters, &mut info, ref_token);
+                    info.refbits.extend_from_slice(block_refbits.as_slice());
                     block_refbits.clear();
                     run -= 16;
                 }
@@ -964,10 +993,8 @@ impl ProgressiveTokenBuffer {
                     (run << 4) | 3 // 0x?3 for positive
                 };
                 let ref_token = RefToken::new(symbol, block_refbits.len() as u8);
-                self.push_ref(ref_token);
-                for &bit in &block_refbits {
-                    self.push_refbit(bit);
-                }
+                Self::push_ref_into(&mut self.counters, &mut info, ref_token);
+                info.refbits.extend_from_slice(block_refbits.as_slice());
                 block_refbits.clear();
                 run = 0;
             }
@@ -985,7 +1012,12 @@ impl ProgressiveTokenBuffer {
                 if pending_refbits.len() + block_refbits.len() > 255 {
                     // Flush current EOB run before starting a new one
                     if eob_run > 0 {
-                        self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                        Self::emit_eob_run_with_refbits(
+                            &mut self.counters,
+                            &mut info,
+                            eob_run,
+                            &pending_refbits,
+                        );
                         pending_refbits.clear();
                         eob_run = 0;
                     }
@@ -995,7 +1027,12 @@ impl ProgressiveTokenBuffer {
 
                 // Also check if we've hit the max run or refbits limit after accumulation
                 if eob_run == 0x7FFF || pending_refbits.len() > 255 {
-                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    Self::emit_eob_run_with_refbits(
+                        &mut self.counters,
+                        &mut info,
+                        eob_run,
+                        &pending_refbits,
+                    );
                     pending_refbits.clear();
                     eob_run = 0;
                 }
@@ -1004,9 +1041,16 @@ impl ProgressiveTokenBuffer {
 
         // Flush remaining EOB run
         if eob_run > 0 || !pending_refbits.is_empty() {
-            self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+            Self::emit_eob_run_with_refbits(
+                &mut self.counters,
+                &mut info,
+                eob_run,
+                &pending_refbits,
+            );
         }
 
+        // Restore the hoisted scan entry before end_scan records num_tokens.
+        self.scan_info.push(info);
         self.end_scan();
 
         // Debug: dump tokens and refbits for comparison with C++
@@ -1056,8 +1100,39 @@ impl ProgressiveTokenBuffer {
         Ok(())
     }
 
-    /// Emits an EOB run token with associated refinement bits.
-    fn emit_eob_run_with_refbits(&mut self, _context: u8, run: u16, refbits: &[u8]) {
+    /// Adds a refinement token to `info`, updating the frequency counter.
+    ///
+    /// `push_ref` with the scan's `ScanTokenInfo` passed in, so a caller that
+    /// has hoisted the entry out of `scan_info` does not re-acquire
+    /// `scan_info.last_mut()` per token.
+    #[inline]
+    fn push_ref_into(counters: &mut [FrequencyCounter], info: &mut ScanTokenInfo, token: RefToken) {
+        // Same counting/masking contract as push_ref: EOB and ZRL symbols pass
+        // through; newly-nonzero category-1 symbols mask the sign bit.
+        let context = info.context as usize;
+        if context < counters.len() {
+            let low_nibble = token.symbol & 0x0F;
+            let masked_symbol = if low_nibble == 1 || low_nibble == 3 {
+                token.symbol & 253 // Clear sign bit
+            } else {
+                token.symbol
+            };
+            counters[context].count(masked_symbol);
+        }
+        info.ref_tokens.push(token);
+    }
+
+    /// Emits an EOB run token with associated refinement bits into `info`.
+    ///
+    /// Same behavior as the per-bit version but appends the bit run with a
+    /// single `extend_from_slice` — refbit values are already 0/1, so the
+    /// `bit & 1` masking `push_refbit` applies is a no-op here.
+    fn emit_eob_run_with_refbits(
+        counters: &mut [FrequencyCounter],
+        info: &mut ScanTokenInfo,
+        run: u16,
+        refbits: &[u8],
+    ) {
         let symbol = if run <= 1 {
             0x00
         } else {
@@ -1066,18 +1141,14 @@ impl ProgressiveTokenBuffer {
         };
 
         let ref_token = RefToken::new(symbol, refbits.len() as u8);
-        self.push_ref(ref_token);
+        Self::push_ref_into(counters, info, ref_token);
 
         // Store the EOB run value if > 1
-        if run > 1
-            && let Some(info) = self.scan_info.last_mut()
-        {
+        if run > 1 {
             info.eobruns.push(run);
         }
 
-        for &bit in refbits {
-            self.push_refbit(bit);
-        }
+        info.refbits.extend_from_slice(refbits);
     }
 }
 
