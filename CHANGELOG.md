@@ -47,6 +47,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   map of the file as the zencodec decode path reads it: every marker
   segment, scan, fill and stray byte, JFIF thumbnail, MPF image, GContainer
   item and Samsung SEF trailer, each with what the decoder does with it.
+  Tables and segments that are overwritten or never used are reported as
+  dropped, and bytes after a unit's internal end (JFIF thumbnail, APP14 and
+  MPF tails, ICC past its declared size) as their own parts.
   Fuzz target `fuzz_inventory`; `just inventory-oracle` cross-checks the
   offsets against ExifTool. Builds against zencodec's `feat/inventory`
   branch through `[patch.crates-io]` until that is released. (aa444b2d)
