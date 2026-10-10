@@ -64,6 +64,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   Fuzz target `fuzz_inventory`; `just inventory-oracle` cross-checks the
   offsets against ExifTool. Builds against zencodec's `feat/inventory`
   branch through `[patch.crates-io]` until that is released. (aa444b2d)
+  Review round 1: the gain-map role follows `ultrahdr_metadata()` and
+  `gainmap()`; a count-only Huffman pass splits bytes after a scan's last
+  MCU (and before each RSTn) out of the scan data; DAC entries, MPF index
+  holes and extended-XMP headers are their own parts; the job's strictness,
+  policy, limits and output path are followed. (62b7e7b5, c8e70083,
+  4a889024, c5dafa31, bca48b52, 06eda96a)
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
