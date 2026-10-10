@@ -73,6 +73,7 @@
 //! decode (no preferred descriptors: RGB8 for 3 components, GRAY8 for 1),
 //! and a part the other path treats differently says so in its detail.
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -115,6 +116,7 @@ pub(crate) struct Options {
 
 /// The job's `GainMapRender`, as far as it changes what the decode reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "ultrahdr"), allow(dead_code))]
 pub(crate) enum Render {
     /// `BaseOnly`: the gain-map image is never decoded.
     Base,
@@ -239,6 +241,7 @@ struct Walk<'a> {
     data: &'a [u8],
     inv: Inventory,
     ids: Vec<PartId>,
+    #[cfg_attr(not(feature = "ultrahdr"), allow(dead_code))]
     opts: Options,
     /// Per [`Repeat`] kind: the first part of that kind (the one carrying
     /// the detail) and how many more followed.
@@ -283,6 +286,7 @@ struct MpfImage {
 
 /// What the job's decode does with the Ultra HDR gain map.
 #[derive(Clone, Copy)]
+#[cfg_attr(not(feature = "ultrahdr"), allow(dead_code))]
 enum GainMap {
     /// Not decoded.
     None,
@@ -869,7 +873,7 @@ fn has_zero_quant(body: &[u8]) -> bool {
             return false;
         };
         let zero = if wide {
-            values.as_chunks::<2>().0.iter().any(|v| *v == [0, 0])
+            values.as_chunks::<2>().0.contains(&[0, 0])
         } else {
             values.contains(&0)
         };
@@ -1196,7 +1200,7 @@ fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8], permissive: bool) {
 
 /// A Huffman table a scan reads.
 enum Table {
-    Owned(crate::huffman::HuffmanDecodeTable),
+    Owned(Box<crate::huffman::HuffmanDecodeTable>),
     Standard(&'static crate::huffman::HuffmanDecodeTable),
 }
 
@@ -1224,7 +1228,7 @@ impl Table {
         let counts: [u8; 16] = b.get(1..17)?.try_into().ok()?;
         H::from_bits_values(&counts, b.get(17..)?)
             .ok()
-            .map(Self::Owned)
+            .map(|t| Self::Owned(Box::new(t)))
     }
 }
 
@@ -1886,7 +1890,7 @@ impl Walk<'_> {
                 }
                 let end = scan_end(data, hdr_end, limit);
                 let counted = match st.frame {
-                    Some(f) if sos_ok && matches!(f.mode, 0xC0 | 0xC1 | 0xC2) => {
+                    Some(f) if sos_ok && matches!(f.mode, 0xC0..=0xC2) => {
                         let spec = &data[pos + 5..hdr_end];
                         count_scan(data, &f, &defs, spec, hdr_end, end, restart, permissive)
                     }
@@ -3098,6 +3102,7 @@ impl Walk<'_> {
     /// failures that would make `decode_gainmap_jpeg` fail (a default
     /// `Decoder`). Entropy-level failures stay invisible, as for the
     /// primary image. Walks a scratch inventory that is then dropped.
+    #[cfg(feature = "ultrahdr")]
     fn stream_decodes(&self, r: Range<usize>) -> bool {
         let mut w = Walk {
             data: self.data,

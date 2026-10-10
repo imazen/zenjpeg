@@ -311,12 +311,10 @@ pub(super) fn count(data: &[u8], start: usize, limit: usize, scan: &Scan<'_, '_>
     let mut rst = 0u8;
     let mut mcu = 0u64;
     while mcu < mcus {
-        let interval_end = if restart > 0 {
-            ((mcu / restart) + 1) * restart
-        } else {
-            mcus
-        }
-        .min(mcus);
+        let interval_end = mcu
+            .checked_div(restart)
+            .map_or(mcus, |k| (k + 1) * restart)
+            .min(mcus);
         // One interval.
         let mut stopped = None;
         'interval: while mcu < interval_end {
