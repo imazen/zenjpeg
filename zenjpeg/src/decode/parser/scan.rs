@@ -20,8 +20,6 @@ use super::super::DecodeWarning;
 use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
 use super::JpegParser;
 use super::baseline_streaming;
-use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
-use crate::types::PixelFormat;
 
 /// Scan parsing and baseline decoding methods for JpegParser.
 impl<'a> JpegParser<'a> {
@@ -682,68 +680,28 @@ impl<'a> JpegParser<'a> {
         if self.force_f32_idct {
             return false;
         }
-        // XYB color space needs coefficient-based decode: the streaming path
-        // assumes YCbCr→RGB conversion, which produces wrong colors for XYB.
-        // Coefficient storage is required so the output stage can run the
-        // XYB→linear→sRGB conversion.
-        if self
-            .icc_profile
-            .as_ref()
-            .map(|p| crate::color::icc::is_xyb_profile(p))
-            .unwrap_or(false)
-        {
-            return false;
-        }
-        // Grayscale (1 component) and YCbCr (3 components) are supported.
-        // Grayscale streaming produces 1bpp gray or 4bpp BGRA depending on
-        // streaming_output_format. Other component counts are unsupported.
-        if self.num_components != 1 && self.num_components != 3 {
-            return false;
-        }
-        // Grayscale: streamable only when sampling factors are 1x1.
-        //
-        // JPEG allows single-component frames with Hi/Vi > 1 (e.g. h_samp=2,
-        // v_samp=2 on a grayscale file). Per ISO/IEC 10918-1 A.2.3, a
-        // non-interleaved scan (Ns=1) has MCU = 1 data unit regardless of
-        // sampling factors — but our streaming buffer sizing assumes the
-        // component fills a max_h_samp × max_v_samp MCU, which is wrong
-        // when max_h_samp/max_v_samp are clamped to 1 for grayscale. Fall
-        // back to the coefficient-buffering path for these files.
-        if self.num_components == 1 {
-            let h = self.components[0].h_samp_factor;
-            let v = self.components[0].v_samp_factor;
-            return h == 1 && v == 1;
-        }
-        // Only accept standard sampling factor combinations
-        {
-            let y_h = self.components[0].h_samp_factor;
-            let y_v = self.components[0].v_samp_factor;
-            let c_h = self.components[1].h_samp_factor;
-            let c_v = self.components[1].v_samp_factor;
-            let c2_h = self.components[2].h_samp_factor;
-            let c2_v = self.components[2].v_samp_factor;
-            // Cb and Cr must have matching sampling factors
-            if c_h != c2_h || c_v != c2_v {
-                return false;
-            }
-            // Supported standard modes only:
-            // 4:4:4 = Y(1x1) Cb(1x1) Cr(1x1)
-            // 4:2:0 = Y(2x2) Cb(1x1) Cr(1x1)
-            // 4:2:2 = Y(2x1) Cb(1x1) Cr(1x1)
-            match (y_h, y_v, c_h, c_v) {
-                (1, 1, 1, 1) => true, // 4:4:4
-                (2, 2, 1, 1) => true, // 4:2:0
-                (2, 1, 1, 1) => true, // 4:2:2
-                _ => false,
-            }
-        }
+        // The colour model and sampling shape decide the rest (decided at
+        // SOF; see `PathPlan::mcu_kernel`): grayscale 1x1 and 4:4:4 / 4:2:2 /
+        // 4:2:0 YCbCr or RGB with 1x1 chroma. XYB, CMYK, oversampled
+        // grayscale (a non-interleaved scan whose MCU is one block) and every
+        // other shape need the coefficient path.
+        self.plan().mcu_kernel().is_some()
     }
 
-    /// Streaming decode for baseline 4:4:4 YCbCr images.
-    /// Combines Huffman decode + dequantize + IDCT + color convert in one pass.
-    /// No coefficient storage - processes MCU row by row directly to RGB output.
+    /// Streaming decode for the baseline frames `PathPlan::mcu_kernel` admits:
+    /// grayscale 1x1, and 4:4:4 / 4:2:2 / 4:2:0 YCbCr or RGB with one
+    /// interleaved scan. Combines Huffman decode + dequantize + IDCT + the
+    /// frame's `RowKernel` in one pass. No coefficient storage - processes MCU
+    /// row by row directly to the 8-bit output (gray or RGB).
     ///
     /// The `stop` parameter allows cancellation of long-running decodes.
+    ///
+    /// Out of line (called once per decode): inlined into
+    /// `decode_baseline_streaming`, edits to that function's setup code moved
+    /// the register allocation of this function's inlined entropy loop
+    /// (decode-only Ir on a baseline 4:4:4 file: 303.1M inlined, 289.7M out of
+    /// line; `docs/TUNING_HISTORY.md`, 2026-10-10).
+    #[inline(never)]
     pub(super) fn decode_baseline_streaming_rgb(
         &mut self,
         scan_components: &[(usize, u8, u8)],
@@ -785,11 +743,12 @@ impl<'a> JpegParser<'a> {
         // borrows below (charge_memory needs &mut self). Sized from the
         // (untrusted) SOF dimensions; this IS the streaming path's output
         // buffer, so `to_pixels` does not charge again for it.
+        let kernel = self
+            .color_model
+            .row_kernel(self.streaming_layout(), self.idct_method)
+            .ok_or_else(|| Error::internal("streaming decode without a row kernel"))?;
+        let out_bpp = kernel.layout().bytes_per_pixel();
         {
-            let out_bpp = match self.streaming_output_format {
-                Some(PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba) => 4,
-                _ => 3,
-            };
             let out_size =
                 checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
             self.charge_memory(out_size, "pixel output buffer")?;
@@ -862,13 +821,6 @@ impl<'a> JpegParser<'a> {
             try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cb strip buffer")?;
         let mut cr_strip: Vec<i16> =
             try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cr strip buffer")?;
-
-        // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted.
-        let (out_bpp, out_4bpp, swap_rb) = match self.streaming_output_format {
-            Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4usize, true, true),
-            Some(PixelFormat::Rgba) => (4, true, false),
-            _ => (3, false, false),
-        };
 
         // Allocate output buffer (3bpp RGB or 4bpp BGRA/RGBA). Sized from the
         // (untrusted) SOF dimensions → default fallible, and charged against
@@ -985,57 +937,20 @@ impl<'a> JpegParser<'a> {
                 mcu_count += 1;
             }
 
-            // Color convert this MCU row directly to output buffer
+            // Convert this MCU row's strips directly into the output buffer.
             let y_start = mcu_y * 8;
             let rows_this_mcu = 8.min(height.saturating_sub(y_start));
             let cols_this_mcu = width.min(strip_width);
-            let is_rgb = self.is_rgb_jpeg();
-
+            let row_bytes = width * out_bpp;
             for row in 0..rows_this_mcu {
-                let strip_offset = row * strip_width;
-                let rgb_offset = (y_start + row) * width * out_bpp;
-
-                if is_rgb && out_4bpp {
-                    for px in 0..cols_this_mcu {
-                        let i = strip_offset + px;
-                        let o = rgb_offset + px * 4;
-                        if swap_rb {
-                            rgb[o] = cr_strip[i].clamp(0, 255) as u8;
-                            rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
-                            rgb[o + 2] = y_strip[i].clamp(0, 255) as u8;
-                        } else {
-                            rgb[o] = y_strip[i].clamp(0, 255) as u8;
-                            rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
-                            rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
-                        }
-                        rgb[o + 3] = 255;
-                    }
-                } else if is_rgb {
-                    for px in 0..cols_this_mcu {
-                        let i = strip_offset + px;
-                        let o = rgb_offset + px * 3;
-                        rgb[o] = y_strip[i].clamp(0, 255) as u8;
-                        rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
-                        rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
-                    }
-                } else if out_4bpp {
-                    ycbcr_planes_i16_to_xrgba_u8(
-                        &y_strip[strip_offset..strip_offset + cols_this_mcu],
-                        &cb_strip[strip_offset..strip_offset + cols_this_mcu],
-                        &cr_strip[strip_offset..strip_offset + cols_this_mcu],
-                        &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 4],
-                        swap_rb,
-                        self.idct_method == super::super::IdctMethod::Libjpeg,
-                    );
-                } else {
-                    ycbcr_planes_i16_to_rgb_u8(
-                        &y_strip[strip_offset..strip_offset + cols_this_mcu],
-                        &cb_strip[strip_offset..strip_offset + cols_this_mcu],
-                        &cr_strip[strip_offset..strip_offset + cols_this_mcu],
-                        &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
-                        self.idct_method == super::super::IdctMethod::Libjpeg,
-                    );
-                }
+                let s = row * strip_width;
+                let o = (y_start + row) * row_bytes;
+                kernel.row(
+                    &y_strip[s..s + cols_this_mcu],
+                    &cb_strip[s..],
+                    &cr_strip[s..],
+                    &mut rgb[o..o + row_bytes],
+                );
             }
         }
 
@@ -1116,9 +1031,12 @@ impl<'a> JpegParser<'a> {
         // `to_pixels` does not charge again. The per-MCU-row strips `allocate`
         // also creates are O(width) and are not charged (see
         // `JpegParser::charge_memory`).
+        let kernel = self
+            .color_model
+            .row_kernel(self.streaming_layout(), self.idct_method)
+            .ok_or_else(|| Error::internal("streaming decode without a row kernel"))?;
         {
-            let (out_bpp, _, _) =
-                baseline_streaming::output_pixel_layout(&geom, self.streaming_output_format);
+            let out_bpp = kernel.layout().bytes_per_pixel();
             let out_size = checked_size_2d(geom.width, geom.height)
                 .and_then(|s| checked_size_2d(s, out_bpp))?;
             self.charge_memory(out_size, "pixel output buffer")?;
@@ -1136,18 +1054,12 @@ impl<'a> JpegParser<'a> {
         let mut bufs = baseline_streaming::StreamingBuffers::allocate(
             &geom,
             self.chroma_upsampling,
-            self.streaming_output_format,
+            kernel.layout(),
             self.alloc_pref,
         )?;
 
         // ---- Phase 4: kernel selection ----
-        let use_fused_box = !geom.is_grayscale
-            && geom.h_ratio == 2
-            && geom.v_ratio == 2
-            && matches!(
-                self.chroma_upsampling,
-                super::super::ChromaUpsampling::NearestNeighbor
-            );
+        let use_fused_box = geom.uses_box(self.chroma_upsampling);
         let upsample_fn = baseline_streaming::select_upsample_fn(
             &geom,
             self.chroma_upsampling,
@@ -1155,7 +1067,6 @@ impl<'a> JpegParser<'a> {
             use_fused_box,
         )?;
         let idct_fn = baseline_streaming::select_idct_fn(self.idct_method);
-        let is_rgb = !geom.is_grayscale && self.is_rgb_jpeg();
 
         // ---- Phase 5: entropy decoder setup ----
         let mut decoder = baseline_streaming::setup_entropy_decoder(self, scan_components);
@@ -1175,8 +1086,7 @@ impl<'a> JpegParser<'a> {
             quant_tables: &quant_tables,
             restart_interval: self.restart_interval as u32,
             idct_fn,
-            is_rgb,
-            turbo_color: self.idct_method == super::super::IdctMethod::Libjpeg,
+            kernel,
         };
 
         if bufs.need_fancy {

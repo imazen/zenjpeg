@@ -12,7 +12,7 @@
 #   pub modules                                84
 #   pub types (struct/enum/trait/alias)       297
 #   pub consts/statics                        320
-#   free functions                            372
+#   free functions                            364
 #   inherent methods                         1194
 #   struct fields                             760
 #   enum variants                             506
@@ -24,9 +24,9 @@
 # per-module pub lines:
 #   (root)                           76
 #   alloc                             1
-#   color                           117
+#   color                           110
 #   container                         8
-#   decode                          447
+#   decode                          446
 #   decoder                          54
 #   detect                           40
 #   encode                         1480
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         12
 
-## items (3372 lines)
+## items (3367 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -443,9 +443,6 @@ pub fn color::icc::srgb_to_linear(f32) -> f32 [also: color::xyb]
 pub fn color::icc::srgb_to_linear_inplace(&mut [f32])
 pub fn color::rgb_to_ycbcr_f32(f32, f32, f32) -> (f32, f32, f32) [also: color::ycbcr]
 pub fn color::rgb_u8_swap_rb_inplace(&mut [u8]) [also: color::ycbcr]
-pub fn color::rgb_u8_to_bgra_u8(&[u8], &mut [u8]) [also: color::ycbcr]
-pub fn color::rgb_u8_to_bgrx_u8(&[u8], &mut [u8]) [also: color::ycbcr]
-pub fn color::rgb_u8_to_rgba_u8(&[u8], &mut [u8]) [also: color::ycbcr]
 pub fn color::rgb_u8_to_xrgba_u8(&[u8], &mut [u8], bool) [also: color::ycbcr]
 pub fn color::xyb::linear_rgb_to_xyb(f32, f32, f32) -> (f32, f32, f32)
 pub fn color::xyb::linear_rgb_to_xyb_255(f32, f32, f32) -> (f32, f32, f32)
@@ -489,7 +486,6 @@ pub fn color::ycbcr::rgb_to_cmyk(u8, u8, u8) -> (u8, u8, u8, u8)
 pub fn color::ycbcr::rgb_to_ycbcr(u8, u8, u8) -> (u8, u8, u8)
 pub fn color::ycbcr::rgb_to_ycbcr_planes(&[u8], usize, usize) -> encoder::Result<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>
 pub fn color::ycbcr::ycbcr_planes_to_rgb(&[u8], &[u8], &[u8], usize, usize) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn color::ycbcr::ycbcr_to_rgb_i16_x16(&[i16; 16], &[i16; 16], &[i16; 16], &mut [u8], &mut usize)
 pub fn color::ycbcr_planes_f32_to_rgb_f32(&[f32], &[f32], &[f32], &mut [f32]) [also: color::ycbcr]
 pub fn color::ycbcr_planes_f32_to_rgb_u8(&[f32], &[f32], &[f32], &mut [u8]) [also: color::ycbcr]
 pub fn color::ycbcr_planes_i16_to_rgb_u8(&[i16], &[i16], &[i16], &mut [u8], bool) [also: color::ycbcr]
@@ -583,7 +579,6 @@ pub fn decode::upsample::upsample_h2v2_i16_libjpeg(&[i16], usize, usize, &mut [i
 pub fn decode::upsample::upsample_h2v2_i16_libjpeg_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_libjpeg_strided_turbo(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_libjpeg_turbo(&[i16], usize, usize, &mut [i16], usize, usize)
-pub fn decode::upsample::upsample_h2v2_i16_nearest(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h2v2_i16_nearest_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
 pub fn decode::upsample::upsample_h2v2_libjpeg_row(&[i16], &[i16], &mut [i16], usize, usize, decode::upsample::H2v2Bias)
 pub fn decode::upsample::upsample_h2v2_libjpeg_row_scalar(&[i16], &[i16], &mut [i16], usize, usize, decode::upsample::H2v2Bias)

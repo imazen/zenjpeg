@@ -115,8 +115,11 @@ pub fn restructure(
     // Step 3: Compute restart interval in MCUs
     let restart_mcus = compute_restart_interval(&coeffs.components, config.restart_interval);
 
-    // Step 4: Encode with the requested structure
-    let preserved = extras.as_ref().map(|e| e.segments());
+    // Step 4: Encode with the requested structure, each preserved segment on
+    // its source side of SOF (`placement`)
+    let segments = extras.as_ref().map(|e| e.segments()).unwrap_or(&[]);
+    let after_sof = super::placement::after_sof_flags(jpeg_data, segments);
+    let preserved = Some(super::placement::Placed::new(segments, &after_sof));
 
     match config.output_mode {
         OutputMode::Sequential => encode_from_coefficients(&coeffs, preserved, restart_mcus, &stop),
@@ -241,7 +244,7 @@ fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<Progres
 /// optimized tables.
 pub(crate) fn encode_progressive_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[crate::decode::PreservedSegment]>,
+    preserved_segments: Option<super::placement::Placed<'_>>,
     _restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
@@ -351,9 +354,9 @@ pub(crate) fn encode_progressive_from_coefficients(
     output.push(0xFF);
     output.push(MARKER_SOI);
 
-    // Preserved metadata
+    // Preserved metadata that sat before SOF in the source
     if let Some(segments) = preserved_segments {
-        for seg in segments {
+        for seg in segments.side(false) {
             write_marker_segment(&mut output, seg.marker, &seg.data);
         }
     }
@@ -363,6 +366,13 @@ pub(crate) fn encode_progressive_from_coefficients(
 
     // SOF2 (progressive)
     write_sof2(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+
+    // Preserved segments the source placed after SOF stay there (`placement`)
+    if let Some(segments) = preserved_segments {
+        for seg in segments.side(true) {
+            write_marker_segment(&mut output, seg.marker, &seg.data);
+        }
+    }
 
     // DHT — DC tables initially
     write_progressive_dc_tables(&mut output, &tables, num_dc_tables);

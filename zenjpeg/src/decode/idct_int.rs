@@ -574,6 +574,16 @@ mod avx2 {
         (z << 6) | (y << 4) | (x << 2) | w
     }
 
+    /// Bound i16 values to `+-UNCLAMPED_SAMPLE_LIMIT` (the unclamped
+    /// variants). After `packs_epi32`'s saturation this equals bounding the
+    /// i32 value, as the scalar and generic tiers do.
+    #[rite]
+    fn bound_unclamped_avx(_token: archmage::X64V3Token, reg: __m256i) -> __m256i {
+        let lo = _mm256_set1_epi16(-(super::UNCLAMPED_SAMPLE_LIMIT as i16));
+        let hi = _mm256_set1_epi16(super::UNCLAMPED_SAMPLE_LIMIT as i16);
+        _mm256_min_epi16(_mm256_max_epi16(reg, lo), hi)
+    }
+
     /// Clamp i16 values to [0, 255] range.
     #[rite]
     fn clamp_avx(_token: archmage::X64V3Token, reg: __m256i) -> __m256i {
@@ -869,8 +879,8 @@ mod avx2 {
         bitmap = _mm256_or_si256(bitmap, ac_check);
 
         if _mm256_testz_si256(bitmap, bitmap) == 1 {
-            // DC-only: unclamped
-            let coeff = ((in_vector[0] + 4 + 1024) >> 3) as i16;
+            // DC-only: unclamped, bounded like the other tiers
+            let coeff = super::bound_unclamped((in_vector[0] as i64 + 4 + 1024) >> 3);
             let idct_value = _mm_set1_epi16(coeff);
             let mut pos = 0;
             for _ in 0..8 {
@@ -963,12 +973,12 @@ mod avx2 {
             &mut row7,
         );
 
-        // Pack and store WITHOUT clamping: packs_epi32 saturates to i16 range
-        // [-32768, 32767] which is sufficient for YCbCr→RGB.
+        // Pack and store without the [0, 255] clamp, bounded to
+        // +-UNCLAMPED_SAMPLE_LIMIT like every other tier.
         let mut pos = 0;
         macro_rules! pack_store_unclamped {
             ($r0:expr, $r1:expr) => {
-                let packed = _mm256_packs_epi32($r0, $r1);
+                let packed = bound_unclamped_avx(_token, _mm256_packs_epi32($r0, $r1));
                 let reordered = _mm256_permute4x64_epi64(packed, shuffle(3, 1, 2, 0));
 
                 safe_simd::_mm_storeu_si128(
@@ -1004,12 +1014,11 @@ mod avx2 {
     /// saturation never engages and pack equals the scalar `as i16` cast.
     #[arcane]
     #[allow(unused_assignments)]
-    pub fn idct_int_libjpeg_avx2(
+    pub fn idct_int_libjpeg_avx2<const CLAMP_255: bool>(
         _token: archmage::X64V3Token,
         in_vector: &[i32; 64],
         out_vector: &mut [i16],
         stride: usize,
-        clamp_255: bool,
     ) -> bool {
         assert!(out_vector.len() >= stride * 7 + 8);
 
@@ -1138,10 +1147,10 @@ mod avx2 {
         macro_rules! pack_store_islow {
             ($r0:expr, $r1:expr) => {
                 let packed = _mm256_packs_epi32($r0, $r1);
-                let result = if clamp_255 {
+                let result = if CLAMP_255 {
                     clamp_avx(_token, packed)
                 } else {
-                    packed
+                    bound_unclamped_avx(_token, packed)
                 };
                 let reordered = _mm256_permute4x64_epi64(result, shuffle(3, 1, 2, 0));
 
@@ -1480,15 +1489,37 @@ pub fn pixels_i16_to_f32_centered(pixels: &[i16; 64]) -> [f32; 64] {
 // Unclamped IDCT variants (for f32 output targets)
 //
 // These skip the [0, 255] clamping at the end, preserving ringing outside
-// the nominal range. The level shift (+128) is still applied. Values
-// typically land in [-30, 285] which is safe for all downstream consumers
-// (upsampling uses i32 intermediates, YCbCr→RGB clamps at output).
+// the nominal range. The level shift (+128) is still applied. On 392 valid
+// and real-photo corpus JPEGs the samples span [-73, 335] (measured
+// 2026-10-10, docs/DECODER_PATHS.md); crafted coefficients reach far beyond
+// i16.
+// Every variant bounds its output to +-UNCLAMPED_SAMPLE_LIMIT in i32, before
+// the i16 store, so all tiers produce the same samples (a bare `as i16` wraps
+// where AVX2's pack saturates) and every downstream i16/i32 step stays exact:
+// the AVX2 triangle upsamplers sum 4x a sample in i16 (+-8188 at the bound),
+// the YCbCr kernels centre chroma in i16 (c - 128), and libjpeg-turbo's
+// constants (116130 * (Cb - 128)) stay inside i32.
 // =============================================================================
+
+/// Bound on unclamped IDCT samples (pixel domain, after the +128 level shift):
+/// `[-UNCLAMPED_SAMPLE_LIMIT, UNCLAMPED_SAMPLE_LIMIT]`, the range the row
+/// kernels and upsamplers are exact for on every SIMD tier
+/// ([`crate::color::planes::SAMPLE_LIMIT`]).
+pub(crate) const UNCLAMPED_SAMPLE_LIMIT: i32 = crate::color::planes::SAMPLE_LIMIT;
+
+/// Clamp an i32 sample to the unclamped bound and narrow it.
+#[inline(always)]
+fn bound_unclamped(v: i64) -> i16 {
+    v.clamp(
+        -(UNCLAMPED_SAMPLE_LIMIT as i64),
+        UNCLAMPED_SAMPLE_LIMIT as i64,
+    ) as i16
+}
 
 /// Unclamped DC-only IDCT. Level-shifted but not clamped to [0, 255].
 #[inline]
 pub fn idct_int_dc_only_unclamped(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
-    let coeff = wa(wa(dc_coeff, 4), 1024).wrapping_shr(3) as i16;
+    let coeff = bound_unclamped((dc_coeff as i64 + 4 + 1024) >> 3);
 
     let min_len = stride * 7 + 8;
     assert!(out_vector.len() >= min_len);
@@ -1526,7 +1557,8 @@ fn idct_int_wide_unclamped_impl(
     wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat_t(token, SCALE_BITS), 17);
     wide_simd::transpose_i32x8(token, &mut rows);
 
-    // Store WITHOUT clamping — single bounds check for all strided writes
+    // Store without the [0, 255] clamp, bounded to +-UNCLAMPED_SAMPLE_LIMIT
+    // — single bounds check for all strided writes
     let min_len = stride * 7 + 8;
     assert!(out_vector.len() >= min_len);
     let out = &mut out_vector[..min_len];
@@ -1534,7 +1566,7 @@ fn idct_int_wide_unclamped_impl(
     for row in &rows {
         let arr = row.to_array();
         for (j, &val) in arr.iter().enumerate() {
-            out[out_pos + j] = val as i16;
+            out[out_pos + j] = bound_unclamped(val as i64);
         }
         out_pos += stride;
     }
@@ -1642,7 +1674,7 @@ pub fn idct_int_libjpeg_unclamped(
             && workspace[base + 6] == 0
             && workspace[base + 7] == 0
         {
-            let dcval = (descale(workspace[base], LJ_PASS1_BITS + 3) + 128) as i16;
+            let dcval = bound_unclamped(descale(workspace[base], LJ_PASS1_BITS + 3) + 128);
             let out_base = row * stride;
             out_vector[out_base..out_base + 8].fill(dcval);
             continue;
@@ -1693,14 +1725,14 @@ pub fn idct_int_libjpeg_unclamped(
 
         // Unclamped output: level shift (+128) but NO clamp to [0, 255]
         let out_base = row * stride;
-        out_vector[out_base] = (descale(tmp10 + tmp3, total_shift) + 128) as i16;
-        out_vector[out_base + 7] = (descale(tmp10 - tmp3, total_shift) + 128) as i16;
-        out_vector[out_base + 1] = (descale(tmp11 + tmp2, total_shift) + 128) as i16;
-        out_vector[out_base + 6] = (descale(tmp11 - tmp2, total_shift) + 128) as i16;
-        out_vector[out_base + 2] = (descale(tmp12 + tmp1, total_shift) + 128) as i16;
-        out_vector[out_base + 5] = (descale(tmp12 - tmp1, total_shift) + 128) as i16;
-        out_vector[out_base + 3] = (descale(tmp13 + tmp0, total_shift) + 128) as i16;
-        out_vector[out_base + 4] = (descale(tmp13 - tmp0, total_shift) + 128) as i16;
+        out_vector[out_base] = bound_unclamped(descale(tmp10 + tmp3, total_shift) + 128);
+        out_vector[out_base + 7] = bound_unclamped(descale(tmp10 - tmp3, total_shift) + 128);
+        out_vector[out_base + 1] = bound_unclamped(descale(tmp11 + tmp2, total_shift) + 128);
+        out_vector[out_base + 6] = bound_unclamped(descale(tmp11 - tmp2, total_shift) + 128);
+        out_vector[out_base + 2] = bound_unclamped(descale(tmp12 + tmp1, total_shift) + 128);
+        out_vector[out_base + 5] = bound_unclamped(descale(tmp12 - tmp1, total_shift) + 128);
+        out_vector[out_base + 3] = bound_unclamped(descale(tmp13 + tmp0, total_shift) + 128);
+        out_vector[out_base + 4] = bound_unclamped(descale(tmp13 - tmp0, total_shift) + 128);
     }
 }
 
@@ -1893,12 +1925,12 @@ fn idct_libjpeg_wide_impl(
             out_pos += stride;
         }
     } else {
-        // Unclamped: level-shifted but not clamped; values stay well inside
-        // i16 within the guards (|pre-shift| < 2^31 implies |pixel| < 7800).
+        // Unclamped: level-shifted, bounded to +-UNCLAMPED_SAMPLE_LIMIT
+        // (within the guards |pixel| < 7800, so only the bound applies).
         for row in &rows {
             let arr = row.to_array();
             for (j, &val) in arr.iter().enumerate() {
-                out[out_pos + j] = val as i16;
+                out[out_pos + j] = bound_unclamped(val as i64);
             }
             out_pos += stride;
         }
@@ -1918,7 +1950,7 @@ pub fn idct_int_libjpeg_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride:
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
-            if !avx2::idct_int_libjpeg_avx2(token, coeffs, output, stride, true) {
+            if !avx2::idct_int_libjpeg_avx2::<true>(token, coeffs, output, stride) {
                 idct_int_libjpeg(coeffs, output, stride);
             }
             return;
@@ -1945,7 +1977,7 @@ pub fn idct_int_libjpeg_auto_unclamped(coeffs: &mut [i32; 64], output: &mut [i16
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
-            if !avx2::idct_int_libjpeg_avx2(token, coeffs, output, stride, false) {
+            if !avx2::idct_int_libjpeg_avx2::<false>(token, coeffs, output, stride) {
                 idct_int_libjpeg_unclamped(coeffs, output, stride);
             }
             return;
@@ -2800,5 +2832,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The unclamped variants (f32 output targets) bound every sample to
+    /// `+-UNCLAMPED_SAMPLE_LIMIT` before the i16 store, so extreme
+    /// coefficients give the same samples on every tier: a bare `as i16`
+    /// wrapped on the generic tier where AVX2's pack saturated.
+    #[test]
+    fn unclamped_idct_is_bounded_and_tier_independent() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        let lim = UNCLAMPED_SAMPLE_LIMIT as i16;
+        // Dequantized coefficients (coefficient x quantizer), up to the i16
+        // coefficient range times a 16-bit quantizer.
+        let big = 32_767 * 255;
+        let mut blocks: Vec<([i32; 64], u8)> = Vec::new();
+        for dc in [
+            -big, -262_600, -8_400, -2_000, 0, 2_000, 8_400, 195_000, big,
+        ] {
+            let mut b = [0i32; 64];
+            b[0] = dc;
+            blocks.push((b, 1));
+        }
+        let mut x = 0x1234_5678u32;
+        for scale in [100i32, 3_000, 60_000, big] {
+            let mut b = [0i32; 64];
+            for v in b.iter_mut() {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                *v = ((x >> 8) as i32 % (2 * scale + 1)) - scale;
+            }
+            blocks.push((b, 64));
+        }
+        let stride = 8;
+        let run = || -> Vec<i16> {
+            let mut all = Vec::new();
+            for (block, count) in &blocks {
+                for libjpeg in [false, true] {
+                    let mut c = *block;
+                    let mut out = vec![0i16; stride * 8];
+                    if libjpeg {
+                        idct_int_tiered_libjpeg_unclamped(&mut c, &mut out, stride, *count);
+                    } else {
+                        idct_int_tiered_unclamped(&mut c, &mut out, stride, *count);
+                    }
+                    all.extend(out);
+                }
+                let mut out = vec![0i16; stride * 8];
+                idct_int_dc_only_unclamped(block[0], &mut out, stride);
+                all.extend(out);
+            }
+            all
+        };
+        let reference = std::sync::Mutex::new(None::<Vec<i16>>);
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let got = run();
+            assert!(
+                got.iter().all(|&v| (-lim..=lim).contains(&v)),
+                "unclamped IDCT left +-{lim} at {perm}"
+            );
+            assert!(
+                got.contains(&lim) && got.contains(&-lim),
+                "bound not reached at {perm}"
+            );
+            let mut r = reference.lock().unwrap();
+            match r.as_ref() {
+                None => *r = Some(got),
+                Some(want) => assert_eq!(&got, want, "unclamped IDCT differs at {perm}"),
+            }
+        });
+        eprintln!("unclamped IDCT bound: {report}");
     }
 }

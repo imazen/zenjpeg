@@ -26,7 +26,7 @@ use crate::recompress::router::StrategyParams;
 use crate::recompress::source::SourceAnalysis;
 
 use super::StrategyOutcome;
-use super::preserve_emit::{EmitConfig, QuantScale, QuantStrategy, emit_preserved};
+use super::preserve_emit::{EmitConfig, QuantScale, QuantStrategy, emit_preserved_placed};
 
 /// Convert a target IJG-equivalent quality to a quant-table scale
 /// (relative to the source's existing tables). At target_ijg_q = source
@@ -88,6 +88,9 @@ fn zensim_a_to_ijg_q_estimate(z: f32) -> u8 {
 pub(in crate::recompress) struct PreparedPreserve {
     pub(in crate::recompress) coeffs: crate::decode::DecodedCoefficients,
     pub(in crate::recompress) preserved_segments: Vec<crate::decode::PreservedSegment>,
+    /// Each preserved segment's side of SOF in the source
+    /// (`lossless::placement::after_sof_flags`).
+    pub(in crate::recompress) preserved_after_sof: Vec<bool>,
     pub(in crate::recompress) quant_strategy: QuantStrategy,
     pub(in crate::recompress) aq_mask: Option<super::preserve_emit::AqMask>,
     pub(in crate::recompress) subsampling: Subsampling,
@@ -107,7 +110,12 @@ pub fn run_preserve(
         aq_mask: prepared.aq_mask,
         preserved_segments: prepared.preserved_segments,
     };
-    let bytes = emit_preserved(&prepared.coeffs, prepared.subsampling, &cfg)?;
+    let bytes = emit_preserved_placed(
+        &prepared.coeffs,
+        prepared.subsampling,
+        &cfg,
+        &prepared.preserved_after_sof,
+    )?;
 
     // Validate the emitted bytes round-trip through zenjpeg's decoder.
     // If they don't, the emitter hit an edge case — return an error so
@@ -232,9 +240,12 @@ pub(in crate::recompress) fn prepare_preserve(
         }
     };
 
+    let preserved_after_sof =
+        crate::lossless::placement::after_sof_flags(jpeg_bytes, &preserved_segments);
     Ok(PreparedPreserve {
         coeffs,
         preserved_segments,
+        preserved_after_sof,
         quant_strategy,
         aq_mask,
         subsampling,

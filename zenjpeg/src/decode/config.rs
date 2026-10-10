@@ -188,6 +188,21 @@ pub enum IdctMethod {
     Libjpeg,
 }
 
+impl IdctMethod {
+    /// The method a frame with `num_components` components decodes with:
+    /// 1-component frames always use [`Libjpeg`](Self::Libjpeg) (#154), so the
+    /// gray plane is identical on every path. Every consumer of the requested
+    /// method (`decode()`, the scanline strips, the wave reader) goes through
+    /// this.
+    pub(crate) fn for_components(self, num_components: usize) -> Self {
+        if num_components == 1 {
+            IdctMethod::Libjpeg
+        } else {
+            self
+        }
+    }
+}
+
 /// Post-decode deblocking mode.
 ///
 /// Controls whether and how deblocking filters are applied after JPEG decoding
@@ -1031,6 +1046,13 @@ pub struct DecodeConfig {
     /// coefficient buffers fallible, small bounded MCU scratch infallible).
     /// See [`crate::foundation::alloc`].
     pub(crate) alloc_pref: zencodec::AllocPreference,
+
+    /// Whether a scanline reader may take the wave-only route (`parallel`,
+    /// nearest-neighbour 4:2:2 / 4:2:0, MCU-row DRI), which keeps decoded RGB
+    /// rows only and so cannot serve luma or f32 reads of a YCbCr frame.
+    /// Internal callers that know they will make such reads clear it
+    /// ([`DecodeConfig::for_plane_reads`]). Always `true` through the public API.
+    pub(crate) wave_only_reader: bool,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -1053,6 +1075,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("idct_method", &self.idct_method)
             .field("deblock_mode", &self.deblock_mode)
             .field("alloc_pref", &self.alloc_pref)
+            .field("wave_only_reader", &self.wave_only_reader)
             .finish()
     }
 }
@@ -1078,6 +1101,7 @@ impl Default for DecodeConfig {
             idct_method: None,
             deblock_mode: DeblockMode::default(),
             alloc_pref: zencodec::AllocPreference::CodecDefault,
+            wave_only_reader: true,
         }
     }
 }

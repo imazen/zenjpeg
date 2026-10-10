@@ -14,7 +14,9 @@ use zenpixels::{PixelBuffer, PixelDescriptor};
 use crate::error::{Error, ErrorKind};
 use crate::types::PixelFormat;
 
-use super::info::{decode_descriptor, populate_info_from_jpeg_extras, to_image_info};
+use super::info::{
+    decode_descriptor, needs_plane_reads, populate_info_from_jpeg_extras, to_image_info,
+};
 use super::streaming::JpegStreamingDecoder;
 
 static JPEG_DECODE_CAPS: DecodeCapabilities = {
@@ -411,12 +413,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                 info = info.with_orientation(zencodec::Orientation::Identity);
             }
 
-            // scanline_reader_cow accepts both Borrowed and Owned data.
-            // When Owned, the reader stores the Vec internally.
-            let reader = cfg.scanline_reader_cow(data)?;
-
             let descriptor =
                 decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
+
+            // scanline_reader_cow accepts both Borrowed and Owned data.
+            // When Owned, the reader stores the Vec internally.
+            let reader = if needs_plane_reads(descriptor) {
+                cfg.for_plane_reads().scanline_reader_cow(data)?
+            } else {
+                cfg.scanline_reader_cow(data)?
+            };
             let mcu_height = reader.luma_rows_per_mcu();
 
             Ok(JpegStreamingDecoder {
@@ -566,7 +572,11 @@ fn push_decoder_native<'a>(
     }
 
     // Create the streaming scanline reader
-    let mut reader = cfg.scanline_reader(data_ref)?;
+    let mut reader = if needs_plane_reads(descriptor) {
+        cfg.for_plane_reads().scanline_reader(data_ref)?
+    } else {
+        cfg.scanline_reader(data_ref)?
+    };
 
     let width = reader.width() as usize;
     let height = reader.height() as usize;
@@ -775,14 +785,7 @@ fn push_decoder_direct<'a>(
     let decode_into_result = if dst_stride == row_bytes {
         let dst_bytes = dst.as_strided_bytes_mut();
         if let Some(ref stop) = job.stop {
-            cfg.decode_streaming_into(
-                data_ref,
-                format,
-                dst_bytes,
-                stop,
-                header.num_components,
-                header.is_xyb,
-            )
+            cfg.decode_streaming_into(data_ref, format, dst_bytes, stop, header.num_components)
         } else {
             cfg.decode_streaming_into(
                 data_ref,
@@ -790,7 +793,6 @@ fn push_decoder_direct<'a>(
                 dst_bytes,
                 &Unstoppable,
                 header.num_components,
-                header.is_xyb,
             )
         }
     } else {
@@ -803,7 +805,6 @@ fn push_decoder_direct<'a>(
                 &mut contiguous,
                 stop,
                 header.num_components,
-                header.is_xyb,
             )
         } else {
             cfg.decode_streaming_into(
@@ -812,7 +813,6 @@ fn push_decoder_direct<'a>(
                 &mut contiguous,
                 &Unstoppable,
                 header.num_components,
-                header.is_xyb,
             )
         };
         match streaming_result {

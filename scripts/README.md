@@ -33,3 +33,4 @@ and the codec config contract.
 | `zq_emit_rust.py`       | Bakes Rust source for the legacy 8-config Zq controller (`src/encode/zq.rs`) — zenjpeg-specific |
 | `zq_pareto_fit.py`      | Offline Pareto-front analysis for the legacy 8-config controller — zenjpeg-specific |
 | `zq_tier2_subablation.py`| Targeted experiment: can we drop zenanalyze Tier 2 entirely? — kept for reference |
+| `colorspace_mutation_reach.py` | Path-reach check for `tests/colorspace_paths.rs`: corrupts one planes-to-pixels / derived-read site at a time in a copy of the tree and records which tests fail (`zenjpeg/docs/DECODER_PATHS.md`, "Proving a test reaches a path") |

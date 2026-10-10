@@ -1,7 +1,9 @@
-//! Shared IDCT helpers for sequential and parallel output paths.
+//! Shared IDCT and padding helpers for the integer output paths.
 //!
-//! These functions are used by both `output.rs` (sequential) and
-//! `output_parallel.rs` (parallel) to avoid duplicating IDCT+dequant logic.
+//! The fast integer path (`fast_integer.rs`, sequential and threaded) uses
+//! the IDCT helpers and the padding helper; the streaming baseline loops
+//! (`baseline_streaming.rs`) and the fused parallel decoder
+//! (`fused_parallel.rs`) use only `edge_replicate_h_padding`.
 
 use crate::decode::idct_int::idct_int_dc_only;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE};

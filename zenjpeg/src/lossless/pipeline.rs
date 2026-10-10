@@ -77,9 +77,12 @@ pub fn transform(jpeg_data: &[u8], config: &TransformConfig, stop: impl Stop) ->
 
     stop.check()?;
 
-    // Step 3: Re-encode as JPEG
-    let preserved = extras.as_ref().map(|e| e.segments());
-    let output = encode_from_coefficients(&transformed, preserved, 0, &stop)?;
+    // Step 3: Re-encode as JPEG, each preserved segment on its source side
+    // of SOF (`placement`).
+    let segments = extras.as_ref().map(|e| e.segments()).unwrap_or(&[]);
+    let after_sof = super::placement::after_sof_flags(jpeg_data, segments);
+    let preserved = super::placement::Placed::new(segments, &after_sof);
+    let output = encode_from_coefficients(&transformed, Some(preserved), 0, &stop)?;
 
     Ok(output)
 }
@@ -93,7 +96,7 @@ pub fn transform(jpeg_data: &[u8], config: &TransformConfig, stop: impl Stop) ->
 /// - Optional restart markers at specified MCU intervals
 pub(super) fn encode_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[crate::decode::PreservedSegment]>,
+    preserved_segments: Option<super::placement::Placed<'_>>,
     restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
@@ -205,9 +208,10 @@ pub(super) fn encode_from_coefficients(
     output.push(0xFF);
     output.push(MARKER_SOI);
 
-    // Write preserved metadata segments (EXIF, ICC, XMP, etc.)
+    // Write preserved metadata segments (EXIF, ICC, XMP, etc.) that sat
+    // before SOF in the source
     if let Some(segments) = preserved_segments {
-        for seg in segments {
+        for seg in segments.side(false) {
             write_marker_segment(&mut output, seg.marker, &seg.data);
         }
     }
@@ -217,6 +221,14 @@ pub(super) fn encode_from_coefficients(
 
     // SOF0 - Start of Frame (baseline)
     write_sof(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+
+    // Preserved segments the source placed after SOF stay there: a JFIF or
+    // Adobe segment there does not decide the colour model (`placement`).
+    if let Some(segments) = preserved_segments {
+        for seg in segments.side(true) {
+            write_marker_segment(&mut output, seg.marker, &seg.data);
+        }
+    }
 
     // DHT - Huffman tables
     write_huffman_table(&mut output, 0x00, &dc_luma_table); // DC luma, table 0
@@ -465,6 +477,8 @@ pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u
     // Clone the preserved segments so we can modify the EXIF orientation
     let mut segments: Vec<crate::decode::PreservedSegment> =
         extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    // Source positions, taken before the EXIF edit changes a payload.
+    let after_sof = super::placement::after_sof_flags(jpeg_data, &segments);
 
     // Find and rewrite EXIF orientation to 1 (Normal)
     for seg in &mut segments {
@@ -473,6 +487,7 @@ pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u
         }
     }
 
-    let output = encode_from_coefficients(&transformed, Some(&segments), 0, &stop)?;
+    let preserved = super::placement::Placed::new(&segments, &after_sof);
+    let output = encode_from_coefficients(&transformed, Some(preserved), 0, &stop)?;
     Ok(output)
 }

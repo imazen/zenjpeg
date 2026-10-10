@@ -47,6 +47,7 @@ pub mod idct;
 #[doc(hidden)]
 pub mod idct_int;
 
+pub(crate) mod color_model;
 mod config;
 mod depth;
 mod extras;
@@ -202,18 +203,26 @@ use crate::color::icc::apply_icc_transform_f32;
 #[cfg(feature = "moxcms")]
 use crate::color::icc::{TargetColorSpace, apply_icc_transform};
 
+/// How a scanline reader serves rows (see `DecodeConfig::classify_scanline_route`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScanlineMode {
+    /// Baseline: entropy-decode and render one MCU row at a time (strip).
+    Streaming,
+    /// Progressive / arithmetic: decode coefficients up front, then render
+    /// through the same strip as streaming.
+    Coefficients,
+    /// Everything the strip cannot render (XYB, CMYK, oversampled grayscale,
+    /// exotic sampling; progressive grayscale): decode to pixels up front.
+    Pixels,
+}
+
 /// Routing decisions shared by the borrowed and owned scanline-reader
 /// entry points (computed by `DecodeConfig::classify_scanline_route`).
 struct ScanlineRoute {
+    mode: ScanlineMode,
     is_grayscale: bool,
-    #[allow(dead_code)] // recorded for completeness; buffering already implied it
-    is_cmyk: bool,
-    is_xyb: bool,
-    max_h: u8,
-    max_v_samp: usize,
+    color_model: color_model::ColorModel,
     mcu_height: usize,
-    needs_buffered: bool,
-    needs_buffered_sampling: bool,
 }
 
 impl DecodeConfig {
@@ -221,6 +230,16 @@ impl DecodeConfig {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// This configuration for a scanline reader whose caller will read luma
+    /// (gray8, gray f32) or f32 RGB: the wave-only route keeps decoded RGB
+    /// rows only and refuses those reads on YCbCr frames, so it is skipped.
+    /// The planar wave state (native i16 reads) is unaffected.
+    pub(crate) fn for_plane_reads(&self) -> Self {
+        let mut config = self.clone();
+        config.wave_only_reader = false;
+        config
     }
 
     /// Creates a per-job decode request binding this config with JPEG data.
@@ -294,15 +313,13 @@ impl DecodeConfig {
     /// and chroma upsampling mode.
     ///
     /// - Explicit `idct_method()` always wins
-    /// - Default is `Jpegli` for all upsampling modes
+    /// - Default is `Libjpeg` for all upsampling modes: the libjpeg-exact
+    ///   IDCT, turbo's 16-bit YCbCr→RGB and turbo's fixed h2v2 upsampling
+    ///   biases, so the default triangle decode matches libjpeg-turbo.
     ///
-    /// The default `Triangle` upsampling matches libjpeg-turbo/mozjpeg within
-    /// max_diff ≤ 3. For near-exact matching (max_diff ≤ 1, YCbCr→RGB
-    /// rounding only), also set `.idct_method(IdctMethod::Libjpeg)` — that
-    /// selects both the libjpeg-exact IDCT and turbo's fixed h2v2 upsampling
-    /// biases. The islow kernel is SIMD with a scalar fallback and runs
-    /// within ~20% of the default kernel per block (~8% end-to-end on a
-    /// 10 MP gray scan; ~50% when it was scalar-only).
+    /// The islow kernel is SIMD with a scalar fallback and runs within ~20% of
+    /// the jpegli kernel per block (~8% end-to-end on a 10 MP gray scan; ~50%
+    /// when it was scalar-only).
     pub(crate) fn effective_idct_method(&self) -> IdctMethod {
         self.idct_method.unwrap_or(IdctMethod::Libjpeg)
     }
@@ -806,13 +823,24 @@ impl DecodeConfig {
     ///
     /// This allows reading the image row by row without loading the entire
     /// image into memory. Uses streaming single-pass decode for baseline JPEGs
-    /// (all standard subsampling modes: 4:4:4, 4:2:0, 4:2:2). Falls back to
-    /// buffered decode for progressive JPEGs, CMYK, and Knusperli deblocking.
+    /// (all standard subsampling modes: 4:4:4, 4:2:0, 4:2:2). Progressive and
+    /// non-interleaved files are read from their coefficients; CMYK, XYB,
+    /// sampling shapes the strip does not serve, orientation transforms and
+    /// Knusperli deblocking fall back to a buffered decode.
     ///
-    /// With `--features parallel` and DRI present in the JPEG, wave-parallel
-    /// decode activates automatically: restart segments are decoded in parallel
-    /// via rayon into a reusable wave buffer with a 6 MB memory budget.
-    /// Use [`num_threads(1)`](Self::num_threads) to force sequential decode.
+    /// With `--features parallel`, wave-parallel decode activates
+    /// automatically for files with restart markers on MCU-row boundaries and
+    /// at least 1024 MCUs, under the default [`OutputTarget::Srgb8`] and
+    /// [`DeblockMode::Off`]: restart segments are decoded in parallel via
+    /// rayon into a reusable wave buffer with a 6 MB memory budget. With
+    /// nearest-neighbour 4:2:2 or 4:2:0 upsampling the reader then holds
+    /// decoded RGB rows, so on YCbCr frames `read_rows_gray8`,
+    /// `read_rows_gray_f32`, `read_rows_gray_linear_f32`,
+    /// `read_rows_ycbcr_f32` and `read_rows_rgba_f32` return
+    /// [`ErrorKind::UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature)
+    /// (every RGB-family read and `read_rows_ycbcr_native_i16` are served).
+    /// Use [`num_threads(1)`](Self::num_threads) to force sequential decode,
+    /// which serves every read.
     ///
     /// # Example
     /// ```ignore
@@ -858,60 +886,48 @@ impl DecodeConfig {
 
         let route = Self::classify_scanline_route(&parser)?;
         let mcu_height = route.mcu_height;
+        let (width, height) = (parser.width, parser.height);
 
-        // Coefficient-centric buffered path (issue #187): progressive /
-        // arithmetic JPEGs can't stream, but instead of pre-converting to RGB
-        // (which forces a lossy RGB→YCbCr/gray re-derivation on those reads) we
-        // decode to coefficients and run the SAME strip pipeline as streaming,
-        // so every output format is native. Limited to what the i16 strip
-        // supports (≤3 components, symmetric Cb/Cr sampling); CMYK, the
-        // exotic-sampling normalization, and asymmetric chroma stay on the RGB
-        // buffered path below.
-        if route.needs_buffered && !route.is_cmyk && Self::coeff_strip_compatible(&parser) {
-            let width = parser.width;
-            let height = parser.height;
-            let is_rgb = parser.is_rgb_colorspace();
-            let coeffs = self.decode_buffered_coefficients(&mut parser)?;
-            let mut reader = ScanlineReader::from_coefficients(
-                alloc::borrow::Cow::Borrowed(data),
-                coeffs,
-                self.chroma_upsampling,
-                self.effective_idct_method(),
-                OutputTarget::Srgb8,
-                self.deblock_mode,
-                self.alloc_pref,
-                route.is_xyb,
-                is_rgb,
-            )?;
-            self.apply_crop(&mut reader, width, height, mcu_height)?;
-            return Ok(reader);
-        }
-
-        if route.needs_buffered || route.needs_buffered_sampling {
-            let width = parser.width;
-            let height = parser.height;
-            let num_components = parser.num_components;
-            // Progressive/arithmetic/CMYK use the actual sampling factors;
-            // the exotic-sampling fallback normalizes from the max factors.
-            let subsampling = if route.needs_buffered {
-                compute_subsampling(&parser.components, num_components)
-            } else {
-                subsampling_from_max(route.max_h, route.max_v_samp as u8, route.is_grayscale)
-            };
-
-            let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
-
-            let mut reader = ScanlineReader::new_buffered(
-                data,
-                width,
-                height,
-                num_components,
-                subsampling,
-                pixels,
-                route.is_xyb,
-            );
-            self.apply_crop(&mut reader, width, height, mcu_height)?;
-            return Ok(reader);
+        match route.mode {
+            // Coefficient-centric buffered path (issue #187): progressive /
+            // arithmetic JPEGs can't stream, but instead of pre-converting to
+            // pixels (which forces a lossy re-derivation on YCbCr/gray reads)
+            // we decode to coefficients and run the SAME strip pipeline as
+            // streaming, so every output format is native.
+            ScanlineMode::Coefficients => {
+                let coeffs = self.decode_buffered_coefficients(&mut parser)?;
+                // Same output target as the streaming strip, so a file's rows
+                // do not depend on which strip route serves it.
+                let mut reader = ScanlineReader::from_coefficients(
+                    alloc::borrow::Cow::Borrowed(data),
+                    coeffs,
+                    self.chroma_upsampling,
+                    self.effective_idct_method(),
+                    self.output_target,
+                    self.deblock_mode,
+                    self.alloc_pref,
+                    route.color_model,
+                )?;
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                return Ok(reader);
+            }
+            ScanlineMode::Pixels => {
+                let num_components = parser.num_components;
+                let subsampling = compute_subsampling(&parser.components, num_components);
+                let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
+                let mut reader = ScanlineReader::new_buffered(
+                    data,
+                    width,
+                    height,
+                    num_components,
+                    subsampling,
+                    pixels,
+                    route.color_model,
+                );
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                return Ok(reader);
+            }
+            ScanlineMode::Streaming => {}
         }
 
         // Extract scan data and construct scanline reader
@@ -961,6 +977,8 @@ impl DecodeConfig {
     /// and can be effectively `'static` (no external borrow).
     ///
     /// `Cow::Borrowed` delegates to [`scanline_reader`](Self::scanline_reader).
+    /// Owned readers route like borrowed ones, including the wave-parallel
+    /// reader and its refused reads described there.
     pub fn scanline_reader_cow<'a>(
         &self,
         data: alloc::borrow::Cow<'a, [u8]>,
@@ -1002,53 +1020,36 @@ impl DecodeConfig {
         }
 
         let is_grayscale = parser.num_components == 1;
-        let is_cmyk = parser.num_components == 4;
-        let is_xyb = parser.info().is_xyb;
-
-        let comps = &parser.components[..parser.num_components as usize];
-        let max_v_samp = comps
-            .iter()
-            .map(|c| c.v_samp_factor as usize)
-            .max()
-            .unwrap_or(1);
-        let max_h = comps.iter().map(|c| c.h_samp_factor).max().unwrap_or(1);
-        let mcu_height = max_v_samp * 8;
-
-        // Progressive/arithmetic require full coefficient storage; CMYK
-        // streaming is not implemented.
-        let needs_buffered = matches!(
-            parser.mode,
-            JpegMode::Progressive
-                | JpegMode::ArithmeticSequential
-                | JpegMode::ArithmeticProgressive
-        ) || is_cmyk;
-
-        // Exotic sampling the strip processor cannot handle:
-        // factors > 2, asymmetric Cb/Cr, or chroma factors exceeding luma.
-        let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
-            max_h > 2 || max_v_samp > 2
+        let plan = parser.plan();
+        let mcu_height = plan.shape.max_v as usize * 8;
+        // Progressive and arithmetic frames need full coefficient storage, and
+        // so do non-interleaved sequential frames (one scan per component).
+        let needs_coefficients = !plan.interleaved
+            || matches!(
+                parser.mode,
+                JpegMode::Progressive
+                    | JpegMode::ArithmeticSequential
+                    | JpegMode::ArithmeticProgressive
+            );
+        // The strip renders grayscale 1x1 and the three-plane shapes with
+        // factors up to 2 for YCbCr / RGB (`PathPlan::strip`); everything else
+        // decodes to pixels up front. Grayscale progressive also stays on
+        // pixels: its gray buffer already serves every read natively.
+        let mode = if !plan.strip() {
+            ScanlineMode::Pixels
+        } else if !needs_coefficients {
+            ScanlineMode::Streaming
+        } else if plan.model.has_row_kernel() {
+            ScanlineMode::Coefficients
         } else {
-            let cb_h = comps[1].h_samp_factor;
-            let cb_v = comps[1].v_samp_factor;
-            let cr_h = comps[2].h_samp_factor;
-            let cr_v = comps[2].v_samp_factor;
-            max_h > 2
-                || max_v_samp > 2
-                || cb_h != cr_h
-                || cb_v != cr_v
-                || cb_h > comps[0].h_samp_factor
-                || cb_v > comps[0].v_samp_factor
+            ScanlineMode::Pixels
         };
 
         Ok(ScanlineRoute {
+            mode,
             is_grayscale,
-            is_cmyk,
-            is_xyb,
-            max_h,
-            max_v_samp,
+            color_model: plan.model,
             mcu_height,
-            needs_buffered,
-            needs_buffered_sampling,
         })
     }
 
@@ -1089,7 +1090,6 @@ impl DecodeConfig {
         };
         parser.to_pixels(
             output_format,
-            route.is_xyb,
             self.chroma_upsampling,
             OutputTarget::Srgb8,
             &Unstoppable,
@@ -1111,34 +1111,6 @@ impl DecodeConfig {
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&Unstoppable)?;
         parser.extract_coefficients()
-    }
-
-    /// Whether a parsed JPEG's sampling fits the coefficient-centric buffered
-    /// reader ([`ScanlineReader::from_coefficients`]). Requirements:
-    ///
-    /// - at most 3 components (the i16 strip is 3-wide), and
-    /// - for color, symmetric Cb/Cr sampling (strip requires `h[1]==h[2]`,
-    ///   `v[1]==v[2]`).
-    ///
-    /// Vertically-subsampled chroma (4:2:0, 4:4:0) qualifies as of 2026-07-15.
-    /// It was previously gated out because the coefficient path's vertical
-    /// bottom-context peek (`peek_next_chroma_row`) diverged from the
-    /// whole-image reference by up to ~76/255 at MCU boundaries; that turned out
-    /// to be a wrong DC-only shortcut *inside* the peek rather than a defect in
-    /// the mechanism (see `docs/DECODER_UNIFICATION_PLAN.md`). With the shortcut
-    /// removed, all four symmetric-chroma modes decode byte-identically to the
-    /// streaming reference and to libjpeg-turbo, so they take the native
-    /// coefficient path (fixing the lossy YCbCr/gray reads).
-    fn coeff_strip_compatible(parser: &parser::JpegParser<'_>) -> bool {
-        // Only 3-component color benefits: grayscale already serves native Y
-        // from the RGB(=Y) buffer, so routing it gains nothing and only adds
-        // risk. The lossy re-derivation this fixes (RGB→YCbCr, RGB→Y) is a
-        // color-only defect.
-        if parser.num_components != 3 {
-            return false;
-        }
-        let c = &parser.components;
-        c[1].h_samp_factor == c[2].h_samp_factor && c[1].v_samp_factor == c[2].v_samp_factor
     }
 
     /// Internal: create a scanline reader that owns its JPEG data.
@@ -1165,7 +1137,14 @@ impl DecodeConfig {
                 num_components: u8,
                 subsampling: Subsampling,
                 pixels: alloc::vec::Vec<u8>,
-                is_xyb: bool,
+                color_model: color_model::ColorModel,
+                mcu_height: usize,
+            },
+            Coefficients {
+                coeffs: DecodedCoefficients,
+                width: u32,
+                height: u32,
+                color_model: color_model::ColorModel,
                 mcu_height: usize,
             },
             Streaming {
@@ -1215,16 +1194,21 @@ impl DecodeConfig {
             let route = Self::classify_scanline_route(&parser)?;
             let mcu_height = route.mcu_height;
 
-            if route.needs_buffered || route.needs_buffered_sampling {
+            if route.mode == ScanlineMode::Coefficients {
+                let (width, height) = (parser.width, parser.height);
+                let coeffs = self.decode_buffered_coefficients(&mut parser)?;
+                ParseResult::Coefficients {
+                    coeffs,
+                    width,
+                    height,
+                    color_model: route.color_model,
+                    mcu_height,
+                }
+            } else if route.mode == ScanlineMode::Pixels {
                 let width = parser.width;
                 let height = parser.height;
                 let num_components = parser.num_components;
-                let subsampling = if route.needs_buffered {
-                    compute_subsampling(&parser.components, num_components)
-                } else {
-                    subsampling_from_max(route.max_h, route.max_v_samp as u8, route.is_grayscale)
-                };
-
+                let subsampling = compute_subsampling(&parser.components, num_components);
                 let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
 
                 ParseResult::Buffered {
@@ -1233,7 +1217,7 @@ impl DecodeConfig {
                     num_components,
                     subsampling,
                     pixels,
-                    is_xyb: route.is_xyb,
+                    color_model: route.color_model,
                     mcu_height,
                 }
             } else {
@@ -1277,7 +1261,7 @@ impl DecodeConfig {
                 num_components,
                 subsampling,
                 pixels,
-                is_xyb,
+                color_model,
                 mcu_height,
             } => {
                 let mut reader = ScanlineReader::new_buffered_cow(
@@ -1287,8 +1271,28 @@ impl DecodeConfig {
                     num_components,
                     subsampling,
                     pixels,
-                    is_xyb,
+                    color_model,
                 );
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                Ok(reader)
+            }
+            ParseResult::Coefficients {
+                coeffs,
+                width,
+                height,
+                color_model,
+                mcu_height,
+            } => {
+                let mut reader = ScanlineReader::from_coefficients(
+                    Cow::Owned(vec),
+                    coeffs,
+                    self.chroma_upsampling,
+                    self.effective_idct_method(),
+                    self.output_target,
+                    self.deblock_mode,
+                    self.alloc_pref,
+                    color_model,
+                )?;
                 self.apply_crop(&mut reader, width, height, mcu_height)?;
                 Ok(reader)
             }
@@ -1339,11 +1343,28 @@ impl DecodeConfig {
         }
     }
 
-    /// MCU row height of the source image (max vertical sampling factor x 8),
-    /// from a header-only probe. Used to resolve user crop regions on the
-    /// scanline transform paths, matching the historical behavior of using
-    /// the pre-transform sampling factors.
-    fn source_mcu_height(&self, data: &[u8]) -> Result<usize> {
+    /// What the buffered scanline fallbacks (lossless transform, coefficient
+    /// deblocking) decode with: 8-bit RGB, or gray for one-component frames,
+    /// whatever the caller's `output_format` / `output_target`. Their
+    /// buffered reader serves every read from those bytes, as the readers of
+    /// `decode_buffered_pixels` do; the caller's format applies to the reads.
+    fn buffered_fallback_config(&self, model: color_model::ColorModel) -> Self {
+        let mut config = self.clone();
+        config.output_format = Some(if model == color_model::ColorModel::Gray {
+            PixelFormat::Gray
+        } else {
+            PixelFormat::Rgb
+        });
+        config.output_target = OutputTarget::Srgb8;
+        config
+    }
+
+    /// MCU row height (max vertical sampling factor x 8) and colour model of
+    /// the source, from a header-only probe. The MCU height resolves user crop
+    /// regions on the scanline transform paths (the pre-transform sampling
+    /// factors, as before); the model is decided at SOF, so it matches every
+    /// decode path.
+    fn source_header(&self, data: &[u8]) -> Result<(usize, color_model::ColorModel)> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
@@ -1353,12 +1374,7 @@ impl DecodeConfig {
             self.alloc_pref,
         )?;
         parser.read_header()?;
-        let max_v_samp = parser.components[..parser.num_components as usize]
-            .iter()
-            .map(|c| c.v_samp_factor as usize)
-            .max()
-            .unwrap_or(1);
-        Ok(max_v_samp * 8)
+        Ok((parser.shape.max_v as usize * 8, parser.color_model))
     }
 
     /// Transform path for owned data: fully decodes and stores owned data.
@@ -1375,8 +1391,8 @@ impl DecodeConfig {
         use crate::types::Subsampling;
         use alloc::borrow::Cow;
 
-        let mcu_height = self.source_mcu_height(&vec)?;
-        let mut config_no_crop = self.clone();
+        let (mcu_height, color_model) = self.source_header(&vec)?;
+        let mut config_no_crop = self.buffered_fallback_config(color_model);
         config_no_crop.crop_region = None;
         let result = config_no_crop.decode(&vec, Unstoppable)?;
         let vis_w = result.width();
@@ -1393,7 +1409,7 @@ impl DecodeConfig {
             num_components,
             Subsampling::S444,
             pixels,
-            false,
+            color_model,
         );
         self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
         Ok(reader)
@@ -1422,6 +1438,43 @@ impl DecodeConfig {
         if ri == 0 {
             return Ok(None);
         }
+
+        // The wave kernels run the clamped integer IDCT and never deblock. The
+        // strip honours the output target (the unclamped IDCT under f32
+        // targets) and the Boundary4Tap filter, so a reader served from the
+        // wave under either would return rows that depend on the thread
+        // count. Those readers stay on the strip, wave-only and planar alike.
+        if self.output_target.needs_unclamped_idct() || self.deblock_mode != DeblockMode::Off {
+            return Ok(None);
+        }
+
+        // Wave decoding walks the MCU grid like the fused kernels, so it takes
+        // the same shapes (`PathPlan::mcu_kernel`). The wave-only reader
+        // renders RGB rows for 4:2:2 / 4:2:0 nearest-neighbour; otherwise the
+        // wave only serves native planes, which RGB frames do not have.
+        let plan = color_model::PathPlan {
+            model: scan_data.color_model,
+            shape: scan_data.shape,
+            interleaved: scan_data.interleaved,
+        };
+        let Some(layout) = plan.mcu_kernel() else {
+            return Ok(None);
+        };
+        let is_wave_only = self.wave_only_reader
+            && matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor)
+            && matches!(
+                layout,
+                color_model::ChromaLayout::H2V1 | color_model::ChromaLayout::H2V2
+            );
+        if !is_wave_only && plan.model == color_model::ColorModel::Rgb {
+            return Ok(None);
+        }
+        let Some(kernel) = plan.model.row_kernel(
+            crate::color::planes::Layout8::Rgb,
+            self.effective_idct_method(),
+        ) else {
+            return Ok(None);
+        };
 
         let max_h = scan_data.h_samp[..num_comps]
             .iter()
@@ -1506,15 +1559,9 @@ impl DecodeConfig {
             ac_tables,
             self.strictness,
             self.effective_idct_method(),
+            kernel,
             wave_size,
         );
-
-        // Determine if we can use the wave-only RGB box path (original behavior)
-        let is_box_filter = matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor);
-        let is_subsampled_color = num_comps == 3
-            && (scan_data.h_samp[1] != scan_data.h_samp[0]
-                || scan_data.v_samp[1] != scan_data.v_samp[0]);
-        let is_wave_only = is_box_filter && is_subsampled_color;
 
         Ok(Some((wave_state, is_wave_only)))
     }
@@ -1557,7 +1604,10 @@ impl DecodeConfig {
     /// Fallback for deblock modes that need coefficient access (Knusperli, Auto at low Q).
     /// Runs full `decode()` then wraps the result in a buffered `ScanlineReader`.
     fn scanline_reader_deblock_fallback<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let result = self.decode(data, Unstoppable)?;
+        let (_, color_model) = self.source_header(data)?;
+        let result = self
+            .buffered_fallback_config(color_model)
+            .decode(data, Unstoppable)?;
         let (vis_w, vis_h, num_ch) = (
             result.width(),
             result.height(),
@@ -1573,7 +1623,7 @@ impl DecodeConfig {
             num_ch,
             Subsampling::S444,
             pixels,
-            false,
+            color_model,
         ))
     }
 
@@ -1582,7 +1632,10 @@ impl DecodeConfig {
         &self,
         data: alloc::vec::Vec<u8>,
     ) -> Result<ScanlineReader<'a>> {
-        let result = self.decode(&data, Unstoppable)?;
+        let (_, color_model) = self.source_header(&data)?;
+        let result = self
+            .buffered_fallback_config(color_model)
+            .decode(&data, Unstoppable)?;
         let (vis_w, vis_h, num_ch) = (
             result.width(),
             result.height(),
@@ -1598,7 +1651,7 @@ impl DecodeConfig {
             num_ch,
             Subsampling::S444,
             pixels,
-            false,
+            color_model,
         ))
     }
 
@@ -1610,14 +1663,13 @@ impl DecodeConfig {
     /// IDCT for dimension swaps). Serve the oriented pixels from a buffered
     /// reader so the scanline path matches decode() exactly.
     fn scanline_reader_with_transform<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let mcu_height = self.source_mcu_height(data)?;
-        let mut config_no_crop = self.clone();
+        let (mcu_height, color_model) = self.source_header(data)?;
+        let mut config_no_crop = self.buffered_fallback_config(color_model);
         config_no_crop.crop_region = None;
         let result = config_no_crop.decode(data, Unstoppable)?;
         let vis_w = result.width();
         let vis_h = result.height();
         let num_components = result.format().num_channels() as u8;
-        let is_xyb = false; // XYB is converted to RGB during decode
         let pixels = result
             .into_pixels_u8()
             .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
@@ -1629,7 +1681,7 @@ impl DecodeConfig {
             num_components,
             Subsampling::S444,
             pixels,
-            is_xyb,
+            color_model,
         );
         // Crop is in output space (post-transform), resolve against visible dims
         self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
@@ -1839,7 +1891,6 @@ impl DecodeConfig {
         #[cfg(not(feature = "ultrahdr"))]
         let gain_map_result: Option<GainMapResult> = None;
 
-        let info = parser.info();
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
 
         let mut result = if self.output_target.is_f32() {
@@ -1848,13 +1899,12 @@ impl DecodeConfig {
             let mut pixels = if self.deblock_mode != DeblockMode::Off {
                 parser.to_pixels_f32_deblock(
                     output_format,
-                    info.is_xyb,
                     self.chroma_upsampling,
                     self.deblock_mode,
                     &stop,
                 )?
             } else {
-                parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?
+                parser.to_pixels_f32(output_format, self.chroma_upsampling, &stop)?
             };
 
             // Apply ICC profile if enabled and the caller explicitly asked
@@ -1870,11 +1920,7 @@ impl DecodeConfig {
             // Skip the ICC apply for XYB in all cases.
             #[cfg(feature = "moxcms")]
             {
-                let is_xyb = parser
-                    .icc_profile
-                    .as_ref()
-                    .map(|icc| crate::color::icc::is_xyb_profile(icc))
-                    .unwrap_or(false);
+                let is_xyb = parser.color_model == color_model::ColorModel::Xyb;
                 if let Some(target) = self.correct_color
                     && !is_xyb
                     && let Some(ref icc_profile) = parser.icc_profile
@@ -1935,7 +1981,6 @@ impl DecodeConfig {
             // Knusperli requires raw DCT coefficients, so it must use the coefficient path.
             let f32_pixels = parser.to_pixels_f32_deblock(
                 output_format,
-                info.is_xyb,
                 self.chroma_upsampling,
                 self.deblock_mode,
                 &stop,
@@ -1979,7 +2024,6 @@ impl DecodeConfig {
             #[allow(unused_mut)]
             let mut pixels = parser.to_pixels(
                 output_format,
-                info.is_xyb,
                 self.chroma_upsampling,
                 self.output_target,
                 &stop,
@@ -2021,11 +2065,7 @@ impl DecodeConfig {
             // profile here would double-transform. Skip for XYB.
             #[cfg(feature = "moxcms")]
             {
-                let is_xyb = parser
-                    .icc_profile
-                    .as_ref()
-                    .map(|icc| crate::color::icc::is_xyb_profile(icc))
-                    .unwrap_or(false);
+                let is_xyb = parser.color_model == color_model::ColorModel::Xyb;
                 if let Some(target) = self.correct_color
                     && !is_xyb
                     && let Some(ref icc_profile) = parser.icc_profile
@@ -2193,7 +2233,6 @@ impl DecodeConfig {
                 self.alloc_pref,
             )?;
             parser.read_header()?;
-            let is_xyb = parser.info().is_xyb;
 
             // For grayscale source, only PixelFormat::Gray is meaningful.
             if parser.num_components == 1 && format != PixelFormat::Gray {
@@ -2219,7 +2258,6 @@ impl DecodeConfig {
             parser.decode(&stop)?;
             return parser.write_pixels_into(
                 format,
-                is_xyb,
                 self.chroma_upsampling,
                 self.output_target,
                 &Unstoppable,
@@ -2237,7 +2275,7 @@ impl DecodeConfig {
     ///
     /// This is the same code path as `decode_into`'s `direct_eligible` branch,
     /// but without the redundant `JpegParser::read_header()` — the header
-    /// info (num_components, is_xyb) is passed from the caller's cached probe.
+    /// info (num_components) is passed from the caller's cached probe.
     ///
     /// Returns `Ok(bytes_written)` on success, `Err` if the streaming path
     /// fails internally (e.g., coefficient guard triggers).
@@ -2249,7 +2287,6 @@ impl DecodeConfig {
         dst: &mut [u8],
         stop: &dyn Stop,
         num_components: u8,
-        is_xyb: bool,
     ) -> Result<usize> {
         // Grayscale source + non-Gray format: can't stream, need full decode
         if num_components == 1 && format != PixelFormat::Gray {
@@ -2281,7 +2318,6 @@ impl DecodeConfig {
         parser.decode(&stop)?;
         parser.write_pixels_into(
             format,
-            is_xyb,
             self.chroma_upsampling,
             self.output_target,
             &Unstoppable,
@@ -2350,7 +2386,13 @@ impl DecodeConfig {
             }
         }
 
-        let mut reader = self.scanline_reader(data)?;
+        // Gray reads need the luma plane, which the wave-only reader does not
+        // keep for YCbCr frames.
+        let mut reader = if format == PixelFormat::Gray {
+            self.for_plane_reads().scanline_reader(data)?
+        } else {
+            self.scanline_reader(data)?
+        };
         let info = reader.info();
         let width = reader.width() as usize;
         let bpp = format.bytes_per_pixel();
@@ -2440,7 +2482,8 @@ impl DecodeConfig {
             }
         };
 
-        let mut reader = self.scanline_reader(data)?;
+        // f32 reads of YCbCr frames need the strip's planes.
+        let mut reader = self.for_plane_reads().scanline_reader(data)?;
         let info = reader.info();
         let width = reader.width() as usize;
         let row_floats = width * floats_per_pixel;
@@ -2691,6 +2734,7 @@ impl DecodeConfig {
         )?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.apply_idct_method(self.effective_idct_method());
         parser.decode(&stop)?;
 
         let info = parser.info();

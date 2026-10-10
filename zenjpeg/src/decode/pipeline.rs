@@ -157,11 +157,11 @@ impl StripProcessor {
         let is_grayscale = num_components == 1;
 
         // StripProcessor assumes Cb and Cr share the same sampling factors.
-        // Asymmetric chroma should be routed through the f32 generic path in
-        // output.rs (see `cb_h != cr_h` guards in scanline_reader /
-        // Decoder::decode / can_use_fast_i16_subsampled). If any caller slips
-        // through, panic loudly in debug builds rather than silently producing
-        // wrong chroma.
+        // Asymmetric chroma is classified `ChromaLayout::Other`, which no strip
+        // path accepts (`PathPlan::strip`, `decode::color_model`), so it takes
+        // the per-component path in output.rs. If any caller slips through,
+        // panic loudly in debug builds rather than silently producing wrong
+        // chroma.
         debug_assert!(
             num_components < 3 || (h_samp[1] == h_samp[2] && v_samp[1] == v_samp[2]),
             "StripProcessor requires symmetric Cb/Cr sampling factors; \
@@ -344,7 +344,7 @@ impl StripProcessor {
             has_deferred_bottom: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling,
-            idct_method,
+            idct_method: idct_method.for_components(num_components as usize),
             output_target,
         })
     }
@@ -403,7 +403,7 @@ impl StripProcessor {
         };
 
         let unclamped = self.output_target.needs_unclamped_idct();
-        // self.idct_method is gray-normalized at the parser (#154).
+        // Gray-normalized in `new` (`IdctMethod::for_components`, #154).
         let method = self.idct_method;
 
         if coeff_count <= 1 {
@@ -495,20 +495,35 @@ impl StripProcessor {
         }
 
         // Horizontal padding (all MCU rows if image width not MCU-aligned)
-        if let Some(downsampled_w) = (image_width + h_ratio.saturating_sub(1)).checked_div(h_ratio)
-            && downsampled_w < strip_w
-        {
-            let rows = self.chroma_strip_height;
-            for row in 0..rows {
-                let row_off = row * stride;
-                let last_val_cb = self.cb_strip[row_off + downsampled_w - 1];
-                let last_val_cr = self.cr_strip[row_off + downsampled_w - 1];
-                for col in downsampled_w..strip_w {
-                    self.cb_strip[row_off + col] = last_val_cb;
-                    self.cr_strip[row_off + col] = last_val_cr;
-                }
-            }
+        let downsampled_w = image_width.div_ceil(h_ratio);
+        let rows = self.chroma_strip_height;
+        for row in 0..rows {
+            let row_off = row * stride;
+            replicate_last_column(
+                &mut self.cb_strip[row_off..row_off + strip_w],
+                downsampled_w,
+            );
+            replicate_last_column(
+                &mut self.cr_strip[row_off..row_off + strip_w],
+                downsampled_w,
+            );
         }
+    }
+
+    /// Replicate the last real chroma column over the horizontal MCU padding
+    /// of the next MCU row's first chroma row (`next_cb_row`/`next_cr_row`),
+    /// as [`Self::truncate_chroma_padding`] does for the strip: the bottom
+    /// boundary fix-up interpolates against that row, and its padding must
+    /// not reach the last visible column.
+    pub fn truncate_next_row_padding(&mut self, image_width: usize) {
+        if self.subsampling != Subsampling::S420 {
+            return;
+        }
+        let h_ratio = self.h_samp[0] as usize / self.h_samp[1].max(1) as usize;
+        let downsampled_w = image_width.div_ceil(h_ratio.max(1));
+        let w = self.chroma_strip_width;
+        replicate_last_column(&mut self.next_cb_row[..w], downsampled_w);
+        replicate_last_column(&mut self.next_cr_row[..w], downsampled_w);
     }
 
     /// Upsample chroma buffers to full resolution.
@@ -972,4 +987,14 @@ impl StripProcessor {
             }
         }
     }
+}
+
+/// Overwrite `row[real..]` with `row[real - 1]` (no-op when `real` covers the
+/// row or is zero).
+fn replicate_last_column(row: &mut [i16], real: usize) {
+    if real == 0 || real >= row.len() {
+        return;
+    }
+    let last = row[real - 1];
+    row[real..].fill(last);
 }

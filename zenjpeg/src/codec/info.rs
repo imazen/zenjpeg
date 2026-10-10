@@ -56,6 +56,13 @@ pub(super) fn source_color_from_header(
     sc
 }
 
+/// Whether reads for `descriptor` need the strip's planes (gray and f32
+/// reads of YCbCr frames), which the wave-only scanline reader does not keep.
+pub(super) fn needs_plane_reads(descriptor: PixelDescriptor) -> bool {
+    use zenpixels::{ChannelLayout, ChannelType};
+    descriptor.channel_type() == ChannelType::F32 || descriptor.layout() == ChannelLayout::Gray
+}
+
 /// Derive the correct [`PixelDescriptor`] for decoded JPEG pixels.
 ///
 /// Uses the shared zencodec utility to map source color metadata to a
