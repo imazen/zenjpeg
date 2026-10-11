@@ -26,7 +26,7 @@ All notable changes to zenjpeg are documented here. Earlier history
     the model (`Rgb`, `Xyb`, `Cmyk`; it was always `YCbCr` or `Grayscale`).
   - XYB needs the RGB decision: an XYB ICC profile on a YCbCr-signalled frame
     decodes and reports YCbCr, and on a one- or four-component frame reports
-    `Grayscale` / `Cmyk` with `is_xyb == false` (it reported `Xyb`).
+    `Grayscale` / `Cmyk` with `is_xyb == false` (it reported `Xyb`). (`5b6b6be7`)
 - Which decode path serves a frame is decided from the model, one exact
   sampling classification and whether the first scan is interleaved. Shapes no
   MCU-walking kernel models (4:4:0 and 4:1:1 under the fused/wave parallel
@@ -37,20 +37,20 @@ All notable changes to zenjpeg are documented here. Earlier history
   (2,2)/(1,2)/(1,2) and (4,1)/(2,1)/(2,1) no longer take the fused kernels
   (they take the threaded fast integer path), and the planar wave state
   (`read_rows_ycbcr_native_i16` with threads) is no longer attached for
-  4:4:0, (1,2)x3, (2,1)x3, (2,2)/(1,2)/(1,2) and (2,2)/(2,1)/(2,1).
+  4:4:0, (1,2)x3, (2,1)x3, (2,2)/(1,2)/(1,2) and (2,2)/(2,1)/(2,1). (`5b6b6be7`)
 - One row-kernel family converts IDCT planes to pixels on every MCU- or
   strip-walking integer path (streaming, fused, wave, fast integer, scanline
   strip); the fast integer coefficient path writes the requested layout directly and
   its sequential and parallel variants share one per-range routine. Streaming
   4:2:2 nearest-neighbour decode converts straight from the half-width chroma
-  rows, as the fused and wave paths do (same pixels, one pass fewer).
+  rows, as the fused and wave paths do (same pixels, one pass fewer). (`5b6b6be7`)
 - Scanline reads derived from decoded RGB use one formula set in every reader
   mode: `read_rows_gray8` is libjpeg-turbo's rounded `rgb_gray_convert` luma
   (was a truncated `(299 R + 587 G + 114 B) / 1000` in buffered mode),
   `read_rows_ycbcr_f32` uses the exact BT.601 matrix (buffered mode used
   three-digit coefficients), and integer samples linearize through the exact
   8-bit table on every path (`read_rows_gray_linear_f32` and grayscale/RGB
-  `read_rows_rgba_f32` used the f32 polynomial in streaming mode).
+  `read_rows_rgba_f32` used the f32 polynomial in streaming mode). (`5b6b6be7`)
 - The per-component integer path (CMYK/YCCK, and shapes no fast path serves)
   chose its IDCT by upsampler: jpegli's 12-bit kernel under nearest-neighbour
   and libjpeg's islow under the triangle filter, whatever `IdctMethod` said.
@@ -58,22 +58,22 @@ All notable changes to zenjpeg are documented here. Earlier history
   does. Pixels change by up to 3 on such files for nearest-neighbour with the
   default method and for the triangle filter with `IdctMethod::Jpegli`.
   `Decoder::decode_to_ycbcr_f32` had the same rule and never applied the
-  decoder's method; its Y plane now equals the scanline `read_rows_gray8`.
+  decoder's method; its Y plane now equals the scanline `read_rows_gray8`. (`5b6b6be7`)
 - Owned scanline readers (`scanline_reader_cow(Cow::Owned)`) of progressive
   YCbCr/RGB files use the same coefficient reader as borrowed ones (they
   decoded to RGB first, so their gray and YCbCr reads were lossy
-  re-derivations).
+  re-derivations). (`5b6b6be7`)
 - Scanline readers on the coefficient route (progressive, non-interleaved)
   honour `output_target` like the streaming route; they always used the 8-bit
   target. With an f32 target the strip keeps the unclamped IDCT output, and
   8-bit reads convert it and clamp the result. `read_rows_gray_f32` and
   `read_rows_ycbcr_f32` of gray and YCbCr frames return those samples
   unclamped, so on progressive files under an f32 target they can now leave
-  [0, 1] (and [-0.5, 0.5] for chroma), as on the streaming route.
+  [0, 1] (and [-0.5, 0.5] for chroma), as on the streaming route. (`5b6b6be7`)
 - Borrowed scanline readers of progressive YCbCr 4:1:1 and chroma-above-luma
   files hold decoded RGB (the strip no longer serves those shapes), so their
   `read_rows_gray8` and `read_rows_ycbcr_f32` derive luma and YCbCr from R, G,
-  B instead of returning the Y/Cb/Cr planes.
+  B instead of returning the Y/Cb/Cr planes. (`5b6b6be7`)
 - `read_rows_ycbcr_native_i16` is an explicit unsupported feature where there
   are no YCbCr planes to return: XYB frames (it returned the XYB planes on
   baseline files), CMYK/YCCK, and readers that hold decoded pixels
@@ -81,14 +81,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   transform and deblock fallbacks), which failed with "internal error:
   missing Y quantization table". Borrowed progressive YCbCr 4:1:1 and
   chroma-above-luma readers returned planes from the coefficient strip and now
-  get this error, since the strip no longer serves those shapes.
+  get this error, since the strip no longer serves those shapes. (`5b6b6be7`)
 - Wave-parallel (`parallel`, nearest-neighbour 4:2:2 / 4:2:0, MCU-row DRI)
   readers of YCbCr frames refuse `read_rows_rgba_f32` with
   `UnsupportedFeature`, like the other reads that need the planes (it failed
   with "internal error: missing Y quantization table").
   `decode_rows(Gray)`, `decode_rows_f32` and the zencodec gray / f32 streaming
   decode build their reader without the wave-only route, so they no longer
-  fail in that configuration.
+  fail in that configuration. (`5b6b6be7`)
 - Progressive encode's token replay batches its bit-writes: Huffman code
   and sign bit now emit as one write, refinement bits append in packed
   <=24-bit chunks instead of one call per bit, and first-scan tokens use
@@ -112,110 +112,110 @@ All notable changes to zenjpeg are documented here. Earlier history
   change on), so such a file decoded with the YCbCr matrix applied to R, G, B
   or XYB planes. The JFIF segment is dropped, and its pixel density with it,
   as libjpeg-turbo omits JFIF for RGB output. YCbCr and grayscale output keep
-  it.
+  it. (`a695d0ab`)
 - Encodes no longer carry a caller's Adobe APP14 (same segment sources as
   above). A preserved transform 0, from any Adobe-RGB JPEG or zenjpeg's own
   RGB output re-encoded with its metadata (`zjpeg optimize` does this), made
   YCbCr output decode as RGB in jpegli, libjpeg-turbo and zenjpeg.
   libjpeg-turbo writes Adobe only for RGB/CMYK/YCCK; YCbCr and grayscale
   output now carry none, and RGB and XYB output carry only the encoder's own
-  APP14 (transform 0) instead of a caller's duplicate.
+  APP14 (transform 0) instead of a caller's duplicate. (`a695d0ab`)
 - RGB-as-RGB JPEGs (Adobe APP14 transform 0, or component IDs `'R','G','B'`
   without APP14 or JFIF) decode to their R, G, B samples on every path: fused
   parallel (4:4:4, box, h2v1, fancy), wave-parallel scanline, the fast integer
   coefficient path (sequential and threaded), `decode_into`, every scanline
   read, `decode_to_ycbcr_f32` (BT.601 conversion of the R, G, B planes, was the
   planes relabelled Y, Cb, Cr) and `read_rows_ycbcr_native_i16` (now an error
-  naming RGB). Several of these applied the YCbCr matrix to R, G, B.
+  naming RGB). Several of these applied the YCbCr matrix to R, G, B. (`5b6b6be7`)
 - `decode()` and `decode_into()` with `PixelFormat::Bgr` returned RGB order on
-  the streaming baseline path.
+  the streaming baseline path. (`5b6b6be7`)
 - `ScanlineReader::read_rows_gray8`, `read_rows_gray_f32` and
   `read_rows_gray_linear_f32` on baseline YCbCr 4:2:0 and 4:4:0 files returned
   the wrong luma for the last row of every MCU row (the row the streaming
   strip reader defers for chroma context): on a 2048x2048 4:2:0 file 258,848
-  gray8 pixels differed from libjpeg-turbo's grayscale decode, by up to 246.
+  gray8 pixels differed from libjpeg-turbo's grayscale decode, by up to 246. (`5b6b6be7`)
 - `ScanlineReader::read_rows_bgr8` used a separate per-pixel f32 conversion and
-  differed from `read_rows_rgb8` by 1 on YCbCr files.
+  differed from `read_rows_rgb8` by 1 on YCbCr files. (`5b6b6be7`)
 - XYB files read through borrowed scanline readers of progressive files (the
   coefficient strip) got the YCbCr matrix instead of the XYB conversion, and
-  `ScanlineReader::info()` reported `YCbCr` for XYB files.
+  `ScanlineReader::info()` reported `YCbCr` for XYB files. (`5b6b6be7`)
 - Baseline XYB files with MCU-row DRI over 1024 MCUs or more failed to decode
   with `parallel` ("no decoded data"): the fused path took them and the output
-  stage then skipped its result for XYB.
+  stage then skipped its result for XYB. (`5b6b6be7`)
 - The scanline strip readers built the next MCU row's first chroma row before
   replicating the last real chroma column over the MCU padding: with 4:2:0, the
   triangle filter and an even width that is not a multiple of 16, the last
   column of the last row of each MCU row was off by up to 8 from libjpeg-turbo
-  (`zj_040_decode_diff_2.jpg`).
+  (`zj_040_decode_diff_2.jpg`). (`5b6b6be7`)
 - The threaded fast integer path (buffered decodes of 2,000,000 px and up) skipped the
   right-edge chroma replication its sequential twin did, so the last column of
   even, non-MCU-aligned 4:2:0 / 4:2:2 images differed between `num_threads(1)`
-  and the default.
+  and the default. (`5b6b6be7`)
 - Crafted sampling no longer panics or diverges across thread counts: a
   fractional horizontal ratio (3x1 luma over 2x1 chroma) indexed past the
   chroma strip in the fused box path; YCbCr 4:4:0 and 4:1:1 reached the
   4:2:x box kernel; oversampled grayscale (a non-interleaved scan) reached the
-  scanline strip and fused kernels, which assume an interleaved MCU.
+  scanline strip and fused kernels, which assume an interleaved MCU. (`5b6b6be7`)
 - Non-interleaved sequential files (one scan per component) reached the
   scanline strip and wave readers, which walk interleaved MCUs, and came out
   as garbage (max diff 255 on ~99% of bytes) while `decode()` refused the
-  streaming path for them. Interleaving is part of the path plan now.
+  streaming path for them. Interleaving is part of the path plan now. (`5b6b6be7`)
 - `decode_into` with RGBA/BGRA output, nearest-neighbour upsampling and a
   progressive 4:2:0 file wider than 8192 pixels panicked
-  (`row too wide for box-filter 4bpp tail`).
+  (`row too wide for box-filter 4bpp tail`). (`5b6b6be7`)
 - `decode_into` with `parallel` consumes a fused-parallel result instead of
-  failing with "coefficient data unavailable".
+  failing with "coefficient data unavailable". (`5b6b6be7`)
 - `decode_into(PixelFormat::Gray)` failed with "unsupported color conversion"
   on grayscale JPEGs: baseline at every thread count, progressive, and
   oversampled (sampling above 1x1), while `decode()` to `Gray` succeeded. Every
-  `decode_into` now converts exactly as `decode()` does.
+  `decode_into` now converts exactly as `decode()` does. (`5b6b6be7`)
 - The fused parallel path no longer charges its output buffer against
   `max_memory` before deciding it cannot run (the fallback path then charged
-  again).
+  again). (`5b6b6be7`)
 - Wave-parallel scanline readers serve every 8-bit RGB-family read (`bgr8`,
   `rgbx8`, `bgrx8`, ...) and crop; they served only `read_rows_rgb8` and
   ignored crop. For RGB frames they also serve the derived and f32 reads; for
   YCbCr frames those need the planes and fail with an error that says so.
-  Wave-only readers of 4:2:2 frames reported `Subsampling::S420`.
+  Wave-only readers of 4:2:2 frames reported `Subsampling::S420`. (`5b6b6be7`)
 - The AVX2 YCbCr kernels zero-extended Y while the AVX-512 kernel and the
   scalar tail sign-extended it. Strip rows from the unclamped IDCT (an f32
   `output_target` with `IdctMethod::Jpegli`) go below 0, so 8-bit scanline
   reads turned ringing below black into white specks in each 16-pixel SIMD
-  block, and `read_rows_rgb8` and `read_rows_rgbx8` disagreed on AVX-512 hosts.
+  block, and `read_rows_rgb8` and `read_rows_rgbx8` disagreed on AVX-512 hosts. (`5b6b6be7`)
 - Scanline strip and wave readers of grayscale frames used the IDCT method as
   configured, while `decode()` uses `Libjpeg` for one-component frames (#154):
-  with `IdctMethod::Jpegli` their gray rows differed from `decode()`.
+  with `IdctMethod::Jpegli` their gray rows differed from `decode()`. (`5b6b6be7`)
 - `read_rows_ycbcr_f32` panicked when the planes held fewer than the requested
   rows; it reads the rows that fit, and a plane shorter than one row is an
   `InvalidBufferSize` error. A stride below the width is `StrideTooSmall` (was
-  an internal error).
+  an internal error). (`5b6b6be7`)
 - Wave-parallel scanline readers ignored `output_target` and the deblock mode:
   the wave decodes with the clamped IDCT and never filters, so under an f32
   target or `Boundary4Tap` their rows differed from `num_threads(1)`. Readers
-  with an f32 target or a deblock mode no longer take the wave route.
+  with an f32 target or a deblock mode no longer take the wave route. (`5b6b6be7`)
 - Strip rows from the unclamped IDCT (f32 `output_target`) are bounded to
   +/-2047. A legal block with extreme chroma rang past that and overflowed the
   i16 sums of the AVX2 upsamplers and the chroma centring, so 8-bit reads of
-  one file differed between SIMD tiers.
+  one file differed between SIMD tiers. (`5b6b6be7`)
 - `read_rows_ycbcr_native_i16` from the planar wave filled the chroma padding
   columns past the image with decoded padding instead of repeating the last
   real column as the sequential strip does, so those columns depended on the
-  thread count.
+  thread count. (`5b6b6be7`)
 - The scanline fallbacks for orientation transforms and coefficient deblocking
   decoded with the caller's `output_format` and `output_target`, then read the
   bytes as RGB: with `Bgr`, `read_rows_rgb8` returned B, G, R; with `Rgba` rows
-  were read at a 3-byte stride; with an f32 target the reader failed.
+  were read at a 3-byte stride; with an f32 target the reader failed. (`5b6b6be7`)
 - A TEM marker (`FF01`) or a stray RST marker between SOF and the first SOS:
   the `decode()` loop read TEM as a segment with a length and the scan locator
   read both that way, while the header walk skipped them, so the walkers could
   disagree on which SOS came first (a scanline reader walked a non-interleaved scan as
   interleaved MCUs). Every walker now treats both as standalone (T.81 B.1.1.3),
-  and a file whose first scan disagrees with the header walk is rejected.
+  and a file whose first scan disagrees with the header walk is rejected. (`5b6b6be7`)
 - Lossless transforms (`transform`, `apply_exif_orientation`), progressive
   restructuring and recompress `Preserve` wrote every preserved APPn/COM
   segment right after SOI. A JFIF or Adobe segment the source carried between
   SOF and SOS moved in front of SOF and changed the output's colour model
-  (jpegli: max diff 207). Each preserved segment now keeps its side of SOF.
+  (jpegli: max diff 207). Each preserved segment now keeps its side of SOF. (`5b6b6be7`)
 - The workspace no longer enables archmage's `testable_dispatch` for every
   member's normal dependency. Cargo unifies features, so it reached every build
   that depends on zenjpeg or zenyuv (published 0.8.4 included) and turned each
@@ -255,7 +255,7 @@ All notable changes to zenjpeg are documented here. Earlier history
   path serves the layout; 0 for IJG on RGB, 1 on YCbCr; 1 for jpegli against
   `dequant_bias(true)`). zenjpeg's decode of each
   fixture must equal its decode of the twin jpegli's rule picks. CI compiles
-  the test under clippy; running it needs the tools.
+  the test under clippy; running it needs the tools. (`8dfc940b`)
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit
   seeds, scalar/neutral/active controls, per-pass engagement traces and terminal
