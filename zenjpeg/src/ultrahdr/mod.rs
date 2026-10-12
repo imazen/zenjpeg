@@ -54,6 +54,8 @@
 //! ```
 
 mod decode;
+#[cfg(feature = "zencodec")]
+pub(crate) use decode::{extract_xmp_from_jpeg, primary_xmp_gain_map, xmp_segment_range};
 mod encode;
 
 // Re-export the main workflow functions.

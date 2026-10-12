@@ -702,6 +702,19 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed during metadata integration: the Ultra HDR inventory scratch walk omitted
+  cancellation state and reduced traversal failures to a decode boolean. It now
+  propagates the original typed failure; `gain_map_preflight_preserves_each_cancellation_reason`
+  exercises every observed poll. The combined inventory/ultrahdr feature build
+  must stay in CI.
+
+### Fixed in metadata integration: inventory did not poll cancellation
+
+The proposed PR 221 inventory path did not read the decode job's stop token.
+The shared-contract integration polls it while walking markers and counting
+entropy MCUs, preserving the first reported stop reason in a typed error.
+`cancellation_during_the_walk_preserves_the_first_reason` pins that behavior.
+
 Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
 with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
@@ -1539,3 +1552,7 @@ One training-family screen proves exact map/byte/pixel repeat and engagement;
 69 bytes saved accompanies lower quality under D/SSIMULACRA2/Butteraugli. This
 is not an RD win, calibrated targeting or replacement-model qualification.
 Use the shared zensim native targeting owner for the next full experiment.
+
+- Metadata integration found that converting an input limit through the native JPEG error
+  retained its category but lost the shared `LimitExceeded` cause. Inventory now keeps
+  that cause in its codec envelope; generic and dynamic dispatch assert actual/max.

@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -76,7 +77,10 @@ jobs:
         run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata" --lib --tests
+
+      - name: Inventory disabled through configured jobs
+        run: cargo test -p zenjpeg --release --features zencodec --test inventory_feature
 
       - name: Test (no defaults, minimal)
         run: cargo test -p zenjpeg --release --no-default-features --lib --tests
@@ -141,6 +145,11 @@ jobs:
             --skip codec_corpus_conformance::test_image_rs_progressive
         env:
           CODEC_CORPUS_CACHE: /tmp/codec-corpus
+
+      - name: Metadata and inventory (i686)
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata --test inventory_feature --test extended_metadata --test fuzz_regression
+        env:
+          CODEC_CORPUS_CACHE: target/corpus-cache
 
   wasm32:
     name: Build (wasm32-wasip1)

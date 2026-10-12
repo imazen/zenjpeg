@@ -49,7 +49,7 @@ const TYPE_UNDEFINED: u16 = 7;
 const TYPE_LONG: u16 = 4;
 
 /// Errors that can occur during MPF parsing.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum MpfError {
     /// No APP2 segment with `MPF\0` identifier was found.
@@ -87,9 +87,26 @@ pub enum MpfError {
         payload_len: usize,
     },
 
+    /// A secondary image's absolute offset, `tiff_header_pos` plus the
+    /// entry's data offset, does not fit in `usize` (reachable from file data
+    /// on 32-bit targets).
+    #[non_exhaustive]
+    #[error("MPF image offset overflows ({tiff_header_pos} + {data_offset})")]
+    OffsetOverflow {
+        /// TIFF header position passed to
+        /// [`crate::container::mpf::parse_mpf_segment`].
+        tiff_header_pos: usize,
+        /// The entry's data offset (relative to the TIFF header).
+        data_offset: usize,
+    },
+
     /// The MPF declares zero images (degenerate).
     #[error("MPF declares zero images")]
     NoImages,
+
+    /// Allocating the entry list failed.
+    #[error("out of memory for the MPF entry list")]
+    OutOfMemory,
 
     /// Structural parse failure with a human-readable detail.
     #[error("MPF parse error: {0}")]
@@ -176,7 +193,7 @@ pub fn parse_mpf_segment(
     };
 
     let r16 = |off: usize| -> Option<u16> {
-        let b = mpf_data.get(off..off + 2)?;
+        let b = mpf_data.get(off..off.checked_add(2)?)?;
         Some(if big_endian {
             u16::from_be_bytes([b[0], b[1]])
         } else {
@@ -184,7 +201,7 @@ pub fn parse_mpf_segment(
         })
     };
     let r32 = |off: usize| -> Option<u32> {
-        let b = mpf_data.get(off..off + 4)?;
+        let b = mpf_data.get(off..off.checked_add(4)?)?;
         Some(if big_endian {
             u32::from_be_bytes([b[0], b[1], b[2], b[3]])
         } else {
@@ -278,10 +295,13 @@ pub fn parse_mpf_segment(
     // first entry's image size (a real entry is never zero-sized); when it
     // fails, fall back to the structural position — MP entries directly
     // follow the IFD's next-IFD pointer (`cursor + 4`).
+    // `off` comes from the file, so the probe offsets are checked (an
+    // overflow on 32-bit targets is simply not a sane entry).
     let entry_looks_sane = |off: usize| -> bool {
+        let size_at = |delta: usize| off.checked_add(delta).and_then(r32);
         off != 0
-            && r32(off + 4).is_some_and(|size| size > 0)
-            && (mp_entry_count < 2 || r32(off + 16 + 4).is_some_and(|size| size > 0))
+            && size_at(4).is_some_and(|size| size > 0)
+            && (mp_entry_count < 2 || size_at(16 + 4).is_some_and(|size| size > 0))
     };
     if !entry_looks_sane(mp_entry_offset) {
         let post_ifd = cursor.saturating_add(4);
@@ -333,7 +353,10 @@ pub fn parse_mpf_segment(
         });
     }
 
-    let mut entries = Vec::with_capacity(mp_entry_count);
+    let mut entries = Vec::new();
+    entries
+        .try_reserve_exact(mp_entry_count)
+        .map_err(|_| MpfError::OutOfMemory)?;
     for i in 0..mp_entry_count {
         // checked because on 32-bit, attacker-controlled mp_entry_offset
         // (from a u32 in the file) can approach usize::MAX.
@@ -364,10 +387,17 @@ pub fn parse_mpf_segment(
             needed: 4,
             payload_len: mpf_data.len(),
         })? as usize;
+        // `data_offset` is attacker-controlled; on 32-bit targets the sum can
+        // wrap, so an overflow is a malformed entry, not an offset.
         let abs_offset = if i == 0 {
             0
         } else {
-            tiff_header_pos + data_offset
+            tiff_header_pos
+                .checked_add(data_offset)
+                .ok_or(MpfError::OffsetOverflow {
+                    tiff_header_pos,
+                    data_offset,
+                })?
         };
         entries.push(MpfEntry {
             image_type: MpImageType::from_type_code(attribute),
@@ -634,6 +664,52 @@ mod tests {
         assert_eq!(entries[0].offset, 0);
         // Secondary offset = tiff_header_pos + data_offset = 100 + 1000.
         assert_eq!(entries[1].offset, 1_100);
+    }
+
+    #[test]
+    fn parse_mpf_segment_offset_overflow_is_an_error() {
+        // A secondary data offset that wraps `tiff_header_pos + offset`
+        // (reachable on 32-bit targets) is malformed, not a panic.
+        let payload = build_mpf_payload(&[
+            (MpImageType::BaselinePrimary.type_code(), 1_000, 0),
+            (MpImageType::Undefined.type_code(), 200, u32::MAX),
+        ]);
+        let err = parse_mpf_segment(&payload, usize::MAX - 10).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MpfError::OffsetOverflow {
+                    tiff_header_pos,
+                    data_offset,
+                } if tiff_header_pos == usize::MAX - 10 && data_offset == u32::MAX as usize
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_mpf_segment_entry_probe_near_usize_max_is_not_an_entry() {
+        // The B002 entry offset is probed at `off + 4` and `off + 20`; an
+        // offset near `usize::MAX` (reachable on 32-bit targets) must fall
+        // back to the post-IFD position, not overflow. The entries really
+        // sit after the IFD here, so the fallback finds them.
+        let payload = build_mpf_payload(&[
+            (MpImageType::BaselinePrimary.type_code(), 1_000, 0),
+            (MpImageType::Undefined.type_code(), 200, 1_000),
+        ]);
+        let entries = parse_mpf_segment(&payload, 100).unwrap();
+        let ifd = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]) as usize;
+        let count = u16::from_be_bytes([payload[ifd], payload[ifd + 1]]) as usize;
+        let mut patched = payload.clone();
+        for i in 0..count {
+            let e = ifd + 2 + 12 * i;
+            if patched[e..e + 2] == [0xB0, 0x02] {
+                patched[e + 8..e + 12].copy_from_slice(&u32::MAX.to_be_bytes());
+            }
+        }
+        // On 32-bit targets the patched offset is `usize::MAX`, so the probe
+        // overflows (the i686 CI job runs this); on 64-bit it is out of range.
+        assert_eq!(parse_mpf_segment(&patched, 100).unwrap(), entries);
     }
 
     #[test]

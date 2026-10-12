@@ -5,7 +5,25 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Reconcile PR210 component filtering with PR225 inspection: filtering remains
+  available without extended inspection or inventory; both retain their
+  `container::metadata` API paths. Preserve typed inventory part-limit causes.
+
+### QUEUED BREAKING CHANGES (published 0.8.4 audit)
+
+- Existing at `b88f02e3`: lost encoder auto traits and shifted discriminants in
+  `DecodeWarning`, `EncoderFamily`, and `ProgressiveScanMode`. The forced-patch
+  audit also confirms removed scanline methods (`de79d22e`) and quant-table
+  variant/method changes (`22485f82`), in addition to the Pattern-B breaks below.
+  [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
+
 ### Changed
+- Gain-map XMP parsing/generation and GContainer XML now delegate privately to
+  zenmeta, retaining JPEG-owned public types. The strict PR210 validation
+  (`74e727f`) is owner-approved: malformed numeric values, ambiguous properties
+  and invalid XML are rejected instead of silently substituting defaults.
+  XML namespace aliases remain supported; `XmpError::Invalid` is additive to
+  the existing non-exhaustive error enum.
 - Progressive encode's token replay batches its bit-writes: Huffman code
   and sign bit now emit as one write, refinement bits append in packed
   <=24-bit chunks instead of one call per bit, and first-scan tokens use
@@ -22,6 +40,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- MPF offset arithmetic and entry-list allocation failures from PR 225
+  (`897af486`) now return errors, including overflowing offsets on 32-bit hosts.
 - The workspace no longer enables archmage's `testable_dispatch` for every
   member's normal dependency. Cargo unifies features, so it reached every build
   that depends on zenjpeg or zenyuv (published 0.8.4 included) and turned each
@@ -52,6 +72,18 @@ All notable changes to zenjpeg are documented here. Earlier history
   `encode_with_target`'s trial cache is now keyed by `f32` bits.
 
 ### Added
+
+- Default-off `inventory` feature reusing PR 221 (`2c963974`) and the
+  zencodec-owned inventory contract. Disabled calls return typed unsupported;
+  enabled calls preserve typed input-limit causes and follow the configured decode
+  job, polling cancellation during
+  marker traversal and entropy counting. No zenmeta types enter codec signatures.
+- Default-off `extended-metadata` inspection and validated ICC, extended-XMP and
+  Photoshop reassembly from PR 225 (`897af486`). The implementation is excluded
+  when disabled. JPEG-specific framing and decoder-consumption rules stay here.
+- Temporary pinned zencodec review dependencies for metadata integration;
+  replace with released versions before publishing. The existing queued API
+  breaks relative to crates.io 0.8.4 remain listed separately.
 
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit

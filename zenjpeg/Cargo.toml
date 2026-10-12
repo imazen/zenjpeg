@@ -53,6 +53,7 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "c1c3292ff10f386191780ad407526951165da47a", default-features = false, features = ["xmp"] }
 zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true, optional = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)
@@ -193,6 +194,11 @@ zensim = { workspace = true, features = ["classification"] }
 
 [features]
 default = []
+# Optional structural inspection and validated metadata reassembly. The entire
+# implementation is excluded when disabled, not just hidden from public docs.
+extended-metadata = []
+inventory = ["zencodec"]
+__oracle-exiftool = ["extended-metadata"]
 # Dev-only: enables archmage/testable_dispatch so benches/tier_isolation.rs can
 # disable the baseline SIMD token (NEON on aarch64) and measure a real scalar
 # arm. Never enable in a published build.
@@ -657,3 +663,20 @@ name = "gray_decode_bench"
 [[example]]
 name = "zq_rd_probe"
 required-features = ["__zensim-research"]
+
+[[test]]
+name = "extended_metadata_exiftool"
+required-features = ["extended-metadata", "__oracle-exiftool"]
+
+[[bench]]
+name = "metadata_walk"
+harness = false
+required-features = ["extended-metadata"]
+
+[[example]]
+name = "inventory_dump"
+required-features = ["inventory"]
+
+[[test]]
+name = "inventory_oracle"
+required-features = ["inventory"]

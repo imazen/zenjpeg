@@ -34,6 +34,8 @@
 mod decode;
 mod encode;
 mod info;
+#[cfg(feature = "inventory")]
+mod inventory;
 mod streaming;
 
 #[cfg(test)]

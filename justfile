@@ -258,3 +258,55 @@ api-doc-check:
 arm-tiers-macos group="":
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p zenjpeg --features _dev --bench tier_isolation -- --group='{{group}}' --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
+
+# JPEG framing and validated reassembly; existing fixtures and decoder paths.
+metadata-check:
+    cargo test -p zenjpeg --features extended-metadata --lib container::
+    cargo test -p zenjpeg --features extended-metadata --test extended_metadata --test fuzz_regression
+    cargo clippy -p zenjpeg --features extended-metadata --lib --test extended_metadata --test fuzz_regression -- -D warnings
+
+metadata-oracle:
+    cargo test -p zenjpeg --features __oracle-exiftool --test extended_metadata_exiftool -- --nocapture
+
+metadata-inventory-unit:
+    cargo test -p zenjpeg --features inventory --lib codec::inventory
+
+metadata-inventory-check:
+    cargo test -p zenjpeg --features zencodec --test inventory_feature
+    cargo test -p zenjpeg --features inventory --test inventory_feature
+    cargo test -p zenjpeg --features inventory --test bundled inventory_
+    cargo clippy -p zenjpeg --features inventory,extended-metadata --lib --test inventory_feature --test bundled -- -D warnings
+
+metadata-fuzz-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_inventory --bin fuzz_container_metadata
+
+metadata-inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zenjpeg --features inventory --test inventory_oracle -- --nocapture
+
+# Reused PR210 filtering tests, independent of extended inspection and inventory.
+metadata-filter-check:
+    cargo test -p zenjpeg --no-default-features --lib container::metadata::filter::
+    cargo test -p zenjpeg --features inventory --test inventory_feature
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+
+# Force a patch comparison: the local version has already been bumped to 0.9.
+metadata-api-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenjpeg==0.8.4 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc -p zenjpeg --lib --features inventory,extended-metadata,zencodec,ultrahdr -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/0.8.4" --lib --features zencodec,ultrahdr -- -Zunstable-options --output-format json
+    cargo semver-checks check-release -p zenjpeg --current-rustdoc target/doc/zenjpeg.json --baseline-rustdoc target/published-api/0.8.4/doc/zenjpeg.json --release-type patch
+
+metadata-integration-oracles:
+    just metadata-oracle
+    just metadata-inventory-oracle
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
+    just api-doc
+
+metadata-hdr-check:
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib container::
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib codec::inventory
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
+    cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
+    just api-doc

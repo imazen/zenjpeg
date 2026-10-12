@@ -202,38 +202,10 @@ pub struct MpfEntry {
 /// `Item:Semantic`, `Item:Mime`, `Item:Length`, and `Item:Padding`.
 #[must_use]
 pub fn parse_container_items(xmp: &str) -> Vec<ContainerItem> {
-    let mut items = Vec::new();
-    let mut search_from = 0;
-    while let Some(li_start) = xmp[search_from..].find("rdf:li") {
-        let abs_start = search_from + li_start;
-        let block_end = xmp[abs_start..]
-            .find("</rdf:li>")
-            .map(|p| abs_start + p)
-            .or_else(|| {
-                xmp[abs_start + 6..]
-                    .find("rdf:li")
-                    .map(|p| abs_start + 6 + p)
-            })
-            .unwrap_or(xmp.len());
-        let block = &xmp[abs_start..block_end];
-        let semantic =
-            extract_attr_from_block(block, "Item:Semantic").map(|s| ItemSemantic::from_xmp(&s));
-        let mime = extract_attr_from_block(block, "Item:Mime");
-        if let (Some(semantic), Some(mime)) = (semantic, mime) {
-            let length =
-                extract_attr_from_block(block, "Item:Length").and_then(|s| s.parse::<usize>().ok());
-            let padding = extract_attr_from_block(block, "Item:Padding")
-                .and_then(|s| s.parse::<usize>().ok());
-            items.push(ContainerItem {
-                semantic,
-                mime,
-                length,
-                padding,
-            });
-        }
-        search_from = block_end;
-    }
-    items
+    zenmeta::xmp::container::parse_container_items(xmp)
+        .into_iter()
+        .map(from_shared_item)
+        .collect()
 }
 
 /// Generate a `Container:Directory` XML fragment for a list of items.
@@ -242,44 +214,26 @@ pub fn parse_container_items(xmp: &str) -> Vec<ContainerItem> {
 /// `rdf:Description` that declares the Container and Item namespaces.
 #[must_use]
 pub fn generate_container_directory(items: &[ContainerItem]) -> String {
-    let mut xml = String::from("      <Container:Directory>\n        <rdf:Seq>\n");
-    for item in items {
-        xml.push_str("          <rdf:li rdf:parseType=\"Resource\">\n");
-        xml.push_str("            <Container:Item\n");
-        xml.push_str(&alloc::format!(
-            "                Item:Semantic=\"{}\"\n",
-            item.semantic.as_xmp_str()
-        ));
-        xml.push_str(&alloc::format!(
-            "                Item:Mime=\"{}\"",
-            item.mime
-        ));
-        if let Some(length) = item.length {
-            xml.push_str(&alloc::format!(
-                "\n                Item:Length=\"{length}\""
-            ));
-        }
-        if let Some(padding) = item.padding {
-            xml.push_str(&alloc::format!(
-                "\n                Item:Padding=\"{padding}\""
-            ));
-        }
-        xml.push_str("/>\n");
-        xml.push_str("          </rdf:li>\n");
-    }
-    xml.push_str("        </rdf:Seq>\n      </Container:Directory>");
-    xml
+    zenmeta::xmp::container::generate_container_directory(
+        &items.iter().map(to_shared_item).collect::<Vec<_>>(),
+    )
 }
 
-fn extract_attr_from_block(block: &str, attr_name: &str) -> Option<String> {
-    let pattern = alloc::format!("{attr_name}=\"");
-    if let Some(start) = block.find(&pattern) {
-        let value_start = start + pattern.len();
-        if let Some(end) = block[value_start..].find('"') {
-            return Some(String::from(&block[value_start..value_start + end]));
-        }
+pub(super) fn to_shared_item(item: &ContainerItem) -> zenmeta::xmp::container::ContainerItem {
+    let mut shared = zenmeta::xmp::container::ContainerItem::primary(item.mime.clone());
+    shared.semantic = zenmeta::xmp::container::ItemSemantic::from_xmp(item.semantic.as_xmp_str());
+    shared.length = item.length;
+    shared.padding = item.padding;
+    shared
+}
+
+pub(super) fn from_shared_item(item: zenmeta::xmp::container::ContainerItem) -> ContainerItem {
+    ContainerItem {
+        semantic: ItemSemantic::from_xmp(item.semantic.as_xmp_str()),
+        mime: item.mime,
+        length: item.length,
+        padding: item.padding,
     }
-    None
 }
 
 // ===========================================================================

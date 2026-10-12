@@ -306,6 +306,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -436,6 +445,7 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
+source = "git+https://github.com/imazen/zenanalyze?rev=e6c72f99390c190c102275c3b0e4d41fe0a734a4#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
 dependencies = [
  "archmage",
  "garb",
@@ -447,9 +457,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4b0d4108a8f062c85090bf8d0e6dd00fea976ffacc0e4f3cb6b03284a75531"
+version = "0.1.27"
+source = "git+https://github.com/imazen/zencodec?rev=c1c3292ff10f386191780ad407526951165da47a#c1c3292ff10f386191780ad407526951165da47a"
 dependencies = [
  "almost-enough",
  "enough",
@@ -478,6 +487,7 @@ dependencies = [
  "whereat",
  "zenanalyze",
  "zencodec",
+ "zenmeta",
  "zenpixels",
  "zenpixels-convert",
  "zenyuv",
@@ -490,10 +500,21 @@ dependencies = [
  "arbitrary",
  "enough",
  "libfuzzer-sys",
+ "zencodec",
  "zenjpeg",
  "zenpixels",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "zenmeta"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=c1c3292ff10f386191780ad407526951165da47a#c1c3292ff10f386191780ad407526951165da47a"
+dependencies = [
+ "roxmltree",
+ "zencodec",
+ "zenpixels",
 ]
 
 [[package]]
