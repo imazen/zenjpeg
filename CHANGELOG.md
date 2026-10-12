@@ -18,6 +18,7 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- Require ultrahdr-core 0.6.0 when enabling Ultra HDR; the encoder uses its `f16` feature, which 0.5 does not provide (`154df755`).
 - Add default-off `metadata-rewrite` with codec-owned `metadata::rewrite`, moved
   from zencodecs (`aa21cba0`). zencodec owns its public request/plan types;
   zenmeta owns shared EXIF/service/plan processing. Gain-map scrubbing repairs
