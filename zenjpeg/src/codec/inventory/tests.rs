@@ -609,8 +609,7 @@ fn components_decode_of_the_fixture_fails_and_the_inventory_follows() {
     }
 }
 
-/// The orientation walker is a copy of `find_exif_orientation`'s; the two
-/// must agree on which segment carries the orientation.
+/// Inventory and pixel orientation share EXIF segment selection.
 #[test]
 fn orientation_segment_agrees() {
     let f = everything();
@@ -621,7 +620,7 @@ fn orientation_segment_agrees() {
     no_orient.extend(exif(8));
     no_orient.extend(&tiny_jpeg()[2..]);
     cases.push(no_orient);
-    // A single fill byte before the EXIF segment desynchronises the walk.
+    // A single fill byte must not change EXIF selection.
     let mut fill = vec![0xFF, 0xD8, 0xFF];
     fill.extend(exif(6));
     fill.extend(&tiny_jpeg()[2..]);
@@ -636,10 +635,9 @@ fn orientation_segment_agrees() {
     }
 }
 
-/// With auto-orient, an EXIF segment other than the first can drive the
-/// pixel orientation: it is consumed for orientation only.
+/// The first reported EXIF remains authoritative when it lacks orientation.
 #[test]
-fn auto_orient_reads_the_first_exif_with_an_orientation() {
+fn auto_orient_uses_the_reported_first_exif() {
     let mut data = vec![0xFF, 0xD8];
     let first = segment(0xE1, b"Exif\0\0MM\0\x2a\0\0\0\x08\0\0\0\0\0\0");
     data.extend(&first);
@@ -658,17 +656,13 @@ fn auto_orient_reads_the_first_exif_with_an_orientation() {
             .unwrap()
     };
     assert_eq!(seg_at(2).disposition(), D::Metadata(M::Exif));
-    // Only the second segment's orientation entry is consumed.
-    let second = seg_at(2 + first.len());
-    assert_eq!(second.disposition(), D::Skipped);
-    let entry = inv
-        .parts()
-        .iter()
-        .find(|p| p.disposition() == D::Metadata(M::Orientation))
-        .unwrap();
-    assert_eq!(*entry.tag(), PartTag::Code(0x0112));
-    assert_eq!(entry.len(), 12);
-    assert!(entry.range().start >= second.range().start && entry.range().end <= second.range().end);
+    assert_eq!(seg_at(2 + first.len()).disposition(), D::Skipped);
+    assert!(
+        inv.parts()
+            .iter()
+            .all(|p| p.disposition() != D::Metadata(M::Orientation))
+    );
+    assert_eq!(crate::decode::find_exif_orientation(&data), None);
     let inv = inventory(&data, opts()).unwrap();
     assert_eq!(
         inv.parts()

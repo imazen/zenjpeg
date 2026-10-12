@@ -161,6 +161,8 @@ pub fn iter(data: &'_ [u8]) -> MarkerIter<'_> {
 /// [`MarkerSpan`] per top-level segment and stops after the first EOI is
 /// emitted, when the input is exhausted, or on malformed structure.
 pub struct MarkerIter<'a> {
+    /// Internal metadata lookup follows decoder resynchronization and SOS size.
+    decoder_metadata: bool,
     data: &'a [u8],
     pos: usize,
     /// `true` after we yield an EOI span. Subsequent `.next()` returns `None`.
@@ -193,10 +195,20 @@ impl<'a> MarkerIter<'a> {
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Self {
+            decoder_metadata: false,
             data,
             pos: 0,
             ended: false,
             stop: None,
+        }
+    }
+
+    /// Metadata selection without decoding pixels. Keep the public structural
+    /// iterator's stop-on-stray behavior unchanged for inspection callers.
+    pub(crate) fn for_decoder_metadata(data: &'a [u8]) -> Self {
+        Self {
+            decoder_metadata: true,
+            ..Self::new(data)
         }
     }
 
@@ -232,6 +244,19 @@ impl<'a> Iterator for MarkerIter<'a> {
     fn next(&mut self) -> Option<MarkerSpan<'a>> {
         if self.ended || self.stop.is_some() {
             return None;
+        }
+        if self.decoder_metadata {
+            loop {
+                self.pos += memchr::memchr(0xff, self.data.get(self.pos..)?)?;
+                while self.data.get(self.pos + 1) == Some(&0xff) {
+                    self.pos += 1;
+                }
+                if self.data.get(self.pos + 1) == Some(&0x00) {
+                    self.pos += 2;
+                } else {
+                    break;
+                }
+            }
         }
         // We need at least 2 bytes for a marker.
         if self.pos + 1 >= self.data.len() {
@@ -282,12 +307,20 @@ impl<'a> Iterator for MarkerIter<'a> {
         // 2) SOS — length word, then header, then entropy-coded stream
         //    terminated by the next real marker.
         if m == MARKER_SOS {
-            let (payload, header_end) = match read_length_and_payload(self.data, self.pos) {
-                Some(x) => x,
-                None => {
-                    self.stop = Some(length_failure(self.data, self.pos, fill_start));
-                    self.pos = self.data.len();
-                    return None;
+            let (payload, header_end) = if self.decoder_metadata {
+                // Native SOS parsing uses the component count, not Ls.
+                let end = self
+                    .pos
+                    .checked_add(8 + 2 * usize::from(*self.data.get(self.pos + 4)?))?;
+                (self.data.get(self.pos + 4..end)?, end)
+            } else {
+                match read_length_and_payload(self.data, self.pos) {
+                    Some(x) => x,
+                    None => {
+                        self.stop = Some(length_failure(self.data, self.pos, fill_start));
+                        self.pos = self.data.len();
+                        return None;
+                    }
                 }
             };
             let scan_end = skip_entropy_scan(self.data, header_end);

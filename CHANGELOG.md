@@ -72,6 +72,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Pixel auto-orientation and inventory select the first reported EXIF packet, including post-scan EXIF; fill bytes cannot redirect lookup into another segment's payload. Streaming metadata uses that same packet and reports transformed dimensions. First-EXIF-without-orientation no longer falls through to a later packet. Published signatures are unchanged; these are accepted-input/output corrections (follow-up to `ce321b8b`).
+
 - Accept standalone TEM markers after the frame header; inventory leaves following bytes separate. Components decoding treats ordinary XMP without gain-map properties as absent gain-map metadata, preserving base pixels instead of failing. Signatures are unchanged (follow-up to `b473e0f9`).
 
 - Dynamic Depth extraction honors primary GContainer padding with checked offsets; native MPF parsing checks IFD/entry offsets on 32-bit targets and allocates its bounded image list fallibly. No signatures change (follow-up to `4064e3cb`).

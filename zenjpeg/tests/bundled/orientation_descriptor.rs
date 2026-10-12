@@ -317,8 +317,8 @@ fn streaming_decoder_reports_identity_after_auto_orient() {
         "streaming: expected Identity after auto-orient"
     );
     // NOTE: ImageInfo.width/height come from the JPEG header (pre-transform).
-    // The actual output dimensions from next_batch() reflect the transform.
-    // This is a known limitation — ImageInfo dimensions are source dimensions.
+    // ImageInfo and streamed batches both describe the oriented output.
+    assert_eq!((streamer.info().width, streamer.info().height), (2, 4));
 
     // Drain the stream and verify actual output dimensions
     let mut total_rows = 0u32;

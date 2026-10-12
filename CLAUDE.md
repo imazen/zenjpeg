@@ -702,6 +702,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Resolved 2026-10-12: orientation selected a different EXIF packet from metadata and could enter comment payloads after fill bytes. Native orientation and inventory now share selection; post-scan packets and streaming metadata agree. `just metadata-orientation-check` covers pixel and metadata parity.
+
 - Resolved 2026-10-12: Dynamic Depth ignored primary padding and returned shifted bytes; native MPF parsing retained unchecked 32-bit offsets despite the extended inspector's checked arithmetic. `just metadata-depth-bounds-check` covers exact depth/confidence bytes, oversized padding and i686 IFD/fallback offsets.
 
 - Resolved in metadata review (2026-10-12): blanket MPF bounds checks skipped an embedded gain map and promoted an unrelated trailing image. Default decoding again accepts the embedded image; strict mode rejects its placement. Inventory shares the extraction admission predicate, and lossless rewriting separately refuses relocation it cannot preserve. The synthetic fixture's original default assertions remain; `just metadata-mpf-compat-check` checks the separation.

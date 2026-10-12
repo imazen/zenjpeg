@@ -394,10 +394,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             let mut out = OutputInfo::full_decode(w, h, native_format);
 
             let will_orient = will_auto_orient(self.orientation);
-            if will_orient
-                && let Some(ref exif) = info.exif
-                && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
-            {
+            if will_orient && let Some(orient_val) = crate::decode::find_exif_orientation(data) {
                 let orient = zencodec::Orientation::from_exif(orient_val).unwrap_or_default();
                 if orient.swaps_axes() {
                     core::mem::swap(&mut w, &mut h);
@@ -465,7 +462,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                 self.policy.as_ref(),
             );
             // read_info borrows data temporarily and returns owned JpegInfo.
-            let header = self.config.inner.read_info(&data)?;
+            let mut header = self.config.inner.read_info(&data)?;
+            // Streaming pixels use full-file orientation selection, including
+            // post-scan EXIF. Report that same packet rather than header-only EXIF.
+            header.exif = crate::decode::first_exif_segment(&data).map(|s| s.payload.to_vec());
             self.check_progressive_policy(header.mode)?;
             let mut info = to_image_info(&header);
 
@@ -477,6 +477,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             // scanline_reader_cow accepts both Borrowed and Owned data.
             // When Owned, the reader stores the Vec internally.
             let reader = cfg.scanline_reader_cow(data)?;
+            info.width = reader.width();
+            info.height = reader.height();
 
             let descriptor =
                 decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
@@ -613,10 +615,11 @@ fn push_decoder_native<'a>(
 
     // Reuse cached header from push_decoder (avoids re-parsing).
     // Falls back to read_info if cache miss (shouldn't happen in normal flow).
-    let header = match job.cached_header.take() {
+    let mut header = match job.cached_header.take() {
         Some(h) => h,
         None => job.config.inner.read_info(data_ref)?,
     };
+    header.exif = crate::decode::first_exif_segment(data_ref).map(|s| s.payload.to_vec());
     job.check_progressive_policy(header.mode)?;
 
     // Raw CMYK output for 4-component JPEGs: the streaming ScanlineReader has

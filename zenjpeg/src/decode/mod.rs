@@ -2880,58 +2880,19 @@ impl DecodeConfig {
 /// Looks for APP1 segments containing EXIF data and reads the orientation tag.
 /// Returns `Some(1..=8)` if found, `None` otherwise.
 pub(crate) fn find_exif_orientation(data: &[u8]) -> Option<u8> {
-    const EXIF_PREFIX: &[u8] = b"Exif\0\0";
+    crate::lossless::parse_exif_orientation(first_exif_segment(data)?.payload)
+}
 
-    if data.len() < 4 {
+/// The first EXIF segment reported by native metadata, including inter-scan
+/// and post-scan segments. An absent orientation in it does not select a
+/// different EXIF packet. Shared with inventory; never search inside payloads.
+pub(crate) fn first_exif_segment(data: &[u8]) -> Option<crate::container::MarkerSpan<'_>> {
+    if !data.starts_with(&[0xff, 0xd8]) {
         return None;
     }
-
-    let mut pos = 2; // Skip SOI
-    while pos + 4 < data.len() {
-        if data[pos] != 0xFF {
-            pos += 1;
-            continue;
-        }
-        let marker = data[pos + 1];
-
-        // Stop at SOS or EOI — no more metadata after scan data starts
-        if marker == 0xDA || marker == 0xD9 {
-            break;
-        }
-
-        // Skip markers without length
-        if marker == 0xFF || marker == 0x00 || (0xD0..=0xD7).contains(&marker) {
-            pos += 2;
-            continue;
-        }
-
-        // Read segment length
-        if pos + 4 > data.len() {
-            break;
-        }
-        let length = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
-        if length < 2 {
-            break;
-        }
-        let seg_start = pos + 4;
-        let seg_end = pos + 2 + length;
-        if seg_end > data.len() {
-            break;
-        }
-
-        // APP1 (0xE1) with EXIF prefix
-        if marker == 0xE1 && seg_end - seg_start >= EXIF_PREFIX.len() {
-            let seg_data = &data[seg_start..seg_end];
-            if seg_data.starts_with(EXIF_PREFIX)
-                && let Some(orientation) = crate::lossless::parse_exif_orientation(seg_data)
-            {
-                return Some(orientation);
-            }
-        }
-
-        pos = seg_end;
-    }
-    None
+    crate::container::MarkerIter::for_decoder_metadata(data).find(|s| {
+        s.kind == crate::container::MarkerKind::App(1) && s.payload.starts_with(b"Exif\0\0")
+    })
 }
 
 /// Copy a `dst_w × dst_h` rectangle starting at `(crop_x, crop_y)` out of an interleaved

@@ -239,3 +239,18 @@ base pixels on ordinary XMP. The adapter retains the shared parser's distinction
 between `NotUltraHdr` and malformed gain-map metadata instead of converting both
 to decode failure. `just metadata-admission-check` covers both paths and their
 inventory agreement. Existing assertions were updated with owner approval.
+
+### Orientation selection
+
+Native orientation and inventory now share first-EXIF selection through the
+container marker iterator's private decoder-metadata mode. The public iterator
+retains its structural stop-on-stray behavior. Selection handles fill bytes,
+stray bytes and native SOS header sizing, includes EXIF after scan data, and
+never searches inside another segment's payload. An orientation-free first
+EXIF remains authoritative instead of falling through to another packet.
+Streaming metadata reports the same packet and transformed dimensions.
+`just metadata-orientation-check` passes the corpus inventory, orientation
+reporting and byte-identical streaming/buffered pixel regressions.
+
+The full inventory walker and structural inspector remain different consumers;
+this removes their duplicated orientation lookup, not all marker parsing.

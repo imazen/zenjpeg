@@ -303,11 +303,10 @@ fn extended_xmp_guid_and_length_are_dropped() {
     }
 }
 
-/// Finding 4: one fill byte desynchronises `find_exif_orientation` into a
-/// COM payload holding an APP1 EXIF lookalike. The COM stays `Skipped`; only
-/// the 12-byte orientation entry the decoder applies is consumed.
+/// Fill bytes must not make orientation lookup read an EXIF lookalike
+/// inside a comment payload.
 #[test]
-fn orientation_lookalike_inside_another_part_is_a_field() {
+fn orientation_lookalike_inside_another_part_is_unread() {
     use zencodec::OrientationHint;
     let orig = load(TESTORIG);
     let mut exif = b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01".to_vec();
@@ -322,8 +321,8 @@ fn orientation_lookalike_inside_another_part_is_a_field() {
     let out = decode(correct(), &d).unwrap();
     assert_eq!(
         (out.width(), out.height()),
-        (149, 227),
-        "orientation 6 applied"
+        (227, 149),
+        "comment payload is not EXIF"
     );
 
     let i = inv(&correct(), &d);
@@ -333,14 +332,71 @@ fn orientation_lookalike_inside_another_part_is_a_field() {
     let lookalike = 3 + 4 + 20;
     let entry = lookalike + 4 + 6 + 8 + 2;
     let p = leaf_at(&i, entry);
-    assert_eq!(
-        p.disposition(),
-        D::Metadata(zencodec::inventory::MetadataKind::Orientation),
-        "{}",
-        show(p)
-    );
-    assert_eq!(p.range(), entry as u64..entry as u64 + 12, "{}", show(p));
+    assert_eq!(p.disposition(), D::Skipped, "{}", show(p));
     assert_eq!(leaf_at(&i, entry + 12).disposition(), D::Skipped);
+}
+
+/// First-packet selection and fill handling agree between preserved metadata,
+/// corrected pixels and streaming output, including EXIF after scan data.
+#[test]
+fn orientation_uses_the_same_exif_for_pixels_and_info() {
+    use zencodec::decode::StreamingDecode as _;
+    use zencodec::{Orientation, OrientationHint};
+    let orig = load(TESTORIG);
+    let mut exif = b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01".to_vec();
+    exif.extend([0x01, 0x12, 0x00, 0x03, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]);
+    let packet = seg(0xe1, &exif);
+    let normal = insert(&orig, 2, &packet);
+    let mut filled = vec![0xff];
+    filled.extend(&packet);
+    let empty_exif = seg(0xe1, b"Exif\0\0MM\0\x2a\0\0\0\x08\0\0\0\0\0\0");
+    let empty_first = insert(&normal, 2, &empty_exif);
+    let corrected = |d: &[u8]| decode(job().with_orientation(OrientationHint::Correct), d).unwrap();
+    let expected = pixels(&corrected(&normal));
+    for d in [
+        normal,
+        insert(&orig, 2, &filled),
+        insert(&orig, primary_eoi_end(&orig) - 2, &packet),
+    ] {
+        let preserved = decode(job(), &d).unwrap();
+        assert_eq!(preserved.info().orientation, Orientation::Rotate90);
+        let output = corrected(&d);
+        assert_eq!((output.width(), output.height()), (149, 227));
+        assert_eq!(output.info().orientation, Orientation::Identity);
+        assert_eq!(pixels(&output), expected);
+        let stream = job().streaming_decoder(Cow::Borrowed(&d), &[]).unwrap();
+        assert_eq!(stream.info().orientation, preserved.info().orientation);
+        assert_eq!(
+            stream.info().embedded_metadata.exif,
+            preserved.info().embedded_metadata.exif
+        );
+        let mut corrected_stream = job()
+            .with_orientation(OrientationHint::Correct)
+            .streaming_decoder(Cow::Borrowed(&d), &[])
+            .unwrap();
+        assert_eq!(
+            (
+                corrected_stream.info().width,
+                corrected_stream.info().height
+            ),
+            (149, 227)
+        );
+        let mut streamed_pixels = Vec::new();
+        while let Some((_, batch)) = corrected_stream.next_batch().unwrap() {
+            for row in 0..batch.rows() {
+                streamed_pixels.extend_from_slice(batch.row(row));
+            }
+        }
+        assert_eq!(streamed_pixels, expected);
+        inv(&job().with_orientation(OrientationHint::Correct), &d);
+    }
+    let output = corrected(&empty_first);
+    assert_eq!((output.width(), output.height()), (227, 149));
+    assert_eq!(pixels(&output), pixels(&decode(job(), &orig).unwrap()));
+    assert_eq!(
+        decode(job(), &empty_first).unwrap().info().orientation,
+        Orientation::Identity
+    );
 }
 
 /// The scan-data part's disposition (every test file here has one scan

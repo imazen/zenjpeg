@@ -1376,49 +1376,10 @@ fn scan_tables(tables: u8, permissive: bool) -> (u8, u8) {
     (clamp(tables >> 4), clamp(tables & 0x0F))
 }
 
-/// Offset of the segment `find_exif_orientation` (decode/mod.rs) takes the
-/// pixel orientation from. A byte-for-byte copy of its loop, including the
-/// way a single fill byte desynchronises it; the `orientation_segment_agrees`
-/// test pins the two together.
+/// The same first EXIF segment used by native orientation and metadata.
 fn exif_orientation_segment(data: &[u8]) -> Option<usize> {
-    const EXIF_PREFIX: &[u8] = b"Exif\0\0";
-    if data.len() < 4 {
-        return None;
-    }
-    let mut pos = 2;
-    while pos + 4 < data.len() {
-        if data[pos] != 0xFF {
-            pos += 1;
-            continue;
-        }
-        let marker = data[pos + 1];
-        if marker == MARKER_SOS || marker == MARKER_EOI {
-            break;
-        }
-        if marker == 0xFF || marker == 0x00 || (0xD0..=0xD7).contains(&marker) {
-            pos += 2;
-            continue;
-        }
-        let length = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
-        if length < 2 {
-            break;
-        }
-        let seg_start = pos + 4;
-        let seg_end = pos + 2 + length;
-        if seg_end > data.len() {
-            break;
-        }
-        if marker == 0xE1 && seg_end - seg_start >= EXIF_PREFIX.len() {
-            let seg_data = &data[seg_start..seg_end];
-            if seg_data.starts_with(EXIF_PREFIX)
-                && crate::lossless::parse_exif_orientation(seg_data).is_some()
-            {
-                return Some(pos);
-            }
-        }
-        pos = seg_end;
-    }
-    None
+    let segment = crate::decode::first_exif_segment(data)?;
+    crate::lossless::parse_exif_orientation(segment.payload).map(|_| segment.offset)
 }
 
 /// `(sof_name, supported)` for a SOFn marker, as `read_header` treats it.
@@ -2775,81 +2736,33 @@ impl Walk<'_> {
             }
         }
 
-        // Pixel orientation (OrientationHint::Correct*): find_exif_orientation
-        // runs its own pre-SOS walk and takes the first EXIF segment that
-        // carries an orientation tag.
-        let mut orientation_from_inside = None;
+        // Pixel orientation uses the same first EXIF as native metadata. If
+        // extraction is disabled, only its orientation field is consumed.
         if decode_ok
             && view.auto_orient
             && let Some(at) = exif_orientation_segment(data)
+            && let Some(i) = st.apps.iter().position(|a| a.payload.start == at + 4)
+            && !matches!(
+                decided[i],
+                Some((Disposition::Metadata(MetadataKind::Exif), _))
+            )
         {
-            match st.apps.iter().position(|a| a.payload.start == at + 4) {
-                Some(i) => {
-                    if !matches!(
-                        decided[i],
-                        Some((Disposition::Metadata(MetadataKind::Exif), _))
-                    ) {
-                        let a = &st.apps[i];
-                        match exif_orientation_entry(&data[a.payload.clone()]) {
-                            Some(r) => {
-                                // Only the orientation entry is consumed.
-                                decided[i] = Some((
-                                    Disposition::Skipped,
-                                    Some(
-                                        "only its orientation entry is read (auto-orient); \
-                                         ImageInfo::exif carries the first EXIF segment"
-                                            .into(),
-                                    ),
-                                ));
-                                extra.push((
-                                    a.node,
-                                    part(
-                                        PartKind::Field,
-                                        PartTag::Code(0x0112),
-                                        a.payload.start + r.start..a.payload.start + r.end,
-                                        Disposition::Metadata(MetadataKind::Orientation),
-                                    )
-                                    .with_detail("EXIF orientation entry, applied to the pixels"),
-                                ));
-                            }
-                            None => {
-                                // parse_exif_orientation found a tag the
-                                // entry search does not locate to the byte.
-                                decided[i] = Some((
-                                    Disposition::Skipped,
-                                    Some(
-                                        "find_exif_orientation applies an orientation from this \
-                                         segment, at an entry the inventory does not locate; \
-                                         ImageInfo::exif carries the first EXIF segment"
-                                            .into(),
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-                }
-                None => orientation_from_inside = Some(at),
-            }
-        }
-
-        // The reverse case: the reported EXIF carries an orientation that the
-        // pixel-orientation walk never reaches (it desynchronises on a single
-        // fill byte, and stops at the first SOS).
-        if decode_ok && view.auto_orient {
-            let found = exif_orientation_segment(data);
-            for (i, a) in st.apps.iter().enumerate() {
-                if matches!(
-                    decided[i],
-                    Some((Disposition::Metadata(MetadataKind::Exif), _))
-                ) && crate::lossless::parse_exif_orientation(&data[a.payload.clone()]).is_some()
-                    && found != Some(a.payload.start - 4)
-                    && let Some((_, detail)) = decided[i].as_mut()
-                {
-                    *detail = Some(String::from(
-                        "its orientation is neither applied to the pixels nor reported: \
-                         find_exif_orientation does not reach this segment",
-                    ));
-                }
+            let a = &st.apps[i];
+            if let Some(r) = exif_orientation_entry(&data[a.payload.clone()]) {
+                decided[i] = Some((
+                    Disposition::Skipped,
+                    Some("only its orientation entry is read (auto-orient)".into()),
+                ));
+                extra.push((
+                    a.node,
+                    part(
+                        PartKind::Field,
+                        PartTag::Code(0x0112),
+                        a.payload.start + r.start..a.payload.start + r.end,
+                        Disposition::Metadata(MetadataKind::Orientation),
+                    )
+                    .with_detail("EXIF orientation entry, applied to the pixels"),
+                ));
             }
         }
 
@@ -2906,59 +2819,6 @@ impl Walk<'_> {
         }
         for (node, p) in extra {
             self.add(Some(node), p)?;
-        }
-        if let Some(at) = orientation_from_inside {
-            self.orientation_inside(st, at)?;
-        }
-        Ok(())
-    }
-
-    /// The orientation walk desynchronised (a single fill byte is enough)
-    /// and read an APP1 EXIF header at `at`, inside another part. The part
-    /// keeps its disposition; the 12-byte orientation entry the decoder
-    /// applies becomes a `Field` child of the innermost part around it.
-    fn orientation_inside(&mut self, st: &Stream, at: usize) -> Result<(), Failed> {
-        let data = self.data;
-        let entry = be16(data, at + 2).and_then(|n| {
-            let payload = data.get(at + 4..at + 2 + n as usize)?;
-            let r = exif_orientation_entry(payload)?;
-            Some(at + 4 + r.start..at + 4 + r.end)
-        });
-        let nodes = st.nodes.start..self.ids.len();
-        let around = |w: &Self, r: &Range<usize>| {
-            nodes.clone().rev().find(|&n| {
-                let p = &w.node(n).range();
-                p.start <= r.start as u64 && r.end as u64 <= p.end
-            })
-        };
-        if let Some(r) = entry
-            && let Some(node) = around(self, &r)
-            && self.inv.children(Some(self.ids[node])).iter().all(|&c| {
-                let c = &self.inv.parts()[c.index()].range();
-                c.end <= r.start as u64 || c.start >= r.end as u64
-            })
-        {
-            self.add(
-                Some(node),
-                part(
-                    PartKind::Field,
-                    PartTag::Code(0x0112),
-                    r,
-                    Disposition::Metadata(MetadataKind::Orientation),
-                )
-                .with_detail(format!(
-                    "EXIF orientation entry of an APP1 lookalike at offset {at}: \
-                     find_exif_orientation applies it to the pixels"
-                )),
-            )?;
-        } else if let Some(node) = around(self, &(at..at + 1)) {
-            self.append_detail(
-                node,
-                &format!(
-                    "find_exif_orientation applies an EXIF orientation read from an APP1 \
-                     lookalike at offset {at} inside this part"
-                ),
-            );
         }
         Ok(())
     }

@@ -452,3 +452,9 @@ metadata-admission-check:
     cargo test -p zenjpeg --features inventory,ultrahdr --lib ultrahdr::decode
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
     cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test bundled -- -D warnings
+
+metadata-orientation-check:
+    just metadata-admission-check
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_corpus
+    cargo test -p zenjpeg --lib container::marker
