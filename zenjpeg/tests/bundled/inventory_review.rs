@@ -789,6 +789,24 @@ fn the_first_extracted_undefined_entry_is_the_gain_map() {
         "{}",
         show(outside)
     );
+    // Strict validation must fail rather than promote the unrelated trailing
+    // JPEG. The default assertions above intentionally retain the legacy case.
+    let mut policy = zencodec::decode::DecodePolicy::none();
+    policy.strict = Some(true);
+    let strict = || render_job(c).with_policy(policy.clone());
+    assert!(
+        decode(strict(), &d)
+            .unwrap_err()
+            .contains("overlaps the primary")
+    );
+    let strict_inventory = inv(&strict(), &d);
+    assert!(!any_scan_consumed(&strict_inventory));
+    assert!(
+        !strict_inventory
+            .parts()
+            .iter()
+            .any(|p| p.disposition() == D::Metadata(zencodec::inventory::MetadataKind::GainMap))
+    );
 }
 
 /// Finding 1 (review r20): an extended-XMP chunk inside the gain map is

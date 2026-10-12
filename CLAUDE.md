@@ -702,7 +702,7 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-- Open in metadata review (2026-10-12): `inventory_review::the_first_extracted_undefined_entry_is_the_gain_map` fails on Linux and Windows after the recovered MPF bounds checks. An Undefined entry inside the primary APP15 is skipped, and a later unrelated Undefined image is then promoted to gain-map status. Reconcile native gain-map selection and inventory together; the proposed behavior preserves base pixels without that invalid gain map and refuses HDR reconstruction. Updating the legacy overlapping-entry assertions requires the pending owner decision. JPEG replacement PR226 must not land while this remains unresolved.
+- Resolved in metadata review (2026-10-12): blanket MPF bounds checks skipped an embedded gain map and promoted an unrelated trailing image. Default decoding again accepts the embedded image; strict mode rejects its placement. Inventory shares the extraction admission predicate, and lossless rewriting separately refuses relocation it cannot preserve. The synthetic fixture's original default assertions remain; `just metadata-mpf-compat-check` checks the separation.
 
 
 - i686 CI could not fetch the progressive image-rs JPEG corpus inside cross. The prefetch example now requests the exact nested key in addition to its parent; codec-corpus 1.1.0 stores those independently.
@@ -715,8 +715,8 @@ sensitivity tables, and preset baselines.
 - Metadata integration recovered MPF/lossless defects: stale secondary offsets,
   dropped or mismatched secondary transforms, repeated/overlapping extraction,
   and hand-parsed GContainer field spans. The recovered tests pass with shared
-  namespace validation and MPF reconstruction; the edge-default/fixture approval
-  is still pending. `just metadata-lossless-check metadata-lossless-oracle`
+  namespace validation and MPF reconstruction; the owner approved the edge
+  default and proportional-fixture corrections. `just metadata-lossless-check metadata-lossless-oracle`
   exercises both our reader and independent tools.
 
 

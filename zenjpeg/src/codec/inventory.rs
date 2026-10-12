@@ -206,6 +206,17 @@ pub(crate) fn inventory(
                 Some(eoi_end) => mpf_images(data, &st, eoi_end),
                 None => (None, Vec::new()),
             };
+            if opts.decode_strictness.is_strict()
+                && st
+                    .eoi_end
+                    .is_some_and(|end| images.iter().any(|m| m.range.start < end))
+            {
+                w.append_detail(
+                    st.nodes.start,
+                    "decode fails: MPF secondary image overlaps the primary JPEG in strict mode",
+                );
+                st.decode_fatal = true;
+            }
             let gain_map = if st.decode_fatal {
                 GainMap::None
             } else {
@@ -340,6 +351,7 @@ fn mpf_images(data: &[u8], st: &Stream, eoi_end: usize) -> (Option<usize>, Vec<M
     };
     let base = mpf.payload.start + 4;
     let mut out = Vec::new();
+    let mut taken = Vec::new();
     for (idx, entry) in dir.images.iter().enumerate() {
         if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
             continue;
@@ -350,9 +362,10 @@ fn mpf_images(data: &[u8], st: &Stream, eoi_end: usize) -> (Option<usize>, Vec<M
             base.checked_add(entry.offset as usize)
         };
         let range = start.map_or(0..0, |s| s..s.saturating_add(entry.size as usize));
-        let extracted = data
-            .get(range.clone())
-            .is_some_and(|b| b.starts_with(&[0xFF, MARKER_SOI]));
+        let extracted = crate::container::mpf::secondary_range_readable(data, &range, &taken);
+        if extracted {
+            taken.push(range.clone());
+        }
         out.push(MpfImage {
             idx,
             ty: entry.image_type,
@@ -3347,7 +3360,7 @@ impl Walk<'_> {
             } else if !m.extracted {
                 (
                     Disposition::Skipped,
-                    "does not start with SOI; the decoder ignores it",
+                    "not a readable, disjoint JPEG range; the decoder ignores it",
                 )
             } else if !decode_ok {
                 (Disposition::Skipped, "not read: the decode fails")

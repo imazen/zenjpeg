@@ -72,6 +72,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Preserve default decoding of MPF JPEGs embedded inside the primary APP payload; strict mode rejects that layout. Inventory and native extraction share range admission, retaining duplicate-copy bounds. Lossless rewriting checks relocation independently and refuses unsupported embedded layouts. This restores the existing default acceptance; published signatures are unchanged (follow-up to `9a5694d4`).
+
 - Prefetch the exact progressive JPEG corpus key used by i686 tests; codec-corpus 1.1.0 caches the parent and nested requests separately.
 - Lossy recompression refuses auxiliary-image inputs that its single-image emitters cannot preserve. MPF, ISO gain-map and namespace-aware XMP signaling share an admission guard; lossless restructuring remains available. The expert coefficient emitter refuses dangling auxiliary metadata too. Published signatures are unchanged.
 - Native `DecodedExtras::icc_profile` and extended inspection share chunk validation. Native decoding now returns `None` for incomplete, duplicate, inconsistent, or empty ICC chunks instead of returning a partial profile; published signatures are unchanged.

@@ -23,6 +23,21 @@ use thiserror::Error;
 use super::marker::{MarkerKind, iter};
 use super::types::{MpImageType, MpfEntry};
 
+/// Admission shared by native extraction and inventory. Embedded JPEGs are
+/// readable too; relocation constraints belong to the rewriting path. Disjoint
+/// extracted ranges bound total copied secondary bytes by the input length.
+pub(crate) fn secondary_range_readable(
+    data: &[u8],
+    range: &core::ops::Range<usize>,
+    taken: &[core::ops::Range<usize>],
+) -> bool {
+    data.get(range.clone())
+        .is_some_and(|b| b.starts_with(&[0xff, 0xd8]))
+        && taken
+            .iter()
+            .all(|r| range.end <= r.start || range.start >= r.end)
+}
+
 /// `"MPF\0"` — the 4-byte identifier at the start of an MPF APP2 segment.
 pub const MPF_IDENTIFIER: &[u8; 4] = b"MPF\0";
 

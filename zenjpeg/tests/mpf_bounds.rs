@@ -160,9 +160,9 @@ fn overlapping_mpf_entries_are_skipped() {
 }
 
 /// An entry pointing inside the primary (here at a JPEG embedded in an APP15
-/// segment) is not a secondary image.
+/// segment) remains readable by default, but strict decode and rewriting reject it.
 #[test]
-fn mpf_entries_before_the_primary_eoi_are_skipped() {
+fn embedded_mpf_entries_are_readable_except_in_strict_mode() {
     let inner = gray_jpeg(16, 16, 3);
     let base = color_jpeg(32, 32);
     // APP15 right after SOI carrying `inner`.
@@ -178,7 +178,20 @@ fn mpf_entries_before_the_primary_eoi_are_skipped() {
         |_| vec![(UNDEFINED, inner.len() as u32, 2 + app2 + 4)],
         &[],
     );
-    assert_eq!(extracted(&jpeg), vec![]);
+    assert_eq!(extracted(&jpeg), vec![(1, inner.len())]);
+    let strict = DecodeConfig::new()
+        .strict()
+        .preserve(PreserveConfig::all())
+        .decode(&jpeg, Unstoppable);
+    assert!(
+        strict
+            .unwrap_err()
+            .to_string()
+            .contains("overlaps the primary")
+    );
+    for result in run_both(&jpeg) {
+        assert!(result.unwrap_err().to_string().contains("cannot relocate"));
+    }
 }
 
 // ---------------------------------------------------------------------------

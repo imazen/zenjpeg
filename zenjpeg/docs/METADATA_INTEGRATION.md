@@ -95,8 +95,8 @@ unchanged. `just metadata-exif-check` passed, including existing independent
 img-parts/kamadak readers, new round trips and strict clippy.
 
 ISO-first gain-map parsing, ISO-only output and SDR-base metadata/color
-preservation are integrated below. The interrupted GContainer/lossless stack
-and HDR reconstruction color interpretation still require review.
+preservation are integrated below. The recovered GContainer/lossless stack and HDR reconstruction color
+interpretation are reconciled in the sections below.
 
 ## Reconciled ISO-first metadata stack
 
@@ -202,12 +202,19 @@ suite passes all 59 selected tests and all six edge tests. Lossless native/i686,
 independent-reader, stable fuzz-seed replay, API snapshot, and recompression
 admission checks have passed locally. Remote CI must validate the combined revision.
 
-### Remaining combined-CI gate
+### Embedded MPF compatibility
 
-Combined CI on Linux x64/ARM and Windows x64/ARM finds the same failure in
-`inventory_review::the_first_extracted_undefined_entry_is_the_gain_map`. Its
-first Undefined MPF entry points inside primary APP15. The recovered bounds
-checks exclude that entry, but later selection promotes an unrelated secondary
-image as the gain map. This is an unresolved behavior conflict, not a fixture
-download failure. Replacement PR226 and the four superseded proposals remain
-open until native selection, inventory and the owner-approved expectations agree.
+The combined-CI regression used a synthetic layout: the test moves a corpus
+Ultra HDR gain map into APP15 and appends an unrelated JPEG. It is not evidence
+of an original real-world file with that layout. Default (Balanced), Lenient
+and Permissive decoding retain embedded MPF JPEGs. Strict decoding rejects an
+MPF secondary inside the primary, including early gain-map extraction. Native
+extraction and inventory share the readable/disjoint-range admission predicate;
+duplicate ranges still cannot multiply copied secondary bytes. The original
+inventory assertion that the embedded image is the gain map remains intact.
+
+Lossless transformation/restructuring independently refuses embedded MPF
+images: those emitters cannot relocate the references inside the original APP
+payload. Decoder acceptance therefore does not promise rewrite support.
+`just metadata-mpf-compat-check` passes the original inventory review suite,
+strict-mode parity, repeated/overlapping extraction bounds and lossless refusal.

@@ -247,8 +247,9 @@ pub(super) struct SourceSecondary<'a> {
 /// an error when the file describes one it cannot carry. Nothing is dropped
 /// silently:
 /// - Every MPF entry after the primary must have been extracted. The decoder
-///   takes only entries that lie after the primary's EOI, inside the input,
-///   disjoint from each other and starting with SOI; an index naming anything
+///   takes readable, disjoint ranges inside the input, including embedded
+///   JPEGs. This writer additionally requires placement after the primary EOI;
+///   an index naming anything
 ///   else (a repeated or overlapping entry, a second primary, bytes that are
 ///   not a JPEG) is refused here instead of being dropped.
 /// - A gain map signalled only by XMP (`hdrgm` properties or a GContainer
@@ -287,6 +288,26 @@ fn secondary_sources<'a>(
     })?;
     match extras.mpf() {
         Some(dir) => {
+            // Decoding permits JPEGs embedded in APP payloads. This writer
+            // emits independent trailing images and cannot relocate those
+            // references without also rewriting the containing payload.
+            let primary = crate::container::marker::primary_bounds(jpeg_data)
+                .ok_or_else(|| Error::invalid_jpeg_data("missing primary JPEG bounds"))?;
+            let mpf = crate::container::marker::iter(&jpeg_data[..primary.end])
+                .find(|s| {
+                    s.kind == crate::container::MarkerKind::App(2)
+                        && s.payload.starts_with(b"MPF\0")
+                })
+                .ok_or_else(|| Error::invalid_jpeg_data("missing MPF segment"))?;
+            let base = mpf.offset + 8;
+            if dir.images.iter().skip(1).any(|entry| {
+                entry.offset != 0 && base.saturating_add(entry.offset as usize) < primary.end
+            }) {
+                return Err(Error::invalid_jpeg_data(
+                    "lossless rewriting cannot relocate an MPF image embedded in the primary JPEG",
+                ));
+            }
+
             if (1..dir.images.len()).any(|i| !out.iter().any(|s| s.index == i)) {
                 return Err(Error::invalid_jpeg_data(
                     "the MPF index names an image that is not a separate JPEG after the primary \

@@ -649,6 +649,16 @@ impl<'a> JpegParser<'a> {
             gainmap_range = find_secondary_jpeg_range(full_data);
         }
 
+        if self.strictness.is_strict()
+            && let Some((start, _)) = gainmap_range
+            && crate::container::marker::primary_bounds(full_data)
+                .is_some_and(|primary| start < primary.end)
+        {
+            return Err(Error::invalid_jpeg_data(
+                "MPF secondary image overlaps the primary JPEG in strict mode",
+            ));
+        }
+
         // The gain-map image's ISO 21496-1 record wins over XMP (Ultra HDR
         // v1.1, "ISO 21496-1 Compatibility"; see `UltraHdrExtras`). One that
         // does not parse falls back to the XMP.
@@ -1054,16 +1064,10 @@ impl<'a> JpegParser<'a> {
         // (after "MPF\0" signature). We need to add the base position to get absolute offsets.
         let mpf_base = self.mpf_header_pos;
 
-        // Extract secondary images based on MPF entries. A secondary lives in
-        // the bytes after the primary's EOI and shares no byte with another
-        // secondary: entries that point before the EOI, past the input, or at
-        // a range already taken are skipped. Without this, a directory that
-        // repeats one large entry (up to 256 of them) copied it once per
-        // entry, and an entry pointing back at the primary made the lossless
-        // carry-through transform the primary again, recursively. The ranges
-        // taken are disjoint and inside the input, so their total never
-        // exceeds the input length.
-        let mut taken: Vec<(usize, usize)> = Vec::new();
+        // Default decoding retains readable embedded JPEGs. Strict mode rejects
+        // entries inside the primary; lossless rewriting checks relocation
+        // separately. Disjoint ranges prevent repeated-copy amplification.
+        let mut taken = Vec::new();
         for (idx, entry) in mpf_dir.images.iter().enumerate() {
             // Skip primary image (index 0 or BaselinePrimary type)
             if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
@@ -1082,31 +1086,31 @@ impl<'a> JpegParser<'a> {
                 primary_eoi_pos
             } else if mpf_base > 0 {
                 // Add base position to get absolute file offset
-                mpf_base + entry.offset as usize
+                mpf_base
+                    .checked_add(entry.offset as usize)
+                    .ok_or_else(|| Error::invalid_jpeg_data("MPF secondary offset overflow"))?
             } else {
                 // Fallback: treat as absolute offset (shouldn't happen if MPF was properly parsed)
                 entry.offset as usize
             };
 
+            if self.strictness.is_strict() && offset < primary_eoi_pos {
+                return Err(Error::invalid_jpeg_data(
+                    "MPF secondary image overlaps the primary JPEG in strict mode",
+                ));
+            }
             let end = offset.saturating_add(entry.size as usize);
-            if offset < primary_eoi_pos
-                || end > self.data.len()
-                || end <= offset
-                || taken.iter().any(|&(s, e)| offset < e && s < end)
-            {
+            let range = offset..end;
+            if !crate::container::mpf::secondary_range_readable(self.data, &range, &taken) {
                 continue;
             }
-            let bytes = &self.data[offset..end];
-            // Verify it looks like a JPEG (starts with SOI)
-            if bytes.len() < 2 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
-                continue;
-            }
+            let bytes = &self.data[range.clone()];
             let mut image_data = Vec::new();
             image_data
                 .try_reserve_exact(bytes.len())
                 .map_err(|_| Error::allocation_failed(bytes.len(), "MPF secondary image"))?;
             image_data.extend_from_slice(bytes);
-            taken.push((offset, end));
+            taken.push(range);
             extras.add_secondary_image(idx, entry.image_type, image_data);
         }
 

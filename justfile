@@ -424,3 +424,9 @@ metadata-layout-contract-check:
 metadata-progressive-corpus-check:
     cargo run -p zenjpeg --example metadata_corpus_prefetch
     cargo test -p zenjpeg --test bundled codec_corpus_conformance::test_image_rs_progressive -- --exact
+
+# Default compatibility, strict rejection, bounded extraction, and rewrite refusal.
+metadata-mpf-compat-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --test mpf_bounds --test lossless_mpf
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test mpf_bounds --test bundled -- -D warnings
