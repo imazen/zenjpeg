@@ -54,7 +54,7 @@
 //! ```
 
 mod decode;
-pub(crate) use decode::iso21496_from_gainmap_jpeg;
+
 #[cfg(feature = "inventory")]
 pub(crate) use decode::{primary_xmp_gain_map, xmp_segment_range};
 mod encode;

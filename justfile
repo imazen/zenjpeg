@@ -374,8 +374,53 @@ metadata-dependency-check:
 metadata-gamut-check:
     cargo test -p zenjpeg --features ultrahdr --test bundled convenience_hdr_readers_retain_display_p3_primaries
 
+metadata-lossless-check:
+    cargo test -p zenjpeg --features ultrahdr --test lossless_mpf --test mpf_bounds --test lossless_coefficient_range --test lossless_edges
+    cargo test -p zenjpeg --features ultrahdr --lib lossless::
+    cargo clippy -p zenjpeg --features ultrahdr --lib --test lossless_mpf --test mpf_bounds -- -D warnings
+
+metadata-lossless-oracle:
+    ZENJPEG_ORACLE_TOOLS=1 cargo test -p zenjpeg --features ultrahdr --test lossless_oracle -- --test-threads=1
+
+metadata-lossless-feature-check:
+    cargo check -p zenjpeg --no-default-features
+    cargo test -p zenjpeg --no-default-features --lib gain_map_preservation
+    cargo test -p zenjpeg --no-default-features --lib gain_map_decode_inherits
+    cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite
+
+metadata-lossless-fuzz-check:
+    cargo test -p zenjpeg --features metadata-rewrite,extended-metadata,inventory --test fuzz_regression
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_lossless --bin fuzz_metadata_rewrite
+
+metadata-lossless-api-check:
+    cargo fmt -p zenjpeg --check
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+    just api-doc
+
+metadata-lossless-portability-check:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test lossless_mpf --test mpf_bounds --test lossless_coefficient_range --test lossless_edges
+    actionlint .github/workflows/ci.yml
+
 metadata-icc-parity-check:
     cargo test -p zenjpeg --features extended-metadata --test metadata_limits
     cargo test -p zenjpeg --features extended-metadata --test extended_metadata icc_
     cargo clippy -p zenjpeg --features extended-metadata --lib --test metadata_limits -- -D warnings
     cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+
+metadata-lossless-regression-check:
+    just metadata-ci-lib
+    cargo test -p zenjpeg --features layout,ultrahdr --test bundled layout_pipeline
+    cargo test -p zenjpeg --features layout,ultrahdr --test lossless_edges
+
+metadata-recompress-admission-check:
+    cargo test -p zenjpeg --features recompress,__test-utils --test recompress_metadata --test recompress_api
+    cargo clippy -p zenjpeg --features recompress,__test-utils --lib --test recompress_metadata -- -D warnings
+
+# Approved gain-map alignment and explicit edge rejection contracts.
+metadata-layout-contract-check:
+    cargo test -p zenjpeg --features layout,ultrahdr --test bundled layout_pipeline
+    cargo test -p zenjpeg --features layout,ultrahdr --test lossless_edges
+
+metadata-progressive-corpus-check:
+    cargo run -p zenjpeg --example metadata_corpus_prefetch
+    cargo test -p zenjpeg --test bundled codec_corpus_conformance::test_image_rs_progressive -- --exact

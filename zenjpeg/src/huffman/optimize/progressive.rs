@@ -574,7 +574,7 @@ impl ProgressiveTokenBuffer {
                     // Get DC coefficient and shift by al
                     let dc = block[0] >> al;
                     let prev = self.dc_pred(comp_idx);
-                    let diff = dc - prev;
+                    let diff = dc.wrapping_sub(prev);
                     self.set_dc_pred(comp_idx, dc);
 
                     // Create DC token

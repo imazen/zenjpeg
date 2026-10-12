@@ -19,7 +19,8 @@ use enough::Stop;
 use super::coeff_transform::{TransformConfig, TransformedCoefficients, transform_coefficients};
 use super::geometry::McuGeom;
 use super::pipeline::{
-    component_to_blocks, encode_from_coefficients, write_marker_segment, write_quant_tables,
+    coefficient_out_of_range, component_to_blocks, encode_from_coefficients, finish_container,
+    transform_secondary_images, write_preserved_segments, write_quant_tables,
 };
 
 /// Output scan structure for restructured JPEG.
@@ -100,7 +101,7 @@ pub fn restructure(
     // Step 2: Optionally transform coefficients
     let coeffs = if let Some(ref transform_config) = config.transform {
         transform_coefficients(&decoded_coeffs, transform_config)
-            .map_err(|e| Error::io_error(alloc::format!("{e}")))?
+            .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?
     } else {
         TransformedCoefficients {
             width: decoded_coeffs.width,
@@ -115,14 +116,34 @@ pub fn restructure(
     // Step 3: Compute restart interval in MCUs
     let restart_mcus = compute_restart_interval(&coeffs.components, config.restart_interval);
 
-    // Step 4: Encode with the requested structure
+    // Step 4: MPF secondary images follow the primary's transform (verbatim
+    // when there is none; their own scan structure is left alone).
+    let identity = TransformConfig::default();
+    let transform_config = config.transform.as_ref().unwrap_or(&identity);
+    let secondaries = transform_secondary_images(
+        jpeg_data,
+        extras.as_ref(),
+        transform_config,
+        false,
+        (decoded_coeffs.width, decoded_coeffs.height),
+        (coeffs.width, coeffs.height),
+        &stop,
+    )?;
+
+    // Step 5: Encode with the requested structure
     let preserved = extras.as_ref().map(|e| e.segments());
 
     match config.output_mode {
-        OutputMode::Sequential => encode_from_coefficients(&coeffs, preserved, restart_mcus, &stop),
-        OutputMode::Progressive => {
-            encode_progressive_from_coefficients(&coeffs, preserved, restart_mcus, &stop)
+        OutputMode::Sequential => {
+            encode_from_coefficients(&coeffs, preserved, &secondaries, restart_mcus, &stop)
         }
+        OutputMode::Progressive => encode_progressive_from_coefficients(
+            &coeffs,
+            preserved,
+            &secondaries,
+            restart_mcus,
+            &stop,
+        ),
     }
 }
 
@@ -153,6 +174,34 @@ fn compute_restart_interval(
             mcus_per_interval.min(u16::MAX as usize) as u16
         }
     }
+}
+
+/// Whether `scan` codes without category 16 (see `coefficient_out_of_range`),
+/// walking the blocks the way `ProgressiveTokenBuffer` tokenizes them: a DC
+/// first scan predicts per component in block order with no restarts. An AC
+/// first scan refuses -32768 at any `al`, as the baseline writer does: it has
+/// no category at `al = 0`, and a flip, which negates it, has no `i16`
+/// result (`BlockTransform::apply` leaves it -32768). Refinement scans emit
+/// single bits.
+fn scan_is_codable(scan: &ProgressiveScan, all_blocks: &[Vec<[i16; DCT_BLOCK_SIZE]>]) -> bool {
+    if scan.ah != 0 {
+        return true;
+    }
+    if scan.ss == 0 {
+        return scan.components.iter().all(|&c| {
+            let mut prev = 0i16;
+            all_blocks[usize::from(c)].iter().all(|block| {
+                let dc = block[0] >> scan.al;
+                let diff = dc.wrapping_sub(prev);
+                prev = dc;
+                diff != i16::MIN
+            })
+        });
+    }
+    let band = usize::from(scan.ss)..=usize::from(scan.se);
+    all_blocks[usize::from(scan.components[0])]
+        .iter()
+        .all(|block| !block[band.clone()].contains(&i16::MIN))
 }
 
 /// Generate jpegli-style progressive scan script.
@@ -242,6 +291,7 @@ fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<Progres
 pub(crate) fn encode_progressive_from_coefficients(
     coeffs: &TransformedCoefficients,
     preserved_segments: Option<&[crate::decode::PreservedSegment]>,
+    secondaries: &[crate::encode::extras::MpfImage],
     _restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
@@ -301,6 +351,9 @@ pub(crate) fn encode_progressive_from_coefficients(
     let mut token_buffer = ProgressiveTokenBuffer::new(num_components, context_config.num_contexts);
 
     for (scan_idx, scan) in scans.iter().enumerate() {
+        if !scan_is_codable(scan, &all_blocks) {
+            return Err(coefficient_out_of_range());
+        }
         let context = if scan.ss == 0 && scan.se == 0 {
             context_config.dc_context(scan.components[0] as usize) as u8
         } else {
@@ -351,12 +404,8 @@ pub(crate) fn encode_progressive_from_coefficients(
     output.push(0xFF);
     output.push(MARKER_SOI);
 
-    // Preserved metadata
-    if let Some(segments) = preserved_segments {
-        for seg in segments {
-            write_marker_segment(&mut output, seg.marker, &seg.data);
-        }
-    }
+    // Preserved metadata + MPF index placeholder
+    let mpf_at = write_preserved_segments(&mut output, preserved_segments, secondaries)?;
 
     // DQT
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
@@ -426,6 +475,9 @@ pub(crate) fn encode_progressive_from_coefficients(
     // EOI
     output.push(0xFF);
     output.push(MARKER_EOI);
+
+    // MPF index + secondary images
+    finish_container(&mut output, secondaries, mpf_at)?;
 
     Ok(output)
 }

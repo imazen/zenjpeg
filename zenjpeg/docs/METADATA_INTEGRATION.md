@@ -78,7 +78,7 @@ fixtures are unchanged, with [hashes and source revisions](../fuzz/METADATA_FIXT
 ## CI corpus provisioning
 
 CI run `38253462548` exposed missing-corpus failures on Windows ARM and i686.
-`metadata_corpus_prefetch` fetches all seven metadata datasets serially before
+`metadata_corpus_prefetch` fetches metadata datasets serially before
 parallel tests. `CODEC_CORPUS_CACHE` is an explicit absolute path, mounted into
 cross through `Cross.toml`, so cross does not need to fetch image-rs itself.
 The previous two image-rs skips are removed. `just metadata-prefetch-check`
@@ -162,3 +162,42 @@ instead of silently labeled sRGB. The existing Ultra HDR round-trip suite
 and strict clippy pass with the new P3 regression (`just metadata-policy-check`).
 No public signatures change; the descriptor and unsupported-profile behavior
 changes are observable and must be retained in release notes.
+
+## Recovered lossless container work
+
+Lossless transforms and sequential/progressive restructuring carry secondary
+JPEGs and rebuild the MPF index after emission. GContainer lengths are matched
+by semantic rather than MPF order. Namespace validation and span editing use
+zenmeta's `Directory`; no zenmeta nominal type appears in the JPEG public API.
+Malformed/ambiguous directories fail rather than preserving stale lengths.
+Decoder extraction accepts only disjoint secondary ranges after the primary EOI.
+Nested secondary containers and proportional-crop mismatches are rejected.
+
+The additive public entry point is
+`lossless::apply_exif_orientation_with_edge_handling(&[u8], EdgeHandling, impl Stop)`.
+The owner approved default edge rejection and the corresponding aligned layout
+fixture on 2026-10-12. The original partial-MCU input remains an explicit rejection test.
+`just metadata-lossless-check` passes the recovered coefficient, edge, MPF,
+bounds and lossless unit suites. `just metadata-lossless-oracle` passes exact
+jpegtran/djpeg comparison and ExifTool secondary-image reachability. The raw
+and decoded gain-map tests also run with HDR rendering disabled.
+
+### Native compatibility and recompression admission
+
+Native and extended ICC reassembly share one chunk validator (`c7d341a9`).
+Invalid chunk sets return None through the published native Option accessor;
+inspection retains its typed errors. Native extended-XMP concatenation remains
+legacy behavior; strict extended inspection stays explicit.
+
+The recovered lossless path preserves auxiliary JPEGs. Lossy recompression's
+single-image strategies now refuse MPF/ISO/gain-map/container signaling and
+concatenated images instead of silently dropping auxiliaries. This is an
+accepted-input behavior change with no public signature change. It does not
+implement lossy gain-map recompression. Existing recompression/ICC tests and
+new auxiliary-image admission tests pass.
+
+Validation on 2026-10-12: both complete library configurations pass (parallel/
+HDR/codec and inventory/extended/HDR/codec). After owner approval, the layout
+suite passes all 59 selected tests and all six edge tests. Lossless native/i686,
+independent-reader, stable fuzz-seed replay, API snapshot, and recompression
+admission checks have passed locally. Remote CI must validate the combined revision.

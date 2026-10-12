@@ -21,6 +21,7 @@ mod calibration;
 mod error;
 #[cfg(feature = "recompress-iqa")]
 mod measure;
+mod metadata;
 #[cfg(feature = "recompress-iqa")]
 mod refine;
 mod router;

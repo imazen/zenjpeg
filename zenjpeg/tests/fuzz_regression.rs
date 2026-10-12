@@ -798,6 +798,9 @@ fn regression_seeds_do_not_panic() {
         run_container_mpf(&data);
         run_container_probe(&data);
         run_container_xmp(&data);
+        lossless_checks::check(&data);
+        #[cfg(feature = "metadata-rewrite")]
+        rewrite_checks::check(&data);
         #[cfg(feature = "extended-metadata")]
         metadata_checks::check_all(&data);
         #[cfg(feature = "inventory")]
@@ -816,3 +819,9 @@ fn regression_seeds_do_not_panic() {
     );
     assert!(replayed > 0, "replayed no seeds at all");
 }
+
+#[path = "../fuzz/lossless_checks.rs"]
+mod lossless_checks;
+#[cfg(feature = "metadata-rewrite")]
+#[path = "../fuzz/rewrite_checks.rs"]
+mod rewrite_checks;

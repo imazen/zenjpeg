@@ -10,6 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "zune/test-images/jpeg",
         "zune/fuzz-corpus/jpeg",
         "image-rs/tests/images/jpg",
+        "image-rs/tests/images/jpg/progressive",
     ] {
         let path = corpus.get(dataset)?;
         println!("{dataset}: {}", path.display());

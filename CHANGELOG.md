@@ -18,6 +18,20 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- Recover lossless MPF handling: transform secondary JPEGs with the primary,
+  rebuild MPF offsets, update GContainer lengths by semantic through zenmeta,
+  reject incomplete/ambiguous/nested secondary layouts, and preserve EXIF byte
+  offsets when resetting orientation. Shared metadata revision: `a81daf76`.
+- Add `lossless::apply_exif_orientation_with_edge_handling`; the existing entry
+  point remains. The recovered default rejects implicit edge trimming; callers
+  can explicitly select proportional trimming. This is a behavior change from
+  published 0.8.4, not a removed signature.
+- Raw/decoded gain-map extraction works without enabling HDR rendering; it
+  inherits decoder limits and cancellation. JPEG ISO framing is shared by the
+  native extractor and HDR convenience reader.
+- Reuse the recovered lossless/coefficient/MPF tests and independent jpegtran,
+  djpeg and ExifTool checks. Shared lossless and metadata-rewrite fuzz checks
+  also run against every existing committed regression/metadata seed.
 - Verify the EXIF boundary explicitly: zencodec metadata is bare TIFF; native `DecodedExtras` retains the APP1 `Exif\0\0` prefix.
 - Require ultrahdr-core 0.6.0 when enabling Ultra HDR; the encoder uses its `f16` feature, which 0.5 does not provide (`154df755`).
 - Add default-off `metadata-rewrite` with codec-owned `metadata::rewrite`, moved
@@ -57,6 +71,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+
+- Prefetch the exact progressive JPEG corpus key used by i686 tests; codec-corpus 1.1.0 caches the parent and nested requests separately.
+- Lossy recompression refuses auxiliary-image inputs that its single-image emitters cannot preserve. MPF, ISO gain-map and namespace-aware XMP signaling share an admission guard; lossless restructuring remains available. The expert coefficient emitter refuses dangling auxiliary metadata too. Published signatures are unchanged.
 - Native `DecodedExtras::icc_profile` and extended inspection share chunk validation. Native decoding now returns `None` for incomplete, duplicate, inconsistent, or empty ICC chunks instead of returning a partial profile; published signatures are unchanged.
 - Ultra HDR convenience readers and streaming reconstruction retain resolved base-image ICC primaries instead of hardcoding BT.709. Profiles requiring a CMS now return an unsupported error; existing signatures remain.
 - Reject oversized EXIF/APP/COM metadata with an encode error before writing output; raw EXIF is no longer silently truncated. Forward request-level `EncoderSegments` into the encoder instead of omitting them. Published signatures remain unchanged.

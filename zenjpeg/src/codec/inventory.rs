@@ -3042,7 +3042,7 @@ impl Walk<'_> {
                 decide(
                     &mut decided[i],
                     Disposition::Dropped,
-                    Some("reassembled profile exceeds MAX_ICC_PROFILE_SIZE; not reported".into()),
+                    Some("ICC chunks are incomplete, inconsistent, empty, or over the size limit; not reported".into()),
                 );
             }
         }
@@ -3256,7 +3256,7 @@ impl Walk<'_> {
                 }
                 Some(m) => {
                     let gm = &data[m.range.clone()];
-                    let iso = crate::ultrahdr::iso21496_from_gainmap_jpeg(gm)
+                    let iso = crate::container::iso21496_from_gainmap_jpeg(gm)
                         .is_some_and(|result| result.is_ok());
                     let parameters_at = if iso {
                         crate::container::probe(gm, crate::container::Wants::ISO_GAINMAP)

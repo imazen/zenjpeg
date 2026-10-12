@@ -17,7 +17,6 @@ pub(crate) mod output_helpers;
 mod progressive;
 mod scan;
 
-#[cfg(feature = "ultrahdr")]
 use super::extras::MpfImageTypeExt;
 use super::extras::{
     AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image,
@@ -514,20 +513,11 @@ impl<'a> JpegParser<'a> {
     ///
     /// Returns byte range `(start, end)` into `full_data` instead of copying,
     /// enabling zero-copy access to the gain map JPEG.
-    #[cfg(feature = "ultrahdr")]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
-    ) -> Result<(
-        Option<(usize, usize)>,
-        Option<ultrahdr_core::GainMapMetadata>,
-    )> {
+    ) -> Result<(Option<(usize, usize)>, Option<zencodec::GainMapParams>)> {
         use super::extras::{MpfDirectory, SegmentType, detect_segment_type, parse_mpf_directory};
-        // Kept on ultrahdr_core::metadata::xmp::parse_xmp because this returns
-        // the old `GainMapMetadata` struct shape that the containing function
-        // still expects. Migrate to `crate::container::xmp::parse_xmp` (which
-        // returns `zencodec::GainMapParams`) once ultrahdr-core 0.5 lands with
-        // the GainMapMetadata-as-alias refactor from ultrahdr#6.
         use crate::container::xmp::parse_xmp;
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -621,12 +611,9 @@ impl<'a> JpegParser<'a> {
         }
 
         // Parse metadata from XMP
-        let metadata = xmp_data.as_ref().and_then(|xmp| {
-            if !xmp.contains("hdrgm:Version") && !xmp.contains("hdrgm:GainMapMax") {
-                return None;
-            }
-            parse_xmp(xmp).ok().map(|(m, _)| m)
-        });
+        let metadata = xmp_data
+            .as_ref()
+            .and_then(|xmp| parse_xmp(xmp).ok().map(|(m, _)| m));
 
         // Neither hdrgm XMP nor an ISO 21496-1 record: not an UltraHDR image.
         if metadata.is_none() && !primary_iso {
@@ -658,7 +645,6 @@ impl<'a> JpegParser<'a> {
         // Fallback: if MPF parsing failed but the metadata indicates UltraHDR,
         // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
         // This handles non-standard MPF structures from some Android camera apps.
-        #[cfg(feature = "ultrahdr")]
         if gainmap_range.is_none() {
             gainmap_range = find_secondary_jpeg_range(full_data);
         }
@@ -668,7 +654,7 @@ impl<'a> JpegParser<'a> {
         // does not parse falls back to the XMP.
         if let Some((gm_start, gm_end)) = gainmap_range
             && let Some(Ok(iso)) =
-                crate::ultrahdr::iso21496_from_gainmap_jpeg(&full_data[gm_start..gm_end])
+                crate::container::iso21496_from_gainmap_jpeg(&full_data[gm_start..gm_end])
         {
             return Ok((gainmap_range, Some(iso)));
         }
@@ -700,7 +686,6 @@ impl<'a> JpegParser<'a> {
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
-#[cfg(feature = "ultrahdr")]
 fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
     let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
     let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
@@ -1069,7 +1054,16 @@ impl<'a> JpegParser<'a> {
         // (after "MPF\0" signature). We need to add the base position to get absolute offsets.
         let mpf_base = self.mpf_header_pos;
 
-        // Extract secondary images based on MPF entries
+        // Extract secondary images based on MPF entries. A secondary lives in
+        // the bytes after the primary's EOI and shares no byte with another
+        // secondary: entries that point before the EOI, past the input, or at
+        // a range already taken are skipped. Without this, a directory that
+        // repeats one large entry (up to 256 of them) copied it once per
+        // entry, and an entry pointing back at the primary made the lossless
+        // carry-through transform the primary again, recursively. The ranges
+        // taken are disjoint and inside the input, so their total never
+        // exceeds the input length.
+        let mut taken: Vec<(usize, usize)> = Vec::new();
         for (idx, entry) in mpf_dir.images.iter().enumerate() {
             // Skip primary image (index 0 or BaselinePrimary type)
             if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
@@ -1095,14 +1089,25 @@ impl<'a> JpegParser<'a> {
             };
 
             let end = offset.saturating_add(entry.size as usize);
-            if end <= self.data.len() {
-                let image_data = self.data[offset..end].to_vec();
-
-                // Verify it looks like a JPEG (starts with SOI)
-                if image_data.len() >= 2 && image_data[0] == 0xFF && image_data[1] == 0xD8 {
-                    extras.add_secondary_image(idx, entry.image_type, image_data);
-                }
+            if offset < primary_eoi_pos
+                || end > self.data.len()
+                || end <= offset
+                || taken.iter().any(|&(s, e)| offset < e && s < end)
+            {
+                continue;
             }
+            let bytes = &self.data[offset..end];
+            // Verify it looks like a JPEG (starts with SOI)
+            if bytes.len() < 2 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+                continue;
+            }
+            let mut image_data = Vec::new();
+            image_data
+                .try_reserve_exact(bytes.len())
+                .map_err(|_| Error::allocation_failed(bytes.len(), "MPF secondary image"))?;
+            image_data.extend_from_slice(bytes);
+            taken.push((offset, end));
+            extras.add_secondary_image(idx, entry.image_type, image_data);
         }
 
         Ok(())
@@ -1369,7 +1374,6 @@ impl<'a> JpegParser<'a> {
 /// but we can still find the gain map JPEG by looking for JPEG boundaries.
 ///
 /// Returns the second JPEG's byte range `(start, end)` if found, or None if not found.
-#[cfg(feature = "ultrahdr")]
 fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
     const SOI: [u8; 2] = [0xFF, 0xD8]; // Start of Image
 

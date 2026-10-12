@@ -55,4 +55,9 @@ pub use xmp::{
     parse_xmp_full,
 };
 
+mod gainmap;
+pub(crate) use gainmap::iso21496_from_gainmap_jpeg;
+#[cfg(feature = "ultrahdr")]
+pub(crate) use gainmap::iso21496_record;
+
 pub(crate) mod chunks;

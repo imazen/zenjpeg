@@ -8,7 +8,30 @@
 //! JPEG stores image data as 8×8 blocks of DCT coefficients. The DCT basis functions
 //! have symmetry properties that allow spatial transforms (flip, rotate, transpose) to
 //! be performed by rearranging blocks on the image grid and selectively negating
-//! coefficients within each block.
+//! coefficients within each block. Dimension-swapping transforms transpose the
+//! quantization tables along with the blocks.
+//!
+//! # Metadata and secondary images
+//!
+//! Every APPn/COM segment of the source is carried through. A Multi-Picture
+//! (MPF) container — an Ultra HDR JPEG with its gain map, a depth map, MPF
+//! thumbnails — is carried as a whole: each secondary image receives the same
+//! transform, the MPF index is rebuilt for the new byte layout, and a GContainer
+//! XMP directory's `Item:Length` values are updated. A secondary that cannot be
+//! transformed is an error rather than a silently dropped or mismatched image.
+//!
+//! A gain map stored after the primary without an MPF index (signalled by
+//! `hdrgm` XMP, as some Android files do) is carried the same way and gains an
+//! index. Secondaries are transformed one level deep: a secondary that must be
+//! transformed and holds secondary images of its own, or a GContainer directory
+//! listing an item that is not a carried JPEG (a Motion Photo video), is
+//! [`ErrorKind::UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature)
+//! (a [`lossless::restructure`](fn@crate::lossless::restructure) without a
+//! transform copies each secondary verbatim);
+//! an MPF index naming an image that is not a separate JPEG after the primary
+//! (an entry inside the primary, overlapping or repeating another, or past the
+//! end of the file) is
+//! [`ErrorKind::InvalidJpegData`](crate::decoder::ErrorKind::InvalidJpegData).
 //!
 //! # Example
 //!
@@ -43,5 +66,5 @@ pub use coeff_transform::{
     BlockTransform, EdgeHandling, LosslessTransform, TransformConfig, transform_coefficients,
 };
 pub use exif::{parse_exif_orientation, set_exif_orientation};
-pub use pipeline::{apply_exif_orientation, transform};
+pub use pipeline::{apply_exif_orientation, apply_exif_orientation_with_edge_handling, transform};
 pub use restructure::{OutputMode, RestartInterval, RestructureConfig, restructure};

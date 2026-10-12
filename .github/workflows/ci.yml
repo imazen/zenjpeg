@@ -83,6 +83,16 @@ jobs:
       - name: Test (all user features)
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite" --lib --tests
 
+      - name: Install lossless metadata oracles
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libjpeg-turbo-progs libimage-exiftool-perl
+
+      - name: Check lossless pixels and secondary metadata with independent readers
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ZENJPEG_ORACLE_TOOLS: "1"
+        run: cargo test -p zenjpeg --release --features ultrahdr --test lossless_oracle -- --test-threads=1
+
       - name: Inventory disabled through configured jobs
         run: cargo test -p zenjpeg --release --features zencodec --test inventory_feature
 
@@ -241,7 +251,7 @@ jobs:
               echo "choco attempt $i failed; retrying in 20s" && sleep 20
             done
             test -x "/c/libjpeg-turbo64/bin/djpeg.exe" || { echo "::error::libjpeg-turbo install failed (djpeg missing)"; exit 1; }
-            echo "C:\\libjpeg-turbo64\\bin" >> "$GITHUB_PATH"
+            printf '%s\n' 'C:\libjpeg-turbo64\bin' >> "$GITHUB_PATH"
           fi
           cmake --version
           djpeg -version || djpeg --version || echo "djpeg not in PATH yet (will be available after PATH update)"

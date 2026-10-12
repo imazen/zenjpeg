@@ -135,6 +135,8 @@ pub(in crate::recompress) fn prepare_preserve(
     analysis: &SourceAnalysis,
     params: &StrategyParams,
 ) -> Result<PreparedPreserve, Error> {
+    crate::recompress::metadata::check_single_image(jpeg_bytes)?;
+
     // Operating window: with the zigzag DQT bug fixed (2026-05-28),
     // Preserve produces pixel-identical output for IDENTITY scale
     // across 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 with even dimensions.

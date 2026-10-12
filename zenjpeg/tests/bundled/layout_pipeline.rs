@@ -558,6 +558,23 @@ const ULTRAHDR_XMP: &str = r#"<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
 
 /// Create a fake UltraHDR JPEG: primary (with gain map XMP) + gain map JPEG appended after EOI.
 fn make_ultrahdr_jpeg(primary_w: u32, primary_h: u32, gainmap_w: u32, gainmap_h: u32) -> Vec<u8> {
+    make_ultrahdr_jpeg_with(
+        primary_w,
+        primary_h,
+        gainmap_w,
+        gainmap_h,
+        ChromaSubsampling::Quarter,
+    )
+}
+
+/// [`make_ultrahdr_jpeg`] with the gain map's chroma subsampling chosen.
+fn make_ultrahdr_jpeg_with(
+    primary_w: u32,
+    primary_h: u32,
+    gainmap_w: u32,
+    gainmap_h: u32,
+    gainmap_subsampling: ChromaSubsampling,
+) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
 
     // Encode primary with UltraHDR XMP
@@ -574,7 +591,7 @@ fn make_ultrahdr_jpeg(primary_w: u32, primary_h: u32, gainmap_w: u32, gainmap_h:
 
     // Encode gain map (grayscale-like, but RGB for simplicity)
     let gm_pixels = make_noise_pixels(gainmap_w, gainmap_h, 0xDEAD_BEEF);
-    let gm_config = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter);
+    let gm_config = EncoderConfig::ycbcr(75.0, gainmap_subsampling);
     let mut gm_encoder = gm_config
         .request()
         .encode_from_bytes(gainmap_w, gainmap_h, PixelLayout::Rgb8Srgb)
@@ -624,9 +641,12 @@ fn ultrahdr_lossless_identity_preserves_gainmap() {
     );
 }
 
+/// The gain map is 4:4:4 (8x8 MCUs, like the grayscale gain maps cameras
+/// write), so a 180-degree rotation of its 32x24 grid needs no trimming; the
+/// 4:2:0 case is `ultrahdr_lossless_rotate_rejects_partial_gainmap_blocks`.
 #[test]
 fn ultrahdr_lossless_rotate_preserves_gainmap() {
-    let ultrahdr = make_ultrahdr_jpeg(64, 48, 32, 24);
+    let ultrahdr = make_ultrahdr_jpeg_with(64, 48, 32, 24, ChromaSubsampling::None);
 
     let result = LayoutConfig::new(85.0)
         .request(&ultrahdr)
@@ -654,6 +674,26 @@ fn ultrahdr_lossless_rotate_preserves_gainmap() {
     let decoded = Decoder::new().decode(&result.data, Unstoppable).unwrap();
     assert_eq!(decoded.width(), 64);
     assert_eq!(decoded.height(), 48);
+}
+
+/// A 4:2:0 32x24 gain map would lose its bottom 8 rows to a lossless
+/// 180-degree rotation (16x16 MCUs) while the 64x48 primary loses none. The
+/// default edge handling refuses rather than drop or misregister it (#204);
+/// main trimmed the gain map silently.
+#[test]
+fn ultrahdr_lossless_rotate_rejects_partial_gainmap_blocks() {
+    let ultrahdr = make_ultrahdr_jpeg(64, 48, 32, 24);
+    let result = LayoutConfig::new(85.0_f32)
+        .request(&ultrahdr)
+        .rotate_180()
+        .execute(&Unstoppable);
+    let Err(err) = result else {
+        panic!("a partial-block gain map must not be trimmed");
+    };
+    assert!(
+        matches!(err.kind(), zenjpeg::decoder::ErrorKind::InvalidConfig(_)),
+        "{err:?}"
+    );
 }
 
 #[test]

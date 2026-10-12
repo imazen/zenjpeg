@@ -1835,14 +1835,11 @@ impl DecodeConfig {
         let (visible_w, visible_h) = (parser.width, parser.height);
 
         // Extract gain map before pixel conversion (needs parser state)
-        #[cfg(feature = "ultrahdr")]
         let gain_map_result = if self.gain_map != GainMapHandling::Discard {
-            self.extract_gain_map(&mut parser, data)?
+            self.extract_gain_map(&mut parser, data, &stop)?
         } else {
             None
         };
-        #[cfg(not(feature = "ultrahdr"))]
-        let gain_map_result: Option<GainMapResult> = None;
 
         let info = parser.info();
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
@@ -2733,12 +2730,13 @@ impl DecodeConfig {
     /// Extract gain map from UltraHDR image if present.
     ///
     /// Called during `decode()` when `gain_map != Discard`.
-    #[cfg(feature = "ultrahdr")]
     fn extract_gain_map(
         &self,
         parser: &mut JpegParser,
         data: &[u8],
+        stop: &dyn Stop,
     ) -> Result<Option<GainMapResult>> {
+        stop.check()?;
         let (gainmap_range, _metadata) = parser.extract_gainmap_early(data)?;
 
         let (start, end) = match gainmap_range {
@@ -2746,17 +2744,28 @@ impl DecodeConfig {
             None => return Ok(None), // Not an UltraHDR image
         };
 
-        let gainmap_jpeg = data[start..end].to_vec();
+        stop.check()?;
+        let mut gainmap_jpeg = Vec::new();
+        gainmap_jpeg
+            .try_reserve_exact(end - start)
+            .map_err(|_| Error::allocation_failed(end - start, "preserving gain map JPEG"))?;
+        gainmap_jpeg.extend_from_slice(&data[start..end]);
+        let mut decoder = Decoder::new()
+            .max_pixels(self.max_pixels)
+            .max_memory(self.max_memory)
+            .strictness(self.strictness)
+            .auto_orient(false);
+        decoder.alloc_pref = self.alloc_pref;
 
         let (pixels, width, height) = if self.gain_map == GainMapHandling::Decode {
             // Decode the gain map JPEG to pixels
-            let gm_result = Decoder::new().decode(&gainmap_jpeg, enough::Unstoppable)?;
+            let gm_result = decoder.decode(&gainmap_jpeg, stop)?;
             let w = gm_result.width;
             let h = gm_result.height;
             (Some(gm_result.into_pixels_u8().unwrap()), w, h)
         } else {
             // PreserveRaw: just get dimensions from header without decoding pixels
-            let gm_info = Decoder::new().read_info(&gainmap_jpeg)?;
+            let gm_info = decoder.read_info(&gainmap_jpeg)?;
             (None, gm_info.dimensions.width, gm_info.dimensions.height)
         };
 
@@ -2981,6 +2990,85 @@ mod tests {
     use super::*;
     use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use enough::Unstoppable;
+
+    fn gain_map_fixture(map_side: u32) -> (Vec<u8>, Vec<u8>) {
+        use crate::encode::EncoderSegments;
+        let encode = |side: u32, segments: EncoderSegments| {
+            let pixels: Vec<u8> = (0..side * side * 3)
+                .map(|i| ((i * 73 + i / 17) % 256) as u8)
+                .collect();
+            let mut encoder = EncoderConfig::ycbcr(90, ChromaSubsampling::None)
+                .with_segments(segments)
+                .encode_from_bytes(side, side, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            encoder.push_packed(&pixels, Unstoppable).unwrap();
+            encoder.finish().unwrap()
+        };
+        let map = encode(map_side, EncoderSegments::new());
+        let primary = encode(
+            16,
+            EncoderSegments::new()
+                .set_xmp(&crate::container::xmp::generate_primary_xmp(map.len()))
+                .add_gainmap(map.clone()),
+        );
+        (primary, map)
+    }
+
+    #[test]
+    fn gain_map_preservation_does_not_require_hdr_rendering() {
+        let (jpeg, map) = gain_map_fixture(8);
+        for preserve in [PreserveConfig::all(), PreserveConfig::none()] {
+            for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+                let result = Decoder::new()
+                    .preserve(preserve.clone())
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let gain_map = result.gain_map.expect("requested gain map must be present");
+                assert_eq!(gain_map.jpeg, map);
+                assert_eq!((gain_map.width, gain_map.height), (8, 8));
+                if mode == GainMapHandling::Decode {
+                    let expected = Decoder::new()
+                        .auto_orient(false)
+                        .decode(&map, Unstoppable)
+                        .unwrap();
+                    assert_eq!(gain_map.pixels.as_deref(), expected.pixels_u8());
+                } else {
+                    assert!(gain_map.pixels.is_none());
+                }
+            }
+        }
+        assert!(
+            Decoder::new()
+                .decode(&jpeg, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+        assert!(
+            Decoder::new()
+                .gain_map(GainMapHandling::PreserveRaw)
+                .decode(&map, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn gain_map_decode_inherits_pixel_limit() {
+        let (jpeg, _) = gain_map_fixture(32);
+        for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+            assert!(
+                Decoder::new()
+                    .max_pixels(256)
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .is_err(),
+                "{mode:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_decoder_creation() {

@@ -116,3 +116,41 @@ fn preserve_keeps_icc_profile() {
         _ => panic!("unexpected RecompressResult variant"),
     }
 }
+
+#[test]
+fn lossy_recompression_does_not_drop_auxiliary_images() {
+    use enough::Unstoppable;
+    use zenjpeg::container::{find_jpeg_boundaries, generate_primary_xmp};
+    use zenjpeg::encode::EncoderSegments;
+    let secondary = make_jpeg_with_icc(32, 32, 80, &[]);
+    for (indexed, described) in [(true, true), (false, true), (false, false)] {
+        let mut segments = EncoderSegments::new();
+        if described {
+            segments = segments.set_xmp(&generate_primary_xmp(secondary.len()));
+        }
+        if indexed {
+            segments = segments.add_gainmap(secondary.clone());
+        }
+        let mut encoder = EncoderConfig::ycbcr(92, ChromaSubsampling::Quarter)
+            .with_segments(segments)
+            .encode_from_bytes(160, 160, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        encoder
+            .push_packed(&test_image(160, 160), Unstoppable)
+            .unwrap();
+        let mut input = encoder.finish().unwrap();
+        if !indexed {
+            input.extend_from_slice(&secondary);
+        }
+        assert_eq!(find_jpeg_boundaries(&input).len(), 2);
+        assert!(matches!(
+            recompress(&input, &RecompressOptions::new(70.0)),
+            Err(zenjpeg::recompress::Error::Unsupported(_))
+        ));
+        if described {
+            let output =
+                zenjpeg::lossless::restructure(&input, &Default::default(), Unstoppable).unwrap();
+            assert_eq!(find_jpeg_boundaries(&output).len(), 2);
+        }
+    }
+}

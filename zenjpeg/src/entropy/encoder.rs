@@ -31,7 +31,7 @@ fn encode_block_simd_impl(
 ) -> (bool, i16) {
     // Encode DC coefficient
     let dc = coeffs[0];
-    let dc_diff = dc - prev_dc;
+    let dc_diff = dc.wrapping_sub(prev_dc);
 
     let dc_cat = category(dc_diff);
     let (code, len) = dc_table.encode(dc_cat);
@@ -217,7 +217,7 @@ impl<'a> EntropyEncoder<'a> {
 
         // Encode DC coefficient
         let dc = coeffs[0];
-        let dc_diff = dc - self.prev_dc[component];
+        let dc_diff = dc.wrapping_sub(self.prev_dc[component]);
         self.prev_dc[component] = dc;
 
         let dc_cat = category(dc_diff);
@@ -348,7 +348,7 @@ impl<'a> EntropyEncoder<'a> {
         } else {
             // DC first scan: encode shifted DC difference
             let shifted_dc = dc >> al;
-            let dc_diff = shifted_dc - self.prev_dc[component];
+            let dc_diff = shifted_dc.wrapping_sub(self.prev_dc[component]);
             self.prev_dc[component] = shifted_dc;
 
             let dc_table = self.dc_tables[table_idx]

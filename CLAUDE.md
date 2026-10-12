@@ -702,6 +702,21 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- i686 CI could not fetch the progressive image-rs JPEG corpus inside cross. The prefetch example now requests the exact nested key in addition to its parent; codec-corpus 1.1.0 stores those independently.
+
+- Recompression single-image strategies dropped MPF secondaries while retaining
+  XMP pointers. `recompress/metadata.rs` now refuses this unsupported input
+  before lossy work, including expert strategy/emit entry points; the recovered
+  lossless path preserves the images. Gate: `just metadata-recompress-admission-check`.
+
+- Metadata integration recovered MPF/lossless defects: stale secondary offsets,
+  dropped or mismatched secondary transforms, repeated/overlapping extraction,
+  and hand-parsed GContainer field spans. The recovered tests pass with shared
+  namespace validation and MPF reconstruction; the edge-default/fixture approval
+  is still pending. `just metadata-lossless-check metadata-lossless-oracle`
+  exercises both our reader and independent tools.
+
+
 - Fixed metadata integration regression: Ultra HDR convenience decode and streaming reconstruction labeled Display P3 base pixels BT.709. Shared ICC resolution now supplies the color descriptor/gamut; the bundled P3 regression reproduces the old behavior and passes after the fix.
 
 - Metadata carrier boundary regression (2026-10-12): encoding an oversized prepared comment panics; request-level prepared EXIF is omitted. Reproduced by `tests/metadata_limits.rs` before the validation/forwarding fix. The same fix rejects oversized raw EXIF instead of truncating it.
