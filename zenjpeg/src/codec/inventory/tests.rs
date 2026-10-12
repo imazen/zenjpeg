@@ -244,6 +244,10 @@ fn everything() -> Fixture {
 
 fn opts() -> Options {
     Options {
+        allow_exif: true,
+        allow_icc: true,
+        allow_xmp: true,
+
         auto_orient: false,
         render: super::Render::Base,
         max_pixels: 0,
@@ -536,6 +540,61 @@ fn everything_fixture_dispositions_match_the_decoder() {
         zencodec::Orientation::from_exif(6).unwrap()
     );
     assert_eq!((out.pixels().width(), out.pixels().rows()), (16, 8));
+}
+
+#[test]
+fn metadata_policy_agrees_across_probe_decode_streaming_and_inventory() {
+    use alloc::borrow::Cow;
+    use zencodec::decode::{DecodePolicy, StreamingDecode as _};
+    let f = everything();
+    for mask in 0..8 {
+        let (exif, icc, xmp) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0);
+        let policy = DecodePolicy::none()
+            .with_allow_exif(exif)
+            .with_allow_icc(icc)
+            .with_allow_xmp(xmp);
+        let job = || JpegDecoderConfig::new().job().with_policy(policy);
+        let check = |info: &zencodec::ImageInfo| {
+            assert_eq!(
+                info.embedded_metadata.exif.is_some(),
+                exif,
+                "EXIF mask={mask}"
+            );
+            assert_eq!(
+                info.source_color.icc_profile.is_some(),
+                icc,
+                "ICC mask={mask}"
+            );
+            assert_eq!(info.embedded_metadata.xmp.is_some(), xmp, "XMP mask={mask}");
+        };
+        check(&job().probe(&f.bytes).unwrap());
+        let decoded = job()
+            .decoder(Cow::Borrowed(&f.bytes), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        check(decoded.info());
+        let native = decoded.extras::<crate::decode::DecodedExtras>().unwrap();
+        assert_eq!(native.exif().is_some(), exif);
+        assert_eq!(native.icc_profile().is_some(), icc);
+        assert_eq!(native.xmp().is_some(), xmp);
+        let stream = job()
+            .streaming_decoder(Cow::Borrowed(&f.bytes), &[])
+            .unwrap();
+        check(stream.info());
+        let inventory = job().inventory(&f.bytes).unwrap();
+        inventory.validate().unwrap();
+        for (kind, allowed) in [(M::Exif, exif), (M::Icc, icc), (M::Xmp, xmp)] {
+            assert_eq!(
+                inventory
+                    .parts()
+                    .iter()
+                    .any(|p| p.disposition() == D::Metadata(kind)),
+                allowed,
+                "inventory {kind:?}, mask={mask}"
+            );
+        }
+    }
 }
 
 #[test]

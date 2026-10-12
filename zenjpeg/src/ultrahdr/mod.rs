@@ -54,6 +54,7 @@
 //! ```
 
 mod decode;
+pub(crate) use decode::metadata_with_xmp;
 
 #[cfg(feature = "inventory")]
 pub(crate) use decode::{primary_xmp_gain_map, xmp_segment_range};

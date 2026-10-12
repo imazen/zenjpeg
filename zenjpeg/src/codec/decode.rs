@@ -332,6 +332,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                 .start_at()
             })?;
         let opts = super::inventory::Options {
+            allow_exif: self
+                .policy
+                .as_ref()
+                .is_none_or(|p| p.allow_exif != Some(false)),
+            allow_icc: self
+                .policy
+                .as_ref()
+                .is_none_or(|p| p.allow_icc != Some(false)),
+            allow_xmp: self
+                .policy
+                .as_ref()
+                .is_none_or(|p| p.allow_xmp != Some(false)),
             auto_orient: will_auto_orient(self.orientation),
             render: self.inventory_render(data),
             max_pixels: self.limit_adjusted_inner().get_max_pixels(),
@@ -373,7 +385,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         {
             // Check input size limits
             self.check_input_size(data)?;
-            let info = self.limit_adjusted_inner().read_info(data)?;
+            let info = read_job_info(&self.limit_adjusted_inner(), data, self.policy.as_ref())?;
             let mut image_info = to_image_info(&info);
             if let Ok(probe) = crate::detect::probe(data) {
                 image_info = image_info.with_source_encoding_details(probe);
@@ -385,7 +397,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, Self::Error> {
         {
             self.check_input_size(data)?;
-            let info = self.limit_adjusted_inner().read_info(data)?;
+            let info = read_job_info(&self.limit_adjusted_inner(), data, self.policy.as_ref())?;
             let native_format =
                 decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref());
             let mut w = info.dimensions.width;
@@ -439,7 +451,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             // Pre-cache the header so push_decoder_native can reuse it
             // instead of calling read_info() again.
             if self.cached_header.is_none()
-                && let Ok(info) = self.config.inner.read_info(&data)
+                && let Ok(info) = read_job_info(&self.config.inner, &data, self.policy.as_ref())
             {
                 self.cached_header = Some(info);
             }
@@ -462,10 +474,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                 self.policy.as_ref(),
             );
             // read_info borrows data temporarily and returns owned JpegInfo.
-            let mut header = self.config.inner.read_info(&data)?;
+            let mut header = read_job_info(&self.config.inner, &data, self.policy.as_ref())?;
             // Streaming pixels use full-file orientation selection, including
             // post-scan EXIF. Report that same packet rather than header-only EXIF.
-            header.exif = crate::decode::first_exif_segment(&data).map(|s| s.payload.to_vec());
+            if cfg.preserve.exif {
+                header.exif = crate::decode::first_exif_segment(&data).map(|s| s.payload.to_vec());
+            }
             self.check_progressive_policy(header.mode)?;
             let mut info = to_image_info(&header);
 
@@ -617,9 +631,11 @@ fn push_decoder_native<'a>(
     // Falls back to read_info if cache miss (shouldn't happen in normal flow).
     let mut header = match job.cached_header.take() {
         Some(h) => h,
-        None => job.config.inner.read_info(data_ref)?,
+        None => read_job_info(&job.config.inner, data_ref, job.policy.as_ref())?,
     };
-    header.exif = crate::decode::first_exif_segment(data_ref).map(|s| s.payload.to_vec());
+    if cfg.preserve.exif {
+        header.exif = crate::decode::first_exif_segment(data_ref).map(|s| s.payload.to_vec());
+    }
     job.check_progressive_policy(header.mode)?;
 
     // Raw CMYK output for 4-component JPEGs: the streaming ScanlineReader has
@@ -1046,6 +1062,32 @@ pub(super) fn will_auto_orient(hint: zencodec::OrientationHint) -> bool {
 }
 
 /// Build a DecodeConfig with limit overrides and hints applied.
+fn metadata_preserve(
+    policy: Option<&zencodec::decode::DecodePolicy>,
+) -> crate::decode::PreserveConfig {
+    let mut preserve = crate::decode::PreserveConfig::all();
+    if let Some(policy) = policy {
+        if policy.allow_exif == Some(false) {
+            preserve = preserve.exif(false);
+        }
+        if policy.allow_xmp == Some(false) {
+            preserve = preserve.xmp(false);
+        }
+        if policy.allow_icc == Some(false) {
+            preserve = preserve.icc(crate::decode::IccPreserve::None);
+        }
+    }
+    preserve
+}
+
+fn read_job_info(
+    config: &crate::decode::DecodeConfig,
+    data: &[u8],
+    policy: Option<&zencodec::decode::DecodePolicy>,
+) -> Result<crate::decode::JpegInfo, Error> {
+    config.read_info_preserving(data, &metadata_preserve(policy))
+}
+
 fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
@@ -1053,7 +1095,7 @@ fn build_decode_config(
     orientation: zencodec::OrientationHint,
     policy: Option<&zencodec::decode::DecodePolicy>,
 ) -> crate::decode::DecodeConfig {
-    let mut cfg = inner.clone();
+    let mut cfg = inner.clone().preserve(metadata_preserve(policy));
     // Per-site allocation-fallibility preference travels with the rest of the
     // resource governance: big untrusted output/coefficient buffers stay
     // fallible by default, small bounded MCU scratch stays infallible, and an
@@ -1092,18 +1134,6 @@ fn build_decode_config(
         if let Some(false) = pol.allow_truncated {
             cfg = cfg.strict();
         }
-        // Map metadata policy to PreserveConfig
-        let mut preserve = crate::decode::PreserveConfig::all();
-        if let Some(false) = pol.allow_icc {
-            preserve = preserve.icc(crate::decode::IccPreserve::None);
-        }
-        if let Some(false) = pol.allow_exif {
-            preserve = preserve.exif(false);
-        }
-        if let Some(false) = pol.allow_xmp {
-            preserve = preserve.xmp(false);
-        }
-        cfg = cfg.preserve(preserve);
     }
 
     cfg
@@ -1235,7 +1265,6 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 self.orientation,
                 self.policy.as_ref(),
             );
-            cfg = cfg.preserve_all_metadata();
 
             if wants_f32 {
                 cfg = cfg.output_target(OutputTarget::LinearF32);
@@ -1244,7 +1273,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             // Single header parse for all pre-decode checks: dimension limits,
             // progressive policy, CMYK detection, and output format hinting.
             // Previously three separate read_info() calls.
-            let header = cfg.read_info(&data)?;
+            let header = read_job_info(&cfg, &data, self.policy.as_ref())?;
 
             // Dimension limits. `check_dimensions` yields a `LimitExceeded`
             // (foreign — no envelope bridge), so map through the native `Error`.
@@ -1412,7 +1441,9 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 // The gain map is surfaced in the same orientation as the base
                 // buffer above (#151).
                 let base_transform = cfg.compute_effective_transform_from_data(&data);
-                if let Some(dgm) = decode_gain_map_components(extras, base_transform)? {
+                if let Some(dgm) =
+                    decode_gain_map_components(extras, base_transform, cfg.preserve.xmp)?
+                {
                     output = output.with_extras(dgm);
                 }
             }
@@ -1478,7 +1509,6 @@ impl JpegDecoder<'_> {
             self.orientation,
             self.policy.as_ref(),
         );
-        cfg = cfg.preserve_all_metadata();
         // The transform the requested decode would bake (EXIF when
         // auto-orienting, composed with any user decode_transform). The
         // reconstruction itself happens in stored space — upright base +
@@ -1492,7 +1522,7 @@ impl JpegDecoder<'_> {
         // apply_gainmap consumes RGBA8 SDR input.
         cfg = cfg.output_format(crate::types::PixelFormat::Rgba);
 
-        let header = cfg.read_info(&self.data)?;
+        let header = read_job_info(&cfg, &self.data, self.policy.as_ref())?;
         if limits.max_width.is_some() || limits.max_height.is_some() {
             limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
         }
@@ -1508,9 +1538,10 @@ impl JpegDecoder<'_> {
         let extras = result.take_extras().ok_or_else(|| {
             Error::icc_error("Ultra HDR reconstruction: decoder produced no extras".into())
         })?;
-        let (metadata, _) = extras.ultrahdr_metadata().ok_or_else(|| {
-            Error::unsupported_feature("ReconstructHdr requested but the XMP has no gain map")
-        })??;
+        let (metadata, _) = crate::ultrahdr::metadata_with_xmp(&extras, cfg.preserve.xmp)
+            .ok_or_else(|| {
+                Error::unsupported_feature("ReconstructHdr requested but the XMP has no gain map")
+            })??;
         let gainmap = extras.decode_gainmap().ok_or_else(|| {
             Error::unsupported_feature("ReconstructHdr requested but the MPF has no gain-map image")
         })??;
@@ -1667,10 +1698,11 @@ fn orient_gain_map(
 fn decode_gain_map_components(
     extras: &crate::decode::DecodedExtras,
     base_transform: crate::lossless::LosslessTransform,
+    allow_xmp: bool,
 ) -> Result<Option<zencodec::decode::DecodedGainMap>, Error> {
     use crate::ultrahdr::UltraHdrExtras;
 
-    let Some(metadata) = extras.ultrahdr_metadata() else {
+    let Some(metadata) = crate::ultrahdr::metadata_with_xmp(extras, allow_xmp) else {
         return Ok(None);
     };
     let (metadata, _) = metadata?;

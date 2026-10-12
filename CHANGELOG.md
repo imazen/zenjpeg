@@ -72,6 +72,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Honor decode EXIF/ICC/XMP extraction flags across probe, buffered decode, streaming metadata, attached native extras and inventory. Remove the adapter's unconditional preserve-all override; denied XMP is also excluded from gain-map parameter fallback. No public signatures change (follow-up to `d2a417df`).
+
 - Pixel auto-orientation and inventory select the first reported EXIF packet, including post-scan EXIF; fill bytes cannot redirect lookup into another segment's payload. Streaming metadata uses that same packet and reports transformed dimensions. First-EXIF-without-orientation no longer falls through to a later packet. Published signatures are unchanged; these are accepted-input/output corrections (follow-up to `ce321b8b`).
 
 - Accept standalone TEM markers after the frame header; inventory leaves following bytes separate. Components decoding treats ordinary XMP without gain-map properties as absent gain-map metadata, preserving base pixels instead of failing. Signatures are unchanged (follow-up to `b473e0f9`).

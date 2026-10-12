@@ -57,12 +57,7 @@ impl UltraHdrExtras for DecodedExtras {
     }
 
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
-        let iso_error = match self.gainmap().and_then(iso21496_from_gainmap_jpeg) {
-            Some(Ok(metadata)) => return Some(Ok((metadata, None))),
-            Some(Err(error)) => Some(error),
-            None => None,
-        };
-        xmp_metadata(self).or_else(|| iso_error.map(Err))
+        metadata_with_xmp(self, true)
     }
 
     fn decode_gainmap(&self) -> Option<Result<GainMap>> {
@@ -77,6 +72,24 @@ impl UltraHdrExtras for DecodedExtras {
             .map(|(m, _)| m.is_single_channel());
         Some(decode_gainmap_jpeg(gainmap_jpeg, single_channel))
     }
+}
+
+/// Resolve gain-map metadata without consulting XMP when extraction is denied.
+pub(crate) fn metadata_with_xmp(
+    extras: &DecodedExtras,
+    allow_xmp: bool,
+) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
+    let iso_error = match extras.gainmap().and_then(iso21496_from_gainmap_jpeg) {
+        Some(Ok(metadata)) => return Some(Ok((metadata, None))),
+        Some(Err(error)) => Some(error),
+        None => None,
+    };
+    if allow_xmp {
+        xmp_metadata(extras)
+    } else {
+        None
+    }
+    .or_else(|| iso_error.map(Err))
 }
 
 fn xmp_metadata(extras: &DecodedExtras) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
@@ -483,6 +496,24 @@ mod tests {
             r#"<x:xmpmeta><rdf:RDF><rdf:Description dc:creator="Test"/></rdf:RDF></x:xmpmeta>"#,
         );
         assert!(!extras.is_ultrahdr());
+    }
+
+    #[test]
+    fn denied_xmp_is_not_used_for_gainmap_parameters() {
+        let xmp = crate::container::xmp::generate_xmp(&metadata(2.0, 3.0), 12);
+        let extras = make_test_extras_with_xmp(&xmp);
+        assert!(metadata_with_xmp(&extras, true).unwrap().is_ok());
+        assert!(metadata_with_xmp(&extras, false).is_none());
+        let secondary = {
+            let mut jpeg = vec![0xff, 0xd8];
+            jpeg.extend(crate::container::xmp::create_xmp_app1_marker(&xmp));
+            jpeg.extend([0xff, 0xd9]);
+            jpeg
+        };
+        let mut extras = DecodedExtras::new();
+        extras.add_secondary_image(1, crate::decode::MpfImageType::Undefined, secondary);
+        assert!(metadata_with_xmp(&extras, true).unwrap().is_ok());
+        assert!(metadata_with_xmp(&extras, false).is_none());
     }
 
     #[test]

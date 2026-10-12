@@ -11,7 +11,7 @@
 //! Dispositions describe two consumers:
 //!
 //! - `Decode::decode`, which parses the whole stream with
-//!   `PreserveConfig::all()` and reports ICC, EXIF, XMP and JFIF density
+//!   the job's metadata preservation policy and reports allowed ICC, EXIF, XMP and JFIF density
 //!   through `ImageInfo` (codec/info.rs `populate_info_from_jpeg_extras`);
 //! - `DecodeJob::probe`, which stops at the first frame header
 //!   (`DecodeConfig::read_info`) and reports the metadata it saw before it.
@@ -92,6 +92,10 @@ use crate::decode::{
 /// What the decode job is configured to do, where it changes a disposition.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Options {
+    pub(crate) allow_exif: bool,
+    pub(crate) allow_icc: bool,
+    pub(crate) allow_xmp: bool,
+
     /// The job applies EXIF orientation to the pixels (`OrientationHint`
     /// `Correct*`), so `find_exif_orientation` reads an EXIF segment.
     pub(crate) auto_orient: bool,
@@ -112,6 +116,17 @@ pub(crate) struct Options {
     /// against the frame header.
     pub(crate) max_width: Option<u32>,
     pub(crate) max_height: Option<u32>,
+}
+
+impl Options {
+    fn allows_metadata(self, ty: SegmentType) -> bool {
+        match ty {
+            SegmentType::Exif => self.allow_exif,
+            SegmentType::Icc => self.allow_icc,
+            SegmentType::Xmp | SegmentType::XmpExtended => self.allow_xmp,
+            _ => true,
+        }
+    }
 }
 
 /// The job's `GainMapRender`, as far as it changes what the decode reads.
@@ -2589,6 +2604,7 @@ impl Walk<'_> {
         // reads chunks up to the first SOS, when no chunk precedes the frame
         // header (decode/parser/mod.rs `info`).
         if probe_ok
+            && self.opts.allow_icc
             && !st
                 .apps
                 .iter()
@@ -2828,12 +2844,16 @@ impl Walk<'_> {
     fn resolve_view(&self, st: &Stream, sel: &[usize], decided: &mut [Decided]) {
         let data = self.data;
         let apps = &st.apps;
-        let of_type = |t: SegmentType| sel.iter().copied().filter(move |&i| apps[i].ty == t);
+        let of_type = |t: SegmentType| {
+            sel.iter()
+                .copied()
+                .filter(move |&i| apps[i].ty == t && self.opts.allows_metadata(t))
+        };
         let extras_of = |types: &[SegmentType]| {
             let mut ex = DecodedExtras::new();
             for &i in sel {
                 let a = &apps[i];
-                if types.contains(&a.ty) {
+                if types.contains(&a.ty) && self.opts.allows_metadata(a.ty) {
                     ex.add_segment(a.marker, data[a.payload.clone()].to_vec(), a.ty);
                 }
             }
@@ -2944,6 +2964,12 @@ impl Walk<'_> {
 
     /// The disposition of a segment no consumer reports.
     fn default_disposition(&self, a: &App, decode_ok: bool) -> (Disposition, Option<String>) {
+        if !self.opts.allows_metadata(a.ty) {
+            return (
+                Disposition::Skipped,
+                Some("metadata extraction denied by job policy".into()),
+            );
+        }
         let body = &self.data[a.payload.clone()];
         let not_reached = || String::from("not reported: the decode fails");
         let (d, why): (Disposition, String) = match a.ty {
@@ -3089,7 +3115,6 @@ impl Walk<'_> {
     /// `decode_gainmap()` outcome approximated by [`Self::stream_decodes`].
     #[cfg(feature = "ultrahdr")]
     fn gain_map_use(&self, st: &Stream, images: &[MpfImage]) -> Result<GainMap, Failed> {
-        use crate::ultrahdr::UltraHdrExtras;
         let required = match self.opts.render {
             Render::Components => false,
             Render::Reconstruct { hdrgm: true } => true,
@@ -3098,7 +3123,7 @@ impl Walk<'_> {
         let data = self.data;
         let mut ex = DecodedExtras::new();
         for a in &st.apps {
-            if matches!(a.ty, SegmentType::Xmp | SegmentType::XmpExtended) {
+            if self.opts.allow_xmp && matches!(a.ty, SegmentType::Xmp | SegmentType::XmpExtended) {
                 ex.add_segment(a.marker, data[a.payload.clone()].to_vec(), a.ty);
             }
         }
@@ -3108,42 +3133,44 @@ impl Walk<'_> {
         if let Some(m) = candidate {
             ex.add_secondary_image(m.idx, m.ty, data[m.range.clone()].to_vec());
         }
-        Ok(match ex.ultrahdr_metadata() {
-            None if required => {
-                GainMap::Fails("ReconstructHdr: ultrahdr_metadata() finds no gain-map parameters")
-            }
-            None => GainMap::None,
-            Some(Err(_)) => GainMap::Fails(
-                "ultrahdr_metadata() returns an error (no hdrgm parameters in the XMP it reads)",
-            ),
-            Some(Ok(_)) => match candidate {
+        Ok(
+            match crate::ultrahdr::metadata_with_xmp(&ex, self.opts.allow_xmp) {
                 None if required => GainMap::Fails(
-                    "ReconstructHdr: the MPF index names no extracted gain-map image",
+                    "ReconstructHdr: ultrahdr_metadata() finds no gain-map parameters",
                 ),
                 None => GainMap::None,
-                Some(m) if !self.stream_decodes(m.range.clone())? => {
-                    GainMap::Fails("the gain-map image fails to decode")
-                }
-                Some(m) => {
-                    let gm = &data[m.range.clone()];
-                    let iso = crate::container::iso21496_from_gainmap_jpeg(gm)
-                        .is_some_and(|result| result.is_ok());
-                    let parameters_at = if iso {
-                        crate::container::probe(gm, crate::container::Wants::ISO_GAINMAP)
-                            .iso_gainmap()
-                            .and_then(|r| (r.start as usize).checked_sub(ISO_21496_1.len() + 4))
-                    } else if crate::ultrahdr::primary_xmp_gain_map(&ex).is_none() {
-                        crate::ultrahdr::xmp_segment_range(gm).map(|r| r.start)
-                    } else {
-                        None
-                    };
-                    GainMap::Decoded {
-                        idx: m.idx,
-                        parameters_at: parameters_at.map(|at| m.range.start + at),
+                Some(Err(_)) => GainMap::Fails(
+                    "ultrahdr_metadata() returns an error (no hdrgm parameters in the XMP it reads)",
+                ),
+                Some(Ok(_)) => match candidate {
+                    None if required => GainMap::Fails(
+                        "ReconstructHdr: the MPF index names no extracted gain-map image",
+                    ),
+                    None => GainMap::None,
+                    Some(m) if !self.stream_decodes(m.range.clone())? => {
+                        GainMap::Fails("the gain-map image fails to decode")
                     }
-                }
+                    Some(m) => {
+                        let gm = &data[m.range.clone()];
+                        let iso = crate::container::iso21496_from_gainmap_jpeg(gm)
+                            .is_some_and(|result| result.is_ok());
+                        let parameters_at = if iso {
+                            crate::container::probe(gm, crate::container::Wants::ISO_GAINMAP)
+                                .iso_gainmap()
+                                .and_then(|r| (r.start as usize).checked_sub(ISO_21496_1.len() + 4))
+                        } else if crate::ultrahdr::primary_xmp_gain_map(&ex).is_none() {
+                            crate::ultrahdr::xmp_segment_range(gm).map(|r| r.start)
+                        } else {
+                            None
+                        };
+                        GainMap::Decoded {
+                            idx: m.idx,
+                            parameters_at: parameters_at.map(|at| m.range.start + at),
+                        }
+                    }
+                },
             },
-        })
+        )
     }
 
     #[cfg(not(feature = "ultrahdr"))]

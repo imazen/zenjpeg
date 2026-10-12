@@ -702,6 +702,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Resolved 2026-10-12: zencodec metadata denial was overwritten by preserve-all and bypassed by header probing. Adapter policy now reaches probe, decode, streaming info, native extras and inventory; XMP gain-map fallback follows it too. `just metadata-extraction-policy-check` covers all eight flag combinations.
+
 - Resolved 2026-10-12: orientation selected a different EXIF packet from metadata and could enter comment payloads after fill bytes. Native orientation and inventory now share selection; post-scan packets and streaming metadata agree. `just metadata-orientation-check` covers pixel and metadata parity.
 
 - Resolved 2026-10-12: Dynamic Depth ignored primary padding and returned shifted bytes; native MPF parsing retained unchecked 32-bit offsets despite the extended inspector's checked arithmetic. `just metadata-depth-bounds-check` covers exact depth/confidence bytes, oversized padding and i686 IFD/fallback offsets.

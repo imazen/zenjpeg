@@ -254,3 +254,19 @@ reporting and byte-identical streaming/buffered pixel regressions.
 
 The full inventory walker and structural inspector remain different consumers;
 this removes their duplicated orientation lookup, not all marker parsing.
+
+### Extraction policy
+
+The new eight-combination policy regression failed on the original probe's
+EXIF output with extraction disabled. A shared adapter helper now maps policy
+to preservation for headers and decoding; the unconditional preserve-all
+override is removed. Probe, buffered output, streaming metadata, native extras
+and inventory agree. Gain-map resolution can disable XMP fallback in both the
+primary and secondary packet while retaining ISO parameters.
+`just metadata-extraction-policy-check` passes those combinations, orientation
+and inventory regressions, gain-map policy tests and strict Clippy.
+
+These flags govern metadata extraction, not privacy rewriting of the original
+file or the opaque bytes of a preserved secondary JPEG. Required internal color
+and orientation interpretation remains a separate concern; see the shared API
+findings below before treating these flags as parser-isolation controls.

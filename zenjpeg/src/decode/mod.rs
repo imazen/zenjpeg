@@ -738,11 +738,20 @@ impl DecodeConfig {
             .xmp(true)
             .icc(IccPreserve::All);
 
+        self.read_info_preserving(data, &preserve)
+    }
+
+    /// Header metadata with an explicit extraction policy for codec adapters.
+    pub(crate) fn read_info_preserving(
+        &self,
+        data: &[u8],
+        preserve: &PreserveConfig,
+    ) -> Result<JpegInfo> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
             self.max_memory,
-            Some(&preserve),
+            Some(preserve),
             self.strictness,
             self.alloc_pref,
         )?;
@@ -756,7 +765,18 @@ impl DecodeConfig {
             ));
         }
 
-        Ok(parser.info())
+        let mut info = parser.info();
+        if !preserve.exif {
+            info.exif = None;
+        }
+        if !preserve.xmp {
+            info.xmp = None;
+        }
+        if preserve.icc == IccPreserve::None {
+            info.icc_profile = None;
+            info.has_icc_profile = false;
+        }
+        Ok(info)
     }
 
     /// Estimates peak memory usage for decoding an image of given dimensions.

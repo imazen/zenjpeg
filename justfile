@@ -458,3 +458,8 @@ metadata-orientation-check:
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_corpus
     cargo test -p zenjpeg --lib container::marker
+
+metadata-extraction-policy-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib metadata_policy_agrees
+    just metadata-admission-check
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
