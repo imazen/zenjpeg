@@ -270,3 +270,62 @@ These flags govern metadata extraction, not privacy rewriting of the original
 file or the opaque bytes of a preserved secondary JPEG. Required internal color
 and orientation interpretation remains a separate concern; see the shared API
 findings below before treating these flags as parser-isolation controls.
+
+### HDR adapter reconciliation (2026-10-13)
+
+The adapter's literal `hdrgm:` dispatch bypassed valid ISO-only and aliased-XMP
+metadata. Reconstruction now decides from decoded extras using the native
+ISO-first resolver. Ordinary images still return their base rendition. The
+native and adapter outputs match byte-for-byte for XMP, ISO, both, a namespace
+alias, and a Display P3 base at the same headroom. Mastering primaries follow
+the reconstructed descriptor. Run `just metadata-hdr-dispatch-check`.
+
+The existing `rgba_uhdr.jpg` corpus profile is Display P3 with sRGB transfer,
+but was absent from zenpixels' identification table. Its generator admits the
+profile with maximum u16 reference error 1 and all rendering intents; the fix
+is on zenpixels main at `8f7ee871`. JPEG pins that unpublished revision. This
+keeps color interpretation in the shared pixel crate and preserves the original
+inventory tests. Profiles requiring a CMS still return an explicit error.
+
+### API design findings from the codec integrations
+
+- **Presence, validity, and support are different results.** Ordinary XMP is
+  not an invalid gain map. Preserve zenmeta's absence/malformed distinction at
+  the codec boundary; `Option<Result<...>>` accessors must not erase it.
+- **Rendering must consume resolved metadata.** The ISO/prefix bug survived a
+  correct shared parser because adapter dispatch duplicated its decision. Keep
+  parsing and source selection together, and test adapter pixels against native
+  output for each metadata representation.
+- **Extraction and interpretation need distinct policies.** Denying returned
+  ICC or EXIF is different from ignoring color or orientation while rendering.
+  Current extraction flags filter probe/output/native extras. HDR refuses a
+  denied ICC it needs, rather than silently assigning sRGB. A future shared
+  policy should express these intents separately.
+- **Compatibility, strict validation, and rewrite capability differ.** An
+  embedded MPF image can be readable and bounded while unsafe to relocate.
+  Share parsing and bounds checks, but pass validation policy explicitly. Do
+  not make a lossless rewrite restriction a default decode rejection.
+- **Truncation policy currently changes more than truncation.** JPEG maps
+  `allow_truncated = false` to its full strictness mode. This also tightens
+  marker/layout admission. That coupling remains and deserves a shared-policy
+  review; this integration does not silently change its existing contract.
+- **Normalization is observable API behavior.** zencodec EXIF uses bare TIFF;
+  native JPEG extras retain the APP1 prefix. Signature-only semver checks do
+  not catch this. The changelog and boundary tests must accompany the API audit.
+- **Shared primitives do not yet mean one complete walker.** First-EXIF
+  selection and MPF admission are shared. Native recovery, structural inspection,
+  and inventory still have distinct walks; malformed DRI/DAC handling needs
+  continued differential coverage. Native MPF's i686 overflow demonstrated why
+  duplicated offset arithmetic is particularly costly.
+- **Inventory needs its own limits and availability contract.** The codec set
+  exposed mismatched input/part-limit expectations. Typed limits and feature-off
+  errors belong to zencodec; the optional scanner must not require pixel decode.
+- **Ownership boundaries work without exposing zenmeta types.** JPEG-owned
+  wrappers and private conversions preserve independent versions. Reuse parser
+  implementations and tests, not public implementation-crate types.
+
+One implementation cost remains: explicit HDR requests for an ordinary image
+can decode it once to resolve metadata and again for the requested base output.
+A future metadata-only resolved-component view can remove that work without
+reintroducing format-signaling heuristics; it must retain the same selection,
+bounds, and policy semantics. No claim of a fully unified scanner is made here.

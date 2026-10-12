@@ -1062,9 +1062,9 @@ checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 
 [[package]]
 name = "lz4_flex"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "magetypes"
@@ -2636,8 +2636,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
+source = "git+https://github.com/imazen/zenpixels?rev=8f7ee871900b54a8c9c53feafeb7664a92b116f5#8f7ee871900b54a8c9c53feafeb7664a92b116f5"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -2648,15 +2647,14 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf516a64a98f08fa2aa19e86f1389e49894f750441044d65369687cf88a1b8dd"
+source = "git+https://github.com/imazen/zenpixels?rev=8f7ee871900b54a8c9c53feafeb7664a92b116f5#8f7ee871900b54a8c9c53feafeb7664a92b116f5"
 dependencies = [
  "archmage 0.9.30",
  "bytemuck",
  "garb",
  "libm",
  "linear-srgb",
- "lz4_flex 0.13.1",
+ "lz4_flex 0.14.0",
  "magetypes",
  "once_cell",
  "paste",

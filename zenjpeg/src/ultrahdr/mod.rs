@@ -54,6 +54,8 @@
 //! ```
 
 mod decode;
+#[cfg(feature = "zencodec")]
+pub(crate) use decode::base_color;
 pub(crate) use decode::metadata_with_xmp;
 
 #[cfg(feature = "inventory")]

@@ -138,10 +138,8 @@ pub(crate) enum Render {
     /// `Components`: `decode_gain_map_components` (codec/decode.rs) runs
     /// after the base decode.
     Components,
-    /// `ReconstructHdr`. `hdrgm`: the XMP `read_info` returns contains
-    /// `hdrgm:`, which is what sends the decode down
-    /// `decode_reconstruct_hdr`; otherwise it decodes the base image only.
-    Reconstruct { hdrgm: bool },
+    /// Reconstruct from resolved ISO/XMP metadata; ordinary images use the base.
+    Reconstruct,
     /// The decode refuses the mode: `Components` or `ReconstructHdr`
     /// without the `ultrahdr` feature, or a mode it does not recognize.
     Refused,
@@ -3117,13 +3115,17 @@ impl Walk<'_> {
     fn gain_map_use(&self, st: &Stream, images: &[MpfImage]) -> Result<GainMap, Failed> {
         let required = match self.opts.render {
             Render::Components => false,
-            Render::Reconstruct { hdrgm: true } => true,
+            Render::Reconstruct => true,
             _ => return Ok(GainMap::None),
         };
+        use crate::ultrahdr::UltraHdrExtras;
         let data = self.data;
         let mut ex = DecodedExtras::new();
         for a in &st.apps {
-            if self.opts.allow_xmp && matches!(a.ty, SegmentType::Xmp | SegmentType::XmpExtended) {
+            if (self.opts.allow_xmp && matches!(a.ty, SegmentType::Xmp | SegmentType::XmpExtended))
+                || (self.opts.allow_icc && a.ty == SegmentType::Icc)
+                || (a.marker == 0xE2 && data[a.payload.clone()].starts_with(ISO_21496_1))
+            {
                 ex.add_segment(a.marker, data[a.payload.clone()].to_vec(), a.ty);
             }
         }
@@ -3135,13 +3137,28 @@ impl Walk<'_> {
         }
         Ok(
             match crate::ultrahdr::metadata_with_xmp(&ex, self.opts.allow_xmp) {
-                None if required => GainMap::Fails(
-                    "ReconstructHdr: ultrahdr_metadata() finds no gain-map parameters",
-                ),
+                None if required && !self.opts.allow_xmp && candidate.is_some() => {
+                    GainMap::Fails("gain-map reconstruction needs metadata denied by decode policy")
+                }
+                None if required && ex.is_ultrahdr() => {
+                    GainMap::Fails("no readable gain-map parameters")
+                }
                 None => GainMap::None,
                 Some(Err(_)) => GainMap::Fails(
                     "ultrahdr_metadata() returns an error (no hdrgm parameters in the XMP it reads)",
                 ),
+                Some(Ok(_))
+                    if required
+                        && !self.opts.allow_icc
+                        && st.apps.iter().any(|a| a.ty == SegmentType::Icc) =>
+                {
+                    GainMap::Fails("HDR reconstruction needs ICC metadata denied by decode policy")
+                }
+                Some(Ok(_))
+                    if required && crate::ultrahdr::base_color(ex.icc_profile()).is_err() =>
+                {
+                    GainMap::Fails("HDR reconstruction requires color-managed ICC conversion")
+                }
                 Some(Ok(_)) => match candidate {
                     None if required => GainMap::Fails(
                         "ReconstructHdr: the MPF index names no extracted gain-map image",

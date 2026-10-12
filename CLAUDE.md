@@ -702,6 +702,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Resolved 2026-10-13: zencodec HDR dispatch tested a literal `hdrgm:` prefix and silently returned SDR for ISO-only/aliased XMP files; reconstruction also mislabeled wide-gamut bases as sRGB. Native metadata resolution and base-color handling now drive the adapter. The corpus Display P3 profile needed a shared zenpixels identification entry (`8f7ee871`). `just metadata-hdr-dispatch-check` covers native pixel parity and the existing corpus inventory/orientation regressions.
+
 - Resolved 2026-10-12: zencodec metadata denial was overwritten by preserve-all and bypassed by header probing. Adapter policy now reaches probe, decode, streaming info, native extras and inventory; XMP gain-map fallback follows it too. `just metadata-extraction-policy-check` covers all eight flag combinations.
 
 - Resolved 2026-10-12: orientation selected a different EXIF packet from metadata and could enter comment payloads after fill bytes. Native orientation and inventory now share selection; post-scan packets and streaming metadata agree. `just metadata-orientation-check` covers pixel and metadata parity.

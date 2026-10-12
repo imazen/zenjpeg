@@ -1078,3 +1078,46 @@ fn convenience_hdr_readers_retain_display_p3_primaries() {
     .unwrap();
     assert_eq!(rows.gamut(), UhdrColorGamut::DisplayP3);
 }
+
+#[cfg(feature = "zencodec")]
+#[test]
+fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
+    use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+    use zenjpeg::ultrahdr::{HdrOutputFormat, decode_ultrahdr_hdr, encode_ultrahdr_luma};
+    let mut files: Vec<Vec<u8>> = gain_map_jpegs()
+        .1
+        .into_iter()
+        .map(|(_, jpeg)| jpeg)
+        .collect();
+    let mut aliased = files[0].clone();
+    for i in 0..aliased.len().saturating_sub(4) {
+        if &aliased[i..i + 5] == b"hdrgm" {
+            aliased[i..i + 5].copy_from_slice(b"other");
+        }
+    }
+    files.push(aliased);
+    files.push(encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::DisplayP3)).unwrap());
+    for (index, jpeg) in files.iter().enumerate() {
+        let expected = decode_ultrahdr_hdr(jpeg, 4.0, HdrOutputFormat::LinearFloat).unwrap();
+        let actual = zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                target_headroom: Some(4.0),
+            })
+            .decoder(std::borrow::Cow::Borrowed(jpeg), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!(
+            actual.pixels().descriptor(),
+            expected.descriptor(),
+            "file {index}"
+        );
+        assert_eq!(
+            actual.pixels().as_strided_bytes(),
+            expected.as_slice().as_strided_bytes(),
+            "file {index}"
+        );
+    }
+}

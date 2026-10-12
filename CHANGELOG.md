@@ -18,6 +18,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- HDR reconstruction resolves ISO/XMP metadata through the same native resolver
+  instead of testing a literal XML prefix. ISO-only and namespace-aliased files
+  reconstruct HDR; base primaries/transfer and mastering primaries are retained.
+  Denied ICC required by HDR reconstruction returns a policy error. The existing
+  corpus's Display P3 profile is recognized by an unpublished zenpixels fix
+  pinned at `8f7ee871`; no JPEG public signatures change.
 - Recover lossless MPF handling: transform secondary JPEGs with the primary,
   rebuild MPF offsets, update GContainer lengths by semantic through zenmeta,
   reject incomplete/ambiguous/nested secondary layouts, and preserve EXIF byte

@@ -543,18 +543,8 @@ impl JpegDecodeJob {
             zencodec::GainMapRender::BaseOnly => Render::Base,
             #[cfg(feature = "ultrahdr")]
             zencodec::GainMapRender::Components => Render::Components,
-            // `decode` takes the dedicated path only when the XMP
-            // `read_info` returns carries `hdrgm:`.
             #[cfg(feature = "ultrahdr")]
-            zencodec::GainMapRender::ReconstructHdr { .. } => Render::Reconstruct {
-                hdrgm: self
-                    .config
-                    .inner
-                    .read_info(data)
-                    .ok()
-                    .and_then(|i| i.xmp)
-                    .is_some_and(|x| x.contains("hdrgm:")),
-            },
+            zencodec::GainMapRender::ReconstructHdr { .. } => Render::Reconstruct,
             _ => {
                 let _ = data;
                 Render::Refused
@@ -1211,7 +1201,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             use zenpixels::ChannelType;
 
             // Ultra HDR rendition intent. ReconstructHdr takes a dedicated
-            // path when the file actually carries gain-map XMP; an image
+            // path when resolved metadata identifies a gain map; an image
             // without one decodes below as the (complete) base image.
             // Components decorates the normal decode at the end. Unknown
             // future modes are refused — never silently mis-rendered.
@@ -1220,17 +1210,8 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 zencodec::GainMapRender::ReconstructHdr { target_headroom } => {
                     #[cfg(feature = "ultrahdr")]
                     {
-                        let has_gain_map_xmp = self
-                            .config
-                            .inner
-                            .read_info(&self.data)
-                            .ok()
-                            .and_then(|i| i.xmp)
-                            .is_some_and(|x| x.contains("hdrgm:"));
-                        if has_gain_map_xmp {
-                            return self
-                                .decode_reconstruct_hdr(target_headroom)
-                                .map_err(Into::into);
+                        if let Some(output) = self.decode_reconstruct_hdr(target_headroom)? {
+                            return Ok(output);
                         }
                         // No gain map: the base image IS the image.
                     }
@@ -1490,7 +1471,10 @@ impl JpegDecoder<'_> {
     /// `content_light_level` and a mastering display built from the gain
     /// map's alternate-image capacity, so a downstream native-HDR encode is
     /// complete.
-    fn decode_reconstruct_hdr(self, target_headroom: Option<f32>) -> Result<DecodeOutput, Error> {
+    fn decode_reconstruct_hdr(
+        &self,
+        target_headroom: Option<f32>,
+    ) -> Result<Option<DecodeOutput>, Error> {
         use crate::ultrahdr::UltraHdrExtras;
         use ultrahdr_core::gainmap::{HdrOutputFormat, apply_gainmap};
 
@@ -1538,10 +1522,20 @@ impl JpegDecoder<'_> {
         let extras = result.take_extras().ok_or_else(|| {
             Error::icc_error("Ultra HDR reconstruction: decoder produced no extras".into())
         })?;
-        let (metadata, _) = crate::ultrahdr::metadata_with_xmp(&extras, cfg.preserve.xmp)
-            .ok_or_else(|| {
-                Error::unsupported_feature("ReconstructHdr requested but the XMP has no gain map")
-            })??;
+        let resolved = crate::ultrahdr::metadata_with_xmp(&extras, cfg.preserve.xmp);
+        if resolved.is_none() && !extras.is_ultrahdr() {
+            if !cfg.preserve.xmp && extras.gainmap().is_some() {
+                return Err(Error::policy_rejected(
+                    "gain-map reconstruction needs metadata denied by decode policy",
+                ));
+            }
+            return Ok(None);
+        }
+        let (metadata, _) = resolved.ok_or_else(|| {
+            Error::unsupported_feature(
+                "ReconstructHdr requested but no gain-map parameters are readable",
+            )
+        })??;
         let gainmap = extras.decode_gainmap().ok_or_else(|| {
             Error::unsupported_feature("ReconstructHdr requested but the MPF has no gain-map image")
         })??;
@@ -1549,7 +1543,22 @@ impl JpegDecoder<'_> {
         let pixels_u8 = result
             .into_pixels_u8()
             .ok_or_else(|| Error::internal("decoder produced no u8 pixels"))?;
-        let sdr = PixelBuffer::from_vec(pixels_u8, w, h, zenpixels::PixelDescriptor::RGBA8_SRGB)
+        // Denying extraction cannot turn tagged pixels into assumed sRGB.
+        if cfg.preserve.icc == crate::decode::IccPreserve::None
+            && crate::container::marker::MarkerIter::for_decoder_metadata(&self.data).any(|span| {
+                span.kind == crate::container::marker::MarkerKind::App(2)
+                    && span.payload.starts_with(b"ICC_PROFILE\0")
+            })
+        {
+            return Err(Error::policy_rejected(
+                "HDR reconstruction needs ICC metadata denied by decode policy",
+            ));
+        }
+        let (primaries, transfer) = crate::ultrahdr::base_color(extras.icc_profile())?;
+        let descriptor = zenpixels::PixelDescriptor::RGBA8_SRGB
+            .with_primaries(primaries)
+            .with_transfer(transfer);
+        let sdr = PixelBuffer::from_vec(pixels_u8, w, h, descriptor)
             .map_err(|_| Error::internal("pixel buffer creation failed"))?;
 
         // Output form: honor an f16 preference; default linear f32 RGBA.
@@ -1619,8 +1628,13 @@ impl JpegDecoder<'_> {
             ),
             None => zencodec::ContentLightLevel::new(capacity_nits as u16, 0),
         });
+        let (red, green, blue) = hdr
+            .descriptor()
+            .primaries
+            .chromaticity()
+            .ok_or_else(|| Error::unsupported_feature("unknown reconstructed HDR primaries"))?;
         info.source_color.mastering_display = Some(zencodec::MasteringDisplay::new(
-            [[0.640, 0.330], [0.300, 0.600], [0.150, 0.060]],
+            [[red.0, red.1], [green.0, green.1], [blue.0, blue.1]],
             [0.3127, 0.3290],
             capacity_nits,
             0.005,
@@ -1642,7 +1656,7 @@ impl JpegDecoder<'_> {
             )
         })?;
 
-        Ok(output)
+        Ok(Some(output))
     }
 }
 

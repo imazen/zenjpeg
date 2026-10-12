@@ -463,3 +463,9 @@ metadata-extraction-policy-check:
     cargo test -p zenjpeg --features inventory,ultrahdr --lib metadata_policy_agrees
     just metadata-admission-check
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+
+metadata-hdr-dispatch-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled codec_hdr_matches_native
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib -- -D warnings

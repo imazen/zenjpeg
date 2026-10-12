@@ -46,8 +46,10 @@ pub trait UltraHdrExtras {
 
 impl UltraHdrExtras for DecodedExtras {
     fn is_ultrahdr(&self) -> bool {
-        self.xmp()
-            .is_some_and(|xmp| xmp.contains("hdrgm:Version") || xmp.contains("hdrgm:GainMapMax"))
+        self.ultrahdr_metadata().is_some()
+            || self.xmp().is_some_and(|xmp| {
+                xmp.contains("hdrgm:Version") || xmp.contains("hdrgm:GainMapMax")
+            })
             || self
                 .segments_by_marker(0xE2)
                 .any(|seg| seg.data.starts_with(zencodec::ISO_21496_1_URN))
@@ -317,7 +319,7 @@ fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result
 
 // The decoder inverts XYB to sRGB. For other ICC profiles, resolve only
 // color spaces the shared resolver can represent without a CMS.
-fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, TransferFunction)> {
+pub(crate) fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, TransferFunction)> {
     let Some(icc) = icc else {
         return Ok((ColorPrimaries::Bt709, TransferFunction::Srgb));
     };
