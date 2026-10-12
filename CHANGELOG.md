@@ -55,6 +55,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- Reject oversized EXIF/APP/COM metadata with an encode error before writing output; raw EXIF is no longer silently truncated. Forward request-level `EncoderSegments` into the encoder instead of omitting them. Published signatures remain unchanged.
+
 - Reuse metadata commits `ea224f98`/`a76f7c41`: EXIF encoding accepts a TIFF
   structure or JPEG APP1 payload and writes the `Exif\0\0` prefix once.
   The zencodec boundary now exposes bare TIFF; native `DecodedExtras::exif`

@@ -702,6 +702,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Metadata carrier boundary regression (2026-10-12): encoding an oversized prepared comment panics; request-level prepared EXIF is omitted. Reproduced by `tests/metadata_limits.rs` before the validation/forwarding fix. The same fix rejects oversized raw EXIF instead of truncating it.
+
 - Metadata CI run `38253462548`: Windows ARM and i686 failed on unavailable
   datasets. Serial host prefetch and an explicit cross cache mount are added;
   local metadata tests pass, remote verification is pending.

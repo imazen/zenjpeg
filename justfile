@@ -358,3 +358,8 @@ metadata-rewrite-oracle:
         cmp "$output/before$suffix.ppm" "$output/after$suffix.ppm"
     done
     exiftool -a -validate -warning -error "$output/after.jpg"
+
+metadata-limits-check:
+    cargo test -p zenjpeg --test metadata_limits
+    cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
+    cargo clippy -p zenjpeg --lib --features metadata-rewrite -- -D warnings

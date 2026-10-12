@@ -46,6 +46,30 @@ pub struct BytesEncoder {
     zq_pixel_buffer: Option<alloc::vec::Vec<u8>>,
 }
 
+// Validate before allocating the pixel encoder or writing any output.
+fn validate_metadata(config: &EncoderConfig, exif: Option<&super::exif::Exif>) -> Result<()> {
+    if let Some(segments) = &config.segments {
+        for segment in segments.segments() {
+            if segment.data.len() > u16::MAX as usize - 2 {
+                return Err(Error::invalid_config(
+                    "metadata exceeds a JPEG segment carrier".into(),
+                ));
+            }
+        }
+    }
+    let exif_len = match exif {
+        Some(super::exif::Exif::Raw(bytes)) => super::exif::strip_app1_exif_header(bytes).len(),
+        Some(fields) => fields.to_bytes().map_or(0, |bytes| bytes.len()),
+        None => 0,
+    };
+    if exif_len > MAX_EXIF_BYTES {
+        return Err(Error::invalid_config(
+            "EXIF exceeds the JPEG APP1 carrier".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl BytesEncoder {
     /// Access inner streaming encoder (for fused parallel encoder).
     #[cfg(feature = "parallel")]
@@ -62,6 +86,7 @@ impl BytesEncoder {
         exif_data: Option<super::exif::Exif>,
         xmp_data: Option<alloc::vec::Vec<u8>>,
     ) -> Result<Self> {
+        validate_metadata(&config, exif_data.as_ref())?;
         // Validate dimensions
         if width == 0 || height == 0 {
             return Err(Error::invalid_dimensions(
@@ -511,7 +536,7 @@ impl BytesEncoder {
         if let Some(ref exif) = self.exif_data
             && let Some(exif_bytes) = exif.to_bytes()
         {
-            inject_exif_inplace(output, &exif_bytes);
+            inject_exif_inplace(output, &exif_bytes)?;
         }
 
         if let Some(ref xmp_data) = self.xmp_data {
@@ -621,7 +646,7 @@ impl BytesEncoder {
             if let Some(ref exif) = self.exif_data
                 && let Some(exif_bytes) = exif.to_bytes()
             {
-                inject_exif_inplace(&mut bytes, &exif_bytes);
+                inject_exif_inplace(&mut bytes, &exif_bytes)?;
             }
             if let Some(ref xmp_data) = self.xmp_data {
                 inject_xmp_inplace(&mut bytes, xmp_data);
@@ -755,41 +780,6 @@ const XMP_NAMESPACE: &[u8; 29] = b"http://ns.adobe.com/xap/1.0/\0";
 #[allow(dead_code)] // Used by inject_xmp (consuming variant, not currently called)
 const MAX_XMP_BYTES: usize = 65504;
 
-/// Inject EXIF data into a JPEG as APP1 marker, right after SOI.
-#[allow(dead_code)] // Consuming variant; _inplace version is used instead
-fn inject_exif(jpeg: Vec<u8>, exif_data: &[u8]) -> Vec<u8> {
-    if exif_data.is_empty() {
-        return jpeg;
-    }
-
-    // Truncate if too large
-    let exif_len = exif_data.len().min(MAX_EXIF_BYTES);
-
-    // Build EXIF APP1 marker
-    let mut marker = Vec::with_capacity(4 + 6 + exif_len);
-    marker.push(0xFF);
-    marker.push(0xE1); // APP1
-
-    // Length: 2 (length field) + 6 (signature) + data
-    let segment_length = 2 + 6 + exif_len;
-    marker.push((segment_length >> 8) as u8);
-    marker.push(segment_length as u8);
-
-    // EXIF signature
-    marker.extend_from_slice(EXIF_SIGNATURE);
-
-    // EXIF data
-    marker.extend_from_slice(&exif_data[..exif_len]);
-
-    // Insert after SOI (2 bytes)
-    let mut result = Vec::with_capacity(jpeg.len() + marker.len());
-    result.extend_from_slice(&jpeg[..2]); // SOI
-    result.extend_from_slice(&marker);
-    result.extend_from_slice(&jpeg[2..]);
-
-    result
-}
-
 /// Inject XMP data into a JPEG as APP1 marker.
 ///
 /// Inserts after SOI and any existing APP1 (EXIF) markers.
@@ -849,13 +839,17 @@ fn inject_icc_profile_inplace(jpeg: &mut Vec<u8>, icc_data: &[u8]) {
 }
 
 /// Inject EXIF data into a JPEG in-place using splice.
-fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) {
+fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) -> Result<()> {
     if exif_data.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // Truncate if too large
-    let exif_len = exif_data.len().min(MAX_EXIF_BYTES);
+    let exif_len = exif_data.len();
+    if exif_len > MAX_EXIF_BYTES {
+        return Err(Error::invalid_config(
+            "EXIF exceeds the JPEG APP1 carrier".into(),
+        ));
+    }
 
     // Build EXIF APP1 marker
     let mut marker = Vec::with_capacity(4 + 6 + exif_len);
@@ -875,6 +869,7 @@ fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) {
 
     // Insert after SOI (2 bytes) using splice
     jpeg.splice(2..2, marker);
+    Ok(())
 }
 
 /// Inject XMP data into a JPEG in-place using splice.
@@ -1125,6 +1120,7 @@ impl YCbCrPlanarEncoder {
         exif_data: Option<super::exif::Exif>,
         xmp_data: Option<alloc::vec::Vec<u8>>,
     ) -> Result<Self> {
+        validate_metadata(&config, exif_data.as_ref())?;
         // Validate dimensions
         if width == 0 || height == 0 {
             return Err(Error::invalid_dimensions(
@@ -1534,7 +1530,7 @@ impl YCbCrPlanarEncoder {
         if let Some(ref exif) = self.exif_data
             && let Some(exif_bytes) = exif.to_bytes()
         {
-            inject_exif_inplace(output, &exif_bytes);
+            inject_exif_inplace(output, &exif_bytes)?;
         }
 
         if let Some(ref xmp_data) = self.xmp_data {
