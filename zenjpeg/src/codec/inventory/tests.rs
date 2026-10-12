@@ -512,8 +512,13 @@ fn everything_fixture_dispositions_match_the_decoder() {
     // The first EXIF segment, not the second.
     assert_eq!(
         info.embedded_metadata.exif.as_deref(),
-        Some(&payload("exif")[..])
+        Some(&payload("exif")[6..])
     );
+    // Native extras retain the APP1 identifier; zencodec exposes bare TIFF.
+    let native = crate::decode::Decoder::new()
+        .decode(&f.bytes, enough::Unstoppable)
+        .unwrap();
+    assert_eq!(native.extras().unwrap().exif(), Some(&payload("exif")[..]));
     // Both ICC chunks, reassembled.
     assert_eq!(
         info.source_color.icc_profile.as_deref(),
