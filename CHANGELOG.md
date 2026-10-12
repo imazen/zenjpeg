@@ -40,6 +40,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- Gate inventory-only Ultra HDR helper imports on `inventory`, so ordinary
+  Ultra HDR/zencodec builds also pass warnings-as-errors (`db07f503` follow-up).
 - MPF offset arithmetic and entry-list allocation failures from PR 225
   (`897af486`) now return errors, including overflowing offsets on 32-bit hosts.
 - The workspace no longer enables archmage's `testable_dispatch` for every

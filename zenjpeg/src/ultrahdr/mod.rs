@@ -54,7 +54,7 @@
 //! ```
 
 mod decode;
-#[cfg(feature = "zencodec")]
+#[cfg(feature = "inventory")]
 pub(crate) use decode::{extract_xmp_from_jpeg, primary_xmp_gain_map, xmp_segment_range};
 mod encode;
 

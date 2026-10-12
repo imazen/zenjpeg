@@ -310,3 +310,11 @@ metadata-hdr-check:
     cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
     cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
     just api-doc
+
+metadata-hdr-feature-matrix:
+    cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+    cargo clippy -p zenjpeg --lib --tests --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils" -- -D warnings
+
+metadata-ci-lib:
+    cargo test -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,__test-utils"
+    cargo test -p zenjpeg --lib --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils"
