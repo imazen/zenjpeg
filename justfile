@@ -363,3 +363,7 @@ metadata-limits-check:
     cargo test -p zenjpeg --test metadata_limits
     cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
     cargo clippy -p zenjpeg --lib --features metadata-rewrite -- -D warnings
+
+metadata-policy-check:
+    cargo test -p zenjpeg --features ultrahdr --test bundled ultrahdr_roundtrip
+    cargo clippy -p zenjpeg --features ultrahdr --lib -- -D warnings

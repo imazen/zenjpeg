@@ -94,9 +94,9 @@ relative to 0.8.4 and is recorded in the changelog, even though signatures are
 unchanged. `just metadata-exif-check` passed, including existing independent
 img-parts/kamadak readers, new round trips and strict clippy.
 
-ISO-first gain-map parsing, ISO-only output, SDR-base metadata/color preservation
-and the interrupted GContainer parser changes are not yet integrated. Oversized
-EXIF handling and HDR reconstruction color interpretation still require review.
+ISO-first gain-map parsing, ISO-only output and SDR-base metadata/color
+preservation are integrated below. The interrupted GContainer/lossless stack
+and HDR reconstruction color interpretation still require review.
 
 ## Reconciled ISO-first metadata stack
 
@@ -113,8 +113,8 @@ and clippy checks. Two existing ignored external HDR tests remain ignored;
 this run is not independent HDR reconstruction validation. Existing independent
 framing/metadata oracles and final cross-platform checks remain release gates.
 
-Remaining reconciliation: interrupted GContainer/lossless work, oversized EXIF
-handling, HDR reconstruction's base-gamut assumption, and mismatch reporting.
+Remaining reconciliation: interrupted GContainer/lossless work, HDR
+reconstruction's base-gamut assumption, and mismatch reporting.
 No claim is made that all JPEG metadata work is complete.
 
 ## Codec-owned metadata rewriting
@@ -135,3 +135,18 @@ The planner supports one primary plus one MPF gain map, and explicitly refuses
 other MPF layouts. It is stricter than a display decoder: malformed authoritative
 ISO or conflicting ISO/XMP parameters prevent rewriting, while a decoder can
 fall back to XMP. Extended-XMP editing still requires reassembly support.
+
+## Metadata carrier bounds and explicit gain-map policy
+
+The carrier boundary regression reproduced a panic for an oversized prepared
+comment and omission of request-level prepared EXIF. `716b0e13` forwards
+`EncodeRequest::segments` and validates APP/COM sizes before encoder construction.
+Raw EXIF larger than 65,527 TIFF bytes now returns an error instead of being
+truncated. The new boundary tests use img-parts to compare retained bytes;
+the existing 26 img-parts/kamadak metadata tests and strict clippy pass.
+
+The unreleased `encode_with_gainmap_metadata` entry point from `ab83a512` is
+restored with zenmeta filtering and the common format-aware assembler. Its
+source metadata is authoritative; private segments from the encoder config
+are not copied around that policy. ISO-only output stays ISO-only. Public
+parameters use zencodec types and existing codec types, never zenmeta types.

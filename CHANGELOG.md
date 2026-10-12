@@ -96,6 +96,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   `encode_with_target`'s trial cache is now keyed by `f32` bits.
 
 ### Added
+- Restore the unreleased `encode_with_gainmap_metadata` policy entry point from the metadata integration stack, delegating filtering to zenmeta and assembly to the shared format-aware encoder.
+
 
 - Default-off `inventory` feature reusing PR 221 (`2c963974`) and the
   zencodec-owned inventory contract. Disabled calls return typed unsupported;

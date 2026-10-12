@@ -992,3 +992,61 @@ fn inventory_marks_the_selected_iso_gain_map_record() {
         }
     }
 }
+
+#[test]
+fn explicit_gain_map_policy_preserves_display_and_removes_private_metadata() {
+    use zenjpeg::ultrahdr::{GainMapEncodingFormat, compute_gainmap, encode_with_gainmap_metadata};
+    let hdr = create_test_hdr_in(UhdrColorGamut::DisplayP3);
+    let sdr = create_test_sdr_in(UhdrColorGamut::DisplayP3);
+    let (gainmap, metadata) =
+        compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+    let source = zencodec::Metadata::none()
+        .with_orientation(zencodec::Orientation::Rotate90)
+        .with_artist("PRIVATE-ARTIST")
+        .with_cicp(zencodec::Cicp::DISPLAY_P3);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .with_segments(zenjpeg::encode::EncoderSegments::new().add_comment("PRIVATE-COMMENT"));
+    for format in [GainMapEncodingFormat::Iso21496, GainMapEncodingFormat::Both] {
+        let jpeg = encode_with_gainmap_metadata(
+            &sdr,
+            &gainmap,
+            &metadata,
+            &config,
+            75.0,
+            format,
+            &source,
+            &zencodec::MetadataPolicy::ColorAndRotation,
+            Unstoppable,
+        )
+        .unwrap();
+        assert!(!jpeg.windows(8).any(|w| w == b"PRIVATE-"));
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let extras = decoded.extras().unwrap();
+        assert!(extras.icc_profile().is_some());
+        assert_eq!(
+            zencodec::exif::Exif::parse(extras.exif().unwrap())
+                .unwrap()
+                .orientation(),
+            Some(zencodec::Orientation::Rotate90)
+        );
+        assert!(extras.ultrahdr_metadata().unwrap().is_ok());
+        if matches!(format, GainMapEncodingFormat::Iso21496) {
+            assert!(extras.xmp().is_none());
+        }
+    }
+    let source = source.with_xmp(b"<private/>".as_slice());
+    assert!(
+        encode_with_gainmap_metadata(
+            &sdr,
+            &gainmap,
+            &metadata,
+            &config,
+            75.0,
+            GainMapEncodingFormat::Both,
+            &source,
+            &zencodec::MetadataPolicy::PreserveExact,
+            Unstoppable,
+        )
+        .is_err()
+    );
+}
