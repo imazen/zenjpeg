@@ -367,3 +367,6 @@ metadata-limits-check:
 metadata-policy-check:
     cargo test -p zenjpeg --features ultrahdr --test bundled ultrahdr_roundtrip
     cargo clippy -p zenjpeg --features ultrahdr --lib -- -D warnings
+
+metadata-dependency-check:
+    cargo check -p zenjpeg --features ultrahdr --lib
