@@ -3,7 +3,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, review/zenmeta-integration]
   pull_request:
     branches: [main]
 
@@ -20,6 +20,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CI: true
+  CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
 
 jobs:
   test:
@@ -72,6 +73,9 @@ jobs:
           rm -f Cargo.lock
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Prefetch metadata corpora before parallel tests
+        run: cargo run -p zenjpeg --example metadata_corpus_prefetch
 
       - name: Test (defaults)
         run: cargo test -p zenjpeg --release --lib --tests
@@ -133,23 +137,14 @@ jobs:
         with:
           key: cross-i686
 
+      - name: Prefetch metadata corpora before parallel tests
+        run: cargo run -p zenjpeg --example metadata_corpus_prefetch
+
       - name: Test (i686)
-        # Skip two tests that require sparse-cloning the full image-rs/image
-        # repo. codec-corpus bundles its own test corpora (so zune/fuzz tests
-        # work) but image-rs/tests/images is fetched from the separate
-        # image-rs/image repo, which the cross container's constrained network
-        # times out on. Unrelated to 32-bit correctness.
-        run: |
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests -- \
-            --skip codec_corpus_conformance::test_image_rs_general \
-            --skip codec_corpus_conformance::test_image_rs_progressive
-        env:
-          CODEC_CORPUS_CACHE: /tmp/codec-corpus
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
       - name: Metadata and inventory (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata --test inventory_feature --test extended_metadata --test fuzz_regression
-        env:
-          CODEC_CORPUS_CACHE: target/corpus-cache
 
   wasm32:
     name: Build (wasm32-wasip1)

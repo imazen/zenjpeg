@@ -702,6 +702,10 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Metadata CI run `38253462548`: Windows ARM and i686 failed on unavailable
+  datasets. Serial host prefetch and an explicit cross cache mount are added;
+  local metadata tests pass, remote verification is pending.
+
 - Fixed during metadata integration: the Ultra HDR inventory scratch walk omitted
   cancellation state and reduced traversal failures to a decode boolean. It now
   propagates the original typed failure; `gain_map_preflight_preserves_each_cancellation_reason`

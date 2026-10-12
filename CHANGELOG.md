@@ -18,6 +18,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- CI now fetches metadata corpora serially before tests and mounts the host
+  cache into cross, avoiding uncached corpus failures on Windows ARM and i686.
 - Gain-map XMP parsing/generation and GContainer XML now delegate privately to
   zenmeta, retaining JPEG-owned public types. The strict PR210 validation
   (`74e727f`) is owner-approved: malformed numeric values, ambiguous properties

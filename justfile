@@ -318,3 +318,11 @@ metadata-hdr-feature-matrix:
 metadata-ci-lib:
     cargo test -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,__test-utils"
     cargo test -p zenjpeg --lib --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils"
+
+# Populate corpus dependencies once before parallel metadata tests.
+metadata-prefetch:
+    cargo run -p zenjpeg --example metadata_corpus_prefetch
+
+metadata-prefetch-check:
+    just metadata-prefetch
+    cargo test -p zenjpeg --features inventory,extended-metadata --test extended_metadata --test inventory_feature --test fuzz_regression

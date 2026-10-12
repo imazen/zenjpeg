@@ -74,3 +74,12 @@ The oracle version is deliberate: use ExifTool tag `12.40`, revision
 `537cba56936c21b729aeed404b117e31c3c6fed0`, on PATH for `just metadata-oracle`.
 Changing its pinned expectations requires re-settling the differences. Approved
 fixtures are unchanged, with [hashes and source revisions](../fuzz/METADATA_FIXTURES.md).
+
+## CI corpus provisioning
+
+CI run `38253462548` exposed missing-corpus failures on Windows ARM and i686.
+`metadata_corpus_prefetch` fetches all seven metadata datasets serially before
+parallel tests. `CODEC_CORPUS_CACHE` is an explicit absolute path, mounted into
+cross through `Cross.toml`, so cross does not need to fetch image-rs itself.
+The previous two image-rs skips are removed. `just metadata-prefetch-check`
+passed locally; Windows ARM and container execution still require remote CI.
