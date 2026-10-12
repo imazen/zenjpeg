@@ -373,3 +373,9 @@ metadata-dependency-check:
 
 metadata-gamut-check:
     cargo test -p zenjpeg --features ultrahdr --test bundled convenience_hdr_readers_retain_display_p3_primaries
+
+metadata-icc-parity-check:
+    cargo test -p zenjpeg --features extended-metadata --test metadata_limits
+    cargo test -p zenjpeg --features extended-metadata --test extended_metadata icc_
+    cargo clippy -p zenjpeg --features extended-metadata --lib --test metadata_limits -- -D warnings
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings

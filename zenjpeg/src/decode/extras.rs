@@ -787,48 +787,28 @@ impl DecodedExtras {
 
     /// Reassemble ICC profile from chunks.
     fn reassemble_icc(&self) -> Option<Vec<u8>> {
-        let icc_segments: Vec<_> = self.segments_by_type(SegmentType::Icc).collect();
-        if icc_segments.is_empty() {
-            return None;
-        }
-
-        // Parse chunk numbers and sort
-        // Format: "ICC_PROFILE\0" + chunk_num (1 byte) + total_chunks (1 byte) + data
         const ICC_SIG: &[u8] = b"ICC_PROFILE\0";
-        let mut chunks: Vec<(u8, &[u8])> = Vec::new();
-
-        for seg in icc_segments {
-            if seg.data.len() < ICC_SIG.len() + 2 {
-                continue;
-            }
-            if !seg.data.starts_with(ICC_SIG) {
-                continue;
-            }
-            let chunk_num = seg.data[ICC_SIG.len()];
-            let data = &seg.data[ICC_SIG.len() + 2..];
-            chunks.push((chunk_num, data));
-        }
-
-        if chunks.is_empty() {
+        let chunks = || self.segments_by_type(SegmentType::Icc);
+        // Reject an incomplete carrier; do not assemble the other chunks into
+        // a profile that silently omits bytes.
+        if chunks().any(|seg| !seg.data.starts_with(ICC_SIG) || seg.data.len() < ICC_SIG.len() + 2)
+        {
             return None;
         }
-
-        // Sort by chunk number and concatenate
-        chunks.sort_by_key(|(num, _)| *num);
-        let total_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
-
-        // Enforce maximum ICC profile size to prevent memory exhaustion
-        if total_size > crate::foundation::alloc::MAX_ICC_PROFILE_SIZE {
-            return None;
+        let profile = crate::container::chunks::icc_profile(
+            chunks().map(|seg| (seg.data[12], seg.data[13], &seg.data[14..])),
+            crate::foundation::alloc::MAX_ICC_PROFILE_SIZE,
+        )
+        .ok()??;
+        match profile {
+            alloc::borrow::Cow::Owned(profile) => Some(profile),
+            alloc::borrow::Cow::Borrowed(bytes) => {
+                let mut profile = Vec::new();
+                profile.try_reserve_exact(bytes.len()).ok()?;
+                profile.extend_from_slice(bytes);
+                Some(profile)
+            }
         }
-
-        let profile: Vec<u8> = chunks
-            .into_iter()
-            .flat_map(|(_, data)| data)
-            .copied()
-            .collect();
-
-        Some(profile)
     }
 
     /// Parse MPF directory from APP2 segment.

@@ -1564,3 +1564,13 @@ Use the shared zensim native targeting owner for the next full experiment.
 - Metadata integration found that converting an input limit through the native JPEG error
   retained its category but lost the shared `LimitExceeded` cause. Inventory now keeps
   that cause in its codec envelope; generic and dynamic dispatch assert actual/max.
+
+### ICC chunk parity (2026-10-12)
+
+Native `DecodedExtras::icc_profile` previously concatenated malformed ICC chunks
+that extended inspection rejected. Both now use `container/chunks.rs`; framing
+stays codec-owned and no inventory feature is required. `just metadata-icc-parity-check`
+checks native/inspection agreement and replays the existing ICC conformance cases.
+The native accessor retains its published Option signature and reports invalid
+chunk sets as None. Extended XMP's legacy concatenation remains separate and
+must not be silently replaced by a differently shaped logical packet.

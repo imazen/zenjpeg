@@ -57,6 +57,7 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- Native `DecodedExtras::icc_profile` and extended inspection share chunk validation. Native decoding now returns `None` for incomplete, duplicate, inconsistent, or empty ICC chunks instead of returning a partial profile; published signatures are unchanged.
 - Ultra HDR convenience readers and streaming reconstruction retain resolved base-image ICC primaries instead of hardcoding BT.709. Profiles requiring a CMS now return an unsupported error; existing signatures remain.
 - Reject oversized EXIF/APP/COM metadata with an encode error before writing output; raw EXIF is no longer silently truncated. Forward request-level `EncoderSegments` into the encoder instead of omitting them. Published signatures remain unchanged.
 

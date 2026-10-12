@@ -23,58 +23,30 @@ pub(super) fn icc_profile<'a>(
     items: &[Item<'a>],
     limits: &MetadataLimits,
 ) -> Result<Option<Cow<'a, [u8]>>, MetadataError> {
-    let mut chunks = items.iter().filter_map(|item| match item.kind {
-        ItemKind::IccProfile(chunk) => Some(chunk),
-        _ => None,
-    });
-    let Some(first) = chunks.next() else {
-        return Ok(None);
-    };
-    let count = first.count;
-    if count == 0 {
-        return Err(MetadataError::IccZeroChunkCount);
-    }
-    // Indexed by sequence number; slot 0 is unused.
-    let mut by_seq: [Option<&'a [u8]>; 256] = [None; 256];
-    let mut total = 0usize;
-    for chunk in core::iter::once(first).chain(chunks) {
-        if chunk.count != count {
-            return Err(MetadataError::IccChunkCountMismatch {
-                expected: count,
-                found: chunk.count,
-            });
+    crate::container::chunks::icc_profile(
+        items.iter().filter_map(|item| match item.kind {
+            ItemKind::IccProfile(chunk) => Some((chunk.sequence, chunk.count, chunk.data)),
+            _ => None,
+        }),
+        limits.max_reassembled_bytes,
+    )
+    .map_err(|error| {
+        use crate::container::chunks::Error;
+        match error {
+            Error::IccZeroChunkCount => MetadataError::IccZeroChunkCount,
+            Error::IccChunkCountMismatch { expected, found } => {
+                MetadataError::IccChunkCountMismatch { expected, found }
+            }
+            Error::IccSequenceOutOfRange { sequence, count } => {
+                MetadataError::IccSequenceOutOfRange { sequence, count }
+            }
+            Error::IccDuplicateChunk { sequence } => MetadataError::IccDuplicateChunk { sequence },
+            Error::IccMissingChunk { sequence } => MetadataError::IccMissingChunk { sequence },
+            Error::IccEmptyProfile => MetadataError::IccEmptyProfile,
+            Error::TooLarge { size, limit } => MetadataError::TooLarge { size, limit },
+            Error::OutOfMemory => MetadataError::OutOfMemory,
         }
-        if chunk.sequence == 0 || chunk.sequence > count {
-            return Err(MetadataError::IccSequenceOutOfRange {
-                sequence: chunk.sequence,
-                count,
-            });
-        }
-        let slot = &mut by_seq[usize::from(chunk.sequence)];
-        if slot.is_some() {
-            return Err(MetadataError::IccDuplicateChunk {
-                sequence: chunk.sequence,
-            });
-        }
-        *slot = Some(chunk.data);
-        total += chunk.data.len();
-    }
-    if let Some(missing) = (1..=count).find(|&s| by_seq[usize::from(s)].is_none()) {
-        return Err(MetadataError::IccMissingChunk { sequence: missing });
-    }
-    // jpeg_read_icc_profile rejects a total length of 0 (JWRN_BOGUS_ICC).
-    if total == 0 {
-        return Err(MetadataError::IccEmptyProfile);
-    }
-    check_size(total, limits)?;
-    if count == 1 {
-        return Ok(by_seq[1].map(Cow::Borrowed));
-    }
-    let mut profile = try_vec(total)?;
-    for data in by_seq[1..=usize::from(count)].iter().flatten() {
-        profile.extend_from_slice(data);
-    }
-    Ok(Some(Cow::Owned(profile)))
+    })
 }
 
 /// XMP Specification Part 3, 1.1.3.1, over the header items: the standard

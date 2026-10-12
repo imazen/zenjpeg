@@ -54,3 +54,5 @@ pub use xmp::{
     generate_primary_xmp_with_items, generate_xmp, generate_xmp_with_items, parse_xmp,
     parse_xmp_full,
 };
+
+pub(crate) mod chunks;
