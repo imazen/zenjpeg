@@ -201,3 +201,13 @@ HDR/codec and inventory/extended/HDR/codec). After owner approval, the layout
 suite passes all 59 selected tests and all six edge tests. Lossless native/i686,
 independent-reader, stable fuzz-seed replay, API snapshot, and recompression
 admission checks have passed locally. Remote CI must validate the combined revision.
+
+### Remaining combined-CI gate
+
+Combined CI on Linux x64/ARM and Windows x64/ARM finds the same failure in
+`inventory_review::the_first_extracted_undefined_entry_is_the_gain_map`. Its
+first Undefined MPF entry points inside primary APP15. The recovered bounds
+checks exclude that entry, but later selection promotes an unrelated secondary
+image as the gain map. This is an unresolved behavior conflict, not a fixture
+download failure. Replacement PR226 and the four superseded proposals remain
+open until native selection, inventory and the owner-approved expectations agree.

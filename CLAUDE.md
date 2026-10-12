@@ -702,6 +702,9 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Open in metadata review (2026-10-12): `inventory_review::the_first_extracted_undefined_entry_is_the_gain_map` fails on Linux and Windows after the recovered MPF bounds checks. An Undefined entry inside the primary APP15 is skipped, and a later unrelated Undefined image is then promoted to gain-map status. Reconcile native gain-map selection and inventory together; the proposed behavior preserves base pixels without that invalid gain map and refuses HDR reconstruction. Updating the legacy overlapping-entry assertions requires the pending owner decision. JPEG replacement PR226 must not land while this remains unresolved.
+
+
 - i686 CI could not fetch the progressive image-rs JPEG corpus inside cross. The prefetch example now requests the exact nested key in addition to its parent; codec-corpus 1.1.0 stores those independently.
 
 - Recompression single-image strategies dropped MPF secondaries while retaining
