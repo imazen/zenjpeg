@@ -629,7 +629,10 @@ impl<'a> JpegParser<'a> {
                 }
                 if entry.image_type.is_gainmap() && entry.offset > 0 {
                     // Calculate absolute offset: MPF header position + relative offset
-                    let absolute_offset = mpf_header_pos + entry.offset as usize;
+                    let Some(absolute_offset) = mpf_header_pos.checked_add(entry.offset as usize)
+                    else {
+                        continue;
+                    };
                     let end = absolute_offset.saturating_add(entry.size as usize);
                     if end <= full_data.len() {
                         let data = &full_data[absolute_offset..end];

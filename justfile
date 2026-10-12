@@ -430,3 +430,13 @@ metadata-mpf-compat-check:
     cargo test -p zenjpeg --features inventory,ultrahdr --test mpf_bounds --test lossless_mpf
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
     cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test mpf_bounds --test bundled -- -D warnings
+
+metadata-final-regression-check:
+    just metadata-mpf-compat-check
+    cargo test -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --test bundled
+    just metadata-lossless-oracle
+    just metadata-lossless-portability-check
+    just metadata-lossless-feature-check
+    just metadata-icc-parity-check
+    cargo fmt -p zenjpeg --check
+    just api-doc

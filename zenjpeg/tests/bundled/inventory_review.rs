@@ -789,6 +789,34 @@ fn the_first_extracted_undefined_entry_is_the_gain_map() {
         "{}",
         show(outside)
     );
+    // Native raw extraction must select identical bytes even when ordinary
+    // metadata preservation is disabled (the early-extraction path).
+    use zenjpeg::decode::{DecodeConfig, GainMapHandling, PreserveConfig};
+    for config in [
+        DecodeConfig::new(),
+        DecodeConfig::new().lenient(),
+        DecodeConfig::new().permissive(),
+    ] {
+        let extracted = config
+            .preserve(PreserveConfig::none())
+            .gain_map(GainMapHandling::PreserveRaw)
+            .decode(&d, enough::Unstoppable)
+            .unwrap()
+            .gain_map
+            .unwrap();
+        assert_eq!(extracted.jpeg, gm);
+    }
+    let early_strict = DecodeConfig::new()
+        .strict()
+        .preserve(PreserveConfig::none())
+        .gain_map(GainMapHandling::PreserveRaw)
+        .decode(&d, enough::Unstoppable);
+    assert!(
+        early_strict
+            .unwrap_err()
+            .to_string()
+            .contains("overlaps the primary")
+    );
     // Strict validation must fail rather than promote the unrelated trailing
     // JPEG. The default assertions above intentionally retain the legacy case.
     let mut policy = zencodec::decode::DecodePolicy::none();
