@@ -199,6 +199,96 @@ mod api_tests {
         );
     }
 
+    /// A JPEG with an EXIF APP1 segment (copyright only, so no orientation
+    /// handling rewrites it), and that segment's TIFF structure.
+    fn jpeg_with_exif() -> (Vec<u8>, Vec<u8>) {
+        let tiff = Exif::build()
+            .copyright("zen exif round trip")
+            .to_bytes()
+            .unwrap();
+        assert!(tiff.starts_with(b"II") || tiff.starts_with(b"MM"));
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 120,
+                g: 60,
+                b: 30,
+            };
+            64
+        ];
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+        let mut enc = config
+            .request()
+            .exif(Exif::raw(tiff.clone()))
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(bytemuck::cast_slice(&pixels), enough::Unstoppable)
+            .unwrap();
+        (enc.finish().unwrap(), tiff)
+    }
+
+    fn exif_headers(jpeg: &[u8]) -> usize {
+        jpeg.windows(6).filter(|w| w == b"Exif\0\0").count()
+    }
+
+    #[test]
+    fn exif_crosses_the_zencodec_boundary_as_tiff_and_round_trips() {
+        let (source, tiff) = jpeg_with_exif();
+        assert_eq!(exif_headers(&source), 1);
+        let dec = JpegDecoderConfig::new();
+        // Decode and probe both hand out the TIFF structure.
+        let decoded = dec.decode(&source).unwrap();
+        assert_eq!(decoded.info().metadata().exif.as_deref(), Some(&tiff[..]));
+        let probed = dec.probe_header(&source).unwrap();
+        assert_eq!(probed.metadata().exif.as_deref(), Some(&tiff[..]));
+
+        // JPEG -> JPEG through zencodec: one header, the same TIFF.
+        let meta = decoded.info().metadata();
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 1, g: 2, b: 3 }; 64];
+        let img = Img::new(pixels.as_slice(), 8, 8);
+        let reencoded = enc
+            .clone()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert_eq!(exif_headers(reencoded.data()), 1);
+        assert_eq!(
+            dec.decode(reencoded.data())
+                .unwrap()
+                .info()
+                .metadata()
+                .exif
+                .as_deref(),
+            Some(&tiff[..])
+        );
+
+        // A blob that still carries the APP1 header (from an older decoder)
+        // is written with one header too.
+        let prefixed = [b"Exif\0\0".as_slice(), &tiff].concat();
+        let meta = Metadata::default().with_exif(prefixed);
+        let reencoded = enc
+            .clone()
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert_eq!(exif_headers(reencoded.data()), 1);
+        assert_eq!(
+            dec.decode(reencoded.data())
+                .unwrap()
+                .info()
+                .metadata()
+                .exif
+                .as_deref(),
+            Some(&tiff[..])
+        );
+    }
+
     #[test]
     fn decode_roundtrip() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);

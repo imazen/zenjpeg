@@ -326,3 +326,9 @@ metadata-prefetch:
 metadata-prefetch-check:
     just metadata-prefetch
     cargo test -p zenjpeg --features inventory,extended-metadata --test extended_metadata --test inventory_feature --test fuzz_regression
+
+# Reconcile EXIF framing from the pending metadata source stack.
+metadata-exif-check:
+    cargo test -p zenjpeg --features zencodec --lib exif
+    cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
+    cargo clippy -p zenjpeg --features zencodec --lib -- -D warnings

@@ -42,6 +42,11 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+- Reuse metadata commits `ea224f98`/`a76f7c41`: EXIF encoding accepts a TIFF
+  structure or JPEG APP1 payload and writes the `Exif\0\0` prefix once.
+  The zencodec boundary now exposes bare TIFF; native `DecodedExtras::exif`
+  retains its APP1-payload behavior. This is an observable metadata-byte change
+  relative to published 0.8.4, without a signature change.
 - Gate inventory-only Ultra HDR helper imports on `inventory`, so ordinary
   Ultra HDR/zencodec builds also pass warnings-as-errors (`db07f503` follow-up).
 - MPF offset arithmetic and entry-list allocation failures from PR 225

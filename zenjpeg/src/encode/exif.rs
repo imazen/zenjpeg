@@ -19,6 +19,18 @@
 //!     .exif(Exif::raw(my_exif_bytes));
 //! ```
 
+/// The JPEG APP1 header that precedes EXIF's TIFF structure in a JPEG file.
+const APP1_EXIF_HEADER: &[u8] = b"Exif\0\0";
+
+/// `bytes` without a leading JPEG APP1 `Exif\0\0` header. The TIFF structure
+/// itself starts with its byte-order mark (`II` or `MM`), so stripping the
+/// header can never remove TIFF data. The encoder writes the header once, so a
+/// blob that still carries it (as a JPEG decoder's APP1 payload does) must not
+/// get a second one.
+pub(crate) fn strip_app1_exif_header(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(APP1_EXIF_HEADER).unwrap_or(bytes)
+}
+
 /// EXIF orientation values (rotation/flip).
 ///
 /// These correspond to the EXIF Orientation tag (0x0112) values 1-8.
@@ -54,7 +66,8 @@ pub enum Orientation {
 /// accidentally mix raw bytes with field-based building.
 #[derive(Debug, Clone)]
 pub enum Exif {
-    /// Raw EXIF TIFF bytes (without the `Exif\0\0` APP1 prefix).
+    /// Raw EXIF TIFF bytes. A leading JPEG APP1 `Exif\0\0` header is
+    /// accepted and not written twice (see [`Exif::raw`]).
     Raw(Vec<u8>),
     /// Built from common fields.
     Fields(ExifFields),
@@ -63,8 +76,12 @@ pub enum Exif {
 impl Exif {
     /// Create EXIF from raw TIFF bytes.
     ///
-    /// The bytes should be raw TIFF data without the `Exif\0\0` APP1 prefix
-    /// (the encoder adds that automatically).
+    /// The bytes are the TIFF structure, starting with its byte-order mark
+    /// (`II` or `MM`); the encoder adds the JPEG APP1 `Exif\0\0` header. Bytes
+    /// that already start with that header (the APP1 payload a JPEG decoder
+    /// returns, such as
+    /// [`DecodedExtras::exif`](crate::decode::DecodedExtras::exif)) are
+    /// accepted too: the header is written once, never twice.
     #[must_use]
     pub fn raw(bytes: impl Into<Vec<u8>>) -> Self {
         Exif::Raw(bytes.into())
@@ -79,13 +96,14 @@ impl Exif {
         ExifFields::default()
     }
 
-    /// Convert to raw TIFF bytes for embedding.
+    /// Convert to raw TIFF bytes for embedding, without the JPEG APP1
+    /// `Exif\0\0` header (a `Raw` blob that carries it has it removed).
     ///
     /// Returns `None` if no fields are set (for the `Fields` variant).
     #[must_use]
     pub fn to_bytes(&self) -> Option<Vec<u8>> {
         match self {
-            Exif::Raw(bytes) => Some(bytes.clone()),
+            Exif::Raw(bytes) => Some(strip_app1_exif_header(bytes).to_vec()),
             Exif::Fields(fields) => fields.to_bytes(),
         }
     }
@@ -159,6 +177,18 @@ impl ExifFields {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_bytes_lose_a_leading_app1_header() {
+        let tiff = b"MM\0*\0\0\0\x08\0\0\0\0\0\0".to_vec();
+        let prefixed = [b"Exif\0\0".as_slice(), &tiff].concat();
+        assert_eq!(Exif::raw(tiff.clone()).to_bytes(), Some(tiff.clone()));
+        assert_eq!(Exif::raw(prefixed.clone()).to_bytes(), Some(tiff.clone()));
+        assert_eq!(Exif::Raw(prefixed).to_bytes(), Some(tiff));
+        // Only the exact header: a near miss is left alone.
+        let other = b"Exif\0\xFFII*\0".to_vec();
+        assert_eq!(Exif::raw(other.clone()).to_bytes(), Some(other));
+    }
 
     #[test]
     fn test_orientation_only() {

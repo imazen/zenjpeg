@@ -83,3 +83,17 @@ parallel tests. `CODEC_CORPUS_CACHE` is an explicit absolute path, mounted into
 cross through `Cross.toml`, so cross does not need to fetch image-rs itself.
 The previous two image-rs skips are removed. `just metadata-prefetch-check`
 passed locally; Windows ARM and container execution still require remote CI.
+
+## Additional metadata source reconciliation
+
+The unmerged metadata stack ending at `3c8f4057` is separate from PRs210/221/225.
+Its EXIF fixes `ea224f98` and `a76f7c41` are now integrated: encode prefixes
+EXIF exactly once, and the zencodec adapter transports bare TIFF while native
+`DecodedExtras::exif` retains the APP1 payload. This changes metadata bytes
+relative to 0.8.4 and is recorded in the changelog, even though signatures are
+unchanged. `just metadata-exif-check` passed, including existing independent
+img-parts/kamadak readers, new round trips and strict clippy.
+
+ISO-first gain-map parsing, ISO-only output, SDR-base metadata/color preservation
+and the interrupted GContainer parser changes are not yet integrated. Oversized
+EXIF handling and HDR reconstruction color interpretation still require review.

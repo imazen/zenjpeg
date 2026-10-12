@@ -387,23 +387,19 @@ impl EncoderSegments {
 
     /// Set/replace EXIF data.
     ///
-    /// The data should be raw TIFF bytes (without the "Exif\0\0" prefix,
-    /// which is added automatically).
+    /// The data is the TIFF structure; the "Exif\0\0" APP1 header is added
+    /// automatically. Data that already starts with that header is accepted
+    /// and gets it once, not twice.
     #[must_use]
     pub fn set_exif(self, data: Vec<u8>) -> Self {
-        // Build full EXIF APP1 data with signature
-        let mut full_data = Vec::with_capacity(EXIF_SIGNATURE.len() + data.len());
-        full_data.extend_from_slice(EXIF_SIGNATURE);
-        full_data.extend_from_slice(&data);
+        let full_data = exif_app1_payload(&data);
         self.replace(0xE1, full_data, SegmentType::Exif)
     }
 
     /// Set/replace EXIF data (mutable version).
     pub fn set_exif_mut(&mut self, data: Vec<u8>) -> &mut Self {
         self.remove_mut(SegmentType::Exif);
-        let mut full_data = Vec::with_capacity(EXIF_SIGNATURE.len() + data.len());
-        full_data.extend_from_slice(EXIF_SIGNATURE);
-        full_data.extend_from_slice(&data);
+        let full_data = exif_app1_payload(&data);
         self.add_mut(0xE1, full_data, SegmentType::Exif)
     }
 
@@ -740,6 +736,16 @@ pub(crate) fn write_segment(output: &mut Vec<u8>, marker: u8, data: &[u8]) {
     crate::container::marker::write_raw_segment(output, marker, &[], data);
 }
 
+/// The APP1 payload for EXIF data: the "Exif\0\0" header, then the TIFF
+/// structure (a header already present in `data` is not repeated).
+fn exif_app1_payload(data: &[u8]) -> Vec<u8> {
+    let tiff = super::exif::strip_app1_exif_header(data);
+    let mut full_data = Vec::with_capacity(EXIF_SIGNATURE.len() + tiff.len());
+    full_data.extend_from_slice(EXIF_SIGNATURE);
+    full_data.extend_from_slice(tiff);
+    full_data
+}
+
 /// Write all encoder segments to output buffer (in correct order).
 pub(crate) fn write_encoder_segments(output: &mut Vec<u8>, segments: &EncoderSegments) {
     // Write in order: JFIF → EXIF → XMP → ICC → IPTC → Adobe → Comments
@@ -1010,6 +1016,27 @@ mod tests {
         assert!(segments.has(SegmentType::Exif));
         let exif_data = segments.get(SegmentType::Exif).unwrap();
         assert!(exif_data.starts_with(EXIF_SIGNATURE));
+    }
+
+    #[test]
+    fn set_exif_writes_the_app1_header_once() {
+        // Data that already carries the header (a decoder's APP1 payload)
+        // gets it once, through both setters.
+        let tiff = b"II*\0\x08\0\0\0\0\0\0\0\0\0";
+        let prefixed = [EXIF_SIGNATURE, &tiff[..]].concat();
+        for data in [tiff.to_vec(), prefixed] {
+            let segments = EncoderSegments::new().set_exif(data.clone());
+            assert_eq!(
+                segments.get(SegmentType::Exif).unwrap(),
+                [EXIF_SIGNATURE, &tiff[..]].concat()
+            );
+            let mut segments = EncoderSegments::new();
+            segments.set_exif_mut(data);
+            assert_eq!(
+                segments.get(SegmentType::Exif).unwrap(),
+                [EXIF_SIGNATURE, &tiff[..]].concat()
+            );
+        }
     }
 
     #[test]

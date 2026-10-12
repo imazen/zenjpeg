@@ -20,6 +20,18 @@
 //! | `StreamingDecode` | [`JpegStreamingDecoder`] |
 //! | `AnimationFrameDecode` | `Unsupported<At<CodecError>>` (JPEG has no animation) |
 //!
+//! # EXIF at the zencodec boundary
+//!
+//! [`zencodec::ImageInfo::exif`] and [`zencodec::Metadata::exif`] hold the
+//! EXIF TIFF structure, starting with its byte-order mark (`II` or `MM`),
+//! without the JPEG APP1 `Exif\0\0` header: decoding strips it and encoding
+//! adds it. That is the form PNG's `eXIf` chunk holds (PNG Third Edition,
+//! 11.3.4.5: "the JPEG APP1 marker, length, and the 'Exif ID code' ... are not
+//! included"), so a JPEG's EXIF can go to another format as is. Encoding also
+//! accepts a blob that still carries the header and writes it once. The native
+//! API is unchanged: [`crate::decode::DecodedExtras::exif`] returns the APP1
+//! payload, header included.
+//!
 //! # Error envelope (Pattern B)
 //!
 //! Every trait impl below uses `type Error = At<zencodec::CodecError>` — the

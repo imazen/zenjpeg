@@ -25,7 +25,8 @@ pub(super) fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
             img_info = img_info
                 .with_orientation(zencodec::Orientation::from_exif(orient).unwrap_or_default());
         }
-        img_info = img_info.with_exif(exif.clone());
+        // The zencodec EXIF blob is the TIFF structure (module docs).
+        img_info = img_info.with_exif(crate::encode::exif::strip_app1_exif_header(exif).to_vec());
     }
     if let Some(ref xmp) = info.xmp {
         img_info = img_info.with_xmp(xmp.as_bytes().to_vec());
@@ -106,7 +107,8 @@ pub(super) fn populate_info_from_jpeg_extras(
                     .with_orientation(zencodec::Orientation::from_exif(orient).unwrap_or_default());
             }
         }
-        info = info.with_exif(exif.to_vec());
+        // The zencodec EXIF blob is the TIFF structure (module docs).
+        info = info.with_exif(crate::encode::exif::strip_app1_exif_header(exif).to_vec());
     }
     if let Some(xmp) = extras.xmp() {
         info = info.with_xmp(xmp.as_bytes().to_vec());
