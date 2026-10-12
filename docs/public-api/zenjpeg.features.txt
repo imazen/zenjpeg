@@ -1,5 +1,5 @@
 # zenjpeg public API — additions from non-default features
-# features: boundary-rd,extended-metadata,inventory,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec
+# features: boundary-rd,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,10 +9,10 @@
 
 ## summary
 #
-#   pub modules                                 4
+#   pub modules                                 5
 #   pub types (struct/enum/trait/alias)        82
 #   pub consts/statics                          4
-#   free functions                             32
+#   free functions                             34
 #   inherent methods                          137
 #   struct fields                             158
 #   enum variants                             146
@@ -22,15 +22,16 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           37
+#   (root)                           38
 #   container                       211
 #   decoder                           3
 #   encoder                          40
 #   layout                           67
+#   metadata                          1
 #   recompress                      158
-#   ultrahdr                         72
+#   ultrahdr                         73
 
-## items (588 lines)
+## items (591 lines)
 
 #[non_exhaustive] pub enum container::metadata::ItemKind<'a>
 pub container::metadata::ItemKind::Adobe(container::metadata::Adobe)
@@ -355,6 +356,8 @@ pub layout::LayoutResult::data: alloc::vec::Vec<u8>
 pub layout::LayoutResult::height: u32
 pub layout::LayoutResult::lossless: bool
 pub layout::LayoutResult::width: u32
+pub mod metadata
+pub fn metadata::rewrite<'a>(&zencodec::metadata_rewrite::Request<'a>) -> core::result::Result<zencodec::metadata_rewrite::Plan<'a>, zencodec::metadata_rewrite::Error>
 pub mod recompress
 pub mod recompress::expert
 pub enum recompress::expert::ActivityTier
@@ -582,6 +585,7 @@ pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&z
 pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap_metadata(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, &zencodec::metadata::Metadata, &zencodec::metadata::MetadataPolicy, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String
 pub fn ultrahdr::generate_primary_xmp(usize) -> alloc::string::String
 pub fn ultrahdr::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String

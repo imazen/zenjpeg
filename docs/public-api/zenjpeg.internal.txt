@@ -12,7 +12,7 @@
 #   pub modules                                84
 #   pub types (struct/enum/trait/alias)       297
 #   pub consts/statics                        320
-#   free functions                            372
+#   free functions                            373
 #   inherent methods                         1217
 #   struct fields                             760
 #   enum variants                             506
@@ -42,9 +42,9 @@
 #   rgb                              11
 #   test_utils                       95
 #   types                           138
-#   ultrahdr                         12
+#   ultrahdr                         13
 
-## items (3395 lines)
+## items (3396 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -1963,6 +1963,7 @@ pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&z
 pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap_metadata(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encode::encoder_config::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, &zencodec::metadata::Metadata, &zencodec::metadata::MetadataPolicy, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub mod color
 pub mod color::fast_yuv
 pub mod color::icc

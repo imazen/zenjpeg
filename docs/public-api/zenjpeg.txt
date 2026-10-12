@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1712 lines (supported surface) | zenjpeg.features.txt 675 added (features: boundary-rd,extended-metadata,inventory,layout,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3622 lines (923 hidden + 7231 excluded-feature)
+# files: zenjpeg.txt 1712 lines (supported surface) | zenjpeg.features.txt 678 added (features: boundary-rd,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3623 lines (923 hidden + 7232 excluded-feature)
 
 ## summary
 #
