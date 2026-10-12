@@ -1050,3 +1050,31 @@ fn explicit_gain_map_policy_preserves_display_and_removes_private_metadata() {
         .is_err()
     );
 }
+
+#[test]
+fn convenience_hdr_readers_retain_display_p3_primaries() {
+    use zenjpeg::ultrahdr::{
+        compute_gainmap, create_hdr_reconstructor, decode_ultrahdr, decode_ultrahdr_hdr,
+        encode_with_gainmap,
+    };
+    let hdr = create_test_hdr_in(UhdrColorGamut::DisplayP3);
+    let sdr = create_test_sdr_in(UhdrColorGamut::DisplayP3);
+    let (gainmap, metadata) =
+        compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let jpeg = encode_with_gainmap(&sdr, &gainmap, &metadata, &config, 75.0, Unstoppable).unwrap();
+    let base = decode_ultrahdr(&jpeg).unwrap();
+    assert_eq!(base.descriptor().primaries, UhdrColorGamut::DisplayP3);
+    let output =
+        decode_ultrahdr_hdr(&jpeg, 4.0, zenjpeg::ultrahdr::HdrOutputFormat::LinearFloat).unwrap();
+    assert_eq!(output.descriptor().primaries, UhdrColorGamut::DisplayP3);
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    let rows = create_hdr_reconstructor(
+        decoded.width(),
+        decoded.height(),
+        decoded.extras().unwrap(),
+        4.0,
+    )
+    .unwrap();
+    assert_eq!(rows.gamut(), UhdrColorGamut::DisplayP3);
+}

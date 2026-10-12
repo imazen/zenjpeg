@@ -10,8 +10,7 @@ use crate::error::{Error, Result};
 use crate::types::PixelFormat as JpegPixelFormat;
 use enough::Unstoppable;
 use ultrahdr_core::{
-    ColorPrimaries, ColorPrimaries as ColorGamut, GainMap, GainMapMetadata, PixelBuffer,
-    PixelFormat, TransferFunction,
+    ColorPrimaries, GainMap, GainMapMetadata, PixelBuffer, PixelFormat, TransferFunction,
     color::tonemap::AdaptiveTonemapper,
     gainmap::{HdrOutputFormat, RowDecoder, apply_gainmap},
     pixel_buffer_from_vec,
@@ -180,7 +179,7 @@ pub fn create_hdr_reconstructor(
         width,
         height,
         display_boost,
-        ColorGamut::Bt709,
+        base_color(extras.icc_profile())?.0,
     )
     .map_err(ultrahdr_to_zenjpeg_error)
 }
@@ -228,8 +227,8 @@ pub fn tonemapper_from_ultrahdr(extras: &DecodedExtras) -> Result<AdaptiveTonema
 ///
 /// One-call equivalent of libultrahdr's `uhdr_decode` followed by
 /// `uhdr_get_decoded_image` with `display_boost = 1.0`. Returns the SDR
-/// base image as `Rgba8` with sRGB transfer — what every viewer can show
-/// without an HDR-aware compositor. For HDR output, use
+/// base image with its resolved primaries and transfer function. Unknown ICC
+/// profiles require a color-managed decode and return an error here. For HDR output, use
 /// [`decode_ultrahdr_hdr`].
 ///
 /// Works on any JPEG (Ultra HDR or not) since it returns the primary
@@ -262,9 +261,9 @@ pub fn decode_ultrahdr_hdr(
     display_boost: f32,
     format: HdrOutputFormat,
 ) -> Result<PixelBuffer> {
-    let mut decoded = Decoder::new().decode(bytes, Unstoppable)?;
+    let decoded = Decoder::new().decode(bytes, Unstoppable)?;
     let extras = decoded
-        .take_extras()
+        .extras()
         .ok_or_else(|| Error::decode_error("decoded JPEG has no extras".to_string()))?;
     let (metadata, _) = extras
         .ultrahdr_metadata()
@@ -285,11 +284,12 @@ pub fn decode_ultrahdr_hdr(
     .map_err(ultrahdr_to_zenjpeg_error)
 }
 
-/// Convert a [`crate::decode::DecodeResult`] to a `PixelBuffer` with sRGB
-/// transfer + Bt709 primaries. Maps the codec-internal [`JpegPixelFormat`]
+/// Convert a [`crate::decode::DecodeResult`] to a `PixelBuffer`, preserving
+/// the decoded primaries and transfer. Maps the codec-internal [`JpegPixelFormat`]
 /// to [`zenpixels::PixelFormat`]; expands 3-channel RGB to 4-channel Rgba8
 /// when the codec returned packed RGB (the common case).
 fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result<PixelBuffer> {
+    let (primaries, transfer) = base_color(decoded.extras().and_then(DecodedExtras::icc_profile))?;
     let width = decoded.width;
     let height = decoded.height;
     let format = decoded.format;
@@ -308,15 +308,24 @@ fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result
             )));
         }
     };
-    pixel_buffer_from_vec(
-        bytes,
-        width,
-        height,
-        zp_format,
-        ColorPrimaries::Bt709,
-        TransferFunction::Srgb,
-    )
-    .map_err(ultrahdr_to_zenjpeg_error)
+    pixel_buffer_from_vec(bytes, width, height, zp_format, primaries, transfer)
+        .map_err(ultrahdr_to_zenjpeg_error)
+}
+
+// The decoder inverts XYB to sRGB. For other ICC profiles, resolve only
+// color spaces the shared resolver can represent without a CMS.
+fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, TransferFunction)> {
+    let Some(icc) = icc else {
+        return Ok((ColorPrimaries::Bt709, TransferFunction::Srgb));
+    };
+    if crate::color::icc::is_xyb_profile(icc) {
+        return Ok((ColorPrimaries::Bt709, TransferFunction::Srgb));
+    }
+    zenpixels::ColorProfileSource::Icc(icc)
+        .resolve()
+        .ok_or_else(|| {
+            Error::unsupported_feature("Ultra HDR base ICC requires color-managed conversion")
+        })
 }
 
 /// Pad packed RGB bytes to RGBA8 with `A=0xFF`. Done in-place via Vec growth.

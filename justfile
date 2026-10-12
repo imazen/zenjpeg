@@ -370,3 +370,6 @@ metadata-policy-check:
 
 metadata-dependency-check:
     cargo check -p zenjpeg --features ultrahdr --lib
+
+metadata-gamut-check:
+    cargo test -p zenjpeg --features ultrahdr --test bundled convenience_hdr_readers_retain_display_p3_primaries

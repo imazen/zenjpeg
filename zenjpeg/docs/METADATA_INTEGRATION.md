@@ -150,3 +150,15 @@ restored with zenmeta filtering and the common format-aware assembler. Its
 source metadata is authoritative; private segments from the encoder config
 are not copied around that policy. ISO-only output stays ISO-only. Public
 parameters use zencodec types and existing codec types, never zenmeta types.
+
+### Ultra HDR convenience-reader color
+
+The Display P3 regression reproduced a BT.709 descriptor from
+`decode_ultrahdr`, `decode_ultrahdr_hdr`, and the streaming reconstructor's
+hardcoded gamut. These paths now use zenpixels' shared ICC resolver, retaining
+primaries and transfer without a second profile parser. XYB decoder output
+retains its sRGB interpretation; an ICC profile requiring a CMS is refused
+instead of silently labeled sRGB. The existing Ultra HDR round-trip suite
+and strict clippy pass with the new P3 regression (`just metadata-policy-check`).
+No public signatures change; the descriptor and unsupported-profile behavior
+changes are observable and must be retained in release notes.
