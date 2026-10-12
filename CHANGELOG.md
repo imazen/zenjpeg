@@ -72,6 +72,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Accept standalone TEM markers after the frame header; inventory leaves following bytes separate. Components decoding treats ordinary XMP without gain-map properties as absent gain-map metadata, preserving base pixels instead of failing. Signatures are unchanged (follow-up to `b473e0f9`).
+
 - Dynamic Depth extraction honors primary GContainer padding with checked offsets; native MPF parsing checks IFD/entry offsets on 32-bit targets and allocates its bounded image list fallibly. No signatures change (follow-up to `4064e3cb`).
 
 - Preserve default decoding of MPF JPEGs embedded inside the primary APP payload; strict mode rejects that layout. Inventory and native extraction share range admission, retaining duplicate-copy bounds. Lossless rewriting checks relocation independently and refuses unsupported embedded layouts. This restores the existing default acceptance; published signatures are unchanged (follow-up to `9a5694d4`).

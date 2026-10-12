@@ -737,11 +737,10 @@ fn unused_units_and_tails_are_not_hidden_in_consumed_parts() {
     assert_eq!(tail.disposition(), D::Metadata(M::Icc));
 }
 
-/// After the frame header the decoder reads TEM as if it carried a length
-/// (decode/parser/mod.rs: TEM falls through to `skip_segment`); the
-/// inventory follows the decoder, not the standard.
+/// TEM is standalone before and after the frame header; bytes after it
+/// remain visible to the parser and inventory.
 #[test]
-fn tem_after_the_frame_header_is_read_as_a_length() {
+fn tem_after_the_frame_header_is_standalone() {
     let mut data = vec![0xFF, 0xD8];
     data.extend(dqt());
     data.extend(dht());
@@ -758,15 +757,25 @@ fn tem_after_the_frame_header_is_read_as_a_length() {
         .iter()
         .find(|p| *p.tag() == PartTag::Marker(0x01))
         .unwrap();
-    assert_eq!(tem.range(), tem_at as u64..tem_at as u64 + 8);
+    assert_eq!(tem.range(), tem_at as u64..tem_at as u64 + 2);
     assert_eq!(tem.disposition(), D::Skipped);
-    // The decoder agrees: the image still decodes after skipping 6 bytes.
+    // Balanced decoding accepts the following stray bytes as well.
     JpegDecoderConfig::new()
         .job()
         .decoder(alloc::borrow::Cow::Borrowed(&data[..]), &[])
         .unwrap()
         .decode()
         .unwrap();
+    // The original failure swallowed SOS as TEM's length. Without the stray
+    // bytes, strict decoding must accept TEM directly followed by SOS too.
+    data.drain(tem_at + 2..tem_at + 8);
+    crate::decode::DecodeConfig::new()
+        .strict()
+        .decode(&data, enough::Unstoppable)
+        .unwrap();
+    let inv = inventory(&data, opts()).unwrap();
+    inv.validate().unwrap();
+    assert!(inv.parts().iter().any(|p| p.disposition() == D::ImageData));
 }
 
 #[test]

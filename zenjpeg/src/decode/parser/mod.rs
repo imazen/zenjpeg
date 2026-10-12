@@ -557,8 +557,8 @@ impl<'a> JpegParser<'a> {
             }
 
             // Markers without length
-            if (0xD0..=0xD7).contains(&marker) {
-                // RST markers
+            if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+                // Standalone TEM and RST markers
                 continue;
             }
 
@@ -928,7 +928,7 @@ impl<'a> JpegParser<'a> {
                         // write a trailing RST after the final MCU interval.
                         // These are standalone 2-byte markers with no length
                         // field, so just skip them.
-                        0xD0..=0xD7 => Ok(()),
+                        0xD0..=0xD7 | 0x01 => Ok(()),
                         MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker),
                         _ => self.skip_segment(),
                     };

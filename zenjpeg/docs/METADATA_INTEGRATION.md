@@ -230,3 +230,12 @@ Native MPF's compatibility parser independently needed checked IFD and MP-entry
 offsets; strict inspection's checked arithmetic had not covered it.
 `just metadata-depth-bounds-check` passes native depth/bounds tests and the
 native-parser overflow regression on i686, plus Clippy.
+
+### Standalone markers and absent metadata
+
+TEM is parameterless in both header and body parsing; inventory no longer
+swallows the following bytes into its segment. Components decoding preserves
+base pixels on ordinary XMP. The adapter retains the shared parser's distinction
+between `NotUltraHdr` and malformed gain-map metadata instead of converting both
+to decode failure. `just metadata-admission-check` covers both paths and their
+inventory agreement. Existing assertions were updated with owner approval.

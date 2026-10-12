@@ -446,3 +446,9 @@ metadata-depth-bounds-check:
     cargo test -p zenjpeg --test mpf_bounds
     CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test mpf_bounds native_mpf_offsets_do_not_wrap
     cargo clippy -p zenjpeg --lib --test mpf_bounds -- -D warnings
+
+metadata-admission-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib codec::inventory
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib ultrahdr::decode
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test bundled -- -D warnings

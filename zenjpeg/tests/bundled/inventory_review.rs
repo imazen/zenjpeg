@@ -880,9 +880,8 @@ fn gain_map_extended_xmp_is_dropped() {
     assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
 }
 
-/// Decoder issue (filed separately): Components fails the whole decode on
-/// a plain JPEG whose XMP has no hdrgm. Whatever the decoder does, the
-/// inventory must agree on whether image data reaches the caller.
+/// Components on ordinary XMP preserves the base pixels without inventing
+/// a gain map; inventory agrees that image data reaches the caller.
 #[cfg(feature = "ultrahdr")]
 #[test]
 fn components_on_plain_xmp_agrees_with_the_decoder() {
@@ -891,9 +890,11 @@ fn components_on_plain_xmp_agrees_with_the_decoder() {
     x.extend(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>");
     let d = insert(&orig, 20, &seg(0xE1, &x));
     let c = zencodec::GainMapRender::Components;
-    let ok = decode(render_job(c), &d).is_ok();
+    let output = decode(render_job(c), &d).unwrap();
+    assert!(decoded_gain_map(&output).is_none());
+    assert_eq!(pixels(&output), pixels(&decode(job(), &orig).unwrap()));
     let i = inv(&render_job(c), &d);
-    assert_eq!(scan_disposition(&i) == D::ImageData, ok);
+    assert_eq!(scan_disposition(&i), D::ImageData);
 }
 
 /// A primary ISO record is not the secondary image's full parameter record.

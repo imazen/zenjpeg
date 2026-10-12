@@ -33,7 +33,8 @@ pub trait UltraHdrExtras {
     /// parse error is returned.
     ///
     /// Returns `None` if neither supported metadata form is present.
-    /// Returns `Some(Err(...))` if XMP is present but parsing fails.
+    /// Ordinary XMP without gain-map properties returns `None`.
+    /// Returns `Some(Err(...))` if gain-map metadata is present but invalid.
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>>;
 
     /// Decode the gain map JPEG from MPF secondary images.
@@ -87,13 +88,23 @@ fn xmp_metadata(extras: &DecodedExtras) -> Option<Result<(GainMapMetadata, Optio
     // Then try gain map JPEG's XMP (modern format: metadata in secondary)
     if let Some(gainmap_jpeg) = extras.gainmap()
         && let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg)
+        && let Some(metadata) = optional_gainmap_xmp(&gm_xmp)
     {
-        return Some(parse_xmp(&gm_xmp).map_err(xmp_to_zenjpeg_error));
+        return Some(metadata);
     }
 
     // Fall back to primary XMP even if values are all-default
     let xmp = extras.xmp()?;
-    Some(parse_xmp(xmp).map_err(xmp_to_zenjpeg_error))
+    optional_gainmap_xmp(xmp)
+}
+
+/// The parser distinguishes absent gain-map properties from invalid ones.
+/// Preserve that distinction through the optional metadata API.
+fn optional_gainmap_xmp(xmp: &str) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
+    match parse_xmp(xmp) {
+        Err(crate::container::xmp::XmpError::NotUltraHdr) => None,
+        result => Some(result.map_err(xmp_to_zenjpeg_error)),
+    }
 }
 
 /// The body of a gain-map JPEG's ISO 21496-1 APP2 record (URN included), if

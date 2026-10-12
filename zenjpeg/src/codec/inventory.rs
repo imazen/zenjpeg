@@ -1901,12 +1901,12 @@ impl Walk<'_> {
                 phase = Phase::Done;
                 continue;
             }
-            if (0xD0..=0xD7).contains(&m) || (m == MARKER_TEM && phase == Phase::Header) {
-                // `read_header` ignores RSTn/TEM; `decode` ignores RSTn between scans.
-                let (kind, why) = if phase == Phase::Header {
+            if (0xD0..=0xD7).contains(&m) || m == MARKER_TEM {
+                // Both header and body parsing ignore standalone RSTn/TEM.
+                let (kind, why) = if phase == Phase::Header || m == MARKER_TEM {
                     (
                         Repeat::HeaderMarker,
-                        "standalone marker before the frame header; the decoder ignores it",
+                        "standalone marker; the decoder ignores it",
                     )
                 } else {
                     (
@@ -2371,10 +2371,7 @@ impl Walk<'_> {
                 _ => {
                     // `skip_segment`: the decoder reads the
                     // length and skips the body.
-                    let why = if m == MARKER_TEM {
-                        "TEM is a standalone marker, but after the frame header the decoder \
-                         reads the next two bytes as a length and skips that many bytes"
-                    } else if m == MARKER_SOI {
+                    let why = if m == MARKER_SOI {
                         "SOI inside the stream; the decoder reads a length and skips it"
                     } else if m == MARKER_SOS {
                         "scan header before any frame header; the decoder skips the header, \
