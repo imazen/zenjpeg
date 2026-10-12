@@ -97,3 +97,22 @@ img-parts/kamadak readers, new round trips and strict clippy.
 ISO-first gain-map parsing, ISO-only output, SDR-base metadata/color preservation
 and the interrupted GContainer parser changes are not yet integrated. Oversized
 EXIF handling and HDR reconstruction color interpretation still require review.
+
+## Reconciled ISO-first metadata stack
+
+The existing pending source commits `1581bf08`, `da8d2982` and `e008374e`
+are integrated with shared XMP delegation. Their original tests cover ISO-only,
+XMP-only and combined output, conflicting metadata precedence, malformed-ISO
+fallback, streaming readers, SDR caller metadata and ICC synthesis. The new
+inventory check requires the selected secondary ISO record to be GainMap
+metadata in Components mode and unconsumed in BaseOnly mode. A primary version
+record is not interpreted as the secondary's full parameters.
+
+`just metadata-iso-check` passes the native decode, roundtrip, inventory review
+and clippy checks. Two existing ignored external HDR tests remain ignored;
+this run is not independent HDR reconstruction validation. Existing independent
+framing/metadata oracles and final cross-platform checks remain release gates.
+
+Remaining reconciliation: interrupted GContainer/lossless work, oversized EXIF
+handling, HDR reconstruction's base-gamut assumption, and mismatch reporting.
+No claim is made that all JPEG metadata work is complete.

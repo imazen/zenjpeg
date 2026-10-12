@@ -25,12 +25,14 @@ pub trait UltraHdrExtras {
     /// Check if this JPEG contains UltraHDR gain map metadata.
     ///
     /// Returns `true` if the XMP contains HDR gain map attributes
-    /// (`hdrgm:Version` or `hdrgm:GainMapMax`).
+    /// (`hdrgm:Version` or `hdrgm:GainMapMax`), or an ISO 21496-1 APP2 exists.
     fn is_ultrahdr(&self) -> bool;
 
-    /// Parse and return the gain map metadata from XMP.
+    /// Read gain-map parameters, preferring the secondary image's ISO 21496-1
+    /// APP2 record over XMP. Invalid ISO falls back to XMP; without XMP its
+    /// parse error is returned.
     ///
-    /// Returns `None` if no XMP is present or it's not UltraHDR.
+    /// Returns `None` if neither supported metadata form is present.
     /// Returns `Some(Err(...))` if XMP is present but parsing fails.
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>>;
 
@@ -44,26 +46,22 @@ pub trait UltraHdrExtras {
 impl UltraHdrExtras for DecodedExtras {
     fn is_ultrahdr(&self) -> bool {
         self.xmp()
-            .map(|xmp: &str| xmp.contains("hdrgm:Version") || xmp.contains("hdrgm:GainMapMax"))
-            .unwrap_or(false)
+            .is_some_and(|xmp| xmp.contains("hdrgm:Version") || xmp.contains("hdrgm:GainMapMax"))
+            || self
+                .segments_by_marker(0xE2)
+                .any(|seg| seg.data.starts_with(zencodec::ISO_21496_1_URN))
+            || self
+                .gainmap()
+                .is_some_and(|jpeg| iso21496_record(jpeg).is_some())
     }
 
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
-        // First try primary XMP (legacy format: all metadata in primary).
-        if let Some(found) = primary_xmp_gain_map(self) {
-            return Some(Ok(found));
-        }
-
-        // Then try gain map JPEG's XMP (modern format: metadata in secondary)
-        if let Some(gainmap_jpeg) = self.gainmap()
-            && let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg)
-        {
-            return Some(parse_xmp(&gm_xmp).map_err(xmp_to_zenjpeg_error));
-        }
-
-        // Fall back to primary XMP even if values are all-default
-        let xmp = self.xmp()?;
-        Some(parse_xmp(xmp).map_err(xmp_to_zenjpeg_error))
+        let iso_error = match self.gainmap().and_then(iso21496_from_gainmap_jpeg) {
+            Some(Ok(metadata)) => return Some(Ok((metadata, None))),
+            Some(Err(error)) => Some(error),
+            None => None,
+        };
+        xmp_metadata(self).or_else(|| iso_error.map(Err))
     }
 
     fn decode_gainmap(&self) -> Option<Result<GainMap>> {
@@ -78,6 +76,48 @@ impl UltraHdrExtras for DecodedExtras {
             .map(|(m, _)| m.is_single_channel());
         Some(decode_gainmap_jpeg(gainmap_jpeg, single_channel))
     }
+}
+
+fn xmp_metadata(extras: &DecodedExtras) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
+    // First try primary XMP (legacy format: all metadata in primary).
+    if let Some(found) = primary_xmp_gain_map(extras) {
+        return Some(Ok(found));
+    }
+
+    // Then try gain map JPEG's XMP (modern format: metadata in secondary)
+    if let Some(gainmap_jpeg) = extras.gainmap()
+        && let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg)
+    {
+        return Some(parse_xmp(&gm_xmp).map_err(xmp_to_zenjpeg_error));
+    }
+
+    // Fall back to primary XMP even if values are all-default
+    let xmp = extras.xmp()?;
+    Some(parse_xmp(xmp).map_err(xmp_to_zenjpeg_error))
+}
+
+/// The body of a gain-map JPEG's ISO 21496-1 APP2 record (URN included), if
+/// it has one before its first scan.
+fn iso21496_record(gainmap_jpeg: &[u8]) -> Option<&[u8]> {
+    let probe = crate::container::probe(gainmap_jpeg, crate::container::Wants::ISO_GAINMAP);
+    let payload = probe.iso_gainmap()?;
+    let start = (payload.start as usize).checked_sub(zencodec::ISO_21496_1_URN.len())?;
+    gainmap_jpeg.get(start..payload.end as usize)
+}
+
+/// Gain-map metadata from a gain-map JPEG's ISO 21496-1 APP2 record (where
+/// ISO 21496-1 and the Ultra HDR v1.1 format put the full record; the
+/// primary image carries only a version record), or `None` when it has no
+/// such record.
+pub(crate) fn iso21496_from_gainmap_jpeg(gainmap_jpeg: &[u8]) -> Option<Result<GainMapMetadata>> {
+    let body = iso21496_record(gainmap_jpeg)?;
+    Some(
+        zencodec::gainmap::parse_iso21496_fmt(
+            body,
+            ultrahdr_core::Iso21496Format::JpegApp2BodyWithUrn,
+        )
+        .map_err(|e| Error::decode_error(alloc::format!("ISO 21496-1 gain-map metadata: {e}"))),
+    )
 }
 
 /// Create a streaming HDR reconstructor for row-by-row processing.
@@ -392,7 +432,7 @@ pub(crate) fn xmp_segment_range(jpeg: &[u8]) -> Option<core::ops::Range<usize>> 
     Some(marker_pos..xmp_end)
 }
 
-/// `ultrahdr_metadata()`'s first branch: gain-map parameters from the
+/// XMP fallback branch: gain-map parameters from the
 /// primary XMP, when it carries non-default ones.
 pub(crate) fn primary_xmp_gain_map(
     extras: &DecodedExtras,
@@ -450,5 +490,107 @@ mod tests {
     fn test_is_ultrahdr_no_xmp() {
         let extras = DecodedExtras::new();
         assert!(!extras.is_ultrahdr());
+    }
+    fn metadata(max: f64, headroom: f64) -> GainMapMetadata {
+        let mut m = GainMapMetadata::default();
+        for c in &mut m.channels {
+            c.min = 0.0;
+            c.max = max;
+            c.gamma = 1.0;
+            c.base_offset = 1.0 / 64.0;
+            c.alternate_offset = 1.0 / 64.0;
+        }
+        m.base_hdr_headroom = 0.0;
+        m.alternate_hdr_headroom = headroom;
+        m
+    }
+
+    /// A stand-in gain-map image: SOI, one APP2 with `body`, EOI. The
+    /// metadata path reads its header only.
+    fn gainmap_jpeg_with_app2(body: &[u8]) -> Vec<u8> {
+        let len = u16::try_from(body.len() + 2).unwrap().to_be_bytes();
+        [&[0xFF, 0xD8, 0xFF, 0xE2], &len[..], body, &[0xFF, 0xD9]].concat()
+    }
+
+    fn iso_body(m: &GainMapMetadata) -> Vec<u8> {
+        zencodec::gainmap::serialize_iso21496_fmt(
+            m,
+            ultrahdr_core::Iso21496Format::JpegApp2BodyWithUrn,
+        )
+    }
+
+    /// What the ISO 21496-1 record of `m` decodes to (its fractions round).
+    fn iso_round_trip(m: &GainMapMetadata) -> GainMapMetadata {
+        zencodec::gainmap::parse_iso21496_fmt(
+            &iso_body(m),
+            ultrahdr_core::Iso21496Format::JpegApp2BodyWithUrn,
+        )
+        .unwrap()
+    }
+
+    fn extras_with(
+        primary_xmp: Option<&GainMapMetadata>,
+        gainmap: Option<Vec<u8>>,
+    ) -> DecodedExtras {
+        let mut extras = DecodedExtras::new();
+        if let Some(m) = primary_xmp {
+            let xmp = crate::container::xmp::generate_gainmap_xmp(m);
+            extras.add_segment(
+                0xE1,
+                [&b"http://ns.adobe.com/xap/1.0/\0"[..], xmp.as_bytes()].concat(),
+                SegmentType::Xmp,
+            );
+        }
+        if let Some(jpeg) = gainmap {
+            extras.add_secondary_image(1, crate::decode::MpfImageType::Undefined, jpeg);
+        }
+        extras
+    }
+
+    #[test]
+    fn iso_only_gain_map_metadata_is_read() {
+        // zenjpeg#216: no XMP at all, the ISO 21496-1 record in the gain-map
+        // image.
+        let iso = metadata(2.0, 2.0);
+        let extras = extras_with(None, Some(gainmap_jpeg_with_app2(&iso_body(&iso))));
+        assert!(extras.is_ultrahdr());
+        let (got, len) = extras.ultrahdr_metadata().unwrap().unwrap();
+        assert_eq!(got, iso_round_trip(&iso));
+        assert_eq!(len, None);
+    }
+
+    #[test]
+    fn iso_metadata_wins_over_disagreeing_xmp() {
+        // Ultra HDR v1.1: prefer ISO 21496-1 when both are present.
+        let xmp = metadata(1.0, 1.0);
+        let iso = metadata(3.0, 3.0);
+        let extras = extras_with(Some(&xmp), Some(gainmap_jpeg_with_app2(&iso_body(&iso))));
+        let (got, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+        assert_eq!(got, iso_round_trip(&iso));
+        assert_ne!(got.alternate_hdr_headroom, xmp.alternate_hdr_headroom);
+    }
+
+    #[test]
+    fn malformed_iso_record_falls_back_to_xmp_or_is_the_error() {
+        // A version-only record (what the primary image carries) where the
+        // gain-map image should hold the full metadata.
+        let truncated = [zencodec::ISO_21496_1_URN, &[0u8, 0, 0, 0][..]].concat();
+        let xmp = metadata(2.0, 2.0);
+        let extras = extras_with(Some(&xmp), Some(gainmap_jpeg_with_app2(&truncated)));
+        let (got, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+        assert_eq!(got.alternate_hdr_headroom, xmp.alternate_hdr_headroom);
+        let extras = extras_with(None, Some(gainmap_jpeg_with_app2(&truncated)));
+        assert!(matches!(extras.ultrahdr_metadata(), Some(Err(_))));
+        // Its presence still marks the file as a gain-map image.
+        assert!(extras.is_ultrahdr());
+    }
+
+    #[test]
+    fn xmp_only_gain_map_metadata_is_unchanged() {
+        let xmp = metadata(2.0, 2.0);
+        let extras = extras_with(Some(&xmp), Some(gainmap_jpeg_with_app2(b"not iso")));
+        let (got, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+        assert_eq!(got.alternate_hdr_headroom, xmp.alternate_hdr_headroom);
+        assert_eq!(got.channels[0].max, xmp.channels[0].max);
     }
 }

@@ -5,9 +5,11 @@
 //! as [`super::UhdrRawImage`] for back-compat).
 
 use crate::container::xmp::{create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp};
+use crate::decode::SegmentType;
 use crate::encode::extras::EncoderSegments;
 use crate::encoder::{EncoderConfig, PixelLayout};
 use crate::error::{Error, Result};
+use alloc::borrow::Cow;
 use enough::{Stop, Unstoppable};
 use ultrahdr_core::{
     ColorPrimaries, GainMap, GainMapChannel, GainMapEncodingFormat, GainMapMetadata,
@@ -590,6 +592,18 @@ pub fn encode_with_gainmap(
 }
 
 /// Encode SDR image with pre-computed gain map and metadata format control.
+///
+/// `metadata_format` picks the gain-map metadata the file carries:
+/// - [`GainMapEncodingFormat::Xmp`]: Ultra HDR `hdrgm` XMP, in the primary
+///   image (version and GContainer directory) and in the gain-map image (the
+///   parameters).
+/// - [`GainMapEncodingFormat::Iso21496`]: ISO 21496-1 only: the version
+///   record in the primary image and the full record in the gain-map image,
+///   no XMP.
+/// - [`GainMapEncodingFormat::Both`]: both forms, as the Ultra HDR Image
+///   Format v1.1 recommends for encoders.
+///
+/// Every format locates the gain map with an MPF directory.
 pub fn encode_with_gainmap_format(
     sdr: &PixelBuffer,
     gainmap: &GainMap,
@@ -608,12 +622,18 @@ pub fn encode_with_gainmap_format(
         gainmap_final = inject_marker_after_soi(&gainmap_final, marker)?;
     }
 
-    let primary_xmp = generate_primary_xmp(gainmap_final.len());
-
-    let mut segments = EncoderSegments::new().set_xmp(&primary_xmp).add_mpf_image(
+    let include_xmp = matches!(
+        metadata_format,
+        GainMapEncodingFormat::Xmp | GainMapEncodingFormat::Both
+    );
+    let gainmap_len = gainmap_final.len();
+    let mut segments = EncoderSegments::new().add_mpf_image(
         gainmap_final,
         crate::encode::extras::MpfImageType::Undefined,
     );
+    if include_xmp {
+        segments = segments.set_xmp(&generate_primary_xmp(gainmap_len));
+    }
 
     let include_iso = matches!(
         metadata_format,
@@ -718,10 +738,19 @@ fn encode_gainmap_jpeg(gainmap: &GainMap, quality: f32, stop: &impl Stop) -> Res
 }
 
 /// Encode the SDR base image. The SDR `PixelBuffer` must be `Rgba8` or `Rgb8`.
+///
+/// `gainmap_segments` (the gain-map image, its XMP and ISO 21496-1 records)
+/// are added to the segments the caller set on `config`, which are kept: an
+/// ICC profile, EXIF, IPTC, comments. The Ultra HDR XMP, when there is one,
+/// replaces the caller's XMP (a JPEG holds one standard XMP packet), and the
+/// gain map replaces any MPF images or ISO 21496-1 records of the caller's.
+/// Without a caller ICC profile, a base whose primaries are not BT.709 gets
+/// one (see [`base_icc_profile`]): JPEG has no other colour carrier, and an
+/// untagged base is read as sRGB.
 fn encode_sdr_base(
     sdr: &PixelBuffer,
     config: &EncoderConfig,
-    segments: EncoderSegments,
+    gainmap_segments: EncoderSegments,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
     let format = sdr.descriptor().pixel_format();
@@ -735,11 +764,67 @@ fn encode_sdr_base(
         }
     };
 
+    // The caller's segments, without what the gain map replaces (their MPF
+    // images are not copied at all).
+    let replaces_xmp = gainmap_segments.has(SegmentType::Xmp);
+    let mut segments = EncoderSegments::new();
+    for seg in config.segments.iter().flat_map(EncoderSegments::segments) {
+        let replaced = seg.data.starts_with(zencodec::ISO_21496_1_URN)
+            || (replaces_xmp
+                && matches!(
+                    seg.segment_type,
+                    SegmentType::Xmp | SegmentType::XmpExtended
+                ));
+        if !replaced {
+            segments = segments.add(seg.marker, seg.data.clone(), seg.segment_type);
+        }
+    }
+    for seg in gainmap_segments.segments() {
+        segments = segments.add(seg.marker, seg.data.clone(), seg.segment_type);
+    }
+    for image in gainmap_segments.mpf_images() {
+        segments = segments.add_mpf_image(image.data.clone(), image.image_type);
+    }
+    if !segments.has(SegmentType::Icc)
+        && let Some(icc) = base_icc_profile(sdr)?
+    {
+        segments = segments.set_icc(icc.into_owned());
+    }
+
     let config_with_segments = config.clone().with_segments(segments);
     let mut encoder = config_with_segments.encode_from_bytes(sdr.width(), sdr.height(), layout)?;
 
     encoder.push_packed(sdr.as_slice().as_strided_bytes(), stop)?;
     encoder.finish()
+}
+
+/// The ICC profile an SDR base needs so readers do not take it for sRGB:
+/// none for BT.709 primaries (the colour every reader assumes for an untagged
+/// JPEG) or unknown ones (nothing to state); a bundled profile for Display P3
+/// or BT.2020 with the sRGB or BT.709 transfer; otherwise an error, since the
+/// base would be mislabelled. A caller with another colour supplies its profile
+/// in the `EncoderConfig` segments instead.
+fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
+    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+    let desc = sdr.descriptor();
+    if matches!(
+        desc.primaries,
+        ColorPrimaries::Bt709 | ColorPrimaries::Unknown
+    ) {
+        return Ok(None);
+    }
+    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(synthesize_icc_for_cicp);
+    match synthesized {
+        Some(SynthesizedIcc::Profile(icc)) => Ok(Some(icc)),
+        Some(SynthesizedIcc::NotNeeded) => Ok(None),
+        _ => Err(Error::icc_error(alloc::format!(
+            "UltraHDR SDR base in {:?} primaries with {:?} transfer: no ICC profile \
+             describes it here; supply one in the EncoderConfig's segments (an APP2 \
+             ICC_PROFILE segment)",
+            desc.primaries,
+            desc.transfer
+        ))),
+    }
 }
 
 /// Convert an ultrahdr_core error to a zenjpeg Error.

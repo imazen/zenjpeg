@@ -850,12 +850,11 @@ fn components_on_plain_xmp_agrees_with_the_decoder() {
     assert_eq!(scan_disposition(&i) == D::ImageData, ok);
 }
 
-/// ISO 21496-1: no zencodec decode or probe path reads the APP2 payload.
-/// Two payloads give identical BaseOnly, Components and ReconstructHdr
-/// output, and the segment stays Unknown.
+/// A primary ISO record is not the secondary image's full parameter record.
+/// Mutating its unused parameter bytes must not change reconstructed output.
 #[cfg(feature = "ultrahdr")]
 #[test]
-fn iso_21496_payload_is_not_read() {
+fn primary_iso_payload_is_not_gain_map_parameters() {
     let orig = load(UHDR);
     let iso = |fill: u8| {
         let mut p = b"urn:iso:std:iso:ts:21496:-1\0".to_vec();

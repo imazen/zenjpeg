@@ -313,9 +313,12 @@ struct MpfImage {
 enum GainMap {
     /// Not decoded.
     None,
-    /// MPF image `idx` is decoded; `xmp_at`: the start of the APP1 inside
+    /// MPF image `idx` is decoded; `parameters_at`: the selected APP1/APP2 inside
     /// it that supplies the parameters, when that is where they come from.
-    Decoded { idx: usize, xmp_at: Option<usize> },
+    Decoded {
+        idx: usize,
+        parameters_at: Option<usize>,
+    },
     /// The decode fails.
     Fails(&'static str),
 }
@@ -3079,9 +3082,8 @@ impl Walk<'_> {
                     (
                         Disposition::Unknown,
                         Some(
-                            "ISO 21496-1 gain-map metadata; no zencodec decode or probe path \
-                             reads it: gain-map parameters come from hdrgm XMP \
-                             (UltraHdrExtras::ultrahdr_metadata)"
+                            "ISO 21496-1 record not selected for gain-map parameters; \
+                             full parameters are read from the selected secondary image"
                                 .into(),
                         ),
                     )
@@ -3120,14 +3122,14 @@ impl Walk<'_> {
     }
 
     /// Map an embedded image's resolved parts to what its role makes of
-    /// them. `xmp_at`: where the APP1 that `extract_xmp_from_jpeg` reads for
+    /// them. `parameters_at`: where the selected APP1 or APP2 read for
     /// the gain-map parameters starts, when the decode takes them from it.
-    fn apply_role(&mut self, nodes: Range<usize>, role: Role, xmp_at: Option<usize>) {
+    fn apply_role(&mut self, nodes: Range<usize>, role: Role, parameters_at: Option<usize>) {
         for n in nodes {
             let p = self.node(n);
             let d = p.disposition();
-            let is_xmp_segment =
-                p.kind() == PartKind::Segment && Some(p.range().start) == xmp_at.map(|a| a as u64);
+            let is_parameters_segment = p.kind() == PartKind::Segment
+                && Some(p.range().start) == parameters_at.map(|a| a as u64);
             let (new, detail) = match (role, d) {
                 (Role::GainMap, Disposition::Structure | Disposition::ImageData) => {
                     (Disposition::Metadata(MetadataKind::GainMap), None)
@@ -3135,18 +3137,18 @@ impl Walk<'_> {
                 (Role::GainMap, Disposition::Metadata(MetadataKind::Colour)) => {
                     (Disposition::Metadata(MetadataKind::GainMap), None)
                 }
-                (Role::GainMap, Disposition::Metadata(MetadataKind::Xmp)) if is_xmp_segment => (
+                (Role::GainMap, _) if is_parameters_segment => (
                     Disposition::Metadata(MetadataKind::GainMap),
                     Some(
-                        "the gain-map parameters: ultrahdr_metadata() reads this packet \
-                         (extract_xmp_from_jpeg) because the primary XMP carries none",
+                        "selected gain-map parameters: ISO 21496-1 takes precedence, \
+                         with hdrgm XMP used as fallback",
                     ),
                 ),
                 (Role::GainMap, Disposition::Metadata(MetadataKind::Xmp)) => (
                     Disposition::Dropped,
                     Some(
                         "the gain-map decode keeps only pixels; ultrahdr_metadata() reads the \
-                         primary XMP, or the first standard XMP packet of this image only",
+                         selected ISO record or primary/secondary XMP packet only",
                     ),
                 ),
                 (Role::GainMap, Disposition::Metadata(_)) => (
@@ -3168,7 +3170,7 @@ impl Walk<'_> {
         mut p: Part,
         r: Range<usize>,
         role: Role,
-        xmp_at: Option<usize>,
+        parameters_at: Option<usize>,
     ) -> Result<usize, Failed> {
         let is_jpeg = self.data.get(r.start..r.start + 2) == Some(&[0xFF, MARKER_SOI][..]);
         if is_jpeg {
@@ -3187,7 +3189,7 @@ impl Walk<'_> {
             )?;
             // Every part of this stream, including children `resolve` added.
             let all = st.nodes.start..self.ids.len();
-            self.apply_role(all, role, xmp_at);
+            self.apply_role(all, role, parameters_at);
         }
         Ok(node)
     }
@@ -3254,14 +3256,20 @@ impl Walk<'_> {
                 }
                 Some(m) => {
                     let gm = &data[m.range.clone()];
-                    let from_gain_map = crate::ultrahdr::primary_xmp_gain_map(&ex).is_none()
-                        && crate::ultrahdr::extract_xmp_from_jpeg(gm).is_some();
+                    let iso = crate::ultrahdr::iso21496_from_gainmap_jpeg(gm)
+                        .is_some_and(|result| result.is_ok());
+                    let parameters_at = if iso {
+                        crate::container::probe(gm, crate::container::Wants::ISO_GAINMAP)
+                            .iso_gainmap()
+                            .and_then(|r| (r.start as usize).checked_sub(ISO_21496_1.len() + 4))
+                    } else if crate::ultrahdr::primary_xmp_gain_map(&ex).is_none() {
+                        crate::ultrahdr::xmp_segment_range(gm).map(|r| r.start)
+                    } else {
+                        None
+                    };
                     GainMap::Decoded {
                         idx: m.idx,
-                        xmp_at: from_gain_map
-                            .then(|| crate::ultrahdr::xmp_segment_range(gm))
-                            .flatten()
-                            .map(|r| m.range.start + r.start),
+                        parameters_at: parameters_at.map(|at| m.range.start + at),
                     }
                 }
             },
@@ -3311,8 +3319,8 @@ impl Walk<'_> {
                 && placed.iter().all(|p| r.end <= p.start || r.start >= p.end)
         };
         let decode_ok = !st.decode_fatal;
-        let (gain_map_idx, xmp_at) = match gain_map {
-            GainMap::Decoded { idx, xmp_at } => (Some(idx), xmp_at),
+        let (gain_map_idx, parameters_at) = match gain_map {
+            GainMap::Decoded { idx, parameters_at } => (Some(idx), parameters_at),
             _ => (None, None),
         };
 
@@ -3364,7 +3372,11 @@ impl Walk<'_> {
             )
             .with_label("MPF")
             .with_detail(format!("MPF image {idx}, type {type_code:#08x}; {why}"));
-            let at = if role == Role::GainMap { xmp_at } else { None };
+            let at = if role == Role::GainMap {
+                parameters_at
+            } else {
+                None
+            };
             if free(&placed, &r) {
                 let node = self.embedded(None, p, r.clone(), role, at)?;
                 mpf_parts.push((r.clone(), node));

@@ -535,6 +535,8 @@ impl<'a> JpegParser<'a> {
 
         let mut xmp_data: Option<String> = None;
         let mut mpf_directory: Option<MpfDirectory> = None;
+        // The primary image's ISO 21496-1 APP2 (version) record.
+        let mut primary_iso = false;
         let mut mpf_header_pos: usize = 0; // Position of MP header (after "MPF\0")
 
         // Scan through the entire JPEG for XMP and MPF markers
@@ -609,6 +611,9 @@ impl<'a> JpegParser<'a> {
                         mpf_header_pos = pos + MPF_SIG.len();
                     }
                 }
+                0xE2 if seg_data.starts_with(zencodec::ISO_21496_1_URN) => {
+                    primary_iso = true;
+                }
                 _ => {}
             }
 
@@ -623,8 +628,8 @@ impl<'a> JpegParser<'a> {
             parse_xmp(xmp).ok().map(|(m, _)| m)
         });
 
-        // If no metadata, not an UltraHDR image
-        if metadata.is_none() {
+        // Neither hdrgm XMP nor an ISO 21496-1 record: not an UltraHDR image.
+        if metadata.is_none() && !primary_iso {
             return Ok((None, None));
         }
 
@@ -650,12 +655,22 @@ impl<'a> JpegParser<'a> {
             None
         });
 
-        // Fallback: if MPF parsing failed but XMP metadata indicates UltraHDR,
+        // Fallback: if MPF parsing failed but the metadata indicates UltraHDR,
         // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
         // This handles non-standard MPF structures from some Android camera apps.
         #[cfg(feature = "ultrahdr")]
-        if gainmap_range.is_none() && metadata.is_some() {
+        if gainmap_range.is_none() {
             gainmap_range = find_secondary_jpeg_range(full_data);
+        }
+
+        // The gain-map image's ISO 21496-1 record wins over XMP (Ultra HDR
+        // v1.1, "ISO 21496-1 Compatibility"; see `UltraHdrExtras`). One that
+        // does not parse falls back to the XMP.
+        if let Some((gm_start, gm_end)) = gainmap_range
+            && let Some(Ok(iso)) =
+                crate::ultrahdr::iso21496_from_gainmap_jpeg(&full_data[gm_start..gm_end])
+        {
+            return Ok((gainmap_range, Some(iso)));
         }
 
         // If primary XMP had only hdrgm:Version but no numeric metadata,

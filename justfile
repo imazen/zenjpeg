@@ -332,3 +332,9 @@ metadata-exif-check:
     cargo test -p zenjpeg --features zencodec --lib exif
     cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
     cargo clippy -p zenjpeg --features zencodec --lib -- -D warnings
+
+metadata-iso-check:
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib ultrahdr::decode
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled ultrahdr_roundtrip
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings

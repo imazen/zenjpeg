@@ -18,6 +18,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- Reconcile the pending metadata stack (`1581bf08`, `da8d2982`, `e008374e`):
+  secondary ISO 21496-1 gain-map parameters take precedence over XMP, with
+  malformed-ISO fallback; buffered/streaming readers agree. Inventory now
+  identifies the selected ISO record. This changes accepted metadata behavior
+  relative to published 0.8.4; existing signatures remain.
+- ISO-only gain-map output omits generated hdrgm XMP. SDR-base encoding retains
+  caller EXIF/ICC/IPTC/comments and synthesizes supported wide-gamut ICC when
+  absent; unsupported unsignaled gamut/transfer pairs return an error.
 - CI now fetches metadata corpora serially before tests and mounts the host
   cache into cross, avoiding uncached corpus failures on Windows ARM and i686.
 - Gain-map XMP parsing/generation and GContainer XML now delegate privately to

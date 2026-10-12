@@ -690,3 +690,305 @@ fn encode_with_gainmap_format_iso21496() {
         "Iso21496 and Both should produce different bytes"
     );
 }
+
+/// One gain-map JPEG per metadata format, from the same HDR/SDR pair and
+/// metadata (baseline, so the streaming reader can open them too).
+fn gain_map_jpegs() -> (
+    zenjpeg::ultrahdr::GainMapMetadata,
+    Vec<(zenjpeg::ultrahdr::GainMapEncodingFormat, Vec<u8>)>,
+) {
+    use zenjpeg::ultrahdr::{GainMapEncodingFormat, compute_gainmap, encode_with_gainmap_format};
+    let hdr = create_test_hdr(64, 64);
+    let sdr = create_test_sdr(64, 64);
+    let (gainmap, metadata) = compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable)
+        .expect("gainmap compute");
+    let files = [
+        GainMapEncodingFormat::Xmp,
+        GainMapEncodingFormat::Iso21496,
+        GainMapEncodingFormat::Both,
+    ]
+    .into_iter()
+    .map(|format| {
+        let jpeg = encode_with_gainmap_format(
+            &sdr,
+            &gainmap,
+            &metadata,
+            &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false),
+            75.0,
+            format,
+            Unstoppable,
+        )
+        .expect("encode_with_gainmap_format");
+        (format, jpeg)
+    })
+    .collect();
+    (metadata, files)
+}
+
+/// The largest channel value of a linear-float HDR reconstruction.
+fn hdr_peak(jpeg: &[u8]) -> f32 {
+    use zenjpeg::ultrahdr::{HdrOutputFormat, decode_ultrahdr_hdr};
+    let hdr = decode_ultrahdr_hdr(jpeg, 8.0, HdrOutputFormat::LinearFloat).expect("HDR decode");
+    hdr.as_slice()
+        .as_strided_bytes()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn gain_map_metadata_round_trips_in_every_format() {
+    // zenjpeg#216: an ISO 21496-1-only file decodes with its gain map, and
+    // a file with both forms decodes from the ISO record (Ultra HDR v1.1).
+    use zenjpeg::ultrahdr::{
+        GainMapEncodingFormat, Iso21496Format, parse_iso21496_fmt, serialize_iso21496_fmt,
+    };
+    let (metadata, files) = gain_map_jpegs();
+    let iso = parse_iso21496_fmt(
+        &serialize_iso21496_fmt(&metadata, Iso21496Format::JpegApp2BodyWithUrn),
+        Iso21496Format::JpegApp2BodyWithUrn,
+    )
+    .unwrap();
+    for (format, jpeg) in &files {
+        let decoded = Decoder::new().decode(jpeg, Unstoppable).unwrap();
+        let extras = decoded.extras().expect("extras");
+        assert!(extras.is_ultrahdr(), "{format:?}");
+        let (got, _) = extras.ultrahdr_metadata().expect("metadata").unwrap();
+        match format {
+            GainMapEncodingFormat::Xmp => {
+                assert!(
+                    (got.alternate_hdr_headroom - metadata.alternate_hdr_headroom).abs() < 1e-4,
+                    "{format:?}: {got:?}"
+                );
+                for (g, m) in got.channels.iter().zip(&metadata.channels) {
+                    assert!((g.max - m.max).abs() < 1e-4, "{format:?}: {got:?}");
+                }
+            }
+            _ => assert_eq!(got, iso, "{format:?}"),
+        }
+        // The streaming reader finds the same metadata source.
+        let reader = Decoder::new()
+            .ultrahdr_reader(
+                jpeg,
+                UltraHdrReaderConfig::new().mode(UltraHdrMode::SdrAndGainMap),
+            )
+            .expect("UltraHdrReader");
+        assert!(reader.is_ultrahdr(), "{format:?}");
+        if *format != GainMapEncodingFormat::Xmp {
+            assert_eq!(reader.metadata(), Some(&iso), "{format:?}");
+        }
+    }
+    // Reconstruction applies the gain map in every format, to within the
+    // metadata's rounding (XMP decimals vs ISO fractions).
+    let peaks: Vec<f32> = files.iter().map(|(_, jpeg)| hdr_peak(jpeg)).collect();
+    assert!(
+        peaks[0] > 1.5,
+        "the gain map boosts the highlights: {peaks:?}"
+    );
+    for peak in &peaks[1..] {
+        assert!((peak - peaks[0]).abs() / peaks[0] < 1e-3, "{peaks:?}");
+    }
+}
+
+#[test]
+fn iso21496_format_writes_no_xmp() {
+    // zencodec#132: `GainMapEncodingFormat::Iso21496` is ISO 21496-1 only;
+    // `Xmp` and `Both` keep the `hdrgm` XMP.
+    use zenjpeg::ultrahdr::GainMapEncodingFormat;
+    let (_, files) = gain_map_jpegs();
+    for (format, jpeg) in &files {
+        let hdrgm = jpeg.windows(6).any(|w| w == b"hdrgm:");
+        let xmp_ns = jpeg
+            .windows(28)
+            .any(|w| w == b"http://ns.adobe.com/xap/1.0/");
+        let iso = jpeg
+            .windows(zencodec::ISO_21496_1_URN.len())
+            .filter(|w| *w == zencodec::ISO_21496_1_URN)
+            .count();
+        let decoded = Decoder::new().decode(jpeg, Unstoppable).unwrap();
+        let primary_xmp = decoded.extras().unwrap().xmp().is_some();
+        match format {
+            GainMapEncodingFormat::Iso21496 => {
+                assert!(!hdrgm && !xmp_ns && !primary_xmp, "{format:?}");
+                // The primary's version record and the gain map's record.
+                assert_eq!(iso, 2, "{format:?}");
+            }
+            GainMapEncodingFormat::Xmp => {
+                assert!(hdrgm && primary_xmp, "{format:?}");
+                assert_eq!(iso, 0, "{format:?}");
+            }
+            _ => {
+                assert!(hdrgm && primary_xmp, "{format:?}");
+                assert_eq!(iso, 2, "{format:?}");
+            }
+        }
+    }
+}
+
+/// `create_test_hdr` in other primaries.
+fn create_test_hdr_in(primaries: UhdrColorGamut) -> UhdrRawImage {
+    let hdr = create_test_hdr(64, 64);
+    pixel_buffer_from_vec(
+        hdr.as_slice().as_strided_bytes().to_vec(),
+        64,
+        64,
+        UhdrPixelFormat::RgbaF32,
+        primaries,
+        UhdrColorTransfer::Linear,
+    )
+    .expect("HDR buffer")
+}
+
+/// `create_test_sdr` in other primaries.
+fn create_test_sdr_in(primaries: UhdrColorGamut) -> UhdrRawImage {
+    let sdr = create_test_sdr(64, 64);
+    pixel_buffer_from_vec(
+        sdr.as_slice().as_strided_bytes().to_vec(),
+        64,
+        64,
+        UhdrPixelFormat::Rgba8,
+        primaries,
+        UhdrColorTransfer::Srgb,
+    )
+    .expect("SDR buffer")
+}
+
+fn primary_icc(jpeg: &[u8]) -> Option<Vec<u8>> {
+    let decoded = Decoder::new().decode(jpeg, Unstoppable).unwrap();
+    decoded.extras().unwrap().icc_profile().map(<[u8]>::to_vec)
+}
+
+#[test]
+fn sdr_base_carries_an_icc_profile_for_its_primaries() {
+    // zencodec#132: the `_luma` / `_with_curve` paths keep the HDR primaries
+    // in the SDR base; a P3 or BT.2020 base must say so.
+    use zenjpeg::ultrahdr::encode_ultrahdr_luma;
+    use zenpixels::Cicp;
+    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+    let expected = |cicp| match synthesize_icc_for_cicp(cicp) {
+        SynthesizedIcc::Profile(icc) => icc.into_owned(),
+        other => panic!("{other:?}"),
+    };
+    let p3 = encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::DisplayP3)).unwrap();
+    assert_eq!(primary_icc(&p3), Some(expected(Cicp::DISPLAY_P3)));
+    let bt2020 = encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::Bt2020)).unwrap();
+    assert_eq!(
+        primary_icc(&bt2020),
+        Some(expected(Cicp::new(9, 13, 0, true)))
+    );
+    // BT.709 stays untagged: every reader assumes it.
+    let bt709 = encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::Bt709)).unwrap();
+    assert_eq!(primary_icc(&bt709), None);
+    // The gain map is still found and decoded.
+    let decoded = Decoder::new().decode(&p3, Unstoppable).unwrap();
+    assert!(decoded.extras().unwrap().decode_gainmap().unwrap().is_ok());
+}
+
+#[test]
+fn sdr_base_keeps_the_callers_segments() {
+    // The caller's ICC profile and EXIF stay; the Ultra HDR XMP replaces the
+    // caller's XMP only when the format writes XMP.
+    use zenjpeg::encode::EncoderSegments;
+    use zenjpeg::ultrahdr::{GainMapEncodingFormat, compute_gainmap, encode_with_gainmap_format};
+    let hdr = create_test_hdr_in(UhdrColorGamut::DisplayP3);
+    let sdr = create_test_sdr_in(UhdrColorGamut::DisplayP3);
+    let (gainmap, metadata) =
+        compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+    let icc = b"caller's own profile bytes".to_vec();
+    let tiff = b"II*\0\x08\0\0\0\0\0\0\0\0\0".to_vec();
+    let caller_xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><caller/></x:xmpmeta>"#;
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).with_segments(
+        EncoderSegments::new()
+            .set_icc(icc.clone())
+            .set_exif(tiff.clone())
+            .set_xmp(caller_xmp),
+    );
+    for format in [GainMapEncodingFormat::Both, GainMapEncodingFormat::Iso21496] {
+        let jpeg = encode_with_gainmap_format(
+            &sdr,
+            &gainmap,
+            &metadata,
+            &config,
+            75.0,
+            format,
+            Unstoppable,
+        )
+        .unwrap();
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let extras = decoded.extras().unwrap();
+        assert_eq!(extras.icc_profile(), Some(&icc[..]), "{format:?}");
+        assert_eq!(
+            extras.exif(),
+            Some(&[b"Exif\0\0".as_slice(), &tiff].concat()[..]),
+            "{format:?}"
+        );
+        let xmp = extras.xmp().unwrap();
+        match format {
+            GainMapEncodingFormat::Iso21496 => assert!(xmp.contains("<caller/>"), "{xmp}"),
+            _ => assert!(
+                xmp.contains("hdrgm:Version") && !xmp.contains("<caller/>"),
+                "{xmp}"
+            ),
+        }
+        assert!(extras.is_ultrahdr(), "{format:?}");
+    }
+}
+
+#[test]
+fn sdr_base_in_a_gamut_without_a_profile_is_an_error() {
+    // Adobe RGB with the sRGB transfer has no bundled profile: writing the
+    // base untagged would mislabel it, so the encode fails and says why.
+    use zenjpeg::ultrahdr::{compute_gainmap, encode_with_gainmap};
+    let hdr = create_test_hdr_in(UhdrColorGamut::AdobeRgb);
+    let sdr = create_test_sdr_in(UhdrColorGamut::AdobeRgb);
+    let (gainmap, metadata) =
+        compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let err = encode_with_gainmap(&sdr, &gainmap, &metadata, &config, 75.0, Unstoppable)
+        .expect_err("no profile for Adobe RGB with the sRGB transfer");
+    assert!(err.to_string().contains("supply one"), "{err}");
+    // With the caller's profile it encodes.
+    let config = config.with_segments(
+        zenjpeg::encode::EncoderSegments::new().set_icc(b"an Adobe RGB profile".to_vec()),
+    );
+    assert!(encode_with_gainmap(&sdr, &gainmap, &metadata, &config, 75.0, Unstoppable).is_ok());
+}
+
+#[cfg(feature = "inventory")]
+#[test]
+fn inventory_marks_the_selected_iso_gain_map_record() {
+    use zencodec::decode::{DecodeJob, DecoderConfig};
+    use zencodec::inventory::{Disposition, MetadataKind, PartKind};
+    for (format, jpeg) in gain_map_jpegs().1 {
+        if format == zenjpeg::ultrahdr::GainMapEncodingFormat::Xmp {
+            continue;
+        }
+        let offset = jpeg
+            .windows(zencodec::ISO_21496_1_URN.len())
+            .rposition(|bytes| bytes == zencodec::ISO_21496_1_URN)
+            .unwrap() as u64;
+        for render in [
+            zencodec::GainMapRender::Components,
+            zencodec::GainMapRender::BaseOnly,
+        ] {
+            let inventory = zenjpeg::JpegDecoderConfig::new()
+                .job()
+                .with_gain_map_render(render)
+                .inventory(&jpeg)
+                .unwrap();
+            inventory.validate().unwrap();
+            let record = inventory
+                .parts()
+                .iter()
+                .find(|part| part.kind() == PartKind::Segment && part.range().contains(&offset))
+                .unwrap();
+            assert_eq!(
+                record.disposition() == Disposition::Metadata(MetadataKind::GainMap),
+                render == zencodec::GainMapRender::Components,
+                "{format:?}/{render:?}: {record:?}"
+            );
+        }
+    }
+}
