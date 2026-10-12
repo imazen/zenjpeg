@@ -940,9 +940,9 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
 
     // Skip to IFD offset (at offset + 4)
     let ifd_offset = read_u32(offset + 4) as usize;
-    let ifd_pos = offset + ifd_offset;
+    let ifd_pos = offset.checked_add(ifd_offset)?;
 
-    if data.len() < ifd_pos + 2 {
+    if data.len() < ifd_pos.checked_add(2)? {
         return None;
     }
 
@@ -960,8 +960,8 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
 
     // First try standard 12-byte entry spacing
     for i in 0..num_entries {
-        let entry_pos = ifd_pos + 2 + i * 12;
-        if data.len() < entry_pos + 12 {
+        let entry_pos = ifd_pos.checked_add(2)?.checked_add(i.checked_mul(12)?)?;
+        if data.len() < entry_pos.checked_add(12)? {
             break;
         }
 
@@ -969,7 +969,7 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
         if tag == 0xB002 {
             // MP Entry - type should be UNDEFINED (7), count is total bytes
             mp_entry_count = read_u32(entry_pos + 4);
-            mp_entry_offset = Some(read_u32(entry_pos + 8) as usize + offset);
+            mp_entry_offset = (read_u32(entry_pos + 8) as usize).checked_add(offset);
             break;
         }
     }
@@ -986,7 +986,9 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
         // Scan from after the entry count through the expected IFD area
         // Limit search to a reasonable range (256 bytes covers most MPF structures)
         let scan_start = ifd_pos + 2;
-        let scan_end = (scan_start + 256).min(data.len().saturating_sub(12));
+        let scan_end = scan_start
+            .saturating_add(256)
+            .min(data.len().saturating_sub(12));
 
         for pos in scan_start..scan_end {
             if data.len() >= pos + 12 && data[pos..pos + 2] == tag_bytes {
@@ -995,7 +997,7 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
                 if type_val == 7 {
                     // Type 7 = UNDEFINED, expected for MP Entry
                     mp_entry_count = read_u32(pos + 4);
-                    mp_entry_offset = Some(read_u32(pos + 8) as usize + offset);
+                    mp_entry_offset = (read_u32(pos + 8) as usize).checked_add(offset);
                     break;
                 }
             }
@@ -1003,13 +1005,17 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
     }
 
     let mp_entry_offset = mp_entry_offset?;
+    if mp_entry_offset > data.len() {
+        return None;
+    }
 
     // Each MP entry is 16 bytes. Cap against actual data size to prevent
     // OOM on crafted inputs with inflated mp_entry_count.
     let num_images = (mp_entry_count / 16) as usize;
     let max_from_data = data.len().saturating_sub(mp_entry_offset) / 16;
     let num_images = num_images.min(max_from_data).min(256);
-    let mut images = Vec::with_capacity(num_images);
+    let mut images = Vec::new();
+    images.try_reserve_exact(num_images).ok()?;
 
     for i in 0..num_images {
         let entry_pos = mp_entry_offset + i * 16;

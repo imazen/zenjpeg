@@ -218,3 +218,15 @@ images: those emitters cannot relocate the references inside the original APP
 payload. Decoder acceptance therefore does not promise rewrite support.
 `just metadata-mpf-compat-check` passes the original inventory review suite,
 strict-mode parity, repeated/overlapping extraction bounds and lossless refusal.
+
+### Native depth and MPF bounds
+
+The new Dynamic Depth regression reproduced shifted extraction: padding bytes
+were returned as the depth prefix and its tail was lost. Native extraction now
+adds the primary item's padding before walking secondary resources, matching
+[Dynamic Depth 1.0](https://developer.android.com/static/media/camera/camera2/Dynamic-depth-v1.0.pdf)
+and the inventory. Oversized padding returns no depth result.
+Native MPF's compatibility parser independently needed checked IFD and MP-entry
+offsets; strict inspection's checked arithmetic had not covered it.
+`just metadata-depth-bounds-check` passes native depth/bounds tests and the
+native-parser overflow regression on i686, plus Clippy.

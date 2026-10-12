@@ -122,6 +122,32 @@ fn extracted(jpeg: &[u8]) -> Vec<(usize, usize)> {
         .unwrap_or_default()
 }
 
+/// Native MPF parsing has an independent compatibility fallback. Both its
+/// normal IFD walk and its fallback must reject offsets that wrap on i686.
+#[test]
+fn native_mpf_offsets_do_not_wrap() {
+    let primary = color_jpeg(32, 32);
+    let map = gray_jpeg(16, 16, 8);
+    let jpeg = with_mpf(
+        &primary,
+        1,
+        |p| vec![(UNDEFINED, map.len() as u32, p)],
+        &map,
+    );
+    for (field, fallback) in [(14, false), (52, false), (52, true)] {
+        let mut input = jpeg.clone();
+        input[field..field + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+        if fallback {
+            input[18..20].copy_from_slice(&0u16.to_be_bytes());
+        }
+        let result = DecodeConfig::new()
+            .preserve(PreserveConfig::all())
+            .decode(&input, Unstoppable)
+            .unwrap();
+        assert!(result.extras().unwrap().mpf().is_none());
+    }
+}
+
 /// A directory naming the same secondary 255 times extracts it once (it
 /// copied it 255 times).
 #[test]

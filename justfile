@@ -440,3 +440,9 @@ metadata-final-regression-check:
     just metadata-icc-parity-check
     cargo fmt -p zenjpeg --check
     just api-doc
+
+metadata-depth-bounds-check:
+    cargo test -p zenjpeg --lib decode::depth::tests
+    cargo test -p zenjpeg --test mpf_bounds
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test mpf_bounds native_mpf_offsets_do_not_wrap
+    cargo clippy -p zenjpeg --lib --test mpf_bounds -- -D warnings
