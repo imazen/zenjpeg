@@ -116,3 +116,22 @@ framing/metadata oracles and final cross-platform checks remain release gates.
 Remaining reconciliation: interrupted GContainer/lossless work, oversized EXIF
 handling, HDR reconstruction's base-gamut assumption, and mismatch reporting.
 No claim is made that all JPEG metadata work is complete.
+
+## Codec-owned metadata rewriting
+
+The default-off `metadata-rewrite` feature exposes `zenjpeg::metadata::rewrite`
+with zencodec request/plan/error types. The planner and existing framing and
+Ultra HDR scrub assertions moved from zencodecs `aa21cba0`; tests now call the
+codec directly. Neither zencodecs nor zenpipe is required.
+
+`just metadata-rewrite-check` passes without default features. The gain-map
+recipe verifies native full-HDR output, parameters, unchanged entropy scans,
+MPF offsets and explicit XMP service behavior, and runs framing tests on i686.
+`just metadata-rewrite-oracle` decodes both primary and gain-map JPEGs before
+and after rewriting with libjpeg's `djpeg` and compares PPM bytes exactly;
+ExifTool reports `Validate: OK` for the rewritten container.
+
+The planner supports one primary plus one MPF gain map, and explicitly refuses
+other MPF layouts. It is stricter than a display decoder: malformed authoritative
+ISO or conflicting ISO/XMP parameters prevent rewriting, while a decoder can
+fall back to XMP. Extended-XMP editing still requires reassembly support.

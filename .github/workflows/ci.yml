@@ -81,7 +81,7 @@ jobs:
         run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite" --lib --tests
 
       - name: Inventory disabled through configured jobs
         run: cargo test -p zenjpeg --release --features zencodec --test inventory_feature
@@ -144,7 +144,7 @@ jobs:
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
       - name: Metadata and inventory (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata --test inventory_feature --test extended_metadata --test fuzz_regression
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata,metadata-rewrite --test inventory_feature --test extended_metadata --test fuzz_regression --test metadata_rewrite
 
   wasm32:
     name: Build (wasm32-wasip1)

@@ -18,6 +18,11 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- Add default-off `metadata-rewrite` with codec-owned `metadata::rewrite`, moved
+  from zencodecs (`aa21cba0`). zencodec owns its public request/plan types;
+  zenmeta owns shared EXIF/service/plan processing. Gain-map scrubbing repairs
+  MPF/XMP references and rejects ambiguous ISO/XMP parameters. This is additive
+  relative to 0.8.4. Shared unpublished dependencies advance to `a31a9b68`.
 - Reconcile the pending metadata stack (`1581bf08`, `da8d2982`, `e008374e`):
   secondary ISO 21496-1 gain-map parameters take precedence over XMP, with
   malformed-ISO fallback; buffered/streaming readers agree. Inventory now

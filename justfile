@@ -338,3 +338,23 @@ metadata-iso-check:
     cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled ultrahdr_roundtrip
     cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled inventory_review
     cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
+
+metadata-rewrite-check:
+    cargo test -p zenjpeg --no-default-features --features metadata-rewrite --test metadata_rewrite
+    cargo clippy -p zenjpeg --no-default-features --features metadata-rewrite --lib --test metadata_rewrite -- -D warnings
+
+metadata-rewrite-gainmap-check:
+    cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --no-default-features --features metadata-rewrite --test metadata_rewrite --target i686-unknown-linux-gnu
+
+metadata-rewrite-oracle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output="$HOME/tmp/zenmeta-jpeg-rewrite-oracle"
+    JPEG_METADATA_OUTPUT="$output" cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite scrubs_both_components -- --nocapture
+    for suffix in "" "-map"; do
+        djpeg -outfile "$output/before$suffix.ppm" "$output/before$suffix.jpg"
+        djpeg -outfile "$output/after$suffix.ppm" "$output/after$suffix.jpg"
+        cmp "$output/before$suffix.ppm" "$output/after$suffix.ppm"
+    done
+    exiftool -a -validate -warning -error "$output/after.jpg"
