@@ -1062,6 +1062,24 @@ pub fn dequantize_unzigzag_i32_into_partial(
     }
 }
 
+/// Dequantize a natural-order coefficient block into an existing i32 buffer.
+///
+/// Contiguous multiply — fully vectorizable — for decoders that store
+/// coefficients in natural order at entropy-decode time (the baseline
+/// streaming path's `decode_block_into_natural`, matching libjpeg-turbo's
+/// `jpeg_natural_order[]` layout). Writes all 64 positions, so no
+/// pre-zeroing of `result` is needed.
+#[inline(always)]
+pub fn dequantize_natural_i32_into(
+    coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    result: &mut [i32; DCT_BLOCK_SIZE],
+) {
+    for k in 0..DCT_BLOCK_SIZE {
+        result[k] = coeffs[k] as i32 * quant[k] as i32;
+    }
+}
+
 /// Dequantizes a block of coefficients (SIMD-optimized).
 pub fn dequantize_block(
     quantized: &[i16; DCT_BLOCK_SIZE],

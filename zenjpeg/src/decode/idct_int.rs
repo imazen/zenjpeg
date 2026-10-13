@@ -1013,23 +1013,76 @@ mod avx2 {
     ) -> bool {
         assert!(out_vector.len() >= stride * 7 + 8);
 
-        let mut row0 =
-            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
-        let mut row1 =
-            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
-        let mut row2 =
+        let row0 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
+        let row1 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
+        let row2 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap());
-        let mut row3 =
+        let row3 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap());
-        let mut row4 =
+        let row4 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap());
-        let mut row5 =
+        let row5 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap());
-        let mut row6 =
+        let row6 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap());
-        let mut row7 =
+        let row7 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap());
 
+        return idct_int_libjpeg_avx2_core(
+            _token, row0, row1, row2, row3, row4, row5, row6, row7, out_vector, stride, clamp_255,
+        );
+    }
+
+    /// Fused dequantize + [`idct_int_libjpeg_avx2`] for the streaming decode
+    /// loop: reads quantized `i16` coefficients in *natural* order (as written
+    /// by `decode_block_into_natural`, matching libjpeg-turbo's layout) and
+    /// multiplies by the quantizer inside the row loads — the same fold
+    /// libjpeg-turbo does via `inverse_DCT`'s multiplier tables, except in i32
+    /// lanes. Returns `false` for the scalar fallback as before.
+    #[arcane]
+    pub(crate) fn idct_int_libjpeg_avx2_q16(
+        _token: archmage::X64V3Token,
+        coeffs: &[i16; 64],
+        quant: &[u16; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+    ) -> bool {
+        let mut rows = [_mm256_setzero_si256(); 8];
+        for i in 0..8 {
+            let c = safe_simd::_mm_loadu_si128(
+                <&[i16; 8]>::try_from(&coeffs[8 * i..8 * i + 8]).unwrap(),
+            );
+            let q = safe_simd::_mm_loadu_si128(
+                <&[u16; 8]>::try_from(&quant[8 * i..8 * i + 8]).unwrap(),
+            );
+            rows[i] = _mm256_mullo_epi32(_mm256_cvtepi16_epi32(c), _mm256_cvtepu16_epi32(q));
+        }
+        let [row0, row1, row2, row3, row4, row5, row6, row7] = rows;
+        idct_int_libjpeg_avx2_core(
+            _token, row0, row1, row2, row3, row4, row5, row6, row7, out_vector, stride, true,
+        )
+    }
+
+    /// The two-pass islow butterfly over pre-loaded row registers; shared by
+    /// [`idct_int_libjpeg_avx2`] and [`idct_int_libjpeg_avx2_q16`].
+    #[arcane]
+    #[allow(unused_assignments)]
+    #[allow(unused_mut)]
+    #[allow(clippy::too_many_arguments)]
+    fn idct_int_libjpeg_avx2_core(
+        _token: archmage::X64V3Token,
+        mut row0: __m256i,
+        mut row1: __m256i,
+        mut row2: __m256i,
+        mut row3: __m256i,
+        mut row4: __m256i,
+        mut row5: __m256i,
+        mut row6: __m256i,
+        mut row7: __m256i,
+        out_vector: &mut [i16],
+        stride: usize,
+        clamp_255: bool,
+    ) -> bool {
         // Guard: all values must fit the i16 window [-32768, 32767].
         // abs() maps i32::MIN to itself (sign bit set), which the mask
         // test rejects, so the window check is exact on every input.
@@ -1382,6 +1435,39 @@ fn idct_int_portable(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
     idct_int(coeffs, output, stride);
     #[cfg(not(all(target_arch = "wasm32", not(target_feature = "simd128"))))]
     wide_simd::idct_int_wide(coeffs, output, stride);
+}
+
+/// Fused dequantize + libjpeg-exact IDCT over natural-order `i16`
+/// coefficients for the baseline streaming loops (the coefficients written
+/// by `decode_block_into_natural`). Folding the quantizer into the kernel's
+/// row loads removes the separate dequant pass and the i32 scratch's
+/// store/load round-trip — the equivalent of libjpeg-turbo folding
+/// dequantization into `inverse_DCT`'s multiplier tables.
+///
+/// Returns `false` outside the i16-exactness guard; the caller must then
+/// dequantize and run [`idct_int_libjpeg`].
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn idct_int_libjpeg_streaming_avx2_q16(
+    token: archmage::X64V3Token,
+    coeffs: &[i16; 64],
+    quant: &[u16; 64],
+    output: &mut [i16],
+    stride: usize,
+) -> bool {
+    avx2::idct_int_libjpeg_avx2_q16(token, coeffs, quant, output, stride)
+}
+
+/// jpegli-exact IDCT via a pre-resolved v3 token (see above).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn idct_int_streaming_avx2(
+    token: archmage::X64V3Token,
+    coeffs: &mut [i32; 64],
+    output: &mut [i16],
+    stride: usize,
+) {
+    avx2::idct_int_avx2(token, coeffs, output, stride)
 }
 
 /// Perform integer IDCT using AVX2 intrinsics via archmage capability token.

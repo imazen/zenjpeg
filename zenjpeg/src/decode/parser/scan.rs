@@ -14,6 +14,8 @@ use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::JpegMode;
+#[cfg(target_arch = "x86_64")]
+use archmage::SimdToken;
 use enough::Stop;
 
 use super::super::DecodeWarning;
@@ -1175,19 +1177,22 @@ impl<'a> JpegParser<'a> {
             quant_tables: &quant_tables,
             restart_interval: self.restart_interval as u32,
             idct_fn,
+            #[cfg(target_arch = "x86_64")]
+            idct_v3: archmage::X64V3Token::summon(),
             is_rgb,
             turbo_color: self.idct_method == super::super::IdctMethod::Libjpeg,
         };
 
         if bufs.need_fancy {
-            let upsample = upsample_fn.expect("fancy h2v2 requires an upsample fn");
+            // select_upsample_fn doubles as validation: unsupported sampling
+            // ratios for the fancy path surface as its Err here.
+            upsample_fn.expect("fancy h2v2 requires an upsample fn");
             baseline_streaming::run_fancy_h2v2_loop(
                 &mut decoder,
                 &inputs,
                 &geom,
                 &mut bufs,
                 &mut state,
-                upsample,
                 c_data_offset,
                 downsampled_w,
                 stop,

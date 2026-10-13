@@ -2530,6 +2530,207 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2<const TURBO: bool>(
     }
 }
 
+/// Fancy (triangle) h2v2 chroma upsample fused into the YCbCr→RGB convert —
+/// one output row at a time. `cs_cb`/`cs_cr` hold the per-strip column sums
+/// `3*near + far` in padded layout: `cs[0]` repeats the first tap and
+/// `cs[in_width + 1]` the last, so the left/right filter taps are plain
+/// `cs[c]`/`cs[c + 2]` loads with no scalar edge handling. The upsampled
+/// chroma stays in registers — the i16 upsampled planes are never
+/// materialized.
+///
+/// Bit-exact with [`upsample_h2v2_libjpeg_row`] followed by
+/// [`ycbcr_planes_i16_to_rgb_u8`]: even pixels use `(3*cs + cs_left + bl)>>4`,
+/// odd `(3*cs + cs_right + br)>>4`, edges via the replicated taps.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fused_h2v2_fancy_ycbcr_row_avx2<const TURBO: bool>(
+    _token: archmage::X64V3Token,
+    y_row: &[i16],
+    cs_cb: &[i16],
+    cs_cr: &[i16],
+    rgb: &mut [u8],
+    width: usize,
+    bias_left: i16,
+    bias_right: i16,
+) {
+    use core::arch::x86_64::*;
+
+    macro_rules! srai {
+        ($x:expr) => {{
+            if TURBO {
+                _mm256_srai_epi32($x, 16)
+            } else {
+                _mm256_srai_epi32($x, 14)
+            }
+        }};
+    }
+
+    let bias = _mm256_set1_epi16(128);
+    let y_coeff = _mm256_set1_epi32(if TURBO { TURBO_Y_CF } else { Y_CF_INT });
+    let rounding = _mm256_set1_epi32(if TURBO { TURBO_ROUND } else { YUV_ROUND });
+    let cr_to_r = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_R } else { CR_TO_R_INT });
+    let cr_to_g = _mm256_set1_epi32(if TURBO { TURBO_CR_TO_G } else { CR_TO_G_INT });
+    let cb_to_g = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_G } else { CB_TO_G_INT });
+    let cb_to_b = _mm256_set1_epi32(if TURBO { TURBO_CB_TO_B } else { CB_TO_B_INT });
+    let zero = _mm256_setzero_si256();
+    let v_three = _mm256_set1_epi16(3);
+    let v_bl = _mm256_set1_epi16(bias_left);
+    let v_br = _mm256_set1_epi16(bias_right);
+
+    let sh_r = _mm256_setr_epi8(
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14,
+        9, 4, 15, 10, 5,
+    );
+    let sh_g = _mm256_setr_epi8(
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
+        14, 9, 4, 15, 10,
+    );
+    let sh_b = _mm256_setr_epi8(
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
+        3, 14, 9, 4, 15,
+    );
+    let m0 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, -1, 0, 0,
+    );
+    let m1 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0,
+    );
+
+    // Each chunk: 8 column-sum positions -> 16 upsampled chroma -> 16 px RGB.
+    let chunks = width / 16;
+    for chunk in 0..chunks {
+        let c = chunk * 8;
+        let px = chunk * 16;
+        let out_offset = px * 3;
+
+        // Triangle filter on the column sums (window = cs[c-1], cs[c], cs[c+1]
+        // via the padded layout at offsets c, c+1, c+2).
+        macro_rules! upsample_plane {
+            ($cs:ident) => {{
+                let left =
+                    safe_simd::_mm_loadu_si128(<&[i16; 8]>::try_from(&$cs[c..c + 8]).unwrap());
+                let ctr =
+                    safe_simd::_mm_loadu_si128(<&[i16; 8]>::try_from(&$cs[c + 1..c + 9]).unwrap());
+                let right =
+                    safe_simd::_mm_loadu_si128(<&[i16; 8]>::try_from(&$cs[c + 2..c + 10]).unwrap());
+                let c3 = _mm_mullo_epi16(ctr, _mm256_castsi256_si128(v_three));
+                let even = _mm_srai_epi16(
+                    _mm_add_epi16(_mm_add_epi16(c3, left), _mm256_castsi256_si128(v_bl)),
+                    4,
+                );
+                let odd = _mm_srai_epi16(
+                    _mm_add_epi16(_mm_add_epi16(c3, right), _mm256_castsi256_si128(v_br)),
+                    4,
+                );
+                // Interleave even/odd taps -> consecutive upsampled pixels.
+                _mm256_set_m128i(_mm_unpackhi_epi16(even, odd), _mm_unpacklo_epi16(even, odd))
+            }};
+        }
+        let cb_vec = upsample_plane!(cs_cb);
+        let cr_vec = upsample_plane!(cs_cr);
+
+        let y_vec =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&y_row[px..px + 16]).unwrap());
+
+        // Subtract 128 from Cb and Cr
+        let cb_centered = _mm256_sub_epi16(cb_vec, bias);
+        let cr_centered = _mm256_sub_epi16(cr_vec, bias);
+
+        let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
+        let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
+        let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
+        let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
+
+        let cb_sign = _mm256_srai_epi16(cb_centered, 15);
+        let cr_sign = _mm256_srai_epi16(cr_centered, 15);
+        let cb_lo = _mm256_unpacklo_epi16(cb_centered, cb_sign);
+        let cb_hi = _mm256_unpackhi_epi16(cb_centered, cb_sign);
+        let cr_lo = _mm256_unpacklo_epi16(cr_centered, cr_sign);
+        let cr_hi = _mm256_unpackhi_epi16(cr_centered, cr_sign);
+
+        let r_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cr_lo, cr_to_r)
+        ));
+        let r_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cr_hi, cr_to_r)
+        ));
+        let g_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_add_epi32(
+                _mm256_mullo_epi32(cr_lo, cr_to_g),
+                _mm256_mullo_epi32(cb_lo, cb_to_g),
+            ),
+        ));
+        let g_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_add_epi32(
+                _mm256_mullo_epi32(cr_hi, cr_to_g),
+                _mm256_mullo_epi32(cb_hi, cb_to_g),
+            ),
+        ));
+        let b_lo = srai!(_mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cb_lo, cb_to_b)
+        ));
+        let b_hi = srai!(_mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cb_hi, cb_to_b)
+        ));
+
+        let r_16 = _mm256_packs_epi32(r_lo, r_hi);
+        let g_16 = _mm256_packs_epi32(g_lo, g_hi);
+        let b_16 = _mm256_packs_epi32(b_lo, b_hi);
+
+        let r_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero), 0b11_01_10_00);
+        let g_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero), 0b11_01_10_00);
+        let b_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero), 0b11_01_10_00);
+
+        let r0 = _mm256_shuffle_epi8(r_8, sh_r);
+        let g0 = _mm256_shuffle_epi8(g_8, sh_g);
+        let b0 = _mm256_shuffle_epi8(b_8, sh_b);
+
+        let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
+        let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
+        let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
+
+        let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
+        let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
+
+        let (rgb_lo, rgb_hi) = rgb[out_offset..out_offset + 48].split_at_mut(32);
+        safe_simd::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(rgb_lo).unwrap(), rgb0);
+        safe_simd::_mm_storeu_si128(
+            <&mut [u8; 16]>::try_from(rgb_hi).unwrap(),
+            _mm256_castsi256_si128(rgb1),
+        );
+    }
+
+    // Scalar remainder: fewer than 16 trailing pixels.
+    for px in chunks * 16..width {
+        let col = px / 2;
+        let (tap, bias) = if px % 2 == 0 {
+            (cs_cb[col] as i32, bias_left as i32)
+        } else {
+            (cs_cb[col + 2] as i32, bias_right as i32)
+        };
+        let cbv = (3 * cs_cb[col + 1] as i32 + tap + bias) >> 4;
+        let (tap, bias) = if px % 2 == 0 {
+            (cs_cr[col] as i32, bias_left as i32)
+        } else {
+            (cs_cr[col + 2] as i32, bias_right as i32)
+        };
+        let crv = (3 * cs_cr[col + 1] as i32 + tap + bias) >> 4;
+        let (r, g, b) = ycc_rgb_pixel(i32::from(y_row[px]), cbv - 128, crv - 128, TURBO);
+        rgb[px * 3] = r;
+        rgb[px * 3 + 1] = g;
+        rgb[px * 3 + 2] = b;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

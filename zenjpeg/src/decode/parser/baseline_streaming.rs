@@ -16,9 +16,12 @@ use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit_pref};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
-use crate::quant::dequantize_unzigzag_i32_into_partial;
+use crate::quant::dequantize_natural_i32_into;
+#[cfg(target_arch = "x86_64")]
+use archmage::arcane;
 
 use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
+use super::super::upsample::upsample_h2v2_strip_ext;
 use super::super::{ChromaUpsampling, DecodeWarning, IdctMethod};
 use super::JpegParser;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
@@ -128,12 +131,14 @@ pub(super) struct StreamingBuffers {
     pub cr_b: Vec<i16>,
     pub cb_up: Vec<i16>,
     pub cr_up: Vec<i16>,
+    /// Column-sum scratch rows for the strip-level h2v2 upsampler
+    /// (`c_strip_width` each; empty unless fancy).
+    pub cs_a: Vec<i16>,
+    pub cs_b: Vec<i16>,
     /// Whether fancy h2v2 (double-buffered + 1-row lag) is active.
     pub need_fancy: bool,
     /// Extended chroma row count (data + 1 above + 1 below for fancy, else data).
     pub ext_height: usize,
-    /// Upsampled chroma row count.
-    pub upsample_out_height: usize,
     /// `out_bpp` — bytes per output pixel (1, 3, or 4).
     pub out_bpp: usize,
     /// Whether output is 4bpp (BGRA/RGBA).
@@ -223,13 +228,10 @@ impl StreamingBuffers {
             Vec::new()
         };
 
-        // Upsampled chroma output buffers
-        // For fancy h2v2: output is ext_height * v_ratio rows (includes context row output)
-        let upsample_out_height = if need_fancy {
-            ext_height * geom.v_ratio
-        } else {
-            geom.y_strip_height
-        };
+        // Upsampled chroma output buffers: exactly one strip of output rows.
+        // (Fancy h2v2 emits only the data rows; context rows are consumed
+        // inside the strip driver, never emitted.)
+        let upsample_out_height = geom.y_strip_height;
         let up_size = if (!geom.is_grayscale && geom.h_ratio == 2) || need_fancy {
             geom.y_strip_width * upsample_out_height
         } else {
@@ -242,6 +244,16 @@ impl StreamingBuffers {
         };
         let cr_up: Vec<i16> = if up_size > 0 {
             try_alloc_maybeuninit_pref(alloc_pref, false, up_size, "Cr upsampled")?
+        } else {
+            Vec::new()
+        };
+        let cs_a: Vec<i16> = if need_fancy {
+            try_alloc_maybeuninit_pref(alloc_pref, false, geom.c_strip_width + 2, "colsum A")?
+        } else {
+            Vec::new()
+        };
+        let cs_b: Vec<i16> = if need_fancy {
+            try_alloc_maybeuninit_pref(alloc_pref, false, geom.c_strip_width + 2, "colsum B")?
         } else {
             Vec::new()
         };
@@ -265,9 +277,10 @@ impl StreamingBuffers {
             cr_b,
             cb_up,
             cr_up,
+            cs_a,
+            cs_b,
             need_fancy,
             ext_height,
-            upsample_out_height,
             out_bpp,
             out_4bpp,
             swap_rb,
@@ -385,8 +398,8 @@ pub(super) struct McuRowState {
     pub next_restart_num: u8,
     pub prev_coeff_counts: [u8; 4],
     pub streaming_truncation_mcu: Option<u32>,
-    pub coeffs: [i16; DCT_BLOCK_SIZE],
     pub dequant_buf: [i32; DCT_BLOCK_SIZE],
+    pub coeffs: [i16; DCT_BLOCK_SIZE],
 }
 
 impl McuRowState {
@@ -396,8 +409,8 @@ impl McuRowState {
             next_restart_num: 0,
             prev_coeff_counts: [64; 4],
             streaming_truncation_mcu: None,
-            coeffs: [0; DCT_BLOCK_SIZE],
             dequant_buf: [0; DCT_BLOCK_SIZE],
+            coeffs: [0; DCT_BLOCK_SIZE],
         }
     }
 }
@@ -414,12 +427,9 @@ impl McuRowState {
 #[inline(always)]
 pub(super) fn decode_mcu_row(
     decoder: &mut EntropyDecoder<'_, '_>,
-    scan_components: &[(usize, u8, u8)],
-    components: &[crate::types::Component; crate::foundation::consts::MAX_COMPONENTS],
+    inputs: &LoopInputs<'_, '_>,
     mcu_cols: usize,
     state: &mut McuRowState,
-    restart_interval: u32,
-    quant_tables: &[&[u16; DCT_BLOCK_SIZE]],
     y_strip: &mut [i16],
     y_strip_width: usize,
     max_h_samp: usize,
@@ -429,8 +439,12 @@ pub(super) fn decode_mcu_row(
     c_h_samp: usize,
     c_data_offset: usize,
     is_grayscale: bool,
-    idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
 ) -> Result<()> {
+    let scan_components = inputs.scan_components;
+    let components = inputs.components;
+    let restart_interval = inputs.restart_interval;
+    let quant_tables = inputs.quant_tables;
+
     for mcu_x in 0..mcu_cols {
         if restart_interval > 0 && state.mcu_count > 0 && state.mcu_count % restart_interval == 0 {
             decoder.align_to_byte();
@@ -450,7 +464,7 @@ pub(super) fn decode_mcu_row(
 
             for by in 0..v_samp {
                 for bx in 0..h_samp {
-                    let coeff_count = match decoder.decode_block_into(
+                    let coeff_count = match decoder.decode_block_into_natural(
                         &mut state.coeffs,
                         state.prev_coeff_counts[*comp_idx],
                         *comp_idx,
@@ -483,13 +497,10 @@ pub(super) fn decode_mcu_row(
                             let dc = state.coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
                         } else {
-                            dequantize_unzigzag_i32_into_partial(
+                            run_block_idct(
+                                inputs,
                                 &state.coeffs,
                                 quant,
-                                &mut state.dequant_buf,
-                                coeff_count,
-                            );
-                            idct_fn(
                                 &mut state.dequant_buf,
                                 &mut y_strip[dst_offset..],
                                 y_strip_width,
@@ -505,13 +516,10 @@ pub(super) fn decode_mcu_row(
                             let dc = state.coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut strip[dst_offset..], c_strip_width);
                         } else {
-                            dequantize_unzigzag_i32_into_partial(
+                            run_block_idct(
+                                inputs,
                                 &state.coeffs,
                                 quant,
-                                &mut state.dequant_buf,
-                                coeff_count,
-                            );
-                            idct_fn(
                                 &mut state.dequant_buf,
                                 &mut strip[dst_offset..],
                                 c_strip_width,
@@ -603,6 +611,116 @@ pub(super) fn output_mcu_row(
     }
 }
 
+/// Fancy h2v2 strip output fused with YCbCr→RGB: per input row it computes
+/// the `3*near + far` column sums into padded scratch, then the fused row
+/// kernel horizontal-filters and color-converts in one pass — the upsampled
+/// chroma planes are never materialized. This drops ~2 bytes of strip
+/// traffic per pixel versus the plane-materializing path.
+///
+/// `rows` is how many of the strip's `2 * c_strip_height` output rows are
+/// real (image height may cut the last strip short); `y_start` is the
+/// strip's first output row in the destination image.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+#[allow(clippy::too_many_arguments)]
+fn output_fancy_strip_fused(
+    _token: archmage::X64V3Token,
+    cb: &[i16],
+    cr: &[i16],
+    c_strip_width: usize,
+    c_strip_height: usize,
+    y_strip: &[i16],
+    y_strip_width: usize,
+    rgb: &mut [u8],
+    width: usize,
+    y_start: usize,
+    rows: usize,
+    turbo: bool,
+    cs_cb: &mut [i16],
+    cs_cr: &mut [i16],
+) {
+    use crate::decode::upsample::h2v2_colsum_ext_avx2;
+
+    let w = c_strip_width;
+    let cols = width.min(y_strip_width);
+
+    for in_y in 0..c_strip_height {
+        let upper = 2 * in_y;
+        if upper >= rows {
+            break;
+        }
+        let near_off = (1 + in_y) * w;
+        let far_a = in_y * w;
+        let far_b = (in_y + 2) * w;
+        let near_cb = &cb[near_off..near_off + w];
+        let near_cr = &cr[near_off..near_off + w];
+
+        // Upper output row of the pair (far = row above near).
+        h2v2_colsum_ext_avx2(_token, near_cb, &cb[far_a..far_a + w], cs_cb);
+        h2v2_colsum_ext_avx2(_token, near_cr, &cr[far_a..far_a + w], cs_cr);
+        let y_off = upper * y_strip_width;
+        let rgb_off = (y_start + upper) * width * 3;
+        if turbo {
+            crate::color::ycbcr::fused_h2v2_fancy_ycbcr_row_avx2::<true>(
+                _token,
+                &y_strip[y_off..y_off + cols],
+                cs_cb,
+                cs_cr,
+                &mut rgb[rgb_off..rgb_off + cols * 3],
+                cols,
+                8,
+                7,
+            );
+        } else {
+            crate::color::ycbcr::fused_h2v2_fancy_ycbcr_row_avx2::<false>(
+                _token,
+                &y_strip[y_off..y_off + cols],
+                cs_cb,
+                cs_cr,
+                &mut rgb[rgb_off..rgb_off + cols * 3],
+                cols,
+                8,
+                7,
+            );
+        }
+
+        // Lower output row (far = row below near). Alternating bias swaps the
+        // rounding taps; turbo keeps (8,7) on both.
+        let lower = upper + 1;
+        if lower >= rows {
+            continue;
+        }
+        h2v2_colsum_ext_avx2(_token, near_cb, &cb[far_b..far_b + w], cs_cb);
+        h2v2_colsum_ext_avx2(_token, near_cr, &cr[far_b..far_b + w], cs_cr);
+        let y_off = lower * y_strip_width;
+        let rgb_off = (y_start + lower) * width * 3;
+        let (bl, br) = if turbo { (8i16, 7i16) } else { (7i16, 8i16) };
+        if turbo {
+            crate::color::ycbcr::fused_h2v2_fancy_ycbcr_row_avx2::<true>(
+                _token,
+                &y_strip[y_off..y_off + cols],
+                cs_cb,
+                cs_cr,
+                &mut rgb[rgb_off..rgb_off + cols * 3],
+                cols,
+                bl,
+                br,
+            );
+        } else {
+            crate::color::ycbcr::fused_h2v2_fancy_ycbcr_row_avx2::<false>(
+                _token,
+                &y_strip[y_off..y_off + cols],
+                cs_cb,
+                cs_cr,
+                &mut rgb[rgb_off..rgb_off + cols * 3],
+                cols,
+                bl,
+                br,
+            );
+        }
+    }
+}
+
 use super::output_helpers::edge_replicate_h_padding as fixup_h_padding;
 
 /// Inputs to the fancy h2v2 + simple decode loops that don't change
@@ -613,9 +731,48 @@ pub(super) struct LoopInputs<'a, 'b> {
     pub quant_tables: &'a [&'b [u16; DCT_BLOCK_SIZE]],
     pub restart_interval: u32,
     pub idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    /// x86-64-v3 token resolved once per scan so per-block IDCT calls go
+    /// straight to the AVX2 kernels — no per-block `summon()`/dispatch.
+    #[cfg(target_arch = "x86_64")]
+    pub idct_v3: Option<archmage::X64V3Token>,
     pub is_rgb: bool,
     /// libjpeg-turbo-exact YCbCr→RGB (IdctMethod::Libjpeg).
     pub turbo_color: bool,
+}
+
+/// Per-block IDCT for the streaming loops. `coeff_count > 1` is guaranteed
+/// by the caller (DC-only blocks are handled before this), so the tiered
+/// dispatchers' DC-only rescan is redundant here.
+#[inline(always)]
+fn run_block_idct(
+    inputs: &LoopInputs<'_, '_>,
+    coeffs: &[i16; 64],
+    quant: &[u16; 64],
+    dequant_buf: &mut [i32; 64],
+    out: &mut [i16],
+    stride: usize,
+    coeff_count: u8,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = inputs.idct_v3 {
+        use super::super::idct_int::{
+            idct_int_libjpeg, idct_int_libjpeg_streaming_avx2_q16, idct_int_streaming_avx2,
+        };
+        if inputs.turbo_color {
+            // IdctMethod::Libjpeg: fused dequantize + guarded kernel; the
+            // scalar i64 fallback keeps bit-exactness outside the i16 window.
+            if !idct_int_libjpeg_streaming_avx2_q16(token, coeffs, quant, out, stride) {
+                dequantize_natural_i32_into(coeffs, quant, dequant_buf);
+                idct_int_libjpeg(dequant_buf, out, stride);
+            }
+        } else {
+            dequantize_natural_i32_into(coeffs, quant, dequant_buf);
+            idct_int_streaming_avx2(token, dequant_buf, out, stride);
+        }
+        return;
+    }
+    dequantize_natural_i32_into(coeffs, quant, dequant_buf);
+    (inputs.idct_fn)(dequant_buf, out, stride, coeff_count);
 }
 
 /// Fancy h2v2 decode loop: double-buffered Y + chroma strips with 1-row lag
@@ -633,7 +790,6 @@ pub(super) fn run_fancy_h2v2_loop(
     geom: &StreamingGeometry,
     bufs: &mut StreamingBuffers,
     state: &mut McuRowState,
-    upsample: UpsampleFn,
     c_data_offset: usize,
     downsampled_w: usize,
     stop: &impl enough::Stop,
@@ -648,7 +804,6 @@ pub(super) fn run_fancy_h2v2_loop(
     let c_h_samp = geom.c_h_samp;
     let v_ratio = geom.v_ratio;
     let ext_height = bufs.ext_height;
-    let upsample_out_height = bufs.upsample_out_height;
 
     for mcu_y in 0..mcu_rows {
         if stop.should_stop() {
@@ -658,12 +813,9 @@ pub(super) fn run_fancy_h2v2_loop(
         // Decode into B buffers (y_strip_b, cb_b, cr_b)
         decode_mcu_row(
             decoder,
-            inputs.scan_components,
-            inputs.components,
+            inputs,
             mcu_cols,
             state,
-            inputs.restart_interval,
-            inputs.quant_tables,
             &mut bufs.y_strip_b,
             y_strip_width,
             max_h_samp,
@@ -673,7 +825,6 @@ pub(super) fn run_fancy_h2v2_loop(
             c_h_samp,
             c_data_offset,
             false,
-            inputs.idct_fn,
         )?;
 
         if mcu_y == 0 {
@@ -692,38 +843,77 @@ pub(super) fn run_fancy_h2v2_loop(
             // Output pending MCU row (A has full context now)
             fixup_h_padding(&mut bufs.cb_a, downsampled_w, c_strip_width, ext_height);
             fixup_h_padding(&mut bufs.cr_a, downsampled_w, c_strip_width, ext_height);
-            upsample(
-                &bufs.cb_a,
-                c_strip_width,
-                ext_height,
-                &mut bufs.cb_up,
-                y_strip_width,
-                upsample_out_height,
-            );
-            upsample(
-                &bufs.cr_a,
-                c_strip_width,
-                ext_height,
-                &mut bufs.cr_up,
-                y_strip_width,
-                upsample_out_height,
-            );
-            output_mcu_row(
-                mcu_y - 1,
-                &bufs.y_strip_a,
-                y_strip_width,
-                y_strip_height,
-                &bufs.cb_up,
-                &bufs.cr_up,
-                v_ratio, // skip context rows in upsampled output
-                &mut bufs.rgb,
-                geom.width,
-                geom.height,
-                inputs.is_rgb,
-                bufs.out_4bpp,
-                bufs.swap_rb,
-                inputs.turbo_color,
-            );
+            let y_start = (mcu_y - 1) * y_strip_height;
+            let rows = y_strip_height.min(geom.height.saturating_sub(y_start));
+            #[cfg(target_arch = "x86_64")]
+            let can_fuse =
+                inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
+            #[cfg(not(target_arch = "x86_64"))]
+            let can_fuse = false;
+            #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
+            let mut used_fused = false;
+            #[cfg(target_arch = "x86_64")]
+            if can_fuse {
+                output_fancy_strip_fused(
+                    inputs.idct_v3.unwrap(),
+                    &bufs.cb_a,
+                    &bufs.cr_a,
+                    c_strip_width,
+                    c_strip_height,
+                    &bufs.y_strip_a,
+                    y_strip_width,
+                    &mut bufs.rgb,
+                    geom.width,
+                    y_start,
+                    rows,
+                    inputs.turbo_color,
+                    &mut bufs.cs_a,
+                    &mut bufs.cs_b,
+                );
+                used_fused = true;
+            }
+            if !used_fused {
+                upsample_h2v2_strip_ext(
+                    &bufs.cb_a,
+                    c_strip_width,
+                    c_strip_width,
+                    c_strip_height,
+                    &mut bufs.cb_up,
+                    y_strip_width,
+                    y_strip_width,
+                    inputs.turbo_color,
+                    &mut bufs.cs_a,
+                    &mut bufs.cs_b,
+                );
+                upsample_h2v2_strip_ext(
+                    &bufs.cr_a,
+                    c_strip_width,
+                    c_strip_width,
+                    c_strip_height,
+                    &mut bufs.cr_up,
+                    y_strip_width,
+                    y_strip_width,
+                    inputs.turbo_color,
+                    &mut bufs.cs_a,
+                    &mut bufs.cs_b,
+                );
+                output_mcu_row(
+                    mcu_y - 1,
+                    &bufs.y_strip_a,
+                    y_strip_width,
+                    y_strip_height,
+                    &bufs.cb_up,
+                    &bufs.cr_up,
+                    0, // upsample emits exactly the data rows — no context to skip
+                    &mut bufs.rgb,
+                    geom.width,
+                    geom.height,
+                    inputs.is_rgb,
+                    bufs.out_4bpp,
+                    bufs.swap_rb,
+                    inputs.turbo_color,
+                );
+            }
 
             // Set B's above-context = A's last data row
             let last_data = c_strip_height * c_strip_width;
@@ -772,38 +962,76 @@ pub(super) fn run_fancy_h2v2_loop(
 
         fixup_h_padding(&mut bufs.cb_a, downsampled_w, c_strip_width, ext_height);
         fixup_h_padding(&mut bufs.cr_a, downsampled_w, c_strip_width, ext_height);
-        upsample(
-            &bufs.cb_a,
-            c_strip_width,
-            ext_height,
-            &mut bufs.cb_up,
-            y_strip_width,
-            upsample_out_height,
-        );
-        upsample(
-            &bufs.cr_a,
-            c_strip_width,
-            ext_height,
-            &mut bufs.cr_up,
-            y_strip_width,
-            upsample_out_height,
-        );
-        output_mcu_row(
-            mcu_rows - 1,
-            &bufs.y_strip_a,
-            y_strip_width,
-            y_strip_height,
-            &bufs.cb_up,
-            &bufs.cr_up,
-            v_ratio, // skip context rows in upsampled output
-            &mut bufs.rgb,
-            geom.width,
-            geom.height,
-            inputs.is_rgb,
-            bufs.out_4bpp,
-            bufs.swap_rb,
-            inputs.turbo_color,
-        );
+        let y_start = (mcu_rows - 1) * y_strip_height;
+        let rows = y_strip_height.min(geom.height.saturating_sub(y_start));
+        #[cfg(target_arch = "x86_64")]
+        let can_fuse =
+            inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
+        #[cfg(not(target_arch = "x86_64"))]
+        let can_fuse = false;
+        let mut used_fused = false;
+        #[cfg(target_arch = "x86_64")]
+        if can_fuse {
+            output_fancy_strip_fused(
+                inputs.idct_v3.unwrap(),
+                &bufs.cb_a,
+                &bufs.cr_a,
+                c_strip_width,
+                c_strip_height,
+                &bufs.y_strip_a,
+                y_strip_width,
+                &mut bufs.rgb,
+                geom.width,
+                y_start,
+                rows,
+                inputs.turbo_color,
+                &mut bufs.cs_a,
+                &mut bufs.cs_b,
+            );
+            used_fused = true;
+        }
+        if !used_fused {
+            upsample_h2v2_strip_ext(
+                &bufs.cb_a,
+                c_strip_width,
+                c_strip_width,
+                c_strip_height,
+                &mut bufs.cb_up,
+                y_strip_width,
+                y_strip_width,
+                inputs.turbo_color,
+                &mut bufs.cs_a,
+                &mut bufs.cs_b,
+            );
+            upsample_h2v2_strip_ext(
+                &bufs.cr_a,
+                c_strip_width,
+                c_strip_width,
+                c_strip_height,
+                &mut bufs.cr_up,
+                y_strip_width,
+                y_strip_width,
+                inputs.turbo_color,
+                &mut bufs.cs_a,
+                &mut bufs.cs_b,
+            );
+            output_mcu_row(
+                mcu_rows - 1,
+                &bufs.y_strip_a,
+                y_strip_width,
+                y_strip_height,
+                &bufs.cb_up,
+                &bufs.cr_up,
+                0, // upsample emits exactly the data rows — no context to skip
+                &mut bufs.rgb,
+                geom.width,
+                geom.height,
+                inputs.is_rgb,
+                bufs.out_4bpp,
+                bufs.swap_rb,
+                inputs.turbo_color,
+            );
+        }
     }
     Ok(())
 }
@@ -847,12 +1075,9 @@ pub(super) fn run_simple_loop(
 
         decode_mcu_row(
             decoder,
-            inputs.scan_components,
-            inputs.components,
+            inputs,
             mcu_cols,
             state,
-            inputs.restart_interval,
-            inputs.quant_tables,
             &mut bufs.y_strip_a,
             y_strip_width,
             max_h_samp,
@@ -862,7 +1087,6 @@ pub(super) fn run_simple_loop(
             c_h_samp,
             c_data_offset,
             is_grayscale,
-            inputs.idct_fn,
         )?;
 
         if is_grayscale {
