@@ -444,11 +444,147 @@ impl IncrementalDecode for JpegIncrementalDecoder {
         Ok(Some((y, slice)))
     }
 
+    fn pull_batch_into(
+        &mut self,
+        sink: &mut dyn zencodec::decode::DecodeRowSink,
+    ) -> Result<Option<u32>, Self::Error> {
+        if let Some(ref stop) = self.stop {
+            stop.check().map_err(Error::from)?;
+        }
+
+        if self.is_complete {
+            return Ok(None);
+        }
+
+        // Try decoding next MCU row if not already ready
+        if !self.mcu_row_ready && !self.is_progressive {
+            if let Some(ref mut reader) = self.reader {
+                if !reader.is_finished() {
+                    let slice = &self.pending_scan[self.pending_scan_pos..];
+                    if let Some(bytes) = reader.decode_mcu_row_slice(slice, self.is_eof)? {
+                        self.pending_scan_pos += bytes;
+                        self.mcu_row_ready = true;
+                    }
+                }
+            }
+        }
+
+        let is_ready = self.mcu_row_ready || (self.is_progressive && self.reader.is_some());
+        if !is_ready {
+            if let Some(ref reader) = self.reader {
+                if reader.is_finished() {
+                    self.is_complete = true;
+                }
+            }
+            return Ok(None);
+        }
+
+        let reader = match self.reader.as_mut() {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        if reader.is_finished() {
+            self.is_complete = true;
+            return Ok(None);
+        }
+
+        let width = reader.width() as usize;
+        let descriptor = match self.descriptor {
+            Some(d) => d,
+            None => return Err(Error::internal("incremental decode: descriptor missing").into()),
+        };
+
+        let batch_rows = self.mcu_height;
+        let y = self.current_row;
+
+        let mut dst = sink
+            .provide_next_buffer(y, batch_rows as u32, width as u32, descriptor)
+            .map_err(Self::wrap_sink_error)?;
+        let dst_stride = dst.stride();
+        let dst_bytes = dst.as_strided_bytes_mut();
+
+        let ch_type = descriptor.channel_type();
+        let ch_layout = descriptor.layout();
+
+        let count = match (ch_type, ch_layout) {
+            (ChannelType::U8, ChannelLayout::Gray) => {
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_rows);
+                reader.read_rows_gray8(out)?
+            }
+            (ChannelType::U8, ChannelLayout::Rgb) => {
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_rows);
+                reader.read_rows_rgb8(out)?
+            }
+            (ChannelType::U8, ChannelLayout::Rgba) => {
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_rows);
+                if descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                    reader.read_rows_rgbx8(out)?
+                } else {
+                    reader.read_rows_rgba8(out)?
+                }
+            }
+            (ChannelType::U8, ChannelLayout::Bgra) => {
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_rows);
+                if descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                    reader.read_rows_bgrx8(out)?
+                } else {
+                    reader.read_rows_bgra8(out)?
+                }
+            }
+            (ChannelType::F32, ChannelLayout::Gray) => {
+                let float_slice: &mut [f32] = bytemuck::cast_slice_mut(dst_bytes);
+                let float_stride = dst_stride / 4;
+                let f_out = ImgRefMut::new(float_slice, float_stride, batch_rows);
+                reader.read_rows_gray_f32(f_out)?
+            }
+            (ChannelType::F32, ChannelLayout::Rgb | ChannelLayout::Rgba) => {
+                let float_slice: &mut [f32] = bytemuck::cast_slice_mut(dst_bytes);
+                let float_stride = dst_stride / 4;
+                let f_out = ImgRefMut::new(float_slice, float_stride, batch_rows);
+                reader.read_rows_rgba_f32(f_out)?
+            }
+            _ => {
+                return Err(Error::from(zencodec::UnsupportedOperation::PixelFormat).into());
+            }
+        };
+
+        drop(dst);
+        self.mcu_row_ready = false;
+
+        if count == 0 {
+            self.is_complete = true;
+            return Ok(None);
+        }
+
+        // Compact pending_scan buffer
+        if self.pending_scan_pos >= self.pending_scan.len() {
+            self.pending_scan.clear();
+            self.pending_scan_pos = 0;
+        } else if self.pending_scan_pos > 8192 {
+            self.pending_scan.drain(..self.pending_scan_pos);
+            self.pending_scan_pos = 0;
+        }
+
+        self.current_row += count as u32;
+
+        if reader.is_finished() {
+            self.is_complete = true;
+        }
+
+        Ok(Some(count as u32))
+    }
+
     fn info(&self) -> Option<&ImageInfo> {
         self.info.as_ref()
+    }
+
+    fn output_descriptor(&self) -> Option<PixelDescriptor> {
+        self.descriptor
     }
 
     fn is_complete(&self) -> bool {
         self.is_complete
     }
 }
+
