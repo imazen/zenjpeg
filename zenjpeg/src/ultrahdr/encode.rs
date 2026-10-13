@@ -726,7 +726,7 @@ pub fn encode_with_gainmap_metadata(
         };
         if exif.orientation() != Some(retained.orientation) {
             exif.set_orientation(retained.orientation);
-            retained.exif = Some(exif.to_bytes().into());
+            retained.exif = Some(zenmeta::exif::serialize(&exif).into());
         }
     }
     let mut segments = EncoderSegments::new();

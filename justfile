@@ -485,3 +485,8 @@ metadata-legacy-icc-check:
     cargo test -p zenjpeg --features extended-metadata,metadata-rewrite,inventory --test metadata_limits
     just metadata-icc-parity-check
     cargo clippy -p zenjpeg --features extended-metadata,inventory --lib -- -D warnings
+
+# Typed rewrite migration plus the gain-map carrier and EXIF compatibility paths.
+shared-contract-check:
+    just metadata-rewrite-check metadata-rewrite-gainmap-check
+    cargo clippy -p zenjpeg --features metadata-rewrite,ultrahdr,zencodec --lib -- -D warnings

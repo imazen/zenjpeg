@@ -189,7 +189,7 @@ fn segment(marker: u8, payload: &[u8]) -> Result<Vec<u8>, Error> {
         .len()
         .checked_add(2)
         .and_then(|n| u16::try_from(n).ok())
-        .ok_or(Error::Limit("JPEG APP segment"))?;
+        .ok_or(Error::Limit(zencodec::LimitKind::OutputSize))?;
     let mut out = Vec::new();
     out.try_reserve_exact(payload.len() + 4)
         .map_err(|_| Error::Allocation)?;
@@ -204,7 +204,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
     for (i, span) in marker::iter(req.input()).enumerate() {
         req.check()?;
         if i >= req.max_carriers() {
-            return Err(Error::Limit("JPEG carriers"));
+            return Err(Error::Limit(zencodec::LimitKind::MetadataCarriers));
         }
         if span.kind == MarkerKind::App(2) && span.payload.starts_with(b"MPF\0") {
             if mpf {
@@ -341,13 +341,13 @@ fn gain_map<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
     };
     inject(
         &mut gain_plan,
-        req,
+        &gain_req,
         segment(0xe2, &iso)?,
         "regenerated ISO gain-map envelope",
     )?;
     inject(
         &mut gain_plan,
-        req,
+        &gain_req,
         edited_gain_xmp(
             req,
             gain_signals.xmp,
@@ -358,13 +358,13 @@ fn gain_map<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
     )?;
     inject(
         &mut base_plan,
-        req,
+        &base_req,
         segment(0xe2, zencodec::ISO_21496_1_PRIMARY_APP2_BODY)?,
         "regenerated primary ISO signal",
     )?;
     inject(
         &mut base_plan,
-        req,
+        &base_req,
         edited_gain_xmp(
             req,
             base_signals.xmp,
@@ -382,13 +382,13 @@ fn gain_map<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
         .output_len()
         .checked_add(dummy.len())
         .filter(|&n| n <= u32::MAX as usize)
-        .ok_or(Error::Limit("MPF primary length"))?;
+        .ok_or(Error::Limit(zencodec::LimitKind::OutputSize))?;
     if gain_plan.output_len() > u32::MAX as usize {
-        return Err(Error::Limit("MPF secondary length"));
+        return Err(Error::Limit(zencodec::LimitKind::OutputSize));
     }
     inject(
         &mut base_plan,
-        req,
+        &base_req,
         mpf::create_mpf_header_typed(
             final_base,
             &[(MpImageType::Undefined, gain_plan.output_len())],
@@ -396,14 +396,16 @@ fn gain_map<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
         ),
         "regenerated MPF offsets",
     )?;
+    let mut output = Plan::new();
+    output.append(req, base_plan, 0)?;
     if base_end < gain_start {
-        base_plan.remove(req, base_end..gain_start, "inter-image padding")?;
+        output.remove(req, base_end..gain_start, "inter-image padding")?;
     }
-    base_plan.append(req, gain_plan, gain_start)?;
+    output.append(req, gain_plan, gain_start)?;
     if gain_end < req.input().len() {
-        base_plan.remove(req, gain_end..req.input().len(), "JPEG trailer")?;
+        output.remove(req, gain_end..req.input().len(), "JPEG trailer")?;
     }
-    Ok(base_plan)
+    Ok(output)
 }
 
 struct Signals<'a> {
@@ -418,7 +420,7 @@ fn signals<'a>(req: &ScrubRequest<'_>, image: &'a [u8]) -> Result<Signals<'a>, E
     for (i, span) in marker::iter(image).enumerate() {
         req.check()?;
         if i >= req.max_carriers() {
-            return Err(Error::Limit("JPEG carrier count"));
+            return Err(Error::Limit(zencodec::LimitKind::MetadataCarriers));
         }
         if span.kind == MarkerKind::App(2)
             && span.payload.starts_with(zencodec::ISO_21496_1_URN)
@@ -437,9 +439,9 @@ fn signals<'a>(req: &ScrubRequest<'_>, image: &'a [u8]) -> Result<Signals<'a>, E
     }
     Ok(s)
 }
-fn inject(
-    plan: &mut Plan<'_>,
-    req: &ScrubRequest<'_>,
+fn inject<'a>(
+    plan: &mut Plan<'a>,
+    req: &ScrubRequest<'a>,
     bytes: Vec<u8>,
     name: &'static str,
 ) -> Result<(), Error> {
@@ -460,14 +462,15 @@ fn same_params(a: &zencodec::GainMapParams, b: &zencodec::GainMapParams) -> bool
         })
 }
 
-fn normalize_icc(
-    req: &ScrubRequest<'_>,
-    plan: &mut Plan<'_>,
+fn normalize_icc<'a>(
+    req: &ScrubRequest<'a>,
+    plan: &mut Plan<'a>,
     parts: &[Option<&[u8]>; 256],
     ranges: &[Range<usize>],
 ) -> Result<(), Error> {
     let total = parts.iter().flatten().try_fold(0usize, |a, p| {
-        a.checked_add(p.len()).ok_or(Error::Limit("ICC bytes"))
+        a.checked_add(p.len())
+            .ok_or(Error::Limit(zencodec::LimitKind::MetadataSize))
     })?;
     req.packet(total)?;
     if !req.normalize_icc() || ranges.is_empty() {
@@ -483,7 +486,7 @@ fn normalize_icc(
     if let Some(normalized) = req.icc(&joined)? {
         let count = normalized.len().div_ceil(65519);
         if count > 255 {
-            return Err(Error::Limit("ICC JPEG segments"));
+            return Err(Error::Limit(zencodec::LimitKind::OutputSize));
         }
         let mut encoded = Vec::new();
         encoded

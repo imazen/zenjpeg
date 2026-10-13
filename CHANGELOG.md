@@ -5,6 +5,18 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Shared rewrite contract
+
+- Keep child-image rewrite mutations within their input contexts and assemble
+  primary/gain-map plans under a fresh parent. The shared provenance checks now
+  validate both borrowed input identity and translated report offsets.
+- Delegate existing EXIF serialization/filtering calls to zenmeta compatibility
+  helpers instead of deprecated zencodec writers.
+
+- Migrate unpublished metadata rewrite errors to shared typed `LimitKind` values.
+  Pin zencodec/zenmeta to `47895ac4`; configured input/output and metadata caps
+  retain rejection behavior without string matching.
+
 - Reconcile PR210 component filtering with PR225 inspection: filtering remains
   available without extended inspection or inventory; both retain their
   `container::metadata` API paths. Preserve typed inventory part-limit causes.

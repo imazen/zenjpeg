@@ -87,7 +87,7 @@ pub fn filter_for_gain_map(jpeg: &[u8], policy: &MetadataPolicy) -> Result<Vec<u
                 let source = Metadata::none()
                     .with_exif(span.payload.to_vec())
                     .with_orientation(orientation);
-                let filtered = source.filtered(policy);
+                let filtered = zenmeta::metadata::filter(&source, policy);
                 if filtered.orientation != source.orientation {
                     return Err(Error::DropOrientation);
                 }
@@ -166,7 +166,7 @@ mod tests {
         let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
         exif.set_orientation(zencodec::Orientation::Rotate90);
         exif.set_artist("PRIVATE");
-        let bytes = exif.to_bytes();
+        let bytes = zenmeta::exif::serialize(&exif);
         let payload = if bytes.starts_with(b"Exif\0\0") {
             bytes
         } else {
