@@ -329,3 +329,10 @@ can decode it once to resolve metadata and again for the requested base output.
 A future metadata-only resolved-component view can remove that work without
 reintroducing format-signaling heuristics; it must retain the same selection,
 bounds, and policy semantics. No claim of a fully unified scanner is made here.
+
+HDR rendering also now applies requested output gamut conversion after gain-map
+application, with strided row conversion and fallible output allocation. The
+progressive-image admission policy reaches this path too. Tests cover the exact
+native-reconstruct-then-convert sequence and inventory/decode rejection parity.
+This is another consequence of keeping output conversion separate from source
+metadata interpretation; converting the base first changes the gain-map inputs.

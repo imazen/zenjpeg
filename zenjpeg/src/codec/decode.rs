@@ -1078,6 +1078,22 @@ fn read_job_info(
     config.read_info_preserving(data, &metadata_preserve(policy))
 }
 
+fn check_progressive_policy(
+    header: &crate::decode::JpegInfo,
+    policy: Option<&zencodec::decode::DecodePolicy>,
+) -> Result<(), Error> {
+    let progressive = matches!(
+        header.mode,
+        crate::types::JpegMode::Progressive | crate::types::JpegMode::ArithmeticProgressive
+    );
+    if progressive && policy.is_some_and(|p| !p.resolve_progressive(true)) {
+        return Err(Error::policy_rejected(
+            "progressive JPEG rejected by decode policy",
+        ));
+    }
+    Ok(())
+}
+
 fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
@@ -1264,19 +1280,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     .map_err(Error::from)?;
             }
 
-            // Progressive policy
-            let is_progressive = matches!(
-                header.mode,
-                crate::types::JpegMode::Progressive | crate::types::JpegMode::ArithmeticProgressive
-            );
-            if let Some(ref policy) = self.policy
-                && is_progressive
-                && !policy.resolve_progressive(true)
-            {
-                return Err(
-                    Error::policy_rejected("progressive JPEG rejected by decode policy").into(),
-                );
-            }
+            check_progressive_policy(&header, self.policy.as_ref())?;
 
             // Passthrough CMYK handling
             let is_raw_cmyk = if matches!(self.config.cmyk_handling, CmykHandling::Passthrough)
@@ -1501,12 +1505,15 @@ impl JpegDecoder<'_> {
         // of one canonical reconstruction (byte-identical to `Preserve` plus
         // an external bake, the same construction as #149).
         let base_transform = cfg.compute_effective_transform_from_data(&self.data);
-        cfg = cfg.auto_orient(false);
+        // Gain-map parameters describe the stored base color. Perform requested
+        // output gamut conversion only after applying the gain map.
+        cfg = cfg.auto_orient(false).correct_color(None);
         cfg.decode_transform = None;
         // apply_gainmap consumes RGBA8 SDR input.
         cfg = cfg.output_format(crate::types::PixelFormat::Rgba);
 
         let header = read_job_info(&cfg, &self.data, self.policy.as_ref())?;
+        check_progressive_policy(&header, self.policy.as_ref())?;
         if limits.max_width.is_some() || limits.max_height.is_some() {
             limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
         }
@@ -1582,6 +1589,36 @@ impl JpegDecoder<'_> {
         let hdr = apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop)
             .map_err(|e| Error::icc_error(alloc::format!("gain-map apply failed: {e}")))?;
         drop(sdr);
+        let hdr = if let Some(target) = self.config.inner.correct_color {
+            use crate::color::icc::TargetColorSpace;
+            let primaries = match target {
+                TargetColorSpace::Srgb => zenpixels::ColorPrimaries::Bt709,
+                TargetColorSpace::DisplayP3 => zenpixels::ColorPrimaries::DisplayP3,
+                TargetColorSpace::Rec2020 => zenpixels::ColorPrimaries::Bt2020,
+            };
+            let descriptor = hdr.descriptor().with_primaries(primaries);
+            if descriptor == hdr.descriptor() {
+                hdr
+            } else {
+                let mut output = PixelBuffer::try_new(w, h, descriptor)
+                    .map_err(|_| Error::internal("HDR color output allocation failed"))?;
+                let mut converter =
+                    zenpixels_convert::RowConverter::new(hdr.descriptor(), descriptor).map_err(
+                        |e| Error::icc_error(alloc::format!("HDR output color conversion: {e}")),
+                    )?;
+                for row in 0..h {
+                    stop.check()?;
+                    converter.convert_row(
+                        hdr.as_slice().row(row),
+                        output.as_slice_mut().row_mut(row),
+                        w,
+                    );
+                }
+                output
+            }
+        } else {
+            hdr
+        };
         // Bake the requested orientation into the finished reconstruction —
         // a pure pixel permutation of the stored-space result (#151), done
         // in place (cycle-following) so no second full-image HDR buffer is

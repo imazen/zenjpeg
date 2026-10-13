@@ -1186,3 +1186,98 @@ fn codec_hdr_policy_agrees_with_inventory() {
         assert_eq!(scan.disposition(), Disposition::Skipped);
     }
 }
+
+#[cfg(feature = "zencodec")]
+#[test]
+fn codec_hdr_color_conversion_follows_gainmap_application() {
+    use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+    use zenjpeg::color::icc::TargetColorSpace;
+    let jpeg =
+        zenjpeg::ultrahdr::encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::DisplayP3))
+            .unwrap();
+    let native = zenjpeg::ultrahdr::decode_ultrahdr_hdr(
+        &jpeg,
+        4.0,
+        zenjpeg::ultrahdr::HdrOutputFormat::LinearFloat,
+    )
+    .unwrap();
+    let mut config = zenjpeg::JpegDecoderConfig::new();
+    *config.inner_mut() = config
+        .inner()
+        .clone()
+        .correct_color(Some(TargetColorSpace::Srgb));
+    let got = config
+        .job()
+        .with_orientation(zencodec::OrientationHint::Preserve)
+        .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+            target_headroom: Some(4.0),
+        })
+        .decoder(std::borrow::Cow::Borrowed(&jpeg), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let descriptor = native.descriptor().with_primaries(UhdrColorGamut::Bt709);
+    let mut expected = zenpixels::PixelBuffer::new(native.width(), native.height(), descriptor);
+    let mut converter =
+        zenpixels_convert::RowConverter::new(native.descriptor(), descriptor).unwrap();
+    for row in 0..native.height() {
+        converter.convert_row(
+            native.as_slice().row(row),
+            expected.as_slice_mut().row_mut(row),
+            native.width(),
+        );
+    }
+    assert_eq!(got.pixels().descriptor(), descriptor);
+    assert_eq!(
+        got.pixels().as_strided_bytes(),
+        expected.as_slice().as_strided_bytes()
+    );
+}
+
+#[cfg(all(feature = "zencodec", feature = "inventory"))]
+#[test]
+fn codec_hdr_obeys_progressive_policy() {
+    use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
+    use zencodec::inventory::{Disposition, PartKind};
+    let hdr = create_test_hdr(64, 64);
+    let sdr = create_test_sdr(64, 64);
+    let (gainmap, metadata) =
+        zenjpeg::ultrahdr::compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable)
+            .unwrap();
+    let jpeg = zenjpeg::ultrahdr::encode_with_gainmap(
+        &sdr,
+        &gainmap,
+        &metadata,
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true),
+        75.0,
+        Unstoppable,
+    )
+    .unwrap();
+    let job = || {
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_policy(DecodePolicy::none().with_allow_progressive(false))
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                target_headroom: Some(4.0),
+            })
+    };
+    let err = job()
+        .decoder(std::borrow::Cow::Borrowed(&jpeg), &[])
+        .unwrap()
+        .decode()
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("progressive JPEG rejected"),
+        "{err}"
+    );
+    let inventory = job().inventory(&jpeg).unwrap();
+    assert_eq!(
+        inventory
+            .parts()
+            .iter()
+            .find(|p| p.kind() == PartKind::ScanData)
+            .unwrap()
+            .disposition(),
+        Disposition::Skipped
+    );
+}

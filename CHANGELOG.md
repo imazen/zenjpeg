@@ -18,6 +18,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- Apply requested HDR output gamut conversion after gain-map reconstruction,
+  and enforce progressive-image policy on the HDR path. Pixel parity is checked
+  against native reconstruction followed by the shared row converter.
 - HDR reconstruction resolves ISO/XMP metadata through the same native resolver
   instead of testing a literal XML prefix. ISO-only and namespace-aliased files
   reconstruct HDR; base primaries/transfer and mastering primaries are retained.
