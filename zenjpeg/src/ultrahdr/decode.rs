@@ -46,7 +46,8 @@ pub trait UltraHdrExtras {
 
 impl UltraHdrExtras for DecodedExtras {
     fn is_ultrahdr(&self) -> bool {
-        self.ultrahdr_metadata().is_some()
+        self.ultrahdr_metadata()
+            .is_some_and(|result| result.is_ok())
             || self.xmp().is_some_and(|xmp| {
                 xmp.contains("hdrgm:Version") || xmp.contains("hdrgm:GainMapMax")
             })

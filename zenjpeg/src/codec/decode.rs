@@ -1507,7 +1507,8 @@ impl JpegDecoder<'_> {
         let base_transform = cfg.compute_effective_transform_from_data(&self.data);
         // Gain-map parameters describe the stored base color. Perform requested
         // output gamut conversion only after applying the gain map.
-        cfg = cfg.auto_orient(false).correct_color(None);
+        cfg = cfg.auto_orient(false);
+        cfg.correct_color = None;
         cfg.decode_transform = None;
         // apply_gainmap consumes RGBA8 SDR input.
         cfg = cfg.output_format(crate::types::PixelFormat::Rgba);
