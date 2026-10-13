@@ -470,3 +470,12 @@ metadata-hdr-dispatch-check:
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
     cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
     cargo clippy -p zenjpeg --features inventory,ultrahdr --lib -- -D warnings
+
+# Continue the final gate after the combined library/bundled suite.
+metadata-final-oracle-check:
+    just metadata-lossless-oracle
+    just metadata-lossless-portability-check
+    just metadata-lossless-feature-check
+    just metadata-icc-parity-check
+    cargo fmt -p zenjpeg --check
+    just api-doc
