@@ -2117,6 +2117,16 @@ impl Walk<'_> {
                         p = p.with_label(l);
                     }
                     let node = self.add(parent, p)?;
+                    if ty == SegmentType::Icc && body.get(12) == Some(&0) {
+                        self.fail(
+                            &mut st,
+                            rules,
+                            node,
+                            at(phase, scans, resync_risk),
+                            Fails::Strict,
+                            "ICC sequence numbers must start at 1 in strict mode",
+                        );
+                    }
                     if ty == SegmentType::Jfif {
                         self.jfif_children(node, &payload)?;
                     }

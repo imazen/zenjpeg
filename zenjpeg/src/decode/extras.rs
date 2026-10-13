@@ -795,7 +795,7 @@ impl DecodedExtras {
         {
             return None;
         }
-        let profile = crate::container::chunks::icc_profile(
+        let profile = crate::container::chunks::icc_profile_for_decode(
             chunks().map(|seg| (seg.data[12], seg.data[13], &seg.data[14..])),
             crate::foundation::alloc::MAX_ICC_PROFILE_SIZE,
         )

@@ -18,6 +18,11 @@ All notable changes to zenjpeg are documented here. Earlier history
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
 
 ### Changed
+- Default decoding preserves a real-world single ICC chunk numbered 0 of 1
+  only when it has a complete ICC header and matching declared payload size.
+  Duplicate, incomplete and oversized chunks remain rejected; strict decode,
+  structural inspection and rewriting retain 1-based sequence validation.
+  Existing malformed-chunk and corpus-inspection expectations are unchanged.
 - Apply requested HDR output gamut conversion after gain-map reconstruction,
   and enforce progressive-image policy on the HDR path. Pixel parity is checked
   against native reconstruction followed by the shared row converter.

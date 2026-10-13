@@ -100,3 +100,82 @@ fn native_icc_reassembly_checks_the_same_chunk_contract_as_inspection() {
         }
     }
 }
+
+#[test]
+fn complete_real_world_zero_of_one_icc_is_readable_by_default() {
+    use enough::Unstoppable;
+    use zenjpeg::decoder::Decoder;
+    let corpus = codec_corpus::Corpus::new()
+        .unwrap()
+        .get("jpeg-conformance")
+        .unwrap();
+    let jpeg =
+        std::fs::read(corpus.join("crash-repro/jpeg-decoder-257/amazed2k1424ktv.jpg")).unwrap();
+    // ExifTool extracts this complete 3,144-byte sRGB profile from the original
+    // corpus file. The legacy pixel-color extractor also preserves it.
+    let expected = zenjpeg::color::icc::extract_icc_profile(&jpeg).unwrap();
+    assert_eq!(expected.len(), 3144);
+    assert_eq!(
+        u32::from_be_bytes(expected[..4].try_into().unwrap()) as usize,
+        expected.len()
+    );
+    assert_eq!(&expected[36..40], b"acsp");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    let sequence = zenjpeg::container::marker::iter(&jpeg)
+        .find(|s| s.payload.starts_with(b"ICC_PROFILE\0"))
+        .unwrap()
+        .offset
+        + 16;
+    assert_eq!(jpeg[sequence], 0);
+    let mut canonical = jpeg.clone();
+    canonical[sequence] = 1;
+    let canonical = Decoder::new().decode(&canonical, Unstoppable).unwrap();
+    assert_eq!(decoded.pixels_u8(), canonical.pixels_u8());
+
+    assert_eq!(
+        decoded.extras().unwrap().icc_profile(),
+        Some(expected.as_slice())
+    );
+    #[cfg(feature = "inventory")]
+    {
+        use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
+        use zencodec::inventory::{Disposition, MetadataKind, PartKind};
+        let inv = zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .inventory(&jpeg)
+            .unwrap();
+        assert!(
+            inv.parts()
+                .iter()
+                .any(|p| p.disposition() == Disposition::Metadata(MetadataKind::Icc))
+        );
+        let strict_inv = zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_policy(DecodePolicy::none().with_strict(true))
+            .inventory(&jpeg)
+            .unwrap();
+        assert_eq!(
+            strict_inv
+                .parts()
+                .iter()
+                .find(|p| p.kind() == PartKind::ScanData)
+                .unwrap()
+                .disposition(),
+            Disposition::Skipped
+        );
+    }
+    let strict = Decoder::new()
+        .strict()
+        .decode(&jpeg, Unstoppable)
+        .unwrap_err();
+    assert!(strict.to_string().contains("ICC sequence"), "{strict}");
+    #[cfg(feature = "extended-metadata")]
+    assert!(
+        zenjpeg::container::metadata::JpegMetadata::parse(&jpeg)
+            .unwrap()
+            .icc_profile()
+            .is_err()
+    );
+    #[cfg(feature = "metadata-rewrite")]
+    assert!(zenjpeg::metadata::rewrite(&zencodec::metadata_rewrite::Request::new(&jpeg)).is_err());
+}

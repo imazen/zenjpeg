@@ -479,3 +479,9 @@ metadata-final-oracle-check:
     just metadata-icc-parity-check
     cargo fmt -p zenjpeg --check
     just api-doc
+
+metadata-legacy-icc-check:
+    cargo test -p zenjpeg --features inventory --lib container::chunks::
+    cargo test -p zenjpeg --features extended-metadata,metadata-rewrite,inventory --test metadata_limits
+    just metadata-icc-parity-check
+    cargo clippy -p zenjpeg --features extended-metadata,inventory --lib -- -D warnings

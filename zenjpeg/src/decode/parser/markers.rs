@@ -551,6 +551,17 @@ impl<'a> JpegParser<'a> {
             return Err(Error::truncated_data("APPn/COM segment body"));
         }
 
+        let data = &self.data[self.position..self.position + data_len];
+        if self.strictness.is_strict()
+            && marker == 0xE2
+            && data.starts_with(b"ICC_PROFILE\0")
+            && data.get(12) == Some(&0)
+        {
+            return Err(Error::invalid_jpeg_data(
+                "ICC sequence numbers must start at 1 in strict mode",
+            ));
+        }
+
         // Always check for APP14 Adobe marker (needed for CMYK/YCCK detection)
         if marker == MARKER_APP14 && self.position + data_len <= self.data.len() {
             let data = &self.data[self.position..self.position + data_len];

@@ -336,3 +336,19 @@ progressive-image admission policy reaches this path too. Tests cover the exact
 native-reconstruct-then-convert sequence and inventory/decode rejection parity.
 This is another consequence of keeping output conversion separate from source
 metadata interpretation; converting the base first changes the gain-map inputs.
+
+### Real-file ICC compatibility (2026-10-13)
+
+`jpeg-conformance/crash-repro/jpeg-decoder-257/amazed2k1424ktv.jpg` carries one
+ICC chunk numbered 0 of 1. ExifTool reads its complete 3,144-byte sRGB profile.
+Native decoding now retains that exact payload when its ICC header signature
+and declared size establish a complete single profile. The shared strict chunk
+assembler still supplies size/allocation checks; duplicate chunks do not take
+this compatibility path. Strict decoding rejects sequence zero, and inventory
+reflects that rejection. Structural inspection and rewriting stay strict.
+
+`just metadata-legacy-icc-check` reuses the original corpus file, compares native
+pixels with canonical sequence numbering, and retains every existing malformed
+chunk assertion and the inspector's pinned corpus discrepancy. The earlier
+question about changing the synthetic sequence-zero expectation is no longer
+needed: its three-byte payload remains rejected. No new binary is committed.

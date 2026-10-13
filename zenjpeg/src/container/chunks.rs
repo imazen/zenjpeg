@@ -74,3 +74,61 @@ pub(crate) fn icc_profile<'a>(
     }
     Ok(Some(Cow::Owned(profile)))
 }
+
+/// Native compatibility for a complete ICC carried as a single chunk 0 of 1.
+/// Structural inspection retains the canonical 1-based contract above.
+pub(crate) fn icc_profile_for_decode<'a>(
+    chunks: impl Iterator<Item = (u8, u8, &'a [u8])>,
+    limit: usize,
+) -> Result<Option<Cow<'a, [u8]>>, Error> {
+    let mut chunks = chunks.peekable();
+    if chunks.peek().is_some_and(|&(sequence, count, data)| {
+        sequence == 0
+            && count == 1
+            && data.len() >= 132
+            && data.get(36..40) == Some(b"acsp")
+            && u32::from_be_bytes(data[..4].try_into().unwrap()) as usize == data.len()
+    }) {
+        let first = chunks.next().unwrap();
+        if chunks.peek().is_none() {
+            return icc_profile(core::iter::once((1, 1, first.2)), limit);
+        }
+        return icc_profile(core::iter::once(first).chain(chunks), limit);
+    }
+    icc_profile(chunks, limit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_numbering_never_weakens_chunk_or_size_limits() {
+        let mut profile = [0u8; 132];
+        profile[..4].copy_from_slice(&132u32.to_be_bytes());
+        profile[36..40].copy_from_slice(b"acsp");
+        assert_eq!(
+            icc_profile_for_decode([(0, 1, profile.as_slice())].into_iter(), 132)
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            profile
+        );
+        assert!(matches!(
+            icc_profile_for_decode([(0, 1, profile.as_slice())].into_iter(), 131),
+            Err(Error::TooLarge { .. })
+        ));
+        for second in [0, 1] {
+            assert!(
+                icc_profile_for_decode(
+                    [(0, 1, profile.as_slice()), (second, 1, profile.as_slice())].into_iter(),
+                    264
+                )
+                .is_err()
+            );
+        }
+        profile[3] = 131;
+        assert!(icc_profile_for_decode([(0, 1, profile.as_slice())].into_iter(), 132).is_err());
+        assert!(icc_profile([(0, 1, profile.as_slice())].into_iter(), 132).is_err());
+    }
+}
