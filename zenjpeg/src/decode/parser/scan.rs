@@ -736,6 +736,9 @@ impl<'a> JpegParser<'a> {
                 (1, 1, 1, 1) => true, // 4:4:4
                 (2, 2, 1, 1) => true, // 4:2:0
                 (2, 1, 1, 1) => true, // 4:2:2
+                // 4:4:0: streamable via the fancy (context-buffered) loop —
+                // NearestNeighbor h1v2 has no strip kernel, keep it buffered.
+                (1, 2, 1, 1) => self.chroma_upsampling == super::super::ChromaUpsampling::Triangle,
                 _ => false,
             }
         }

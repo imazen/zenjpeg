@@ -495,6 +495,23 @@ pub fn upsample_h1v2_i16_libjpeg_strided(
     }
 }
 
+/// One row of vertical 2x upsample, `(3*near + far + bias) >> 2`
+/// elementwise — the libjpeg-turbo h1v2_fancy row function. `near`/`far` are
+/// strided input rows (ext-buffer offsets include context rows); `out` is
+/// the upsampled output row. Elementwise map: autovectorizes on every arch,
+/// no kernel needed.
+pub(crate) fn upsample_h1v2_row_ext(
+    near: &[i16],
+    far: &[i16],
+    out: &mut [i16],
+    width: usize,
+    bias: i16,
+) {
+    for x in 0..width {
+        out[x] = ((near[x] as i32 * 3 + far[x] as i32 + bias as i32) >> 2) as i16;
+    }
+}
+
 /// AVX2 implementation of one row of vertical 2x upsampling.
 ///
 /// Computes `(near*3 + far + bias) >> 2` for 16 i16 elements at a time.

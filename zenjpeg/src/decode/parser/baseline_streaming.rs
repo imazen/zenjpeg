@@ -357,8 +357,8 @@ pub(super) fn select_upsample_fn(
         return Ok(None);
     }
     use crate::decode::upsample::{
-        upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg,
-        upsample_h2v2_i16_libjpeg_turbo,
+        upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
+        upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_libjpeg_turbo,
     };
     Ok(Some(match (geom.h_ratio, geom.v_ratio) {
         (2, 2) => match chroma_upsampling {
@@ -374,6 +374,10 @@ pub(super) fn select_upsample_fn(
         (2, 1) => match chroma_upsampling {
             ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
             ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
+        },
+        (1, 2) => match chroma_upsampling {
+            ChromaUpsampling::Triangle => upsample_h1v2_i16_libjpeg,
+            ChromaUpsampling::NearestNeighbor => upsample_h1v2_i16_nearest,
         },
         _ => {
             return Err(Error::unsupported_feature(
@@ -721,6 +725,111 @@ fn output_fancy_strip_fused(
     }
 }
 
+/// Fancy h1v2 (4:4:0) strip output: vertical-only triangle upsample
+/// `(3*near + far + bias) >> 2` per output row — fused into YCbCr→RGB on
+/// x86-64-v3 (the upsampled chroma never materializes), else row-upsamples
+/// into `cb_up`/`cr_up` for [`output_mcu_row`].
+///
+/// `cb`/`cr` are the extended strips (above-context + data + below-context),
+/// so `near`/`far` row indices here are in *extended* coordinates: image row
+/// `r` uses near = data row `r/2` (ext `1 + r/2`), far = ext `r/2` for the
+/// upper tap and ext `r/2 + 2` for the lower — matching
+/// `upsample_h1v2_i16_libjpeg_strided` on the extended strip.
+#[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
+fn output_fancy_h1v2_strip(
+    inputs: &LoopInputs<'_, '_>,
+    cb: &[i16],
+    cr: &[i16],
+    c_strip_width: usize,
+    mcu_y: usize,
+    y_strip: &[i16],
+    y_strip_width: usize,
+    y_strip_height: usize,
+    cb_up: &mut [i16],
+    cr_up: &mut [i16],
+    rgb: &mut [u8],
+    width: usize,
+    height: usize,
+    y_start: usize,
+    rows: usize,
+    out_4bpp: bool,
+    swap_rb: bool,
+) {
+    use crate::decode::upsample::upsample_h1v2_row_ext;
+
+    let w = c_strip_width;
+    let cols = width.min(y_strip_width);
+    let fused = inputs.idct_v3.is_some() && !inputs.is_rgb && !out_4bpp && !swap_rb;
+
+    for r in 0..rows {
+        let in_y = r / 2;
+        let near_row = (1 + in_y) * w;
+        // upper (even) rows blend with the row above; lower (odd) with below
+        let (far_row, bias) = if r % 2 == 0 {
+            (in_y * w, 1i16)
+        } else {
+            ((in_y + 2) * w, 2i16)
+        };
+        let y_off = r * y_strip_width;
+        let rgb_off = (y_start + r) * width * 3;
+        if fused {
+            let token = inputs.idct_v3.unwrap();
+            let (y_r, cb_n, cb_f, cr_n, cr_f, out) = (
+                &y_strip[y_off..y_off + cols],
+                &cb[near_row..near_row + cols],
+                &cb[far_row..far_row + cols],
+                &cr[near_row..near_row + cols],
+                &cr[far_row..far_row + cols],
+                &mut rgb[rgb_off..rgb_off + cols * 3],
+            );
+            if inputs.turbo_color {
+                crate::color::ycbcr::fused_h1v2_fancy_ycbcr_row_avx2::<true>(
+                    token, y_r, cb_n, cb_f, cr_n, cr_f, out, cols, bias,
+                );
+            } else {
+                crate::color::ycbcr::fused_h1v2_fancy_ycbcr_row_avx2::<false>(
+                    token, y_r, cb_n, cb_f, cr_n, cr_f, out, cols, bias,
+                );
+            }
+        } else {
+            upsample_h1v2_row_ext(
+                &cb[near_row..],
+                &cb[far_row..],
+                &mut cb_up[r * y_strip_width..],
+                cols,
+                bias,
+            );
+            upsample_h1v2_row_ext(
+                &cr[near_row..],
+                &cr[far_row..],
+                &mut cr_up[r * y_strip_width..],
+                cols,
+                bias,
+            );
+        }
+    }
+
+    if !fused {
+        output_mcu_row(
+            mcu_y,
+            y_strip,
+            y_strip_width,
+            y_strip_height,
+            cb_up,
+            cr_up,
+            0,
+            rgb,
+            width,
+            height,
+            inputs.is_rgb,
+            out_4bpp,
+            swap_rb,
+            inputs.turbo_color,
+        );
+    }
+}
+
 use super::output_helpers::edge_replicate_h_padding as fixup_h_padding;
 
 /// Inputs to the fancy h2v2 + simple decode loops that don't change
@@ -845,74 +954,98 @@ pub(super) fn run_fancy_h2v2_loop(
             fixup_h_padding(&mut bufs.cr_a, downsampled_w, c_strip_width, ext_height);
             let y_start = (mcu_y - 1) * y_strip_height;
             let rows = y_strip_height.min(geom.height.saturating_sub(y_start));
-            #[cfg(target_arch = "x86_64")]
-            let can_fuse =
-                inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
-            #[cfg(not(target_arch = "x86_64"))]
-            let can_fuse = false;
-            #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
-            let mut used_fused = false;
-            #[cfg(target_arch = "x86_64")]
-            if can_fuse {
-                output_fancy_strip_fused(
-                    inputs.idct_v3.unwrap(),
+            if geom.h_ratio == 1 {
+                // 4:4:0 (h1v2): vertical-only fancy upsample over the same
+                // extended/context strip scheme.
+                output_fancy_h1v2_strip(
+                    inputs,
                     &bufs.cb_a,
                     &bufs.cr_a,
                     c_strip_width,
-                    c_strip_height,
-                    &bufs.y_strip_a,
-                    y_strip_width,
-                    &mut bufs.rgb,
-                    geom.width,
-                    y_start,
-                    rows,
-                    inputs.turbo_color,
-                    &mut bufs.cs_a,
-                    &mut bufs.cs_b,
-                );
-                used_fused = true;
-            }
-            if !used_fused {
-                upsample_h2v2_strip_ext(
-                    &bufs.cb_a,
-                    c_strip_width,
-                    c_strip_width,
-                    c_strip_height,
-                    &mut bufs.cb_up,
-                    y_strip_width,
-                    y_strip_width,
-                    inputs.turbo_color,
-                    &mut bufs.cs_a,
-                    &mut bufs.cs_b,
-                );
-                upsample_h2v2_strip_ext(
-                    &bufs.cr_a,
-                    c_strip_width,
-                    c_strip_width,
-                    c_strip_height,
-                    &mut bufs.cr_up,
-                    y_strip_width,
-                    y_strip_width,
-                    inputs.turbo_color,
-                    &mut bufs.cs_a,
-                    &mut bufs.cs_b,
-                );
-                output_mcu_row(
                     mcu_y - 1,
                     &bufs.y_strip_a,
                     y_strip_width,
                     y_strip_height,
-                    &bufs.cb_up,
-                    &bufs.cr_up,
-                    0, // upsample emits exactly the data rows — no context to skip
+                    &mut bufs.cb_up,
+                    &mut bufs.cr_up,
                     &mut bufs.rgb,
                     geom.width,
                     geom.height,
-                    inputs.is_rgb,
+                    y_start,
+                    rows,
                     bufs.out_4bpp,
                     bufs.swap_rb,
-                    inputs.turbo_color,
                 );
+            } else {
+                #[cfg(target_arch = "x86_64")]
+                let can_fuse =
+                    inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
+                #[cfg(not(target_arch = "x86_64"))]
+                let can_fuse = false;
+                #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
+                let mut used_fused = false;
+                #[cfg(target_arch = "x86_64")]
+                if can_fuse {
+                    output_fancy_strip_fused(
+                        inputs.idct_v3.unwrap(),
+                        &bufs.cb_a,
+                        &bufs.cr_a,
+                        c_strip_width,
+                        c_strip_height,
+                        &bufs.y_strip_a,
+                        y_strip_width,
+                        &mut bufs.rgb,
+                        geom.width,
+                        y_start,
+                        rows,
+                        inputs.turbo_color,
+                        &mut bufs.cs_a,
+                        &mut bufs.cs_b,
+                    );
+                    used_fused = true;
+                }
+                if !used_fused {
+                    upsample_h2v2_strip_ext(
+                        &bufs.cb_a,
+                        c_strip_width,
+                        c_strip_width,
+                        c_strip_height,
+                        &mut bufs.cb_up,
+                        y_strip_width,
+                        y_strip_width,
+                        inputs.turbo_color,
+                        &mut bufs.cs_a,
+                        &mut bufs.cs_b,
+                    );
+                    upsample_h2v2_strip_ext(
+                        &bufs.cr_a,
+                        c_strip_width,
+                        c_strip_width,
+                        c_strip_height,
+                        &mut bufs.cr_up,
+                        y_strip_width,
+                        y_strip_width,
+                        inputs.turbo_color,
+                        &mut bufs.cs_a,
+                        &mut bufs.cs_b,
+                    );
+                    output_mcu_row(
+                        mcu_y - 1,
+                        &bufs.y_strip_a,
+                        y_strip_width,
+                        y_strip_height,
+                        &bufs.cb_up,
+                        &bufs.cr_up,
+                        0, // upsample emits exactly the data rows — no context to skip
+                        &mut bufs.rgb,
+                        geom.width,
+                        geom.height,
+                        inputs.is_rgb,
+                        bufs.out_4bpp,
+                        bufs.swap_rb,
+                        inputs.turbo_color,
+                    );
+                }
             }
 
             // Set B's above-context = A's last data row
@@ -964,73 +1097,96 @@ pub(super) fn run_fancy_h2v2_loop(
         fixup_h_padding(&mut bufs.cr_a, downsampled_w, c_strip_width, ext_height);
         let y_start = (mcu_rows - 1) * y_strip_height;
         let rows = y_strip_height.min(geom.height.saturating_sub(y_start));
-        #[cfg(target_arch = "x86_64")]
-        let can_fuse =
-            inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
-        #[cfg(not(target_arch = "x86_64"))]
-        let can_fuse = false;
-        let mut used_fused = false;
-        #[cfg(target_arch = "x86_64")]
-        if can_fuse {
-            output_fancy_strip_fused(
-                inputs.idct_v3.unwrap(),
+        if geom.h_ratio == 1 {
+            // 4:4:0 (h1v2): vertical-only fancy upsample.
+            output_fancy_h1v2_strip(
+                inputs,
                 &bufs.cb_a,
                 &bufs.cr_a,
                 c_strip_width,
-                c_strip_height,
-                &bufs.y_strip_a,
-                y_strip_width,
-                &mut bufs.rgb,
-                geom.width,
-                y_start,
-                rows,
-                inputs.turbo_color,
-                &mut bufs.cs_a,
-                &mut bufs.cs_b,
-            );
-            used_fused = true;
-        }
-        if !used_fused {
-            upsample_h2v2_strip_ext(
-                &bufs.cb_a,
-                c_strip_width,
-                c_strip_width,
-                c_strip_height,
-                &mut bufs.cb_up,
-                y_strip_width,
-                y_strip_width,
-                inputs.turbo_color,
-                &mut bufs.cs_a,
-                &mut bufs.cs_b,
-            );
-            upsample_h2v2_strip_ext(
-                &bufs.cr_a,
-                c_strip_width,
-                c_strip_width,
-                c_strip_height,
-                &mut bufs.cr_up,
-                y_strip_width,
-                y_strip_width,
-                inputs.turbo_color,
-                &mut bufs.cs_a,
-                &mut bufs.cs_b,
-            );
-            output_mcu_row(
                 mcu_rows - 1,
                 &bufs.y_strip_a,
                 y_strip_width,
                 y_strip_height,
-                &bufs.cb_up,
-                &bufs.cr_up,
-                0, // upsample emits exactly the data rows — no context to skip
+                &mut bufs.cb_up,
+                &mut bufs.cr_up,
                 &mut bufs.rgb,
                 geom.width,
                 geom.height,
-                inputs.is_rgb,
+                y_start,
+                rows,
                 bufs.out_4bpp,
                 bufs.swap_rb,
-                inputs.turbo_color,
             );
+        } else {
+            #[cfg(target_arch = "x86_64")]
+            let can_fuse =
+                inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
+            #[cfg(not(target_arch = "x86_64"))]
+            let can_fuse = false;
+            let mut used_fused = false;
+            #[cfg(target_arch = "x86_64")]
+            if can_fuse {
+                output_fancy_strip_fused(
+                    inputs.idct_v3.unwrap(),
+                    &bufs.cb_a,
+                    &bufs.cr_a,
+                    c_strip_width,
+                    c_strip_height,
+                    &bufs.y_strip_a,
+                    y_strip_width,
+                    &mut bufs.rgb,
+                    geom.width,
+                    y_start,
+                    rows,
+                    inputs.turbo_color,
+                    &mut bufs.cs_a,
+                    &mut bufs.cs_b,
+                );
+                used_fused = true;
+            }
+            if !used_fused {
+                upsample_h2v2_strip_ext(
+                    &bufs.cb_a,
+                    c_strip_width,
+                    c_strip_width,
+                    c_strip_height,
+                    &mut bufs.cb_up,
+                    y_strip_width,
+                    y_strip_width,
+                    inputs.turbo_color,
+                    &mut bufs.cs_a,
+                    &mut bufs.cs_b,
+                );
+                upsample_h2v2_strip_ext(
+                    &bufs.cr_a,
+                    c_strip_width,
+                    c_strip_width,
+                    c_strip_height,
+                    &mut bufs.cr_up,
+                    y_strip_width,
+                    y_strip_width,
+                    inputs.turbo_color,
+                    &mut bufs.cs_a,
+                    &mut bufs.cs_b,
+                );
+                output_mcu_row(
+                    mcu_rows - 1,
+                    &bufs.y_strip_a,
+                    y_strip_width,
+                    y_strip_height,
+                    &bufs.cb_up,
+                    &bufs.cr_up,
+                    0, // upsample emits exactly the data rows — no context to skip
+                    &mut bufs.rgb,
+                    geom.width,
+                    geom.height,
+                    inputs.is_rgb,
+                    bufs.out_4bpp,
+                    bufs.swap_rb,
+                    inputs.turbo_color,
+                );
+            }
         }
     }
     Ok(())
@@ -1216,50 +1372,101 @@ pub(super) fn run_simple_loop(
             // widths (`c_strip_width`/`y_strip_width`) instead made the final
             // visible column interpolate against MCU-padding chroma, corrupting
             // the rightmost column by up to ~11/255 for even widths (#188).
-            use crate::decode::upsample::{
-                upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
-            };
-            let upsample = match chroma_upsampling {
-                ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg_strided,
-                ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
-            };
             let real_cw = (width + geom.h_ratio - 1) / geom.h_ratio;
-            upsample(
-                &bufs.cb_a[..c_strip_width * c_strip_height],
-                real_cw,
-                c_strip_width,
-                c_strip_height,
-                &mut bufs.cb_up[..y_strip_width * y_strip_height],
-                width,
-                y_strip_width,
-                y_strip_height,
-            );
-            upsample(
-                &bufs.cr_a[..c_strip_width * c_strip_height],
-                real_cw,
-                c_strip_width,
-                c_strip_height,
-                &mut bufs.cr_up[..y_strip_width * y_strip_height],
-                width,
-                y_strip_width,
-                y_strip_height,
-            );
-            output_mcu_row(
-                mcu_y,
-                &bufs.y_strip_a,
-                y_strip_width,
-                y_strip_height,
-                &bufs.cb_up,
-                &bufs.cr_up,
-                0, // no context row skip for non-fancy paths
-                &mut bufs.rgb,
-                width,
-                height,
-                is_rgb,
-                out_4bpp,
-                swap_rb,
-                inputs.turbo_color,
-            );
+
+            // Fused h2v1-fancy + convert (RGB output only): the upsampled
+            // chroma planes are never materialized.
+            #[cfg(target_arch = "x86_64")]
+            let can_fuse = inputs.idct_v3.is_some()
+                && !is_rgb
+                && !out_4bpp
+                && !swap_rb
+                && chroma_upsampling == ChromaUpsampling::Triangle
+                && geom.h_ratio == 2
+                && geom.v_ratio == 1;
+            #[cfg(not(target_arch = "x86_64"))]
+            let can_fuse = false;
+            let mut used_fused = false;
+            #[cfg(target_arch = "x86_64")]
+            if can_fuse {
+                use crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2;
+                let token = inputs.idct_v3.unwrap();
+                let y_start = mcu_y * y_strip_height;
+                let rows = y_strip_height.min(height.saturating_sub(y_start));
+                let cols = width.min(y_strip_width);
+                for r in 0..rows {
+                    let y_off = r * y_strip_width;
+                    let c_off = r * c_strip_width;
+                    let rgb_off = (y_start + r) * width * 3;
+                    if inputs.turbo_color {
+                        fused_h2v1_fancy_ycbcr_row_avx2::<true>(
+                            token,
+                            &bufs.y_strip_a[y_off..y_off + cols],
+                            &bufs.cb_a[c_off..c_off + real_cw],
+                            &bufs.cr_a[c_off..c_off + real_cw],
+                            &mut bufs.rgb[rgb_off..rgb_off + cols * 3],
+                            cols,
+                            real_cw,
+                        );
+                    } else {
+                        fused_h2v1_fancy_ycbcr_row_avx2::<false>(
+                            token,
+                            &bufs.y_strip_a[y_off..y_off + cols],
+                            &bufs.cb_a[c_off..c_off + real_cw],
+                            &bufs.cr_a[c_off..c_off + real_cw],
+                            &mut bufs.rgb[rgb_off..rgb_off + cols * 3],
+                            cols,
+                            real_cw,
+                        );
+                    }
+                }
+                used_fused = true;
+            }
+            if !used_fused {
+                use crate::decode::upsample::{
+                    upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
+                };
+                let upsample = match chroma_upsampling {
+                    ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg_strided,
+                    ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
+                };
+                upsample(
+                    &bufs.cb_a[..c_strip_width * c_strip_height],
+                    real_cw,
+                    c_strip_width,
+                    c_strip_height,
+                    &mut bufs.cb_up[..y_strip_width * y_strip_height],
+                    width,
+                    y_strip_width,
+                    y_strip_height,
+                );
+                upsample(
+                    &bufs.cr_a[..c_strip_width * c_strip_height],
+                    real_cw,
+                    c_strip_width,
+                    c_strip_height,
+                    &mut bufs.cr_up[..y_strip_width * y_strip_height],
+                    width,
+                    y_strip_width,
+                    y_strip_height,
+                );
+                output_mcu_row(
+                    mcu_y,
+                    &bufs.y_strip_a,
+                    y_strip_width,
+                    y_strip_height,
+                    &bufs.cb_up,
+                    &bufs.cr_up,
+                    0, // no context row skip for non-fancy paths
+                    &mut bufs.rgb,
+                    width,
+                    height,
+                    is_rgb,
+                    out_4bpp,
+                    swap_rb,
+                    inputs.turbo_color,
+                );
+            }
         }
     }
     Ok(())
