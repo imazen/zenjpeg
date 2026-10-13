@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn test_orientation_only() {
         let exif = Exif::build().orientation(Orientation::Rotate90);
-        let bytes = zenmeta::exif::serialize(&exif).expect("should produce bytes");
+        let bytes = exif.to_bytes().expect("should produce bytes");
 
         // Should have TIFF header + 1 IFD entry
         assert!(bytes.len() >= 8 + 2 + 12 + 4); // header + count + entry + next
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn test_copyright_short() {
         let exif = Exif::build().copyright("AB");
-        let bytes = zenmeta::exif::serialize(&exif).expect("should produce bytes");
+        let bytes = exif.to_bytes().expect("should produce bytes");
 
         // Short copyright fits inline
         assert_eq!(bytes.len(), 8 + 2 + 12 + 4); // No extra data
@@ -230,7 +230,7 @@ mod tests {
     fn test_copyright_long() {
         let long_copyright = "Copyright 2024 Example Corp";
         let exif = Exif::build().copyright(long_copyright);
-        let bytes = zenmeta::exif::serialize(&exif).expect("should produce bytes");
+        let bytes = exif.to_bytes().expect("should produce bytes");
 
         // Long copyright stored after IFD
         let expected_len = 8 + 2 + 12 + 4 + long_copyright.len() + 1;
@@ -249,7 +249,7 @@ mod tests {
         let exif = Exif::build()
             .orientation(Orientation::Rotate180)
             .copyright("Test");
-        let bytes = zenmeta::exif::serialize(&exif).expect("should produce bytes");
+        let bytes = exif.to_bytes().expect("should produce bytes");
 
         // 2 entries
         assert_eq!(&bytes[8..10], &2u16.to_le_bytes());
@@ -263,17 +263,14 @@ mod tests {
     #[test]
     fn test_empty_fields() {
         let exif = Exif::build();
-        assert!(
-            zenmeta::exif::serialize(&exif).is_none(),
-            "empty fields should return None"
-        );
+        assert!(exif.to_bytes().is_none(), "empty fields should return None");
     }
 
     #[test]
     fn test_raw_bytes() {
         let raw = vec![1u8, 2, 3, 4, 5];
         let exif = Exif::raw(raw.clone());
-        let bytes = zenmeta::exif::serialize(&exif).expect("should produce bytes");
+        let bytes = exif.to_bytes().expect("should produce bytes");
         assert_eq!(bytes, raw);
     }
 
@@ -299,7 +296,7 @@ mod tests {
             .orientation(Orientation::Rotate90)
             .copyright("Test");
 
-        let bytes = zenmeta::exif::serialize(&exif).expect("should produce bytes");
+        let bytes = exif.to_bytes().expect("should produce bytes");
 
         // Should have 2 entries
         assert_eq!(&bytes[8..10], &2u16.to_le_bytes());

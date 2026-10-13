@@ -1602,3 +1602,12 @@ checks native/inspection agreement and replays the existing ICC conformance case
 The native accessor retains its published Option signature and reports invalid
 chunk sets as None. Extended XMP's legacy concatenation remains separate and
 must not be silently replaced by a differently shaped logical packet.
+
+## Known Bugs — shared contract migration validation
+
+Resolved during the shared-contract migration: native `encode::ExifFields` and
+shared `zencodec::Exif` both have `to_bytes` methods but different contracts.
+Only the shared writer delegates to zenmeta; keep native helper tests on their
+native API. `just shared-contract-ci-check` also compiles the independent fuzz
+workspace, whose zencodec pin must match the main workspace to avoid duplicate
+trait identities.

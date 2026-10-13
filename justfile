@@ -490,3 +490,9 @@ metadata-legacy-icc-check:
 shared-contract-check:
     just metadata-rewrite-check metadata-rewrite-gainmap-check
     cargo clippy -p zenjpeg --features metadata-rewrite,ultrahdr,zencodec --lib -- -D warnings
+
+# Include native EXIF helper tests and the independent fuzz dependency graph.
+shared-contract-ci-check:
+    cargo test -p zenjpeg --lib encode::exif::tests
+    cargo clippy -p zenjpeg --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,__test-utils -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bins
