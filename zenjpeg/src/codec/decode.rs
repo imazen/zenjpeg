@@ -1523,12 +1523,12 @@ impl JpegDecoder<'_> {
             Error::icc_error("Ultra HDR reconstruction: decoder produced no extras".into())
         })?;
         let resolved = crate::ultrahdr::metadata_with_xmp(&extras, cfg.preserve.xmp);
+        if resolved.is_none() && !cfg.preserve.xmp && extras.gainmap().is_some() {
+            return Err(Error::policy_rejected(
+                "gain-map reconstruction needs metadata denied by decode policy",
+            ));
+        }
         if resolved.is_none() && !extras.is_ultrahdr() {
-            if !cfg.preserve.xmp && extras.gainmap().is_some() {
-                return Err(Error::policy_rejected(
-                    "gain-map reconstruction needs metadata denied by decode policy",
-                ));
-            }
             return Ok(None);
         }
         let (metadata, _) = resolved.ok_or_else(|| {

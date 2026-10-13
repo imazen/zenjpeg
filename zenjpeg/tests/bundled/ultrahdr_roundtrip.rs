@@ -1109,6 +1109,34 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
             .unwrap()
             .decode()
             .unwrap();
+        let (r, g, b) = expected.descriptor().primaries.chromaticity().unwrap();
+        assert_eq!(
+            actual
+                .info()
+                .source_color
+                .mastering_display
+                .unwrap()
+                .primaries_xy,
+            [[r.0, r.1], [g.0, g.1], [b.0, b.1]]
+        );
+        #[cfg(feature = "inventory")]
+        {
+            use zencodec::inventory::{Disposition, MetadataKind};
+            let inventory = zenjpeg::JpegDecoderConfig::new()
+                .job()
+                .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                    target_headroom: Some(4.0),
+                })
+                .inventory(jpeg)
+                .unwrap();
+            assert!(
+                inventory
+                    .parts()
+                    .iter()
+                    .any(|part| part.disposition() == Disposition::Metadata(MetadataKind::GainMap)),
+                "file {index}"
+            );
+        }
         assert_eq!(
             actual.pixels().descriptor(),
             expected.descriptor(),
@@ -1119,5 +1147,42 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
             expected.as_slice().as_strided_bytes(),
             "file {index}"
         );
+    }
+}
+
+#[cfg(all(feature = "zencodec", feature = "inventory"))]
+#[test]
+fn codec_hdr_policy_agrees_with_inventory() {
+    use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
+    use zencodec::inventory::{Disposition, PartKind};
+    let xmp = gain_map_jpegs().1.remove(0).1;
+    let p3 =
+        zenjpeg::ultrahdr::encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::DisplayP3))
+            .unwrap();
+    for (jpeg, policy) in [
+        (&xmp, DecodePolicy::none().with_allow_xmp(false)),
+        (&p3, DecodePolicy::none().with_allow_icc(false)),
+    ] {
+        let job = || {
+            zenjpeg::JpegDecoderConfig::new()
+                .job()
+                .with_policy(policy)
+                .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                    target_headroom: Some(4.0),
+                })
+        };
+        let err = job()
+            .decoder(std::borrow::Cow::Borrowed(jpeg), &[])
+            .unwrap()
+            .decode()
+            .unwrap_err();
+        assert!(err.to_string().contains("policy"), "{err}");
+        let inventory = job().inventory(jpeg).unwrap();
+        let scan = inventory
+            .parts()
+            .iter()
+            .find(|p| p.kind() == PartKind::ScanData)
+            .unwrap();
+        assert_eq!(scan.disposition(), Disposition::Skipped);
     }
 }
