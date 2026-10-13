@@ -1033,38 +1033,7 @@ mod avx2 {
         );
     }
 
-    /// Fused dequantize + [`idct_int_libjpeg_avx2`] for the streaming decode
-    /// loop: reads quantized `i16` coefficients in *natural* order (as written
-    /// by `decode_block_into_natural`, matching libjpeg-turbo's layout) and
-    /// multiplies by the quantizer inside the row loads — the same fold
-    /// libjpeg-turbo does via `inverse_DCT`'s multiplier tables, except in i32
-    /// lanes. Returns `false` for the scalar fallback as before.
-    #[arcane]
-    pub(crate) fn idct_int_libjpeg_avx2_q16(
-        _token: archmage::X64V3Token,
-        coeffs: &[i16; 64],
-        quant: &[u16; 64],
-        out_vector: &mut [i16],
-        stride: usize,
-    ) -> bool {
-        let mut rows = [_mm256_setzero_si256(); 8];
-        for i in 0..8 {
-            let c = safe_simd::_mm_loadu_si128(
-                <&[i16; 8]>::try_from(&coeffs[8 * i..8 * i + 8]).unwrap(),
-            );
-            let q = safe_simd::_mm_loadu_si128(
-                <&[u16; 8]>::try_from(&quant[8 * i..8 * i + 8]).unwrap(),
-            );
-            rows[i] = _mm256_mullo_epi32(_mm256_cvtepi16_epi32(c), _mm256_cvtepu16_epi32(q));
-        }
-        let [row0, row1, row2, row3, row4, row5, row6, row7] = rows;
-        idct_int_libjpeg_avx2_core(
-            _token, row0, row1, row2, row3, row4, row5, row6, row7, out_vector, stride, true,
-        )
-    }
-
-    /// The two-pass islow butterfly over pre-loaded row registers; shared by
-    /// [`idct_int_libjpeg_avx2`] and [`idct_int_libjpeg_avx2_q16`].
+    /// The two-pass islow butterfly over pre-loaded row registers.
     #[arcane]
     #[allow(unused_assignments)]
     #[allow(unused_mut)]
@@ -1727,23 +1696,6 @@ fn idct_int_portable(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 /// coefficients for the baseline streaming loops (the coefficients written
 /// by `decode_block_into_natural`). Folding the quantizer into the kernel's
 /// row loads removes the separate dequant pass and the i32 scratch's
-/// store/load round-trip — the equivalent of libjpeg-turbo folding
-/// dequantization into `inverse_DCT`'s multiplier tables.
-///
-/// Returns `false` outside the i16-exactness guard; the caller must then
-/// dequantize and run [`idct_int_libjpeg`].
-#[cfg(target_arch = "x86_64")]
-#[inline]
-pub(crate) fn idct_int_libjpeg_streaming_avx2_q16(
-    token: archmage::X64V3Token,
-    coeffs: &[i16; 64],
-    quant: &[u16; 64],
-    output: &mut [i16],
-    stride: usize,
-) -> bool {
-    avx2::idct_int_libjpeg_avx2_q16(token, coeffs, quant, output, stride)
-}
-
 /// libjpeg-exact IDCT, i16/pmaddwd kernel (jidctint-avx2.asm port) via a
 /// pre-resolved v3 token. Always succeeds — the kernel reproduces mozjpeg's
 /// NASM semantics for every input (including its i16 wrap domain), so no
