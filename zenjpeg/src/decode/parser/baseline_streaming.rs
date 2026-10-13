@@ -865,12 +865,12 @@ fn run_block_idct(
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = inputs.idct_v3 {
         use super::super::idct_int::{
-            idct_int_libjpeg, idct_int_libjpeg_streaming_avx2_q16, idct_int_streaming_avx2,
+            idct_int_libjpeg, idct_int_libjpeg_streaming_avx2_w16, idct_int_streaming_avx2,
         };
         if inputs.turbo_color {
             // IdctMethod::Libjpeg: fused dequantize + guarded kernel; the
             // scalar i64 fallback keeps bit-exactness outside the i16 window.
-            if !idct_int_libjpeg_streaming_avx2_q16(token, coeffs, quant, out, stride) {
+            if !idct_int_libjpeg_streaming_avx2_w16(token, coeffs, quant, out, stride) {
                 dequantize_natural_i32_into(coeffs, quant, dequant_buf);
                 idct_int_libjpeg(dequant_buf, out, stride);
             }

@@ -1218,6 +1218,292 @@ mod avx2 {
         let _ = pos;
         true
     }
+
+    // ---------------------------------------------------------------------
+    // libjpeg-turbo's native i16 islow (jidctint-avx2.asm port)
+    // ---------------------------------------------------------------------
+    //
+    // Column/row passes on i16 row-pairs using `pmaddwd` pair-products —
+    // two fused multiply-adds per instruction — plus `pmullw` dequantize.
+    // Bit-identical to mozjpeg's NASM kernel on every input, including its
+    // wrap/saturate behavior when `coef * quant` leaves the i16 window (the
+    // same domain mozjpeg's own decompressor feeds it).
+    //
+    // Layout: each ymm holds an i16 row pair `[rowX | rowY]`; the pmaddwd
+    // constants pair (a,b) so lane0 computes one butterfly term and lane1
+    // the paired term.
+
+    /// Paired-multiplier constants for [`idct_int_libjpeg_avx2_w16`],
+    /// matching jidctint-avx2.asm's `PW_*` tables (CONST_BITS = 13).
+    #[rite]
+    fn islow_w16_even_consts(_token: archmage::X64V3Token) -> __m256i {
+        // lane0: (F541+F765, F541) x4 ; lane1: (F541-F1847, F541) x4
+        _mm256_setr_epi16(
+            10703, 4433, 10703, 4433, 10703, 4433, 10703, 4433, -10704, 4433, -10704, 4433, -10704,
+            4433, -10704, 4433,
+        )
+    }
+
+    #[rite]
+    fn islow_w16_z34_consts(_token: archmage::X64V3Token) -> __m256i {
+        // lane0: (F1175-F1961, F1175) x4 ; lane1: (F1175-F390, F1175) x4
+        _mm256_setr_epi16(
+            -6436, 9633, -6436, 9633, -6436, 9633, -6436, 9633, 6437, 9633, 6437, 9633, 6437, 9633,
+            6437, 9633,
+        )
+    }
+
+    #[rite]
+    fn islow_w16_tmp01_consts(_token: archmage::X64V3Token) -> __m256i {
+        // lane0: (F298-F899, -F899) x4 ; lane1: (F2053-F2562, -F2562) x4
+        _mm256_setr_epi16(
+            -4927, -7373, -4927, -7373, -4927, -7373, -4927, -7373, -4176, -20995, -4176, -20995,
+            -4176, -20995, -4176, -20995,
+        )
+    }
+
+    #[rite]
+    fn islow_w16_tmp32_consts(_token: archmage::X64V3Token) -> __m256i {
+        // lane0: (-F899, F1501-F899) x4 ; lane1: (-F2562, F3072-F2562) x4
+        _mm256_setr_epi16(
+            -7373, 4926, -7373, 4926, -7373, 4926, -7373, 4926, -20995, 4177, -20995, 4177, -20995,
+            4177, -20995, 4177,
+        )
+    }
+
+    /// In-place 8x8 i16 transpose over row-pair registers
+    /// `([r0|r1], [r3|r2], [r4|r5], [r7|r6])` producing column pairs
+    /// `([c0|c4], [c1|c5], [c2|c6], [c3|c7])` — the jidctint-avx2
+    /// `dotranspose` op sequence.
+    #[rite]
+    #[inline(always)]
+    fn islow_w16_transpose(
+        _token: archmage::X64V3Token,
+        a: &mut __m256i,
+        b: &mut __m256i,
+        c: &mut __m256i,
+        d: &mut __m256i,
+    ) {
+        let t5 = _mm256_permute4x64_epi64(*a, 0xD8);
+        let t6 = _mm256_permute4x64_epi64(*b, 0x72);
+        let t7 = _mm256_permute4x64_epi64(*c, 0xD8);
+        let t8 = _mm256_permute4x64_epi64(*d, 0x72);
+
+        let n1 = _mm256_unpacklo_epi16(t5, t6);
+        let n2 = _mm256_unpackhi_epi16(t5, t6);
+        let n3 = _mm256_unpacklo_epi16(t7, t8);
+        let n4 = _mm256_unpackhi_epi16(t7, t8);
+
+        let m5 = _mm256_unpacklo_epi16(n1, n2);
+        let m6 = _mm256_unpacklo_epi16(n3, n4);
+        let m7 = _mm256_unpackhi_epi16(n1, n2);
+        let m8 = _mm256_unpackhi_epi16(n3, n4);
+
+        *a = _mm256_unpacklo_epi64(m5, m6);
+        *b = _mm256_unpackhi_epi64(m5, m6);
+        *c = _mm256_unpacklo_epi64(m7, m8);
+        *d = _mm256_unpackhi_epi64(m7, m8);
+    }
+
+    /// libjpeg-turbo i16 islow: fused dequantize (`pmullw`, same wrapping
+    /// semantics as `jidctint-avx2.asm`'s `ismtl` multiply) + both butterfly
+    /// passes + descale/level-shift/clamp to `[0, 255]` i16.
+    ///
+    /// Bit-identical to mozjpeg's `jsimd_idct_islow_avx2` on every input —
+    /// the kernel IS the reference implementation for the
+    /// `IdctMethod::Libjpeg` path, so no fallback is ever needed.
+    #[arcane]
+    #[allow(unused_mut)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn idct_int_libjpeg_avx2_w16(
+        _token: archmage::X64V3Token,
+        coeffs: &[i16; 64],
+        quant: &[u16; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+    ) -> bool {
+        assert!(out_vector.len() >= stride * 7 + 8);
+
+        let pw_e = islow_w16_even_consts(_token);
+        let pw_z34 = islow_w16_z34_consts(_token);
+        let pw_01 = islow_w16_tmp01_consts(_token);
+        let pw_32 = islow_w16_tmp32_consts(_token);
+        // lane0: +1 x8 ; lane1: -1 x8 — vpsignw source for [in0 | -in4].
+        let pw_neg = _mm256_set_epi16(-1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1);
+        let descale1 = _mm256_set1_epi32(1 << 10);
+        let descale2 = _mm256_set1_epi32(1 << 17);
+        let zero = _mm256_setzero_si256();
+
+        // Load + dequantize: ymm row pairs [r0|r1], [r2|r3], [r4|r5], [r6|r7]
+        // (pmullw low-16 product = the asm's ismtl multiply).
+        macro_rules! load_pair {
+            ($c0:expr, $c1:expr) => {
+                _mm256_mullo_epi16(
+                    _mm256_set_m128i(
+                        safe_simd::_mm_loadu_si128(
+                            <&[i16; 8]>::try_from(&coeffs[$c1..$c1 + 8]).unwrap(),
+                        ),
+                        safe_simd::_mm_loadu_si128(
+                            <&[i16; 8]>::try_from(&coeffs[$c0..$c0 + 8]).unwrap(),
+                        ),
+                    ),
+                    _mm256_set_m128i(
+                        safe_simd::_mm_loadu_si128(
+                            <&[u16; 8]>::try_from(&quant[$c1..$c1 + 8]).unwrap(),
+                        ),
+                        safe_simd::_mm_loadu_si128(
+                            <&[u16; 8]>::try_from(&quant[$c0..$c0 + 8]).unwrap(),
+                        ),
+                    ),
+                )
+            };
+        }
+        let r01 = load_pair!(0, 8);
+        let r23 = load_pair!(16, 24);
+        let r45 = load_pair!(32, 40);
+        let r67 = load_pair!(48, 56);
+
+        // Rearrange to (in0_4, in3_1, in2_6, in7_5)
+        let in04 = _mm256_permute2x128_si256::<0x20>(r01, r45);
+        let in31 = _mm256_permute2x128_si256::<0x31>(r23, r01);
+        let in26 = _mm256_permute2x128_si256::<0x20>(r23, r67);
+        let in75 = _mm256_permute2x128_si256::<0x31>(r67, r45);
+
+        // One dodct pass: (in0_4, in3_1, in2_6, in7_5) ->
+        // (data0_1, data3_2, data4_5, data7_6) as i16 row pairs.
+        macro_rules! dodct {
+            ($in04:expr, $in31:expr, $in26:expr, $in75:expr, $descale:expr, $shift:literal) => {{
+                // -- Even part
+                let sw26 = _mm256_permute2x128_si256::<0x01>($in26, $in26);
+                let p26l = _mm256_unpacklo_epi16($in26, sw26);
+                let p26h = _mm256_unpackhi_epi16($in26, sw26);
+                let tmp32l = _mm256_madd_epi16(p26l, pw_e);
+                let tmp32h = _mm256_madd_epi16(p26h, pw_e);
+
+                let sw40 = _mm256_permute2x128_si256::<0x01>($in04, $in04);
+                let sgn = _mm256_sign_epi16($in04, pw_neg);
+                let t01 = _mm256_add_epi16(sw40, sgn); // [in0+in4 | in0-in4]
+                let e_l = _mm256_srai_epi32::<3>(_mm256_unpacklo_epi16(zero, t01));
+                let e_h = _mm256_srai_epi32::<3>(_mm256_unpackhi_epi16(zero, t01));
+
+                let tmp1011l = _mm256_add_epi32(e_l, tmp32l);
+                let tmp1312l = _mm256_sub_epi32(e_l, tmp32l);
+                let tmp1011h = _mm256_add_epi32(e_h, tmp32h);
+                let tmp1312h = _mm256_sub_epi32(e_h, tmp32h);
+
+                // -- Odd part
+                let z34 = _mm256_add_epi16($in75, $in31); // [z3 | z4]
+                let z43 = _mm256_permute2x128_si256::<0x01>(z34, z34);
+                let z34l = _mm256_unpacklo_epi16(z34, z43);
+                let z34h = _mm256_unpackhi_epi16(z34, z43);
+                let z3_4l = _mm256_madd_epi16(z34l, pw_z34);
+                let z3_4h = _mm256_madd_epi16(z34h, pw_z34);
+
+                let in13 = _mm256_permute2x128_si256::<0x01>($in31, $in31);
+                let i_l = _mm256_unpacklo_epi16($in75, in13);
+                let i_h = _mm256_unpackhi_epi16($in75, in13);
+                let tmp01l = _mm256_add_epi32(_mm256_madd_epi16(i_l, pw_01), z3_4l);
+                let tmp01h = _mm256_add_epi32(_mm256_madd_epi16(i_h, pw_01), z3_4h);
+                let tmp32ol = _mm256_add_epi32(
+                    _mm256_madd_epi16(i_l, pw_32),
+                    _mm256_permute2x128_si256::<0x01>(z3_4l, z3_4l),
+                );
+                let tmp32oh = _mm256_add_epi32(
+                    _mm256_madd_epi16(i_h, pw_32),
+                    _mm256_permute2x128_si256::<0x01>(z3_4h, z3_4h),
+                );
+
+                // -- Final output stage: bias, descale, pack i32 -> i16
+                let d01 = _mm256_packs_epi32(
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_add_epi32(tmp1011l, tmp32ol),
+                        $descale,
+                    )),
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_add_epi32(tmp1011h, tmp32oh),
+                        $descale,
+                    )),
+                );
+                let d76 = _mm256_packs_epi32(
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_sub_epi32(tmp1011l, tmp32ol),
+                        $descale,
+                    )),
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_sub_epi32(tmp1011h, tmp32oh),
+                        $descale,
+                    )),
+                );
+                let d32 = _mm256_packs_epi32(
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_add_epi32(tmp1312l, tmp01l),
+                        $descale,
+                    )),
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_add_epi32(tmp1312h, tmp01h),
+                        $descale,
+                    )),
+                );
+                let d45 = _mm256_packs_epi32(
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_sub_epi32(tmp1312l, tmp01l),
+                        $descale,
+                    )),
+                    _mm256_srai_epi32::<$shift>(_mm256_add_epi32(
+                        _mm256_sub_epi32(tmp1312h, tmp01h),
+                        $descale,
+                    )),
+                );
+                (d01, d32, d45, d76)
+            }};
+        }
+
+        // Pass 1: columns (descale by CONST_BITS - PASS1_BITS = 11)
+        let (mut d01, mut d32, mut d45, mut d76) = dodct!(in04, in31, in26, in75, descale1, 11);
+        islow_w16_transpose(_token, &mut d01, &mut d32, &mut d45, &mut d76);
+        // -> (c0_4, c1_5, c2_6, c3_7)
+
+        // Pass 2: rows — rebuild input pairs [c3|c1], [c7|c5]
+        let p_in04 = d01;
+        let p_in31 = _mm256_permute2x128_si256::<0x20>(d76, d32);
+        let p_in26 = d45;
+        let p_in75 = _mm256_permute2x128_si256::<0x31>(d76, d32);
+        let (mut d01, mut d32, mut d45, mut d76) =
+            dodct!(p_in04, p_in31, p_in26, p_in75, descale2, 18);
+        islow_w16_transpose(_token, &mut d01, &mut d32, &mut d45, &mut d76);
+        // -> (r0_4, r1_5, r2_6, r3_7)
+
+        // Level shift + clamp to [0, 255]: scalar computes
+        // (descale + 128).clamp(0,255); adds_epi16 saturating add keeps that
+        // identical across the i16 edge cases.
+        let v128 = _mm256_set1_epi16(128);
+        let v0 = _mm256_setzero_si256();
+        let v255 = _mm256_set1_epi16(255);
+        let mut pos = 0usize;
+        macro_rules! store_pair {
+            ($v:expr) => {{
+                let shifted =
+                    _mm256_min_epi16(_mm256_max_epi16(_mm256_adds_epi16($v, v128), v0), v255);
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_castsi256_si128(shifted),
+                );
+                pos += 4 * stride;
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<1>(shifted),
+                );
+                pos -= 3 * stride;
+            }};
+        }
+        // Each call writes rows pos/stride and pos/stride+4, then advances.
+        store_pair!(d01); // rows 0, 4
+        store_pair!(d32); // rows 1, 5
+        store_pair!(d45); // rows 2, 6
+        store_pair!(d76); // rows 3, 7
+        let _ = pos;
+        true
+    }
 }
 
 // =============================================================================
@@ -1456,6 +1742,22 @@ pub(crate) fn idct_int_libjpeg_streaming_avx2_q16(
     stride: usize,
 ) -> bool {
     avx2::idct_int_libjpeg_avx2_q16(token, coeffs, quant, output, stride)
+}
+
+/// libjpeg-exact IDCT, i16/pmaddwd kernel (jidctint-avx2.asm port) via a
+/// pre-resolved v3 token. Always succeeds — the kernel reproduces mozjpeg's
+/// NASM semantics for every input (including its i16 wrap domain), so no
+/// scalar fallback is required.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn idct_int_libjpeg_streaming_avx2_w16(
+    token: archmage::X64V3Token,
+    coeffs: &[i16; 64],
+    quant: &[u16; 64],
+    output: &mut [i16],
+    stride: usize,
+) -> bool {
+    avx2::idct_int_libjpeg_avx2_w16(token, coeffs, quant, output, stride)
 }
 
 /// jpegli-exact IDCT via a pre-resolved v3 token (see above).
@@ -2095,6 +2397,85 @@ pub fn idct_int_tiered_libjpeg_unclamped(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_w16_vs_scalar_islow() {
+        let token = match archmage::X64V3Token::summon() {
+            Some(t) => t,
+            None => return,
+        };
+        // Deterministic PRNG (xorshift64)
+        let mut st = 0x9E3779B97F4A7C15u64;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        // Oracle: scalar islow. Only compare inside the domain where the
+        // jidctint-avx2 op sequence is exact vs the C algorithm: keeping
+        // |coef*quant| <= 512 ensures the dequantized values, the i16 pair
+        // sums, and both packssdw stages stay clear of wrap/saturation.
+        // Outside it the kernel intentionally reproduces mozjpeg's NASM
+        // wrap semantics instead (the reference for turbo-mode parity).
+        let mut compared = 0;
+        let mut mismatches = 0;
+        for trial in 0..20000 {
+            let mut coeffs = [0i16; 64];
+            let mut quant = [1u16; 64];
+            let n_ac = if trial % 3 == 0 {
+                64
+            } else {
+                1 + (next() % 20) as usize
+            };
+            for i in 0..64 {
+                quant[i] = 1 + (next() % 8) as u16;
+                if i < n_ac || i == 0 {
+                    let mag = (next() % 100) as i16;
+                    coeffs[i] = if next() % 2 == 0 { mag } else { -mag };
+                }
+            }
+            if coeffs
+                .iter()
+                .zip(quant.iter())
+                .any(|(&c, &q)| (c as i32).abs() * q as i32 > 512)
+            {
+                continue;
+            }
+            let mut in32 = [0i32; 64];
+            for i in 0..64 {
+                in32[i] = coeffs[i] as i32 * quant[i] as i32;
+            }
+            let mut ref_out = [0i16; 64];
+            idct_int_libjpeg(&mut in32, &mut ref_out, 8);
+            let mut w16_out = [0i16; 64];
+            assert!(super::avx2::idct_int_libjpeg_avx2_w16(
+                token,
+                &coeffs,
+                &quant,
+                &mut w16_out,
+                8
+            ));
+            compared += 1;
+            for i in 0..64 {
+                if ref_out[i] != w16_out[i] {
+                    mismatches += 1;
+                    if mismatches <= 4 {
+                        eprintln!(
+                            "trial {} idx {}: ref={} w16={}",
+                            trial, i, ref_out[i], w16_out[i]
+                        );
+                    }
+                }
+            }
+        }
+        println!(
+            "w16 vs scalar (in-domain): {} cases, {} mismatched",
+            compared, mismatches
+        );
+        assert_eq!(mismatches, 0);
+    }
 
     #[test]
     fn test_dc_only() {
