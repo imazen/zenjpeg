@@ -488,6 +488,9 @@ metadata-legacy-icc-check:
 
 # Typed rewrite migration plus the gain-map carrier and EXIF compatibility paths.
 shared-contract-check:
+    cargo test -p zenjpeg --features zencodec,inventory,metadata-rewrite --test shared_contracts
+    cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+    cargo clippy -p zenjpeg --features zencodec,inventory,metadata-rewrite --test shared_contracts -- -D warnings
     just metadata-rewrite-check metadata-rewrite-gainmap-check
     cargo clippy -p zenjpeg --features metadata-rewrite,ultrahdr,zencodec --lib -- -D warnings
 

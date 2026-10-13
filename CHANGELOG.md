@@ -5,6 +5,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Tests
+
+- Shared codec-testkit checks cover checked policy admission, inventory boundaries
+  and rewrite limits/retention, with independent JPEG pixel decoding.
+
+
 ### Shared rewrite contract
 
 - Keep child-image rewrite mutations within their input contexts and assemble

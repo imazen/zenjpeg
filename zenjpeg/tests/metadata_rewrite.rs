@@ -218,6 +218,19 @@ mod gain_map_scrub {
         let req = ScrubRequest::new(&input);
         let plan = req.plan().unwrap();
         let output = plan.to_vec().unwrap();
+        zencodec_testkit::check_metadata_rewrite(
+            req.clone(),
+            zenjpeg::metadata::rewrite,
+            |candidate| {
+                assert_eq!(
+                    candidate, output,
+                    "shared bounded planner must retain both image components"
+                );
+                assert_eq!(scans(&input), scans(candidate));
+                Ok(())
+            },
+        )
+        .unwrap();
         assert!(!output.windows(6).any(|b| b == b"SECRET"));
         assert_eq!(scans(&input), scans(&output));
         assert_eq!(

@@ -81,6 +81,9 @@ jobs:
 
       - name: Test (all user features)
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite" --lib --tests
+      - name: Shared contracts without inventory
+        run: cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+
 
       - name: Install lossless metadata oracles
         if: matrix.os == 'ubuntu-latest'

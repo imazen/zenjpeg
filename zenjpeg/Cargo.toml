@@ -53,7 +53,7 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "47895ac46f555b4bac7e28ac57bb50299c96889b", default-features = false, features = ["xmp"] }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "919dd67861abc3bf0192b9a67f760454a1a96407", default-features = false, features = ["xmp"] }
 zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true, optional = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)
