@@ -15,7 +15,7 @@ use crate::decode::{ChromaUpsampling, DeblockMode, IdctMethod, OutputTarget, Sca
 use crate::error::Error;
 use crate::types::JpegMode;
 
-use super::decode::{build_decode_config, will_auto_orient, JpegDecoderConfig};
+use super::decode::{JpegDecoderConfig, build_decode_config, will_auto_orient};
 use super::info::{decode_descriptor, to_image_info};
 
 /// Incremental JPEG decoder implementing [`zencodec::decode::IncrementalDecode`].
@@ -229,7 +229,8 @@ impl IncrementalDecode for JpegIncrementalDecoder {
         if !self.header_parsed {
             self.header_buf.extend_from_slice(chunk);
             if !self.try_parse_header(is_eof)? {
-                return Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput));
+                return Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput)
+                    .with_header_ready(false));
             }
         } else if !self.is_progressive {
             self.pending_scan.extend_from_slice(chunk);
@@ -240,7 +241,8 @@ impl IncrementalDecode for JpegIncrementalDecoder {
         // Phase 2: Progressive Handling
         if self.is_progressive {
             if !self.is_eof {
-                return Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput));
+                return Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput)
+                    .with_header_ready(self.header_parsed));
             }
             if self.reader.is_none() {
                 let cfg = build_decode_config(
@@ -256,7 +258,8 @@ impl IncrementalDecode for JpegIncrementalDecoder {
                 self.reader = Some(reader);
                 self.mcu_row_ready = true;
             }
-            return Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady));
+            return Ok(PushOutcome::new(chunk.len(), PushStatus::OutputReady)
+                .with_header_ready(self.header_parsed));
         }
 
         // Phase 3: Baseline Streaming
@@ -271,7 +274,16 @@ impl IncrementalDecode for JpegIncrementalDecoder {
         }
 
         let status = if self.mcu_row_ready {
-            PushStatus::OutputReady
+            if self
+                .pending_scan
+                .len()
+                .saturating_sub(self.pending_scan_pos)
+                > 65536
+            {
+                PushStatus::BlockedOnOutput
+            } else {
+                PushStatus::OutputReady
+            }
         } else if let Some(ref reader) = self.reader {
             if reader.is_finished() {
                 self.is_complete = true;
@@ -283,7 +295,11 @@ impl IncrementalDecode for JpegIncrementalDecoder {
             PushStatus::NeedMoreInput
         };
 
-        Ok(PushOutcome::new(chunk.len(), status))
+        Ok(PushOutcome::new(chunk.len(), status).with_header_ready(self.header_parsed))
+    }
+
+    fn wrap_sink_error(err: zencodec::decode::SinkError) -> Self::Error {
+        Error::io_error(err.to_string()).into()
     }
 
     fn pull_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {

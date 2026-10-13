@@ -1648,7 +1648,9 @@ mod pattern_b_envelope_tests {
     #[test]
     fn incremental_decode_chunk_sizes() {
         use imgref::{Img, ImgExt as _};
-        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode, PushStatus};
+        use zencodec::decode::{
+            Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode, PushStatus,
+        };
 
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let width = 64;
@@ -1685,7 +1687,9 @@ mod pattern_b_envelope_tests {
             while offset < jpeg_bytes.len() {
                 let end = (offset + chunk_size).min(jpeg_bytes.len());
                 let is_eof = end == jpeg_bytes.len();
-                let outcome = inc.push_chunk(&jpeg_bytes[offset..end], is_eof, None).unwrap();
+                let outcome = inc
+                    .push_chunk(&jpeg_bytes[offset..end], is_eof, None)
+                    .unwrap();
                 offset = end;
 
                 while let Some((y, strip)) = inc.pull_batch().unwrap() {
@@ -1707,7 +1711,11 @@ mod pattern_b_envelope_tests {
                 }
             }
 
-            assert!(inc.is_complete(), "decoder must be complete for chunk_size {}", chunk_size);
+            assert!(
+                inc.is_complete(),
+                "decoder must be complete for chunk_size {}",
+                chunk_size
+            );
             assert_eq!(
                 decoded_rows.len(),
                 ref_bytes.len(),
@@ -1715,8 +1723,7 @@ mod pattern_b_envelope_tests {
                 chunk_size
             );
             assert_eq!(
-                decoded_rows,
-                ref_bytes,
+                decoded_rows, ref_bytes,
                 "decoded pixels must match for chunk_size {}",
                 chunk_size
             );
@@ -1726,7 +1733,9 @@ mod pattern_b_envelope_tests {
     #[test]
     fn incremental_decode_baseline_chunk_sizes() {
         use imgref::{Img, ImgExt as _};
-        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode, PushStatus};
+        use zencodec::decode::{
+            Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode, PushStatus,
+        };
 
         let enc = JpegEncoderConfig::new()
             .with_calibrated_quality(85.0)
@@ -1765,7 +1774,9 @@ mod pattern_b_envelope_tests {
             while offset < jpeg_bytes.len() {
                 let end = (offset + chunk_size).min(jpeg_bytes.len());
                 let is_eof = end == jpeg_bytes.len();
-                let outcome = inc.push_chunk(&jpeg_bytes[offset..end], is_eof, None).unwrap();
+                let outcome = inc
+                    .push_chunk(&jpeg_bytes[offset..end], is_eof, None)
+                    .unwrap();
                 offset = end;
 
                 while let Some((y, strip)) = inc.pull_batch().unwrap() {
@@ -1787,7 +1798,11 @@ mod pattern_b_envelope_tests {
                 }
             }
 
-            assert!(inc.is_complete(), "decoder must be complete for chunk_size {}", chunk_size);
+            assert!(
+                inc.is_complete(),
+                "decoder must be complete for chunk_size {}",
+                chunk_size
+            );
             assert_eq!(
                 decoded_rows.len(),
                 ref_bytes.len(),
@@ -1795,8 +1810,7 @@ mod pattern_b_envelope_tests {
                 chunk_size
             );
             assert_eq!(
-                decoded_rows,
-                ref_bytes,
+                decoded_rows, ref_bytes,
                 "decoded pixels must match for chunk_size {}",
                 chunk_size
             );
@@ -1806,7 +1820,9 @@ mod pattern_b_envelope_tests {
     #[test]
     fn incremental_decode_dyn_dispatch() {
         use imgref::{Img, ImgExt as _};
-        use zencodec::decode::{DecodeJob as _, DecoderConfig as _, DynIncrementalDecoder, PushStatus};
+        use zencodec::decode::{
+            DecodeJob as _, DecoderConfig as _, DynIncrementalDecoder, PushStatus,
+        };
 
         let enc = JpegEncoderConfig::new().with_calibrated_quality(75.0);
         let width = 32;
@@ -1823,10 +1839,13 @@ mod pattern_b_envelope_tests {
         let jpeg_bytes = encoded.data();
 
         let dec_cfg = JpegDecoderConfig::new();
-        let mut dyn_inc: Box<dyn DynIncrementalDecoder> = dec_cfg.job().dyn_incremental_decoder(&[]).unwrap();
+        let mut dyn_inc: Box<dyn DynIncrementalDecoder> =
+            dec_cfg.job().dyn_incremental_decoder(&[]).unwrap();
 
         let outcome = dyn_inc.push_chunk(jpeg_bytes, true, None).unwrap();
-        assert!(outcome.status == PushStatus::OutputReady || outcome.status == PushStatus::Complete);
+        assert!(
+            outcome.status == PushStatus::OutputReady || outcome.status == PushStatus::Complete
+        );
 
         let mut total_rows = 0;
         while let Some((_y, strip)) = dyn_inc.pull_batch().unwrap() {
@@ -1836,4 +1855,3 @@ mod pattern_b_envelope_tests {
         assert!(dyn_inc.is_complete());
     }
 }
-

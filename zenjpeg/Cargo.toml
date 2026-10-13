@@ -133,6 +133,8 @@ tempfile = "3"
 # `[patch.crates-io]` needed. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 zencodec-testkit = ">=0.1.0, <0.3.0"
+zencodec = { workspace = true, features = ["std"] }
+tokio = { version = "1", features = ["rt", "io-util", "macros"] }
 
 
 # WASM testing dependencies (browser + Node.js)

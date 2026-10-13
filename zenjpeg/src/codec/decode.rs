@@ -444,11 +444,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     fn dyn_incremental_decoder(
         self,
         preferred: &[PixelDescriptor],
-    ) -> Result<alloc::boxed::Box<dyn zencodec::decode::DynIncrementalDecoder>, zencodec::decode::BoxedError> {
+    ) -> Result<
+        alloc::boxed::Box<dyn zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
         let dec = self
             .into_incremental_decoder(preferred)
             .map_err(|e| alloc::boxed::Box::new(e) as zencodec::decode::BoxedError)?;
-        Ok(alloc::boxed::Box::new(zencodec::decode::IncrementalDecoderShim(dec)))
+        Ok(alloc::boxed::Box::new(
+            zencodec::decode::IncrementalDecoderShim(dec),
+        ))
     }
 }
 

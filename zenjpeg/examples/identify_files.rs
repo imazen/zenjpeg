@@ -60,7 +60,9 @@ fn main() {
                 if exact { "" } else { " (tol)" }
             ),
             TableId::JpegliDistance { distance, exact } => println!(
-                "{name}\tjpegli d={distance:.3}{}", if exact { "" } else { " (±1)" }),
+                "{name}\tjpegli d={distance:.3}{}",
+                if exact { "" } else { " (±1)" }
+            ),
             TableId::Unknown => println!("{name}\tUNKNOWN"),
             _ => println!("{name}\t?"),
         }

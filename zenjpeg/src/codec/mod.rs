@@ -33,17 +33,17 @@
 
 mod decode;
 mod encode;
+mod incremental;
 mod info;
 mod streaming;
-mod incremental;
 
 #[cfg(test)]
 mod tests;
 
 pub use decode::{CmykHandling, JpegDecodeJob, JpegDecoder, JpegDecoderConfig};
 pub use encode::{JpegEncodeJob, JpegEncoder, JpegEncoderConfig};
-pub use streaming::JpegStreamingDecoder;
 pub use incremental::JpegIncrementalDecoder;
+pub use streaming::JpegStreamingDecoder;
 
 /// Alias for backwards compatibility within the `zencodec` feature gate.
 pub type JpegEncoding = JpegEncoderConfig;
