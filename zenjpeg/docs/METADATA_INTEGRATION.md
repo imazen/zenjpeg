@@ -113,9 +113,8 @@ and clippy checks. Two existing ignored external HDR tests remain ignored;
 this run is not independent HDR reconstruction validation. Existing independent
 framing/metadata oracles and final cross-platform checks remain release gates.
 
-Remaining reconciliation: interrupted GContainer/lossless work, HDR
-reconstruction's base-gamut assumption, and mismatch reporting.
-No claim is made that all JPEG metadata work is complete.
+The recovered GContainer/lossless work and HDR base-gamut reconciliation are
+implemented below. The API findings section records the remaining design limits.
 
 ## Codec-owned metadata rewriting
 
@@ -170,7 +169,9 @@ JPEGs and rebuild the MPF index after emission. GContainer lengths are matched
 by semantic rather than MPF order. Namespace validation and span editing use
 zenmeta's `Directory`; no zenmeta nominal type appears in the JPEG public API.
 Malformed/ambiguous directories fail rather than preserving stale lengths.
-Decoder extraction accepts only disjoint secondary ranges after the primary EOI.
+Decoder extraction accepts bounded, disjoint secondary ranges; default-mode
+compatibility for embedded ranges is described below. Rewriting requires
+secondary ranges after the primary EOI.
 Nested secondary containers and proportional-crop mismatches are rejected.
 
 The additive public entry point is
@@ -185,8 +186,10 @@ and decoded gain-map tests also run with HDR rendering disabled.
 ### Native compatibility and recompression admission
 
 Native and extended ICC reassembly share one chunk validator (`c7d341a9`).
-Invalid chunk sets return None through the published native Option accessor;
-inspection retains its typed errors. Native extended-XMP concatenation remains
+Default native decoding additionally recognizes the complete single-profile
+sequence-zero compatibility case described below. Other invalid chunk sets
+return None through the published native Option accessor; inspection retains
+its typed errors. Native extended-XMP concatenation remains
 legacy behavior; strict extended inspection stays explicit.
 
 The recovered lossless path preserves auxiliary JPEGs. Lossy recompression's
