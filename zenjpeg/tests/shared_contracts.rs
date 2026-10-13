@@ -35,7 +35,7 @@ fn policy_and_inventory_contracts() {
         tk::check_encode_policy_admission(
             enc.clone(),
             D::new(),
-            &img,
+            img.as_slice(),
             metadata.clone(),
             EncodePolicy::none(),
             policy,
