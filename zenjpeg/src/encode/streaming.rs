@@ -88,7 +88,13 @@ struct StreamingOutputState {
     /// Total MCUs in the full image (for restart marker logic).
     total_mcus: usize,
     /// JPEG header bytes (SOI through SOS), written at construction time.
+    /// Empty once [`StreamingEncoder::start_output`] moved it into `writer`.
     header: Vec<u8>,
+    /// Output handed out through `pending_output`: the header is at the
+    /// front of `writer`'s buffer, and `writer.as_bytes()[..sent]` is gone.
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
+    started: bool,
+    sent: usize,
 }
 
 /// Streaming input JPEG encoder.
@@ -479,6 +485,8 @@ impl StreamingEncoder {
                 entropy_state: crate::entropy::StreamingEntropyState::new(),
                 total_mcus: processor.layout.total_mcus,
                 header,
+                started: false,
+                sent: 0,
             })
         } else {
             None
@@ -544,6 +552,71 @@ impl StreamingEncoder {
     #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     pub(crate) fn is_streaming(&self) -> bool {
         self.streaming.is_some()
+    }
+
+    /// Stream-through only: the frame header (SOI through SOS), for the
+    /// caller to add metadata segments to before [`start_output`](Self::start_output).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_header(&mut self) -> Result<Vec<u8>> {
+        match self.streaming.as_mut() {
+            Some(st) if !st.started && self.current_y == 0 && self.rows_buffered == 0 => {
+                Ok(core::mem::take(&mut st.header))
+            }
+            _ => Err(Error::invalid_state(
+                "streaming output starts before any row, in stream-through mode",
+            )),
+        }
+    }
+
+    /// Stream-through only: make `header` (from [`take_header`](Self::take_header),
+    /// with any metadata segments added) and every later byte available
+    /// through [`pending_output`](Self::pending_output) as strips are encoded.
+    /// The bytes are those `finish` would have returned.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn start_output(&mut self, header: Vec<u8>) -> Result<()> {
+        let st = self
+            .streaming
+            .as_mut()
+            .filter(|st| !st.started && st.writer.as_bytes().is_empty())
+            .ok_or_else(|| Error::invalid_state("streaming output already started"))?;
+        st.writer.write_bytes_raw(&header);
+        st.started = true;
+        Ok(())
+    }
+
+    /// Bytes ready to send once [`start_output`](Self::start_output) ran;
+    /// otherwise empty.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn pending_output(&self) -> &[u8] {
+        match &self.streaming {
+            Some(st) if st.started => &st.writer.as_bytes()[st.sent..],
+            _ => &[],
+        }
+    }
+
+    /// Mark the first `n` pending bytes as sent.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn consume_output(&mut self, n: usize) {
+        let Some(st) = self.streaming.as_mut().filter(|st| st.started) else {
+            return;
+        };
+        let len = st.writer.as_bytes().len();
+        st.sent = (st.sent + n).min(len);
+        // Reclaim sent bytes when all are gone (the usual case: a driver
+        // drains after every push), or when they dominate the buffer.
+        if st.sent == len || (st.sent >= 64 * 1024 && st.sent > len / 2) {
+            st.writer.discard_front(st.sent);
+            st.sent = 0;
+        }
+    }
+
+    /// The most pushed rows whose bytes are not yet pending, in
+    /// stream-through mode: up to a strip of rows waits to fill the strip
+    /// (an MCU row), and the strip processor quantizes each iMCU one strip
+    /// later, once adaptive quantization has seen the rows below it.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn output_lag_rows(&self) -> u32 {
+        (2 * self.strip_height - 1) as u32
     }
 
     /// Pushes a single row of pixel data.
@@ -938,6 +1011,9 @@ impl StreamingEncoder {
         )?;
 
         self.processor.clear_blocks();
+        // Whole bytes become visible to `pending_output` now rather than
+        // when the accumulator next fills; the byte stream is unchanged.
+        state.writer.flush_whole_bytes();
 
         Ok(())
     }
@@ -1200,8 +1276,12 @@ impl StreamingEncoder {
         streaming: StreamingOutputState,
         output: &mut Vec<u8>,
     ) -> Result<()> {
-        // Flush the BitWriter's remaining bits and scan data
+        // Flush the BitWriter's remaining bits and scan data. With
+        // streaming output the header is already at the front of the scan
+        // data, and the first `sent` bytes were handed out.
+        let sent = streaming.sent;
         let scan_data = streaming.writer.into_bytes();
+        let scan_data = &scan_data[sent..];
 
         // Assemble: header + scan data + EOI
         let total_size = streaming.header.len() + scan_data.len() + 2;
@@ -1211,7 +1291,7 @@ impl StreamingEncoder {
             .map_err(|_| Error::allocation_failed(total_size, "streaming finish output"))?;
 
         output.extend_from_slice(&streaming.header);
-        output.extend_from_slice(&scan_data);
+        output.extend_from_slice(scan_data);
         output.push(0xFF);
         output.push(crate::foundation::consts::MARKER_EOI);
 

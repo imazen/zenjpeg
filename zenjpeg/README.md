@@ -173,6 +173,8 @@ variant (see [Quality Options](#quality-options)).
 
 Width and height are `u32` (pixels) on every entry point. All three return a streaming `Encoder`. Push rows with `push_packed()`, finish with `finish()`. One-shot convenience: `config.request().encode(&pixels, w, h)`.
 
+**Streaming output.** Pushing rows keeps memory low; getting bytes out before `finish` also needs fixed (or custom) Huffman tables and a sequential scan, since optimized tables and progressive scans need every block first. Through the `zencodec` feature, `JpegEncoderConfig::new().with_progressive(false).with_huffman(false)` makes `Encoder::begin` report `OutputTiming::streaming(31)` (4:2:0): the header is pending at once and each MCU row follows at most 31 rows behind, byte-identical to the one-shot encode. Fixed tables make the file larger than optimized ones.
+
 ### Builder Methods
 
 | Method | Default | Notes |

@@ -15,6 +15,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JPEG. The header is reported as soon as it probes; rows come from
   `push_decoder` once the whole file is offered. A native decoder that streams
   baseline MCU rows as bytes arrive is the next step.
+- Streaming encode output (zencodec PR 149): `Encoder::begin` starts the row
+  encoder and returns an `OutputTiming`. With fixed or custom Huffman tables
+  and a sequential scan (`with_huffman(false)` plus `with_progressive(false)`
+  or effort 0), the header and its metadata segments are pending at once and
+  each MCU row follows as it is encoded, at most `2 x strip height - 1` rows
+  behind (31 for 4:2:0, 15 for 4:4:4; measured: first scan bytes after exactly
+  that many rows plus one). The bytes equal the one-shot encode's, with and
+  without EXIF/XMP, for every strip height tested (`tests/streaming_encode.rs`).
+  Optimized tables, progressive scans, XYB/RGB modes, target-quality loops and
+  MPF gain-map indexes report `AT_FINISH`. The output-size limit counts bytes
+  already handed out. Declares `EncodeCapabilities::streaming_output`.
+- `JpegEncoderConfig::with_huffman`: optimized, fixed, Annex K or custom
+  tables, overriding the effort preset's choice.
+
+### Changed
+
+- Rows pushed with a known canvas (`with_canvas_size`, now also `begin`) and
+  `encode_from` encode with the configuration as given. They were silently
+  re-encoded as baseline with fixed Huffman tables, so their output differed
+  from `encode` for the same configuration; it now matches it.
+
+### Fixed
+
+- `JpegEncoderConfig::with_progressive` and `from_preset` were overridden by
+  the effort preset applied at encode time (effort 1, the default, always gave
+  HybridProgressive): `with_progressive(false)` still wrote a progressive file
+  and `from_preset("jpegli_baseline", ..)` a progressive one. Explicit settings
+  now outrank the effort preset; a later `with_generic_effort` replaces a
+  named preset.
 
 ### Added
 

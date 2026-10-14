@@ -254,6 +254,34 @@ impl BitWriter {
         &self.buffer
     }
 
+    /// Moves every whole byte from the bit accumulator into the buffer
+    /// (with 0xFF stuffing), keeping fewer than 8 bits back.
+    ///
+    /// The byte stream is unchanged; the bytes only become visible in
+    /// [`as_bytes`](Self::as_bytes) sooner. Streaming output calls this
+    /// after each strip so a driver can send everything but the last
+    /// partial byte.
+    pub fn flush_whole_bytes(&mut self) {
+        while self.bits_in_buffer >= 8 {
+            self.bits_in_buffer -= 8;
+            let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
+            self.buffer.push(byte);
+            if byte == 0xFF {
+                self.buffer.push(0x00);
+            }
+        }
+    }
+
+    /// Drops the first `n` bytes of the buffer: bytes already handed out.
+    /// Later bytes, and the bit accumulator, are untouched.
+    pub fn discard_front(&mut self, n: usize) {
+        if n >= self.buffer.len() {
+            self.buffer.clear();
+        } else {
+            self.buffer.drain(..n);
+        }
+    }
+
     /// Returns the current byte position.
     #[must_use]
     pub fn position(&self) -> usize {
@@ -1059,6 +1087,47 @@ mod tests {
         assert!(reader.starved());
         assert_eq!(reader.read_bit_refine(), 0);
         assert!(reader.starved());
+    }
+
+    /// `flush_whole_bytes` and `discard_front` change only when bytes become
+    /// visible, never the byte stream: interleaving them with writes (all-ones
+    /// runs included, so 0xFF stuffing happens at flush points) and keeping
+    /// the discarded prefixes reproduces the plain writer's output exactly.
+    #[test]
+    fn early_whole_byte_flushes_keep_the_stream() {
+        let mut x = 0x2545_f491u32;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        for every in [1usize, 2, 3, 7, 50] {
+            let mut plain = BitWriter::new();
+            let mut early = BitWriter::new();
+            let mut taken = Vec::new();
+            for i in 0..4000 {
+                let r = next();
+                let count = (r % 24 + 1) as u8;
+                // Every fourth write is all ones, to force 0xFF bytes.
+                let bits = if i % 4 == 0 {
+                    (1u32 << count) - 1
+                } else {
+                    (r >> 8) & ((1u32 << count) - 1)
+                };
+                plain.write_bits(bits, count);
+                early.write_bits(bits, count);
+                if i % every == 0 {
+                    early.flush_whole_bytes();
+                    // Hand out a varying share of what is visible.
+                    let n = early.as_bytes().len() * (i % 3) / 2;
+                    taken.extend_from_slice(&early.as_bytes()[..n]);
+                    early.discard_front(n);
+                }
+            }
+            taken.extend_from_slice(&early.into_bytes());
+            assert_eq!(taken, plain.into_bytes(), "flush every {every} writes");
+        }
     }
 
     /// A read that needs more bits than the data has left is `Truncated`
