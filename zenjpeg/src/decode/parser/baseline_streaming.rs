@@ -635,7 +635,7 @@ pub(super) fn output_mcu_row(
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn output_fancy_strip_fused(
+pub(crate) fn output_fancy_strip_fused(
     _token: archmage::X64V3Token,
     cb: &[i16],
     cr: &[i16],

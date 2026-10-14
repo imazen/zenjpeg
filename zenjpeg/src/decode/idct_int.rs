@@ -1465,9 +1465,41 @@ mod avx2 {
             }};
         }
 
-        // Pass 1: columns (descale by CONST_BITS - PASS1_BITS = 11)
-        let (mut d01, mut d32, mut d45, mut d76) = dodct!(in04, in31, in26, in75, descale1, 11);
-        islow_w16_transpose(_token, &mut d01, &mut d32, &mut d45, &mut d76);
+        // Pass 1: columns (descale by CONST_BITS - PASS1_BITS = 11).
+        //
+        // Whole-block shortcut matching the asm's `NO_ZERO_COLUMN_TEST`:
+        // when AC rows 1..7 are all zero, pass 1 is just `psllw(deq_row0, 2)`
+        // broadcast per column — which *wraps* i16 where the butterfly's
+        // packs_epi32 would saturate. Both are identical in-domain; taking
+        // the shortcut keeps parity with mozjpeg-asm on corrupt input (and
+        // skips pass 1 on flat blocks).
+        let ac_zero = {
+            let r_hi = _mm256_extracti128_si256::<1>(r01);
+            let orv = _mm256_or_si256(
+                _mm256_or_si256(_mm256_or_si256(r23, r45), r67),
+                _mm256_set_m128i(r_hi, r_hi),
+            );
+            _mm256_testz_si256(orv, orv) != 0
+        };
+        let (d01, d32, d45, d76) = if ac_zero {
+            // ws[c] = wrap16(deq_row0[c] << 2); column c broadcasts ws[c]
+            // down all 8 rows — in core layout: cK_4 = [ws[K] x8 | ws[K+4] x8].
+            let ws8 = _mm_slli_epi16(_mm256_castsi256_si128(r01), 2);
+            let lo = _mm_unpacklo_epi16(ws8, ws8); // [w0 w0 w1 w1 w2 w2 w3 w3]
+            let hi = _mm_unpackhi_epi16(ws8, ws8); // [w4 w4 .. w7 w7]
+            let pair = _mm256_set_m128i(hi, lo);
+            (
+                _mm256_shuffle_epi32::<0x00>(pair),
+                _mm256_shuffle_epi32::<0x55>(pair),
+                _mm256_shuffle_epi32::<0xAA>(pair),
+                _mm256_shuffle_epi32::<0xFF>(pair),
+            )
+        } else {
+            let (a, b, c, d) = dodct!(in04, in31, in26, in75, descale1, 11);
+            let (mut a, mut b, mut c, mut d) = (a, b, c, d);
+            islow_w16_transpose(_token, &mut a, &mut b, &mut c, &mut d);
+            (a, b, c, d)
+        };
         // -> (c0_4, c1_5, c2_6, c3_7)
 
         // Pass 2: rows — rebuild input pairs [c3|c1], [c7|c5]

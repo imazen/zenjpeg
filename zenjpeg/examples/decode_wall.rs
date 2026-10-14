@@ -85,6 +85,7 @@ fn main() {
     let mut reps = 30usize;
     let mut quality = 85u8;
     let mut sub = mozjpeg_rs::Subsampling::S420;
+    let mut restart_interval = 0u16;
     let mut progressive = false;
     let mut tile: Option<(u32, u32)> = None;
     let mut save: Option<String> = None;
@@ -117,6 +118,10 @@ fn main() {
             "--prog" => {
                 progressive = true;
                 i += 1;
+            }
+            "--rst" => {
+                restart_interval = args[i + 1].parse().unwrap();
+                i += 2;
             }
             "--tile" => {
                 let (w, h) = args[i + 1].split_once('x').expect("--tile WxH");
@@ -160,6 +165,7 @@ fn main() {
         mozjpeg_rs::Encoder::new(preset)
             .quality(quality)
             .subsampling(sub)
+            .restart_interval(restart_interval)
             .encode_rgb(&pix, tw, th)
             .expect("mozjpeg encode")
     } else {
