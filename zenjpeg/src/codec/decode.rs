@@ -19,6 +19,7 @@ use super::streaming::JpegStreamingDecoder;
 
 static JPEG_DECODE_CAPS: DecodeCapabilities = {
     let caps = DecodeCapabilities::new()
+        .with_incremental(true)
         .with_icc(true)
         .with_exif(true)
         .with_xmp(true)
@@ -516,6 +517,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> Result<Self::AnimationFrameDec, Self::Error> {
         Err(ErrorKind::UnsupportedOperation(UnsupportedOperation::AnimationDecode).into())
+    }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered (a native baseline decoder that streams MCU rows is planned; progressive, arithmetic, CMYK and transformed outputs need the whole file in any case).
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
     }
 }
 
