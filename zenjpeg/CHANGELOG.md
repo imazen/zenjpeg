@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
+  `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
+  is declared, so the zencodec-io drivers (files, streams, async sources) serve
+  JPEG. The header is reported as soon as it probes; rows come from
+  `push_decoder` once the whole file is offered. A native decoder that streams
+  baseline MCU rows as bytes arrive is the next step.
+
+### Added
+
 - **BQuarter-aware XYB subsampling pick in `EncoderConfig::adaptive`** — when
   the adaptive oracle chooses XYB, it now picks Full vs BQuarter from
   zenanalyze's `xyb_bquarter_chroma_loss` (id 139, the per-color-sensitivity-
