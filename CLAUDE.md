@@ -1,6 +1,6 @@
 # zenjpeg Project Guide
 
-Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
+Pure Rust port of jpegli (Bruse, Versari, Szabadka and Alakuijala) from the JPEG XL project.
 
 ## Canonical training data + indexes (added 2026-05-20)
 
@@ -1306,7 +1306,7 @@ encoder.finish_into(&mut output, &metadata)?;
 ### UltraHDR Conformance Notes
 
 zenjpeg uses `ultrahdr-core` for XMP metadata parsing and gain map computation. There are known
-differences from Google's libultrahdr reference implementation:
+differences from the libultrahdr reference implementation:
 
 | Behavior | libultrahdr | zenjpeg/ultrahdr-core |
 |----------|-------------|----------------------|

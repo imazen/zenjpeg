@@ -1537,7 +1537,7 @@ pub fn load_corpus(dir: &std::path::Path, max_files: Option<usize>) -> Vec<Image
 /// Distinguishes between Rust and C++ implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncoderImpl {
-    /// zenjpeg: Pure Rust port of Google's jpegli
+    /// zenjpeg: Pure Rust port of jpegli (Bruse et al.)
     JpegliRs,
     /// cjpegli: Original C++ jpegli via FFI (requires cjpegli-ffi feature)
     CJpegli,
