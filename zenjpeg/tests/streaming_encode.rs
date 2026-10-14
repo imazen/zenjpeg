@@ -369,3 +369,36 @@ fn an_mpf_gain_map_reports_at_finish() {
         "the gain map follows the primary image"
     );
 }
+
+#[test]
+fn strided_crops_push_without_a_trailing_stride() {
+    // A crop of a wider image: rows are `stride` apart and the slice ends at
+    // the last row's pixels. Every path must take it, streamed or not, and
+    // give the bytes of the same pixels packed.
+    let (full_w, w, h) = (300u32, 64u32, 48u32);
+    let wide = pixels(full_w, h, 3);
+    let stride = full_w as usize * 3;
+    let packed: Vec<u8> = (0..h as usize)
+        .flat_map(|y| wide[y * stride..y * stride + w as usize * 3].to_vec())
+        .collect();
+    let cfg = fixed(ChromaSubsampling::Quarter);
+    let want = one_shot(&cfg, &packed, w, h, 3, &Metadata::none());
+    let crop = |y: u32, n: u32| {
+        let start = y as usize * stride;
+        let end = start + (n as usize - 1) * stride + w as usize * 3;
+        PixelSlice::new(&wide[start..end], w, n, stride, desc(3)).unwrap()
+    };
+    let mut enc = cfg.clone().job().encoder().unwrap();
+    enc.begin(w, h, desc(3)).unwrap();
+    let mut got = Vec::new();
+    for y in (0..h).step_by(16) {
+        enc.push_rows(crop(y, 16)).unwrap();
+        let n = enc.pending_output().len();
+        got.extend_from_slice(enc.pending_output());
+        enc.consume_output(n);
+    }
+    got.extend_from_slice(enc.finish().unwrap().data());
+    assert_eq!(got, want, "streamed crop");
+    let whole = cfg.job().encoder().unwrap().encode(crop(0, h)).unwrap();
+    assert_eq!(whole.data(), &want[..], "one-shot crop");
+}

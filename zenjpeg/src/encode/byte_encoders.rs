@@ -278,7 +278,8 @@ impl BytesEncoder {
 
     /// Push rows with explicit stride.
     ///
-    /// - `data`: Raw pixel bytes
+    /// - `data`: Raw pixel bytes: `rows` rows `stride_bytes` apart, the last
+    ///   needing only `width * bytes_per_pixel` bytes
     /// - `rows`: Number of scanlines to push
     /// - `stride_bytes`: Bytes per row in buffer (>= width * bytes_per_pixel)
     /// - `stop`: Cancellation token (use `enough::Unstoppable` if not needed)
@@ -314,8 +315,12 @@ impl BytesEncoder {
             return Err(Error::too_many_rows(self.height, new_total));
         }
 
-        // Validate buffer size
-        let expected_size = rows * stride_bytes;
+        // Validate buffer size. The last row needs only its pixels, not a
+        // full stride: a strided view of a larger image (a crop) ends there.
+        let expected_size = match rows {
+            0 => 0,
+            n => (n - 1) * stride_bytes + min_stride,
+        };
         if data.len() < expected_size {
             return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }

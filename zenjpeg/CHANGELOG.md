@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `BytesEncoder::push` (and so the zencodec `push_rows`) required `rows x
+  stride` bytes and rejected a strided view whose last row holds only its
+  pixels, which is how a crop of a wider image ends; it now needs
+  `(rows - 1) x stride + width x bytes per pixel`. Found by the end-to-end
+  streaming bench feeding crops of a 4000x3000 photo
+  (`strided_crops_push_without_a_trailing_stride`).
 - `JpegEncoderConfig::with_progressive` and `from_preset` were overridden by
   the effort preset applied at encode time (effort 1, the default, always gave
   HybridProgressive): `with_progressive(false)` still wrote a progressive file
