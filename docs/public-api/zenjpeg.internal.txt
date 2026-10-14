@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)       297
 #   pub consts/statics                        320
 #   free functions                            373
-#   inherent methods                         1217
+#   inherent methods                         1220
 #   struct fields                             760
 #   enum variants                             506
 #   re-exports                                 18
@@ -22,7 +22,7 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           76
+#   (root)                           77
 #   alloc                             1
 #   color                           117
 #   container                        31
@@ -32,7 +32,7 @@
 #   encode                         1480
 #   encoder                         134
 #   entropy                         100
-#   foundation                      349
+#   foundation                      351
 #   heuristics                        3
 #   huffman                         306
 #   layout                            3
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3396 lines)
+## items (3399 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -415,6 +415,7 @@ pub fn alloc::vec::Vec<T>::from(foundation::instrumented_vec::InstrumentedVec<T>
 pub fn CmykHandling::assert_fields_are_eq(&self)
 pub fn JpegEncoderConfig::inner(&self) -> &encode::encoder_config::EncoderConfig
 pub fn JpegEncoderConfig::inner_mut(&mut self) -> &mut encode::encoder_config::EncoderConfig
+pub fn JpegEncoderConfig::with_huffman(self, impl core::convert::Into<encode::encoder_types::HuffmanStrategy>) -> Self
 pub fn JpegEncoderConfig::with_subsampling(self, encode::encoder_types::ChromaSubsampling) -> Self
 pub fn JpegEncoderConfig::ycbcr(f32, encode::encoder_types::ChromaSubsampling) -> Self
 pub fn color::cmyk_adobe_to_rgb(u8, u8, u8, u8) -> (u8, u8, u8) [also: color::ycbcr]
@@ -1486,9 +1487,11 @@ pub fn foundation::bitstream::BitReader<'a>::skip_bits_fast(&mut self, u8)
 pub fn foundation::bitstream::BitReaderState::clone(&self) -> foundation::bitstream::BitReaderState
 pub fn foundation::bitstream::BitWriter::as_bytes(&self) -> &[u8]
 pub fn foundation::bitstream::BitWriter::default() -> Self
+pub fn foundation::bitstream::BitWriter::discard_front(&mut self, usize)
 pub fn foundation::bitstream::BitWriter::flush(&mut self)
 pub fn foundation::bitstream::BitWriter::flush_complete_bytes_only(&mut self, &mut alloc::vec::Vec<u8>) -> encoder::Result<(u64, u8)>
 pub fn foundation::bitstream::BitWriter::flush_restart_marker(&mut self, u8) -> encoder::Result<()>
+pub fn foundation::bitstream::BitWriter::flush_whole_bytes(&mut self)
 pub fn foundation::bitstream::BitWriter::flush_without_eoi(&mut self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
 pub fn foundation::bitstream::BitWriter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::bitstream::BitWriter::into_bytes(self) -> alloc::vec::Vec<u8>

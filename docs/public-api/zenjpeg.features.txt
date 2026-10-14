@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)        82
 #   pub consts/statics                          4
 #   free functions                             34
-#   inherent methods                          137
+#   inherent methods                          138
 #   struct fields                             158
 #   enum variants                             146
 #   re-exports                                 25
@@ -22,7 +22,7 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           38
+#   (root)                           39
 #   container                       211
 #   decoder                           3
 #   encoder                          40
@@ -31,7 +31,7 @@
 #   recompress                      158
 #   ultrahdr                         73
 
-## items (591 lines)
+## items (592 lines)
 
 #[non_exhaustive] pub enum container::metadata::ItemKind<'a>
 pub container::metadata::ItemKind::Adobe(container::metadata::Adobe)
@@ -617,6 +617,7 @@ pub fn JpegEncoderConfig::inner(&self) -> &encoder::EncoderConfig
 pub fn JpegEncoderConfig::inner_mut(&mut self) -> &mut encoder::EncoderConfig
 pub fn JpegEncoderConfig::new() -> Self
 pub fn JpegEncoderConfig::with_calibrated_quality(self, f32) -> Self
+pub fn JpegEncoderConfig::with_huffman(self, impl core::convert::Into<encoder::HuffmanStrategy>) -> Self
 pub fn JpegEncoderConfig::with_progressive(self, bool) -> Self
 pub fn JpegEncoderConfig::with_sharp_yuv(self, bool) -> Self
 pub fn JpegEncoderConfig::with_subsampling(self, encoder::ChromaSubsampling) -> Self
