@@ -20,7 +20,7 @@ use crate::quant::dequantize_natural_i32_into;
 #[cfg(target_arch = "x86_64")]
 use archmage::arcane;
 
-use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
+use super::super::idct_int::{idct_int_dc_only, idct_int_dc_only_w16, idct_int_tiered};
 use super::super::upsample::upsample_h2v2_strip_ext;
 use super::super::{ChromaUpsampling, DecodeWarning, IdctMethod};
 use super::JpegParser;
@@ -499,7 +499,11 @@ pub(super) fn decode_mcu_row(
                         let dst_offset = dst_y * y_strip_width + dst_x;
                         if coeff_count <= 1 {
                             let dc = state.coeffs[0] as i32 * quant[0] as i32;
-                            idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
+                            if inputs.turbo_color && inputs.idct_v3.is_some() {
+                                idct_int_dc_only_w16(dc, &mut y_strip[dst_offset..], y_strip_width);
+                            } else {
+                                idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
+                            }
                         } else {
                             run_block_idct(
                                 inputs,
@@ -518,7 +522,11 @@ pub(super) fn decode_mcu_row(
                         let strip = if *comp_idx == 1 { &mut *cb } else { &mut *cr };
                         if coeff_count <= 1 {
                             let dc = state.coeffs[0] as i32 * quant[0] as i32;
-                            idct_int_dc_only(dc, &mut strip[dst_offset..], c_strip_width);
+                            if inputs.turbo_color && inputs.idct_v3.is_some() {
+                                idct_int_dc_only_w16(dc, &mut strip[dst_offset..], c_strip_width);
+                            } else {
+                                idct_int_dc_only(dc, &mut strip[dst_offset..], c_strip_width);
+                            }
                         } else {
                             run_block_idct(
                                 inputs,

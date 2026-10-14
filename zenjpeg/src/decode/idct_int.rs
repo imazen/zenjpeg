@@ -95,6 +95,25 @@ pub fn idct_int_dc_only(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
     }
 }
 
+/// DC-only fast path matching libjpeg-turbo's SIMD `jidctint` exactly,
+/// including its i16 wrap domain: `vpmullw` dequantization (`dc as i16`)
+/// and `vpsllw PASS1_BITS` both wrap to 16 bits. On corrupt bitstreams
+/// (e.g. DC-predictor runaway past |deq*4| > 32767) the i32 version
+/// saturates while the asm wraps — this keeps byte-parity with mozjpeg.
+/// Identical output to [`idct_int_dc_only`] for all in-domain inputs.
+#[inline]
+pub(crate) fn idct_int_dc_only_w16(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
+    let ws = (dc_coeff as i16).wrapping_shl(2) as i32;
+    let coeff = (((ws + 16) >> 5) + 128).clamp(0, 255) as i16;
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out = &mut out_vector[..min_len];
+    for i in 0..8 {
+        let off = i * stride;
+        out[off..off + 8].fill(coeff);
+    }
+}
+
 /// Check if all AC coefficients are zero (DC-only block).
 #[inline]
 pub fn is_dc_only_int(coeffs: &[i32; 64]) -> bool {

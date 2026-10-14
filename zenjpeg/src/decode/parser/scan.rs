@@ -960,7 +960,20 @@ impl<'a> JpegParser<'a> {
                     let dst_offset = mcu_x * 8;
                     if coeff_count <= 1 {
                         let dc = coeffs[0] as i32 * quant[0] as i32;
-                        idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+                        #[cfg(target_arch = "x86_64")]
+                        let is_turbo_v3 = self.idct_method == super::super::IdctMethod::Libjpeg
+                            && idct_v3.is_some();
+                        #[cfg(not(target_arch = "x86_64"))]
+                        let is_turbo_v3 = false;
+                        if is_turbo_v3 {
+                            super::super::idct_int::idct_int_dc_only_w16(
+                                dc,
+                                &mut strip[dst_offset..],
+                                strip_width,
+                            );
+                        } else {
+                            idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+                        }
                     } else {
                         let strip_out = &mut strip[dst_offset..];
                         let mut handled = false;
