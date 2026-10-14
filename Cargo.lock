@@ -2508,7 +2508,6 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=b1bfe29303a022298d66b4eba7f60214f6f16081#b1bfe29303a022298d66b4eba7f60214f6f16081"
 dependencies = [
  "almost-enough",
  "enough",
@@ -2520,7 +2519,6 @@ dependencies = [
 [[package]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=b1bfe29303a022298d66b4eba7f60214f6f16081#b1bfe29303a022298d66b4eba7f60214f6f16081"
 dependencies = [
  "enough",
  "how-far",
@@ -2896,3 +2894,7 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "zencodec-testkit"
+version = "0.2.0"

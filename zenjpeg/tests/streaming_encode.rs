@@ -342,3 +342,30 @@ fn testkit_streaming_output_honesty() {
     tk::check_streaming_output_honesty(fixed(ChromaSubsampling::None), D::new(), &img).unwrap();
     tk::check_streaming_output_honesty(E::new(), D::new(), &img).unwrap();
 }
+
+#[test]
+fn an_mpf_gain_map_reports_at_finish() {
+    // The MPF index records the primary image's length, which is known
+    // only at the end, so a fixed-table encode with a gain map cannot stream.
+    let (w, h) = (64u32, 48u32);
+    let px = pixels(w, h, 3);
+    let gain_map = one_shot(
+        &fixed(ChromaSubsampling::Quarter),
+        &pixels(16, 16, 1),
+        16,
+        16,
+        1,
+        &Metadata::none(),
+    );
+    let mut cfg = fixed(ChromaSubsampling::Quarter);
+    *cfg.inner_mut() = cfg.inner().clone().add_gainmap(gain_map.clone());
+    let m = Metadata::none();
+    let (timing, got, seen) = streamed(&cfg, &px, (w, h, 3), 16, &m);
+    assert_eq!(timing, OutputTiming::AT_FINISH);
+    assert!(seen.iter().all(|&(_, n)| n == 0), "nothing pending");
+    assert_eq!(got, one_shot(&cfg, &px, w, h, 3, &m));
+    assert!(
+        got.ends_with(&gain_map),
+        "the gain map follows the primary image"
+    );
+}
