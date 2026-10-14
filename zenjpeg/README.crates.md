@@ -3,8 +3,8 @@
 # zenjpeg
 
 zenjpeg is a pure-Rust JPEG encoder and decoder with perceptual optimization. It
-began as a port of Google's [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
-(from the JPEG XL project) and, after several rewrites, adds streaming single-pass
+began as a port of [jpegli](https://github.com/google/jpegli)
+(Bruse, Versari, Szabadka and Alakuijala) from the JPEG XL project and, after several rewrites, adds streaming single-pass
 encode and decode with bounded memory, parallel encode/decode, adaptive
 quantization, optional trellis quantization, an optional XYB perceptual color
 space, UltraHDR gain maps, lossless DCT-domain transforms, and JPEG→JPEG
@@ -107,7 +107,7 @@ set all limits in one value (and reuse them via the request builder), use
 
 ## Heritage
 
-Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli) from Google's JPEG XL project. After six rewrites it shares ideas but little code with the original.
+Started as a port of [jpegli](https://github.com/google/jpegli) (Bruse, Versari, Szabadka and Alakuijala) from the JPEG XL project. After six rewrites it shares ideas but little code with the original.
 
 **From jpegli:** adaptive quantization, XYB color space, perceptual quant tables, zero-bias coefficient rounding.
 
@@ -633,9 +633,10 @@ cargo test --release -- --ignored       # Full suite (needs C++ build + corpus)
 
 ## Acknowledgments
 
-Built on ideas from [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
-(Google, BSD-3-Clause) and [mozjpeg](https://github.com/mozilla/mozjpeg)
-(Mozilla). After six rewrites from the initial jpegli port, zenjpeg is an
+Built on ideas from [jpegli](https://github.com/google/jpegli)
+(Bruse, Versari, Szabadka and Alakuijala — see their [Jpegli paper](https://arxiv.org/abs/2403.18589))
+and [mozjpeg](https://github.com/mozilla/mozjpeg)
+(the mozilla/mozjpeg project). After six rewrites from the initial jpegli port, zenjpeg is an
 independent project with its own architecture, streaming pipeline, and quality
 optimizations.
 
