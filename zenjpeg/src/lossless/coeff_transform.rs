@@ -174,10 +174,13 @@ impl LosslessTransform {
 /// How to handle images with non-MCU-aligned dimensions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EdgeHandling {
-    /// Trim partial MCU blocks (output may be slightly smaller).
-    #[default]
+    /// Explicitly allow trimming partial MCU blocks (output may be smaller).
+    /// MPF transforms require every image to retain the same proportional region.
     TrimPartialBlocks,
-    /// Error if dimensions aren't MCU-aligned.
+    /// Error if this transform would remove pixels. This is the default.
+    /// Partial edges are allowed when the transform leaves them trailing;
+    /// identity and transpose therefore never require MCU alignment.
+    #[default]
     RejectPartialBlocks,
 }
 
@@ -287,12 +290,16 @@ impl BlockTransform {
     ///
     /// `src` contains 64 i16 coefficients in zigzag order.
     /// Returns the transformed block.
+    ///
+    /// -32768 has no negation in `i16`; a negated -32768 stays -32768, and
+    /// the lossless re-encoders refuse an AC coefficient of -32768, so a flip
+    /// of one fails instead of changing its sign.
     #[must_use]
     pub fn apply(&self, src: &[i16; 64]) -> [i16; 64] {
         let mut dst = [0i16; 64];
         for (src_z, &(dst_z, negate)) in self.entries.iter().enumerate() {
             let val = src[src_z];
-            dst[dst_z as usize] = if negate { -val } else { val };
+            dst[dst_z as usize] = if negate { val.wrapping_neg() } else { val };
         }
         dst
     }

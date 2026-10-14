@@ -17,7 +17,6 @@ pub(crate) mod output_helpers;
 mod progressive;
 mod scan;
 
-#[cfg(feature = "ultrahdr")]
 use super::extras::MpfImageTypeExt;
 use super::extras::{
     AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image,
@@ -514,20 +513,11 @@ impl<'a> JpegParser<'a> {
     ///
     /// Returns byte range `(start, end)` into `full_data` instead of copying,
     /// enabling zero-copy access to the gain map JPEG.
-    #[cfg(feature = "ultrahdr")]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
-    ) -> Result<(
-        Option<(usize, usize)>,
-        Option<ultrahdr_core::GainMapMetadata>,
-    )> {
+    ) -> Result<(Option<(usize, usize)>, Option<zencodec::GainMapParams>)> {
         use super::extras::{MpfDirectory, SegmentType, detect_segment_type, parse_mpf_directory};
-        // Kept on ultrahdr_core::metadata::xmp::parse_xmp because this returns
-        // the old `GainMapMetadata` struct shape that the containing function
-        // still expects. Migrate to `crate::container::xmp::parse_xmp` (which
-        // returns `zencodec::GainMapParams`) once ultrahdr-core 0.5 lands with
-        // the GainMapMetadata-as-alias refactor from ultrahdr#6.
         use crate::container::xmp::parse_xmp;
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -535,6 +525,8 @@ impl<'a> JpegParser<'a> {
 
         let mut xmp_data: Option<String> = None;
         let mut mpf_directory: Option<MpfDirectory> = None;
+        // The primary image's ISO 21496-1 APP2 (version) record.
+        let mut primary_iso = false;
         let mut mpf_header_pos: usize = 0; // Position of MP header (after "MPF\0")
 
         // Scan through the entire JPEG for XMP and MPF markers
@@ -565,8 +557,8 @@ impl<'a> JpegParser<'a> {
             }
 
             // Markers without length
-            if (0xD0..=0xD7).contains(&marker) {
-                // RST markers
+            if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+                // Standalone TEM and RST markers
                 continue;
             }
 
@@ -609,6 +601,9 @@ impl<'a> JpegParser<'a> {
                         mpf_header_pos = pos + MPF_SIG.len();
                     }
                 }
+                0xE2 if seg_data.starts_with(zencodec::ISO_21496_1_URN) => {
+                    primary_iso = true;
+                }
                 _ => {}
             }
 
@@ -616,15 +611,12 @@ impl<'a> JpegParser<'a> {
         }
 
         // Parse metadata from XMP
-        let metadata = xmp_data.as_ref().and_then(|xmp| {
-            if !xmp.contains("hdrgm:Version") && !xmp.contains("hdrgm:GainMapMax") {
-                return None;
-            }
-            parse_xmp(xmp).ok().map(|(m, _)| m)
-        });
+        let metadata = xmp_data
+            .as_ref()
+            .and_then(|xmp| parse_xmp(xmp).ok().map(|(m, _)| m));
 
-        // If no metadata, not an UltraHDR image
-        if metadata.is_none() {
+        // Neither hdrgm XMP nor an ISO 21496-1 record: not an UltraHDR image.
+        if metadata.is_none() && !primary_iso {
             return Ok((None, None));
         }
 
@@ -637,7 +629,10 @@ impl<'a> JpegParser<'a> {
                 }
                 if entry.image_type.is_gainmap() && entry.offset > 0 {
                     // Calculate absolute offset: MPF header position + relative offset
-                    let absolute_offset = mpf_header_pos + entry.offset as usize;
+                    let Some(absolute_offset) = mpf_header_pos.checked_add(entry.offset as usize)
+                    else {
+                        continue;
+                    };
                     let end = absolute_offset.saturating_add(entry.size as usize);
                     if end <= full_data.len() {
                         let data = &full_data[absolute_offset..end];
@@ -650,12 +645,31 @@ impl<'a> JpegParser<'a> {
             None
         });
 
-        // Fallback: if MPF parsing failed but XMP metadata indicates UltraHDR,
+        // Fallback: if MPF parsing failed but the metadata indicates UltraHDR,
         // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
         // This handles non-standard MPF structures from some Android camera apps.
-        #[cfg(feature = "ultrahdr")]
-        if gainmap_range.is_none() && metadata.is_some() {
+        if gainmap_range.is_none() {
             gainmap_range = find_secondary_jpeg_range(full_data);
+        }
+
+        if self.strictness.is_strict()
+            && let Some((start, _)) = gainmap_range
+            && crate::container::marker::primary_bounds(full_data)
+                .is_some_and(|primary| start < primary.end)
+        {
+            return Err(Error::invalid_jpeg_data(
+                "MPF secondary image overlaps the primary JPEG in strict mode",
+            ));
+        }
+
+        // The gain-map image's ISO 21496-1 record wins over XMP (Ultra HDR
+        // v1.1, "ISO 21496-1 Compatibility"; see `UltraHdrExtras`). One that
+        // does not parse falls back to the XMP.
+        if let Some((gm_start, gm_end)) = gainmap_range
+            && let Some(Ok(iso)) =
+                crate::container::iso21496_from_gainmap_jpeg(&full_data[gm_start..gm_end])
+        {
+            return Ok((gainmap_range, Some(iso)));
         }
 
         // If primary XMP had only hdrgm:Version but no numeric metadata,
@@ -685,7 +699,6 @@ impl<'a> JpegParser<'a> {
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
-#[cfg(feature = "ultrahdr")]
 fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
     let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
     let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
@@ -915,7 +928,7 @@ impl<'a> JpegParser<'a> {
                         // write a trailing RST after the final MCU interval.
                         // These are standalone 2-byte markers with no length
                         // field, so just skip them.
-                        0xD0..=0xD7 => Ok(()),
+                        0xD0..=0xD7 | 0x01 => Ok(()),
                         MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker),
                         _ => self.skip_segment(),
                     };
@@ -1054,7 +1067,10 @@ impl<'a> JpegParser<'a> {
         // (after "MPF\0" signature). We need to add the base position to get absolute offsets.
         let mpf_base = self.mpf_header_pos;
 
-        // Extract secondary images based on MPF entries
+        // Default decoding retains readable embedded JPEGs. Strict mode rejects
+        // entries inside the primary; lossless rewriting checks relocation
+        // separately. Disjoint ranges prevent repeated-copy amplification.
+        let mut taken = Vec::new();
         for (idx, entry) in mpf_dir.images.iter().enumerate() {
             // Skip primary image (index 0 or BaselinePrimary type)
             if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
@@ -1073,21 +1089,32 @@ impl<'a> JpegParser<'a> {
                 primary_eoi_pos
             } else if mpf_base > 0 {
                 // Add base position to get absolute file offset
-                mpf_base + entry.offset as usize
+                mpf_base
+                    .checked_add(entry.offset as usize)
+                    .ok_or_else(|| Error::invalid_jpeg_data("MPF secondary offset overflow"))?
             } else {
                 // Fallback: treat as absolute offset (shouldn't happen if MPF was properly parsed)
                 entry.offset as usize
             };
 
-            let end = offset.saturating_add(entry.size as usize);
-            if end <= self.data.len() {
-                let image_data = self.data[offset..end].to_vec();
-
-                // Verify it looks like a JPEG (starts with SOI)
-                if image_data.len() >= 2 && image_data[0] == 0xFF && image_data[1] == 0xD8 {
-                    extras.add_secondary_image(idx, entry.image_type, image_data);
-                }
+            if self.strictness.is_strict() && offset < primary_eoi_pos {
+                return Err(Error::invalid_jpeg_data(
+                    "MPF secondary image overlaps the primary JPEG in strict mode",
+                ));
             }
+            let end = offset.saturating_add(entry.size as usize);
+            let range = offset..end;
+            if !crate::container::mpf::secondary_range_readable(self.data, &range, &taken) {
+                continue;
+            }
+            let bytes = &self.data[range.clone()];
+            let mut image_data = Vec::new();
+            image_data
+                .try_reserve_exact(bytes.len())
+                .map_err(|_| Error::allocation_failed(bytes.len(), "MPF secondary image"))?;
+            image_data.extend_from_slice(bytes);
+            taken.push(range);
+            extras.add_secondary_image(idx, entry.image_type, image_data);
         }
 
         Ok(())
@@ -1354,7 +1381,6 @@ impl<'a> JpegParser<'a> {
 /// but we can still find the gain map JPEG by looking for JPEG boundaries.
 ///
 /// Returns the second JPEG's byte range `(start, end)` if found, or None if not found.
-#[cfg(feature = "ultrahdr")]
 fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
     const SOI: [u8; 2] = [0xFF, 0xD8]; // Start of Image
 

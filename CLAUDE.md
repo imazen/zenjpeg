@@ -702,6 +702,55 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Resolved 2026-10-13: sharing strict ICC chunk validation dropped a complete real-world single profile numbered 0 of 1. Native decoding accepts only the complete-header/matching-size/single-chunk case; strict parsing and rewriting reject it. Original malformed-chunk assertions remain. `just metadata-legacy-icc-check` covers corpus pixels, profile bytes, inventory agreement, duplicate chunks and size caps.
+
+- Resolved 2026-10-13: zencodec HDR dispatch tested a literal `hdrgm:` prefix and silently returned SDR for ISO-only/aliased XMP files; reconstruction also mislabeled wide-gamut bases as sRGB. Native metadata resolution and base-color handling now drive the adapter. The corpus Display P3 profile needed a shared zenpixels identification entry (`8f7ee871`). `just metadata-hdr-dispatch-check` covers native pixel parity and the existing corpus inventory/orientation regressions.
+
+- Resolved 2026-10-12: zencodec metadata denial was overwritten by preserve-all and bypassed by header probing. Adapter policy now reaches probe, decode, streaming info, native extras and inventory; XMP gain-map fallback follows it too. `just metadata-extraction-policy-check` covers all eight flag combinations.
+
+- Resolved 2026-10-12: orientation selected a different EXIF packet from metadata and could enter comment payloads after fill bytes. Native orientation and inventory now share selection; post-scan packets and streaming metadata agree. `just metadata-orientation-check` covers pixel and metadata parity.
+
+- Resolved 2026-10-12: Dynamic Depth ignored primary padding and returned shifted bytes; native MPF parsing retained unchecked 32-bit offsets despite the extended inspector's checked arithmetic. `just metadata-depth-bounds-check` covers exact depth/confidence bytes, oversized padding and i686 IFD/fallback offsets.
+
+- Resolved in metadata review (2026-10-12): blanket MPF bounds checks skipped an embedded gain map and promoted an unrelated trailing image. Default decoding again accepts the embedded image; strict mode rejects its placement. Inventory shares the extraction admission predicate, and lossless rewriting separately refuses relocation it cannot preserve. The synthetic fixture's original default assertions remain; `just metadata-mpf-compat-check` checks the separation.
+
+
+- i686 CI could not fetch the progressive image-rs JPEG corpus inside cross. The prefetch example now requests the exact nested key in addition to its parent; codec-corpus 1.1.0 stores those independently.
+
+- Recompression single-image strategies dropped MPF secondaries while retaining
+  XMP pointers. `recompress/metadata.rs` now refuses this unsupported input
+  before lossy work, including expert strategy/emit entry points; the recovered
+  lossless path preserves the images. Gate: `just metadata-recompress-admission-check`.
+
+- Metadata integration recovered MPF/lossless defects: stale secondary offsets,
+  dropped or mismatched secondary transforms, repeated/overlapping extraction,
+  and hand-parsed GContainer field spans. The recovered tests pass with shared
+  namespace validation and MPF reconstruction; the owner approved the edge
+  default and proportional-fixture corrections. `just metadata-lossless-check metadata-lossless-oracle`
+  exercises both our reader and independent tools.
+
+
+- Fixed metadata integration regression: Ultra HDR convenience decode and streaming reconstruction labeled Display P3 base pixels BT.709. Shared ICC resolution now supplies the color descriptor/gamut; the bundled P3 regression reproduces the old behavior and passes after the fix.
+
+- Metadata carrier boundary regression (2026-10-12): encoding an oversized prepared comment panics; request-level prepared EXIF is omitted. Reproduced by `tests/metadata_limits.rs` before the validation/forwarding fix. The same fix rejects oversized raw EXIF instead of truncating it.
+
+- Metadata CI run `38253462548`: Windows ARM and i686 failed on unavailable
+  datasets. Serial host prefetch and an explicit cross cache mount are added;
+  local metadata tests pass, remote verification is pending.
+
+- Fixed during metadata integration: the Ultra HDR inventory scratch walk omitted
+  cancellation state and reduced traversal failures to a decode boolean. It now
+  propagates the original typed failure; `gain_map_preflight_preserves_each_cancellation_reason`
+  exercises every observed poll. The combined inventory/ultrahdr feature build
+  must stay in CI.
+
+### Fixed in metadata integration: inventory did not poll cancellation
+
+The proposed PR 221 inventory path did not read the decode job's stop token.
+The shared-contract integration polls it while walking markers and counting
+entropy MCUs, preserving the first reported stop reason in a typed error.
+`cancellation_during_the_walk_preserves_the_first_reason` pins that behavior.
+
 Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
 with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
 entries accumulate here.
@@ -1539,3 +1588,26 @@ One training-family screen proves exact map/byte/pixel repeat and engagement;
 69 bytes saved accompanies lower quality under D/SSIMULACRA2/Butteraugli. This
 is not an RD win, calibrated targeting or replacement-model qualification.
 Use the shared zensim native targeting owner for the next full experiment.
+
+- Metadata integration found that converting an input limit through the native JPEG error
+  retained its category but lost the shared `LimitExceeded` cause. Inventory now keeps
+  that cause in its codec envelope; generic and dynamic dispatch assert actual/max.
+
+### ICC chunk parity (2026-10-12)
+
+Native `DecodedExtras::icc_profile` previously concatenated malformed ICC chunks
+that extended inspection rejected. Both now use `container/chunks.rs`; framing
+stays codec-owned and no inventory feature is required. `just metadata-icc-parity-check`
+checks native/inspection agreement and replays the existing ICC conformance cases.
+The native accessor retains its published Option signature and reports invalid
+chunk sets as None. Extended XMP's legacy concatenation remains separate and
+must not be silently replaced by a differently shaped logical packet.
+
+## Known Bugs — shared contract migration validation
+
+Resolved during the shared-contract migration: native `encode::ExifFields` and
+shared `zencodec::Exif` both have `to_bytes` methods but different contracts.
+Only the shared writer delegates to zenmeta; keep native helper tests on their
+native API. `just shared-contract-ci-check` also compiles the independent fuzz
+workspace, whose zencodec pin must match the main workspace to avoid duplicate
+trait identities.

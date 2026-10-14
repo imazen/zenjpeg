@@ -5,15 +5,17 @@
 
 use alloc::vec::Vec;
 
-use crate::decode::{DecodeConfig, PreserveConfig};
+use crate::decode::{DecodeConfig, DecodedExtras, PreserveConfig, PreservedSegment, SegmentType};
+use crate::encode::extras::{MpfImage, XMP_NAMESPACE, generate_mpf_directory};
 use crate::entropy::encoder::EntropyEncoder;
 use crate::error::{Error, Result};
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI,
-    MARKER_SOF0, MARKER_SOI, MARKER_SOS,
+    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP2, MARKER_DHT, MARKER_DQT, MARKER_DRI,
+    MARKER_EOI, MARKER_SOF0, MARKER_SOI, MARKER_SOS,
 };
 use crate::huffman::encode::{HuffmanEncodeTable, build_code_lengths, lengths_to_bits_values};
 use enough::Stop;
+use zenmeta::xmp::container::{Directory, ItemSemantic};
 
 /// Build a [`HuffmanEncodeTable`] from a 256-entry frequency array.
 ///
@@ -32,7 +34,8 @@ fn build_huffman_table(freq: &[u64; 256]) -> Result<HuffmanEncodeTable> {
 }
 
 use super::coeff_transform::{
-    LosslessTransform, TransformConfig, TransformedCoefficients, transform_coefficients,
+    EdgeHandling, LosslessTransform, TransformConfig, TransformedCoefficients,
+    transform_coefficients,
 };
 use super::exif::{parse_exif_orientation, set_exif_orientation};
 use super::geometry::{McuGeom, ScanEvent, for_each_interleaved_event};
@@ -59,41 +62,489 @@ use super::geometry::{McuGeom, ScanEvent, for_each_interleaved_event};
 ///
 /// let rotated = transform(&jpeg_data, &TransformConfig {
 ///     transform: LosslessTransform::Rotate90,
-///     edge_handling: EdgeHandling::TrimPartialBlocks,
+///     edge_handling: EdgeHandling::RejectPartialBlocks,
 /// }, enough::Unstoppable)?;
 /// ```
 pub fn transform(jpeg_data: &[u8], config: &TransformConfig, stop: impl Stop) -> Result<Vec<u8>> {
+    transform_with(jpeg_data, config, false, Level::Primary, &stop)
+}
+
+/// Where an image sits in its file: the primary, or a secondary of it.
+/// Secondaries are carried one level deep: a secondary's own MPF images are
+/// never extracted, and a secondary that has secondaries of its own is
+/// refused ([`refuse_nested`]), so a crafted file cannot multiply the work
+/// by nesting containers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Level {
+    Primary,
+    Secondary,
+}
+
+/// Shared body of [`transform`] and the path for MPF secondary images. With
+/// `reset_exif_orientation`, any EXIF orientation tag in the output is set to
+/// 1 (Normal) — the [`apply_exif_orientation`] contract, applied to
+/// secondaries that carry their own tag.
+fn transform_with(
+    jpeg_data: &[u8],
+    config: &TransformConfig,
+    reset_exif_orientation: bool,
+    level: Level,
+    stop: &impl Stop,
+) -> Result<Vec<u8>> {
     stop.check()?;
 
     // Step 1: Decode to coefficients + extract metadata in a single pass
-    let decoder = DecodeConfig::new().preserve(PreserveConfig::all());
-    let (decoded_coeffs, extras) = decoder.decode_coefficients_with_extras(jpeg_data, &stop)?;
+    let preserve = match level {
+        Level::Primary => PreserveConfig::all(),
+        Level::Secondary => PreserveConfig::all()
+            .mpf_gainmaps(false)
+            .mpf_thumbnails(false)
+            .mpf_multiframe(false)
+            .mpf_depth(false),
+    };
+    let decoder = DecodeConfig::new().preserve(preserve);
+    let (decoded_coeffs, extras) = decoder.decode_coefficients_with_extras(jpeg_data, stop)?;
 
     stop.check()?;
 
     // Step 2: Transform coefficients
     let transformed = transform_coefficients(&decoded_coeffs, config)
-        .map_err(|e| Error::io_error(alloc::format!("{e}")))?;
+        .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?;
 
     stop.check()?;
 
-    // Step 3: Re-encode as JPEG
-    let preserved = extras.as_ref().map(|e| e.segments());
-    let output = encode_from_coefficients(&transformed, preserved, 0, &stop)?;
+    // Step 3: The secondary images get the same transform.
+    let secondaries = match level {
+        Level::Primary => transform_secondary_images(
+            jpeg_data,
+            extras.as_ref(),
+            config,
+            reset_exif_orientation,
+            (decoded_coeffs.width, decoded_coeffs.height),
+            (transformed.width, transformed.height),
+            stop,
+        )?,
+        Level::Secondary => {
+            refuse_nested(jpeg_data, extras.as_ref())?;
+            Vec::new()
+        }
+    };
 
-    Ok(output)
+    // Step 4: Re-encode as JPEG
+    let mut segments: Vec<PreservedSegment> =
+        extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    if reset_exif_orientation {
+        for seg in &mut segments {
+            if seg.segment_type == SegmentType::Exif {
+                set_exif_orientation(&mut seg.data, 1);
+            }
+        }
+    }
+    encode_from_coefficients(&transformed, Some(&segments), &secondaries, 0, stop)
+}
+
+/// Carry the secondary images (Ultra HDR gain maps, depth maps, MPF
+/// thumbnails and frames) through a transform. Each secondary is
+/// geometrically bound to the primary, so it receives the **same** transform
+/// through the same pipeline, one level deep. Explicit trimming is accepted
+/// only when every image retains the same proportional source rectangle.
+/// With [`LosslessTransform::None`] and no EXIF fix-up the bytes pass through
+/// verbatim.
+///
+/// A secondary that cannot be carried or transformed is an error, never
+/// silently dropped or carried untransformed: either would leave the file
+/// describing a gain map (or thumbnail) that no longer matches the primary
+/// ([`secondary_sources`] lists what must be carried).
+pub(super) fn transform_secondary_images(
+    jpeg_data: &[u8],
+    extras: Option<&DecodedExtras>,
+    config: &TransformConfig,
+    reset_exif_orientation: bool,
+    primary_source: (u32, u32),
+    primary_output: (u32, u32),
+    stop: &impl Stop,
+) -> Result<Vec<MpfImage>> {
+    let sources = secondary_sources(jpeg_data, extras)?;
+    let verbatim = config.transform == LosslessTransform::None && !reset_exif_orientation;
+    let mut out = Vec::new();
+    out.try_reserve_exact(sources.len())
+        .map_err(|_| Error::allocation_failed(sources.len(), "secondary image list"))?;
+    for img in &sources {
+        stop.check()?;
+        let data = if verbatim {
+            let mut copy = Vec::new();
+            copy.try_reserve_exact(img.data.len())
+                .map_err(|_| Error::allocation_failed(img.data.len(), "secondary image"))?;
+            copy.extend_from_slice(img.data);
+            copy
+        } else {
+            transform_with(
+                img.data,
+                config,
+                reset_exif_orientation,
+                Level::Secondary,
+                stop,
+            )
+            .map_err(|e| in_secondary(e, img))?
+        };
+        if !verbatim && config.edge_handling == EdgeHandling::TrimPartialBlocks {
+            // Trimming removes right/bottom source edges before the same D4
+            // transform. Equal retained fractions on both axes therefore mean
+            // equal normalized crop rectangles. Compare integer products to
+            // avoid rounding away a primary/gain-map registration mismatch.
+            let decoder = DecodeConfig::new();
+            let source = decoder
+                .read_info(img.data)
+                .map_err(|e| in_secondary(e, img))?
+                .dimensions;
+            let output = decoder
+                .read_info(&data)
+                .map_err(|e| in_secondary(e, img))?
+                .dimensions;
+            let (pw, ph, sw, sh) = if config.transform.swaps_dimensions() {
+                (
+                    primary_source.1,
+                    primary_source.0,
+                    source.height,
+                    source.width,
+                )
+            } else {
+                (
+                    primary_source.0,
+                    primary_source.1,
+                    source.width,
+                    source.height,
+                )
+            };
+            if u64::from(primary_output.0) * u64::from(sw)
+                != u64::from(output.width) * u64::from(pw)
+                || u64::from(primary_output.1) * u64::from(sh)
+                    != u64::from(output.height) * u64::from(ph)
+            {
+                return Err(Error::invalid_config(alloc::format!(
+                    "MPF secondary image #{} would retain a different region than the primary after trimming; use a coordinated crop or RejectPartialBlocks",
+                    img.index,
+                )));
+            }
+        }
+        out.push(MpfImage {
+            image_type: img.image_type,
+            data,
+        });
+    }
+    Ok(out)
+}
+
+/// One secondary image to carry: its MPF index (1 for a gain map found
+/// without an MPF index), its MPF type, and its bytes in the source.
+pub(super) struct SourceSecondary<'a> {
+    index: usize,
+    image_type: crate::encode::extras::MpfImageType,
+    data: &'a [u8],
+}
+
+/// The secondary images of a file that the lossless pipeline must carry, or
+/// an error when the file describes one it cannot carry. Nothing is dropped
+/// silently:
+/// - Every MPF entry after the primary must have been extracted. The decoder
+///   takes readable, disjoint ranges inside the input, including embedded
+///   JPEGs. This writer additionally requires placement after the primary EOI;
+///   an index naming anything
+///   else (a repeated or overlapping entry, a second primary, bytes that are
+///   not a JPEG) is refused here instead of being dropped.
+/// - A gain map signalled only by XMP (`hdrgm` properties or a GContainer
+///   `GainMap` item, no MPF index, as some Android files are written) is the
+///   JPEG that follows the primary; it is carried, and the output gains an
+///   MPF index for it.
+/// - The XMP GContainer directory may not list more secondary items than are
+///   carried: an item that is not a carried JPEG (e.g. a Motion Photo video)
+///   would be dropped while the directory still described it.
+///
+/// The carried ranges are disjoint parts of the input, so their total never
+/// exceeds its length (checked again here).
+fn secondary_sources<'a>(
+    jpeg_data: &'a [u8],
+    extras: Option<&'a DecodedExtras>,
+) -> Result<Vec<SourceSecondary<'a>>> {
+    let Some(extras) = extras else {
+        return Ok(Vec::new());
+    };
+    let mut out: Vec<SourceSecondary<'a>> = extras
+        .secondary_images()
+        .iter()
+        .map(|s| SourceSecondary {
+            index: s.mpf_index,
+            image_type: s.image_type,
+            data: &s.data,
+        })
+        .collect();
+    let xmp = extras.xmp();
+    let directory = xmp.map(Directory::parse).transpose().map_err(|e| {
+        Error(
+            Error::invalid_jpeg_data("invalid XMP directory")
+                .0
+                .at_string(|| alloc::format!("{e}")),
+        )
+    })?;
+    match extras.mpf() {
+        Some(dir) => {
+            // Decoding permits JPEGs embedded in APP payloads. This writer
+            // emits independent trailing images and cannot relocate those
+            // references without also rewriting the containing payload.
+            let primary = crate::container::marker::primary_bounds(jpeg_data)
+                .ok_or_else(|| Error::invalid_jpeg_data("missing primary JPEG bounds"))?;
+            let mpf = crate::container::marker::iter(&jpeg_data[..primary.end])
+                .find(|s| {
+                    s.kind == crate::container::MarkerKind::App(2)
+                        && s.payload.starts_with(b"MPF\0")
+                })
+                .ok_or_else(|| Error::invalid_jpeg_data("missing MPF segment"))?;
+            let base = mpf.offset + 8;
+            if dir.images.iter().skip(1).any(|entry| {
+                entry.offset != 0 && base.saturating_add(entry.offset as usize) < primary.end
+            }) {
+                return Err(Error::invalid_jpeg_data(
+                    "lossless rewriting cannot relocate an MPF image embedded in the primary JPEG",
+                ));
+            }
+
+            if (1..dir.images.len()).any(|i| !out.iter().any(|s| s.index == i)) {
+                return Err(Error::invalid_jpeg_data(
+                    "the MPF index names an image that is not a separate JPEG after the primary \
+                     (a repeated or overlapping entry, a second primary, or bytes outside the \
+                     file); lossless transforms do not drop secondary images",
+                ));
+            }
+        }
+        None => {
+            let signals_gain_map = xmp.is_some_and(|x| {
+                crate::container::xmp::parse_xmp(x).is_ok()
+                    || directory
+                        .as_ref()
+                        .is_some_and(|d| d.items().any(|i| i.semantic == ItemSemantic::GainMap))
+            });
+            if signals_gain_map {
+                let ranges = crate::container::marker::find_jpeg_boundaries(jpeg_data);
+                if let [primary, gain_map, ..] = ranges.as_slice()
+                    && primary.start == 0
+                    && gain_map.start >= primary.end
+                {
+                    out.push(SourceSecondary {
+                        index: 1,
+                        image_type: crate::encode::extras::MpfImageType::Undefined,
+                        data: &jpeg_data[gain_map.clone()],
+                    });
+                }
+            }
+        }
+    }
+    let listed = directory.as_ref().map_or(0, |d| {
+        d.items()
+            .filter(|i| i.semantic != ItemSemantic::Primary)
+            .count()
+    });
+    if listed > out.len() {
+        return Err(Error::unsupported_feature(
+            "the XMP GContainer directory lists items that are not secondary JPEGs of this \
+             file (e.g. a Motion Photo video); lossless transforms do not drop them",
+        ));
+    }
+    let total = out
+        .iter()
+        .map(|s| s.data.len())
+        .fold(0usize, usize::saturating_add);
+    if total > jpeg_data.len() {
+        return Err(Error::invalid_jpeg_data(
+            "secondary images larger than the file that holds them",
+        ));
+    }
+    Ok(out)
+}
+
+/// `e`, raised while carrying `img`, with the secondary named. The kind is
+/// kept, so a cancellation stays `Cancelled` and an edge rejection stays
+/// `InvalidConfig`; kinds that carry a message get the secondary's index and
+/// type in front of it, the others get it as trace context.
+fn in_secondary(e: Error, img: &SourceSecondary<'_>) -> Error {
+    let label = || alloc::format!("MPF secondary image #{} ({:?})", img.index, img.image_type);
+    match e.kind() {
+        crate::error::ErrorKind::InvalidConfig(m) => {
+            Error::invalid_config(alloc::format!("{}: {m}", label()))
+        }
+        crate::error::ErrorKind::DecodeError(m) => {
+            Error::decode_error(alloc::format!("{}: {m}", label()))
+        }
+        _ => Error(e.0.at_string(label)),
+    }
+}
+
+/// A secondary image is carried as one image: it may not hold secondaries of
+/// its own (an MPF index naming further images, a GContainer directory with
+/// secondary items, or a second JPEG in its bytes). Those would be dropped,
+/// and following them would let nesting multiply the work.
+fn refuse_nested(jpeg_data: &[u8], extras: Option<&DecodedExtras>) -> Result<()> {
+    let mpf = extras
+        .and_then(|e| e.mpf())
+        .is_some_and(|d| d.images.len() > 1);
+    let directory = extras
+        .and_then(|e| e.xmp())
+        .map(Directory::parse)
+        .transpose()
+        .map_err(|e| {
+            Error(
+                Error::invalid_jpeg_data("invalid XMP directory")
+                    .0
+                    .at_string(|| alloc::format!("{e}")),
+            )
+        })?
+        .is_some_and(|d| d.items().any(|i| i.semantic != ItemSemantic::Primary));
+    let trailing = crate::container::marker::find_jpeg_boundaries(jpeg_data).len() > 1;
+    if mpf || directory || trailing {
+        return Err(Error::unsupported_feature(
+            "an MPF secondary image holds secondary images of its own; lossless transforms \
+             carry secondaries one level deep",
+        ));
+    }
+    Ok(())
+}
+
+/// Write the preserved APPn/COM segments right after SOI.
+///
+/// The source's MPF index (APP2 `MPF\0`) is never copied: its offsets and
+/// sizes describe the source layout. When `secondaries` will follow the
+/// primary, a placeholder index of the final size is written in its place
+/// (or after the other segments if the source had none) and the GContainer
+/// XMP `Item:Length` values are rewritten to the new secondary lengths.
+/// Returns the placeholder's offset for [`finish_container`], which patches
+/// in the primary length once it is known.
+pub(super) fn write_preserved_segments(
+    output: &mut Vec<u8>,
+    preserved: Option<&[PreservedSegment]>,
+    secondaries: &[MpfImage],
+) -> Result<Option<usize>> {
+    let mut mpf_at = None;
+    let mut place_mpf = |output: &mut Vec<u8>| {
+        if !secondaries.is_empty() && mpf_at.is_none() {
+            let off = output.len();
+            let data = generate_mpf_directory(secondaries.len(), 0, &mpf_sizes(secondaries), off);
+            write_marker_segment(output, MARKER_APP2, &data);
+            mpf_at = Some(off);
+        }
+    };
+    if let Some(segments) = preserved {
+        for seg in segments {
+            match seg.segment_type {
+                SegmentType::Mpf => place_mpf(output),
+                SegmentType::Xmp if !secondaries.is_empty() => {
+                    let carried: Vec<(&str, usize)> = secondaries
+                        .iter()
+                        .map(|s| (item_semantic(s.image_type), s.data.len()))
+                        .collect();
+                    let rewritten = seg
+                        .data
+                        .strip_prefix(XMP_NAMESPACE)
+                        .and_then(|x| core::str::from_utf8(x).ok())
+                        .and_then(|x| {
+                            Directory::parse(x)
+                                .and_then(|d| d.rewrite_item_lengths(&carried))
+                                .ok()
+                        })
+                        // Must still fit one APP1 segment (the digits may grow).
+                        .filter(|x| XMP_NAMESPACE.len() + x.len() + 2 <= usize::from(u16::MAX));
+                    match rewritten {
+                        Some(x) => {
+                            let mut data = Vec::with_capacity(XMP_NAMESPACE.len() + x.len());
+                            data.extend_from_slice(XMP_NAMESPACE);
+                            data.extend_from_slice(x.as_bytes());
+                            write_marker_segment(output, seg.marker, &data);
+                        }
+                        None => {
+                            return Err(Error::unsupported_feature(
+                                "the XMP GContainer directory describes items the carried \
+                                 secondary images do not match, or the rewritten packet no \
+                                 longer fits one APP1 segment",
+                            ));
+                        }
+                    }
+                }
+                _ => write_marker_segment(output, seg.marker, &seg.data),
+            }
+        }
+    }
+    place_mpf(output);
+    Ok(mpf_at)
+}
+
+/// Complete a container assembled with [`write_preserved_segments`]: after the
+/// primary's EOI, patch the MPF index with the primary's byte length and
+/// append the secondary images.
+pub(super) fn finish_container(
+    output: &mut Vec<u8>,
+    secondaries: &[MpfImage],
+    mpf_at: Option<usize>,
+) -> Result<()> {
+    let Some(off) = mpf_at else {
+        return Ok(());
+    };
+    let primary_len = u32::try_from(output.len())
+        .map_err(|_| Error::unsupported_feature("MPF container with a primary image over 4 GiB"))?;
+    let data = generate_mpf_directory(secondaries.len(), primary_len, &mpf_sizes(secondaries), off);
+    // Same entry count as the placeholder → same length; only the primary size
+    // and the secondary offsets (relative to the index) change.
+    let start = off + 4;
+    output[start..start + data.len()].copy_from_slice(&data);
+    let total = secondaries
+        .iter()
+        .map(|s| s.data.len())
+        .fold(0usize, usize::saturating_add);
+    output
+        .try_reserve(total)
+        .map_err(|_| Error::allocation_failed(total, "MPF container"))?;
+    for s in secondaries {
+        output.extend_from_slice(&s.data);
+    }
+    Ok(())
+}
+
+/// The GContainer `Item:Semantic` an MPF secondary of this type fills: Ultra
+/// HDR stores its gain map as MPF type Undefined, Dynamic Depth its depth map
+/// as Disparity. Other MPF images (thumbnails, frames) are not directory items.
+fn item_semantic(t: crate::encode::extras::MpfImageType) -> &'static str {
+    use crate::encode::extras::MpfImageType;
+    match t {
+        MpfImageType::Undefined => "GainMap",
+        MpfImageType::Disparity => "DepthMap",
+        _ => "",
+    }
+}
+
+fn mpf_sizes(secondaries: &[MpfImage]) -> Vec<(u32, crate::encode::extras::MpfImageType)> {
+    secondaries
+        .iter()
+        // A secondary over 4 GiB cannot be indexed by MPF; clamp rather than
+        // wrap so a reader sees a bounded, obviously-too-large entry instead
+        // of a small wrong one.
+        .map(|s| {
+            (
+                u32::try_from(s.data.len()).unwrap_or(u32::MAX),
+                s.image_type,
+            )
+        })
+        .collect()
 }
 
 /// Encode transformed coefficients back to JPEG bytes.
 ///
 /// Writes a baseline sequential JPEG with:
-/// - Same quantization tables as the source
+/// - The coefficients' quantization tables
 /// - Optimized Huffman tables (built from coefficient frequencies)
-/// - Preserved metadata segments (if provided)
+/// - Preserved metadata segments (if provided), with the MPF index rebuilt
+/// - The MPF secondary images appended after EOI
 /// - Optional restart markers at specified MCU intervals
 pub(super) fn encode_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[crate::decode::PreservedSegment]>,
+    preserved_segments: Option<&[PreservedSegment]>,
+    secondaries: &[MpfImage],
     restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
@@ -133,11 +584,13 @@ pub(super) fn encode_from_coefficients(
     {
         let mut prev_dc = [0i16; 3];
         let mut restart_counter = restart_interval;
+        let mut uncodable = false;
         for_each_interleaved_event(&geom, |ev| match ev {
             ScanEvent::Block { comp, idx } => {
                 let t = usize::from(comp != 0);
                 let block = &blocks[comp][idx];
-                let dc_diff = block[0] - prev_dc[comp];
+                let dc_diff = block[0].wrapping_sub(prev_dc[comp]);
+                uncodable |= dc_diff == i16::MIN || block[1..].contains(&i16::MIN);
                 prev_dc[comp] = block[0];
                 dc_freq[t][category(dc_diff) as usize] += 1;
                 count_block_ac(block, &mut ac_freq[t]);
@@ -153,6 +606,9 @@ pub(super) fn encode_from_coefficients(
                 }
             }
         });
+        if uncodable {
+            return Err(coefficient_out_of_range());
+        }
     }
 
     let dc_luma_table = build_huffman_table(&dc_freq[0])?;
@@ -205,12 +661,8 @@ pub(super) fn encode_from_coefficients(
     output.push(0xFF);
     output.push(MARKER_SOI);
 
-    // Write preserved metadata segments (EXIF, ICC, XMP, etc.)
-    if let Some(segments) = preserved_segments {
-        for seg in segments {
-            write_marker_segment(&mut output, seg.marker, &seg.data);
-        }
-    }
+    // Preserved metadata segments (EXIF, ICC, XMP, ...) + MPF index placeholder
+    let mpf_at = write_preserved_segments(&mut output, preserved_segments, secondaries)?;
 
     // DQT - Write quantization tables
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
@@ -240,6 +692,9 @@ pub(super) fn encode_from_coefficients(
     // EOI
     output.push(0xFF);
     output.push(MARKER_EOI);
+
+    // MPF index + secondary images
+    finish_container(&mut output, secondaries, mpf_at)?;
 
     Ok(output)
 }
@@ -277,6 +732,20 @@ pub(super) fn component_to_blocks(
         blocks.push(block);
     }
     blocks
+}
+
+/// The error for a coefficient the re-encode cannot code.
+///
+/// Decoders keep DCT coefficients modulo 2^16 (the DC prediction wraps, as
+/// libjpeg's `(JCOEF)` store does), so the re-encode takes DC differences
+/// modulo 2^16 as well and reproduces every stored coefficient. The one value
+/// no Huffman category holds is -32768 (category 16), as an AC value or as a
+/// DC difference. No conforming 8-bit stream produces it; a crafted one can,
+/// and libjpeg's encoder refuses it too (`JERR_BAD_DCT_COEF`).
+pub(super) fn coefficient_out_of_range() -> Error {
+    Error::invalid_jpeg_data(
+        "DCT coefficient out of range for re-encoding: -32768 has no Huffman category",
+    )
 }
 
 /// Return the Huffman category for a coefficient value.
@@ -418,6 +887,10 @@ pub(super) fn write_dri(output: &mut Vec<u8>, restart_interval: u16) {
 /// Reads the EXIF orientation from the JPEG's metadata, applies the corresponding
 /// lossless transform, and resets the orientation tag to 1 (Normal) in the output.
 ///
+/// Returns an error if the primary or a retained MPF secondary would lose pixels.
+/// Use [`crate::lossless::apply_exif_orientation_with_edge_handling`] to explicitly permit trimming.
+/// This is a behavior change from the previous trimming default (#204).
+///
 /// If the orientation is already 1 (Normal), absent, or unrecognized, the input
 /// is returned unchanged (fast path — no decode/re-encode).
 ///
@@ -430,22 +903,34 @@ pub(super) fn write_dri(output: &mut Vec<u8>, restart_interval: u16) {
 /// let corrected = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
 /// ```
 pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
-    // Step 1: Quick scan for EXIF orientation without full decode
+    apply_exif_orientation_with_edge_handling(jpeg_data, EdgeHandling::RejectPartialBlocks, stop)
+}
+
+/// Apply EXIF orientation with an explicit partial-MCU policy.
+///
+/// Like [`crate::lossless::apply_exif_orientation`], this resets EXIF orientation after a successful
+/// transform. [`crate::lossless::EdgeHandling::TrimPartialBlocks`] explicitly permits pixel removal.
+/// With MPF images, all images must retain the same proportional source region;
+/// incompatible grids return an error instead of misaligning a gain map.
+/// No output is returned if any required image cannot satisfy the policy.
+pub fn apply_exif_orientation_with_edge_handling(
+    jpeg_data: &[u8],
+    edge_handling: EdgeHandling,
+    stop: impl Stop,
+) -> Result<Vec<u8>> {
+    // Step 1: Decode to coefficients + metadata in one pass and read the
+    // EXIF orientation (a tag-less or upright file returns unchanged).
     let decoder = DecodeConfig::new().preserve(PreserveConfig::all());
     let (coeffs, extras) = decoder.decode_coefficients_with_extras(jpeg_data, &stop)?;
 
-    // Find EXIF segment and parse orientation
     let orientation = extras
         .as_ref()
         .and_then(|e| e.exif())
         .and_then(parse_exif_orientation);
-
-    // Fast path: no rotation needed
     let orientation = match orientation {
         Some(o) if o != 1 => o,
         _ => return Ok(jpeg_data.to_vec()),
     };
-
     let lossless_transform = match LosslessTransform::from_exif_orientation(orientation) {
         Some(t) => t,
         None => return Ok(jpeg_data.to_vec()),
@@ -454,25 +939,65 @@ pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u
     // Step 2: Transform coefficients
     let config = TransformConfig {
         transform: lossless_transform,
-        ..Default::default()
+        edge_handling,
     };
     let transformed = transform_coefficients(&coeffs, &config)
-        .map_err(|e| Error::io_error(alloc::format!("{e}")))?;
+        .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?;
 
     stop.check()?;
 
-    // Step 3: Re-encode, rewriting EXIF orientation to 1
-    // Clone the preserved segments so we can modify the EXIF orientation
-    let mut segments: Vec<crate::decode::PreservedSegment> =
-        extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    // Step 3: The MPF secondaries get the same rotation (and the same EXIF
+    // orientation reset, should one carry the tag).
+    let secondaries = transform_secondary_images(
+        jpeg_data,
+        extras.as_ref(),
+        &config,
+        true,
+        (coeffs.width, coeffs.height),
+        (transformed.width, transformed.height),
+        &stop,
+    )?;
 
-    // Find and rewrite EXIF orientation to 1 (Normal)
+    // Step 4: Re-encode, rewriting EXIF orientation to 1 (Normal)
+    let mut segments: Vec<PreservedSegment> =
+        extras.map(|e| e.segments().to_vec()).unwrap_or_default();
     for seg in &mut segments {
-        if seg.segment_type == crate::decode::SegmentType::Exif {
+        if seg.segment_type == SegmentType::Exif {
             set_exif_orientation(&mut seg.data, 1);
         }
     }
 
-    let output = encode_from_coefficients(&transformed, Some(&segments), 0, &stop)?;
-    Ok(output)
+    encode_from_coefficients(&transformed, Some(&segments), &secondaries, 0, &stop)
+}
+
+#[cfg(test)]
+mod secondary_error_tests {
+    use super::*;
+    use crate::error::ErrorKind;
+
+    fn img() -> SourceSecondary<'static> {
+        SourceSecondary {
+            index: 2,
+            image_type: crate::encode::extras::MpfImageType::Undefined,
+            data: &[],
+        }
+    }
+
+    /// A secondary's error keeps its kind; message-carrying kinds name the
+    /// secondary.
+    #[test]
+    fn in_secondary_keeps_the_kind() {
+        let e = in_secondary(Error::cancelled(), &img());
+        assert!(matches!(e.kind(), ErrorKind::Cancelled(_)), "{e:?}");
+        let e = in_secondary(Error::invalid_config("partial blocks".into()), &img());
+        assert!(
+            matches!(e.kind(), ErrorKind::InvalidConfig(m) if m.contains("#2") && m.contains("partial blocks")),
+            "{e:?}"
+        );
+        let e = in_secondary(Error::allocation_failed(7, "x"), &img());
+        assert!(
+            matches!(e.kind(), ErrorKind::AllocationFailed { .. }),
+            "{e:?}"
+        );
+    }
 }

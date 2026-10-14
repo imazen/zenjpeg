@@ -258,3 +258,244 @@ api-doc-check:
 arm-tiers-macos group="":
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p zenjpeg --features _dev --bench tier_isolation -- --group='{{group}}' --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
+
+# JPEG framing and validated reassembly; existing fixtures and decoder paths.
+metadata-check:
+    cargo test -p zenjpeg --features extended-metadata --lib container::
+    cargo test -p zenjpeg --features extended-metadata --test extended_metadata --test fuzz_regression
+    cargo clippy -p zenjpeg --features extended-metadata --lib --test extended_metadata --test fuzz_regression -- -D warnings
+
+metadata-oracle:
+    cargo test -p zenjpeg --features __oracle-exiftool --test extended_metadata_exiftool -- --nocapture
+
+metadata-inventory-unit:
+    cargo test -p zenjpeg --features inventory --lib codec::inventory
+
+metadata-inventory-check:
+    cargo test -p zenjpeg --features zencodec --test inventory_feature
+    cargo test -p zenjpeg --features inventory --test inventory_feature
+    cargo test -p zenjpeg --features inventory --test bundled inventory_
+    cargo clippy -p zenjpeg --features inventory,extended-metadata --lib --test inventory_feature --test bundled -- -D warnings
+
+metadata-fuzz-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_inventory --bin fuzz_container_metadata
+
+metadata-inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zenjpeg --features inventory --test inventory_oracle -- --nocapture
+
+# Reused PR210 filtering tests, independent of extended inspection and inventory.
+metadata-filter-check:
+    cargo test -p zenjpeg --no-default-features --lib container::metadata::filter::
+    cargo test -p zenjpeg --features inventory --test inventory_feature
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+
+# Force a patch comparison: the local version has already been bumped to 0.9.
+metadata-api-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenjpeg==0.8.4 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc -p zenjpeg --lib --features inventory,extended-metadata,zencodec,ultrahdr -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/0.8.4" --lib --features zencodec,ultrahdr -- -Zunstable-options --output-format json
+    cargo semver-checks check-release -p zenjpeg --current-rustdoc target/doc/zenjpeg.json --baseline-rustdoc target/published-api/0.8.4/doc/zenjpeg.json --release-type patch
+
+metadata-integration-oracles:
+    just metadata-oracle
+    just metadata-inventory-oracle
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
+    just api-doc
+
+metadata-hdr-check:
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib container::
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib codec::inventory
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
+    cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
+    just api-doc
+
+metadata-hdr-feature-matrix:
+    cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+    cargo clippy -p zenjpeg --lib --tests --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils" -- -D warnings
+
+metadata-ci-lib:
+    cargo test -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,__test-utils"
+    cargo test -p zenjpeg --lib --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils"
+
+# Populate corpus dependencies once before parallel metadata tests.
+metadata-prefetch:
+    cargo run -p zenjpeg --example metadata_corpus_prefetch
+
+metadata-prefetch-check:
+    just metadata-prefetch
+    cargo test -p zenjpeg --features inventory,extended-metadata --test extended_metadata --test inventory_feature --test fuzz_regression
+
+# Reconcile EXIF framing from the pending metadata source stack.
+metadata-exif-check:
+    cargo test -p zenjpeg --features zencodec --lib exif
+    cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
+    cargo clippy -p zenjpeg --features zencodec --lib -- -D warnings
+
+metadata-iso-check:
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib ultrahdr::decode
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled ultrahdr_roundtrip
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
+
+metadata-rewrite-check:
+    cargo test -p zenjpeg --no-default-features --features metadata-rewrite --test metadata_rewrite
+    cargo clippy -p zenjpeg --no-default-features --features metadata-rewrite --lib --test metadata_rewrite -- -D warnings
+
+metadata-rewrite-gainmap-check:
+    cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --no-default-features --features metadata-rewrite --test metadata_rewrite --target i686-unknown-linux-gnu
+
+metadata-rewrite-oracle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output="$HOME/tmp/zenmeta-jpeg-rewrite-oracle"
+    JPEG_METADATA_OUTPUT="$output" cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite scrubs_both_components -- --nocapture
+    for suffix in "" "-map"; do
+        djpeg -outfile "$output/before$suffix.ppm" "$output/before$suffix.jpg"
+        djpeg -outfile "$output/after$suffix.ppm" "$output/after$suffix.jpg"
+        cmp "$output/before$suffix.ppm" "$output/after$suffix.ppm"
+    done
+    exiftool -a -validate -warning -error "$output/after.jpg"
+
+metadata-limits-check:
+    cargo test -p zenjpeg --test metadata_limits
+    cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
+    cargo clippy -p zenjpeg --lib --features metadata-rewrite -- -D warnings
+
+metadata-policy-check:
+    cargo test -p zenjpeg --features ultrahdr --test bundled ultrahdr_roundtrip
+    cargo clippy -p zenjpeg --features ultrahdr --lib -- -D warnings
+
+metadata-dependency-check:
+    cargo check -p zenjpeg --features ultrahdr --lib
+
+metadata-gamut-check:
+    cargo test -p zenjpeg --features ultrahdr --test bundled convenience_hdr_readers_retain_display_p3_primaries
+
+metadata-lossless-check:
+    cargo test -p zenjpeg --features ultrahdr --test lossless_mpf --test mpf_bounds --test lossless_coefficient_range --test lossless_edges
+    cargo test -p zenjpeg --features ultrahdr --lib lossless::
+    cargo clippy -p zenjpeg --features ultrahdr --lib --test lossless_mpf --test mpf_bounds -- -D warnings
+
+metadata-lossless-oracle:
+    ZENJPEG_ORACLE_TOOLS=1 cargo test -p zenjpeg --features ultrahdr --test lossless_oracle -- --test-threads=1
+
+metadata-lossless-feature-check:
+    cargo check -p zenjpeg --no-default-features
+    cargo test -p zenjpeg --no-default-features --lib gain_map_preservation
+    cargo test -p zenjpeg --no-default-features --lib gain_map_decode_inherits
+    cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite
+
+metadata-lossless-fuzz-check:
+    cargo test -p zenjpeg --features metadata-rewrite,extended-metadata,inventory --test fuzz_regression
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_lossless --bin fuzz_metadata_rewrite
+
+metadata-lossless-api-check:
+    cargo fmt -p zenjpeg --check
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+    just api-doc
+
+metadata-lossless-portability-check:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test lossless_mpf --test mpf_bounds --test lossless_coefficient_range --test lossless_edges
+    actionlint .github/workflows/ci.yml
+
+metadata-icc-parity-check:
+    cargo test -p zenjpeg --features extended-metadata --test metadata_limits
+    cargo test -p zenjpeg --features extended-metadata --test extended_metadata icc_
+    cargo clippy -p zenjpeg --features extended-metadata --lib --test metadata_limits -- -D warnings
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+
+metadata-lossless-regression-check:
+    just metadata-ci-lib
+    cargo test -p zenjpeg --features layout,ultrahdr --test bundled layout_pipeline
+    cargo test -p zenjpeg --features layout,ultrahdr --test lossless_edges
+
+metadata-recompress-admission-check:
+    cargo test -p zenjpeg --features recompress,__test-utils --test recompress_metadata --test recompress_api
+    cargo clippy -p zenjpeg --features recompress,__test-utils --lib --test recompress_metadata -- -D warnings
+
+# Approved gain-map alignment and explicit edge rejection contracts.
+metadata-layout-contract-check:
+    cargo test -p zenjpeg --features layout,ultrahdr --test bundled layout_pipeline
+    cargo test -p zenjpeg --features layout,ultrahdr --test lossless_edges
+
+metadata-progressive-corpus-check:
+    cargo run -p zenjpeg --example metadata_corpus_prefetch
+    cargo test -p zenjpeg --test bundled codec_corpus_conformance::test_image_rs_progressive -- --exact
+
+# Default compatibility, strict rejection, bounded extraction, and rewrite refusal.
+metadata-mpf-compat-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --test mpf_bounds --test lossless_mpf
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test mpf_bounds --test bundled -- -D warnings
+
+metadata-final-regression-check:
+    just metadata-mpf-compat-check
+    cargo test -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --test bundled
+    just metadata-lossless-oracle
+    just metadata-lossless-portability-check
+    just metadata-lossless-feature-check
+    just metadata-icc-parity-check
+    cargo fmt -p zenjpeg --check
+    just api-doc
+
+metadata-depth-bounds-check:
+    cargo test -p zenjpeg --lib decode::depth::tests
+    cargo test -p zenjpeg --test mpf_bounds
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test mpf_bounds native_mpf_offsets_do_not_wrap
+    cargo clippy -p zenjpeg --lib --test mpf_bounds -- -D warnings
+
+metadata-admission-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib codec::inventory
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib ultrahdr::decode
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test bundled -- -D warnings
+
+metadata-orientation-check:
+    just metadata-admission-check
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_corpus
+    cargo test -p zenjpeg --lib container::marker
+
+metadata-extraction-policy-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib metadata_policy_agrees
+    just metadata-admission-check
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+
+metadata-hdr-dispatch-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib ultrahdr::decode::
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled codec_hdr_
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib -- -D warnings
+
+# Continue the final gate after the combined library/bundled suite.
+metadata-final-oracle-check:
+    just metadata-lossless-oracle
+    just metadata-lossless-portability-check
+    just metadata-lossless-feature-check
+    just metadata-icc-parity-check
+    cargo fmt -p zenjpeg --check
+    just api-doc
+
+metadata-legacy-icc-check:
+    cargo test -p zenjpeg --features inventory --lib container::chunks::
+    cargo test -p zenjpeg --features extended-metadata,metadata-rewrite,inventory --test metadata_limits
+    just metadata-icc-parity-check
+    cargo clippy -p zenjpeg --features extended-metadata,inventory --lib -- -D warnings
+
+# Typed rewrite migration plus the gain-map carrier and EXIF compatibility paths.
+shared-contract-check:
+    cargo test -p zenjpeg --features zencodec,inventory,metadata-rewrite --test shared_contracts
+    cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+    cargo clippy -p zenjpeg --features zencodec,inventory,metadata-rewrite --test shared_contracts -- -D warnings
+    just metadata-rewrite-check metadata-rewrite-gainmap-check
+    cargo clippy -p zenjpeg --features metadata-rewrite,ultrahdr,zencodec --lib -- -D warnings
+
+# Include native EXIF helper tests and the independent fuzz dependency graph.
+shared-contract-ci-check:
+    cargo test -p zenjpeg --lib encode::exif::tests
+    cargo clippy -p zenjpeg --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,__test-utils -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bins

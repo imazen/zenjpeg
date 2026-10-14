@@ -245,6 +245,9 @@ pub fn emit_preserved(
     subsampling: Subsampling,
     config: &EmitConfig,
 ) -> Result<Vec<u8>, Error> {
+    for segment in &config.preserved_segments {
+        crate::recompress::metadata::check_segment(segment.marker, &segment.data)?;
+    }
     if coeffs.components.is_empty() {
         return Err(Error::Internal("DecodedCoefficients has no components"));
     }
@@ -391,9 +394,12 @@ fn emit_progressive_trial(
         components,
         quant_tables: new_quant_tables,
     };
+    // No MPF secondaries are carried on this path, so a source MPF index is
+    // dropped rather than emitted with offsets into images that aren't here.
     crate::lossless::restructure::encode_progressive_from_coefficients(
         &tc,
         Some(preserved_segments),
+        &[],
         0,
         &enough::Unstoppable,
     )

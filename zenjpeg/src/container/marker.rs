@@ -161,10 +161,32 @@ pub fn iter(data: &'_ [u8]) -> MarkerIter<'_> {
 /// [`MarkerSpan`] per top-level segment and stops after the first EOI is
 /// emitted, when the input is exhausted, or on malformed structure.
 pub struct MarkerIter<'a> {
+    /// Internal metadata lookup follows decoder resynchronization and SOS size.
+    decoder_metadata: bool,
     data: &'a [u8],
     pos: usize,
     /// `true` after we yield an EOI span. Subsequent `.next()` returns `None`.
     ended: bool,
+    /// Why iteration stopped, when it stopped on malformed structure.
+    stop: Option<IterStop>,
+}
+
+/// Why a [`MarkerIter`] stopped before reaching EOI on malformed structure.
+///
+/// Crate-internal: `container::metadata` uses it to surface the bytes the
+/// iterator could not structure instead of dropping them. Offsets are
+/// relative to the iterated buffer. A clean end (EOI yielded, or input
+/// exhausted exactly at a segment boundary) records no stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IterStop {
+    /// The byte at `offset` is not `0xFF` where a marker must begin.
+    NotAMarker { offset: usize },
+    /// The marker whose `0xFF` sits at `offset` carries a length word < 2.
+    BadLength { offset: usize },
+    /// The segment starting at `offset` (fill bytes included) runs past the
+    /// end of the input: a cut marker, a cut length word, or a declared
+    /// length longer than what remains.
+    Truncated { offset: usize },
 }
 
 impl<'a> MarkerIter<'a> {
@@ -173,10 +195,35 @@ impl<'a> MarkerIter<'a> {
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Self {
+            decoder_metadata: false,
             data,
             pos: 0,
             ended: false,
+            stop: None,
         }
+    }
+
+    /// Metadata selection without decoding pixels. Keep the public structural
+    /// iterator's stop-on-stray behavior unchanged for inspection callers.
+    pub(crate) fn for_decoder_metadata(data: &'a [u8]) -> Self {
+        Self {
+            decoder_metadata: true,
+            ..Self::new(data)
+        }
+    }
+
+    /// Why iteration stopped on malformed structure, if it did.
+    #[inline]
+    #[cfg(feature = "extended-metadata")]
+    pub(crate) fn stop(&self) -> Option<IterStop> {
+        self.stop
+    }
+
+    /// `true` once the EOI span has been yielded.
+    #[inline]
+    #[cfg(feature = "extended-metadata")]
+    pub(crate) fn saw_eoi(&self) -> bool {
+        self.ended
     }
 
     /// Current byte offset within the input buffer.
@@ -195,23 +242,47 @@ impl<'a> Iterator for MarkerIter<'a> {
     type Item = MarkerSpan<'a>;
 
     fn next(&mut self) -> Option<MarkerSpan<'a>> {
-        if self.ended {
+        if self.ended || self.stop.is_some() {
             return None;
+        }
+        if self.decoder_metadata {
+            loop {
+                self.pos += memchr::memchr(0xff, self.data.get(self.pos..)?)?;
+                while self.data.get(self.pos + 1) == Some(&0xff) {
+                    self.pos += 1;
+                }
+                if self.data.get(self.pos + 1) == Some(&0x00) {
+                    self.pos += 2;
+                } else {
+                    break;
+                }
+            }
         }
         // We need at least 2 bytes for a marker.
         if self.pos + 1 >= self.data.len() {
+            if self.pos < self.data.len() {
+                // One byte left: a cut marker if it is 0xFF, else stray data.
+                self.stop = Some(if self.data[self.pos] == 0xFF {
+                    IterStop::Truncated { offset: self.pos }
+                } else {
+                    IterStop::NotAMarker { offset: self.pos }
+                });
+            }
             return None;
         }
         // Any leading non-FF byte at the top level is malformed.
         if self.data[self.pos] != 0xFF {
+            self.stop = Some(IterStop::NotAMarker { offset: self.pos });
             return None;
         }
         // Skip pre-marker fill bytes: JPEG permits any number of 0xFF
         // padding bytes before the real marker identifier.
+        let fill_start = self.pos;
         while self.pos + 1 < self.data.len() && self.data[self.pos + 1] == 0xFF {
             self.pos += 1;
         }
         if self.pos + 1 >= self.data.len() {
+            self.stop = Some(IterStop::Truncated { offset: fill_start });
             return None;
         }
 
@@ -236,11 +307,20 @@ impl<'a> Iterator for MarkerIter<'a> {
         // 2) SOS — length word, then header, then entropy-coded stream
         //    terminated by the next real marker.
         if m == MARKER_SOS {
-            let (payload, header_end) = match read_length_and_payload(self.data, self.pos) {
-                Some(x) => x,
-                None => {
-                    self.pos = self.data.len();
-                    return None;
+            let (payload, header_end) = if self.decoder_metadata {
+                // Native SOS parsing uses the component count, not Ls.
+                let end = self
+                    .pos
+                    .checked_add(8 + 2 * usize::from(*self.data.get(self.pos + 4)?))?;
+                (self.data.get(self.pos + 4..end)?, end)
+            } else {
+                match read_length_and_payload(self.data, self.pos) {
+                    Some(x) => x,
+                    None => {
+                        self.stop = Some(length_failure(self.data, self.pos, fill_start));
+                        self.pos = self.data.len();
+                        return None;
+                    }
                 }
             };
             let scan_end = skip_entropy_scan(self.data, header_end);
@@ -258,6 +338,7 @@ impl<'a> Iterator for MarkerIter<'a> {
         let (payload, seg_end) = match read_length_and_payload(self.data, self.pos) {
             Some(x) => x,
             None => {
+                self.stop = Some(length_failure(self.data, self.pos, fill_start));
                 self.pos = self.data.len();
                 return None;
             }
@@ -414,6 +495,20 @@ fn read_length_and_payload(data: &[u8], pos: usize) -> Option<(&[u8], usize)> {
     }
     let payload = &data[pos + 4..seg_end];
     Some((payload, seg_end))
+}
+
+/// Classify a [`read_length_and_payload`] failure for the marker at `pos`
+/// (whose fill bytes begin at `fill_start`): a length word < 2 is
+/// [`IterStop::BadLength`]; a cut length word or a declared length past the
+/// end of `data` is [`IterStop::Truncated`].
+#[inline]
+fn length_failure(data: &[u8], pos: usize, fill_start: usize) -> IterStop {
+    match data.get(pos + 2..pos + 4) {
+        Some(&[hi, lo]) if u16::from_be_bytes([hi, lo]) < 2 => {
+            IterStop::BadLength { offset: fill_start }
+        }
+        _ => IterStop::Truncated { offset: fill_start },
+    }
 }
 
 /// Walk the entropy-coded byte stream starting at `start` and return the

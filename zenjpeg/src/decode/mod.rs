@@ -105,6 +105,11 @@ pub use extras::{
     QualityScale, SegmentType, StandardProfile,
 };
 
+// Segment classification and the MPF index parser, for the structural
+// inventory walker (codec/inventory.rs).
+#[cfg(feature = "inventory")]
+pub(crate) use extras::{detect_segment_type, parse_mpf_directory};
+
 // Re-export depth map types for public API
 #[allow(unused_imports)]
 pub use depth::{
@@ -733,11 +738,20 @@ impl DecodeConfig {
             .xmp(true)
             .icc(IccPreserve::All);
 
+        self.read_info_preserving(data, &preserve)
+    }
+
+    /// Header metadata with an explicit extraction policy for codec adapters.
+    pub(crate) fn read_info_preserving(
+        &self,
+        data: &[u8],
+        preserve: &PreserveConfig,
+    ) -> Result<JpegInfo> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
             self.max_memory,
-            Some(&preserve),
+            Some(preserve),
             self.strictness,
             self.alloc_pref,
         )?;
@@ -751,7 +765,18 @@ impl DecodeConfig {
             ));
         }
 
-        Ok(parser.info())
+        let mut info = parser.info();
+        if !preserve.exif {
+            info.exif = None;
+        }
+        if !preserve.xmp {
+            info.xmp = None;
+        }
+        if preserve.icc == IccPreserve::None {
+            info.icc_profile = None;
+            info.has_icc_profile = false;
+        }
+        Ok(info)
     }
 
     /// Estimates peak memory usage for decoding an image of given dimensions.
@@ -1830,14 +1855,11 @@ impl DecodeConfig {
         let (visible_w, visible_h) = (parser.width, parser.height);
 
         // Extract gain map before pixel conversion (needs parser state)
-        #[cfg(feature = "ultrahdr")]
         let gain_map_result = if self.gain_map != GainMapHandling::Discard {
-            self.extract_gain_map(&mut parser, data)?
+            self.extract_gain_map(&mut parser, data, &stop)?
         } else {
             None
         };
-        #[cfg(not(feature = "ultrahdr"))]
-        let gain_map_result: Option<GainMapResult> = None;
 
         let info = parser.info();
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
@@ -2728,12 +2750,13 @@ impl DecodeConfig {
     /// Extract gain map from UltraHDR image if present.
     ///
     /// Called during `decode()` when `gain_map != Discard`.
-    #[cfg(feature = "ultrahdr")]
     fn extract_gain_map(
         &self,
         parser: &mut JpegParser,
         data: &[u8],
+        stop: &dyn Stop,
     ) -> Result<Option<GainMapResult>> {
+        stop.check()?;
         let (gainmap_range, _metadata) = parser.extract_gainmap_early(data)?;
 
         let (start, end) = match gainmap_range {
@@ -2741,17 +2764,28 @@ impl DecodeConfig {
             None => return Ok(None), // Not an UltraHDR image
         };
 
-        let gainmap_jpeg = data[start..end].to_vec();
+        stop.check()?;
+        let mut gainmap_jpeg = Vec::new();
+        gainmap_jpeg
+            .try_reserve_exact(end - start)
+            .map_err(|_| Error::allocation_failed(end - start, "preserving gain map JPEG"))?;
+        gainmap_jpeg.extend_from_slice(&data[start..end]);
+        let mut decoder = Decoder::new()
+            .max_pixels(self.max_pixels)
+            .max_memory(self.max_memory)
+            .strictness(self.strictness)
+            .auto_orient(false);
+        decoder.alloc_pref = self.alloc_pref;
 
         let (pixels, width, height) = if self.gain_map == GainMapHandling::Decode {
             // Decode the gain map JPEG to pixels
-            let gm_result = Decoder::new().decode(&gainmap_jpeg, enough::Unstoppable)?;
+            let gm_result = decoder.decode(&gainmap_jpeg, stop)?;
             let w = gm_result.width;
             let h = gm_result.height;
             (Some(gm_result.into_pixels_u8().unwrap()), w, h)
         } else {
             // PreserveRaw: just get dimensions from header without decoding pixels
-            let gm_info = Decoder::new().read_info(&gainmap_jpeg)?;
+            let gm_info = decoder.read_info(&gainmap_jpeg)?;
             (None, gm_info.dimensions.width, gm_info.dimensions.height)
         };
 
@@ -2865,59 +2899,20 @@ impl DecodeConfig {
 ///
 /// Looks for APP1 segments containing EXIF data and reads the orientation tag.
 /// Returns `Some(1..=8)` if found, `None` otherwise.
-fn find_exif_orientation(data: &[u8]) -> Option<u8> {
-    const EXIF_PREFIX: &[u8] = b"Exif\0\0";
+pub(crate) fn find_exif_orientation(data: &[u8]) -> Option<u8> {
+    crate::lossless::parse_exif_orientation(first_exif_segment(data)?.payload)
+}
 
-    if data.len() < 4 {
+/// The first EXIF segment reported by native metadata, including inter-scan
+/// and post-scan segments. An absent orientation in it does not select a
+/// different EXIF packet. Shared with inventory; never search inside payloads.
+pub(crate) fn first_exif_segment(data: &[u8]) -> Option<crate::container::MarkerSpan<'_>> {
+    if !data.starts_with(&[0xff, 0xd8]) {
         return None;
     }
-
-    let mut pos = 2; // Skip SOI
-    while pos + 4 < data.len() {
-        if data[pos] != 0xFF {
-            pos += 1;
-            continue;
-        }
-        let marker = data[pos + 1];
-
-        // Stop at SOS or EOI — no more metadata after scan data starts
-        if marker == 0xDA || marker == 0xD9 {
-            break;
-        }
-
-        // Skip markers without length
-        if marker == 0xFF || marker == 0x00 || (0xD0..=0xD7).contains(&marker) {
-            pos += 2;
-            continue;
-        }
-
-        // Read segment length
-        if pos + 4 > data.len() {
-            break;
-        }
-        let length = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
-        if length < 2 {
-            break;
-        }
-        let seg_start = pos + 4;
-        let seg_end = pos + 2 + length;
-        if seg_end > data.len() {
-            break;
-        }
-
-        // APP1 (0xE1) with EXIF prefix
-        if marker == 0xE1 && seg_end - seg_start >= EXIF_PREFIX.len() {
-            let seg_data = &data[seg_start..seg_end];
-            if seg_data.starts_with(EXIF_PREFIX)
-                && let Some(orientation) = crate::lossless::parse_exif_orientation(seg_data)
-            {
-                return Some(orientation);
-            }
-        }
-
-        pos = seg_end;
-    }
-    None
+    crate::container::MarkerIter::for_decoder_metadata(data).find(|s| {
+        s.kind == crate::container::MarkerKind::App(1) && s.payload.starts_with(b"Exif\0\0")
+    })
 }
 
 /// Copy a `dst_w × dst_h` rectangle starting at `(crop_x, crop_y)` out of an interleaved
@@ -2976,6 +2971,85 @@ mod tests {
     use super::*;
     use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use enough::Unstoppable;
+
+    fn gain_map_fixture(map_side: u32) -> (Vec<u8>, Vec<u8>) {
+        use crate::encode::EncoderSegments;
+        let encode = |side: u32, segments: EncoderSegments| {
+            let pixels: Vec<u8> = (0..side * side * 3)
+                .map(|i| ((i * 73 + i / 17) % 256) as u8)
+                .collect();
+            let mut encoder = EncoderConfig::ycbcr(90, ChromaSubsampling::None)
+                .with_segments(segments)
+                .encode_from_bytes(side, side, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            encoder.push_packed(&pixels, Unstoppable).unwrap();
+            encoder.finish().unwrap()
+        };
+        let map = encode(map_side, EncoderSegments::new());
+        let primary = encode(
+            16,
+            EncoderSegments::new()
+                .set_xmp(&crate::container::xmp::generate_primary_xmp(map.len()))
+                .add_gainmap(map.clone()),
+        );
+        (primary, map)
+    }
+
+    #[test]
+    fn gain_map_preservation_does_not_require_hdr_rendering() {
+        let (jpeg, map) = gain_map_fixture(8);
+        for preserve in [PreserveConfig::all(), PreserveConfig::none()] {
+            for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+                let result = Decoder::new()
+                    .preserve(preserve.clone())
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let gain_map = result.gain_map.expect("requested gain map must be present");
+                assert_eq!(gain_map.jpeg, map);
+                assert_eq!((gain_map.width, gain_map.height), (8, 8));
+                if mode == GainMapHandling::Decode {
+                    let expected = Decoder::new()
+                        .auto_orient(false)
+                        .decode(&map, Unstoppable)
+                        .unwrap();
+                    assert_eq!(gain_map.pixels.as_deref(), expected.pixels_u8());
+                } else {
+                    assert!(gain_map.pixels.is_none());
+                }
+            }
+        }
+        assert!(
+            Decoder::new()
+                .decode(&jpeg, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+        assert!(
+            Decoder::new()
+                .gain_map(GainMapHandling::PreserveRaw)
+                .decode(&map, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn gain_map_decode_inherits_pixel_limit() {
+        let (jpeg, _) = gain_map_fixture(32);
+        for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+            assert!(
+                Decoder::new()
+                    .max_pixels(256)
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .is_err(),
+                "{mode:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_decoder_creation() {

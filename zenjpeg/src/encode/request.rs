@@ -159,7 +159,7 @@ impl<'a> EncodeRequest<'a> {
         height: u32,
         layout: PixelLayout,
     ) -> Result<BytesEncoder> {
-        let (config, icc, exif, xmp, _segments) = self.extract_metadata();
+        let (config, icc, exif, xmp) = self.extract_metadata();
         BytesEncoder::new(config, width, height, layout, icc, exif, xmp)
     }
 
@@ -167,7 +167,7 @@ impl<'a> EncodeRequest<'a> {
     ///
     /// Metadata from the request is passed to the encoder.
     pub fn encode_from_rgb<P: Pixel>(self, width: u32, height: u32) -> Result<RgbEncoder<P>> {
-        let (config, icc, exif, xmp, _segments) = self.extract_metadata();
+        let (config, icc, exif, xmp) = self.extract_metadata();
         RgbEncoder::new(config, width, height, icc, exif, xmp)
     }
 
@@ -175,7 +175,7 @@ impl<'a> EncodeRequest<'a> {
     ///
     /// Metadata from the request is passed to the encoder.
     pub fn encode_from_ycbcr_planar(self, width: u32, height: u32) -> Result<YCbCrPlanarEncoder> {
-        let (config, icc, exif, xmp, _segments) = self.extract_metadata();
+        let (config, icc, exif, xmp) = self.extract_metadata();
         YCbCrPlanarEncoder::new(config, width, height, icc, exif, xmp)
     }
 
@@ -259,13 +259,14 @@ impl<'a> EncodeRequest<'a> {
         Option<alloc::vec::Vec<u8>>,
         Option<Exif>,
         Option<alloc::vec::Vec<u8>>,
-        Option<EncoderSegments>,
     ) {
-        let config = self.config.clone();
+        let mut config = self.config.clone();
+        if let Some(segments) = self.segments {
+            config.segments = Some(segments);
+        }
         let icc = self.icc_profile.map(|c| c.into_owned());
         let exif = self.exif;
         let xmp = self.xmp.map(|c| c.into_owned());
-        let segments = self.segments;
-        (config, icc, exif, xmp, segments)
+        (config, icc, exif, xmp)
     }
 }

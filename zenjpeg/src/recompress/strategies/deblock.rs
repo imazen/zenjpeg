@@ -32,6 +32,8 @@ pub fn run_deblock(
     params: &StrategyParams,
     _opts: &RecompressOptions,
 ) -> Result<StrategyOutcome, Error> {
+    crate::recompress::metadata::check_single_image(jpeg_bytes)?;
+
     // 1. Decode with content-aware deblocking enabled.
     let decode_cfg = DecodeConfig::new()
         .output_target(OutputTarget::Srgb8)

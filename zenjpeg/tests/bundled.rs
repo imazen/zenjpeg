@@ -280,3 +280,10 @@ mod ycbcr_locked;
 mod zero_quant_clamp;
 #[path = "bundled/zune_crash_repro.rs"]
 mod zune_crash_repro;
+
+#[cfg(feature = "inventory")]
+#[path = "bundled/inventory_corpus.rs"]
+mod inventory_corpus;
+#[cfg(feature = "inventory")]
+#[path = "bundled/inventory_review.rs"]
+mod inventory_review;

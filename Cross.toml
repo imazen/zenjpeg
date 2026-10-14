@@ -2,6 +2,8 @@
 # See: https://github.com/cross-rs/cross
 
 [build.env]
+# Host prefetch supplies the same absolute cache path inside cross.
+volumes = ["CODEC_CORPUS_CACHE"]
 passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",

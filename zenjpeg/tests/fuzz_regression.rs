@@ -17,7 +17,11 @@
 //!
 //! To add a seed: drop the (preferably `cargo fuzz tmin`-minimized) file into
 //! `fuzz/regression/` — a `crash-<sha>` / `timeout-<name>` / `<class>-<name>`
-//! name, no extension. Nothing else. Subdirectories are walked too.
+//! name, no extension. Nothing else. Subdirectories are walked too. The
+//! synthetic `container::metadata` coverage seeds in `fuzz/seeds/metadata/`
+//! are replayed the same way, and with `extended-metadata` every seed also
+//! runs `fuzz/metadata_checks.rs`, the file the `fuzz_container_metadata`
+//! target includes.
 //!
 //! The limits below mirror `fuzz/fuzz_targets/*.rs` exactly — they are
 //! deliberately tighter than production defaults so a decompression bomb
@@ -51,15 +55,31 @@ fn regression_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fuzz/regression")
 }
 
-/// Every file under `fuzz/regression/`, paired with the directory that names
-/// the target it was found by (kept only for failure messages).
+/// Synthetic `container::metadata` coverage seeds (not crash repros) from
+/// `fuzz/make_metadata_seeds.py`, replayed alongside the crash seeds.
+fn metadata_seed_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/metadata")
+}
+
+/// How many files `fuzz/make_metadata_seeds.py` writes.
+const METADATA_SEEDS: usize = 8;
+
+/// How many crash and timeout repros `fuzz/regression/` holds. Raise it with
+/// each repro added.
+const REGRESSION_SEEDS: usize = 11;
+
+/// Every file under `fuzz/regression/` and `fuzz/seeds/metadata/`, paired
+/// with the directory that names the target it was found by (kept only for
+/// failure messages).
 fn seeds() -> Vec<(String, PathBuf)> {
+    // A missing or unreadable directory fails the suite; it never shrinks it.
     fn walk(dir: &Path, target: &str, out: &mut Vec<(String, PathBuf)>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
+        let entries = fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("cannot read seed directory {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|e| panic!("cannot read an entry of {}: {e}", dir.display()))
+                .path();
             if path.is_dir() {
                 let name = path
                     .file_name()
@@ -75,6 +95,7 @@ fn seeds() -> Vec<(String, PathBuf)> {
 
     let mut out = Vec::new();
     walk(&regression_dir(), "regression", &mut out);
+    walk(&metadata_seed_dir(), "seeds/metadata", &mut out);
     out.sort();
     out
 }
@@ -444,6 +465,12 @@ fn run_container_marker(data: &[u8]) {
     }
 }
 
+/// `fuzz_container_metadata` — the target's own checks, from the file it
+/// includes.
+#[cfg(feature = "extended-metadata")]
+#[path = "../fuzz/metadata_checks.rs"]
+mod metadata_checks;
+
 /// `fuzz_container_mpf`.
 fn run_container_mpf(data: &[u8]) {
     fn validate(entries: &[MpfEntry]) {
@@ -569,6 +596,52 @@ fn run_container_xmp(data: &[u8]) {
     core::hint::black_box(&items);
 }
 
+/// `fuzz_inventory`: the structural inventory under every job configuration
+/// that changes it must cover the input exactly and validate.
+#[cfg(feature = "inventory")]
+fn run_inventory(data: &[u8]) {
+    use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+    let mut permissive = zenjpeg::JpegDecoderConfig::new();
+    let inner = permissive.inner().clone().permissive();
+    *permissive.inner_mut() = inner;
+    let jobs = [
+        zenjpeg::JpegDecoderConfig::new().job(),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Correct),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::Components),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                target_headroom: None,
+            }),
+        zenjpeg::JpegDecoderConfig::new()
+            .job()
+            .with_policy(zencodec::decode::DecodePolicy::strict()),
+        permissive.job(),
+    ];
+    let mut layout: Option<Vec<core::ops::Range<u64>>> = None;
+    for job in jobs {
+        let inv = job.inventory(data).expect("inventory");
+        assert_eq!(inv.input_len(), data.len() as u64);
+        if let Err(e) = inv.validate() {
+            panic!("invalid inventory: {e}\n{inv}");
+        }
+        let ranges: Vec<_> = inv
+            .parts()
+            .iter()
+            .filter(|p| p.parent().is_none())
+            .map(|p| p.range().clone())
+            .collect();
+        match &layout {
+            None => layout = Some(ranges),
+            Some(first) => assert_eq!(first, &ranges, "job options changed the top-level layout"),
+        }
+    }
+}
+
 // ── encode entry points ──────────────────────────────────────────────────
 
 /// `fuzz_encode` and `fuzz_roundtrip`.
@@ -664,29 +737,45 @@ fn run_encode_and_roundtrip(data: &[u8]) {
 #[test]
 fn regression_corpus_is_present() {
     let dir = regression_dir();
-    assert!(
-        dir.is_dir(),
-        "{} is missing — the regression seeds are committed, not generated",
-        dir.display()
-    );
+    for d in [&dir, &metadata_seed_dir()] {
+        assert!(
+            d.is_dir(),
+            "{} is missing — the seeds are committed, not generated",
+            d.display()
+        );
+    }
+    // Each directory on its own: the metadata seeds must not stand in for
+    // missing or truncated crash repros.
     let seeds = seeds();
-    assert!(
-        !seeds.is_empty(),
-        "{} contains no seed files; a suite that tests nothing is worse than \
-         one that fails",
-        dir.display()
-    );
-    let total_bytes: u64 = seeds
-        .iter()
-        .map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
-        .sum();
-    assert!(
-        total_bytes > 0,
-        "{} holds {} seed file(s) but 0 bytes total — the corpus was \
-         truncated, not populated",
-        dir.display(),
-        seeds.len()
-    );
+    for (d, expected) in [
+        (dir, REGRESSION_SEEDS),
+        (metadata_seed_dir(), METADATA_SEEDS),
+    ] {
+        let files: Vec<&PathBuf> = seeds
+            .iter()
+            .map(|(_, p)| p)
+            .filter(|p| p.starts_with(&d))
+            .collect();
+        assert_eq!(
+            files.len(),
+            expected,
+            "{} holds {} seed file(s), expected {expected}; a suite that tests \
+             less than it claims is worse than one that fails",
+            d.display(),
+            files.len()
+        );
+        let total_bytes: u64 = files
+            .iter()
+            .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+            .sum();
+        assert!(
+            total_bytes > 0,
+            "{} holds {} seed file(s) but 0 bytes total — the corpus was \
+             truncated, not populated",
+            d.display(),
+            files.len()
+        );
+    }
 }
 
 #[test]
@@ -709,6 +798,13 @@ fn regression_seeds_do_not_panic() {
         run_container_mpf(&data);
         run_container_probe(&data);
         run_container_xmp(&data);
+        lossless_checks::check(&data);
+        #[cfg(feature = "metadata-rewrite")]
+        rewrite_checks::check(&data);
+        #[cfg(feature = "extended-metadata")]
+        metadata_checks::check_all(&data);
+        #[cfg(feature = "inventory")]
+        run_inventory(&data);
         run_encode_and_roundtrip(&data);
 
         replayed += 1;
@@ -723,3 +819,9 @@ fn regression_seeds_do_not_panic() {
     );
     assert!(replayed > 0, "replayed no seeds at all");
 }
+
+#[path = "../fuzz/lossless_checks.rs"]
+mod lossless_checks;
+#[cfg(feature = "metadata-rewrite")]
+#[path = "../fuzz/rewrite_checks.rs"]
+mod rewrite_checks;

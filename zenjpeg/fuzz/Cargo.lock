@@ -96,12 +96,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "crunchy"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
-
-[[package]]
 name = "derive_arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -164,17 +158,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
-]
-
-[[package]]
-name = "half"
-version = "2.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
-dependencies = [
- "cfg-if",
- "crunchy",
- "zerocopy",
 ]
 
 [[package]]
@@ -306,19 +289,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "safe_arch"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "safe_unaligned_simd"
@@ -391,16 +374,15 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "ultrahdr-core"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d65bd22a90785bb7360076b599ffbc201aef2c5817d2e5f37f37357829d476e"
+checksum = "af411a89dd994324c442cea3fa0ded10aac0550cadb9a5cb2ba03c9596a4ed05"
 dependencies = [
  "bytemuck",
  "enough",
- "half",
  "linear-srgb",
  "thiserror",
- "wide",
+ "whereat",
  "zencodec",
  "zenpixels",
 ]
@@ -418,16 +400,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab90f361db038ba3135da12c938c328fb43a012992101879e3d6ebccb4d7eba8"
 
 [[package]]
-name = "wide"
-version = "1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf05ca94c9fba0c51316899caa1d1e74a064fc310a5efa7375e614343d415be"
-dependencies = [
- "bytemuck",
- "safe_arch",
-]
-
-[[package]]
 name = "winarm-cpufeatures"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -436,6 +408,7 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
+source = "git+https://github.com/imazen/zenanalyze?rev=e6c72f99390c190c102275c3b0e4d41fe0a734a4#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
 dependencies = [
  "archmage",
  "garb",
@@ -447,9 +420,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4b0d4108a8f062c85090bf8d0e6dd00fea976ffacc0e4f3cb6b03284a75531"
+version = "0.1.27"
+source = "git+https://github.com/imazen/zencodec?rev=47895ac46f555b4bac7e28ac57bb50299c96889b#47895ac46f555b4bac7e28ac57bb50299c96889b"
 dependencies = [
  "almost-enough",
  "enough",
@@ -478,6 +450,7 @@ dependencies = [
  "whereat",
  "zenanalyze",
  "zencodec",
+ "zenmeta",
  "zenpixels",
  "zenpixels-convert",
  "zenyuv",
@@ -490,10 +463,21 @@ dependencies = [
  "arbitrary",
  "enough",
  "libfuzzer-sys",
+ "zencodec",
  "zenjpeg",
  "zenpixels",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "zenmeta"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=47895ac46f555b4bac7e28ac57bb50299c96889b#47895ac46f555b4bac7e28ac57bb50299c96889b"
+dependencies = [
+ "roxmltree",
+ "zencodec",
+ "zenpixels",
 ]
 
 [[package]]
@@ -537,26 +521,6 @@ dependencies = [
  "linear-srgb",
  "magetypes",
  "safe_unaligned_simd",
-]
-
-[[package]]
-name = "zerocopy"
-version = "0.8.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
-dependencies = [
- "zerocopy-derive",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.8.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

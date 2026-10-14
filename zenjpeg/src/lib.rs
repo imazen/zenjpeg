@@ -361,3 +361,6 @@ pub use codec::{
 // zennode pipeline node definitions (EncodeJpeg, DecodeJpeg)
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
+
+#[cfg(feature = "metadata-rewrite")]
+pub mod metadata;

@@ -24,6 +24,8 @@ pub fn run_tuned(
     params: &StrategyParams,
     _opts: &RecompressOptions,
 ) -> Result<StrategyOutcome, Error> {
+    crate::recompress::metadata::check_single_image(jpeg_bytes)?;
+
     // 1. Decode to RGB8.
     let decode_cfg = DecodeConfig::new().output_target(OutputTarget::Srgb8);
     let decoded = decode_cfg

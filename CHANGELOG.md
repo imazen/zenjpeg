@@ -5,7 +5,88 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Tests
+
+- Shared codec-testkit checks cover checked policy admission, inventory boundaries
+  and rewrite limits/retention, with independent JPEG pixel decoding.
+
+
+### Shared rewrite contract
+
+- Keep child-image rewrite mutations within their input contexts and assemble
+  primary/gain-map plans under a fresh parent. The shared provenance checks now
+  validate both borrowed input identity and translated report offsets.
+- Delegate existing EXIF serialization/filtering calls to zenmeta compatibility
+  helpers instead of deprecated zencodec writers.
+
+- Migrate unpublished metadata rewrite errors to shared typed `LimitKind` values.
+  Pin zencodec/zenmeta to `47895ac4`; configured input/output and metadata caps
+  retain rejection behavior without string matching.
+
+- Reconcile PR210 component filtering with PR225 inspection: filtering remains
+  available without extended inspection or inventory; both retain their
+  `container::metadata` API paths. Preserve typed inventory part-limit causes.
+
+### QUEUED BREAKING CHANGES (published 0.8.4 audit)
+
+- Existing at `b88f02e3`: lost encoder auto traits and shifted discriminants in
+  `DecodeWarning`, `EncoderFamily`, and `ProgressiveScanMode`. The forced-patch
+  audit also confirms removed scanline methods (`de79d22e`) and quant-table
+  variant/method changes (`22485f82`), in addition to the Pattern-B breaks below.
+  [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
+
 ### Changed
+- Default decoding preserves a real-world single ICC chunk numbered 0 of 1
+  only when it has a complete ICC header and matching declared payload size.
+  Duplicate, incomplete and oversized chunks remain rejected; strict decode,
+  structural inspection and rewriting retain 1-based sequence validation.
+  Existing malformed-chunk and corpus-inspection expectations are unchanged.
+- Apply requested HDR output gamut conversion after gain-map reconstruction,
+  and enforce progressive-image policy on the HDR path. Pixel parity is checked
+  against native reconstruction followed by the shared row converter.
+- HDR reconstruction resolves ISO/XMP metadata through the same native resolver
+  instead of testing a literal XML prefix. ISO-only and namespace-aliased files
+  reconstruct HDR; base primaries/transfer and mastering primaries are retained.
+  Denied ICC required by HDR reconstruction returns a policy error. The existing
+  corpus's Display P3 profile is recognized by an unpublished zenpixels fix
+  pinned at `8f7ee871`; no JPEG public signatures change.
+- Recover lossless MPF handling: transform secondary JPEGs with the primary,
+  rebuild MPF offsets, update GContainer lengths by semantic through zenmeta,
+  reject incomplete/ambiguous/nested secondary layouts, and preserve EXIF byte
+  offsets when resetting orientation. Shared metadata revision: `a81daf76`.
+- Add `lossless::apply_exif_orientation_with_edge_handling`; the existing entry
+  point remains. The recovered default rejects implicit edge trimming; callers
+  can explicitly select proportional trimming. This is a behavior change from
+  published 0.8.4, not a removed signature.
+- Raw/decoded gain-map extraction works without enabling HDR rendering; it
+  inherits decoder limits and cancellation. JPEG ISO framing is shared by the
+  native extractor and HDR convenience reader.
+- Reuse the recovered lossless/coefficient/MPF tests and independent jpegtran,
+  djpeg and ExifTool checks. Shared lossless and metadata-rewrite fuzz checks
+  also run against every existing committed regression/metadata seed.
+- Verify the EXIF boundary explicitly: zencodec metadata is bare TIFF; native `DecodedExtras` retains the APP1 `Exif\0\0` prefix.
+- Require ultrahdr-core 0.6.0 when enabling Ultra HDR; the encoder uses its `f16` feature, which 0.5 does not provide (`154df755`).
+- Add default-off `metadata-rewrite` with codec-owned `metadata::rewrite`, moved
+  from zencodecs (`aa21cba0`). zencodec owns its public request/plan types;
+  zenmeta owns shared EXIF/service/plan processing. Gain-map scrubbing repairs
+  MPF/XMP references and rejects ambiguous ISO/XMP parameters. This is additive
+  relative to 0.8.4. Shared unpublished dependencies advance to `a31a9b68`.
+- Reconcile the pending metadata stack (`1581bf08`, `da8d2982`, `e008374e`):
+  secondary ISO 21496-1 gain-map parameters take precedence over XMP, with
+  malformed-ISO fallback; buffered/streaming readers agree. Inventory now
+  identifies the selected ISO record. This changes accepted metadata behavior
+  relative to published 0.8.4; existing signatures remain.
+- ISO-only gain-map output omits generated hdrgm XMP. SDR-base encoding retains
+  caller EXIF/ICC/IPTC/comments and synthesizes supported wide-gamut ICC when
+  absent; unsupported unsignaled gamut/transfer pairs return an error.
+- CI now fetches metadata corpora serially before tests and mounts the host
+  cache into cross, avoiding uncached corpus failures on Windows ARM and i686.
+- Gain-map XMP parsing/generation and GContainer XML now delegate privately to
+  zenmeta, retaining JPEG-owned public types. The strict PR210 validation
+  (`74e727f`) is owner-approved: malformed numeric values, ambiguous properties
+  and invalid XML are rejected instead of silently substituting defaults.
+  XML namespace aliases remain supported; `XmpError::Invalid` is additive to
+  the existing non-exhaustive error enum.
 - Progressive encode's token replay batches its bit-writes: Huffman code
   and sign bit now emit as one write, refinement bits append in packed
   <=24-bit chunks instead of one call per bit, and first-scan tokens use
@@ -22,6 +103,32 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
+
+- Honor decode EXIF/ICC/XMP extraction flags across probe, buffered decode, streaming metadata, attached native extras and inventory. Remove the adapter's unconditional preserve-all override; denied XMP is also excluded from gain-map parameter fallback. No public signatures change (follow-up to `d2a417df`).
+
+- Pixel auto-orientation and inventory select the first reported EXIF packet, including post-scan EXIF; fill bytes cannot redirect lookup into another segment's payload. Streaming metadata uses that same packet and reports transformed dimensions. First-EXIF-without-orientation no longer falls through to a later packet. Published signatures are unchanged; these are accepted-input/output corrections (follow-up to `ce321b8b`).
+
+- Accept standalone TEM markers after the frame header; inventory leaves following bytes separate. Components decoding treats ordinary XMP without gain-map properties as absent gain-map metadata, preserving base pixels instead of failing. Signatures are unchanged (follow-up to `b473e0f9`).
+
+- Dynamic Depth extraction honors primary GContainer padding with checked offsets; native MPF parsing checks IFD/entry offsets on 32-bit targets and allocates its bounded image list fallibly. No signatures change (follow-up to `4064e3cb`).
+
+- Preserve default decoding of MPF JPEGs embedded inside the primary APP payload; strict mode rejects that layout. Inventory and native extraction share range admission, retaining duplicate-copy bounds. Lossless rewriting checks relocation independently and refuses unsupported embedded layouts. This restores the existing default acceptance; published signatures are unchanged (follow-up to `9a5694d4`).
+
+- Prefetch the exact progressive JPEG corpus key used by i686 tests; codec-corpus 1.1.0 caches the parent and nested requests separately.
+- Lossy recompression refuses auxiliary-image inputs that its single-image emitters cannot preserve. MPF, ISO gain-map and namespace-aware XMP signaling share an admission guard; lossless restructuring remains available. The expert coefficient emitter refuses dangling auxiliary metadata too. Published signatures are unchanged.
+- Native `DecodedExtras::icc_profile` and extended inspection share chunk validation. Native decoding now returns `None` for incomplete, duplicate, inconsistent, or empty ICC chunks instead of returning a partial profile; published signatures are unchanged.
+- Ultra HDR convenience readers and streaming reconstruction retain resolved base-image ICC primaries instead of hardcoding BT.709. Profiles requiring a CMS now return an unsupported error; existing signatures remain.
+- Reject oversized EXIF/APP/COM metadata with an encode error before writing output; raw EXIF is no longer silently truncated. Forward request-level `EncoderSegments` into the encoder instead of omitting them. Published signatures remain unchanged.
+
+- Reuse metadata commits `ea224f98`/`a76f7c41`: EXIF encoding accepts a TIFF
+  structure or JPEG APP1 payload and writes the `Exif\0\0` prefix once.
+  The zencodec boundary now exposes bare TIFF; native `DecodedExtras::exif`
+  retains its APP1-payload behavior. This is an observable metadata-byte change
+  relative to published 0.8.4, without a signature change.
+- Gate inventory-only Ultra HDR helper imports on `inventory`, so ordinary
+  Ultra HDR/zencodec builds also pass warnings-as-errors (`db07f503` follow-up).
+- MPF offset arithmetic and entry-list allocation failures from PR 225
+  (`897af486`) now return errors, including overflowing offsets on 32-bit hosts.
 - The workspace no longer enables archmage's `testable_dispatch` for every
   member's normal dependency. Cargo unifies features, so it reached every build
   that depends on zenjpeg or zenyuv (published 0.8.4 included) and turned each
@@ -52,6 +159,20 @@ All notable changes to zenjpeg are documented here. Earlier history
   `encode_with_target`'s trial cache is now keyed by `f32` bits.
 
 ### Added
+- Restore the unreleased `encode_with_gainmap_metadata` policy entry point from the metadata integration stack, delegating filtering to zenmeta and assembly to the shared format-aware encoder.
+
+
+- Default-off `inventory` feature reusing PR 221 (`2c963974`) and the
+  zencodec-owned inventory contract. Disabled calls return typed unsupported;
+  enabled calls preserve typed input-limit causes and follow the configured decode
+  job, polling cancellation during
+  marker traversal and entropy counting. No zenmeta types enter codec signatures.
+- Default-off `extended-metadata` inspection and validated ICC, extended-XMP and
+  Photoshop reassembly from PR 225 (`897af486`). The implementation is excluded
+  when disabled. JPEG-specific framing and decoder-consumption rules stay here.
+- Temporary pinned zencodec review dependencies for metadata integration;
+  replace with released versions before publishing. The existing queued API
+  breaks relative to crates.io 0.8.4 remain listed separately.
 
 - `__zensim-research` and the recovered `zq_rd_probe` example bind the existing
   Zq loop to complete Rust candidate scoring/current attribution, with explicit

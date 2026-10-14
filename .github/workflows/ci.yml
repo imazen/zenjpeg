@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, review/zenmeta-integration]
   pull_request:
     branches: [main]
 
@@ -19,6 +20,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CI: true
+  CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
 
 jobs:
   test:
@@ -31,7 +33,6 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-          - macos-26-intel
           - windows-latest
           - windows-11-arm
     steps:
@@ -72,11 +73,30 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Prefetch metadata corpora before parallel tests
+        run: cargo run -p zenjpeg --example metadata_corpus_prefetch
+
       - name: Test (defaults)
         run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite" --lib --tests
+      - name: Shared contracts without inventory
+        run: cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+
+
+      - name: Install lossless metadata oracles
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libjpeg-turbo-progs libimage-exiftool-perl
+
+      - name: Check lossless pixels and secondary metadata with independent readers
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ZENJPEG_ORACLE_TOOLS: "1"
+        run: cargo test -p zenjpeg --release --features ultrahdr --test lossless_oracle -- --test-threads=1
+
+      - name: Inventory disabled through configured jobs
+        run: cargo test -p zenjpeg --release --features zencodec --test inventory_feature
 
       - name: Test (no defaults, minimal)
         run: cargo test -p zenjpeg --release --no-default-features --lib --tests
@@ -129,18 +149,14 @@ jobs:
         with:
           key: cross-i686
 
+      - name: Prefetch metadata corpora before parallel tests
+        run: cargo run -p zenjpeg --example metadata_corpus_prefetch
+
       - name: Test (i686)
-        # Skip two tests that require sparse-cloning the full image-rs/image
-        # repo. codec-corpus bundles its own test corpora (so zune/fuzz tests
-        # work) but image-rs/tests/images is fetched from the separate
-        # image-rs/image repo, which the cross container's constrained network
-        # times out on. Unrelated to 32-bit correctness.
-        run: |
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests -- \
-            --skip codec_corpus_conformance::test_image_rs_general \
-            --skip codec_corpus_conformance::test_image_rs_progressive
-        env:
-          CODEC_CORPUS_CACHE: /tmp/codec-corpus
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
+
+      - name: Metadata and inventory (i686)
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata,metadata-rewrite --test inventory_feature --test extended_metadata --test fuzz_regression --test metadata_rewrite
 
   wasm32:
     name: Build (wasm32-wasip1)
@@ -237,7 +253,7 @@ jobs:
               echo "choco attempt $i failed; retrying in 20s" && sleep 20
             done
             test -x "/c/libjpeg-turbo64/bin/djpeg.exe" || { echo "::error::libjpeg-turbo install failed (djpeg missing)"; exit 1; }
-            echo "C:\\libjpeg-turbo64\\bin" >> "$GITHUB_PATH"
+            printf '%s\n' 'C:\libjpeg-turbo64\bin' >> "$GITHUB_PATH"
           fi
           cmake --version
           djpeg -version || djpeg --version || echo "djpeg not in PATH yet (will be available after PATH update)"

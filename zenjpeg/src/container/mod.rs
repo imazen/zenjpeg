@@ -35,6 +35,7 @@
 //! `benchmarks/container_scan_2026-04-20.{csv,md}`.
 
 pub mod marker;
+pub mod metadata;
 pub mod mpf;
 pub mod probe;
 pub mod types;
@@ -53,3 +54,10 @@ pub use xmp::{
     generate_primary_xmp_with_items, generate_xmp, generate_xmp_with_items, parse_xmp,
     parse_xmp_full,
 };
+
+mod gainmap;
+pub(crate) use gainmap::iso21496_from_gainmap_jpeg;
+#[cfg(feature = "ultrahdr")]
+pub(crate) use gainmap::iso21496_record;
+
+pub(crate) mod chunks;
