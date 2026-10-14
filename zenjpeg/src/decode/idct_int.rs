@@ -1312,16 +1312,6 @@ mod avx2 {
     ) -> bool {
         assert!(out_vector.len() >= stride * 7 + 8);
 
-        let pw_e = islow_w16_even_consts(_token);
-        let pw_z34 = islow_w16_z34_consts(_token);
-        let pw_01 = islow_w16_tmp01_consts(_token);
-        let pw_32 = islow_w16_tmp32_consts(_token);
-        // lane0: +1 x8 ; lane1: -1 x8 — vpsignw source for [in0 | -in4].
-        let pw_neg = _mm256_set_epi16(-1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1);
-        let descale1 = _mm256_set1_epi32(1 << 10);
-        let descale2 = _mm256_set1_epi32(1 << 17);
-        let zero = _mm256_setzero_si256();
-
         // Load + dequantize: ymm row pairs [r0|r1], [r2|r3], [r4|r5], [r6|r7]
         // (pmullw low-16 product = the asm's ismtl multiply).
         macro_rules! load_pair {
@@ -1350,6 +1340,35 @@ mod avx2 {
         let r23 = load_pair!(16, 24);
         let r45 = load_pair!(32, 40);
         let r67 = load_pair!(48, 56);
+        islow_w16_core::<true>(_token, r01, r23, r45, r67, out_vector, stride);
+        true
+    }
+
+    /// Shared two-pass islow core over loaded row-pair registers
+    /// `([r0|r1], [r2|r3], [r4|r5], [r6|r7])` — dodct + transpose + dodct +
+    /// transpose + store. `CLAMPED` selects the +128/saturate-to-[0,255]
+    /// output stage (turbo decode) vs the raw unclamped i16 store (f32
+    /// output targets).
+    #[rite]
+    #[allow(clippy::too_many_arguments)]
+    fn islow_w16_core<const CLAMPED: bool>(
+        _token: archmage::X64V3Token,
+        r01: __m256i,
+        r23: __m256i,
+        r45: __m256i,
+        r67: __m256i,
+        out_vector: &mut [i16],
+        stride: usize,
+    ) {
+        let pw_e = islow_w16_even_consts(_token);
+        let pw_z34 = islow_w16_z34_consts(_token);
+        let pw_01 = islow_w16_tmp01_consts(_token);
+        let pw_32 = islow_w16_tmp32_consts(_token);
+        // lane0: +1 x8 ; lane1: -1 x8 — vpsignw source for [in0 | -in4].
+        let pw_neg = _mm256_set_epi16(-1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1);
+        let descale1 = _mm256_set1_epi32(1 << 10);
+        let descale2 = _mm256_set1_epi32(1 << 17);
+        let zero = _mm256_setzero_si256();
 
         // Rearrange to (in0_4, in3_1, in2_6, in7_5)
         let in04 = _mm256_permute2x128_si256::<0x20>(r01, r45);
@@ -1461,17 +1480,20 @@ mod avx2 {
         islow_w16_transpose(_token, &mut d01, &mut d32, &mut d45, &mut d76);
         // -> (r0_4, r1_5, r2_6, r3_7)
 
-        // Level shift + clamp to [0, 255]: scalar computes
-        // (descale + 128).clamp(0,255); adds_epi16 saturating add keeps that
-        // identical across the i16 edge cases.
         let v128 = _mm256_set1_epi16(128);
         let v0 = _mm256_setzero_si256();
         let v255 = _mm256_set1_epi16(255);
         let mut pos = 0usize;
         macro_rules! store_pair {
             ($v:expr) => {{
-                let shifted =
-                    _mm256_min_epi16(_mm256_max_epi16(_mm256_adds_epi16($v, v128), v0), v255);
+                let shifted = if CLAMPED {
+                    // Level shift + clamp to [0, 255]: scalar computes
+                    // (descale + 128).clamp(0,255); adds_epi16 saturating add
+                    // keeps that identical across the i16 edge cases.
+                    _mm256_min_epi16(_mm256_max_epi16(_mm256_adds_epi16($v, v128), v0), v255)
+                } else {
+                    $v
+                };
                 safe_simd::_mm_storeu_si128(
                     <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
                     _mm256_castsi256_si128(shifted),
@@ -1490,7 +1512,64 @@ mod avx2 {
         store_pair!(d45); // rows 2, 6
         store_pair!(d76); // rows 3, 7
         let _ = pos;
-        true
+    }
+
+    /// Row-pair loader for [`islow_w16_core`] from dequantized i32 input —
+    /// truncates each i32 to its low 16 bits (exactly `vpmullw`'s semantics
+    /// on the C-side `coef * quant` product) and packs two rows per ymm.
+    #[rite]
+    #[inline(always)]
+    fn islow_w16_wrap_pair(_token: archmage::X64V3Token, lo: &[i32; 8], hi: &[i32; 8]) -> __m256i {
+        let mask = _mm256_set1_epi32(0xffff);
+        let a = _mm256_and_si256(safe_simd::_mm256_loadu_si256(lo), mask);
+        let b = _mm256_and_si256(safe_simd::_mm256_loadu_si256(hi), mask);
+        // packus saturates i32->u16; masked values are already 0..=0xffff
+        // so it reduces to a wrap-truncate. Result lanes [a0-3, b0-3 | a4-7,
+        // b4-7]; permute qwords to [lo row | hi row].
+        let packed = _mm256_packus_epi32(a, b);
+        _mm256_permute4x64_epi64(packed, 0b11_01_10_00)
+    }
+
+    /// libjpeg-turbo i16 islow for **dequantized** i32 input (the buffered/
+    /// progressive path's `dequantize_*` output). Truncates to the i16
+    /// domain exactly as `vpmullw` does, then runs the identical kernel —
+    /// bit-identical to mozjpeg's `jsimd_idct_islow_avx2` fed the same
+    /// dequantized coefficients. `clamped` picks the [0,255]+128 decode
+    /// output vs raw unclamped values (f32 targets).
+    #[arcane]
+    pub(crate) fn idct_int_libjpeg_avx2_w16_d32(
+        _token: archmage::X64V3Token,
+        in_vector: &[i32; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+        clamped: bool,
+    ) {
+        assert!(out_vector.len() >= stride * 7 + 8);
+        let r01 = islow_w16_wrap_pair(
+            _token,
+            in_vector[0..8].try_into().unwrap(),
+            in_vector[8..16].try_into().unwrap(),
+        );
+        let r23 = islow_w16_wrap_pair(
+            _token,
+            in_vector[16..24].try_into().unwrap(),
+            in_vector[24..32].try_into().unwrap(),
+        );
+        let r45 = islow_w16_wrap_pair(
+            _token,
+            in_vector[32..40].try_into().unwrap(),
+            in_vector[40..48].try_into().unwrap(),
+        );
+        let r67 = islow_w16_wrap_pair(
+            _token,
+            in_vector[48..56].try_into().unwrap(),
+            in_vector[56..64].try_into().unwrap(),
+        );
+        if clamped {
+            islow_w16_core::<true>(_token, r01, r23, r45, r67, out_vector, stride);
+        } else {
+            islow_w16_core::<false>(_token, r01, r23, r45, r67, out_vector, stride);
+        }
     }
 }
 
@@ -1807,8 +1886,19 @@ pub fn idct_int_tiered_libjpeg(
     coeff_count: u8,
 ) {
     if coeff_count <= 1 {
+        // On x86+Libjpeg the streaming kernels use the i16/pmaddwd IDCT
+        // (mozjpeg-NASM-faithful); mirror its DC wrap here for parity.
+        #[cfg(target_arch = "x86_64")]
+        if archmage::X64V3Token::summon().is_some() {
+            return idct_int_dc_only_w16(coeffs[0], output, stride);
+        }
         idct_int_dc_only(coeffs[0], output, stride);
     } else {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = archmage::X64V3Token::summon() {
+            avx2::idct_int_libjpeg_avx2_w16_d32(token, coeffs, output, stride, true);
+            return;
+        }
         idct_int_libjpeg_auto(coeffs, output, stride);
     }
 }
@@ -2361,6 +2451,11 @@ pub fn idct_int_tiered_libjpeg_unclamped(
     if coeff_count <= 1 {
         idct_int_dc_only_unclamped(coeffs[0], output, stride);
     } else {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = archmage::X64V3Token::summon() {
+            avx2::idct_int_libjpeg_avx2_w16_d32(token, coeffs, output, stride, false);
+            return;
+        }
         idct_int_libjpeg_auto_unclamped(coeffs, output, stride);
     }
 }
@@ -2663,28 +2758,31 @@ mod tests {
     /// max-category coefficients). The i32 Jpegli IDCT wraps at these magnitudes.
     #[test]
     fn test_libjpeg_idct_large_coefficients() {
-        // Coefficients that exceed i16 range — can occur at low quality (Q50 and below)
-        // where quant values are large. With i64 intermediates these produce valid output.
+        // In-domain first: tiered and scalar must agree exactly.
+        let mut coeffs = [0i32; 64];
+        coeffs[0] = 4096;
+        coeffs[1] = -2048;
+        let mut output = [0i16; 64];
+        idct_int_tiered_libjpeg(&mut coeffs, &mut output, 8, 2);
+        let mut coeffs2 = [0i32; 64];
+        coeffs2[0] = 4096;
+        coeffs2[1] = -2048;
+        let mut output2 = [0i16; 64];
+        idct_int_libjpeg(&mut coeffs2, &mut output2, 8);
+        assert_eq!(
+            output, output2,
+            "in-domain: tiered and direct libjpeg IDCT must be identical"
+        );
+
+        // Out-of-domain: the tiered path reproduces mozjpeg's i16 NASM kernel
+        // (wrap/saturation), which intentionally differs from the scalar i64
+        // kernel — the same divergence libjpeg-turbo itself has between its
+        // SIMD and C builds. Only output validity is asserted here.
         let mut coeffs = [0i32; 64];
         coeffs[0] = 40000; // DC
         coeffs[1] = -35000; // AC[0,1]
-
         let mut output = [0i16; 64];
         idct_int_tiered_libjpeg(&mut coeffs, &mut output, 8, 2);
-
-        // Direct call should produce identical results (no truncation step)
-        let mut coeffs2 = [0i32; 64];
-        coeffs2[0] = 40000;
-        coeffs2[1] = -35000;
-        let mut output2 = [0i16; 64];
-        idct_int_libjpeg(&mut coeffs2, &mut output2, 8);
-
-        assert_eq!(
-            output, output2,
-            "tiered and direct libjpeg IDCT should produce identical results"
-        );
-
-        // All pixel values should be in valid range [0, 255]
         for &v in &output {
             assert!(
                 (0..=255).contains(&v),

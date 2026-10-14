@@ -308,6 +308,8 @@ impl<'a> JpegParser<'a> {
                 let mut ext_cr_a = vec![0i16; ext_size];
                 let mut ext_cr_b = vec![0i16; ext_size];
 
+                let mut cs_cb: Vec<i16> = vec![0i16; c_strip_width + 2];
+                let mut cs_cr: Vec<i16> = vec![0i16; c_strip_width + 2];
                 let (mut cb_up, mut cr_up) = if needs_full_upsample {
                     let upsample_out_height = ext_height * v_ratio;
                     let upsample_out_size = upsample_out_height * y_strip_width;
@@ -515,38 +517,70 @@ impl<'a> JpegParser<'a> {
                             );
                         }
                     } else {
-                        // Upsample extended strip → reusable upsample buffers
-                        let upsample_out_height = ext_height * v_ratio;
-                        upsample_fn(
-                            &ext_cb_a,
-                            c_strip_width,
-                            ext_height,
-                            &mut cb_up,
-                            y_strip_width,
-                            upsample_out_height,
-                        );
-                        upsample_fn(
-                            &ext_cr_a,
-                            c_strip_width,
-                            ext_height,
-                            &mut cr_up,
-                            y_strip_width,
-                            upsample_out_height,
-                        );
+                        // Fused h2v2: shared colsums + fused upsample→RGB rows
+                        // (Rgb-only here, x86-64-v3). The batch buffer is
+                        // addressed MCU-row-relative, so pass y_start=0 and a
+                        // slice offset to this row's batch region.
+                        #[cfg(target_arch = "x86_64")]
+                        let fused_h2v2 = h_ratio == 2
+                            && v_ratio == 2
+                            && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+                            && <archmage::X64V3Token as archmage::SimdToken>::summon().is_some();
+                        #[cfg(not(target_arch = "x86_64"))]
+                        let fused_h2v2 = false;
 
-                        for row in 0..y_rows_this_mcu {
-                            let strip_offset = row * y_strip_width;
-                            let up_row = v_ratio + row;
-                            let chroma_offset = up_row * y_strip_width;
-                            let rgb_offset = local_rgb_offset + row * rgb_row_stride;
-
-                            ycbcr_planes_i16_to_rgb_u8(
-                                &y_strip[strip_offset..strip_offset + y_cols_this_image],
-                                &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
-                                &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
-                                &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                        if fused_h2v2 {
+                            #[cfg(target_arch = "x86_64")]
+                            super::super::baseline_streaming::output_fancy_strip_fused(
+                                <archmage::X64V3Token as archmage::SimdToken>::summon().unwrap(),
+                                &ext_cb_a,
+                                &ext_cr_a,
+                                c_strip_width,
+                                c_strip_height,
+                                &y_strip,
+                                y_strip_width,
+                                &mut rgb_batch[local_rgb_offset..],
+                                width,
+                                0,
+                                y_rows_this_mcu,
                                 self.idct_method == IdctMethod::Libjpeg,
+                                &mut cs_cb,
+                                &mut cs_cr,
                             );
+                        } else {
+                            // Upsample extended strip → reusable upsample buffers
+                            let upsample_out_height = ext_height * v_ratio;
+                            upsample_fn(
+                                &ext_cb_a,
+                                c_strip_width,
+                                ext_height,
+                                &mut cb_up,
+                                y_strip_width,
+                                upsample_out_height,
+                            );
+                            upsample_fn(
+                                &ext_cr_a,
+                                c_strip_width,
+                                ext_height,
+                                &mut cr_up,
+                                y_strip_width,
+                                upsample_out_height,
+                            );
+
+                            for row in 0..y_rows_this_mcu {
+                                let strip_offset = row * y_strip_width;
+                                let up_row = v_ratio + row;
+                                let chroma_offset = up_row * y_strip_width;
+                                let rgb_offset = local_rgb_offset + row * rgb_row_stride;
+
+                                ycbcr_planes_i16_to_rgb_u8(
+                                    &y_strip[strip_offset..strip_offset + y_cols_this_image],
+                                    &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
+                                    &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
+                                    &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                                    self.idct_method == IdctMethod::Libjpeg,
+                                );
+                            }
                         }
                     }
 

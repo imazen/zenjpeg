@@ -746,6 +746,12 @@ impl<'a> JpegParser<'a> {
             Vec::new()
         };
 
+        // Colsum scratch for the fused h2v2 path (padded layout: w + 2 taps).
+        let mut cs_cb: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, c_strip_width + 2, "colsum cb")?;
+        let mut cs_cr: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, c_strip_width + 2, "colsum cr")?;
+
         // One MCU row of Y → bounded by the row width × strip height → infallible.
         let mut y_strip: Vec<i16> =
             try_alloc_maybeuninit_pref(self.alloc_pref, false, y_strip_size, "Y strip buffer")?;
@@ -968,51 +974,85 @@ impl<'a> JpegParser<'a> {
                 // Upsample extended strip → upsampled output buffer
                 fixup_h_padding(&mut ext_cb_a);
                 fixup_h_padding(&mut ext_cr_a);
-                upsample_fn(
-                    &ext_cb_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cb_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
-                upsample_fn(
-                    &ext_cr_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cr_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
+
+                // Fused h2v2: shared colsums + fused upsample→RGB rows never
+                // materialize the upsampled chroma planes (same math the
+                // streaming path uses; Rgb-only, x86-64-v3).
+                #[cfg(target_arch = "x86_64")]
+                let fused_h2v2 = h_ratio == 2
+                    && v_ratio == 2
+                    && dst_kind == DstKind::Rgb
+                    && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+                    && <archmage::X64V3Token as archmage::SimdToken>::summon().is_some();
+                #[cfg(not(target_arch = "x86_64"))]
+                let fused_h2v2 = false;
 
                 let dst_bytes = dst.as_bytes_mut();
-                for row in 0..y_rows_this_mcu {
-                    let strip_offset = row * y_strip_width;
-                    let up_row = v_ratio + row;
-                    let chroma_offset = up_row * y_strip_width;
-                    let dst_offset = (y_start + row) * row_bytes;
-                    let n = y_cols_this_image;
+                if fused_h2v2 {
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        super::baseline_streaming::output_fancy_strip_fused(
+                            <archmage::X64V3Token as archmage::SimdToken>::summon().unwrap(),
+                            &ext_cb_a,
+                            &ext_cr_a,
+                            c_strip_width,
+                            c_strip_height,
+                            &y_strip,
+                            y_strip_width,
+                            dst_bytes,
+                            width,
+                            y_start,
+                            y_rows_this_mcu,
+                            self.idct_method == super::super::IdctMethod::Libjpeg,
+                            &mut cs_cb,
+                            &mut cs_cr,
+                        );
+                    }
+                } else {
+                    upsample_fn(
+                        &ext_cb_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cb_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                    upsample_fn(
+                        &ext_cr_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cr_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                    for row in 0..y_rows_this_mcu {
+                        let strip_offset = row * y_strip_width;
+                        let up_row = v_ratio + row;
+                        let chroma_offset = up_row * y_strip_width;
+                        let dst_offset = (y_start + row) * row_bytes;
+                        let n = y_cols_this_image;
 
-                    match dst_kind {
-                        DstKind::Rgb => {
-                            ycbcr_planes_i16_to_rgb_u8(
-                                &y_strip[strip_offset..strip_offset + n],
-                                &cb_up[chroma_offset..chroma_offset + n],
-                                &cr_up[chroma_offset..chroma_offset + n],
-                                &mut dst_bytes[dst_offset..dst_offset + n * 3],
-                                self.idct_method == super::super::IdctMethod::Libjpeg,
-                            );
-                        }
-                        DstKind::Rgba | DstKind::Bgra => {
-                            let swap_rb = dst_kind == DstKind::Bgra;
-                            crate::color::ycbcr_planes_i16_to_xrgba_u8(
-                                &y_strip[strip_offset..strip_offset + n],
-                                &cb_up[chroma_offset..chroma_offset + n],
-                                &cr_up[chroma_offset..chroma_offset + n],
-                                &mut dst_bytes[dst_offset..dst_offset + n * 4],
-                                swap_rb,
-                                self.idct_method == super::super::IdctMethod::Libjpeg,
-                            );
+                        match dst_kind {
+                            DstKind::Rgb => {
+                                ycbcr_planes_i16_to_rgb_u8(
+                                    &y_strip[strip_offset..strip_offset + n],
+                                    &cb_up[chroma_offset..chroma_offset + n],
+                                    &cr_up[chroma_offset..chroma_offset + n],
+                                    &mut dst_bytes[dst_offset..dst_offset + n * 3],
+                                    self.idct_method == super::super::IdctMethod::Libjpeg,
+                                );
+                            }
+                            DstKind::Rgba | DstKind::Bgra => {
+                                let swap_rb = dst_kind == DstKind::Bgra;
+                                crate::color::ycbcr_planes_i16_to_xrgba_u8(
+                                    &y_strip[strip_offset..strip_offset + n],
+                                    &cb_up[chroma_offset..chroma_offset + n],
+                                    &cr_up[chroma_offset..chroma_offset + n],
+                                    &mut dst_bytes[dst_offset..dst_offset + n * 4],
+                                    swap_rb,
+                                    self.idct_method == super::super::IdctMethod::Libjpeg,
+                                );
+                            }
                         }
                     }
                 }
