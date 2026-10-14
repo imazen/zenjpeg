@@ -5,6 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Dependency integration
+
+- Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
+
+
 ### Tests
 
 - Shared codec-testkit checks cover checked policy admission, inventory boundaries
