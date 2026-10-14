@@ -73,7 +73,7 @@ impl ItemSemantic {
 /// XMP. Each item describes a secondary image appended after the primary
 /// JPEG's EOI.
 ///
-/// The [`padding`](Self::padding) field is from Google's Dynamic Depth
+/// The [`padding`](Self::padding) field is from the Dynamic Depth specification
 /// Format extension and not present in canonical Ultra HDR.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]

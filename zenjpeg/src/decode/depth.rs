@@ -1180,7 +1180,7 @@ mod tests {
 
     #[test]
     fn gdepth_google_spec_example() {
-        // Based on Google's GDepth specification example
+        // Based on the GDepth specification example
         let depth_data = vec![0xFF, 0xD8, 0x00, 0xFF, 0xD9]; // Fake JPEG
         let b64 = base64_encode(&depth_data);
 
