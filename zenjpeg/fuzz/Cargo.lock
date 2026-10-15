@@ -430,7 +430,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=4c031d808087d055f65a3670e68812f8b654a244#4c031d808087d055f65a3670e68812f8b654a244"
+source = "git+https://github.com/imazen/zencodec?rev=7cc3d3ec6b41103ee8398c30b1582ebdbb6df914#7cc3d3ec6b41103ee8398c30b1582ebdbb6df914"
 dependencies = [
  "almost-enough",
  "enough",
@@ -483,7 +483,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=4c031d808087d055f65a3670e68812f8b654a244#4c031d808087d055f65a3670e68812f8b654a244"
+source = "git+https://github.com/imazen/zencodec?rev=7cc3d3ec6b41103ee8398c30b1582ebdbb6df914#7cc3d3ec6b41103ee8398c30b1582ebdbb6df914"
 dependencies = [
  "roxmltree",
  "zencodec",
