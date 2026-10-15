@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `zjpeg`: `--strip` applies on every pipeline, after the output is written (commit: added at landing). On the default lossless path (no lossy option; `--orient` defaults to auto) and on restructure, every `--strip` value was ignored: `--strip exif` wrote the input back byte-identical, EXIF included. On the re-encode path, `--strip gainmaps` wrote the EXIF APP1 header twice (ExifTool: "Malformed APP1 EXIF segment"), left the gain-map XMP naming the removed map, and failed on an ICC profile or XMP larger than one segment. Stripping gain maps removes the MPF index, the ISO 21496-1 records, the images after the primary and an XMP packet that declares the `hdrgm` namespace (whole: there is no XMP editor; a note says so), and refuses when other data follows the primary.
+
 - UltraHDR encode, standard-range base (commit: added at landing):
   - an XYB base takes sRGB pixels and no caller ICC profile: XYB writes its
     own profile, and a P3 or BT.2020 base (or a caller profile) got a second,

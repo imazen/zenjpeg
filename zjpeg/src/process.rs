@@ -175,6 +175,30 @@ fn process_inner(
     }
 }
 
+/// What `--strip` (and `--apply-icc`, which replaces the profile) removes.
+fn strip_mask(args: &ProcessArgs) -> crate::strip::StripMask {
+    let (exif, icc, xmp, gain_maps) = args.strip_mask();
+    crate::strip::StripMask {
+        exif,
+        icc: icc || args.apply_icc.is_some(),
+        xmp,
+        gain_maps,
+    }
+}
+
+/// Apply `--strip` to a pipeline's output, the same way on every pipeline.
+fn apply_strip(output: Vec<u8>, mask: crate::strip::StripMask, path: &Path) -> Result<Vec<u8>> {
+    if mask.is_empty() {
+        return Ok(output);
+    }
+    let (stripped, notes) =
+        crate::strip::strip(&output, mask).with_context(|| format!("'{}'", path.display()))?;
+    for note in notes {
+        eprintln!("{}: {note}", path.display());
+    }
+    Ok(stripped)
+}
+
 // ============================================================================
 // Pipeline classification
 // ============================================================================
@@ -264,6 +288,7 @@ fn run_lossless(
         lossless::transform(data, &config, enough::Unstoppable)
             .map_err(|e| anyhow::anyhow!("transform failed: {e}"))?
     };
+    let output = apply_strip(output, strip_mask(args), path)?;
 
     let output_size = output.len() as u64;
     let input_size = data.len() as u64;
@@ -330,6 +355,7 @@ fn run_restructure(
 
     let output = lossless::restructure(data, &config, enough::Unstoppable)
         .map_err(|e| anyhow::anyhow!("restructure failed: {e}"))?;
+    let output = apply_strip(output, strip_mask(args), path)?;
 
     let output_size = output.len() as u64;
     let input_size = data.len() as u64;
@@ -612,6 +638,12 @@ fn run_lossy(
         (jpeg, size)
     };
 
+    let output_jpeg = apply_strip(output_jpeg, strip_mask(args), path)?;
+    let output_size = if strip_mask(args).is_empty() {
+        output_size
+    } else {
+        output_jpeg.len() as u64
+    };
     let input_size = data.len() as u64;
 
     if args.skip_if_larger && output_size >= input_size {
@@ -1160,18 +1192,9 @@ fn build_encoder_config(
 
         if strip_exif && strip_icc && strip_xmp && strip_gainmaps {
             // Strip everything — no segments added.
-        } else if strip_gainmaps {
-            // Keep non-MPF metadata but rebuild from scratch to drop MPF/gain-map segments.
-            if !strip_icc && let Some(icc) = extras.icc_profile() {
-                config = config.add_segment(0xE2, build_icc_segment(icc));
-            }
-            if !strip_exif && let Some(exif) = extras.exif() {
-                config = config.add_segment(0xE1, build_exif_segment(exif));
-            }
-            if !strip_xmp && let Some(xmp) = extras.xmp() {
-                config = config.add_segment(0xE1, build_xmp_segment(xmp));
-            }
-        } else if strip_exif || strip_icc || strip_xmp {
+        } else if strip_exif || strip_icc || strip_xmp || strip_gainmaps {
+            // The gain map goes with the output pass (`apply_strip`), which
+            // also removes its MPF index, ISO 21496-1 records and XMP.
             let segments = extras.to_encoder_segments_filtered(|seg| {
                 if strip_exif && seg.segment_type == SegmentType::Exif {
                     return false;
@@ -1194,32 +1217,6 @@ fn build_encoder_config(
     }
 
     config
-}
-
-fn build_icc_segment(icc: &[u8]) -> Vec<u8> {
-    let header = b"ICC_PROFILE\0";
-    let mut seg = Vec::with_capacity(header.len() + 2 + icc.len());
-    seg.extend_from_slice(header);
-    seg.push(1);
-    seg.push(1);
-    seg.extend_from_slice(icc);
-    seg
-}
-
-fn build_exif_segment(exif: &[u8]) -> Vec<u8> {
-    let header = b"Exif\0\0";
-    let mut seg = Vec::with_capacity(header.len() + exif.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(exif);
-    seg
-}
-
-fn build_xmp_segment(xmp: &str) -> Vec<u8> {
-    let header = b"http://ns.adobe.com/xap/1.0/\0";
-    let mut seg = Vec::with_capacity(header.len() + xmp.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(xmp.as_bytes());
-    seg
 }
 
 // ============================================================================

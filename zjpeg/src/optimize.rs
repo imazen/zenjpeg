@@ -191,6 +191,21 @@ fn optimize_inner(
             .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
     };
 
+    let mask = crate::strip::StripMask {
+        exif: args.strip_all || args.strip_exif,
+        icc: args.strip_all || args.strip_icc || args.apply_icc.is_some(),
+        xmp: args.strip_all || args.strip_xmp,
+        gain_maps: args.strip_all || args.strip_gainmaps,
+    };
+    let output_jpeg = if mask.is_empty() {
+        output_jpeg
+    } else {
+        let (stripped, notes) = crate::strip::strip(&output_jpeg, mask)?;
+        for note in notes {
+            eprintln!("{}: {note}", path.display());
+        }
+        stripped
+    };
     let output_size = output_jpeg.len() as u64;
     let input_size = data.len() as u64;
 
@@ -345,27 +360,14 @@ fn build_encoder_config(
     if let Some(extras) = extras {
         if args.strip_all {
             // Strip everything — no segments, no individual metadata
-        } else if args.strip_gainmaps {
-            // Can't use segments API (it always includes gain maps).
-            // Fall back to individual metadata methods on the config.
-            if !args.strip_icc
-                && !strip_icc_for_apply
-                && let Some(icc) = extras.icc_profile()
-            {
-                config = config.add_segment(0xE2, build_icc_segment(icc));
-            }
-            if !args.strip_exif
-                && let Some(exif) = extras.exif()
-            {
-                config = config.add_segment(0xE1, build_exif_segment(exif));
-            }
-            if !args.strip_xmp
-                && let Some(xmp) = extras.xmp()
-            {
-                config = config.add_segment(0xE1, build_xmp_segment(xmp));
-            }
-        } else if args.strip_exif || args.strip_icc || args.strip_xmp || strip_icc_for_apply {
-            // Selective stripping — use filtered segments API (preserves gain maps)
+        } else if args.strip_exif
+            || args.strip_icc
+            || args.strip_xmp
+            || args.strip_gainmaps
+            || strip_icc_for_apply
+        {
+            // Selective stripping — filtered segments; the output pass removes
+            // gain maps (`crate::strip`).
             let strip_exif = args.strip_exif;
             let strip_icc = args.strip_icc || strip_icc_for_apply;
             let strip_xmp = args.strip_xmp;
@@ -392,35 +394,6 @@ fn build_encoder_config(
     }
 
     config
-}
-
-/// Build an APP2 ICC profile segment (with "ICC_PROFILE\0" header).
-fn build_icc_segment(icc: &[u8]) -> Vec<u8> {
-    let header = b"ICC_PROFILE\0";
-    let mut seg = Vec::with_capacity(header.len() + 2 + icc.len());
-    seg.extend_from_slice(header);
-    seg.push(1); // chunk number
-    seg.push(1); // total chunks
-    seg.extend_from_slice(icc);
-    seg
-}
-
-/// Build an APP1 EXIF segment (with "Exif\0\0" header).
-fn build_exif_segment(exif: &[u8]) -> Vec<u8> {
-    let header = b"Exif\0\0";
-    let mut seg = Vec::with_capacity(header.len() + exif.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(exif);
-    seg
-}
-
-/// Build an APP1 XMP segment (with XMP namespace header).
-fn build_xmp_segment(xmp: &str) -> Vec<u8> {
-    let header = b"http://ns.adobe.com/xap/1.0/\0";
-    let mut seg = Vec::with_capacity(header.len() + xmp.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(xmp.as_bytes());
-    seg
 }
 
 fn apply_deblock(
