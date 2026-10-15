@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)       297
 #   pub consts/statics                        320
 #   free functions                            373
-#   inherent methods                         1220
+#   inherent methods                         1221
 #   struct fields                             760
 #   enum variants                             506
 #   re-exports                                 18
@@ -32,7 +32,7 @@
 #   encode                         1480
 #   encoder                         134
 #   entropy                         100
-#   foundation                      351
+#   foundation                      352
 #   heuristics                        3
 #   huffman                         306
 #   layout                            3
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3399 lines)
+## items (3400 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -1497,6 +1497,7 @@ pub fn foundation::bitstream::BitWriter::fmt(&self, &mut core::fmt::Formatter<'_
 pub fn foundation::bitstream::BitWriter::into_bytes(self) -> alloc::vec::Vec<u8>
 pub fn foundation::bitstream::BitWriter::new() -> Self
 pub fn foundation::bitstream::BitWriter::position(&self) -> usize
+pub fn foundation::bitstream::BitWriter::take_buffer(&mut self) -> alloc::vec::Vec<u8>
 pub fn foundation::bitstream::BitWriter::with_capacity(usize) -> Self
 pub fn foundation::bitstream::BitWriter::with_initial_bits(u64, u8) -> Self
 pub fn foundation::bitstream::BitWriter::write_bits(&mut self, u32, u8)
