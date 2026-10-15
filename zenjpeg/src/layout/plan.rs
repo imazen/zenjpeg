@@ -35,6 +35,80 @@ pub(crate) struct Plan {
     pub final_h: u32,
     /// True when the whole pipeline is a no-op (no crop, no resize, no orient).
     pub is_identity: bool,
+    /// The source rectangle the resize reads (`x, y, w, h`, pre-orient
+    /// source coordinates; the whole frame when nothing crops).
+    pub source_rect: (u32, u32, u32, u32),
+    /// The resize output (pre-orient) dimensions.
+    pub resize_out: (u32, u32),
+    /// Whether the orientation swaps the axes.
+    pub swaps_axes: bool,
+}
+
+impl Plan {
+    /// The same geometry for a secondary image (an Ultra HDR gain map) of
+    /// `sec_w`×`sec_h` covering this plan's `src_w`×`src_h` frame: the source
+    /// rectangle (rounded outward) and the output size scale by the size
+    /// ratio, the orientation is the same. The resize filters the stored
+    /// values (`srgb()`), not linear light: a gain map holds encoded boosts,
+    /// not colours, and linearizing them as sRGB shifts the boost wherever the
+    /// map has detail.
+    pub(crate) fn for_secondary(
+        &self,
+        src_w: u32,
+        src_h: u32,
+        sec_w: u32,
+        sec_h: u32,
+        layout_cfg: &LayoutConfig,
+        format: PixelDescriptor,
+    ) -> Plan {
+        let scale_down = |v: u32, to: u32, from: u32| {
+            (u64::from(v) * u64::from(to) / u64::from(from.max(1))) as u32
+        };
+        let scale_up = |v: u32, to: u32, from: u32| {
+            u64::from(v)
+                .saturating_mul(u64::from(to))
+                .div_ceil(u64::from(from.max(1))) as u32
+        };
+        let scale_round = |v: u32, to: u32, from: u32| {
+            ((u64::from(v) * u64::from(to) + u64::from(from.max(1)) / 2) / u64::from(from.max(1)))
+                .max(1) as u32
+        };
+        let (x, y, w, h) = self.source_rect;
+        let x0 = scale_down(x, sec_w, src_w).min(sec_w.saturating_sub(1));
+        let y0 = scale_down(y, sec_h, src_h).min(sec_h.saturating_sub(1));
+        let x1 = scale_up(x + w, sec_w, src_w).clamp(x0 + 1, sec_w);
+        let y1 = scale_up(y + h, sec_h, src_h).clamp(y0 + 1, sec_h);
+        let out_w = scale_round(self.resize_out.0, sec_w, src_w);
+        let out_h = scale_round(self.resize_out.1, sec_h, src_h);
+        let whole = (x0, y0, x1 - x0, y1 - y0) == (0, 0, sec_w, sec_h);
+        let mut builder = ResizeConfig::builder(sec_w, sec_h, out_w, out_h)
+            .filter(layout_cfg.filter)
+            .format(format)
+            .srgb();
+        if !whole {
+            builder = builder.source_region(SourceRegion {
+                x: x0,
+                y: y0,
+                width: x1 - x0,
+                height: y1 - y0,
+            });
+        }
+        let (final_w, final_h) = if self.swaps_axes {
+            (out_h, out_w)
+        } else {
+            (out_w, out_h)
+        };
+        Plan {
+            resize: builder.build(),
+            orient: self.orient,
+            final_w,
+            final_h,
+            is_identity: self.is_identity && whole && (out_w, out_h) == (sec_w, sec_h),
+            source_rect: (x0, y0, x1 - x0, y1 - y0),
+            resize_out: (out_w, out_h),
+            swaps_axes: self.swaps_axes,
+        }
+    }
 }
 
 /// Build a concrete plan from the command list.
@@ -120,6 +194,9 @@ pub(crate) fn plan_layout(
         .filter(layout_cfg.filter)
         .format(PixelDescriptor::RGB8_SRGB)
         .linear();
+    let source_rect = source_region
+        .as_ref()
+        .map_or((0, 0, src_w, src_h), |r| (r.x, r.y, r.width, r.height));
     if let Some(region) = source_region {
         builder = builder.source_region(region);
     }
@@ -136,6 +213,9 @@ pub(crate) fn plan_layout(
         final_w,
         final_h,
         is_identity,
+        source_rect,
+        resize_out: (resize_out_w, resize_out_h),
+        swaps_axes: orient.swaps_axes(),
     }
 }
 
@@ -200,5 +280,75 @@ fn map_pixel(orient: Orientation, sx: u32, sy: u32, w: u32, h: u32) -> (u32, u32
         Orientation::Rotate270 => (sy, w - 1 - sx),
         Orientation::Transverse => (h - 1 - sy, w - 1 - sx),
         _ => (sx, sy),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::command::Rotation;
+
+    fn fit(w: u32, h: u32) -> Command {
+        Command::Fit {
+            mode: FitMode::Fit,
+            w,
+            h,
+        }
+    }
+
+    fn secondary(commands: &[Command], src: (u32, u32), sec: (u32, u32)) -> Plan {
+        let cfg = LayoutConfig::new(85.0_f32);
+        plan_layout(commands, src.0, src.1, &cfg).for_secondary(
+            src.0,
+            src.1,
+            sec.0,
+            sec.1,
+            &cfg,
+            PixelDescriptor::GRAY8_SRGB,
+        )
+    }
+
+    #[test]
+    fn secondary_size_follows_the_primary_resize() {
+        // 2048² → 512²: a 512² map becomes 128².
+        let p = secondary(&[fit(512, 512)], (2048, 2048), (512, 512));
+        assert_eq!((p.final_w, p.final_h), (128, 128));
+        // 1000x500 → 500x250: a 250x125 map becomes 125x63 (62.5 rounds up).
+        let p = secondary(&[fit(500, 250)], (1000, 500), (250, 125));
+        assert_eq!((p.final_w, p.final_h), (125, 63));
+        // Never below one pixel.
+        let p = secondary(&[fit(1, 1)], (1000, 1000), (2, 2));
+        assert!(p.final_w >= 1 && p.final_h >= 1);
+    }
+
+    #[test]
+    fn secondary_crop_scales_outward_and_orientation_follows() {
+        // Crop the right half of a 64x32 frame; a 16x8 map reads its right
+        // half too.
+        let crop = Command::Crop {
+            x: 32,
+            y: 0,
+            w: 32,
+            h: 32,
+        };
+        let p = secondary(&[crop], (64, 32), (16, 8));
+        assert_eq!(p.source_rect, (8, 0, 8, 8));
+        // A crop that does not fall on the map's grid widens to cover it.
+        let odd = Command::Crop {
+            x: 5,
+            y: 3,
+            w: 10,
+            h: 10,
+        };
+        let p = secondary(&[odd], (64, 32), (16, 8));
+        assert_eq!(p.source_rect, (1, 0, 3, 4));
+        // A rotation swaps the map's output axes as it does the primary's.
+        let p = secondary(
+            &[Command::Rotate(Rotation::Rotate90), fit(16, 32)],
+            (64, 32),
+            (16, 8),
+        );
+        assert!(p.swaps_axes);
+        assert_eq!((p.final_w, p.final_h), (4, 8));
     }
 }

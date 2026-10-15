@@ -7,6 +7,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `layout` lossy edits of Ultra HDR files carry the gain map correctly (commit: added at landing):
+  - the map takes the primary's plan, scaled to its own size: the crop, the
+    orientation (EXIF auto-orient included) and the resize; it was only
+    resized to the output's proportions, so a crop or rotation misregistered it;
+  - it is resampled in its stored values, not linear-light sRGB, which moved
+    the boost wherever the map has detail (a 2x downscale of a checkerboard
+    map shifted its mean from 110 to 143 code values);
+  - a one-component map stays one component, and it keeps its ISO 21496-1
+    record; the primary keeps its ISO version record and its GContainer
+    `Item:Length` names the new map (zenmeta's directory editor; a directory
+    that does not match one gain map is an error);
+  - the gain map is found as every reader finds it, so an ISO 21496-1-only
+    file keeps its map (it was dropped) and an unreadable map is an error
+    rather than a silent drop.
+
 - Decode builds again on every non-x86-64 target (aarch64, i686, wasm32): the
   4:4:0 strip output and the DC-only shortcut referred to the x86-64-only AVX2
   token. The 4:4:0 path now runs everywhere (its fused AVX2 row kernel stays

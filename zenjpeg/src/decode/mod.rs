@@ -2895,6 +2895,15 @@ impl DecodeConfig {
     }
 }
 
+/// The byte range of the gain-map JPEG that every gain-map reader finds in
+/// `data` ([`parser::JpegParser::extract_gainmap_early`]), or `None`.
+#[cfg(feature = "layout")]
+pub(crate) fn gain_map_range(data: &[u8]) -> Option<(usize, usize)> {
+    let mut parser = parser::JpegParser::new(data, u64::MAX, None).ok()?;
+    parser.read_header().ok()?;
+    parser.extract_gainmap_early(data).ok()?.0
+}
+
 /// Scan raw JPEG data for EXIF orientation tag without full parsing.
 ///
 /// Looks for APP1 segments containing EXIF data and reads the orientation tag.

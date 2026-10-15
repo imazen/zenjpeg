@@ -321,9 +321,6 @@ impl<'a> LayoutRequest<'a> {
             });
         }
 
-        // The pixel path still assembles its separately encoded gain map.
-        let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
-
         // Lossy path: build a concrete Plan from the command list.
         let plan = plan::plan_layout(&commands, src_w, src_h, self.config);
         let target_w = plan.final_w;
@@ -332,9 +329,24 @@ impl<'a> LayoutRequest<'a> {
         // EXIF orientation reset needed if the plan applies any orient.
         let has_orientation = !plan.orient.is_identity();
 
+        // The pixel path transforms the gain map with the primary's plan
+        // (crop, resize and orientation, scaled to the map) and points the
+        // primary's GContainer directory at the new map before encoding it.
+        let gain_map = match self.detect_and_extract_gainmap() {
+            Some(source_map) => {
+                let map = self.transform_gainmap_lossy(source_map, &plan, src_w, src_h, stop)?;
+                Some((source_map, map))
+            }
+            None => None,
+        };
+        let mut primary_info = info.clone();
+        if let Some((_, map)) = &gain_map {
+            primary_info.xmp = gainmap::with_gain_map_length(info.xmp.as_deref(), map.len())?;
+        }
+
         let primary = lossy::execute_lossy(
             self.jpeg_data,
-            &info,
+            &primary_info,
             self.config,
             &plan,
             has_orientation,
@@ -342,14 +354,8 @@ impl<'a> LayoutRequest<'a> {
             stop,
         )?;
 
-        // Transform gain map proportionally if present
-        let data = match gain_map_jpeg {
-            Some(gm_bytes) => match self
-                .transform_gainmap_lossy(&gm_bytes, src_w, src_h, target_w, target_h, stop)?
-            {
-                Some(gm_transformed) => gainmap::assemble_ultrahdr(primary, gm_transformed),
-                None => primary,
-            },
+        let data = match gain_map {
+            Some((_, map)) => gainmap::assemble_ultrahdr(self.jpeg_data, primary, map),
             None => primary,
         };
 
@@ -394,46 +400,42 @@ impl<'a> LayoutRequest<'a> {
         }
     }
 
-    /// Detect UltraHDR content and extract the gain map JPEG if present.
-    fn detect_and_extract_gainmap(&self, info: &crate::decode::JpegInfo) -> Option<Vec<u8>> {
-        let xmp = info.xmp.as_deref()?;
-        if !gainmap::is_ultrahdr_xmp(xmp) {
-            return None;
-        }
-        gainmap::find_secondary_jpeg(self.jpeg_data)
+    /// The gain-map JPEG every gain-map reader finds in the source (its MPF
+    /// gain map, signalled by `hdrgm` XMP or ISO 21496-1 in the primary or
+    /// by the map's own metadata), if any.
+    fn detect_and_extract_gainmap(&self) -> Option<&'a [u8]> {
+        let (start, end) = crate::decode::gain_map_range(self.jpeg_data)?;
+        self.jpeg_data.get(start..end)
     }
 
-    /// Transform the gain map through the lossy path with proportional dimensions.
+    /// Transform the gain map with the primary's `plan`, scaled to the map.
+    ///
+    /// An unreadable gain map is an error: the primary keeps its gain-map
+    /// signalling, so dropping the map would leave a file that names a map it
+    /// does not have.
     fn transform_gainmap_lossy(
         &self,
         gm_bytes: &[u8],
+        plan: &plan::Plan,
         primary_src_w: u32,
         primary_src_h: u32,
-        primary_dst_w: u32,
-        primary_dst_h: u32,
         stop: &dyn Stop,
-    ) -> Result<Option<Vec<u8>>> {
-        let decoder = DecodeConfig::new();
-        let gm_info = match decoder.read_info(gm_bytes) {
-            Ok(info) => info,
-            Err(_) => return Ok(None), // Corrupted gain map — skip silently
+    ) -> Result<Vec<u8>> {
+        let gm_info = DecodeConfig::new().read_info(gm_bytes)?;
+        let format = if gm_info.num_components == 1 {
+            zenresize::PixelDescriptor::GRAY8_SRGB
+        } else {
+            zenresize::PixelDescriptor::RGB8_SRGB
         };
-        let gm_src_w = gm_info.dimensions.width;
-        let gm_src_h = gm_info.dimensions.height;
-
-        let (gm_dst_w, gm_dst_h) = gainmap::compute_gainmap_target(
+        let gm_plan = plan.for_secondary(
             primary_src_w,
             primary_src_h,
-            primary_dst_w,
-            primary_dst_h,
-            gm_src_w,
-            gm_src_h,
+            gm_info.dimensions.width,
+            gm_info.dimensions.height,
+            self.config,
+            format,
         );
-
-        let gm_transformed =
-            lossy::resize_simple(gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, stop)?;
-
-        Ok(Some(gm_transformed))
+        lossy::transform_secondary(gm_bytes, &gm_info, self.config, &gm_plan, stop)
     }
 
     /// Resolve auto_orient commands that read from source EXIF.
