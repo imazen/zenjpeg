@@ -499,7 +499,7 @@ pub(super) fn decode_mcu_row(
                         let dst_offset = dst_y * y_strip_width + dst_x;
                         if coeff_count <= 1 {
                             let dc = state.coeffs[0] as i32 * quant[0] as i32;
-                            if inputs.turbo_color && inputs.idct_v3.is_some() {
+                            if inputs.w16_idct() {
                                 idct_int_dc_only_w16(dc, &mut y_strip[dst_offset..], y_strip_width);
                             } else {
                                 idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
@@ -522,7 +522,7 @@ pub(super) fn decode_mcu_row(
                         let strip = if *comp_idx == 1 { &mut *cb } else { &mut *cr };
                         if coeff_count <= 1 {
                             let dc = state.coeffs[0] as i32 * quant[0] as i32;
-                            if inputs.turbo_color && inputs.idct_v3.is_some() {
+                            if inputs.w16_idct() {
                                 idct_int_dc_only_w16(dc, &mut strip[dst_offset..], c_strip_width);
                             } else {
                                 idct_int_dc_only(dc, &mut strip[dst_offset..], c_strip_width);
@@ -743,7 +743,6 @@ pub(crate) fn output_fancy_strip_fused(
 /// `r` uses near = data row `r/2` (ext `1 + r/2`), far = ext `r/2` for the
 /// upper tap and ext `r/2 + 2` for the lower — matching
 /// `upsample_h1v2_i16_libjpeg_strided` on the extended strip.
-#[cfg(target_arch = "x86_64")]
 #[allow(clippy::too_many_arguments)]
 fn output_fancy_h1v2_strip(
     inputs: &LoopInputs<'_, '_>,
@@ -768,7 +767,12 @@ fn output_fancy_h1v2_strip(
 
     let w = c_strip_width;
     let cols = width.min(y_strip_width);
+    // The fused upsample+convert row kernel is AVX2; other targets
+    // upsample then convert through `output_mcu_row`.
+    #[cfg(target_arch = "x86_64")]
     let fused = inputs.idct_v3.is_some() && !inputs.is_rgb && !out_4bpp && !swap_rb;
+    #[cfg(not(target_arch = "x86_64"))]
+    let (fused, _) = (false, y_start);
 
     for r in 0..rows {
         let in_y = r / 2;
@@ -779,9 +783,10 @@ fn output_fancy_h1v2_strip(
         } else {
             ((in_y + 2) * w, 2i16)
         };
-        let y_off = r * y_strip_width;
-        let rgb_off = (y_start + r) * width * 3;
+        #[cfg(target_arch = "x86_64")]
         if fused {
+            let y_off = r * y_strip_width;
+            let rgb_off = (y_start + r) * width * 3;
             let token = inputs.idct_v3.unwrap();
             let (y_r, cb_n, cb_f, cr_n, cr_f, out) = (
                 &y_strip[y_off..y_off + cols],
@@ -800,7 +805,9 @@ fn output_fancy_h1v2_strip(
                     token, y_r, cb_n, cb_f, cr_n, cr_f, out, cols, bias,
                 );
             }
-        } else {
+            continue;
+        }
+        {
             upsample_h1v2_row_ext(
                 &cb[near_row..],
                 &cb[far_row..],
@@ -855,6 +862,23 @@ pub(super) struct LoopInputs<'a, 'b> {
     pub is_rgb: bool,
     /// libjpeg-turbo-exact YCbCr→RGB (IdctMethod::Libjpeg).
     pub turbo_color: bool,
+}
+
+impl LoopInputs<'_, '_> {
+    /// Whether full blocks go through the wrap-faithful 16-bit IDCT (x86-64
+    /// with AVX2, libjpeg-turbo colour): DC-only blocks must then take the
+    /// matching 16-bit shortcut, or the two paths disagree on corrupt input.
+    #[inline]
+    fn w16_idct(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            self.turbo_color && self.idct_v3.is_some()
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
 }
 
 /// Per-block IDCT for the streaming loops. `coeff_count > 1` is guaranteed
@@ -988,8 +1012,6 @@ pub(super) fn run_fancy_h2v2_loop(
                 #[cfg(target_arch = "x86_64")]
                 let can_fuse =
                     inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
-                #[cfg(not(target_arch = "x86_64"))]
-                let can_fuse = false;
                 #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
                 let mut used_fused = false;
                 #[cfg(target_arch = "x86_64")]
@@ -1130,8 +1152,7 @@ pub(super) fn run_fancy_h2v2_loop(
             #[cfg(target_arch = "x86_64")]
             let can_fuse =
                 inputs.idct_v3.is_some() && !inputs.is_rgb && !bufs.out_4bpp && !bufs.swap_rb;
-            #[cfg(not(target_arch = "x86_64"))]
-            let can_fuse = false;
+            #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
             let mut used_fused = false;
             #[cfg(target_arch = "x86_64")]
             if can_fuse {
@@ -1392,8 +1413,7 @@ pub(super) fn run_simple_loop(
                 && chroma_upsampling == ChromaUpsampling::Triangle
                 && geom.h_ratio == 2
                 && geom.v_ratio == 1;
-            #[cfg(not(target_arch = "x86_64"))]
-            let can_fuse = false;
+            #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
             let mut used_fused = false;
             #[cfg(target_arch = "x86_64")]
             if can_fuse {

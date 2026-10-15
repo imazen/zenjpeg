@@ -5,6 +5,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+
+- Decode builds again on every non-x86-64 target (aarch64, i686, wasm32): the
+  4:4:0 strip output and the DC-only shortcut referred to the x86-64-only AVX2
+  token. The 4:4:0 path now runs everywhere (its fused AVX2 row kernel stays
+  x86-64), and the 16-bit DC-only shortcut is taken exactly when the matching
+  16-bit full-block IDCT is. Lints for AVX2-only scratch are scoped to other
+  targets; the internal API snapshot records `quant::dequantize_natural_i32_into`.
+
 ### Dependency integration
 
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.

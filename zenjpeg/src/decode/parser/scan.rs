@@ -976,6 +976,7 @@ impl<'a> JpegParser<'a> {
                         }
                     } else {
                         let strip_out = &mut strip[dst_offset..];
+                        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
                         let mut handled = false;
                         #[cfg(target_arch = "x86_64")]
                         if let Some(token) = idct_v3 {

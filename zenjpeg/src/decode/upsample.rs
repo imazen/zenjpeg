@@ -1233,6 +1233,7 @@ fn upsample_h2v2_strip_avx2(
 /// Bit-exact with upsampling the full strip and skipping the first two
 /// output rows: identical near/far inputs and per-row biases.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
 pub(crate) fn upsample_h2v2_strip_ext(
     input: &[i16],
     in_width: usize,

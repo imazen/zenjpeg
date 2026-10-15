@@ -1747,6 +1747,7 @@ impl<'a> JpegParser<'a> {
 
                 // Helper closure: upsample extended chroma strip and color convert
                 // one MCU row to RGB output
+                #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
                 let upsample_and_output =
                     |mcu_row: usize,
                      y_strip: &[i16],

@@ -747,8 +747,10 @@ impl<'a> JpegParser<'a> {
         };
 
         // Colsum scratch for the fused h2v2 path (padded layout: w + 2 taps).
+        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables, unused_mut))]
         let mut cs_cb: Vec<i16> =
             try_alloc_maybeuninit_pref(self.alloc_pref, false, c_strip_width + 2, "colsum cb")?;
+        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables, unused_mut))]
         let mut cs_cr: Vec<i16> =
             try_alloc_maybeuninit_pref(self.alloc_pref, false, c_strip_width + 2, "colsum cr")?;
 

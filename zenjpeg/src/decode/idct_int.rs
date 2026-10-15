@@ -577,6 +577,7 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 // =============================================================================
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg_attr(target_arch = "x86", allow(unused_imports, dead_code))]
 mod avx2 {
     use super::*;
     use archmage::{arcane, rite};

@@ -308,7 +308,9 @@ impl<'a> JpegParser<'a> {
                 let mut ext_cr_a = vec![0i16; ext_size];
                 let mut ext_cr_b = vec![0i16; ext_size];
 
+                #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables, unused_mut))]
                 let mut cs_cb: Vec<i16> = vec![0i16; c_strip_width + 2];
+                #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables, unused_mut))]
                 let mut cs_cr: Vec<i16> = vec![0i16; c_strip_width + 2];
                 let (mut cb_up, mut cr_up) = if needs_full_upsample {
                     let upsample_out_height = ext_height * v_ratio;

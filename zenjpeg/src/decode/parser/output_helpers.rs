@@ -29,7 +29,12 @@ pub(super) fn idct_block_into(
         // (pmullw + psllw in i16), the Jpegli lane stays i32-exact.
         dequant_buf.fill(0);
         dequant_buf[0] = coeffs[0] as i32 * quant[0] as i32;
-        idct_fn(dequant_buf, &mut strip[dst_offset..], strip_width, coeff_count);
+        idct_fn(
+            dequant_buf,
+            &mut strip[dst_offset..],
+            strip_width,
+            coeff_count,
+        );
     } else {
         dequantize_unzigzag_i32_into_partial(coeffs, quant, dequant_buf, coeff_count);
         idct_fn(
