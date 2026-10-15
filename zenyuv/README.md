@@ -27,7 +27,7 @@ The `&[u8]` passed to each `YuvContext` encode method is interpreted as **R firs
 
 ## API
 
-`YuvContext` provides the byte-input conversion methods listed below. Every method returns `()` and **panics** (via `assert!` on buffer length) if any output plane is too small for the given dimensions -- see "Buffer sizes & return contract" below. There is no `Result`-returning variant.
+`YuvContext` provides the byte-input conversion methods listed below. Every method returns `()` and **panics** (via `assert!` on buffer length) if any output plane is too small for the given dimensions -- see "Buffer sizes & return contract" below. Each has a `try_` form (`try_encode_420_u8`, ...) that returns `Result<(), YuvError>` instead: it refuses short buffers, sizes that overflow, and images over a pixel limit (`DEFAULT_MAX_PIXELS`, 120 MP; `YuvContext::with_max_pixels` changes it), and allocates its scratch fallibly.
 
 ### Encode methods (RGB -> YCbCr)
 
@@ -69,7 +69,7 @@ For an image of `width × height`, with `cw = ceil(width/2)` and `ch = ceil(heig
 | `cb` | `width * height` | `cw * ch` |
 | `cr` | `width * height` | `cw * ch` |
 
-- Methods take `width` and `height` explicitly; buffer lengths are validated with `assert!(buf.len() >= required)`. **Undersized buffers panic; they do not return an error.** Over-sized buffers are fine (only the leading `required` bytes are written).
+- Methods take `width` and `height` explicitly; buffer lengths are validated with `assert!(buf.len() >= required)`. **Undersized buffers panic in these methods; the `try_` forms return `YuvError::BufferTooSmall`.** Over-sized buffers are fine (only the leading `required` bytes are written).
 - **Odd dimensions round up** for chroma: a 5-wide image has `cw = 3` chroma columns; a 5-tall image has `ch = 3` chroma rows. Size your `cb`/`cr` planes with `ceil`, not integer-truncating division, or you will panic on odd-dimension images.
 - These are not streaming APIs -- one call converts the whole image (or the whole strip) you pass in.
 

@@ -42,6 +42,7 @@ mod decode;
 mod decode_generic;
 mod encode;
 mod encode_generic;
+mod error;
 pub mod sharp;
 pub(crate) mod types;
 
@@ -58,7 +59,8 @@ mod wasm_encode;
 
 // ── Public re-exports ──────────────────────────────────────────────────────
 
-pub use context::YuvContext;
+pub use context::{DEFAULT_MAX_PIXELS, YuvContext};
+pub use error::YuvError;
 pub use sharp::SharpYuvConfig;
 pub use types::{Matrix, Range};
 
