@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Progressive AC-first scans report an invalid Huffman code and a run past Se as every other scan path does (#224). An invalid code fails the decode at Strict and Balanced (lenient levels take it as EOB with `InvalidHuffmanCode` and keep decoding); it was taken as an EOB with no error or warning at every level, and the rest of the scan was skipped as stray bytes. A run past Se now consumes its value bits, as libjpeg-turbo does, and reports `AcIndexOverflow` (Strict rejects); it ended the block silently, before its value bit on the slow lookup path. The structural inventory follows. The 177-file conformance corpus decodes the same at every strictness level. (commit: added at landing)
+
 - Lossless output for two legal sampling layouts decoded to wrong pixels (found by the new `fuzz_lossless` coefficient oracle; libjpeg-turbo now decodes both to the input's pixels) (commit: added at landing):
   - one-component frames that declare sampling factors other than 1x1 (e.g. 4x1): the sequential writer (`transform`, `apply_exif_orientation`, sequential `restructure`) walked the padded grid in multi-block MCUs, but a one-component scan is non-interleaved, one block of the true grid per MCU (T.81 A.2.2); libjpeg-turbo reported extraneous bytes and wrong rows. `RestartInterval::EveryMcuRows` counts that frame's MCUs the same way.
   - progressive `restructure` when a component other than the first has the largest sampling (luma 1x1 with chroma 2x1, as `cjpeg -sample 1x1,2x1,1x1` writes): the DC scan was interleaved as if every component were 1x1.

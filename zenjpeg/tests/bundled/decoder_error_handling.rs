@@ -1331,6 +1331,125 @@ fn arith_progressive_with_dri_decodes() {
     }
 }
 
+// ============================================================================
+// Progressive AC-first scans report like every other scan path (#224)
+// ============================================================================
+
+/// An 8-row gray JPEG whose DC table holds only symbol 0x00 (code `0`) and
+/// whose AC table holds `ac_symbols`, one code length each (canonical codes).
+/// Progressive: a DC-first scan (`dc_data`), then an AC-first scan over 1..=5
+/// (`ac_data`). Baseline: one scan (`ac_data`).
+fn ac_first_fixture(
+    width: u16,
+    ac_symbols: &[(u8, usize)],
+    dc_data: u8,
+    ac_data: &[u8],
+    progressive: bool,
+) -> Vec<u8> {
+    fn seg(marker: u8, payload: &[u8]) -> Vec<u8> {
+        let len = (payload.len() + 2) as u16;
+        [&[0xFF, marker][..], &len.to_be_bytes(), payload].concat()
+    }
+    let mut dc_counts = [0u8; 16];
+    dc_counts[0] = 1;
+    let mut ac_counts = [0u8; 16];
+    for &(_, len) in ac_symbols {
+        ac_counts[len - 1] += 1;
+    }
+    let ac_values: Vec<u8> = ac_symbols.iter().map(|&(s, _)| s).collect();
+    let dht = [
+        &[0x00][..],
+        &dc_counts,
+        &[0x00],
+        &[0x10],
+        &ac_counts,
+        &ac_values,
+    ]
+    .concat();
+    let w = width.to_be_bytes();
+    let sof = if progressive { 0xC2 } else { 0xC0 };
+    let mut j = vec![0xFF, 0xD8];
+    j.extend(seg(0xDB, &[[0u8].as_slice(), &[1u8; 64]].concat()));
+    j.extend(seg(0xC4, &dht));
+    j.extend(seg(sof, &[8, 0, 8, w[0], w[1], 1, 1, 0x11, 0]));
+    if progressive {
+        j.extend(seg(0xDA, &[1, 1, 0x00, 0, 0, 0]));
+        j.push(dc_data);
+        j.extend(seg(0xDA, &[1, 1, 0x00, 1, 5, 0]));
+    } else {
+        j.extend(seg(0xDA, &[1, 1, 0x00, 0, 63, 0]));
+    }
+    j.extend_from_slice(ac_data);
+    j.extend_from_slice(&[0xFF, 0xD9]);
+    j
+}
+
+/// EOB `0` and 0xF1 `100000000`: 0xF1 plus its value bit is 10 bits, past
+/// the combined fast table, so it takes the slow lookup path.
+const EOB_AND_F1: &[(u8, usize)] = &[(0x00, 1), (0xF1, 9)];
+
+#[test]
+fn progressive_ac_first_invalid_code_is_reported_like_sequential() {
+    // Sixteen 1-bits match no code, mid-scan (24 bytes follow, as in #224;
+    // an invalid code within the reader's lookahead of the segment end is
+    // the end of the scan on every path). The sequential decoder fails on
+    // them at Strict and Balanced; the progressive AC-first scan took them
+    // as an EOB with no error or warning, then skipped the rest of the scan
+    // as stray bytes.
+    let mut ac = vec![0xFF, 0x00, 0xFF, 0x00];
+    ac.extend_from_slice(&[0u8; 24]);
+    let progressive = ac_first_fixture(8, EOB_AND_F1, 0x7F, &ac, true);
+    let mut seq = vec![0x7F, 0xFF, 0x00, 0xFF, 0x00];
+    seq.extend_from_slice(&[0u8; 24]);
+    let sequential = ac_first_fixture(8, EOB_AND_F1, 0, &seq, false);
+    for (name, file) in [("progressive", &progressive), ("sequential", &sequential)] {
+        for level in [Strictness::Strict, Strictness::Balanced] {
+            let result = Decoder::new().strictness(level).decode(file, Unstoppable);
+            assert!(
+                result.is_err(),
+                "{name} {level:?}: an invalid Huffman code must fail"
+            );
+        }
+    }
+    let lenient = Decoder::new()
+        .strictness(Strictness::Lenient)
+        .decode(&progressive, Unstoppable)
+        .expect("lenient recovers");
+    assert!(
+        lenient
+            .warnings()
+            .contains(&zenjpeg::decoder::DecodeWarning::InvalidHuffmanCode),
+        "{:?}",
+        lenient.warnings()
+    );
+}
+
+#[test]
+fn progressive_ac_first_run_past_se_is_reported_on_both_lookup_paths() {
+    // Two blocks in a 1..=5 band. Block 0 is a run past Se plus its value
+    // bit (1), block 1 an EOB (`0`), then 1-padding. The run used to end the
+    // block silently, before its value bit on the slow path, so block 1
+    // decoded from the wrong bit; libjpeg-turbo reads the value bit.
+    let slow = ac_first_fixture(16, EOB_AND_F1, 0x3F, &[0x80, 0x5F], true);
+    // 0x61 `10` (run 6) plus its value bit fits the combined fast table.
+    let fast = ac_first_fixture(16, &[(0x00, 1), (0x61, 2)], 0x3F, &[0xAF], true);
+    for (name, file) in [("slow", &slow), ("fast", &fast)] {
+        assert!(
+            Decoder::new()
+                .strictness(Strictness::Strict)
+                .decode(file, Unstoppable)
+                .is_err(),
+            "{name}: Strict accepts a run past Se"
+        );
+        let balanced = Decoder::new().decode(file, Unstoppable).unwrap();
+        assert_eq!(
+            balanced.warnings(),
+            &[zenjpeg::decoder::DecodeWarning::AcIndexOverflow],
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn dc_huffman_symbols_above_15_are_rejected_at_dht() {
     // A DC table defining symbols 0..=16 (5-bit codes), and a block coded as

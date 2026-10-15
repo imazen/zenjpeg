@@ -1311,11 +1311,13 @@ fn progressive_ac_first_follows_the_decoder() {
     assert!(planted >= 4, "{planted}");
 }
 
-/// Finding R2-1 (s10): after an invalid code in an AC-first scan nothing
-/// more of the scan is decoded; those bytes are not image data at any
-/// level, and rewriting them changes no pixel.
+/// Finding R2-1 (s10), after #224: an invalid code in an AC-first scan is
+/// read as on sequential scans. Strict and Balanced decodes fail there and
+/// the inventory says the scan's data is skipped; Lenient and Permissive
+/// take the code as an EOB and keep decoding, so the bytes after it are
+/// image data (rewriting them changes pixels).
 #[test]
-fn bytes_after_an_ac_first_invalid_code_are_not_image_data() {
+fn bytes_after_an_ac_first_invalid_code_follow_the_decoder() {
     let orig = load(PROG);
     let (scan, mid) = (9310usize..22329usize, 15819usize);
     assert_eq!(
@@ -1335,10 +1337,20 @@ fn bytes_after_an_ac_first_invalid_code_are_not_image_data() {
         }
     }
     for level in LEVELS {
-        assert_eq!(level_pixels(level, &a), level_pixels(level, &b), "{level}");
+        let (pa, pb) = (level_pixels(level, &a), level_pixels(level, &b));
         let i = inv(&level_job(level), &a);
-        let p = leaf_at(&i, from + 100);
-        assert_eq!(p.disposition(), D::Unreferenced, "{level}: {}", show(p));
+        if matches!(level, "strict" | "balanced") {
+            assert!(
+                pa.is_none() && pb.is_none(),
+                "{level}: the decode must fail"
+            );
+            assert!(!any_scan_consumed(&i), "{level}:\n{i}");
+        } else {
+            assert!(pa.is_some() && pb.is_some(), "{level}");
+            assert_ne!(pa, pb, "{level}: the bytes after the code are decoded");
+            let p = leaf_at(&i, from + 100);
+            assert_ne!(p.disposition(), D::Unreferenced, "{level}: {}", show(p));
+        }
     }
 }
 

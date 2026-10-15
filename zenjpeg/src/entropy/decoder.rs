@@ -1891,6 +1891,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             self.reader.skip_bits_fast(total_bits);
                             k += run;
                             if k > se_usize {
+                                // Run past the band; the value bits are
+                                // already consumed. Reported as on every
+                                // other scan path (Strict rejects, #224).
+                                self.had_ac_overflow = true;
                                 break 'block;
                             }
                             block[k] = value << al;
@@ -1914,48 +1918,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         self.reader.skip_bits_fast(code_len);
                         (lookup & 0xFF) as u8
                     } else {
-                        // Slow path: need 16 bits for extended Huffman codes
-                        match self.reader.peek_bits_refill(16) {
-                            Some(bits16) => {
-                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
-                                    self.reader.skip_bits_fast(len);
-                                    sym
-                                } else {
-                                    // Invalid code — treat as EOB
-                                    break 'block;
-                                }
-                            }
-                            None => {
-                                // Edge case: near restart marker or end of scan,
-                                // fewer than 16 bits available. Fall back to
-                                // bit-by-bit Huffman decode (matches the standard
-                                // decode_huffman_symbol_lenient fallback).
-                                let mut code = 0u32;
-                                let mut found_symbol = None;
-                                for len in 1..=16usize {
-                                    let bit = match self.reader.read_bits(1)? {
-                                        ScanRead::Value(b) => b,
-                                        ScanRead::EndOfScan | ScanRead::Truncated => {
-                                            return Ok(false);
-                                        }
-                                    };
-                                    code = (code << 1) | bit;
-                                    if (code as i32) <= ac_table.maxcode[len] {
-                                        let idx = (code as i32 + ac_table.valoffset[len]) as usize;
-                                        if idx < ac_table.values.len() {
-                                            found_symbol = Some(ac_table.values[idx]);
-                                            break;
-                                        }
-                                    }
-                                }
-                                match found_symbol {
-                                    Some(sym) => sym,
-                                    None => {
-                                        // Invalid code or truly exhausted
-                                        break 'block;
-                                    }
-                                }
-                            }
+                        // Codes longer than FAST_BITS, and invalid codes, take
+                        // the shared decoder: an invalid code is an error, or
+                        // EOB plus `had_invalid_huffman` when lenient, as on
+                        // every other scan path (#224).
+                        match self.decode_huffman(ac_table)? {
+                            ScanRead::Value(sym) => sym,
+                            ScanRead::EndOfScan | ScanRead::Truncated => return Ok(false),
                         }
                     };
 
@@ -2012,10 +1981,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         k += run as usize;
                         if k > se_usize {
-                            // AC overflow — treat as EOB. libjxl returns an
-                            // error here so we don't have a canonical
-                            // line-617 equivalent. Mark as EOB-exited so
-                            // the post-block decrement is skipped.
+                            // Run past the band: consume the value bits and
+                            // end the block, as `decode_ac_first` and
+                            // libjpeg-turbo do; reported, Strict rejects
+                            // (#224). libjxl returns an error here so we
+                            // don't have a canonical line-617 equivalent.
+                            // Mark as EOB-exited so the post-block
+                            // decrement is skipped.
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.refill();
+                            if self.reader.bits_available() < size {
+                                return Ok(false);
+                            }
+                            let _ = self.reader.read_bits_fast(size);
                             exited_via_eob = true;
                             break 'block;
                         }

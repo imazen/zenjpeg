@@ -19,7 +19,9 @@
 //!   (`AcIndexOverflow`); any other `r/0` symbol ends the block;
 //! - progressive DC first scans: a DC symbol and value bits per block; DC
 //!   refinement: one bit per block; AC first scans: symbols in `Ss..=Se`
-//!   per block, with `EOBn` runs covering whole blocks;
+//!   per block, with `EOBn` runs covering whole blocks, a run past `Se`
+//!   consuming its value bits and ending the block (`AcIndexOverflow`), an
+//!   invalid code read as on sequential scans;
 //! - with a restart interval, after every interval but the last the
 //!   decoder skips whatever is left before the next marker and expects
 //!   `RSTn` there (n counting from 0, mod 8).
@@ -96,7 +98,7 @@ pub(super) struct Count {
     /// follows as stray bytes.
     pub stop_at: Option<usize>,
     /// A run past the end of a block (`AcIndexOverflow`, an error when
-    /// Strict). Progressive AC-first scans never report it.
+    /// Strict), on sequential and progressive AC-first scans.
     pub ac_overflow: bool,
     /// Whether the decoder drains the bytes before each RSTn
     /// (`decode_ac_first_scan_tracked`) instead of reading the RSTn at its
@@ -114,10 +116,6 @@ enum Stop {
     Out,
     Invalid(usize),
     BadDc(usize),
-    /// A progressive AC-first block met a code that matches no symbol:
-    /// `decode_ac_first_scan_tracked` ends the block without consuming
-    /// it, so every later block of the interval reads nothing.
-    Stall,
 }
 
 /// Reads bits a byte at a time, the way `BitReader::read_byte_slow`
@@ -367,11 +365,6 @@ pub(super) fn count(
             mcu += 1;
         }
         let last = interval_end >= mcus;
-        if matches!(stopped, Some(Stop::Stall)) {
-            // Nothing more is read in this interval: its data ends here.
-            mcu = interval_end;
-            stopped = None;
-        }
         match stopped {
             Some(Stop::Invalid(at)) => {
                 // `decode_huffman_symbol_lenient` takes an invalid code as
@@ -420,7 +413,7 @@ pub(super) fn count(
                     }
                 }
             }
-            Some(Stop::Stall) | None => {}
+            None => {}
         }
         // The interval's data is complete: what follows up to the next
         // marker is never decoded. After the last MCU that is everything
@@ -474,7 +467,8 @@ fn block(
         }
         // AC first scan, as `decode_ac_first_scan_tracked` decodes it
         // (entropy/decoder.rs): the table's own `fast_ac` and
-        // `fast_lookup` on a FAST_BITS peek, then `decode_slow` on 16 bits.
+        // `fast_lookup` on a FAST_BITS peek, then the shared symbol decode
+        // (an invalid code as on sequential scans, #224).
         if *eobrun > 0 {
             *eobrun -= 1;
             return Ok(());
@@ -493,6 +487,7 @@ fn block(
                 bits.bits((entry & 0xF) as u8)?;
                 k += ((entry >> 4) & 0xF) as u32;
                 if k > se {
+                    *ac_overflow = true;
                     return Ok(());
                 }
                 k += 1;
@@ -503,15 +498,7 @@ fn block(
                 bits.bits((lookup >> 8) as u8)?;
                 (lookup & 0xFF) as u8
             } else {
-                let peek16 = bits.peek(16).ok_or(Stop::Out)?;
-                match c.ac.decode_slow(peek16 as i32) {
-                    Some((sym, len)) => {
-                        bits.bits(len)?;
-                        sym
-                    }
-                    // An invalid code ends the block, unconsumed.
-                    None => return Err(Stop::Stall),
-                }
+                bits.symbol(c.ac)?
             };
             let (r, s) = (rs >> 4, rs & 0x0F);
             if s == 0 {
@@ -527,8 +514,9 @@ fn block(
             }
             k += u32::from(r);
             if k > se {
-                // Run past the band: the block ends, its value bits unread.
-                return Ok(());
+                // Run past the band: its value bits are read, the block ends.
+                *ac_overflow = true;
+                return bits.bits(s);
             }
             bits.bits(s)?;
             k += 1;
