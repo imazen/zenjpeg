@@ -388,7 +388,7 @@ impl<'a> JpegParser<'a> {
 
             if table_class == 0 {
                 // DC table - use standard lookup
-                let table = HuffmanDecodeTable::from_bits_values(&bits, &values)?;
+                let table = HuffmanDecodeTable::from_bits_values_dc(&bits, &values)?;
                 self.dc_tables[table_idx] = Some(table);
             } else {
                 // AC table - use fast AC lookup for combined decode + sign extend

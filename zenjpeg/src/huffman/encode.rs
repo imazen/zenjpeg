@@ -322,6 +322,18 @@ impl HuffmanDecodeTable {
         Self::from_bits_values_impl(bits, values, false)
     }
 
+    /// Creates a DC decoding table. DC symbols are difference categories
+    /// 0..=15 (T.81 F.1.2.1; 16 exists only in lossless coding, which this
+    /// decoder does not support). libjpeg-turbo (`jpeg_make_d_derived_tbl`)
+    /// and jpegli (`decode_marker.cc`) reject a larger symbol when the table
+    /// is defined, at every strictness; so does every caller of this.
+    pub(crate) fn from_bits_values_dc(bits: &[u8; 16], values: &[u8]) -> Result<Self> {
+        if values.iter().any(|&v| v > 15) {
+            return Err(Error::invalid_huffman_table(0, "DC symbol above 15"));
+        }
+        Self::from_bits_values_impl(bits, values, false)
+    }
+
     /// Creates an AC decoding table with fast_ac lookup enabled.
     pub fn from_bits_values_ac(bits: &[u8; 16], values: &[u8]) -> Result<Self> {
         Self::from_bits_values_impl(bits, values, true)

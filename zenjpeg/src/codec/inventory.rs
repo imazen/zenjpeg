@@ -971,12 +971,12 @@ fn check_dht(avail: &[u8], declared: usize) -> Result<(), Bad> {
             return bad(k, "DHT length mismatch");
         }
         let built = if info >> 4 == 0 {
-            HuffmanDecodeTable::from_bits_values(&counts, values).map(|_| ())
+            HuffmanDecodeTable::from_bits_values_dc(&counts, values).map(|_| ())
         } else {
             HuffmanDecodeTable::from_bits_values_ac(&counts, values).map(|_| ())
         };
         if built.is_err() {
-            return bad(k, "invalid Huffman code lengths");
+            return bad(k, "invalid Huffman code lengths or DC symbol");
         }
         at += 17 + n;
         k += 1;

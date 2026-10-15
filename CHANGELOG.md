@@ -118,6 +118,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- A DHT that defines a DC symbol above 15 is rejected when it is defined, at every strictness (Permissive skips the segment), as libjpeg-turbo and jpegli do. DC categories end at 15 (16 exists only in lossless coding); category 16 was accepted and decoded two ways (`decode_value` gave the extra bits, `huff_extend` the bits plus one). The structural inventory applies the same rule. (commit: added at landing)
+
 - The streaming `UltraHdrReader`, `Decoder::decode`'s gain-map extraction (`GainMapHandling::PreserveRaw` / `Decode`) and the scanline reader's `gain_map_jpeg` find an MPF-listed gain map that carries its own metadata (its ISO 21496-1 record or its `hdrgm` XMP) when the primary image signals neither, as `UltraHdrExtras::is_ultrahdr` and libultrahdr 1.4.0 do. They reported no gain map for such files. (commit: added at landing)
 
 - Honor decode EXIF/ICC/XMP extraction flags across probe, buffered decode, streaming metadata, attached native extras and inventory. Remove the adapter's unconditional preserve-all override; denied XMP is also excluded from gain-map parameter fallback. No public signatures change (follow-up to `d2a417df`).
