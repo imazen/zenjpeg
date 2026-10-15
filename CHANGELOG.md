@@ -96,6 +96,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 - Shared codec-testkit checks cover checked policy admission, inventory boundaries
   and rewrite limits/retention, with independent JPEG pixel decoding.
+- `fuzz_differential` compares pixels with zune-jpeg only on streams `Strictness::Strict` accepts, as the replay in `tests/fuzz_regression.rs` already did: on a malformed stream both decoders recover, by different policies, and `fuzz/regression/truncation-ac-overflow-slow-path` crashed the target with a difference of 27 (#198). (commit: added at landing)
 - `fuzz_lossless` (and its replay in `tests/fuzz_regression.rs`) checks that an
   output holds no more JPEG streams than its input and that, without a
   transform, every block the image covers keeps its coefficients; its size

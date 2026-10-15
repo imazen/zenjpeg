@@ -4,11 +4,17 @@
 //! for consistency. It helps find cases where zenjpeg behaves differently
 //! from established decoders.
 //!
+//! Pixels are compared only on streams `Strictness::Strict` accepts. On a
+//! malformed stream both decoders are recovering, and zenjpeg's recovery
+//! (pad zeros on truncation, EOB on an AC run past the block, RST resync;
+//! `docs/strictness.md`) is a policy no other decoder promises to match, so
+//! the IDCT-rounding bound below does not describe it (#198).
+//!
 //! Note: This requires zune-jpeg as a dependency.
 
 #![no_main]
 
-use zenjpeg::decoder::{Decoder, PixelFormat};
+use zenjpeg::decoder::{Decoder, PixelFormat, Strictness};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -39,6 +45,15 @@ fuzz_target!(|data: &[u8]| {
                 "Height mismatch: zenjpeg={} zune={}",
                 zenjpeg_img.height, zune_img.height
             );
+
+            let clean_stream = Decoder::new()
+                .max_pixels(4_000_000)
+                .strictness(Strictness::Strict)
+                .decode(data, enough::Unstoppable)
+                .is_ok();
+            if !clean_stream {
+                return;
+            }
 
             // Normalize zune output to RGB so we can compare with zenjpeg's RGB output.
             // zune-jpeg returns grayscale as 1 byte/pixel for grayscale JPEGs even when
