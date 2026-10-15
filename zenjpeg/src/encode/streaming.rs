@@ -610,6 +610,24 @@ impl StreamingEncoder {
         }
     }
 
+    /// Append the pending bytes to `into` and mark them sent. With `into`
+    /// empty and nothing partly sent, the writer's buffer itself moves into
+    /// `into`, without a copy.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_output(&mut self, into: &mut Vec<u8>) {
+        let Some(st) = self.streaming.as_mut().filter(|st| st.started) else {
+            return;
+        };
+        if into.is_empty() && st.sent == 0 {
+            *into = st.writer.take_buffer();
+        } else {
+            into.extend_from_slice(&st.writer.as_bytes()[st.sent..]);
+            let len = st.writer.as_bytes().len();
+            st.writer.discard_front(len);
+        }
+        st.sent = 0;
+    }
+
     /// The most pushed rows whose bytes are not yet pending, in
     /// stream-through mode: up to a strip of rows waits to fill the strip
     /// (an MCU row), and the strip processor quantizes each iMCU one strip

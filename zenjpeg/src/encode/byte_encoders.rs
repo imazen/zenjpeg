@@ -562,6 +562,13 @@ impl BytesEncoder {
         self.inner.consume_output(n);
     }
 
+    /// Hand the pending bytes to `into`; see the streaming encoder's
+    /// `take_output`.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_output(&mut self, into: &mut Vec<u8>) {
+        self.inner.take_output(into);
+    }
+
     /// The most pushed rows whose bytes are not yet pending, once output
     /// streams.
     #[cfg(feature = "zencodec")]

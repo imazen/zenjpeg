@@ -1001,6 +1001,13 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
     }
 
+    fn take_output(&mut self, into: &mut Vec<u8>) {
+        if let Some(enc) = self.streaming_enc.as_mut() {
+            self.sent += enc.pending_output().len() as u64;
+            enc.take_output(into);
+        }
+    }
+
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Self::Error> {
         let desc = rows.descriptor();
         let layout = descriptor_to_layout(desc)?;

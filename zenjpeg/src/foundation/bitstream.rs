@@ -272,6 +272,19 @@ impl BitWriter {
         }
     }
 
+    /// Takes the buffer's bytes, leaving an empty buffer with the same
+    /// capacity for what follows. The bit accumulator is untouched, so the
+    /// stream continues exactly as if the bytes had been dropped with
+    /// [`discard_front`](Self::discard_front).
+    pub fn take_buffer(&mut self) -> Vec<u8> {
+        let capacity = self.buffer.len();
+        let taken = core::mem::replace(
+            &mut self.buffer,
+            ProfiledVec::with_capacity_profiled(capacity, "BitWriter::take_buffer"),
+        );
+        taken.into()
+    }
+
     /// Drops the first `n` bytes of the buffer: bytes already handed out.
     /// Later bytes, and the bit accumulator, are untouched.
     pub fn discard_front(&mut self, n: usize) {
@@ -1089,7 +1102,7 @@ mod tests {
         assert!(reader.starved());
     }
 
-    /// `flush_whole_bytes` and `discard_front` change only when bytes become
+    /// `flush_whole_bytes`, `discard_front` and `take_buffer` change only when bytes become
     /// visible, never the byte stream: interleaving them with writes (all-ones
     /// runs included, so 0xFF stuffing happens at flush points) and keeping
     /// the discarded prefixes reproduces the plain writer's output exactly.
@@ -1119,10 +1132,15 @@ mod tests {
                 early.write_bits(bits, count);
                 if i % every == 0 {
                     early.flush_whole_bytes();
-                    // Hand out a varying share of what is visible.
-                    let n = early.as_bytes().len() * (i % 3) / 2;
-                    taken.extend_from_slice(&early.as_bytes()[..n]);
-                    early.discard_front(n);
+                    // Hand out a varying share of what is visible, all of it
+                    // sometimes by taking the buffer itself.
+                    if i % 3 == 2 && (i / every) % 2 == 0 {
+                        taken.extend_from_slice(&early.take_buffer());
+                    } else {
+                        let n = early.as_bytes().len() * (i % 3) / 2;
+                        taken.extend_from_slice(&early.as_bytes()[..n]);
+                        early.discard_front(n);
+                    }
                 }
             }
             taken.extend_from_slice(&early.into_bytes());
