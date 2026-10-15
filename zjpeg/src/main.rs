@@ -2,6 +2,7 @@ mod batch;
 mod coord;
 mod info;
 mod optimize;
+mod orient;
 mod output;
 mod process;
 mod restructure;

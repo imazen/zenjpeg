@@ -7,6 +7,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `zjpeg process`, lossy path (any quality, crop, resize or encoder option) (commit: added at landing):
+  - the EXIF orientation was applied to the pixels and the tag kept, so viewers rotated the output a second time; the tag is now reset to 1. `--orient keep` was ignored (the decoder orients by default) and now keeps pixels and tag as stored.
+  - `--rotate` and `--flip` were ignored when combined with a lossy option; they now apply after the EXIF orientation.
+  - crop and resize were computed on the stored dimensions, not the oriented ones, so an EXIF-rotated photo came out with swapped proportions.
+  - a gain map (and any other MPF secondary image) was copied unchanged through orientation, rotation, flip and crop, misaligned with the primary. It now gets the primary's transform and proportionally scaled crop, and is re-encoded at quality 90 with its own metadata; `--pad` with a kept gain map is refused (`--strip gainmaps` to drop it).
+  - the deprecated `optimize --auto-orient` resets the tag too, and refuses files with a gain map (it cannot rotate one; `process` can); without `--auto-orient` it no longer orients the pixels.
+
 - Progressive AC-first scans report an invalid Huffman code and a run past Se as every other scan path does (#224). An invalid code fails the decode at Strict and Balanced (lenient levels take it as EOB with `InvalidHuffmanCode` and keep decoding); it was taken as an EOB with no error or warning at every level, and the rest of the scan was skipped as stray bytes. A run past Se now consumes its value bits, as libjpeg-turbo does, and reports `AcIndexOverflow` (Strict rejects); it ended the block silently, before its value bit on the slow lookup path. The structural inventory follows. The 177-file conformance corpus decodes the same at every strictness level. (commit: added at landing)
 
 - Lossless output for two legal sampling layouts decoded to wrong pixels (found by the new `fuzz_lossless` coefficient oracle; libjpeg-turbo now decodes both to the input's pixels) (commit: added at landing):

@@ -148,9 +148,9 @@ fn optimize_inner(
     }
     // ICC profile: preserve by default. Only convert when --apply-icc is specified.
     decoder.correct_color = args.apply_icc.map(|t| convert_icc_target(t));
-    if args.auto_orient {
-        decoder = decoder.auto_orient(true);
-    }
+    // `DecodeConfig` auto-orients by default; without `--auto-orient` the
+    // pixels must stay as stored (the EXIF tag is kept).
+    decoder = decoder.auto_orient(args.auto_orient);
 
     let mut result = decoder
         .decode(&data, enough::Unstoppable)
@@ -161,8 +161,27 @@ fn optimize_inner(
 
     // Step 4: Extract metadata and build encoder config with segments
     let extras = result.take_extras();
+    // With the orientation applied to the pixels, the tag must say 1 or
+    // viewers rotate again. This deprecated command cannot rotate a gain
+    // map with the primary; `process` can.
+    let mut reset_exif = None;
+    if let Some(e) = extras.as_ref()
+        && args.auto_orient
+        && let Some(exif) = e.exif()
+        && crate::orient::exif_orientation(exif).is_some_and(|o| o != 1)
+    {
+        if !e.secondary_images().is_empty() && !(args.strip_all || args.strip_gainmaps) {
+            anyhow::bail!(
+                "--auto-orient would leave the gain map unrotated; use `zjpeg process` \
+                 (which rotates it) or add --strip-gainmaps"
+            );
+        }
+        let mut exif = exif.to_vec();
+        crate::orient::set_exif_orientation(&mut exif, 1);
+        reset_exif = Some(exif);
+    }
 
-    let config = build_encoder_config(args, quality, subsampling, &extras);
+    let config = build_encoder_config(args, quality, subsampling, &extras, reset_exif);
 
     // Step 5: Encode (with optional deblocking)
     let output_jpeg = if decode_to_f32 {
@@ -323,6 +342,7 @@ fn build_encoder_config(
     quality: Quality,
     subsampling: ChromaSubsampling,
     extras: &Option<zenjpeg::decoder::DecodedExtras>,
+    reset_exif: Option<Vec<u8>>,
 ) -> EncoderConfig {
     let mut config = if args.xyb {
         EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
@@ -386,10 +406,17 @@ fn build_encoder_config(
                 }
                 true
             });
-            config = config.with_segments(segments);
+            config = config.with_segments(match reset_exif {
+                Some(exif) if !strip_exif => segments.set_exif(exif),
+                _ => segments,
+            });
         } else {
             // Default: preserve everything including gain maps
-            config = config.with_segments(extras.to_encoder_segments());
+            let segments = extras.to_encoder_segments();
+            config = config.with_segments(match reset_exif {
+                Some(exif) => segments.set_exif(exif),
+                None => segments,
+            });
         }
     }
 
