@@ -502,6 +502,37 @@ impl SharpYuvWorkspace {
         self.y0s.len()
     }
 
+    /// Allocate workspace for chroma width `cw`, or `None` if an allocation
+    /// fails.
+    pub(crate) fn try_new(cw: usize) -> Option<Self> {
+        let z = || {
+            let mut v = alloc::vec::Vec::new();
+            v.try_reserve_exact(cw).ok()?;
+            v.resize(cw, 0.0f32);
+            Some(v)
+        };
+        Some(Self {
+            y0s: z()?,
+            y1s: z()?,
+            y2s: z()?,
+            y3s: z()?,
+            or0: z()?,
+            og0: z()?,
+            ob0: z()?,
+            or1: z()?,
+            og1: z()?,
+            ob1: z()?,
+            or2: z()?,
+            og2: z()?,
+            ob2: z()?,
+            or3: z()?,
+            og3: z()?,
+            ob3: z()?,
+            cb_f: z()?,
+            cr_f: z()?,
+        })
+    }
+
     /// Allocate workspace for chroma width `cw`.
     pub fn new(cw: usize) -> Self {
         Self {

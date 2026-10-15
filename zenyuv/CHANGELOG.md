@@ -9,6 +9,16 @@
 
 ### Added
 
+- `YuvContext::try_encode_420_u8`, `try_encode_420_y_only_u8`,
+  `try_encode_444_u8`, `try_encode_420_f32`, `try_encode_sharp_420_u8` and
+  `try_encode_sharp_420_f32`. They return `Result<(), YuvError>` where the
+  infallible methods panic. They refuse a short buffer, a size that overflows
+  and an image over the pixel limit, and they write nothing on refusal. Scratch
+  owned by the context is allocated fallibly, and valid input gives the same
+  bytes as the infallible method. `YuvError` is `#[non_exhaustive]`. The limit
+  defaults to `DEFAULT_MAX_PIXELS` (120 MP) and is set with
+  `YuvContext::with_max_pixels` (zenjpeg #156, items 1 and 2).
+
 - `sharp::rgb_f32_to_yuv420_sharp`: typed, strided gamma-encoded RGB f32 input
   and Y/Cb/Cr f32 output, using caller-provided planes and the existing Sharp
   YUV workspace/kernel. No RGB8 or Y8 intermediate and no internal allocation.
