@@ -103,6 +103,13 @@ jobs:
 
       - name: Test (__expert + all user features)
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
+      # `recompress` is opt-in, so no other step runs its tests; a stale
+      # fixture went unnoticed until a workspace-wide run (the 16-bit DQT
+      # source stopped needing 16-bit tables after 544a1c48).
+      - name: Test (recompress)
+        run: |
+          cargo test -p zenjpeg --release --features recompress-expert,recompress-iqa --test recompress_api
+          cargo test -p zenjpeg --release --features recompress-expert,recompress-iqa --lib recompress::
 
 
   i686:

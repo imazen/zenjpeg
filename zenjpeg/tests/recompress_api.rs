@@ -254,6 +254,18 @@ fn preserve_identity_emit_handles_16bit_dqt() {
             let mut v = Vec::with_capacity((w * h * 3) as usize);
             for y in 0..h {
                 for x in 0..w {
+                    if subs == Subsampling::S420 {
+                        // 4:2:0 averages the noise below away, every block is
+                        // then zero wherever the 8-bit clamp would change a
+                        // divisor, and the encoder's exact 8-bit downgrade
+                        // (544a1c48) writes Pq=0 tables. A saturated
+                        // blue/yellow checkerboard of 2x2 cells (one cell per
+                        // chroma sample, Cb +-127 at the chroma Nyquist) keeps
+                        // the 16-bit table needed.
+                        let blue = ((x >> 1) ^ (y >> 1)) & 1 == 1;
+                        v.extend_from_slice(if blue { &[0, 0, 255] } else { &[255, 255, 0] });
+                        continue;
+                    }
                     let s: u32 = (x.wrapping_mul(2654435761u32) ^ y).wrapping_mul(2246822519u32);
                     v.push(((x * 7 + y * 3) % 240 + (s & 0x0F)) as u8);
                     v.push(((x * 5 + y * 11) % 220 + ((s >> 4) & 0x1F)) as u8);

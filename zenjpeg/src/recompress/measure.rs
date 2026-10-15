@@ -21,6 +21,11 @@ use crate::recompress::error::Error;
 /// zensim rotation of `latest()` cannot silently shift the metric scale
 /// out from under the baked GEXP / achieved-quality tables. Profile A is a
 /// distinct profile; it is NOT any `PreviewV0_*` variant.
+///
+/// zensim deprecates `A` in favour of the linear `B`. Moving to `B` means
+/// refitting those tables (a calibration sweep), so `A` stays until then;
+/// it remains available behind zensim's default-on `deprecated-profiles`.
+#[allow(deprecated)]
 const PROFILE: ZensimProfile = ZensimProfile::A;
 
 /// Score a recompressed JPEG against the source JPEG it came from.
