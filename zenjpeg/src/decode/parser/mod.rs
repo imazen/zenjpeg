@@ -615,10 +615,8 @@ impl<'a> JpegParser<'a> {
             .as_ref()
             .and_then(|xmp| parse_xmp(xmp).ok().map(|(m, _)| m));
 
-        // Neither hdrgm XMP nor an ISO 21496-1 record: not an UltraHDR image.
-        if metadata.is_none() && !primary_iso {
-            return Ok((None, None));
-        }
+        // hdrgm XMP or the ISO 21496-1 version record in the primary image.
+        let primary_signals = metadata.is_some() || primary_iso;
 
         // Extract gain map JPEG byte range from MPF directory
         // MPF offsets are relative to the start of the MP header (right after "MPF\0")
@@ -645,10 +643,26 @@ impl<'a> JpegParser<'a> {
             None
         });
 
-        // Fallback: if MPF parsing failed but the metadata indicates UltraHDR,
-        // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
-        // This handles non-standard MPF structures from some Android camera apps.
-        if gainmap_range.is_none() {
+        if !primary_signals {
+            // Neither form in the primary image. An MPF-listed gain map whose
+            // own metadata parses (its ISO 21496-1 record or its hdrgm XMP)
+            // still is one: the buffered `UltraHdrExtras` reading and
+            // libultrahdr 1.4.0 both accept it. Otherwise this is not an
+            // UltraHDR image.
+            let own_metadata = gainmap_range.is_some_and(|(start, end)| {
+                let gainmap = &full_data[start..end];
+                matches!(
+                    crate::container::iso21496_from_gainmap_jpeg(gainmap),
+                    Some(Ok(_))
+                ) || find_xmp_in_jpeg(gainmap).is_some_and(|xmp| parse_xmp(&xmp).is_ok())
+            });
+            if !own_metadata {
+                return Ok((None, None));
+            }
+        } else if gainmap_range.is_none() {
+            // Fallback: if MPF parsing failed but the metadata indicates UltraHDR,
+            // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
+            // This handles non-standard MPF structures from some Android camera apps.
             gainmap_range = find_secondary_jpeg_range(full_data);
         }
 
@@ -674,7 +688,11 @@ impl<'a> JpegParser<'a> {
 
         // If primary XMP had only hdrgm:Version but no numeric metadata,
         // check the gain map JPEG's XMP (modern format used by libultrahdr).
-        let metadata = if let (Some(meta), Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
+        let metadata = if let (None, Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
+            // No primary XMP: the gain map's own XMP (checked above).
+            find_xmp_in_jpeg(&full_data[gm_start..gm_end])
+                .and_then(|gm_xmp| parse_xmp(&gm_xmp).ok().map(|(m, _)| m))
+        } else if let (Some(meta), Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
             if meta.channels.iter().all(|c| c.max == 0.0) && meta.alternate_hdr_headroom == 0.0 {
                 // Try the gain map JPEG's XMP
                 let gm_data = &full_data[gm_start..gm_end];

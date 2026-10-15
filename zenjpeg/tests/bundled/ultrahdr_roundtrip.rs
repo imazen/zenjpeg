@@ -827,6 +827,140 @@ fn iso21496_format_writes_no_xmp() {
     }
 }
 
+/// `jpeg` without the primary image's ISO 21496-1 version record. The record
+/// must precede the MPF segment, so the MPF offsets (relative to the MPF
+/// header) stay valid.
+fn without_primary_iso_record(jpeg: &[u8]) -> Vec<u8> {
+    let mut pos = 2;
+    let (mut record, mut mpf) = (None, None);
+    while jpeg[pos] == 0xFF && jpeg[pos + 1] != 0xDA {
+        let len = u16::from_be_bytes([jpeg[pos + 2], jpeg[pos + 3]]) as usize;
+        let payload = &jpeg[pos + 4..pos + 2 + len];
+        if jpeg[pos + 1] == 0xE2 && payload.starts_with(zencodec::ISO_21496_1_URN) {
+            record = Some(pos..pos + 2 + len);
+        } else if jpeg[pos + 1] == 0xE2 && payload.starts_with(b"MPF\0") {
+            mpf = Some(pos);
+        }
+        pos += 2 + len;
+    }
+    let record = record.expect("primary ISO 21496-1 record");
+    assert!(record.end <= mpf.expect("MPF segment"), "record after MPF");
+    [&jpeg[..record.start], &jpeg[record.end..]].concat()
+}
+
+/// What the buffered reading, decode's gain-map extraction and the streaming
+/// reader say about `file`: (is Ultra HDR, its metadata).
+fn every_reader(file: &[u8]) -> [(bool, Option<zenjpeg::ultrahdr::GainMapMetadata>); 3] {
+    use zenjpeg::decoder::GainMapHandling;
+    let decoded = Decoder::new()
+        .gain_map(GainMapHandling::PreserveRaw)
+        .decode(file, Unstoppable)
+        .unwrap();
+    let extras = decoded.extras().unwrap();
+    let buffered_metadata = extras
+        .ultrahdr_metadata()
+        .and_then(Result::ok)
+        .map(|(m, _)| m);
+    let extracted = decoded.gain_map.as_ref().map(|g| g.jpeg.as_slice());
+    assert!(
+        extracted.is_none() || extracted == extras.gainmap(),
+        "decode extracted a different gain map"
+    );
+    let reader = Decoder::new()
+        .ultrahdr_reader(
+            file,
+            UltraHdrReaderConfig::new().mode(UltraHdrMode::SdrAndGainMap),
+        )
+        .unwrap();
+    [
+        (extras.is_ultrahdr(), buffered_metadata.clone()),
+        (
+            extracted.is_some(),
+            buffered_metadata.filter(|_| extracted.is_some()),
+        ),
+        (reader.is_ultrahdr(), reader.metadata().cloned()),
+    ]
+}
+
+#[test]
+fn a_gain_map_with_its_own_metadata_is_found_by_every_reader() {
+    // The primary carries no gain-map signal (no hdrgm XMP, no ISO 21496-1
+    // version record), the MPF-listed gain map carries its own metadata.
+    // The buffered reading accepted these files while the streaming reader
+    // and decode's gain-map extraction reported no gain map; libultrahdr
+    // 1.4.0 probes both as Ultra HDR with the gain map's parameters.
+    use zenjpeg::ultrahdr::GainMapEncodingFormat;
+    let (_, files) = gain_map_jpegs();
+    let file = |wanted| {
+        files
+            .iter()
+            .find(|(format, _)| *format == wanted)
+            .map(|(_, jpeg)| jpeg.as_slice())
+            .unwrap()
+    };
+    for (name, jpeg) in [
+        (
+            "ISO record in the gain map only",
+            without_primary_iso_record(file(GainMapEncodingFormat::Iso21496)),
+        ),
+        (
+            "hdrgm XMP in the gain map only",
+            strip_app1_xmp(file(GainMapEncodingFormat::Xmp)),
+        ),
+    ] {
+        let readers = every_reader(&jpeg);
+        let expected = readers[0].1.clone();
+        assert!(expected.is_some(), "{name}: buffered metadata");
+        for (i, (is_ultrahdr, metadata)) in readers.iter().enumerate() {
+            assert!(*is_ultrahdr, "{name}: reader {i}");
+            assert_eq!(metadata, &expected, "{name}: reader {i}");
+        }
+    }
+
+    // An MPF secondary without gain-map metadata, under a primary without a
+    // signal, is no gain map to any of them.
+    let mut gray = EncoderConfig::grayscale(80.0)
+        .encode_from_bytes(16, 16, zenjpeg::encoder::PixelLayout::Gray8Srgb)
+        .unwrap();
+    gray.push_packed(&[100u8; 256], Unstoppable).unwrap();
+    let secondary = gray.finish().unwrap();
+    // Baseline: the streaming reader opens only baseline files.
+    let mut primary = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .with_segments(
+            zenjpeg::encode::EncoderSegments::new()
+                .add_mpf_image(secondary, zenjpeg::encode::extras::MpfImageType::Undefined),
+        )
+        .encode_from_bytes(32, 32, zenjpeg::encoder::PixelLayout::Rgb8Srgb)
+        .unwrap();
+    primary
+        .push_packed(&[90u8; 32 * 32 * 3], Unstoppable)
+        .unwrap();
+    let plain = primary.finish().unwrap();
+    for (i, (is_ultrahdr, metadata)) in every_reader(&plain).iter().enumerate() {
+        assert!(!is_ultrahdr && metadata.is_none(), "plain MPF: reader {i}");
+    }
+}
+
+/// `jpeg` without its primary image's XMP APP1 segment (before the first SOS),
+/// which precedes the MPF segment in zenjpeg's output.
+fn strip_app1_xmp(jpeg: &[u8]) -> Vec<u8> {
+    let mut pos = 2;
+    while jpeg[pos] == 0xFF && jpeg[pos + 1] != 0xDA {
+        let len = u16::from_be_bytes([jpeg[pos + 2], jpeg[pos + 3]]) as usize;
+        if jpeg[pos + 1] == 0xE1 && jpeg[pos + 4..].starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
+            let mpf = jpeg[pos + 2 + len..]
+                .windows(4)
+                .position(|w| w == b"MPF\0")
+                .expect("MPF after the XMP");
+            assert!(mpf > 0);
+            return [&jpeg[..pos], &jpeg[pos + 2 + len..]].concat();
+        }
+        pos += 2 + len;
+    }
+    panic!("no primary XMP");
+}
+
 /// `create_test_hdr` in other primaries.
 fn create_test_hdr_in(primaries: UhdrColorGamut) -> UhdrRawImage {
     let hdr = create_test_hdr(64, 64);
