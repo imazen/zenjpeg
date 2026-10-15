@@ -297,6 +297,7 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
 ///
 /// Calibrated on CID22-512 corpus (209 images) to produce the same median
 /// SSIMULACRA2 as libjpeg-turbo at each quality level.
+#[cfg(not(feature = "target-zq"))]
 fn calibrated_jpeg_quality(generic_q: f32) -> f32 {
     // generic_quality → jpegli native quality
     const TABLE: &[(f32, f32)] = &[
@@ -331,6 +332,7 @@ fn calibrated_jpeg_quality(generic_q: f32) -> f32 {
 }
 
 /// Piecewise linear interpolation with clamping at table bounds.
+#[cfg(not(feature = "target-zq"))]
 fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
     if x <= table[0].0 {
         return table[0].1;

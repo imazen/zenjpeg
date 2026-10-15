@@ -3,7 +3,6 @@
 //! These functions are used by both `output.rs` (sequential) and
 //! `output_parallel.rs` (parallel) to avoid duplicating IDCT+dequant logic.
 
-use crate::decode::idct_int::idct_int_dc_only;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE};
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 
@@ -25,8 +24,17 @@ pub(super) fn idct_block_into(
     dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     if coeff_count <= 1 {
-        let dc = coeffs[0] as i32 * quant[0] as i32;
-        idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+        // Dequantize just the DC coefficient and let `idct_fn` pick its own
+        // DC-only variant — the Libjpeg lane replicates turbo's NASM wrap
+        // (pmullw + psllw in i16), the Jpegli lane stays i32-exact.
+        dequant_buf.fill(0);
+        dequant_buf[0] = coeffs[0] as i32 * quant[0] as i32;
+        idct_fn(
+            dequant_buf,
+            &mut strip[dst_offset..],
+            strip_width,
+            coeff_count,
+        );
     } else {
         dequantize_unzigzag_i32_into_partial(coeffs, quant, dequant_buf, coeff_count);
         idct_fn(

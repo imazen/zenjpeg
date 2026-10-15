@@ -12,8 +12,10 @@ use crate::foundation::alloc::{
 };
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
-use crate::quant::dequantize_unzigzag_i32_into_partial;
+use crate::quant::dequantize_natural_i32_into;
 use crate::types::JpegMode;
+#[cfg(target_arch = "x86_64")]
+use archmage::SimdToken;
 use enough::Stop;
 
 use super::super::DecodeWarning;
@@ -734,6 +736,9 @@ impl<'a> JpegParser<'a> {
                 (1, 1, 1, 1) => true, // 4:4:4
                 (2, 2, 1, 1) => true, // 4:2:0
                 (2, 1, 1, 1) => true, // 4:2:2
+                // 4:4:0: streamable via the fancy (context-buffered) loop —
+                // NearestNeighbor h1v2 has no strip kernel, keep it buffered.
+                (1, 2, 1, 1) => self.chroma_upsampling == super::super::ChromaUpsampling::Triangle,
                 _ => false,
             }
         }
@@ -885,6 +890,8 @@ impl<'a> JpegParser<'a> {
         // Reusable buffers - avoids allocation per block
         let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
+        #[cfg(target_arch = "x86_64")]
+        let idct_v3 = archmage::X64V3Token::summon();
         // Track previous coefficient count per component for smart zeroing
         let mut prev_coeff_counts: [u8; 4] = [64; 4];
         let mut streaming_truncation_mcu: Option<u32> = None;
@@ -914,7 +921,7 @@ impl<'a> JpegParser<'a> {
                 // Decode, dequantize, and IDCT each component's block directly to strip
                 for (comp_idx, dc_table, ac_table) in scan_components {
                     // Zero-copy decode into reusable buffer with smart zeroing
-                    let coeff_count = match decoder.decode_block_into(
+                    let coeff_count = match decoder.decode_block_into_natural(
                         &mut coeffs,
                         prev_coeff_counts[*comp_idx],
                         *comp_idx,
@@ -953,30 +960,72 @@ impl<'a> JpegParser<'a> {
                     let dst_offset = mcu_x * 8;
                     if coeff_count <= 1 {
                         let dc = coeffs[0] as i32 * quant[0] as i32;
-                        idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+                        #[cfg(target_arch = "x86_64")]
+                        let is_turbo_v3 = self.idct_method == super::super::IdctMethod::Libjpeg
+                            && idct_v3.is_some();
+                        #[cfg(not(target_arch = "x86_64"))]
+                        let is_turbo_v3 = false;
+                        if is_turbo_v3 {
+                            super::super::idct_int::idct_int_dc_only_w16(
+                                dc,
+                                &mut strip[dst_offset..],
+                                strip_width,
+                            );
+                        } else {
+                            idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+                        }
                     } else {
-                        dequantize_unzigzag_i32_into_partial(
-                            &coeffs,
-                            quant,
-                            &mut dequant_buf,
-                            coeff_count,
-                        );
-                        match self.idct_method {
-                            super::super::IdctMethod::Libjpeg => {
-                                super::super::idct_int::idct_int_tiered_libjpeg(
-                                    &mut dequant_buf,
-                                    &mut strip[dst_offset..],
-                                    strip_width,
-                                    coeff_count,
-                                );
+                        let strip_out = &mut strip[dst_offset..];
+                        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
+                        let mut handled = false;
+                        #[cfg(target_arch = "x86_64")]
+                        if let Some(token) = idct_v3 {
+                            match self.idct_method {
+                                super::super::IdctMethod::Libjpeg => {
+                                    // i16 pmaddwd kernel — bit-identical to
+                                    // mozjpeg's jidctint-avx2.asm on all inputs.
+                                    let ok =
+                                        super::super::idct_int::idct_int_libjpeg_streaming_avx2_w16(
+                                            token,
+                                            &coeffs,
+                                            quant,
+                                            strip_out,
+                                            strip_width,
+                                        );
+                                    debug_assert!(ok);
+                                    let _ = ok;
+                                }
+                                super::super::IdctMethod::Jpegli => {
+                                    dequantize_natural_i32_into(&coeffs, quant, &mut dequant_buf);
+                                    super::super::idct_int::idct_int_streaming_avx2(
+                                        token,
+                                        &mut dequant_buf,
+                                        strip_out,
+                                        strip_width,
+                                    );
+                                }
                             }
-                            super::super::IdctMethod::Jpegli => {
-                                idct_int_tiered(
-                                    &mut dequant_buf,
-                                    &mut strip[dst_offset..],
-                                    strip_width,
-                                    coeff_count,
-                                );
+                            handled = true;
+                        }
+                        if !handled {
+                            // scalar fallback
+                            dequantize_natural_i32_into(&coeffs, quant, &mut dequant_buf);
+                            match self.idct_method {
+                                super::super::IdctMethod::Libjpeg => {
+                                    super::super::idct_int::idct_int_libjpeg(
+                                        &mut dequant_buf,
+                                        strip_out,
+                                        strip_width,
+                                    );
+                                }
+                                super::super::IdctMethod::Jpegli => {
+                                    idct_int_tiered(
+                                        &mut dequant_buf,
+                                        strip_out,
+                                        strip_width,
+                                        coeff_count,
+                                    );
+                                }
                             }
                         }
                     }
@@ -1175,19 +1224,22 @@ impl<'a> JpegParser<'a> {
             quant_tables: &quant_tables,
             restart_interval: self.restart_interval as u32,
             idct_fn,
+            #[cfg(target_arch = "x86_64")]
+            idct_v3: archmage::X64V3Token::summon(),
             is_rgb,
             turbo_color: self.idct_method == super::super::IdctMethod::Libjpeg,
         };
 
         if bufs.need_fancy {
-            let upsample = upsample_fn.expect("fancy h2v2 requires an upsample fn");
+            // select_upsample_fn doubles as validation: unsupported sampling
+            // ratios for the fancy path surface as its Err here.
+            upsample_fn.expect("fancy h2v2 requires an upsample fn");
             baseline_streaming::run_fancy_h2v2_loop(
                 &mut decoder,
                 &inputs,
                 &geom,
                 &mut bufs,
                 &mut state,
-                upsample,
                 c_data_offset,
                 downsampled_w,
                 stop,

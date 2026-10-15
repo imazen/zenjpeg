@@ -1265,6 +1265,50 @@ impl<'a> JpegParser<'a> {
                                      cb_up: &mut [i16],
                                      cr_up: &mut [i16],
                                      rgb_chunk: &mut [u8]| {
+                    let pixel_row_start =
+                        (current_mcu_row * mcu_pixel_height).saturating_sub(group_first_pixel_row);
+                    let pixel_rows_this = mcu_pixel_height
+                        .min(height.saturating_sub(current_mcu_row * mcu_pixel_height));
+
+                    // Fused h2v1: upsample+convert per row, no plane materialize
+                    // (Triangle only — NearestNeighbor stays on upsample_fn).
+                    #[cfg(target_arch = "x86_64")]
+                    if matches!(chroma_upsampling, ChromaUpsampling::Triangle) {
+                        if let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
+                        {
+                            for py in 0..pixel_rows_this {
+                                let y_off = py * y_strip_width;
+                                let c_off = py * c_strip_width;
+                                let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
+                                if rgb_off + y_cols_this * 3 > rgb_chunk.len() {
+                                    break;
+                                }
+                                if idct_method == IdctMethod::Libjpeg {
+                                    crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<true>(
+                                        token,
+                                        &y_strip[y_off..y_off + y_cols_this],
+                                        &cb_strip[c_off..c_off + real_chroma_width],
+                                        &cr_strip[c_off..c_off + real_chroma_width],
+                                        &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
+                                        y_cols_this,
+                                        real_chroma_width,
+                                    );
+                                } else {
+                                    crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<false>(
+                                        token,
+                                        &y_strip[y_off..y_off + y_cols_this],
+                                        &cb_strip[c_off..c_off + real_chroma_width],
+                                        &cr_strip[c_off..c_off + real_chroma_width],
+                                        &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
+                                        y_cols_this,
+                                        real_chroma_width,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                    }
+
                     // Horizontal upsample Cb/Cr: real_chroma_width → width, at
                     // padded strides (c_strip_width / y_strip_width).
                     upsample_fn(
@@ -1287,11 +1331,6 @@ impl<'a> JpegParser<'a> {
                         y_strip_width,
                         c_strip_height,
                     );
-
-                    let pixel_row_start =
-                        (current_mcu_row * mcu_pixel_height).saturating_sub(group_first_pixel_row);
-                    let pixel_rows_this = mcu_pixel_height
-                        .min(height.saturating_sub(current_mcu_row * mcu_pixel_height));
 
                     for py in 0..pixel_rows_this {
                         let y_off = py * y_strip_width;
@@ -1683,6 +1722,9 @@ impl<'a> JpegParser<'a> {
                 // Upsampled chroma output
                 let mut cb_up: Vec<i16> = vec![0i16; upsample_out_size];
                 let mut cr_up: Vec<i16> = vec![0i16; upsample_out_size];
+                // Colsum scratch for the fused h2v2 path (w + 2 padded taps)
+                let mut cs_cb: Vec<i16> = vec![0i16; c_strip_width + 2];
+                let mut cs_cr: Vec<i16> = vec![0i16; c_strip_width + 2];
 
                 // Scratch for Triangle upsample
                 let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
@@ -1705,6 +1747,7 @@ impl<'a> JpegParser<'a> {
 
                 // Helper closure: upsample extended chroma strip and color convert
                 // one MCU row to RGB output
+                #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
                 let upsample_and_output =
                     |mcu_row: usize,
                      y_strip: &[i16],
@@ -1713,8 +1756,40 @@ impl<'a> JpegParser<'a> {
                      cb_up: &mut [i16],
                      cr_up: &mut [i16],
                      scratch: &mut [i16; MAX_UPSAMPLE_SCRATCH],
+                     cs_cb: &mut [i16],
+                     cs_cr: &mut [i16],
                      rgb_chunk: &mut [u8]| {
                         let _ = scratch; // scratch unused after SeparableBiased removal
+
+                        let pixel_row_start =
+                            (mcu_row * mcu_pixel_height).saturating_sub(group_first_pixel_row);
+                        let pixel_rows_this =
+                            mcu_pixel_height.min(height.saturating_sub(mcu_row * mcu_pixel_height));
+
+                        // Fused h2v2: shared colsums + upsample→RGB fused rows
+                        // (same kernel as the sequential streaming strip path).
+                        #[cfg(target_arch = "x86_64")]
+                        if let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
+                        {
+                            super::parser::baseline_streaming::output_fancy_strip_fused(
+                                token,
+                                ext_cb,
+                                ext_cr,
+                                c_strip_width,
+                                c_strip_height,
+                                y_strip,
+                                y_strip_width,
+                                rgb_chunk,
+                                width,
+                                pixel_row_start,
+                                pixel_rows_this,
+                                idct_method == IdctMethod::Libjpeg,
+                                cs_cb,
+                                cs_cr,
+                            );
+                            return;
+                        }
+
                         upsample_fn(
                             ext_cb,
                             c_strip_width,
@@ -1731,11 +1806,6 @@ impl<'a> JpegParser<'a> {
                             y_strip_width,
                             upsample_out_height,
                         );
-
-                        let pixel_row_start =
-                            (mcu_row * mcu_pixel_height).saturating_sub(group_first_pixel_row);
-                        let pixel_rows_this =
-                            mcu_pixel_height.min(height.saturating_sub(mcu_row * mcu_pixel_height));
 
                         for row in 0..pixel_rows_this {
                             let y_off = row * y_strip_width;
@@ -1967,6 +2037,8 @@ impl<'a> JpegParser<'a> {
                                 &mut cb_up,
                                 &mut cr_up,
                                 &mut upsample_scratch,
+                                &mut cs_cb,
+                                &mut cs_cr,
                                 rgb_chunk,
                             );
 
@@ -2048,6 +2120,8 @@ impl<'a> JpegParser<'a> {
                         &mut cb_up,
                         &mut cr_up,
                         &mut upsample_scratch,
+                        &mut cs_cb,
+                        &mut cs_cr,
                         rgb_chunk,
                     );
 

@@ -10,7 +10,7 @@
 //! - `output` - Pixel conversion and output formatting
 
 mod arithmetic_scan;
-mod baseline_streaming;
+pub(crate) mod baseline_streaming;
 mod markers;
 mod output;
 pub(crate) mod output_helpers;

@@ -12,7 +12,7 @@
 #   pub modules                                84
 #   pub types (struct/enum/trait/alias)       297
 #   pub consts/statics                        320
-#   free functions                            373
+#   free functions                            374
 #   inherent methods                         1221
 #   struct fields                             760
 #   enum variants                             506
@@ -37,14 +37,14 @@
 #   huffman                         306
 #   layout                            3
 #   lossless                          4
-#   quant                           161
+#   quant                           162
 #   recompress                       12
 #   rgb                              11
 #   test_utils                       95
 #   types                           138
 #   ultrahdr                         13
 
-## items (3400 lines)
+## items (3401 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -1798,6 +1798,7 @@ pub fn quant::dequantize(i16, u16) -> f32
 pub fn quant::dequantize_block(&[i16; 64], &[u16; 64]) -> [f32; 64]
 pub fn quant::dequantize_block_i32(&[i16; 64], &[u16; 64]) -> [i32; 64]
 pub fn quant::dequantize_block_with_bias(&[i16; 64], &[u16; 64], &[f32; 64]) -> [f32; 64]
+pub fn quant::dequantize_natural_i32_into(&[i16; 64], &[u16; 64], &mut [i32; 64])
 pub fn quant::dequantize_unzigzag_i32_into_partial(&[i16; 64], &[u16; 64], &mut [i32; 64], u8)
 pub fn quant::distance_to_linear_quality(f32) -> f32
 pub fn quant::distance_to_scale(f32, usize) -> f32

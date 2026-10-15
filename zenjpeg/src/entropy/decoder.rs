@@ -12,7 +12,7 @@
 use crate::decode::JbrdScanInfo;
 use crate::error::{Error, ErrorKind, Result, ScanRead, ScanResult};
 use crate::foundation::bitstream::BitReader;
-use crate::foundation::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
 use crate::huffman::HuffmanDecodeTable;
 
 use super::decode_value;
@@ -754,6 +754,53 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> ScanResult<u8> {
+        self.decode_block_impl::<false>(
+            coeffs,
+            prev_coeff_count,
+            component,
+            dc_table_idx,
+            ac_table_idx,
+        )
+    }
+
+    /// Like [`decode_block_into`], but stores coefficients in natural
+    /// (row-major) order instead of zigzag order — libjpeg-turbo's
+    /// `jpeg_natural_order[]` layout in `decode_mcu` — so the dequant pass
+    /// becomes a contiguous multiply rather than a scatter.
+    ///
+    /// # Returns
+    /// * `ScanResult<u8>` - natural extent (`1 + max` natural index written)
+    ///   instead of a zigzag count. It serves the same roles: `<= 1` iff no
+    ///   AC was written, and zeroing `coeffs[..extent]` before the next block
+    ///   covers every position this block can have touched (callers pass it
+    ///   back as `prev_coeff_count`).
+    #[inline(always)]
+    pub(crate) fn decode_block_into_natural(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        prev_coeff_count: u8,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> ScanResult<u8> {
+        self.decode_block_impl::<true>(
+            coeffs,
+            prev_coeff_count,
+            component,
+            dc_table_idx,
+            ac_table_idx,
+        )
+    }
+
+    #[inline(always)]
+    fn decode_block_impl<const NATURAL: bool>(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        prev_coeff_count: u8,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> ScanResult<u8> {
         // Get table references once (tables are borrowed, no copying)
         let dc_table =
             self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
@@ -768,8 +815,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // Caller tracks prev_coeff_count per-component for interleaved MCUs.
         let clear_len = prev_coeff_count as usize;
         if clear_len > 0 {
-            // Zero only what was written, not full 64 elements
-            coeffs[..clear_len].fill(0);
+            // Zero only what was written, not full 64 elements.
+            // Fixed-size loop over the whole 128-byte block: variable-length
+            // `fill` lowers to a libc memset call per block, which costs more
+            // than unconditionally clearing this L1-hot array.
+            for c in coeffs.iter_mut() {
+                *c = 0;
+            }
         }
 
         // Decode DC coefficient — inline fast path to avoid function call overhead
@@ -845,8 +897,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         self.reader.skip_bits_fast(total_bits);
                         i += run;
                         if i < DCT_BLOCK_SIZE {
-                            coeffs[i] = value;
-                            last_nonzero = (i + 1) as u8;
+                            if NATURAL {
+                                let nat = JPEG_NATURAL_ORDER[i] as usize;
+                                coeffs[nat] = value;
+                                last_nonzero = last_nonzero.max(nat as u8 + 1);
+                            } else {
+                                coeffs[i] = value;
+                                last_nonzero = (i + 1) as u8;
+                            }
                             i += 1;
                         } else {
                             // Same run-past-the-block as the slow paths below:
@@ -902,8 +960,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 ScanRead::Truncated => return Ok(ScanRead::Truncated),
                             }
                         };
-                        coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
-                        last_nonzero = (i + 1) as u8;
+                        if NATURAL {
+                            let nat = JPEG_NATURAL_ORDER[i] as usize;
+                            coeffs[nat] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                            last_nonzero = last_nonzero.max(nat as u8 + 1);
+                        } else {
+                            coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                            last_nonzero = (i + 1) as u8;
+                        }
                         i += 1;
                     }
                     continue;
@@ -959,8 +1023,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         ScanRead::Truncated => return Ok(ScanRead::Truncated),
                     }
                 };
-                coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
-                last_nonzero = (i + 1) as u8;
+                if NATURAL {
+                    let nat = JPEG_NATURAL_ORDER[i] as usize;
+                    coeffs[nat] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                    last_nonzero = last_nonzero.max(nat as u8 + 1);
+                } else {
+                    coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                    last_nonzero = (i + 1) as u8;
+                }
                 i += 1;
             }
         }

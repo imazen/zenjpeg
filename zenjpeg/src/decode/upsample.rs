@@ -495,6 +495,23 @@ pub fn upsample_h1v2_i16_libjpeg_strided(
     }
 }
 
+/// One row of vertical 2x upsample, `(3*near + far + bias) >> 2`
+/// elementwise — the libjpeg-turbo h1v2_fancy row function. `near`/`far` are
+/// strided input rows (ext-buffer offsets include context rows); `out` is
+/// the upsampled output row. Elementwise map: autovectorizes on every arch,
+/// no kernel needed.
+pub(crate) fn upsample_h1v2_row_ext(
+    near: &[i16],
+    far: &[i16],
+    out: &mut [i16],
+    width: usize,
+    bias: i16,
+) {
+    for x in 0..width {
+        out[x] = ((near[x] as i32 * 3 + far[x] as i32 + bias as i32) >> 2) as i16;
+    }
+}
+
 /// AVX2 implementation of one row of vertical 2x upsampling.
 ///
 /// Computes `(near*3 + far + bias) >> 2` for 16 i16 elements at a time.
@@ -998,6 +1015,274 @@ pub fn upsample_h2v2_i16_libjpeg_strided_turbo(
     upsample_h2v2_i16_libjpeg_strided_with(
         input, in_width, in_stride, in_height, output, out_width, out_stride, out_height, true,
     );
+}
+
+/// Horizontal triangle filter over a column-sum row (i16 lanes, AVX2).
+///
+/// `cs` holds `in_width` values of `3*near + far`; `out` receives the
+/// 2x-upsampled row. Bit-exact with the scalar interior of
+/// [`upsample_h2v2_libjpeg_row_scalar`]: left output `(3c + prev + bl) >> 4`,
+/// right `(3c + next + br) >> 4`, edge columns fixed. Arithmetic stays in
+/// i16 — see the range note on [`upsample_h2v2_libjpeg_row_avx2`].
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn h2v2_hfilter_row_avx2(
+    _token: archmage::X64V3Token,
+    cs: &[i16],
+    out: &mut [i16],
+    in_width: usize,
+    out_width: usize,
+    bias_left: i16,
+    bias_right: i16,
+) {
+    use core::arch::x86_64::*;
+
+    // `cs` uses the padded layout `[left-pad | in_width data | right-pad]`
+    // produced by [`h2v2_colsum_ext_avx2`]: position `c` of the output row
+    // reads cs[c], cs[c + 1], cs[c + 2], so every column — including the
+    // edges, via the replicated pads — vectorizes when `out` is wide enough.
+    let cs = &cs[..in_width + 2];
+    let out = &mut out[..out_width];
+
+    let v_three = _mm256_set1_epi16(3);
+    let v_bl = _mm256_set1_epi16(bias_left);
+    let v_br = _mm256_set1_epi16(bias_right);
+
+    let mut x = 0usize;
+    while x + 16 <= in_width && 2 * x + 32 <= out_width {
+        let cs_prev =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cs[x..x + 16]).unwrap());
+        let cs_this =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cs[x + 1..x + 17]).unwrap());
+        let cs_next =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cs[x + 2..x + 18]).unwrap());
+
+        let t3 = _mm256_mullo_epi16(cs_this, v_three);
+        let v_left = _mm256_srai_epi16(_mm256_add_epi16(_mm256_add_epi16(t3, cs_prev), v_bl), 4);
+        let v_right = _mm256_srai_epi16(_mm256_add_epi16(_mm256_add_epi16(t3, cs_next), v_br), 4);
+
+        let lo = _mm256_unpacklo_epi16(v_left, v_right);
+        let hi = _mm256_unpackhi_epi16(v_left, v_right);
+        let out0 = _mm256_permute2x128_si256(lo, hi, 0x20);
+        let out1 = _mm256_permute2x128_si256(lo, hi, 0x31);
+
+        let o = x * 2;
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut out[o..o + 16]).unwrap(),
+            out0,
+        );
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut out[o + 16..o + 32]).unwrap(),
+            out1,
+        );
+        x += 16;
+    }
+
+    // Scalar remainder only when `out_width` is narrower than the upsampled
+    // span or the row is too narrow for a full chunk.
+    let bias_l = bias_left as i32;
+    let bias_r = bias_right as i32;
+    while x < in_width && 2 * x < out_width {
+        let c = cs[x + 1] as i32;
+        let lo = x * 2;
+        if lo < out_width {
+            out[lo] = ((3 * c + cs[x] as i32 + bias_l) >> 4) as i16;
+        }
+        if lo + 1 < out_width {
+            out[lo + 1] = ((3 * c + cs[x + 2] as i32 + bias_r) >> 4) as i16;
+        }
+        x += 1;
+    }
+}
+
+/// Column sums `3*near + far` for one h2v2 row pair, in the padded layout the
+/// filter kernels consume: `cs[0]` repeats the first tap and
+/// `cs[in_width + 1]` the last, so left/right taps at position `c` read
+/// `cs[c]`/`cs[c + 2]` — no scalar edge handling anywhere.
+///
+/// Bit-exact inputs to the same arithmetic as
+/// [`upsample_h2v2_libjpeg_row_scalar`]: i16 mullo matches the scalar i32
+/// math for |3*near + far| < 32768.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+pub(crate) fn h2v2_colsum_ext_avx2(
+    _token: archmage::X64V3Token,
+    near: &[i16],
+    far: &[i16],
+    cs: &mut [i16],
+) {
+    use core::arch::x86_64::*;
+
+    let w = near.len();
+    let v_three = _mm256_set1_epi16(3);
+    let mut x = 0usize;
+    while x + 16 <= w {
+        let v3 = _mm256_mullo_epi16(
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&near[x..x + 16]).unwrap()),
+            v_three,
+        );
+        let f = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x..x + 16]).unwrap());
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut cs[x + 1..x + 17]).unwrap(),
+            _mm256_add_epi16(v3, f),
+        );
+        x += 16;
+    }
+    while x < w {
+        cs[x + 1] = (near[x] as i32 * 3 + far[x] as i32) as i16;
+        x += 1;
+    }
+    cs[0] = cs[1];
+    cs[w + 1] = cs[w];
+}
+
+/// AVX2 h2v2 strip upsampler: computes `3*near + far` column sums once per
+/// input row — shared across the pair of output rows — into scratch rows,
+/// then runs the horizontal triangle filter on each. This is the structure
+/// of libjpeg-turbo's `jsimd_h2v2_fancy_upsample` (their u8 domain and
+/// in-place tricks aside): one pass over `near`/`far` per input row instead
+/// of one per output row.
+///
+/// Bit-exact with per-row [`upsample_h2v2_libjpeg_row_avx2`] calls.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+#[allow(clippy::too_many_arguments)]
+fn upsample_h2v2_strip_avx2(
+    _token: archmage::X64V3Token,
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    data_rows: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    turbo_bias: bool,
+    cs_a: &mut [i16],
+    cs_b: &mut [i16],
+) {
+    if in_width < 18 {
+        // Narrow strip: scalar path (as upsample_h2v2_libjpeg_row_scalar).
+        for out_y in 0..data_rows * 2 {
+            let in_y = out_y / 2;
+            let near_row = (1 + in_y) * in_stride;
+            let far_row = if out_y % 2 == 0 {
+                in_y * in_stride
+            } else {
+                (in_y + 2) * in_stride
+            };
+            let bias = if turbo_bias {
+                H2v2Bias::Turbo
+            } else {
+                H2v2Bias::Alternating {
+                    is_upper: out_y % 2 == 0,
+                }
+            };
+            upsample_h2v2_libjpeg_row_scalar(
+                &input[near_row..near_row + in_width],
+                &input[far_row..far_row + in_width],
+                &mut output[out_y * out_stride..],
+                in_width,
+                out_width,
+                bias,
+            );
+        }
+        return;
+    }
+
+    // (bias_left, bias_right) per output-row parity. Alternating: upper rows
+    // (8,7), lower rows (7,8). Turbo: (8,7) for both.
+    let (bl_up, br_up) = (8i16, 7i16);
+    let (bl_lo, br_lo) = if turbo_bias {
+        (8i16, 7i16)
+    } else {
+        (7i16, 8i16)
+    };
+
+    for in_y in 0..data_rows {
+        let near_row = (1 + in_y) * in_stride;
+        let far_a_row = in_y * in_stride;
+        let far_b_row = (in_y + 2) * in_stride;
+        let near = &input[near_row..near_row + in_width];
+        let far_a = &input[far_a_row..far_a_row + in_width];
+        let far_b = &input[far_b_row..far_b_row + in_width];
+
+        // Pass 1: column sums for both output rows of the pair.
+        h2v2_colsum_ext_avx2(_token, near, far_a, cs_a);
+        h2v2_colsum_ext_avx2(_token, near, far_b, cs_b);
+
+        // Pass 2: horizontal filter into the two output rows.
+        let out_a = &mut output[2 * in_y * out_stride..];
+        h2v2_hfilter_row_avx2(_token, cs_a, out_a, in_width, out_width, bl_up, br_up);
+        let out_b = &mut output[(2 * in_y + 1) * out_stride..];
+        h2v2_hfilter_row_avx2(_token, cs_b, out_b, in_width, out_width, bl_lo, br_lo);
+    }
+}
+
+/// Upsample one h2v2 chroma strip that carries context rows.
+///
+/// `input` is the extended strip: row 0 is the above-context row, rows
+/// `1..=data_rows` are the strip's data rows, row `data_rows + 1` is the
+/// below-context row. Emits exactly `data_rows * 2` rows: context rows feed
+/// the `far` tap of the edge output rows but are never emitted themselves.
+/// [`upsample_h2v2_i16_libjpeg_strided_with`] upsamples context rows too and
+/// the caller discards them — for an 8-row strip that is 4 wasted rows in 20.
+///
+/// `cs_a`/`cs_b` are scratch rows of `in_width` elements (only used on the
+/// AVX2 path; may be empty otherwise).
+///
+/// Bit-exact with upsampling the full strip and skipping the first two
+/// output rows: identical near/far inputs and per-row biases.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
+pub(crate) fn upsample_h2v2_strip_ext(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    data_rows: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    turbo_bias: bool,
+    cs_a: &mut [i16],
+    cs_b: &mut [i16],
+) {
+    if in_width == 0 || data_rows == 0 || out_width == 0 {
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        upsample_h2v2_strip_avx2(
+            token, input, in_width, in_stride, data_rows, output, out_width, out_stride,
+            turbo_bias, cs_a, cs_b,
+        );
+        return;
+    }
+
+    for out_y in 0..data_rows * 2 {
+        let in_y = out_y / 2;
+        let near_row = (1 + in_y) * in_stride;
+        let far_row = if out_y % 2 == 0 {
+            in_y * in_stride
+        } else {
+            (in_y + 2) * in_stride
+        };
+        let bias = if turbo_bias {
+            H2v2Bias::Turbo
+        } else {
+            H2v2Bias::Alternating {
+                is_upper: out_y % 2 == 0,
+            }
+        };
+        upsample_h2v2_libjpeg_row(
+            &input[near_row..near_row + in_width],
+            &input[far_row..far_row + in_width],
+            &mut output[out_y * out_stride..],
+            in_width,
+            out_width,
+            bias,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

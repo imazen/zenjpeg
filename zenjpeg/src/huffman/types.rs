@@ -241,7 +241,7 @@ pub enum HuffmanAlgorithm {
 
     /// jpegli C++ algorithm (sorted two-pointer merge with retry).
     ///
-    /// This is the algorithm from Google's jpegli in the JPEG XL project.
+    /// This is the algorithm from the jpegli project (Bruse, Versari, Szabadka and Alakuijala).
     /// Uses sorted merge with sentinels. If tree exceeds depth limit, retries
     /// with boosted minimum frequencies.
     ///
