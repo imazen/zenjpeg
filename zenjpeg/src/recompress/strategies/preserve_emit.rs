@@ -399,7 +399,7 @@ fn emit_progressive_trial(
     crate::lossless::restructure::encode_progressive_from_coefficients(
         &tc,
         Some(preserved_segments),
-        &[],
+        &crate::lossless::Carry::none(),
         0,
         &enough::Unstoppable,
     )

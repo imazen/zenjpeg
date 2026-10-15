@@ -120,7 +120,7 @@ pub fn restructure(
     // when there is none; their own scan structure is left alone).
     let identity = TransformConfig::default();
     let transform_config = config.transform.as_ref().unwrap_or(&identity);
-    let secondaries = transform_secondary_images(
+    let carry = transform_secondary_images(
         jpeg_data,
         extras.as_ref(),
         transform_config,
@@ -135,15 +135,11 @@ pub fn restructure(
 
     match config.output_mode {
         OutputMode::Sequential => {
-            encode_from_coefficients(&coeffs, preserved, &secondaries, restart_mcus, &stop)
+            encode_from_coefficients(&coeffs, preserved, &carry, restart_mcus, &stop)
         }
-        OutputMode::Progressive => encode_progressive_from_coefficients(
-            &coeffs,
-            preserved,
-            &secondaries,
-            restart_mcus,
-            &stop,
-        ),
+        OutputMode::Progressive => {
+            encode_progressive_from_coefficients(&coeffs, preserved, &carry, restart_mcus, &stop)
+        }
     }
 }
 
@@ -291,7 +287,7 @@ fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<Progres
 pub(crate) fn encode_progressive_from_coefficients(
     coeffs: &TransformedCoefficients,
     preserved_segments: Option<&[crate::decode::PreservedSegment]>,
-    secondaries: &[crate::encode::extras::MpfImage],
+    carry: &super::pipeline::Carry<'_>,
     _restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
@@ -405,7 +401,7 @@ pub(crate) fn encode_progressive_from_coefficients(
     output.push(MARKER_SOI);
 
     // Preserved metadata + MPF index placeholder
-    let mpf_at = write_preserved_segments(&mut output, preserved_segments, secondaries)?;
+    let mpf_at = write_preserved_segments(&mut output, preserved_segments, carry)?;
 
     // DQT
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
@@ -477,7 +473,7 @@ pub(crate) fn encode_progressive_from_coefficients(
     output.push(MARKER_EOI);
 
     // MPF index + secondary images
-    finish_container(&mut output, secondaries, mpf_at)?;
+    finish_container(&mut output, carry, mpf_at)?;
 
     Ok(output)
 }

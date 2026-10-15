@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Lossless transforms, `restructure` and `apply_exif_orientation` carry every byte after the primary image or fail; they dropped some silently and refused others that lose nothing (commit: added at landing). Carried now: a `GCamera:MicroVideo` or Motion Photo video, and any other trailer, copied verbatim at the end of the file (MicroVideo was dropped; a Motion Photo directory item was refused), with the directory's lengths rewritten; an `hdrgm` gain map that the MPF index does not list, transformed and added to the index (dropped); files with Adobe-style extended XMP, whose directory is now read from the standard packet (every call failed with "invalid XMP directory"); an MPF index whose images were stripped, passed through with the XMP as it was and the dangling index not written (refused). A JPEG inside a video after the primary is no longer taken as the gain map (it was, and the rest of the video was dropped). Refused now instead of dropped: a signalled gain map that cannot be read (no EOI, or larger than the primary) when transforming, and non-fill bytes between secondary JPEGs. Transformed secondaries are bounded by the primary (each at most its pixels, all together at most four times), so a 2 KB file declaring sixteen 50 MP secondaries is refused at once instead of taking 3.75 s. Tests: `tests/mpf_bounds.rs`. This is the carry policy decided on 2026-10-11 (refuse only real loss).
+
 - A DHT that defines a DC symbol above 15 is rejected when it is defined, at every strictness (Permissive skips the segment), as libjpeg-turbo and jpegli do. DC categories end at 15 (16 exists only in lossless coding); category 16 was accepted and decoded two ways (`decode_value` gave the extra bits, `huff_extend` the bits plus one). The structural inventory applies the same rule. (6b079a68)
 
 - The streaming `UltraHdrReader`, `Decoder::decode`'s gain-map extraction (`GainMapHandling::PreserveRaw` / `Decode`) and the scanline reader's `gain_map_jpeg` find an MPF-listed gain map that carries its own metadata (its ISO 21496-1 record or its `hdrgm` XMP) when the primary image signals neither, as `UltraHdrExtras::is_ultrahdr` and libultrahdr 1.4.0 do. They reported no gain map for such files. (a91a4aa6)
@@ -112,6 +114,14 @@ All notable changes to zenjpeg are documented here. Earlier history
   audit also confirms removed scanline methods (`de79d22e`) and quant-table
   variant/method changes (`22485f82`), in addition to the Pattern-B breaks below.
   [Full audit and metadata validation](zenjpeg/docs/METADATA_INTEGRATION.md).
+- Lossless transforms, `restructure` and `apply_exif_orientation` fail where
+  0.8.4 wrote output: on files they cannot carry whole (a nested secondary
+  under a transform, an MPF entry that is not a separate JPEG after the
+  primary, an unreadable signalled gain map, unindexed bytes between secondary
+  JPEGs, a directory image item that is not a secondary JPEG), and with
+  `ImageTooLarge` when the secondaries to transform exceed the primary's
+  pixels (one) or four times them (all). 0.8.4 dropped or misaligned those
+  images. Same signatures.
 
 ### Changed
 - Default decoding preserves a real-world single ICC chunk numbered 0 of 1
@@ -130,8 +140,10 @@ All notable changes to zenjpeg are documented here. Earlier history
   pinned at `8f7ee871`; no JPEG public signatures change.
 - Recover lossless MPF handling: transform secondary JPEGs with the primary,
   rebuild MPF offsets, update GContainer lengths by semantic through zenmeta,
-  reject incomplete/ambiguous/nested secondary layouts, and preserve EXIF byte
+  reject ambiguous/nested secondary layouts, and preserve EXIF byte
   offsets when resetting orientation. Shared metadata revision: `a81daf76`.
+  (What is carried and what is refused changed again; see the first Fixed
+  entry.)
 - Add `lossless::apply_exif_orientation_with_edge_handling`; the existing entry
   point remains. The recovered default rejects implicit edge trimming; callers
   can explicitly select proportional trimming. This is a behavior change from

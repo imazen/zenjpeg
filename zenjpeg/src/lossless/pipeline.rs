@@ -114,7 +114,7 @@ fn transform_with(
     stop.check()?;
 
     // Step 3: The secondary images get the same transform.
-    let secondaries = match level {
+    let carry = match level {
         Level::Primary => transform_secondary_images(
             jpeg_data,
             extras.as_ref(),
@@ -126,7 +126,12 @@ fn transform_with(
         )?,
         Level::Secondary => {
             refuse_nested(jpeg_data, extras.as_ref())?;
-            Vec::new()
+            // Bytes after the secondary's EOI stay with it.
+            Carry {
+                tail: crate::container::marker::primary_bounds(jpeg_data)
+                    .map_or(&[][..], |b| &jpeg_data[b.end..]),
+                ..Carry::none()
+            }
         }
     };
 
@@ -140,36 +145,77 @@ fn transform_with(
             }
         }
     }
-    encode_from_coefficients(&transformed, Some(&segments), &secondaries, 0, stop)
+    encode_from_coefficients(&transformed, Some(&segments), &carry, 0, stop)
 }
 
-/// Carry the secondary images (Ultra HDR gain maps, depth maps, MPF
-/// thumbnails and frames) through a transform. Each secondary is
-/// geometrically bound to the primary, so it receives the **same** transform
-/// through the same pipeline, one level deep. Explicit trimming is accepted
-/// only when every image retains the same proportional source rectangle.
-/// With [`LosslessTransform::None`] and no EXIF fix-up the bytes pass through
-/// verbatim.
+/// Each carried secondary is decoded and re-encoded at its declared size, so
+/// the carry is bounded against the primary: one secondary may hold at most
+/// the primary's pixels (gain maps, depth and confidence maps and MPF
+/// thumbnails are subsampled or the same size; the second frame of an MPF
+/// stereo pair is the same size), and all of them together at most this many
+/// times the primary's pixels. A crafted file declaring many large
+/// secondaries then costs at most this many extra passes of the primary's
+/// size, however many it declares.
+const SECONDARY_PIXEL_BUDGET: u64 = 4;
+
+/// What the lossless writers place after the primary image's EOI.
+pub(crate) struct Carry<'a> {
+    /// The JPEG secondaries, in file order, after the primary's transform:
+    /// listed in the rebuilt MPF index and placed directly after the primary.
+    pub(super) images: Vec<MpfImage>,
+    /// The bytes after the last JPEG secondary (or after the primary): a
+    /// Motion Photo or `GCamera:MicroVideo` video, a vendor trailer. Copied
+    /// verbatim after the images, so it keeps its distance from the end of
+    /// the file, which is what those formats' offsets count.
+    pub(super) tail: &'a [u8],
+    /// `(Item:Semantic, Item:Length)` of each GContainer directory item that
+    /// no carried image fills (a Motion Photo video in `tail`, or an item
+    /// whose bytes are not in the file): its length is written back as it is.
+    pub(super) verbatim_items: Vec<(String, usize)>,
+}
+
+impl Carry<'_> {
+    /// Nothing follows the primary.
+    pub(crate) fn none() -> Self {
+        Self {
+            images: Vec::new(),
+            tail: &[],
+            verbatim_items: Vec::new(),
+        }
+    }
+}
+
+/// Carry what follows the primary (Ultra HDR gain maps, depth maps, MPF
+/// thumbnails and frames, then any other trailing bytes) through a
+/// transform. Each JPEG secondary is geometrically bound to the primary, so
+/// it receives the **same** transform through the same pipeline, one level
+/// deep. Explicit trimming is accepted only when every image retains the same
+/// proportional source rectangle. With [`LosslessTransform::None`] and no
+/// EXIF fix-up the secondaries pass through verbatim.
 ///
-/// A secondary that cannot be carried or transformed is an error, never
-/// silently dropped or carried untransformed: either would leave the file
-/// describing a gain map (or thumbnail) that no longer matches the primary
-/// ([`secondary_sources`] lists what must be carried).
-pub(super) fn transform_secondary_images(
-    jpeg_data: &[u8],
+/// Nothing is dropped silently: [`plan_carry`] says what is carried, and a
+/// secondary that cannot be carried or transformed is an error, never
+/// dropped or carried untransformed (either would leave the file describing
+/// a gain map or thumbnail that no longer matches the primary).
+pub(super) fn transform_secondary_images<'a>(
+    jpeg_data: &'a [u8],
     extras: Option<&DecodedExtras>,
     config: &TransformConfig,
     reset_exif_orientation: bool,
     primary_source: (u32, u32),
     primary_output: (u32, u32),
     stop: &impl Stop,
-) -> Result<Vec<MpfImage>> {
-    let sources = secondary_sources(jpeg_data, extras)?;
+) -> Result<Carry<'a>> {
     let verbatim = config.transform == LosslessTransform::None && !reset_exif_orientation;
-    let mut out = Vec::new();
-    out.try_reserve_exact(sources.len())
-        .map_err(|_| Error::allocation_failed(sources.len(), "secondary image list"))?;
-    for img in &sources {
+    let plan = plan_carry(jpeg_data, extras, primary_source, !verbatim)?;
+    let primary_px = u64::from(primary_source.0) * u64::from(primary_source.1);
+    let budget = primary_px.saturating_mul(SECONDARY_PIXEL_BUDGET);
+    let mut spent = 0u64;
+    let mut images = Vec::new();
+    images
+        .try_reserve_exact(plan.sources.len())
+        .map_err(|_| Error::allocation_failed(plan.sources.len(), "secondary image list"))?;
+    for img in &plan.sources {
         stop.check()?;
         let data = if verbatim {
             let mut copy = Vec::new();
@@ -178,6 +224,18 @@ pub(super) fn transform_secondary_images(
             copy.extend_from_slice(img.data);
             copy
         } else {
+            let source = DecodeConfig::new()
+                .read_info(img.data)
+                .map_err(|e| in_secondary(e, img))?
+                .dimensions;
+            let px = u64::from(source.width) * u64::from(source.height);
+            spent = spent.saturating_add(px);
+            if px > primary_px {
+                return Err(in_secondary(Error::image_too_large(px, primary_px), img));
+            }
+            if spent > budget {
+                return Err(in_secondary(Error::image_too_large(spent, budget), img));
+            }
             transform_with(
                 img.data,
                 config,
@@ -227,138 +285,263 @@ pub(super) fn transform_secondary_images(
                 )));
             }
         }
-        out.push(MpfImage {
+        images.push(MpfImage {
             image_type: img.image_type,
             data,
         });
     }
-    Ok(out)
+    Ok(Carry {
+        images,
+        tail: plan.tail,
+        verbatim_items: plan.verbatim_items,
+    })
 }
 
-/// One secondary image to carry: its MPF index (1 for a gain map found
-/// without an MPF index), its MPF type, and its bytes in the source.
+/// One JPEG secondary to carry: its MPF index (one past the last MPF entry
+/// for a gain map found without an index entry), its MPF type, and its bytes
+/// in the source, which start at `start`.
 pub(super) struct SourceSecondary<'a> {
     index: usize,
     image_type: crate::encode::extras::MpfImageType,
     data: &'a [u8],
+    start: usize,
 }
 
-/// The secondary images of a file that the lossless pipeline must carry, or
-/// an error when the file describes one it cannot carry. Nothing is dropped
-/// silently:
-/// - Every MPF entry after the primary must have been extracted. The decoder
-///   takes readable, disjoint ranges inside the input, including embedded
-///   JPEGs. This writer additionally requires placement after the primary EOI;
-///   an index naming anything
-///   else (a repeated or overlapping entry, a second primary, bytes that are
-///   not a JPEG) is refused here instead of being dropped.
-/// - A gain map signalled only by XMP (`hdrgm` properties or a GContainer
-///   `GainMap` item, no MPF index, as some Android files are written) is the
-///   JPEG that follows the primary; it is carried, and the output gains an
-///   MPF index for it.
-/// - The XMP GContainer directory may not list more secondary items than are
-///   carried: an item that is not a carried JPEG (e.g. a Motion Photo video)
-///   would be dropped while the directory still described it.
-///
-/// The carried ranges are disjoint parts of the input, so their total never
-/// exceeds its length (checked again here).
-fn secondary_sources<'a>(
+/// What [`transform_secondary_images`] carries.
+struct CarryPlan<'a> {
+    sources: Vec<SourceSecondary<'a>>,
+    tail: &'a [u8],
+    verbatim_items: Vec<(String, usize)>,
+}
+
+/// Plan the carry of everything after the primary's EOI. Every byte there
+/// is carried, or the plan is an error:
+/// - Each MPF entry after the primary that the decoder extracted is a JPEG
+///   secondary, transformed with the primary. An entry whose bytes lie past
+///   the end of the file (the trailing images were stripped, as
+///   `jpegtran -copy all` does) describes nothing that can be carried and is
+///   left out of the rebuilt index; the XMP keeps its signalling as it was.
+///   Any other entry that was not extracted (inside the primary, overlapping
+///   or repeating another, a second primary, bytes that are not a JPEG) is
+///   refused.
+/// - When the XMP signals a gain map (`hdrgm` properties or a GContainer
+///   `GainMap` item) and no MPF entry is one, a JPEG that starts right after
+///   the last secondary is it, provided it parses and is no larger than the
+///   primary; its length comes from the directory when it gives one, else
+///   from its EOI. It is carried like an MPF secondary and gains an index
+///   entry. When `transforming`, such a JPEG that cannot be read as a gain
+///   map is refused rather than carried untransformed (without a transform
+///   it stays in the tail). Bytes that do not start a JPEG are not taken as
+///   one (a Motion Photo's MP4 may hold JPEGs inside).
+/// - Bytes between the secondaries must be fill (`00` or `FF`, as GContainer
+///   padding is written); they are dropped and the directory's padding set
+///   to zero. Anything else there is refused.
+/// - Whatever follows the last secondary is the verbatim [`Carry::tail`].
+/// - When `transforming`, a GContainer directory image item (`image/*`) that
+///   no carried JPEG fills is refused while bytes follow the secondaries:
+///   carried verbatim it would no longer match the primary.
+fn plan_carry<'a>(
     jpeg_data: &'a [u8],
-    extras: Option<&'a DecodedExtras>,
-) -> Result<Vec<SourceSecondary<'a>>> {
-    let Some(extras) = extras else {
-        return Ok(Vec::new());
+    extras: Option<&DecodedExtras>,
+    primary_dims: (u32, u32),
+    transforming: bool,
+) -> Result<CarryPlan<'a>> {
+    use crate::encode::extras::MpfImageType;
+    let Some(primary) = crate::container::marker::primary_bounds(jpeg_data) else {
+        // No EOI: the primary runs to the end of the input.
+        return Ok(CarryPlan {
+            sources: Vec::new(),
+            tail: &[],
+            verbatim_items: Vec::new(),
+        });
     };
-    let mut out: Vec<SourceSecondary<'a>> = extras
-        .secondary_images()
-        .iter()
-        .map(|s| SourceSecondary {
-            index: s.mpf_index,
-            image_type: s.image_type,
-            data: &s.data,
+    let xmp = extras.and_then(standard_xmp);
+    // A directory that does not parse cannot be rewritten; that is refused
+    // where a rewrite is needed (`write_preserved_segments`). When
+    // transforming, it is also refused while bytes follow the primary: the
+    // directory could describe an image there that must not stay untransformed.
+    let parsed = xmp.map(Directory::parse);
+    if transforming
+        && primary.end < jpeg_data.len()
+        && let Some(Err(e)) = &parsed
+    {
+        return Err(Error(
+            Error::invalid_jpeg_data(
+                "invalid XMP directory; lossless transforms cannot tell what the bytes after \
+                 the primary are",
+            )
+            .0
+            .at_string(|| alloc::format!("{e}")),
+        ));
+    }
+    let directory = parsed.and_then(|d| d.ok());
+    let items: Vec<&zenmeta::xmp::container::ContainerItem> = directory
+        .as_ref()
+        .map(|d| {
+            d.items()
+                .filter(|i| i.semantic != ItemSemantic::Primary)
+                .collect()
         })
-        .collect();
-    let xmp = extras.xmp();
-    let directory = xmp.map(Directory::parse).transpose().map_err(|e| {
-        Error(
-            Error::invalid_jpeg_data("invalid XMP directory")
-                .0
-                .at_string(|| alloc::format!("{e}")),
-        )
-    })?;
-    match extras.mpf() {
-        Some(dir) => {
-            // Decoding permits JPEGs embedded in APP payloads. This writer
-            // emits independent trailing images and cannot relocate those
-            // references without also rewriting the containing payload.
-            let primary = crate::container::marker::primary_bounds(jpeg_data)
-                .ok_or_else(|| Error::invalid_jpeg_data("missing primary JPEG bounds"))?;
-            let mpf = crate::container::marker::iter(&jpeg_data[..primary.end])
-                .find(|s| {
-                    s.kind == crate::container::MarkerKind::App(2)
-                        && s.payload.starts_with(b"MPF\0")
-                })
-                .ok_or_else(|| Error::invalid_jpeg_data("missing MPF segment"))?;
-            let base = mpf.offset + 8;
-            if dir.images.iter().skip(1).any(|entry| {
-                entry.offset != 0 && base.saturating_add(entry.offset as usize) < primary.end
-            }) {
+        .unwrap_or_default();
+
+    let mut sources: Vec<SourceSecondary<'a>> = Vec::new();
+    let mut mpf_entries = 0;
+    if let Some((extras, dir)) = extras.and_then(|e| e.mpf().map(|d| (e, d))) {
+        mpf_entries = dir.images.len();
+        let mpf = crate::container::marker::iter(&jpeg_data[..primary.end])
+            .find(|s| {
+                s.kind == crate::container::MarkerKind::App(2) && s.payload.starts_with(b"MPF\0")
+            })
+            .ok_or_else(|| Error::invalid_jpeg_data("missing MPF segment"))?;
+        // MPF offsets count from the index's TIFF header; 0 means "right
+        // after the primary" (as the decoder reads them).
+        let base = mpf.offset + 8;
+        for (index, entry) in dir.images.iter().enumerate().skip(1) {
+            let start = if entry.offset == 0 {
+                primary.end
+            } else {
+                base.saturating_add(entry.offset as usize)
+            };
+            let range = start..start.saturating_add(entry.size as usize);
+            if start < primary.end {
+                // Decoding permits JPEGs embedded in APP payloads. This
+                // writer emits independent trailing images and cannot
+                // relocate those references without also rewriting the
+                // containing payload.
                 return Err(Error::invalid_jpeg_data(
                     "lossless rewriting cannot relocate an MPF image embedded in the primary JPEG",
                 ));
             }
-
-            if (1..dir.images.len()).any(|i| !out.iter().any(|s| s.index == i)) {
-                return Err(Error::invalid_jpeg_data(
-                    "the MPF index names an image that is not a separate JPEG after the primary \
-                     (a repeated or overlapping entry, a second primary, or bytes outside the \
-                     file); lossless transforms do not drop secondary images",
-                ));
-            }
-        }
-        None => {
-            let signals_gain_map = xmp.is_some_and(|x| {
-                crate::container::xmp::parse_xmp(x).is_ok()
-                    || directory
-                        .as_ref()
-                        .is_some_and(|d| d.items().any(|i| i.semantic == ItemSemantic::GainMap))
-            });
-            if signals_gain_map {
-                let ranges = crate::container::marker::find_jpeg_boundaries(jpeg_data);
-                if let [primary, gain_map, ..] = ranges.as_slice()
-                    && primary.start == 0
-                    && gain_map.start >= primary.end
-                {
-                    out.push(SourceSecondary {
-                        index: 1,
-                        image_type: crate::encode::extras::MpfImageType::Undefined,
-                        data: &jpeg_data[gain_map.clone()],
+            match extras
+                .secondary_images()
+                .iter()
+                .find(|s| s.mpf_index == index)
+            {
+                Some(s) => {
+                    let data = jpeg_data
+                        .get(range)
+                        .filter(|d| *d == s.data.as_slice())
+                        .ok_or_else(|| {
+                            Error::internal("an extracted MPF image does not match its entry")
+                        })?;
+                    sources.push(SourceSecondary {
+                        index,
+                        image_type: s.image_type,
+                        data,
+                        start,
                     });
+                }
+                // Stripped: nothing of it is left to carry.
+                None if range.end > jpeg_data.len() => {}
+                None => {
+                    return Err(Error::invalid_jpeg_data(
+                        "the MPF index names an image that is not a separate JPEG after the \
+                         primary (a repeated or overlapping entry, a second primary, or bytes \
+                         that are not a JPEG); lossless transforms do not drop secondary images",
+                    ));
                 }
             }
         }
     }
-    let listed = directory.as_ref().map_or(0, |d| {
-        d.items()
-            .filter(|i| i.semantic != ItemSemantic::Primary)
-            .count()
-    });
-    if listed > out.len() {
-        return Err(Error::unsupported_feature(
-            "the XMP GContainer directory lists items that are not secondary JPEGs of this \
-             file (e.g. a Motion Photo video); lossless transforms do not drop them",
-        ));
+    sources.sort_by_key(|s| s.start);
+    let mut cursor = primary.end;
+    for s in &sources {
+        let gap = jpeg_data
+            .get(cursor..s.start)
+            .ok_or_else(|| Error::invalid_jpeg_data("overlapping MPF images"))?;
+        if !gap.iter().all(|&b| b == 0x00 || b == 0xFF) {
+            return Err(Error::invalid_jpeg_data(
+                "bytes between the primary and an MPF image, or between two MPF images, that \
+                 no index describes; lossless transforms do not drop them",
+            ));
+        }
+        cursor = s.start + s.data.len();
     }
-    let total = out
+
+    let directory_gain_map = items.iter().find(|i| i.semantic == ItemSemantic::GainMap);
+    let signals_gain_map = directory_gain_map.is_some()
+        || xmp.is_some_and(|x| crate::container::xmp::parse_xmp(x).is_ok());
+    if signals_gain_map
+        && !sources
+            .iter()
+            .any(|s| s.image_type == MpfImageType::Undefined)
+    {
+        let rest = &jpeg_data[cursor..];
+        if rest.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            let length = directory_gain_map.and_then(|i| i.length).or_else(|| {
+                crate::container::marker::find_jpeg_boundaries(rest)
+                    .first()
+                    .filter(|r| r.start == 0)
+                    .map(|r| r.end)
+            });
+            match length
+                .and_then(|n| rest.get(..n))
+                .filter(|g| fits_in_primary(g, primary_dims))
+            {
+                Some(gain_map) => {
+                    sources.push(SourceSecondary {
+                        index: mpf_entries.max(1),
+                        image_type: MpfImageType::Undefined,
+                        data: gain_map,
+                        start: cursor,
+                    });
+                    cursor += gain_map.len();
+                }
+                // Untransformed, it stays where it is, in the tail.
+                None if !transforming => {}
+                None => {
+                    return Err(Error::invalid_jpeg_data(
+                        "the XMP describes a gain map after the primary that cannot be read as \
+                         one (no EOI, or not a JPEG no larger than the primary); transforming \
+                         the primary would leave it misaligned",
+                    ));
+                }
+            }
+        }
+    }
+
+    let carried: Vec<&str> = sources
         .iter()
-        .map(|s| s.data.len())
-        .fold(0usize, usize::saturating_add);
-    if total > jpeg_data.len() {
-        return Err(Error::invalid_jpeg_data(
-            "secondary images larger than the file that holds them",
-        ));
+        .map(|s| item_semantic(s.image_type))
+        .collect();
+    let mut verbatim_items = Vec::new();
+    for item in &items {
+        let semantic = item.semantic.as_xmp_str();
+        if carried.contains(&semantic) {
+            continue;
+        }
+        if transforming && cursor < jpeg_data.len() && item.mime.starts_with("image/") {
+            return Err(Error::unsupported_feature(
+                "the XMP GContainer directory lists an image that is not an MPF secondary of \
+                 this file; carried untransformed it would no longer match the primary",
+            ));
+        }
+        verbatim_items.push((String::from(semantic), item.length.unwrap_or(0)));
     }
-    Ok(out)
+    Ok(CarryPlan {
+        sources,
+        tail: &jpeg_data[cursor..],
+        verbatim_items,
+    })
+}
+
+/// `jpeg` parses as a JPEG no larger than `primary` on either axis.
+fn fits_in_primary(jpeg: &[u8], primary: (u32, u32)) -> bool {
+    DecodeConfig::new()
+        .read_info(jpeg)
+        .is_ok_and(|i| i.dimensions.width <= primary.0 && i.dimensions.height <= primary.1)
+}
+
+/// The standard XMP packet (without the extended-XMP chunks, which are
+/// copied as they are): the GContainer directory and the `hdrgm` signalling
+/// live there, and it is the packet the directory rewrite edits.
+fn standard_xmp(extras: &DecodedExtras) -> Option<&str> {
+    extras
+        .segments()
+        .iter()
+        .find(|s| s.segment_type == SegmentType::Xmp)
+        .and_then(|s| s.data.strip_prefix(XMP_NAMESPACE))
+        .and_then(|x| core::str::from_utf8(x).ok())
 }
 
 /// `e`, raised while carrying `img`, with the secondary named. The kind is
@@ -387,7 +570,7 @@ fn refuse_nested(jpeg_data: &[u8], extras: Option<&DecodedExtras>) -> Result<()>
         .and_then(|e| e.mpf())
         .is_some_and(|d| d.images.len() > 1);
     let directory = extras
-        .and_then(|e| e.xmp())
+        .and_then(standard_xmp)
         .map(Directory::parse)
         .transpose()
         .map_err(|e| {
@@ -411,17 +594,21 @@ fn refuse_nested(jpeg_data: &[u8], extras: Option<&DecodedExtras>) -> Result<()>
 /// Write the preserved APPn/COM segments right after SOI.
 ///
 /// The source's MPF index (APP2 `MPF\0`) is never copied: its offsets and
-/// sizes describe the source layout. When `secondaries` will follow the
-/// primary, a placeholder index of the final size is written in its place
-/// (or after the other segments if the source had none) and the GContainer
-/// XMP `Item:Length` values are rewritten to the new secondary lengths.
+/// sizes describe the source layout. When `carry` holds images, a
+/// placeholder index of the final size is written in its place (or after the
+/// other segments if the source had none) and the GContainer XMP
+/// `Item:Length` values are rewritten to the new image lengths (items carried
+/// in the tail keep theirs). Without images the XMP is copied as it is, and
+/// so is its signalling: an index whose images were stripped from the file
+/// describes nothing the output holds, and is not written.
 /// Returns the placeholder's offset for [`finish_container`], which patches
 /// in the primary length once it is known.
 pub(super) fn write_preserved_segments(
     output: &mut Vec<u8>,
     preserved: Option<&[PreservedSegment]>,
-    secondaries: &[MpfImage],
+    carry: &Carry<'_>,
 ) -> Result<Option<usize>> {
+    let secondaries = carry.images.as_slice();
     let mut mpf_at = None;
     let mut place_mpf = |output: &mut Vec<u8>| {
         if !secondaries.is_empty() && mpf_at.is_none() {
@@ -439,6 +626,7 @@ pub(super) fn write_preserved_segments(
                     let carried: Vec<(&str, usize)> = secondaries
                         .iter()
                         .map(|s| (item_semantic(s.image_type), s.data.len()))
+                        .chain(carry.verbatim_items.iter().map(|(s, n)| (s.as_str(), *n)))
                         .collect();
                     let rewritten = seg
                         .data
@@ -476,15 +664,16 @@ pub(super) fn write_preserved_segments(
 }
 
 /// Complete a container assembled with [`write_preserved_segments`]: after the
-/// primary's EOI, patch the MPF index with the primary's byte length and
-/// append the secondary images.
+/// primary's EOI, patch the MPF index with the primary's byte length, append
+/// the secondary images, then the verbatim tail.
 pub(super) fn finish_container(
     output: &mut Vec<u8>,
-    secondaries: &[MpfImage],
+    carry: &Carry<'_>,
     mpf_at: Option<usize>,
 ) -> Result<()> {
+    let secondaries = carry.images.as_slice();
     let Some(off) = mpf_at else {
-        return Ok(());
+        return append_tail(output, carry.tail);
     };
     let primary_len = u32::try_from(output.len())
         .map_err(|_| Error::unsupported_feature("MPF container with a primary image over 4 GiB"))?;
@@ -503,6 +692,14 @@ pub(super) fn finish_container(
     for s in secondaries {
         output.extend_from_slice(&s.data);
     }
+    append_tail(output, carry.tail)
+}
+
+fn append_tail(output: &mut Vec<u8>, tail: &[u8]) -> Result<()> {
+    output
+        .try_reserve(tail.len())
+        .map_err(|_| Error::allocation_failed(tail.len(), "trailing data"))?;
+    output.extend_from_slice(tail);
     Ok(())
 }
 
@@ -544,7 +741,7 @@ fn mpf_sizes(secondaries: &[MpfImage]) -> Vec<(u32, crate::encode::extras::MpfIm
 pub(super) fn encode_from_coefficients(
     coeffs: &TransformedCoefficients,
     preserved_segments: Option<&[PreservedSegment]>,
-    secondaries: &[MpfImage],
+    carry: &Carry<'_>,
     restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
@@ -662,7 +859,7 @@ pub(super) fn encode_from_coefficients(
     output.push(MARKER_SOI);
 
     // Preserved metadata segments (EXIF, ICC, XMP, ...) + MPF index placeholder
-    let mpf_at = write_preserved_segments(&mut output, preserved_segments, secondaries)?;
+    let mpf_at = write_preserved_segments(&mut output, preserved_segments, carry)?;
 
     // DQT - Write quantization tables
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
@@ -694,7 +891,7 @@ pub(super) fn encode_from_coefficients(
     output.push(MARKER_EOI);
 
     // MPF index + secondary images
-    finish_container(&mut output, secondaries, mpf_at)?;
+    finish_container(&mut output, carry, mpf_at)?;
 
     Ok(output)
 }
@@ -948,7 +1145,7 @@ pub fn apply_exif_orientation_with_edge_handling(
 
     // Step 3: The MPF secondaries get the same rotation (and the same EXIF
     // orientation reset, should one carry the tag).
-    let secondaries = transform_secondary_images(
+    let carry = transform_secondary_images(
         jpeg_data,
         extras.as_ref(),
         &config,
@@ -967,7 +1164,7 @@ pub fn apply_exif_orientation_with_edge_handling(
         }
     }
 
-    encode_from_coefficients(&transformed, Some(&segments), &secondaries, 0, &stop)
+    encode_from_coefficients(&transformed, Some(&segments), &carry, 0, &stop)
 }
 
 #[cfg(test)]
@@ -980,6 +1177,7 @@ mod secondary_error_tests {
             index: 2,
             image_type: crate::encode::extras::MpfImageType::Undefined,
             data: &[],
+            start: 0,
         }
     }
 

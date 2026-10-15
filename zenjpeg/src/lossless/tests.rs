@@ -3780,7 +3780,14 @@ mod trim_sentinel_tests {
 
             // The full pipeline (emit + decode) must roundtrip the trimmed
             // result exactly over the true grid.
-            let bytes = encode_from_coefficients(&trimmed, None, &[], 0, &Unstoppable).unwrap();
+            let bytes = encode_from_coefficients(
+                &trimmed,
+                None,
+                &crate::lossless::pipeline::Carry::none(),
+                0,
+                &Unstoppable,
+            )
+            .unwrap();
             let decoded = DecodeConfig::new()
                 .decode_coefficients(&bytes, Unstoppable)
                 .unwrap();
