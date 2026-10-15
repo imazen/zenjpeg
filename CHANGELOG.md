@@ -94,6 +94,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 - Shared codec-testkit checks cover checked policy admission, inventory boundaries
   and rewrite limits/retention, with independent JPEG pixel decoding.
+- `fuzz_lossless` (and its replay in `tests/fuzz_regression.rs`) checks that an
+  output holds no more JPEG streams than its input and that, without a
+  transform, every block the image covers keeps its coefficients; its size
+  bound counts MPF secondaries without an EOI, and only the primary is capped,
+  so large declared secondaries are exercised instead of skipped.
+  (commit: added at landing)
 
 
 ### Shared rewrite contract
