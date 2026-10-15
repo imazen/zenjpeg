@@ -5,6 +5,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+
+- zenpixels/zenpixels-convert pinned to main 1d3ddd21 (converged 0.2.17), from e3fab915. HDR metadata types come from `zenpixels::hdr` instead of the root aliases 0.2.17 deprecates.
+
 ### Fixed
 
 - Ultra HDR SDR bases with BT.709 primaries and the BT.709 transfer now carry an ICC profile; they went out untagged, and readers decoded them with the sRGB curve, which differs across the whole range (encoded 0.5 is linear 0.2140 under sRGB, 0.2597 under BT.709). zenpixels is repinned to `e3fab915`, which adds the (1,1) profile and refuses the primaries-10 profiles whose matrix was singular (zenpixels#88). Test: `bt709_base_is_tagged_only_when_its_curve_is_not_srgb`. (b49d6061)

@@ -673,7 +673,7 @@ pub fn encode_with_gainmap_metadata(
         || retained.mastering_display.is_some()
         || retained
             .diffuse_white
-            .is_some_and(|w| w != zenpixels::DiffuseWhite::BT2408)
+            .is_some_and(|w| w != zenpixels::hdr::DiffuseWhite::BT2408)
     {
         return Err(Error::unsupported_feature(
             "gain-map JPEG cannot preserve source XMP/HDR fields; resolve them explicitly before encoding",

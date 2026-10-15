@@ -1676,18 +1676,18 @@ impl JpegDecoder<'_> {
             )
         };
         info.source_color.content_light_level = Some(match measured {
-            Some(cll) => zencodec::ContentLightLevel::new(
+            Some(cll) => zenpixels::hdr::ContentLightLevel::new(
                 cll.max_content_light_level,
                 cll.max_frame_average_light_level,
             ),
-            None => zencodec::ContentLightLevel::new(capacity_nits as u16, 0),
+            None => zenpixels::hdr::ContentLightLevel::new(capacity_nits as u16, 0),
         });
         let (red, green, blue) = hdr
             .descriptor()
             .primaries
             .chromaticity()
             .ok_or_else(|| Error::unsupported_feature("unknown reconstructed HDR primaries"))?;
-        info.source_color.mastering_display = Some(zencodec::MasteringDisplay::new(
+        info.source_color.mastering_display = Some(zenpixels::hdr::MasteringDisplay::new(
             [[red.0, red.1], [green.0, green.1], [blue.0, blue.1]],
             [0.3127, 0.3290],
             capacity_nits,
