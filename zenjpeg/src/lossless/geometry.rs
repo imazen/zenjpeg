@@ -15,6 +15,9 @@
 //! - The "true" grid is what a non-interleaved scan emits per T.81 A.2.2:
 //!   `true_bw = ceil(ceil(width * h_samp / max_h) / 8)` (same for height).
 //! - An interleaved scan emits the full padded grid in MCU order.
+//! - A frame with one component has only non-interleaved scans (T.81
+//!   A.2.2): each MCU is one data unit of the true grid, whatever sampling
+//!   factors the frame declares, so the scan walks the true grid.
 
 use alloc::vec::Vec;
 
@@ -24,10 +27,6 @@ use crate::error::{Error, Result};
 /// Validated per-component grid geometry.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ComponentGeom {
-    /// Horizontal sampling factor.
-    pub h_samp: usize,
-    /// Vertical sampling factor.
-    pub v_samp: usize,
     /// Stored grid width in blocks (MCU-padded).
     pub padded_bw: usize,
     /// Stored grid height in blocks (MCU-padded).
@@ -36,14 +35,19 @@ pub(super) struct ComponentGeom {
     pub true_bw: usize,
     /// Data-unit rows in a non-interleaved scan.
     pub true_bh: usize,
+    /// Data units per MCU across and down in the sequential scan: the
+    /// component's sampling factors, or 1x1 when the frame has one component.
+    pub mcu_bw: usize,
+    pub mcu_bh: usize,
 }
 
 /// Validated whole-image MCU geometry for a component set.
 #[derive(Debug, Clone)]
 pub(super) struct McuGeom {
-    /// MCU columns.
+    /// MCU columns of the sequential scan (the true block columns when the
+    /// frame has one component).
     pub mcus_wide: usize,
-    /// MCU rows.
+    /// MCU rows of the sequential scan.
     pub mcus_high: usize,
     /// Per-component geometry, same order as the component slice.
     pub comps: Vec<ComponentGeom>,
@@ -118,15 +122,25 @@ impl McuGeom {
                 ));
             }
             comps.push(ComponentGeom {
-                h_samp,
-                v_samp,
                 padded_bw,
                 padded_bh,
                 true_bw,
                 true_bh,
+                mcu_bw: h_samp,
+                mcu_bh: v_samp,
             });
         }
 
+        if let [only] = comps.as_mut_slice() {
+            // One component: a non-interleaved scan of its true grid.
+            only.mcu_bw = 1;
+            only.mcu_bh = 1;
+            return Ok(Self {
+                mcus_wide: only.true_bw,
+                mcus_high: only.true_bh,
+                comps,
+            });
+        }
         Ok(Self {
             mcus_wide,
             mcus_high,
@@ -149,7 +163,8 @@ pub(super) enum ScanEvent {
     McuEnd { mcu_idx: usize },
 }
 
-/// Walk every data unit of an interleaved scan in T.81 MCU order.
+/// Walk every data unit of the sequential scan in T.81 MCU order
+/// (interleaved, or the true grid of a one-component frame).
 ///
 /// This is the ONE definition of the sequential scan order. Both frequency
 /// counting and entropy encoding must go through it so the optimized Huffman
@@ -161,10 +176,10 @@ pub(super) fn for_each_interleaved_event(geom: &McuGeom, mut f: impl FnMut(ScanE
     for mcu_y in 0..geom.mcus_high {
         for mcu_x in 0..geom.mcus_wide {
             for (comp_idx, cg) in geom.comps.iter().enumerate() {
-                for dy in 0..cg.v_samp {
-                    for dx in 0..cg.h_samp {
-                        let bx = mcu_x * cg.h_samp + dx;
-                        let by = mcu_y * cg.v_samp + dy;
+                for dy in 0..cg.mcu_bh {
+                    for dx in 0..cg.mcu_bw {
+                        let bx = mcu_x * cg.mcu_bw + dx;
+                        let by = mcu_y * cg.mcu_bh + dy;
                         debug_assert!(bx < cg.padded_bw && by < cg.padded_bh);
                         f(ScanEvent::Block {
                             comp: comp_idx,

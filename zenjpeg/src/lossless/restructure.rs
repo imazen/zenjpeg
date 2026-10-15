@@ -114,7 +114,8 @@ pub fn restructure(
     stop.check()?;
 
     // Step 3: Compute restart interval in MCUs
-    let restart_mcus = compute_restart_interval(&coeffs.components, config.restart_interval);
+    let restart_mcus =
+        compute_restart_interval(&coeffs.components, coeffs.width, config.restart_interval);
 
     // Step 4: MPF secondary images follow the primary's transform (verbatim
     // when there is none; their own scan structure is left alone).
@@ -146,6 +147,7 @@ pub fn restructure(
 /// Compute the restart interval in MCUs from the configuration.
 fn compute_restart_interval(
     components: &[ComponentCoefficients],
+    width: u32,
     interval: RestartInterval,
 ) -> u16 {
     match interval {
@@ -162,9 +164,15 @@ fn compute_restart_interval(
             let max_v_samp = components.iter().map(|c| c.v_samp).max().unwrap_or(1) as usize;
             let _ = max_v_samp; // MCU rows is about horizontal MCU count
 
-            // Luma blocks_wide / max_h_samp = MCU columns
+            // Luma blocks_wide / max_h_samp = MCU columns. A one-component
+            // frame's MCU is one block of its true grid (T.81 A.2.2),
+            // whatever sampling factors it declares.
             let luma = &components[0];
-            let mcus_wide = (luma.blocks_wide + max_h_samp - 1) / max_h_samp;
+            let mcus_wide = if components.len() == 1 {
+                (width as usize).div_ceil(8)
+            } else {
+                (luma.blocks_wide + max_h_samp - 1) / max_h_samp
+            };
 
             let mcus_per_interval = mcus_wide * rows as usize;
             mcus_per_interval.min(u16::MAX as usize) as u16
@@ -294,12 +302,15 @@ pub(crate) fn encode_progressive_from_coefficients(
     let num_components = coeffs.components.len();
     let is_color = num_components >= 3;
 
-    // Determine if subsampled
-    let is_subsampled = if is_color {
-        coeffs.components[0].h_samp > 1 || coeffs.components[0].v_samp > 1
-    } else {
-        false
-    };
+    // An interleaved DC scan walks each component's blocks one per MCU, which
+    // is the interleaved order only when every component is sampled 1x1. Any
+    // other layout (including chroma sampled above luma, e.g. luma 1x1 with
+    // chroma 2x1) takes non-interleaved scans.
+    let is_subsampled = is_color
+        && coeffs
+            .components
+            .iter()
+            .any(|c| c.h_samp > 1 || c.v_samp > 1);
 
     // Validated grid geometry (fails loudly on inconsistent grids).
     let geom = McuGeom::from_components(coeffs.width, coeffs.height, &coeffs.components)?;
