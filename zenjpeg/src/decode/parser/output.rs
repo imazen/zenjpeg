@@ -2040,6 +2040,19 @@ impl<'a> JpegParser<'a> {
             return reformat_rgb_into(&buf, format, width, height, dst);
         }
 
+        // Fused parallel result (`parallel`, MCU-row restart markers), as in
+        // `to_pixels`. It holds the pixels and no coefficients, so the
+        // coefficient fast path below cannot run (#215).
+        #[cfg(feature = "parallel")]
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && !dequant_bias
+            && let Some(fused) = self.fused_result.take()
+        {
+            let super::super::fused_parallel::FusedResult(rgb) = fused;
+            return reformat_rgb_into(&rgb, format, width, height, dst);
+        }
+
         // Direct-write fast path: subsampled (4:2:0/4:2:2/4:4:0) JPEGs decode
         // straight into `dst` without an intermediate RGB Vec.
         if !dequant_bias

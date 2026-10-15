@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `Decoder::decode_into` on baseline 4:2:0 / 4:2:2 files with MCU-row restart markers, built with `parallel`, returned "coefficient data unavailable" (#215): it took the coefficient fast path, but the fused parallel decode those files take holds pixels, not coefficients. It now uses the fused result, as `decode` does. (commit: added at landing)
+
 - `zjpeg`: `--strip` applies on every pipeline, after the output is written (commit: added at landing). On the default lossless path (no lossy option; `--orient` defaults to auto) and on restructure, every `--strip` value was ignored: `--strip exif` wrote the input back byte-identical, EXIF included. On the re-encode path, `--strip gainmaps` wrote the EXIF APP1 header twice (ExifTool: "Malformed APP1 EXIF segment"), left the gain-map XMP naming the removed map, and failed on an ICC profile or XMP larger than one segment. Stripping gain maps removes the MPF index, the ISO 21496-1 records, the images after the primary and an XMP packet that declares the `hdrgm` namespace (whole: there is no XMP editor; a note says so), and refuses when other data follows the primary.
 
 - UltraHDR encode, standard-range base (commit: added at landing):

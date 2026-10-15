@@ -383,3 +383,39 @@ fn icc_correction_is_honoured_by_decode_into() {
         "correct_color(Srgb) on a wide-gamut source",
     );
 }
+
+/// Baseline subsampled frames with MCU-row restart markers, the files
+/// `parallel` decodes with the fused per-restart-segment path. That path
+/// holds pixels and no coefficients, and `decode_into` took the coefficient
+/// fast path for subsampled frames first: "coefficient data unavailable"
+/// for every 4:2:0 / 4:2:2 file large enough for it (#215). Runs in every
+/// build; only `parallel` builds take the fused path.
+#[test]
+fn decode_into_matches_decode_on_restart_marked_subsampled_files() {
+    let (w, h) = (1024u32, 768u32);
+    let mut px = vec![0u8; (w * h * 3) as usize];
+    let mut s = 1u32;
+    for (i, p) in px.iter_mut().enumerate() {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        *p = ((i as u32 / 3 % w) * 255 / w) as u8 ^ ((s >> 28) as u8);
+    }
+    for sub in [
+        ChromaSubsampling::Quarter,
+        ChromaSubsampling::HalfHorizontal,
+    ] {
+        let mut enc = EncoderConfig::ycbcr(90.0, sub)
+            .progressive(false)
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&px, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+        for format in [PixelFormat::Rgb, PixelFormat::Rgba, PixelFormat::Bgra] {
+            let dec = Decoder::new().output_format(format);
+            let want = dec.decode(&jpeg, Unstoppable).unwrap();
+            let mut buf = vec![0u8; want.pixels_u8().unwrap().len()];
+            dec.decode_into(&jpeg, format, &mut buf, Unstoppable)
+                .unwrap_or_else(|e| panic!("{sub:?} {format:?}: {e}"));
+            assert_eq!(&buf[..], want.pixels_u8().unwrap(), "{sub:?} {format:?}");
+        }
+    }
+}
