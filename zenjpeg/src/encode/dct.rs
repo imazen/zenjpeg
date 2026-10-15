@@ -451,7 +451,7 @@ pub(crate) mod simd {
     ) -> [f32; 64] {
         type F32x8 = GenericF32x8<archmage::Wasm128Token>;
 
-        let mut rows = F32x8::load_8x8(token, input);
+        let mut rows = F32x8::load_8x8_t(token, input);
         F32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;
@@ -479,7 +479,7 @@ pub(crate) mod simd {
     ) -> [f32; 64] {
         type F32x8 = GenericF32x8<archmage::NeonToken>;
 
-        let mut rows = F32x8::load_8x8(token, input);
+        let mut rows = F32x8::load_8x8_t(token, input);
         F32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;
@@ -547,7 +547,7 @@ pub(crate) mod simd {
         type F32x8 = GenericF32x8<archmage::Wasm128Token>;
 
         let mut rows: [F32x8; 8] =
-            core::array::from_fn(|i| F32x8::from_array(token, input.rows[i]));
+            core::array::from_fn(|i| F32x8::from_array_t(token, input.rows[i]));
         F32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;

@@ -275,15 +275,15 @@ mod simd_fused_neon {
     #[rite]
     fn linear_to_srgb_255_x4(token: NeonToken, v: F32x4) -> F32x4 {
         let srgb = linear_srgb::tokens::x4::linear_to_srgb_neon(token, v.to_array());
-        F32x4::from_array(token, srgb) * F32x4::splat(token, 255.0)
+        F32x4::from_array_t(token, srgb) * F32x4::splat_t(token, 255.0)
     }
 
     /// Reinhard tone-map for HDR values, identical in form to the x86 body:
     /// `x > 1` uses `x / (1 + x)`, otherwise `x` unchanged; negatives clamped.
     #[rite]
     fn reinhard_x4(token: NeonToken, x: F32x4) -> F32x4 {
-        let zero = F32x4::zero(token);
-        let one = F32x4::splat(token, 1.0);
+        let zero = F32x4::zero_t(token);
+        let one = F32x4::splat_t(token, 1.0);
         let v = x.max(zero);
         let reinhard = v / (one + v);
         let mask = v.simd_gt(one);
@@ -298,7 +298,7 @@ mod simd_fused_neon {
             v[off + 2] as f32,
             v[off + 3] as f32,
         ];
-        F32x4::from_array(token, arr) * F32x4::splat(token, 1.0 / 65535.0)
+        F32x4::from_array_t(token, arr) * F32x4::splat_t(token, 1.0 / 65535.0)
     }
 
     #[arcane]
@@ -306,7 +306,7 @@ mod simd_fused_neon {
         let mut out = [0.0f32; 8];
         for h in 0..2 {
             let lo = h * 4;
-            let v = F32x4::from_array(token, [x[lo], x[lo + 1], x[lo + 2], x[lo + 3]]);
+            let v = F32x4::from_array_t(token, [x[lo], x[lo + 1], x[lo + 2], x[lo + 3]]);
             let r = linear_to_srgb_255_x4(token, reinhard_x4(token, v)).to_array();
             out[lo..lo + 4].copy_from_slice(&r);
         }
@@ -328,16 +328,16 @@ mod simd_fused_neon {
     /// BT.601 RGB->YCbCr on 4 already-sRGB-x255 lanes.
     #[rite]
     fn ycbcr_x4(token: NeonToken, r: F32x4, g: F32x4, b: F32x4) -> (F32x4, F32x4, F32x4) {
-        let kr_y = F32x4::splat(token, YCBCR_R_TO_Y);
-        let kg_y = F32x4::splat(token, YCBCR_G_TO_Y);
-        let kb_y = F32x4::splat(token, YCBCR_B_TO_Y);
-        let kr_cb = F32x4::splat(token, YCBCR_R_TO_CB);
-        let kg_cb = F32x4::splat(token, YCBCR_G_TO_CB);
-        let kb_cb = F32x4::splat(token, YCBCR_B_TO_CB);
-        let kr_cr = F32x4::splat(token, YCBCR_R_TO_CR);
-        let kg_cr = F32x4::splat(token, YCBCR_G_TO_CR);
-        let kb_cr = F32x4::splat(token, YCBCR_B_TO_CR);
-        let offset = F32x4::splat(token, CHROMA_OFFSET);
+        let kr_y = F32x4::splat_t(token, YCBCR_R_TO_Y);
+        let kg_y = F32x4::splat_t(token, YCBCR_G_TO_Y);
+        let kb_y = F32x4::splat_t(token, YCBCR_B_TO_Y);
+        let kr_cb = F32x4::splat_t(token, YCBCR_R_TO_CB);
+        let kg_cb = F32x4::splat_t(token, YCBCR_G_TO_CB);
+        let kb_cb = F32x4::splat_t(token, YCBCR_B_TO_CB);
+        let kr_cr = F32x4::splat_t(token, YCBCR_R_TO_CR);
+        let kg_cr = F32x4::splat_t(token, YCBCR_G_TO_CR);
+        let kb_cr = F32x4::splat_t(token, YCBCR_B_TO_CR);
+        let offset = F32x4::splat_t(token, CHROMA_OFFSET);
 
         let y = kr_y.mul_add(r, kg_y.mul_add(g, kb_y * b));
         let cb = kr_cb.mul_add(r, kg_cb.mul_add(g, kb_cb * b)) + offset;
@@ -375,7 +375,7 @@ mod simd_fused_neon {
     ) -> ([f32; 8], [f32; 8], [f32; 8]) {
         let (mut oy, mut ocb, mut ocr) = ([0.0f32; 8], [0.0f32; 8], [0.0f32; 8]);
         let load = |c: &[f32; 8], lo: usize| {
-            F32x4::from_array(token, [c[lo], c[lo + 1], c[lo + 2], c[lo + 3]])
+            F32x4::from_array_t(token, [c[lo], c[lo + 1], c[lo + 2], c[lo + 3]])
         };
         for h in 0..2 {
             let lo = h * 4;

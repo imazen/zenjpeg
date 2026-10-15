@@ -748,8 +748,12 @@ fn upsample_h2v2_libjpeg_row_generic(
 }
 
 /// Scalar implementation of one output row of fused h2v2 libjpeg-compat upsampling.
+///
+/// Off x86-64 the dispatcher takes the magetypes-generic row, so only the
+/// dispatch-parity test (its reference) calls this there.
 #[doc(hidden)]
 #[inline]
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 pub fn upsample_h2v2_libjpeg_row_scalar(
     near: &[i16],
     far: &[i16],
