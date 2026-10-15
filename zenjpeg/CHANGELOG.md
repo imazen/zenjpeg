@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already handed out. Declares `EncodeCapabilities::streaming_output`.
 - `JpegEncoderConfig::with_huffman`: optimized, fixed, Annex K or custom
   tables, overriding the effort preset's choice.
+- `EncoderConfig::with_prefer_streaming(true)` (zencodec's codec-agnostic
+  request): fixed tables and a sequential scan unless `with_huffman` /
+  `with_progressive` chose otherwise; `prefers_streaming()` reports it.
+- Streaming-output rules: a failed `begin` leaves the encoder unchanged (it
+  used to keep the declared size, so a later `push_rows` silently started a
+  non-streaming encode of it); a second `begin` says "called twice";
+  `encode`, `encode_srgba8` and `encode_from` refuse after `begin` or
+  `push_rows`; an image no taller than the lag reports `AT_FINISH`.
 
 ### Changed
 

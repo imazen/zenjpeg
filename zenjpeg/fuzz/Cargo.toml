@@ -9,7 +9,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "b1bfe29303a022298d66b4eba7f60214f6f16081" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "4c031d808087d055f65a3670e68812f8b654a244" }
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 enough = "0.4.3"
@@ -30,7 +30,7 @@ members = ["."]
 # targets do not enable the optional research picker; use the same remote
 # analysis source as the parent workspace rather than a sibling checkout.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "b1bfe29303a022298d66b4eba7f60214f6f16081" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "4c031d808087d055f65a3670e68812f8b654a244" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "e6c72f99390c190c102275c3b0e4d41fe0a734a4" }
 
 [[bin]]

@@ -67,6 +67,9 @@ struct Overrides {
     progressive: Option<bool>,
     /// From `with_huffman`.
     huffman: Option<crate::encode::encoder_types::HuffmanStrategy>,
+    /// From `EncoderConfig::with_prefer_streaming`: fixed tables and a
+    /// sequential scan unless chosen explicitly above.
+    prefer_streaming: Option<bool>,
 }
 
 impl JpegEncoderConfig {
@@ -250,11 +253,19 @@ impl JpegEncoderConfig {
         // Explicit settings outrank the preset. Progressive first: turning
         // it on selects optimized tables, which an explicit Huffman choice
         // may then replace.
-        if let Some(progressive) = self.overrides.progressive {
-            cfg = cfg.progressive(progressive);
+        // A streaming preference fills in what the caller left open.
+        let stream = self.overrides.prefer_streaming == Some(true);
+        match self.overrides.progressive {
+            Some(progressive) => cfg = cfg.progressive(progressive),
+            None if stream => cfg = cfg.progressive(false),
+            None => {}
         }
-        if let Some(huffman) = &self.overrides.huffman {
-            cfg = cfg.huffman(huffman.clone());
+        match &self.overrides.huffman {
+            Some(huffman) => cfg = cfg.huffman(huffman.clone()),
+            None if stream => {
+                cfg = cfg.huffman(crate::encode::encoder_types::HuffmanStrategy::Fixed);
+            }
+            None => {}
         }
         cfg
     }
@@ -457,6 +468,18 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     /// accept-signal callers that set-then-get to confirm the config
     /// accepted their input must see their own value back, not a silently
     /// clamped one.
+    /// `true`: fixed general-purpose Huffman tables and a sequential scan,
+    /// unless `with_huffman` / `with_progressive` chose otherwise, so
+    /// `Encoder::begin` can stream (files grow by the fixed tables' cost).
+    fn with_prefer_streaming(mut self, prefer: bool) -> Self {
+        self.overrides.prefer_streaming = Some(prefer);
+        self
+    }
+
+    fn prefers_streaming(&self) -> Option<bool> {
+        Some(self.overrides.prefer_streaming.unwrap_or(false))
+    }
+
     fn with_generic_effort(mut self, effort: i32) -> Self {
         // A later effort request replaces a named preset.
         self.effort = effort;
@@ -574,6 +597,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             image_size: self.image_size,
             row_descriptor: None,
             sent: 0,
+            begun: false,
         })
     }
 
@@ -606,6 +630,8 @@ pub struct JpegEncoder {
     row_descriptor: Option<PixelDescriptor>,
     /// Bytes taken through `consume_output`, for the output-size limit.
     sent: u64,
+    /// `begin` succeeded: the image is declared.
+    begun: bool,
     /// Image dimensions from `begin` or `with_canvas_size`.
     image_size: Option<(u32, u32)>,
 }
@@ -828,6 +854,17 @@ impl JpegEncoder {
         Ok(())
     }
 
+    /// The usage paths are exclusive: no one-shot or pull encode once `begin`
+    /// or `push_rows` has started a row encode.
+    fn check_one_shot(&self) -> Result<(), Error> {
+        if self.begun || self.streaming_enc.is_some() || self.accumulator.is_some() {
+            return Err(Error::invalid_state(
+                "encode after begin or push_rows: the usage paths are exclusive",
+            ));
+        }
+        Ok(())
+    }
+
     /// The output-size limit over everything produced so far: bytes sent
     /// plus `more` still to come.
     fn check_total_output(&self, more: usize) -> Result<(), Error> {
@@ -868,6 +905,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Self::Error> {
+        self.check_one_shot()?;
         let layout = descriptor_to_layout(pixels.descriptor())?;
         let width = pixels.width();
         let height = pixels.rows();
@@ -884,6 +922,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         height: u32,
         stride_pixels: u32,
     ) -> Result<EncodeOutput, Self::Error> {
+        self.check_one_shot()?;
         if make_opaque {
             for chunk in data.as_chunks_mut::<4>().0 {
                 chunk[3] = 255;
@@ -915,23 +954,36 @@ impl zencodec::encode::Encoder for JpegEncoder {
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
+        use zencodec::encode::OutputTiming;
+        if self.begun {
+            return Err(Error::invalid_state("begin called twice").into());
+        }
         if self.streaming_enc.is_some() || self.accumulator.is_some() {
             return Err(Error::invalid_state("begin after push_rows").into());
         }
         if self.image_size.is_some_and(|s| s != (width, height)) {
             return Err(Error::invalid_state("begin: size differs from with_canvas_size").into());
         }
+        // Build and check everything before storing any of it: a failed
+        // `begin` leaves the encoder as it was.
+        let layout = descriptor_to_layout(descriptor)?;
+        self.check_limits(width, height, layout)?;
+        let req = self.build_request(Some(layout.channels() as u8))?;
+        let mut enc = req.encode_from_bytes(width, height, layout)?;
+        // Holding every row would be no stream at all: the header alone is
+        // not worth a chunked response.
+        let timing = if enc.can_stream_output() && enc.output_lag_rows() < height {
+            enc.start_output()?;
+            self.check_total_output(enc.pending_output().len())?;
+            OutputTiming::streaming(enc.output_lag_rows())
+        } else {
+            OutputTiming::AT_FINISH
+        };
         self.image_size = Some((width, height));
-        self.start_rows(width, height, descriptor)?;
-        let enc = self.streaming_enc.as_mut().expect("started above");
-        if !enc.can_stream_output() {
-            return Ok(zencodec::encode::OutputTiming::AT_FINISH);
-        }
-        enc.start_output()?;
-        let lag = enc.output_lag_rows();
-        let header = enc.pending_output().len();
-        self.check_total_output(header)?;
-        Ok(zencodec::encode::OutputTiming::streaming(lag))
+        self.streaming_enc = Some(enc);
+        self.row_descriptor = Some(descriptor);
+        self.begun = true;
+        Ok(timing)
     }
 
     fn pending_output(&self) -> &[u8] {
@@ -1038,6 +1090,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
     ) -> Result<EncodeOutput, Self::Error> {
         use zenpixels::PixelSliceMut;
+        self.check_one_shot()?;
 
         // Invoked out of sequence (canvas size must be set before pulling rows)
         // — an API-protocol violation, not an unsupported feature (caterr

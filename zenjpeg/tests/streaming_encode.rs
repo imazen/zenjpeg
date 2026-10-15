@@ -124,11 +124,14 @@ fn fixed_tables_stream_byte_identical_to_one_shot() {
                 let want = one_shot(&cfg, &px, w, h, ch, &m);
                 for strip in [1u32, 7, 16, h] {
                     let (timing, got, _) = streamed(&cfg, &px, (w, h, ch), strip, &m);
-                    assert_eq!(
-                        timing,
-                        OutputTiming::streaming(lag),
-                        "{sub:?} ch{ch} {w}x{h}"
-                    );
+                    // An image no taller than the lag would be held whole:
+                    // that is AT_FINISH, not a stream.
+                    let want_timing = if h > lag {
+                        OutputTiming::streaming(lag)
+                    } else {
+                        OutputTiming::AT_FINISH
+                    };
+                    assert_eq!(timing, want_timing, "{sub:?} ch{ch} {w}x{h}");
                     assert_eq!(
                         got, want,
                         "{sub:?} ch{ch} {w}x{h} strip {strip}: streamed bytes differ"
@@ -401,4 +404,70 @@ fn strided_crops_push_without_a_trailing_stride() {
     assert_eq!(got, want, "streamed crop");
     let whole = cfg.job().encoder().unwrap().encode(crop(0, h)).unwrap();
     assert_eq!(whole.data(), &want[..], "one-shot crop");
+}
+
+#[test]
+fn a_failed_begin_leaves_the_encoder_as_it_was() {
+    let (w, h) = (64u32, 48u32);
+    let px = pixels(w, h, 3);
+    let cfg = fixed(ChromaSubsampling::Quarter);
+    let mut enc = cfg.clone().job().encoder().unwrap();
+    // Gray+alpha is not an encode layout: refused, nothing declared.
+    assert!(enc.begin(w, h, PixelDescriptor::GRAYA8_SRGB).is_err());
+    assert!(enc.pending_output().is_empty());
+    // The same encoder then declares and streams normally.
+    assert!(enc.begin(w, h, desc(3)).unwrap().streams());
+    let mut got = enc.pending_output().to_vec();
+    let n = got.len();
+    enc.consume_output(n);
+    for y in (0..h).step_by(16) {
+        let s = PixelSlice::new(&px[y as usize * 192..][..16 * 192], w, 16, 192, desc(3)).unwrap();
+        enc.push_rows(s).unwrap();
+        let n = enc.pending_output().len();
+        got.extend_from_slice(enc.pending_output());
+        enc.consume_output(n);
+    }
+    got.extend_from_slice(enc.finish().unwrap().data());
+    assert_eq!(got, one_shot(&cfg, &px, w, h, 3, &Metadata::none()));
+}
+
+#[test]
+fn one_shot_paths_are_refused_after_begin() {
+    let px = pixels(32, 32, 3);
+    let cfg = fixed(ChromaSubsampling::Quarter);
+    let mut enc = cfg.clone().job().encoder().unwrap();
+    enc.begin(32, 32, desc(3)).unwrap();
+    let s = PixelSlice::new(&px, 32, 32, 96, desc(3)).unwrap();
+    assert!(enc.encode(s).is_err());
+    let mut enc = cfg.job().encoder().unwrap();
+    enc.begin(32, 32, desc(3)).unwrap();
+    let e = enc.begin(32, 32, desc(3)).unwrap_err();
+    assert!(e.to_string().contains("twice"), "{e}");
+}
+
+#[test]
+fn prefer_streaming_picks_fixed_tables_unless_chosen_explicitly() {
+    let (w, h) = (64u32, 48u32);
+    let begin = |cfg: E| cfg.job().encoder().unwrap().begin(w, h, desc(3)).unwrap();
+    assert_eq!(begin(E::new()), OutputTiming::AT_FINISH);
+    assert_eq!(E::new().prefers_streaming(), Some(false));
+    let prefer = E::new().with_prefer_streaming(true);
+    assert_eq!(prefer.prefers_streaming(), Some(true));
+    assert_eq!(begin(prefer.clone()), OutputTiming::streaming(31));
+    // The same bytes as asking for fixed tables and a sequential scan.
+    let px = pixels(w, h, 3);
+    let explicit = E::new().with_progressive(false).with_huffman(false);
+    assert_eq!(
+        one_shot(&prefer, &px, w, h, 3, &Metadata::none()),
+        one_shot(&explicit, &px, w, h, 3, &Metadata::none())
+    );
+    // An explicit choice wins.
+    assert_eq!(
+        begin(E::new().with_progressive(true).with_prefer_streaming(true)),
+        OutputTiming::AT_FINISH
+    );
+    assert_eq!(
+        begin(E::new().with_huffman(true).with_prefer_streaming(true)),
+        OutputTiming::AT_FINISH
+    );
 }
