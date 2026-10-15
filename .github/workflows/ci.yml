@@ -393,6 +393,17 @@ jobs:
       - name: Clippy (lib only, true default config)
         run: cargo clippy -p zenjpeg --lib -- -D warnings
 
+      # Build-only check of the examples (#199): no test job builds them
+      # (`--lib --tests`), so an example could rot against API changes with
+      # nothing turning red. Examples gated on features this job cannot
+      # enable (target-zq, __ffi-tests, recompress-expert, ...) are skipped
+      # by their `required-features`.
+      - name: Check examples (all user features)
+        run: cargo check -p zenjpeg --examples --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,__test-utils"
+
+      - name: Check examples (default features)
+        run: cargo check -p zenjpeg --examples
+
       - name: Clippy (__expert + boundary-rd)
         run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
 
