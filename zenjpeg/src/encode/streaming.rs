@@ -404,6 +404,7 @@ impl StreamingEncoder {
             use_xyb: builder.use_xyb,
             xyb_subsampling: builder.xyb_subsampling,
             use_rgb: builder.use_rgb,
+            gray_output: builder.gray_output,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
             trellis: builder.trellis,
@@ -1008,7 +1009,7 @@ impl StreamingEncoder {
     /// Borrows blocks from the strip processor, encodes them to the
     /// BitWriter, then clears them (keeping allocation for reuse).
     fn encode_new_blocks_streaming(&mut self) -> Result<()> {
-        let is_color = !self.config.pixel_format.is_grayscale();
+        let is_color = !self.config.writes_gray();
         let width = self.width;
         let subsampling = self.config.subsampling;
         let restart_interval = self.config.restart_interval;
@@ -1117,7 +1118,7 @@ impl StreamingEncoder {
         if let Some(mut streaming) = self.streaming.take() {
             // Streaming mode: finalize the strip processor to flush the last
             // pending iMCU (AQ delays blocks by one strip), then encode them
-            let is_color = !self.config.pixel_format.is_grayscale();
+            let is_color = !self.config.writes_gray();
             let width = self.width;
             let subsampling = self.config.subsampling;
             let restart_interval = self.config.restart_interval;
@@ -1189,7 +1190,7 @@ impl StreamingEncoder {
 
         if let Some(mut streaming) = self.streaming.take() {
             // Streaming mode - no buffered blocks, no counts available
-            let is_color = !self.config.pixel_format.is_grayscale();
+            let is_color = !self.config.writes_gray();
             let width = self.width;
             let subsampling = self.config.subsampling;
             let restart_interval = self.config.restart_interval;
@@ -1221,7 +1222,7 @@ impl StreamingEncoder {
             let strip_output = self.processor.finalize()?;
 
             if config.smallest_scan {
-                let is_color = !config.pixel_format.is_grayscale();
+                let is_color = !config.writes_gray();
                 let counts = Box::new(config.count_block_frequencies(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
@@ -1250,7 +1251,7 @@ impl StreamingEncoder {
                     // Count frequencies from the buffered blocks. The symbol
                     // distribution is the same regardless of scan structure,
                     // so single-scan counts are useful for general-purpose table training.
-                    let is_color = !config.pixel_format.is_grayscale();
+                    let is_color = !config.writes_gray();
                     let counts = Box::new(config.count_block_frequencies(
                         &strip_output.y_blocks,
                         &strip_output.cb_blocks,
@@ -1472,7 +1473,7 @@ impl StreamingEncoder {
         // weigh — it is pure header pruning (~208 B), smaller at every
         // size. Color tiny mode trades shared-table scan bits against
         // header savings, so it gets the exact byte-gated trial.
-        let is_grayscale = config.pixel_format.is_grayscale();
+        let is_grayscale = config.writes_gray();
         let (plain_active, trial) = match config.tiny_file_mode {
             TinyFileMode::Off => (false, false),
             TinyFileMode::Force => (tiny_possible, false),
@@ -1967,7 +1968,7 @@ impl StreamingEncoder {
         Vec<u8>,
         Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
     )> {
-        let is_color = !config.pixel_format.is_grayscale();
+        let is_color = !config.writes_gray();
 
         config.write_header(output)?;
         config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;

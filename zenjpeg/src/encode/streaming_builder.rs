@@ -38,6 +38,8 @@ pub(crate) struct StreamingEncoderBuilder {
     /// component IDs 'R','G','B' + Adobe APP14 transform=0. Mutually
     /// exclusive with `use_xyb`.
     pub(crate) use_rgb: bool,
+    /// Write only Y (see `ComputedConfig::gray_output`).
+    pub(crate) gray_output: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -89,6 +91,7 @@ impl StreamingEncoderBuilder {
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             use_rgb: false,
+            gray_output: false,
             deringing: true,
             aq_enabled: true,
             // Boundary-RD defaults to `None` (feature off). When the public
@@ -232,6 +235,12 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn use_rgb(mut self, enable: bool) -> Self {
         self.use_rgb = enable;
+        self
+    }
+
+    /// Write only the Y component whatever the input format.
+    pub(crate) fn gray_output(mut self, enable: bool) -> Self {
+        self.gray_output = enable;
         self
     }
 

@@ -14,7 +14,7 @@
 #   pub consts/statics                        320
 #   free functions                            374
 #   inherent methods                         1221
-#   struct fields                             760
+#   struct fields                             761
 #   enum variants                             506
 #   re-exports                                 18
 #   trait roster entries (type × trait)       672
@@ -29,7 +29,7 @@
 #   decode                          447
 #   decoder                          54
 #   detect                           40
-#   encode                         1480
+#   encode                         1481
 #   encoder                         134
 #   entropy                         100
 #   foundation                      352
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3401 lines)
+## items (3402 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -2717,6 +2717,7 @@ pub encode::config::ComputedConfig::allow_16bit_quant_tables: bool
 pub encode::config::ComputedConfig::chroma_downsampling: encode::encoder_types::DownsamplingMethod
 pub encode::config::ComputedConfig::edge_padding: types::EdgePaddingConfig
 pub encode::config::ComputedConfig::force_sof1: bool
+pub encode::config::ComputedConfig::gray_output: bool
 pub encode::config::ComputedConfig::height: u32
 pub encode::config::ComputedConfig::mode: types::JpegMode
 pub encode::config::ComputedConfig::parallel: bool

@@ -369,7 +369,7 @@ impl ComputedConfig {
         cr_quant: &QuantTable,
         output: &mut Vec<u8>,
     ) -> Result<()> {
-        let is_color = !self.pixel_format.is_grayscale();
+        let is_color = !self.writes_gray();
         let num_components = if is_color { 3 } else { 1 };
 
         if self.scan_strategy == ScanStrategy::Search && !self.use_xyb && !self.use_rgb {

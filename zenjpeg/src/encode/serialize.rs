@@ -246,11 +246,7 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(marker);
 
-        let num_components = if self.pixel_format.is_grayscale() {
-            1u8
-        } else {
-            3u8
-        };
+        let num_components = if self.writes_gray() { 1u8 } else { 3u8 };
 
         let length = 8u16 + num_components as u16 * 3;
         output.push((length >> 8) as u8);
@@ -507,11 +503,7 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
-        let num_components = if self.pixel_format.is_grayscale() {
-            1u8
-        } else {
-            3u8
-        };
+        let num_components = if self.writes_gray() { 1u8 } else { 3u8 };
 
         let length = 6u16 + num_components as u16 * 2;
         output.push((length >> 8) as u8);
@@ -687,11 +679,7 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
-        let num_components = if self.pixel_format.is_grayscale() {
-            1u8
-        } else {
-            3u8
-        };
+        let num_components = if self.writes_gray() { 1u8 } else { 3u8 };
 
         let length = 6u16 + num_components as u16 * 2;
         output.push((length >> 8) as u8);

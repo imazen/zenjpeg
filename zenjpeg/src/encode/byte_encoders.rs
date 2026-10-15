@@ -272,6 +272,12 @@ impl BytesEncoder {
         if matches!(config.color_mode, super::encoder_types::ColorMode::Rgb) {
             builder = builder.use_rgb(true);
         }
+        if matches!(
+            config.color_mode,
+            super::encoder_types::ColorMode::Grayscale
+        ) {
+            builder = builder.gray_output(true);
+        }
 
         Self::apply_common_builder_config(builder, config, width, height, subsampling).start()
     }

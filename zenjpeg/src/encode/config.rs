@@ -68,6 +68,10 @@ pub struct ComputedConfig {
     /// IDs 'R','G','B' plus Adobe APP14 transform=0. Mutually exclusive
     /// with `use_xyb`.
     pub use_rgb: bool,
+    /// Write one component (Y) whatever the input: `EncoderConfig::grayscale`
+    /// with colour input. The strip processor still converts colour input
+    /// to YCbCr; only Y is written.
+    pub gray_output: bool,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
     /// Enable parallel encoding (requires `parallel` feature)
@@ -253,6 +257,11 @@ pub(crate) fn resolve_restart_rows(
 }
 
 impl ComputedConfig {
+    /// The output has one component: gray input, or `gray_output`.
+    pub(crate) fn writes_gray(&self) -> bool {
+        self.pixel_format.is_grayscale() || self.gray_output
+    }
+
     /// MCU columns for this image's dimensions and subsampling.
     pub(crate) fn mcu_cols(&self) -> u32 {
         let h_samp = match self.subsampling {
@@ -290,6 +299,7 @@ impl Default for ComputedConfig {
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             use_rgb: false,
+            gray_output: false,
             restart_interval: 0,
             #[cfg(feature = "parallel")]
             parallel: false,
