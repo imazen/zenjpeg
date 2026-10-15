@@ -265,6 +265,7 @@ mod tests {
     /// equivalence here, but pin its values directly against libwebp's
     /// reference in `webp_encoder_matches_libwebp_kwebp_matrix` rather
     /// than against a derived f64 ground truth.
+    #[cfg(target_arch = "x86_64")]
     const ALL_DISPATCH_MATRIX_RANGE: &[(Matrix, Range, &str)] = &[
         (Matrix::Bt601, Range::Full, "BT.601 Full"),
         (Matrix::Bt601, Range::Limited, "BT.601 Limited"),
