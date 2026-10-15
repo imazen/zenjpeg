@@ -86,10 +86,16 @@ pub fn run(args: OptimizeArgs) -> Result<()> {
     }
 
     // Print errors to stderr
+    let mut failed = 0usize;
     for r in &summary.results {
         if let Some(ref err) = r.error {
             eprintln!("error: {}: {err}", r.path.display());
+            failed += 1;
         }
+    }
+    // A failed file is a failed run: scripts check the exit status.
+    if failed > 0 {
+        anyhow::bail!("{failed} of {} file(s) failed", summary.results.len());
     }
 
     Ok(())

@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `zjpeg` exits with a failure status when any file fails (`process` and the deprecated `optimize`, `transform` and `restructure`); it printed the error and exited 0. (commit: added at landing)
+
 - `zjpeg process --search-ssim2` / `--search-distance`: the bisection set its next bounds from the best attempt so far instead of the attempt just measured, so after an attempt on the other side of the band it moved away from the band (attempts 50, 75.5, 88.25, 94.6, … where SSIM2 jumps across the band at q70). (commit: added at landing)
 
 - `zjpeg process`, lossy path (any quality, crop, resize or encoder option) (commit: added at landing):
