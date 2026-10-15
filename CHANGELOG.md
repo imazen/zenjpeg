@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `zjpeg process --search-ssim2` / `--search-distance`: the bisection set its next bounds from the best attempt so far instead of the attempt just measured, so after an attempt on the other side of the band it moved away from the band (attempts 50, 75.5, 88.25, 94.6, … where SSIM2 jumps across the band at q70). (commit: added at landing)
+
 - `zjpeg process`, lossy path (any quality, crop, resize or encoder option) (commit: added at landing):
   - the EXIF orientation was applied to the pixels and the tag kept, so viewers rotated the output a second time; the tag is now reset to 1. `--orient keep` was ignored (the decoder orients by default) and now keeps pixels and tag as stored.
   - `--rotate` and `--flip` were ignored when combined with a lossy option; they now apply after the EXIF orientation.
