@@ -74,7 +74,10 @@ fn emit_srgb_cicp_no_icc_marker() {
 /// (`IccDisposition::SynthesizeFrom` lowered via zenpixels-convert's
 /// `synthesize_icc_for_cicp`): JPEG has no CICP carrier, so an embedded ICC is
 /// the only way the wide-gamut description survives — otherwise the file is
-/// silently relabeled sRGB. The oracle is the bundled `DISPLAY_P3_V4` profile.
+/// silently relabeled sRGB. The oracle is what the embedded profile says: its
+/// `cicp` tag names Display P3 with the sRGB transfer. (It was the curated
+/// `DISPLAY_P3_V4`, which carries no `cicp` tag and which libultrahdr does not
+/// recognise as Display P3; zenpixels#87.)
 #[test]
 fn emit_cicp_only_display_p3_synthesizes_icc() {
     let meta = Metadata::none().with_cicp(zencodec::Cicp::DISPLAY_P3);
@@ -83,12 +86,16 @@ fn emit_cicp_only_display_p3_synthesizes_icc() {
         has_marker(&jpeg, b"ICC_PROFILE\0"),
         "CICP-only Display-P3 source must synthesize an embedded ICC"
     );
-    // The synthesized bytes are the bundled Display-P3 profile (it fits in a
-    // single APP2 segment at 480 bytes, so it appears contiguously).
-    let p3 = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
-    assert!(
-        jpeg.windows(p3.len()).any(|w| w == p3),
-        "embedded ICC should be the bundled Display-P3 profile"
+    let icc = zenjpeg::decoder::Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .unwrap()
+        .extras()
+        .and_then(|e| e.icc_profile().map(<[u8]>::to_vec))
+        .expect("embedded ICC");
+    assert_eq!(
+        zenpixels::icc::extract_cicp(&icc),
+        Some(zenpixels::Cicp::new(12, 13, 0, true)),
+        "embedded ICC should name Display P3 with the sRGB transfer"
     );
 }
 

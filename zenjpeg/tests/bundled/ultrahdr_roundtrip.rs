@@ -1012,6 +1012,17 @@ fn sdr_base_carries_an_icc_profile_for_its_primaries() {
         primary_icc(&bt2020),
         Some(expected(Cicp::new(9, 13, 0, true)))
     );
+    // The profiles say what the base holds in a `cicp` tag, which libultrahdr
+    // reads before its colorant matching: P3 or BT.2020 primaries, the sRGB
+    // transfer the base is encoded with. The curated profiles had no tag,
+    // and the BT.2020 one carried the BT.709 curve (zenpixels#86, #87).
+    for (jpeg, cicp) in [
+        (&p3, Cicp::new(12, 13, 0, true)),
+        (&bt2020, Cicp::new(9, 13, 0, true)),
+    ] {
+        let icc = primary_icc(jpeg).unwrap();
+        assert_eq!(zenpixels::icc::extract_cicp(&icc), Some(cicp));
+    }
     // BT.709 stays untagged: every reader assumes it.
     let bt709 = encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::Bt709)).unwrap();
     assert_eq!(primary_icc(&bt709), None);
