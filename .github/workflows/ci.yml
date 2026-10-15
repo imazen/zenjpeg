@@ -58,14 +58,12 @@ jobs:
             -e '/"internal\/jpegli-internals-sys"/d' \
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # Remove zenresize workspace dep (needs zenblend/zennode chain)
-          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # Remove non-CI deps from zenjpeg
+          # Remove non-CI deps from zenjpeg. zenresize (the `layout` feature)
+          # stays: it is a crates.io dependency, and this job runs the
+          # layout tests.
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
-            -e 's/^layout = .*/layout = []/' \
             -e 's/^zennode = .*/zennode = []/' \
             -e 's/, features = \["cjpegli-ffi"\]//' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
@@ -80,7 +78,7 @@ jobs:
         run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
       - name: Shared contracts without inventory
         run: cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
 
