@@ -278,7 +278,8 @@ impl BytesEncoder {
 
     /// Push rows with explicit stride.
     ///
-    /// - `data`: Raw pixel bytes
+    /// - `data`: Raw pixel bytes: `rows` rows `stride_bytes` apart, the last
+    ///   needing only `width * bytes_per_pixel` bytes
     /// - `rows`: Number of scanlines to push
     /// - `stride_bytes`: Bytes per row in buffer (>= width * bytes_per_pixel)
     /// - `stop`: Cancellation token (use `enough::Unstoppable` if not needed)
@@ -314,8 +315,12 @@ impl BytesEncoder {
             return Err(Error::too_many_rows(self.height, new_total));
         }
 
-        // Validate buffer size
-        let expected_size = rows * stride_bytes;
+        // Validate buffer size. The last row needs only its pixels, not a
+        // full stride: a strided view of a larger image (a crop) ends there.
+        let expected_size = match rows {
+            0 => 0,
+            n => (n - 1) * stride_bytes + min_stride,
+        };
         if data.len() < expected_size {
             return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
@@ -496,58 +501,79 @@ impl BytesEncoder {
 
         // Finish streaming encoder directly into output
         self.inner.finish_into(output)?;
+        // With streaming output the metadata went into the header at
+        // `start_output`, and this injects nothing.
+        inject_metadata(
+            &mut self.config.segments,
+            &mut self.exif_data,
+            &mut self.xmp_data,
+            &mut self.icc_profile,
+            output,
+        )
+    }
 
-        // When using EncoderSegments with MPF images, we need to merge individual
-        // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
-        // calling inject_encoder_segments. This ensures the MPF offset calculation
-        // includes all metadata that will be in the final output.
-        if let Some(mut segments) = self.config.segments.take() {
-            // Merge individual metadata into segments if MPF is present
-            // (MPF offset calculation needs all data to be accounted for)
-            if segments.has_mpf_images() {
-                if let Some(ref xmp_data) = self.xmp_data {
-                    if !xmp_data.is_empty() {
-                        // Convert raw XMP bytes to string for set_xmp
-                        if let Ok(xmp_str) = core::str::from_utf8(xmp_data) {
-                            segments = segments.set_xmp(xmp_str);
-                        }
-                    }
-                    self.xmp_data = None; // Mark as handled
-                }
-                if let Some(ref exif) = self.exif_data {
-                    if let Some(exif_bytes) = exif.to_bytes() {
-                        segments.set_exif_mut(exif_bytes);
-                    }
-                    self.exif_data = None; // Mark as handled
-                }
-                if let Some(ref icc_data) = self.icc_profile {
-                    if !icc_data.is_empty() {
-                        segments = segments.set_icc(icc_data.clone());
-                    }
-                    self.icc_profile = None; // Mark as handled
-                }
-            }
-            inject_encoder_segments_inplace(output, &segments);
+    /// Whether this encode can hand out bytes before `finish`: stream-through
+    /// mode (fixed or custom Huffman tables, sequential, not XYB or RGB),
+    /// no target-quality loop, and no MPF index (which records the primary
+    /// image's length).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn can_stream_output(&self) -> bool {
+        self.inner.is_streaming()
+            && self.zq_pixel_buffer.is_none()
+            && !self
+                .config
+                .segments
+                .as_ref()
+                .is_some_and(|s| s.has_mpf_images())
+    }
+
+    /// Write the header, metadata included, and make it and every later
+    /// byte available through [`pending_output`](Self::pending_output) as
+    /// rows are encoded. Call before the first row, only when
+    /// [`can_stream_output`](Self::can_stream_output). The bytes handed out
+    /// plus `finish`'s return equal what `finish` alone would return.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn start_output(&mut self) -> Result<()> {
+        if !self.can_stream_output() {
+            return Err(Error::invalid_state(
+                "this configuration cannot stream its output",
+            ));
         }
+        let mut header = self.inner.take_header()?;
+        inject_metadata(
+            &mut self.config.segments,
+            &mut self.exif_data,
+            &mut self.xmp_data,
+            &mut self.icc_profile,
+            &mut header,
+        )?;
+        self.inner.start_output(header)
+    }
 
-        // Fall back to individual metadata fields for backwards compatibility
-        // These are applied after EncoderSegments if both are provided
-        // (allows override of specific fields while keeping bulk segments)
-        if let Some(ref exif) = self.exif_data
-            && let Some(exif_bytes) = exif.to_bytes()
-        {
-            inject_exif_inplace(output, &exif_bytes)?;
-        }
+    /// Bytes ready to send after [`start_output`](Self::start_output).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn pending_output(&self) -> &[u8] {
+        self.inner.pending_output()
+    }
 
-        if let Some(ref xmp_data) = self.xmp_data {
-            inject_xmp_inplace(output, xmp_data);
-        }
+    /// Mark the first `n` pending bytes as sent.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn consume_output(&mut self, n: usize) {
+        self.inner.consume_output(n);
+    }
 
-        if let Some(ref icc_data) = self.icc_profile {
-            inject_icc_profile_inplace(output, icc_data);
-        }
+    /// Hand the pending bytes to `into`; see the streaming encoder's
+    /// `take_output`.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_output(&mut self, into: &mut Vec<u8>) {
+        self.inner.take_output(into);
+    }
 
-        Ok(())
+    /// The most pushed rows whose bytes are not yet pending, once output
+    /// streams.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn output_lag_rows(&self) -> u32 {
+        self.inner.output_lag_rows()
     }
 
     /// Finish encoding and return both JPEG bytes and Huffman frequency counts.
@@ -908,6 +934,69 @@ fn inject_encoder_segments_inplace(jpeg: &mut Vec<u8>, segments: &super::extras:
     // This is still more efficient than the old finish_to_vec which allocated twice
     let new_jpeg = inject_encoder_segments(core::mem::take(jpeg), segments);
     *jpeg = new_jpeg;
+}
+
+/// Insert the metadata segments (encoder segments, EXIF, XMP, ICC)
+/// after SOI. Every insertion point is among the leading APPn
+/// segments, so `output` may be the whole file or only its header
+/// (SOI through SOS); the bytes are the same either way. Consumes the
+/// metadata: a second call inserts nothing.
+fn inject_metadata(
+    segments_slot: &mut Option<super::extras::EncoderSegments>,
+    exif_data: &mut Option<super::exif::Exif>,
+    xmp_data: &mut Option<alloc::vec::Vec<u8>>,
+    icc_profile: &mut Option<alloc::vec::Vec<u8>>,
+    output: &mut Vec<u8>,
+) -> Result<()> {
+    // When using EncoderSegments with MPF images, we need to merge individual
+    // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
+    // calling inject_encoder_segments. This ensures the MPF offset calculation
+    // includes all metadata that will be in the final output.
+    if let Some(mut segments) = segments_slot.take() {
+        // Merge individual metadata into segments if MPF is present
+        // (MPF offset calculation needs all data to be accounted for)
+        if segments.has_mpf_images() {
+            // Taking each field marks it handled.
+            if let Some(xmp) = xmp_data.take()
+                && !xmp.is_empty()
+            {
+                // Convert raw XMP bytes to string for set_xmp
+                if let Ok(xmp_str) = core::str::from_utf8(&xmp) {
+                    segments = segments.set_xmp(xmp_str);
+                }
+            }
+            if let Some(exif) = exif_data.take()
+                && let Some(exif_bytes) = exif.to_bytes()
+            {
+                segments.set_exif_mut(exif_bytes);
+            }
+            if let Some(icc) = icc_profile.take()
+                && !icc.is_empty()
+            {
+                segments = segments.set_icc(icc);
+            }
+        }
+        inject_encoder_segments_inplace(output, &segments);
+    }
+
+    // Fall back to individual metadata fields for backwards compatibility
+    // These are applied after EncoderSegments if both are provided
+    // (allows override of specific fields while keeping bulk segments)
+    if let Some(exif) = exif_data.take()
+        && let Some(exif_bytes) = exif.to_bytes()
+    {
+        inject_exif_inplace(output, &exif_bytes)?;
+    }
+
+    if let Some(xmp_data) = xmp_data.take() {
+        inject_xmp_inplace(output, &xmp_data);
+    }
+
+    if let Some(icc_data) = icc_profile.take() {
+        inject_icc_profile_inplace(output, &icc_data);
+    }
+
+    Ok(())
 }
 
 /// Marker trait for supported rgb crate pixel types.

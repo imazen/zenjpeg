@@ -108,9 +108,9 @@ dependencies = [
 
 [[package]]
 name = "enough"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e1bd41ecce82c300d0c84fa35b080fa6db50a5398b18f1abf0357bb067549e"
+checksum = "877362cb7b70d1c617f0cd3c67708bd58d894a86af5104018e2c10ebaee3c02f"
 
 [[package]]
 name = "equator"
@@ -158,6 +158,15 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
+]
+
+[[package]]
+name = "how-far"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "090dfeab9752b8574ff7b6fcfc96af46f4e4fc5b2cd0a3462e6d419b076eb7d1"
+dependencies = [
+ "enough",
 ]
 
 [[package]]
@@ -421,10 +430,11 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=47895ac46f555b4bac7e28ac57bb50299c96889b#47895ac46f555b4bac7e28ac57bb50299c96889b"
+source = "git+https://github.com/imazen/zencodec?rev=4c031d808087d055f65a3670e68812f8b654a244#4c031d808087d055f65a3670e68812f8b654a244"
 dependencies = [
  "almost-enough",
  "enough",
+ "how-far",
  "whereat",
  "zenpixels",
 ]
@@ -473,7 +483,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=47895ac46f555b4bac7e28ac57bb50299c96889b#47895ac46f555b4bac7e28ac57bb50299c96889b"
+source = "git+https://github.com/imazen/zencodec?rev=4c031d808087d055f65a3670e68812f8b654a244#4c031d808087d055f65a3670e68812f8b654a244"
 dependencies = [
  "roxmltree",
  "zencodec",
