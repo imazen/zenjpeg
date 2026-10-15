@@ -7,6 +7,18 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- UltraHDR encode, standard-range base (commit: added at landing):
+  - an XYB base takes sRGB pixels and no caller ICC profile: XYB writes its
+    own profile, and a P3 or BT.2020 base (or a caller profile) got a second,
+    conflicting profile set next to it; these are now errors;
+  - `GainMapEncodingFormat::Iso21496` drops a caller XMP that signals a gain
+    map (hdrgm properties or a GContainer directory, as one preserved from an
+    Ultra HDR source does), as `Xmp` and `Both` replace it; it was written
+    with the source map's stale `Item:Length`;
+  - a BT.709 base with a transfer other than sRGB/BT.709 (linear, gamma 2.2,
+    PQ, HLG) gets a profile or is an error; it was written untagged, which
+    reads as sRGB.
+
 - `layout` lossy edits of Ultra HDR files carry the gain map correctly (commit: added at landing):
   - the map takes the primary's plan, scaled to its own size: the crop, the
     orientation (EXIF auto-orient included) and the resize; it was only

@@ -867,8 +867,12 @@ fn encode_sdr_base(
     };
 
     // The caller's segments, without what the gain map replaces (their MPF
-    // images are not copied at all).
-    let replaces_xmp = gainmap_segments.has(SegmentType::Xmp);
+    // images are not copied at all). A caller XMP that signals a gain map
+    // (hdrgm properties or a GContainer directory, as one preserved from an
+    // Ultra HDR source does) describes a map this file does not carry: it is
+    // dropped even when the format writes no XMP of its own.
+    let replaces_xmp =
+        gainmap_segments.has(SegmentType::Xmp) || caller_xmp_signals_a_gain_map(config);
     let mut segments = EncoderSegments::new();
     for seg in config.segments.iter().flat_map(EncoderSegments::segments) {
         let replaced = seg.data.starts_with(zencodec::ISO_21496_1_URN)
@@ -887,7 +891,21 @@ fn encode_sdr_base(
     for image in gainmap_segments.mpf_images() {
         segments = segments.add_mpf_image(image.data.clone(), image.image_type);
     }
-    if !segments.has(SegmentType::Icc)
+    let xyb = matches!(
+        config.color_mode,
+        crate::encode::encoder_types::ColorMode::Xyb { .. }
+    );
+    if xyb {
+        // XYB writes its own ICC profile (the XYB transform) and converts
+        // its input as sRGB: another profile would be a second, conflicting
+        // ICC set, and non-sRGB pixels would be converted wrongly.
+        if segments.has(SegmentType::Icc) || base_icc_profile(sdr)?.is_some() {
+            return Err(Error::unsupported_feature(
+                "an XYB UltraHDR SDR base takes sRGB pixels and no caller ICC profile \
+                 (XYB writes its own); convert the base to sRGB or encode it as YCbCr",
+            ));
+        }
+    } else if !segments.has(SegmentType::Icc)
         && let Some(icc) = base_icc_profile(sdr)?
     {
         segments = segments.set_icc(icc.into_owned());
@@ -909,10 +927,17 @@ fn encode_sdr_base(
 fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
     let desc = sdr.descriptor();
-    if matches!(
-        desc.primaries,
-        ColorPrimaries::Bt709 | ColorPrimaries::Unknown
-    ) {
+    // Untagged means sRGB to every reader: right for BT.709 primaries with
+    // the sRGB (or BT.709, or unstated) transfer, and for unknown primaries
+    // (nothing to state). BT.709 primaries with another transfer (linear,
+    // gamma 2.2, PQ, HLG) need a profile like any other colour.
+    let srgb_like_transfer = matches!(
+        desc.transfer,
+        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Unknown
+    );
+    if desc.primaries == ColorPrimaries::Unknown
+        || (desc.primaries == ColorPrimaries::Bt709 && srgb_like_transfer)
+    {
         return Ok(None);
     }
     let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(synthesize_icc_for_cicp);
@@ -927,6 +952,30 @@ fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
             desc.transfer
         ))),
     }
+}
+
+/// Whether `config`'s XMP (from its segments) signals a gain map: Ultra HDR
+/// `hdrgm` properties or a GContainer directory with a secondary item.
+fn caller_xmp_signals_a_gain_map(config: &EncoderConfig) -> bool {
+    const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+    let Some(segments) = config.segments.as_ref() else {
+        return false;
+    };
+    segments.segments().iter().any(|seg| {
+        seg.segment_type == SegmentType::Xmp
+            && seg
+                .data
+                .strip_prefix(XMP_NS)
+                .and_then(|x| core::str::from_utf8(x).ok())
+                .is_some_and(|xmp| {
+                    let (params, items) = crate::container::parse_xmp_full(xmp);
+                    params.is_some()
+                        || items
+                            .iter()
+                            .any(|i| i.semantic != crate::container::ItemSemantic::Primary)
+                        || xmp.contains("http://ns.adobe.com/hdr-gain-map/1.0/")
+                })
+    })
 }
 
 /// Convert an ultrahdr_core error to a zenjpeg Error.

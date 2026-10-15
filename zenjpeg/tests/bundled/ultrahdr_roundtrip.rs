@@ -1415,3 +1415,97 @@ fn codec_hdr_obeys_progressive_policy() {
         Disposition::Skipped
     );
 }
+
+/// Count of ICC chunk sets (chunks numbered 1) among `jpeg`'s APP2 segments.
+fn icc_chunk_sets(jpeg: &[u8]) -> usize {
+    zenjpeg::container::iter(jpeg)
+        .filter(|s| {
+            matches!(s.kind, zenjpeg::container::MarkerKind::App(2))
+                && s.payload.starts_with(b"ICC_PROFILE\0")
+                && s.payload.get(12) == Some(&1)
+        })
+        .count()
+}
+
+#[test]
+fn xyb_sdr_base_carries_only_its_own_profile() {
+    // XYB writes its own ICC profile and converts its input as sRGB. A P3
+    // base got a second, Display P3 profile set next to the XYB one (and
+    // libjpeg-turbo's read_icc_profile rejects duplicate sets); a caller's
+    // profile did the same.
+    use zenjpeg::encode::EncoderSegments;
+    use zenjpeg::encoder::XybSubsampling;
+    use zenjpeg::ultrahdr::{compute_gainmap, encode_with_gainmap};
+    let xyb = EncoderConfig::xyb(85.0, XybSubsampling::BQuarter);
+    let encode = |primaries, config: &EncoderConfig| {
+        let hdr = create_test_hdr_in(primaries);
+        let sdr = create_test_sdr_in(primaries);
+        let (gm, meta) =
+            compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+        encode_with_gainmap(&sdr, &gm, &meta, config, 75.0, Unstoppable)
+    };
+    let srgb = encode(UhdrColorGamut::Bt709, &xyb).unwrap();
+    assert_eq!(icc_chunk_sets(&srgb), 1);
+    assert!(encode(UhdrColorGamut::DisplayP3, &xyb).is_err());
+    let with_caller_icc = xyb
+        .clone()
+        .with_segments(EncoderSegments::new().set_icc(b"caller profile".to_vec()));
+    assert!(encode(UhdrColorGamut::Bt709, &with_caller_icc).is_err());
+}
+
+#[test]
+fn iso21496_drops_a_callers_gain_map_xmp() {
+    // A caller XMP preserved from an Ultra HDR source names the source's
+    // gain map (hdrgm properties, a GContainer Item:Length). Iso21496 writes
+    // no XMP of its own and kept that packet; Xmp and Both replace it.
+    use zenjpeg::encode::EncoderSegments;
+    use zenjpeg::ultrahdr::{GainMapEncodingFormat, compute_gainmap, encode_with_gainmap_format};
+    let hdr = create_test_hdr_in(UhdrColorGamut::Bt709);
+    let sdr = create_test_sdr_in(UhdrColorGamut::Bt709);
+    let (gm, meta) = compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+    let stale = zenjpeg::container::generate_primary_xmp(123_456);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .with_segments(EncoderSegments::new().set_xmp(&stale));
+    let jpeg = encode_with_gainmap_format(
+        &sdr,
+        &gm,
+        &meta,
+        &config,
+        75.0,
+        GainMapEncodingFormat::Iso21496,
+        Unstoppable,
+    )
+    .unwrap();
+    assert!(!jpeg.windows(6).any(|w| w == b"hdrgm:"));
+    assert!(!jpeg.windows(6).any(|w| w == b"123456"));
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    assert!(decoded.extras().unwrap().is_ultrahdr());
+}
+
+#[test]
+fn bt709_base_with_another_transfer_is_not_left_untagged() {
+    // Untagged means sRGB. BT.709 primaries short-circuited to "no profile"
+    // whatever the transfer, so a linear base was written untagged and read
+    // as sRGB. It now gets a profile (zencodec's icc-db) or is an error.
+    use zenjpeg::ultrahdr::{compute_gainmap, encode_with_gainmap};
+    let hdr = create_test_hdr_in(UhdrColorGamut::Bt709);
+    let sdr = create_test_sdr_in(UhdrColorGamut::Bt709);
+    let (gm, meta) = compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
+    let linear = pixel_buffer_from_vec(
+        sdr.as_slice().as_strided_bytes().to_vec(),
+        64,
+        64,
+        UhdrPixelFormat::Rgba8,
+        UhdrColorGamut::Bt709,
+        UhdrColorTransfer::Linear,
+    )
+    .unwrap();
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    match encode_with_gainmap(&linear, &gm, &meta, &config, 75.0, Unstoppable) {
+        Ok(jpeg) => assert!(primary_icc(&jpeg).is_some(), "linear base written untagged"),
+        Err(e) => assert!(e.to_string().contains("profile"), "{e}"),
+    }
+    // The sRGB base stays untagged.
+    let srgb = encode_with_gainmap(&sdr, &gm, &meta, &config, 75.0, Unstoppable).unwrap();
+    assert_eq!(primary_icc(&srgb), None);
+}
