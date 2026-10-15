@@ -5,6 +5,28 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Streaming encode output (zencodec PR 149)
+
+- `Encoder::begin` streams with fixed or custom Huffman tables and a sequential
+  scan: the header (every metadata segment included) is pending at `begin`, and
+  each strip's whole bytes once the strip is entropy-coded, byte-identical to the
+  one-shot encode. The lag is 2 x strip - 1 rows (31 for 4:2:0, 15 for 4:4:4).
+  Optimized tables, progressive scans and images no taller than the lag report
+  `AT_FINISH` (`tests/streaming_encode.rs`).
+- `Encoder::take_output` moves the scan writer's buffer into an empty destination
+  (`BitWriter::take_buffer`) instead of copying it.
+- `JpegEncoderConfig::with_huffman` (new public API) chooses optimized or fixed
+  tables; `with_prefer_streaming(true)` selects fixed tables and a sequential scan
+  unless the caller chose either explicitly.
+- `begin` validates the declaration before storing any of it; a second `begin`,
+  and `encode` / `encode_from` after `begin` or `push_rows`, are refused. The
+  output-size limit counts bytes already handed out.
+- Behaviour changes: explicit `with_progressive` / `with_huffman` settings now
+  survive the effort preset (the preset used to override them), and the canvas
+  `push_rows` and `encode_from` paths follow the configuration (they used to force
+  a baseline, fixed-table encode). `BytesEncoder::push` accepts strided rows whose
+  last row holds only its pixels (it required `rows x stride` bytes).
+
 ### Dependency integration
 
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
