@@ -1273,40 +1273,39 @@ impl<'a> JpegParser<'a> {
                     // Fused h2v1: upsample+convert per row, no plane materialize
                     // (Triangle only — NearestNeighbor stays on upsample_fn).
                     #[cfg(target_arch = "x86_64")]
-                    if matches!(chroma_upsampling, ChromaUpsampling::Triangle) {
-                        if let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
-                        {
-                            for py in 0..pixel_rows_this {
-                                let y_off = py * y_strip_width;
-                                let c_off = py * c_strip_width;
-                                let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
-                                if rgb_off + y_cols_this * 3 > rgb_chunk.len() {
-                                    break;
-                                }
-                                if idct_method == IdctMethod::Libjpeg {
-                                    crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<true>(
-                                        token,
-                                        &y_strip[y_off..y_off + y_cols_this],
-                                        &cb_strip[c_off..c_off + real_chroma_width],
-                                        &cr_strip[c_off..c_off + real_chroma_width],
-                                        &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
-                                        y_cols_this,
-                                        real_chroma_width,
-                                    );
-                                } else {
-                                    crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<false>(
-                                        token,
-                                        &y_strip[y_off..y_off + y_cols_this],
-                                        &cb_strip[c_off..c_off + real_chroma_width],
-                                        &cr_strip[c_off..c_off + real_chroma_width],
-                                        &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
-                                        y_cols_this,
-                                        real_chroma_width,
-                                    );
-                                }
+                    if matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+                        && let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
+                    {
+                        for py in 0..pixel_rows_this {
+                            let y_off = py * y_strip_width;
+                            let c_off = py * c_strip_width;
+                            let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
+                            if rgb_off + y_cols_this * 3 > rgb_chunk.len() {
+                                break;
                             }
-                            return;
+                            if idct_method == IdctMethod::Libjpeg {
+                                crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<true>(
+                                    token,
+                                    &y_strip[y_off..y_off + y_cols_this],
+                                    &cb_strip[c_off..c_off + real_chroma_width],
+                                    &cr_strip[c_off..c_off + real_chroma_width],
+                                    &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
+                                    y_cols_this,
+                                    real_chroma_width,
+                                );
+                            } else {
+                                crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<false>(
+                                    token,
+                                    &y_strip[y_off..y_off + y_cols_this],
+                                    &cb_strip[c_off..c_off + real_chroma_width],
+                                    &cr_strip[c_off..c_off + real_chroma_width],
+                                    &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
+                                    y_cols_this,
+                                    real_chroma_width,
+                                );
+                            }
                         }
+                        return;
                     }
 
                     // Horizontal upsample Cb/Cr: real_chroma_width → width, at
