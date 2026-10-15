@@ -179,3 +179,55 @@ fn complete_real_world_zero_of_one_icc_is_readable_by_default() {
     #[cfg(feature = "metadata-rewrite")]
     assert!(zenjpeg::metadata::rewrite(&zencodec::metadata_rewrite::Request::new(&jpeg)).is_err());
 }
+
+/// Run `f` on a thread with Rust's default spawned-thread stack (2 MiB, as
+/// tokio's and most worker pools' threads have); `None` if it panicked.
+#[cfg(feature = "zencodec")]
+fn on_2mib_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .ok()
+}
+
+#[cfg(feature = "zencodec")]
+#[test]
+fn deeply_nested_xmp_does_not_overflow_the_stack() {
+    // 10,000 nested elements in a 30 KB XMP packet. zenmeta's XMP reader
+    // handed it to roxmltree, whose parser recurses per element: the
+    // default zencodec decode overflowed a 2 MiB stack and aborted the
+    // process (zenmeta now rejects nesting past 64 levels before parsing).
+    use std::borrow::Cow;
+    use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+    let xmp = format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">{}</x:xmpmeta>"#,
+        "<a>".repeat(10_000)
+    );
+    let jpeg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .request()
+        .xmp(xmp.as_bytes())
+        .encode(&[rgb::RGB8::new(20, 40, 60); 256], 16, 16)
+        .unwrap();
+    let decoded = on_2mib_thread(move || {
+        let job = zenjpeg::JpegDecoderConfig::new().job();
+        let out = job
+            .decoder(Cow::Borrowed(&jpeg), &[])
+            .and_then(|d| d.decode())
+            .map(|o| o.pixels().width());
+        #[cfg(feature = "ultrahdr")]
+        {
+            use zenjpeg::ultrahdr::UltraHdrExtras;
+            let native = zenjpeg::decoder::Decoder::new()
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            let extras = native.extras().unwrap();
+            assert!(!extras.is_ultrahdr());
+            assert!(extras.ultrahdr_metadata().is_none_or(|r| r.is_err()));
+        }
+        out
+    })
+    .expect("the decode panicked");
+    assert_eq!(decoded.unwrap(), 16);
+}

@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- A JPEG whose XMP nests elements deeply no longer aborts the process. zenmeta's XMP reader handed the packet to roxmltree, whose parser recurses per element: a 30 KB packet nesting 10,000 elements overflowed a 2 MiB thread stack in the default zencodec decode (and in `UltraHdrExtras` and the lossless and rewrite paths, which read XMP the same way). zenmeta now rejects nesting past 64 levels before parsing; zencodec, zenmeta and the testkit are pinned to zencodec `f7f21dc7`. (commit: added at landing)
+
 - Caller segments no longer contradict the colour model an encode writes (`EncoderConfig::with_segments`, `add_segment`, `EncoderSegments::set_jfif` / `set_printer_dpi`, preserved `DecodedExtras`, and for ICC the request's `icc_profile`) (commit: added at landing):
   - RGB and XYB output carry no caller JFIF APP0 (JFIF means YCbCr to libjpeg-turbo and jpegli, so the file decoded with the YCbCr matrix applied to R, G, B or XYB planes); its pixel density goes with it, as libjpeg-turbo omits JFIF for RGB output. YCbCr and grayscale output keep it.
   - No output carries a caller's Adobe APP14. A preserved transform 0 (any Adobe-RGB JPEG, or zenjpeg's own RGB output re-encoded with its metadata) made YCbCr output decode as RGB; RGB and XYB output carry only the encoder's own APP14.
