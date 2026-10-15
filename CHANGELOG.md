@@ -7,6 +7,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Caller segments no longer contradict the colour model an encode writes (`EncoderConfig::with_segments`, `add_segment`, `EncoderSegments::set_jfif` / `set_printer_dpi`, preserved `DecodedExtras`, and for ICC the request's `icc_profile`) (commit: added at landing):
+  - RGB and XYB output carry no caller JFIF APP0 (JFIF means YCbCr to libjpeg-turbo and jpegli, so the file decoded with the YCbCr matrix applied to R, G, B or XYB planes); its pixel density goes with it, as libjpeg-turbo omits JFIF for RGB output. YCbCr and grayscale output keep it.
+  - No output carries a caller's Adobe APP14. A preserved transform 0 (any Adobe-RGB JPEG, or zenjpeg's own RGB output re-encoded with its metadata) made YCbCr output decode as RGB; RGB and XYB output carry only the encoder's own APP14.
+  - XYB output carries only its own ICC profile; a caller's was written as a second profile set.
+
 - `Decoder::decode_into` on baseline 4:2:0 / 4:2:2 files with MCU-row restart markers, built with `parallel`, returned "coefficient data unavailable" (#215): it took the coefficient fast path, but the fused parallel decode those files take holds pixels, not coefficients. It now uses the fused result, as `decode` does. (commit: added at landing)
 
 - `zjpeg`: `--strip` applies on every pipeline, after the output is written (commit: added at landing). On the default lossless path (no lossy option; `--orient` defaults to auto) and on restructure, every `--strip` value was ignored: `--strip exif` wrote the input back byte-identical, EXIF included. On the re-encode path, `--strip gainmaps` wrote the EXIF APP1 header twice (ExifTool: "Malformed APP1 EXIF segment"), left the gain-map XMP naming the removed map, and failed on an ICC profile or XMP larger than one segment. Stripping gain maps removes the MPF index, the ISO 21496-1 records, the images after the primary and an XMP packet that declares the `hdrgm` namespace (whole: there is no XMP editor; a note says so), and refuses when other data follows the primary.
