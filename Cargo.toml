@@ -269,8 +269,8 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 # entries once zenanalyze 0.2.x / zenanalyze-api 0.1.1 publish.
 [patch.crates-io]
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8bec0afedb3f33d9006d76f022abf93e795ebc71" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "8bec0afedb3f33d9006d76f022abf93e795ebc71" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "e3fab915c70dc40ca6a28a42efd332e9cc633e0d" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "e3fab915c70dc40ca6a28a42efd332e9cc633e0d" }
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "f7f21dc7e22e5940fb5be009cd14b7111c83bca4" }
 zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "f7f21dc7e22e5940fb5be009cd14b7111c83bca4" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }

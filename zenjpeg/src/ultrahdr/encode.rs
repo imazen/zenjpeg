@@ -919,21 +919,23 @@ fn encode_sdr_base(
 }
 
 /// The ICC profile an SDR base needs so readers do not take it for sRGB:
-/// none for BT.709 primaries (the colour every reader assumes for an untagged
-/// JPEG) or unknown ones (nothing to state); a bundled profile for Display P3
-/// or BT.2020 with the sRGB or BT.709 transfer; otherwise an error, since the
-/// base would be mislabelled. A caller with another colour supplies its profile
-/// in the `EncoderConfig` segments instead.
+/// none for BT.709 primaries with the sRGB transfer (the colour every reader
+/// assumes for an untagged JPEG) or unknown primaries (nothing to state); a
+/// bundled profile otherwise, including BT.709 primaries with the BT.709
+/// transfer, whose curve differs from sRGB's; an error when none exists, since
+/// the base would be mislabelled. A caller with another colour supplies its
+/// profile in the `EncoderConfig` segments instead.
 fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
     let desc = sdr.descriptor();
     // Untagged means sRGB to every reader: right for BT.709 primaries with
-    // the sRGB (or BT.709, or unstated) transfer, and for unknown primaries
-    // (nothing to state). BT.709 primaries with another transfer (linear,
-    // gamma 2.2, PQ, HLG) need a profile like any other colour.
+    // the sRGB (or unstated) transfer, and for unknown primaries (nothing to
+    // state). BT.709 primaries with another transfer (BT.709, linear, gamma
+    // 2.2, PQ, HLG) need a profile like any other colour: the BT.709 OETF is
+    // not the sRGB curve (zenpixels#88).
     let srgb_like_transfer = matches!(
         desc.transfer,
-        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Unknown
+        TransferFunction::Srgb | TransferFunction::Unknown
     );
     if desc.primaries == ColorPrimaries::Unknown
         || (desc.primaries == ColorPrimaries::Bt709 && srgb_like_transfer)
@@ -995,6 +997,31 @@ mod tests {
         let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
         let desc = zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer);
         PixelBuffer::from_vec(bytes, 1, 1, desc).expect("fixture")
+    }
+
+    /// BT.709 primaries: the sRGB transfer stays untagged (every reader
+    /// assumes it); the BT.709 transfer gets a profile that says so, since
+    /// its curve is not sRGB's (zenpixels#88). It was untagged.
+    #[test]
+    fn bt709_base_is_tagged_only_when_its_curve_is_not_srgb() {
+        let base = |transfer| {
+            let desc = zenpixels::PixelDescriptor::RGBA8_SRGB
+                .with_primaries(ColorPrimaries::Bt709)
+                .with_transfer(transfer);
+            PixelBuffer::from_vec(alloc::vec![128u8; 4], 1, 1, desc).expect("fixture")
+        };
+        assert!(
+            base_icc_profile(&base(TransferFunction::Srgb))
+                .unwrap()
+                .is_none()
+        );
+        let icc = base_icc_profile(&base(TransferFunction::Bt709))
+            .unwrap()
+            .expect("a BT.709-transfer base needs a profile");
+        assert_eq!(
+            zenpixels::icc::extract_cicp(&icc),
+            Some(zenpixels::Cicp::new(1, 1, 0, true))
+        );
     }
 
     /// Appendix AA: the tone curve's input normalization states the ROW

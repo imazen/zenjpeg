@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Ultra HDR SDR bases with BT.709 primaries and the BT.709 transfer now carry an ICC profile; they went out untagged, and readers decoded them with the sRGB curve, which differs across the whole range (encoded 0.5 is linear 0.2140 under sRGB, 0.2597 under BT.709). zenpixels is repinned to `e3fab915`, which adds the (1,1) profile and refuses the primaries-10 profiles whose matrix was singular (zenpixels#88). Test: `bt709_base_is_tagged_only_when_its_curve_is_not_srgb`. (commit: added at landing)
+
 - Ultra HDR SDR bases in Display P3 or BT.2020 now carry an ICC profile that says what the base holds (zenjpeg#233; zenpixels#86, #87). zenpixels is repinned to `8bec0afe`, whose `synthesize_icc_for_cicp` serves the exact, `cicp`-tagged profile: a BT.2020 base with the sRGB transfer got a profile with the BT.709 curve, and a Display P3 base got a profile libultrahdr does not recognise (it decoded the base and the HDR rendition as BT.709). The `ultrahdr` feature now enables zenpixels-convert's `icc-db`, which those profiles come from; without `zencodec` a BT.2020 + sRGB base had no profile at all. libultrahdr's `readIccColorGamut` reads the new P3 profile as DISPLAY_P3 and the BT.2020 one as BT_2100. (2416d3f7)
 
 - `EncoderConfig::grayscale` with colour input (every RGB/BGR/RGBX/RGBA layout, 8-bit, 16-bit and f32) wrote a three-component JPEG; it now writes the luminance only, as documented (#235). The streaming encoder decided the component count from the input format alone; `ComputedConfig::writes_gray` now also covers the grayscale mode. Test: `tests/grayscale_from_colour.rs`. (09cdd984)
