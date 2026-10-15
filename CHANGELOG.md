@@ -7,18 +7,22 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
-- A JPEG whose XMP nests elements deeply no longer aborts the process. zenmeta's XMP reader handed the packet to roxmltree, whose parser recurses per element: a 30 KB packet nesting 10,000 elements overflowed a 2 MiB thread stack in the default zencodec decode (and in `UltraHdrExtras` and the lossless and rewrite paths, which read XMP the same way). zenmeta now rejects nesting past 64 levels before parsing; zencodec, zenmeta and the testkit are pinned to zencodec `f7f21dc7`. (commit: added at landing)
+- A DHT that defines a DC symbol above 15 is rejected when it is defined, at every strictness (Permissive skips the segment), as libjpeg-turbo and jpegli do. DC categories end at 15 (16 exists only in lossless coding); category 16 was accepted and decoded two ways (`decode_value` gave the extra bits, `huff_extend` the bits plus one). The structural inventory applies the same rule. (6b079a68)
 
-- Caller segments no longer contradict the colour model an encode writes (`EncoderConfig::with_segments`, `add_segment`, `EncoderSegments::set_jfif` / `set_printer_dpi`, preserved `DecodedExtras`, and for ICC the request's `icc_profile`) (commit: added at landing):
+- The streaming `UltraHdrReader`, `Decoder::decode`'s gain-map extraction (`GainMapHandling::PreserveRaw` / `Decode`) and the scanline reader's `gain_map_jpeg` find an MPF-listed gain map that carries its own metadata (its ISO 21496-1 record or its `hdrgm` XMP) when the primary image signals neither, as `UltraHdrExtras::is_ultrahdr` and libultrahdr 1.4.0 do. They reported no gain map for such files. (a91a4aa6)
+
+- A JPEG whose XMP nests elements deeply no longer aborts the process. zenmeta's XMP reader handed the packet to roxmltree, whose parser recurses per element: a 30 KB packet nesting 10,000 elements overflowed a 2 MiB thread stack in the default zencodec decode (and in `UltraHdrExtras` and the lossless and rewrite paths, which read XMP the same way). zenmeta now rejects nesting past 64 levels before parsing; zencodec, zenmeta and the testkit are pinned to zencodec `f7f21dc7`. (a24dbd42)
+
+- Caller segments no longer contradict the colour model an encode writes (`EncoderConfig::with_segments`, `add_segment`, `EncoderSegments::set_jfif` / `set_printer_dpi`, preserved `DecodedExtras`, and for ICC the request's `icc_profile`) (c7e419b0):
   - RGB and XYB output carry no caller JFIF APP0 (JFIF means YCbCr to libjpeg-turbo and jpegli, so the file decoded with the YCbCr matrix applied to R, G, B or XYB planes); its pixel density goes with it, as libjpeg-turbo omits JFIF for RGB output. YCbCr and grayscale output keep it.
   - No output carries a caller's Adobe APP14. A preserved transform 0 (any Adobe-RGB JPEG, or zenjpeg's own RGB output re-encoded with its metadata) made YCbCr output decode as RGB; RGB and XYB output carry only the encoder's own APP14.
   - XYB output carries only its own ICC profile; a caller's was written as a second profile set.
 
-- `Decoder::decode_into` on baseline 4:2:0 / 4:2:2 files with MCU-row restart markers, built with `parallel`, returned "coefficient data unavailable" (#215): it took the coefficient fast path, but the fused parallel decode those files take holds pixels, not coefficients. It now uses the fused result, as `decode` does. (commit: added at landing)
+- `Decoder::decode_into` on baseline 4:2:0 / 4:2:2 files with MCU-row restart markers, built with `parallel`, returned "coefficient data unavailable" (#215): it took the coefficient fast path, but the fused parallel decode those files take holds pixels, not coefficients. It now uses the fused result, as `decode` does. (d831b937)
 
-- `zjpeg`: `--strip` applies on every pipeline, after the output is written (commit: added at landing). On the default lossless path (no lossy option; `--orient` defaults to auto) and on restructure, every `--strip` value was ignored: `--strip exif` wrote the input back byte-identical, EXIF included. On the re-encode path, `--strip gainmaps` wrote the EXIF APP1 header twice (ExifTool: "Malformed APP1 EXIF segment"), left the gain-map XMP naming the removed map, and failed on an ICC profile or XMP larger than one segment. Stripping gain maps removes the MPF index, the ISO 21496-1 records, the images after the primary and an XMP packet that declares the `hdrgm` namespace (whole: there is no XMP editor; a note says so), and refuses when other data follows the primary.
+- `zjpeg`: `--strip` applies on every pipeline, after the output is written (512dab48). On the default lossless path (no lossy option; `--orient` defaults to auto) and on restructure, every `--strip` value was ignored: `--strip exif` wrote the input back byte-identical, EXIF included. On the re-encode path, `--strip gainmaps` wrote the EXIF APP1 header twice (ExifTool: "Malformed APP1 EXIF segment"), left the gain-map XMP naming the removed map, and failed on an ICC profile or XMP larger than one segment. Stripping gain maps removes the MPF index, the ISO 21496-1 records, the images after the primary and an XMP packet that declares the `hdrgm` namespace (whole: there is no XMP editor; a note says so), and refuses when other data follows the primary.
 
-- UltraHDR encode, standard-range base (commit: added at landing):
+- UltraHDR encode, standard-range base (7fa790f2):
   - an XYB base takes sRGB pixels and no caller ICC profile: XYB writes its
     own profile, and a P3 or BT.2020 base (or a caller profile) got a second,
     conflicting profile set next to it; these are now errors;
@@ -30,7 +34,7 @@ All notable changes to zenjpeg are documented here. Earlier history
     PQ, HLG) gets a profile or is an error; it was written untagged, which
     reads as sRGB.
 
-- `layout` lossy edits of Ultra HDR files carry the gain map correctly (commit: added at landing):
+- `layout` lossy edits of Ultra HDR files carry the gain map correctly (ebb98555):
   - the map takes the primary's plan, scaled to its own size: the crop, the
     orientation (EXIF auto-orient included) and the resize; it was only
     resized to the output's proportions, so a crop or rotation misregistered it;
@@ -177,10 +181,6 @@ All notable changes to zenjpeg are documented here. Earlier history
   mechanical rename with no behavior change.
 
 ### Fixed
-
-- A DHT that defines a DC symbol above 15 is rejected when it is defined, at every strictness (Permissive skips the segment), as libjpeg-turbo and jpegli do. DC categories end at 15 (16 exists only in lossless coding); category 16 was accepted and decoded two ways (`decode_value` gave the extra bits, `huff_extend` the bits plus one). The structural inventory applies the same rule. (commit: added at landing)
-
-- The streaming `UltraHdrReader`, `Decoder::decode`'s gain-map extraction (`GainMapHandling::PreserveRaw` / `Decode`) and the scanline reader's `gain_map_jpeg` find an MPF-listed gain map that carries its own metadata (its ISO 21496-1 record or its `hdrgm` XMP) when the primary image signals neither, as `UltraHdrExtras::is_ultrahdr` and libultrahdr 1.4.0 do. They reported no gain map for such files. (commit: added at landing)
 
 - Honor decode EXIF/ICC/XMP extraction flags across probe, buffered decode, streaming metadata, attached native extras and inventory. Remove the adapter's unconditional preserve-all override; denied XMP is also excluded from gain-map parameter fallback. No public signatures change (follow-up to `d2a417df`).
 
