@@ -276,6 +276,7 @@ impl BitWriter {
     /// capacity for what follows. The bit accumulator is untouched, so the
     /// stream continues exactly as if the bytes had been dropped with
     /// [`discard_front`](Self::discard_front).
+    #[allow(clippy::useless_conversion)] // ProfiledVec<u8> = InstrumentedVec<u8> when alloc-instrument enabled
     pub fn take_buffer(&mut self) -> Vec<u8> {
         let capacity = self.buffer.len();
         let taken = core::mem::replace(
