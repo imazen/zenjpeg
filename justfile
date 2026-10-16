@@ -256,8 +256,14 @@ api-doc-check:
 
 # Native ARM runtime-dispatch comparison; preserve full benchmark output.
 arm-tiers-macos group="":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$HOME/tmp"
-    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p zenjpeg --features _dev --bench tier_isolation -- --group='{{group}}' --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
+    group_args=()
+    if [[ -n '{{group}}' ]]; then group_args+=("--group={{group}}"); fi
+    # macOS cannot enforce a P-core process boundary; this is exploratory.
+    # Local path patches can require a lock refresh before this bench builds.
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zenjpeg --features _dev --bench tier_isolation -- "${group_args[@]}" --cpu-policy=unrestricted --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
 
 # JPEG framing and validated reassembly; existing fixtures and decoder paths.
 metadata-check:
