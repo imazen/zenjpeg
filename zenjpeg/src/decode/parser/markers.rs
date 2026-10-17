@@ -575,11 +575,13 @@ impl<'a> JpegParser<'a> {
         }
 
         // JFIF APP0 and Adobe APP14 decide the colour model at SOF (jpegli
-        // `ProcessAPP`: "JFIF" with a payload of at least 14 bytes; "Adobe"
-        // with at least 12, transform byte at offset 11). The last one wins.
+        // `ProcessAPP`: a JFIF payload of at least 14 bytes; "Adobe" with at
+        // least 12, transform byte at offset 11). The last one wins. The JFIF
+        // identifier is "JFIF\0", as libjpeg-turbo's `examine_app0` and this
+        // crate's own segment parser (`detect_segment_type`) require.
         {
             let data = &self.data[self.position..self.position + data_len];
-            if marker == MARKER_APP0 && data.len() >= 14 && data.starts_with(b"JFIF") {
+            if marker == MARKER_APP0 && data.len() >= 14 && data.starts_with(b"JFIF\0") {
                 self.color_markers.saw_jfif = true;
             }
             if marker == MARKER_APP14 && data.len() >= 12 && data.starts_with(b"Adobe") {
