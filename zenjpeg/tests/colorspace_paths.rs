@@ -2657,6 +2657,252 @@ fn rewrites_keep_colour_markers_on_their_side_of_sof() {
     f.finish("colour markers keep their side of SOF");
 }
 
+/// Every APPn segment with its position: 0 before SOF, 1 between SOF and the
+/// first SOS, 2 after the first SOS (walks entropy-coded data between scans).
+fn app_positions_all(jpeg: &[u8]) -> Vec<(u8, Vec<u8>, u8)> {
+    let mut out = Vec::new();
+    let mut pos = 0u8;
+    let mut p = 2;
+    while p + 4 <= jpeg.len() {
+        if jpeg[p] != 0xFF {
+            p += 1;
+            continue;
+        }
+        let m = jpeg[p + 1];
+        if m == 0xFF || m == 0x00 || (0xD0..=0xD7).contains(&m) {
+            p += if m == 0xFF { 1 } else { 2 };
+            continue;
+        }
+        if m == 0xD9 {
+            break;
+        }
+        let len = 2 + jpeg_writer::be16(jpeg, p + 2);
+        if matches!(m, 0xC0..=0xC2) && pos == 0 {
+            pos = 1;
+        }
+        if (0xE0..=0xEF).contains(&m) {
+            out.push((m, jpeg[p + 4..p + len].to_vec(), pos));
+        }
+        if m == 0xDA {
+            pos = 2;
+            // Skip the entropy-coded data up to the next real marker.
+            p += len;
+            while p + 1 < jpeg.len()
+                && !(jpeg[p] == 0xFF
+                    && jpeg[p + 1] != 0x00
+                    && !(0xD0..=0xD7).contains(&jpeg[p + 1]))
+            {
+                p += 1;
+            }
+            continue;
+        }
+        p += len;
+    }
+    out
+}
+
+/// `jpeg` with `seg` inserted right before its second SOS (after the first
+/// scan's entropy-coded data).
+fn insert_before_second_sos(jpeg: &[u8], seg: &[u8]) -> Vec<u8> {
+    let mut sos_seen = 0;
+    let mut p = 2;
+    while p + 4 <= jpeg.len() {
+        if jpeg[p] == 0xFF && jpeg[p + 1] == 0xDA {
+            sos_seen += 1;
+            if sos_seen == 2 {
+                return [&jpeg[..p], seg, &jpeg[p..]].concat();
+            }
+            p += 2 + jpeg_writer::be16(jpeg, p + 2);
+            while p + 1 < jpeg.len()
+                && !(jpeg[p] == 0xFF
+                    && jpeg[p + 1] != 0x00
+                    && !(0xD0..=0xD7).contains(&jpeg[p + 1]))
+            {
+                p += 1;
+            }
+            continue;
+        }
+        if jpeg[p] == 0xFF && jpeg[p + 1] != 0xFF && jpeg[p + 1] != 0x00 {
+            p += 2 + jpeg_writer::be16(jpeg, p + 2);
+        } else {
+            p += 1;
+        }
+    }
+    panic!("no second SOS");
+}
+
+/// `jpeg` with one stray `0x00` byte right before its SOF (decoders skip it
+/// with a warning).
+fn stray_byte_before_sof(jpeg: &[u8]) -> Vec<u8> {
+    let (p, _, _) = jpeg_writer::segments(jpeg)
+        .into_iter()
+        .find(|(_, m, _)| matches!(m, 0xC0..=0xC2))
+        .expect("SOF");
+    [&jpeg[..p], &[0x00], &jpeg[p..]].concat()
+}
+
+/// Review round 3, B1: a colour marker after the first SOS has no effect on
+/// the source's decode, and a stray byte before SOF does not hide the side of
+/// SOF a marker sits on. Every rewrite must decode like its source: same
+/// model in `read_info`, same pixels, and no colour marker moved to a
+/// position where it starts to count.
+#[test]
+fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
+    use zenjpeg::lossless::{
+        EdgeHandling, LosslessTransform, OutputMode, RestructureConfig, TransformConfig,
+        apply_exif_orientation, restructure, transform,
+    };
+    let mut f = Failures::default();
+    let (w, h) = (96u32, 80u32);
+    let src = noise_image(w as usize, h as usize, 73);
+    let enc = |progressive: bool| {
+        EncoderConfig::ycbcr(92, ChromaSubsampling::Quarter)
+            .progressive(progressive)
+            .encode_bytes(&src, w, h, PixelLayout::Rgb8Srgb)
+            .expect("encode")
+    };
+    let (seq, prog) = (enc(false), enc(true));
+    let exif = exif_orientation(2);
+    let is_colour = |m: u8, p: &[u8]| {
+        (m == 0xEE && p.starts_with(b"Adobe")) || (m == 0xE0 && p.starts_with(b"JFIF"))
+    };
+    // (name, build(pre) -> fixture, control_pre, ids, model, colour position
+    // the output must keep: 2 = after the first SOS or absent, 1 = between
+    // SOF and the first SOS).
+    type Build<'a> = Box<dyn Fn(&[Vec<u8>]) -> Vec<u8> + 'a>;
+    let fixtures: Vec<(&str, Build<'_>, Vec<Vec<u8>>, [u8; 3], ColorSpace, u8)> = vec![
+        (
+            "progressive ids RGB + JFIF between scans",
+            Box::new(|pre: &[Vec<u8>]| {
+                insert_before_second_sos(&resignal(&prog, *b"RGB", pre, &[]), &jfif())
+            }),
+            vec![app14(0)],
+            *b"RGB",
+            ColorSpace::Rgb,
+            2,
+        ),
+        (
+            "progressive ids 1,2,3 + APP14 t0 between scans",
+            Box::new(|pre: &[Vec<u8>]| {
+                insert_before_second_sos(&resignal(&prog, [1, 2, 3], pre, &[]), &app14(0))
+            }),
+            vec![],
+            [1, 2, 3],
+            ColorSpace::YCbCr,
+            2,
+        ),
+        (
+            "ids 1,2,3 + APP14 t0 after SOF + stray byte before SOF",
+            Box::new(|pre: &[Vec<u8>]| {
+                stray_byte_before_sof(&resignal(&seq, [1, 2, 3], pre, &[app14(0)]))
+            }),
+            vec![],
+            [1, 2, 3],
+            ColorSpace::YCbCr,
+            1,
+        ),
+    ];
+    for (name, build, control_pre, ids, model, keep_at) in &fixtures {
+        let base = if name.starts_with("progressive") {
+            &prog
+        } else {
+            &seq
+        };
+        let jpeg = build(&[]);
+        let jpeg_exif = build(&[exif.clone()]);
+        let control = resignal(base, *ids, control_pre, &[]);
+        let control_exif = resignal(
+            base,
+            *ids,
+            &[&[exif.clone()][..], control_pre].concat(),
+            &[],
+        );
+        assert_eq!(
+            Decoder::new().read_info(&jpeg).expect("info").color_space,
+            *model,
+            "{name}: fixture model"
+        );
+        assert_eq!(
+            Decoder::new()
+                .read_info(&control)
+                .expect("info")
+                .color_space,
+            *model,
+            "{name}: control model"
+        );
+        let mut outputs: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+        for mode in [OutputMode::Sequential, OutputMode::Progressive] {
+            let cfg = RestructureConfig {
+                output_mode: mode,
+                ..Default::default()
+            };
+            let run = |j: &[u8]| restructure(j, &cfg, Unstoppable).expect("restructure");
+            outputs.push((format!("restructure {mode:?}"), run(&jpeg), run(&control)));
+        }
+        let cfg = TransformConfig {
+            transform: LosslessTransform::FlipHorizontal,
+            edge_handling: EdgeHandling::TrimPartialBlocks,
+        };
+        let run = |j: &[u8]| transform(j, &cfg, Unstoppable).expect("transform");
+        outputs.push(("transform FlipHorizontal".into(), run(&jpeg), run(&control)));
+        let run = |j: &[u8]| apply_exif_orientation(j, Unstoppable).expect("orientation");
+        outputs.push((
+            "apply_exif_orientation 2".into(),
+            run(&jpeg_exif),
+            run(&control_exif),
+        ));
+        #[cfg(feature = "recompress")]
+        {
+            use zenjpeg::recompress::{
+                RecompressOptions, RecompressResult, StrategyKind, recompress,
+            };
+            match recompress(&jpeg, &RecompressOptions::new(70.0)) {
+                Ok(RecompressResult::Recompressed {
+                    bytes,
+                    strategy: StrategyKind::Preserve,
+                    ..
+                }) => {
+                    let info = Decoder::new().read_info(&bytes).expect("info");
+                    f.check(info.color_space == *model, || {
+                        format!("{name} recompress preserve: model {:?}", info.color_space)
+                    });
+                    for (m, p, at) in app_positions_all(&bytes) {
+                        f.check(!is_colour(m, &p) || at >= *keep_at, || {
+                            format!("{name} recompress preserve: colour FF{m:02X} moved to {at}")
+                        });
+                    }
+                }
+                other => f.check(false, || {
+                    format!(
+                        "{name}: recompress did not take Preserve: {:?}",
+                        other
+                            .as_ref()
+                            .map(|r| matches!(r, RecompressResult::Recompressed { .. }))
+                    )
+                }),
+            }
+        }
+        for (op, out, control_out) in outputs {
+            let label = format!("{name} {op}");
+            let info = Decoder::new().read_info(&out).expect("info");
+            f.check(info.color_space == *model, || {
+                format!("{label}: model {:?}, source {model:?}", info.color_space)
+            });
+            for (m, p, at) in app_positions_all(&out) {
+                f.check(!is_colour(m, &p) || at >= *keep_at, || {
+                    format!("{label}: colour FF{m:02X} moved to position {at}")
+                });
+            }
+            let want = decode_rgb(&control_out, ChromaUpsampling::Triangle, 1);
+            let (max, first) = diff(&decode_rgb(&out, ChromaUpsampling::Triangle, 1), &want);
+            f.check(max == 0, || {
+                format!("{label}: pixels differ by {max} at {first:?}")
+            });
+        }
+    }
+    f.finish("post-scan and stray-byte colour markers stay inert");
+}
+
 /// Known Bugs 4, pinned: gray output from three-component frames is
 /// unsupported on `decode()` and `decode_into()` alike (the two must not
 /// disagree; scanline `read_rows_gray8` serves these frames).

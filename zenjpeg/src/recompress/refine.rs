@@ -151,7 +151,7 @@ pub(crate) fn refine_preserve(
             &prepared.coeffs,
             prepared.subsampling,
             &cfg,
-            &prepared.preserved_after_sof,
+            &prepared.preserved_positions,
         ) else {
             break;
         };

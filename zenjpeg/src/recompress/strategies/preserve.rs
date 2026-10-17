@@ -88,9 +88,9 @@ fn zensim_a_to_ijg_q_estimate(z: f32) -> u8 {
 pub(in crate::recompress) struct PreparedPreserve {
     pub(in crate::recompress) coeffs: crate::decode::DecodedCoefficients,
     pub(in crate::recompress) preserved_segments: Vec<crate::decode::PreservedSegment>,
-    /// Each preserved segment's side of SOF in the source
-    /// (`lossless::placement::after_sof_flags`).
-    pub(in crate::recompress) preserved_after_sof: Vec<bool>,
+    /// Each preserved segment's position in the source
+    /// (`lossless::placement::source_positions`).
+    pub(in crate::recompress) preserved_positions: Vec<crate::lossless::placement::Position>,
     pub(in crate::recompress) quant_strategy: QuantStrategy,
     pub(in crate::recompress) aq_mask: Option<super::preserve_emit::AqMask>,
     pub(in crate::recompress) subsampling: Subsampling,
@@ -114,7 +114,7 @@ pub fn run_preserve(
         &prepared.coeffs,
         prepared.subsampling,
         &cfg,
-        &prepared.preserved_after_sof,
+        &prepared.preserved_positions,
     )?;
 
     // Validate the emitted bytes round-trip through zenjpeg's decoder.
@@ -242,12 +242,12 @@ pub(in crate::recompress) fn prepare_preserve(
         }
     };
 
-    let preserved_after_sof =
-        crate::lossless::placement::after_sof_flags(jpeg_bytes, &preserved_segments);
+    let preserved_positions =
+        crate::lossless::placement::source_positions(jpeg_bytes, &preserved_segments);
     Ok(PreparedPreserve {
         coeffs,
         preserved_segments,
-        preserved_after_sof,
+        preserved_positions,
         quant_strategy,
         aq_mask,
         subsampling,

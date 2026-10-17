@@ -251,17 +251,18 @@ pub fn emit_preserved(
     emit_preserved_placed(coeffs, subsampling, config, &[])
 }
 
-/// [`emit_preserved`] with each preserved segment's side of SOF in the
-/// source (`after_sof`, from `lossless::placement::after_sof_flags`; empty:
-/// all before SOF). A JFIF or Adobe segment the source placed after SOF stays
-/// there, so the output's colour model is the source's.
+/// [`emit_preserved`] with each preserved segment's position in the source
+/// (`positions`, from `lossless::placement::source_positions`; empty: all
+/// before SOF). A JFIF or Adobe segment the source placed after SOF, or after
+/// its first SOS, keeps a position where it does not decide the colour model,
+/// so the output's colour model is the source's.
 pub(in crate::recompress) fn emit_preserved_placed(
     coeffs: &DecodedCoefficients,
     subsampling: Subsampling,
     config: &EmitConfig,
-    after_sof: &[bool],
+    positions: &[crate::lossless::placement::Position],
 ) -> Result<Vec<u8>, Error> {
-    let placed = crate::lossless::placement::Placed::new(&config.preserved_segments, after_sof);
+    let placed = crate::lossless::placement::Placed::new(&config.preserved_segments, positions);
     for segment in &config.preserved_segments {
         crate::recompress::metadata::check_segment(segment.marker, &segment.data)?;
     }
@@ -350,12 +351,14 @@ fn emit_sequential(
     // not decide the colour model; `lossless::placement`). `seg.data` is the
     // raw payload excluding the 2 length bytes, exactly what
     // `write_marker_segment` expects. MPF is filtered out by the caller.
-    for seg in preserved_segments.side(false) {
+    for seg in preserved_segments.before_sof() {
         write_marker_segment(&mut out, seg.marker, &seg.data);
     }
     let needs_sof1 = write_dqt(&mut out, new_quant_tables)?;
     write_sof(&mut out, coeffs, subsampling, edited_components, needs_sof1)?;
-    for seg in preserved_segments.side(true) {
+    // One scan: the source's between-scan segments follow here too, minus
+    // the colour signals (`Placed::after_sof`).
+    for seg in preserved_segments.after_sof(true) {
         write_marker_segment(&mut out, seg.marker, &seg.data);
     }
     write_dht(&mut out, &huff, is_color)?;

@@ -550,3 +550,122 @@ fn ultrahdr_hdr_reconstruction_survives_lossless_rotation() {
         "peak after rotation {peak}, expected ≈{PEAK}"
     );
 }
+
+/// `jpeg` with its GContainer XMP APP1 moved from before SOF to right after
+/// SOF. The encoder writes the XMP before the MPF index, so the index moves
+/// `len` bytes earlier and its MP entries (offsets from the index's TIFF
+/// header) are patched by the same amount to keep the fixture valid.
+fn move_xmp_after_sof(jpeg: &[u8]) -> Vec<u8> {
+    let (mut xmp, mut sof, mut mpf) = (None, None, None);
+    for_each_segment(jpeg, |marker, off, payload| {
+        let len = payload.len() + 4;
+        if marker == 0xE1 && payload.starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
+            xmp = Some((off, len));
+        }
+        if matches!(marker, 0xC0..=0xC2) {
+            sof = Some((off, len));
+        }
+        if marker == 0xE2 && payload.starts_with(b"MPF\0") {
+            mpf = Some(off);
+        }
+    });
+    let ((x, xl), (s, sl), m) = (xmp.expect("XMP"), sof.expect("SOF"), mpf.expect("MPF"));
+    assert!(x < m && m < s, "fixture order XMP < MPF < SOF");
+    let seg = jpeg[x..x + xl].to_vec();
+    let mut out = [&jpeg[..x], &jpeg[x + xl..s + sl], &seg, &jpeg[s + sl..]].concat();
+    // Patch every MP entry offset after the first (the primary's is 0).
+    let tiff = m - xl + 8;
+    let be = &out[tiff..tiff + 2] == b"MM";
+    let rd16 = |b: &[u8], p: usize| {
+        let v = [b[p], b[p + 1]];
+        if be {
+            u16::from_be_bytes(v)
+        } else {
+            u16::from_le_bytes(v)
+        }
+    };
+    let rd32 = |b: &[u8], p: usize| {
+        let v = [b[p], b[p + 1], b[p + 2], b[p + 3]];
+        if be {
+            u32::from_be_bytes(v)
+        } else {
+            u32::from_le_bytes(v)
+        }
+    };
+    let ifd = tiff + rd32(&out, tiff + 4) as usize;
+    let n = rd16(&out, ifd) as usize;
+    let (mut count, mut entries) = (0usize, 0usize);
+    for i in 0..n {
+        let e = ifd + 2 + 12 * i;
+        match rd16(&out, e) {
+            0xB002 => {
+                count = rd32(&out, e + 4) as usize / 16;
+                entries = tiff + rd32(&out, e + 8) as usize;
+            }
+            _ => {}
+        }
+    }
+    assert!(count >= 2, "MP entries");
+    for k in 1..count {
+        let p = entries + 16 * k + 8;
+        let v = rd32(&out, p) + xl as u32;
+        let bytes = if be { v.to_be_bytes() } else { v.to_le_bytes() };
+        out[p..p + 4].copy_from_slice(&bytes);
+    }
+    out
+}
+
+/// Review round 3, S1: a GContainer XMP the source placed after SOF must get
+/// its `Item:Length` rewritten like one before SOF (or the rewrite refused).
+/// Copying it verbatim left the source's gain-map length next to a gain map
+/// whose transformed length differs, and readers locating the gain map
+/// through the directory got wrong offsets with no error.
+#[test]
+fn xmp_after_sof_gets_rewritten_item_lengths() {
+    let (jpeg, secondary) = synthetic_mpf_jpeg(64, 48, 32, 24);
+    let jpeg = move_xmp_after_sof(&jpeg);
+    let dec = DecodeConfig::new().preserve(PreserveConfig::all());
+    let (_, extras) = dec
+        .decode_coefficients_with_extras(&jpeg, Unstoppable)
+        .unwrap();
+    let extras = extras.expect("extras");
+    assert_eq!(
+        extras.gainmap(),
+        Some(secondary.as_slice()),
+        "fixture: secondary still found after the XMP move"
+    );
+    let (_, items) = parse_xmp_full(extras.xmp().expect("fixture XMP"));
+    let src_lengths: Vec<usize> = items.iter().filter_map(|i| i.length).collect();
+    assert_eq!(src_lengths, vec![secondary.len()], "fixture Item:Length");
+    let mut xmp_after_sof = false;
+    for_each_segment(&jpeg, |marker, _, payload| {
+        if matches!(marker, 0xC0..=0xC2) {
+            xmp_after_sof = true;
+        } else if marker == 0xE1 && payload.starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
+            assert!(xmp_after_sof, "fixture: XMP sits after SOF");
+        }
+    });
+
+    let out = transform(
+        &jpeg,
+        &TransformConfig {
+            transform: LosslessTransform::Rotate90,
+            edge_handling: EdgeHandling::RejectPartialBlocks,
+        },
+        Unstoppable,
+    )
+    .unwrap();
+    let (_, out_extras) = dec
+        .decode_coefficients_with_extras(&out, Unstoppable)
+        .unwrap();
+    let out_extras = out_extras.expect("extras");
+    let got = out_extras.gainmap().expect("output keeps its gain map");
+    assert_ne!(
+        got.len(),
+        secondary.len(),
+        "the rotated gain map's length must differ for this test to bite"
+    );
+    let (_, items) = parse_xmp_full(out_extras.xmp().expect("XMP kept"));
+    let lengths: Vec<usize> = items.iter().filter_map(|i| i.length).collect();
+    assert_eq!(lengths, vec![got.len()], "Item:Length after Rotate90");
+}
