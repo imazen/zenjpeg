@@ -220,6 +220,10 @@ moxcms = ["dep:moxcms"]
 __ffi-tests = []
 # Corpus comparison tests (requires local codec-corpus directory)
 __corpus-tests = []
+# Independent-decoder oracles for the colour model (tests/colorspace_oracles.rs):
+# needs python3 + Pillow and IJG djpeg; djpegli when ZENJPEG_DJPEGLI is set.
+# Run through `just colorspace-oracles`.
+__oracle-tests = []
 # Debug token serialization for C++ comparison
 __debug-tokens = []
 # Internal profiling instrumentation (scope timers)

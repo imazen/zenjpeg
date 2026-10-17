@@ -239,12 +239,30 @@ impl Default for EmitConfig {
 /// Apply edits to coefficients in-place and emit a baseline-sequential
 /// JPEG. The output is exactly the source's structure with new quant
 /// tables, requantized coefficients, optimized Huffman, and no other
-/// changes.
+/// changes. Every preserved segment is written before SOF.
+// The `recompress-expert` surface; in-crate callers use
+// `emit_preserved_placed` with the source's segment positions.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 pub fn emit_preserved(
     coeffs: &DecodedCoefficients,
     subsampling: Subsampling,
     config: &EmitConfig,
 ) -> Result<Vec<u8>, Error> {
+    emit_preserved_placed(coeffs, subsampling, config, &[])
+}
+
+/// [`emit_preserved`] with each preserved segment's position in the source
+/// (`positions`, from `lossless::placement::source_positions`; empty: all
+/// before SOF). A JFIF or Adobe segment the source placed after SOF, or after
+/// its first SOS, keeps a position where it does not decide the colour model,
+/// so the output's colour model is the source's.
+pub(in crate::recompress) fn emit_preserved_placed(
+    coeffs: &DecodedCoefficients,
+    subsampling: Subsampling,
+    config: &EmitConfig,
+    positions: &[crate::lossless::placement::Position],
+) -> Result<Vec<u8>, Error> {
+    let placed = crate::lossless::placement::Placed::new(&config.preserved_segments, positions);
     for segment in &config.preserved_segments {
         crate::recompress::metadata::check_segment(segment.marker, &segment.data)?;
     }
@@ -295,7 +313,7 @@ pub fn emit_preserved(
         subsampling,
         &edited_components,
         &new_quant_tables,
-        &config.preserved_segments,
+        placed,
     )?;
 
     // Smallest-trial (#143 item 2): same coefficients, progressive scan
@@ -303,12 +321,8 @@ pub fn emit_preserved(
     // like the main encoder's trials, so large outputs never pay for a
     // second serialization.
     if out.len() <= crate::encode::ENTROPY_TRIAL_MAX_BYTES
-        && let Some(prog) = emit_progressive_trial(
-            coeffs,
-            edited_components,
-            new_quant_tables,
-            &config.preserved_segments,
-        )
+        && let Some(prog) =
+            emit_progressive_trial(coeffs, edited_components, new_quant_tables, placed)
         && prog.len() < out.len()
     {
         return Ok(prog);
@@ -322,7 +336,7 @@ fn emit_sequential(
     subsampling: Subsampling,
     edited_components: &[EditedComponent],
     new_quant_tables: &[Option<[u16; 64]>],
-    preserved_segments: &[PreservedSegment],
+    preserved_segments: crate::lossless::placement::Placed<'_>,
 ) -> Result<Vec<u8>, Error> {
     let is_color = coeffs.components.len() >= 3;
     let huff = optimize_huffman_tables(edited_components, is_color)?;
@@ -331,16 +345,22 @@ fn emit_sequential(
     let mut out = Vec::with_capacity(64 * 1024);
     write_marker_segment(&mut out, MARKER_SOI, &[]); // SOI has no payload
     // Carry the source's APPn/COM metadata (ICC, EXIF, XMP, JFIF, Adobe,
-    // COM) verbatim, right after SOI and before DQT — JPEG requires APPn
-    // segments before the frame header. Written in their original decoded
-    // order (JFIF/APP0 first in well-formed files). `seg.data` is the raw
-    // payload excluding the 2 length bytes, exactly what
+    // COM) verbatim, in their original decoded order, each on its source
+    // side of SOF: those before SOF right after SOI, those the source placed
+    // between SOF and SOS right after SOF (a JFIF or Adobe segment there does
+    // not decide the colour model; `lossless::placement`). `seg.data` is the
+    // raw payload excluding the 2 length bytes, exactly what
     // `write_marker_segment` expects. MPF is filtered out by the caller.
-    for seg in preserved_segments {
+    for seg in preserved_segments.before_sof() {
         write_marker_segment(&mut out, seg.marker, &seg.data);
     }
     let needs_sof1 = write_dqt(&mut out, new_quant_tables)?;
     write_sof(&mut out, coeffs, subsampling, edited_components, needs_sof1)?;
+    // One scan: the source's between-scan segments follow here too, minus
+    // the colour signals (`Placed::after_sof`).
+    for seg in preserved_segments.after_sof(true) {
+        write_marker_segment(&mut out, seg.marker, &seg.data);
+    }
     write_dht(&mut out, &huff, is_color)?;
     write_sos(&mut out, edited_components, is_color)?;
     // Pass the MCU-aligned width to the scan emitter so its computed
@@ -371,7 +391,7 @@ fn emit_progressive_trial(
     coeffs: &DecodedCoefficients,
     edited_components: Vec<EditedComponent>,
     new_quant_tables: Vec<Option<[u16; 64]>>,
-    preserved_segments: &[PreservedSegment],
+    preserved_segments: crate::lossless::placement::Placed<'_>,
 ) -> Option<Vec<u8>> {
     use crate::decode::ComponentCoefficients;
     use crate::lossless::TransformedCoefficients;
@@ -1053,8 +1073,9 @@ mod smallest_trial_tests {
             // The two candidates, built exactly as emit_preserved builds them.
             let (tables, scales) = build_new_quant_tables(&coeffs, cfg.quant_strategy).unwrap();
             let edited = edit_coefficients(&coeffs, &scales, None);
-            let seq = emit_sequential(&coeffs, Subsampling::S420, &edited, &tables, &[]).unwrap();
-            let prog = emit_progressive_trial(&coeffs, edited, tables, &[])
+            let none = crate::lossless::placement::Placed::new(&[], &[]);
+            let seq = emit_sequential(&coeffs, Subsampling::S420, &edited, &tables, none).unwrap();
+            let prog = emit_progressive_trial(&coeffs, edited, tables, none)
                 .expect("progressive trial must succeed on a plain 4:2:0 source");
             assert!(
                 seq.len() <= crate::encode::ENTROPY_TRIAL_MAX_BYTES,

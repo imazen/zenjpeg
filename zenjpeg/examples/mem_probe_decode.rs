@@ -21,6 +21,11 @@
 //! them, so the probe's own footprint stays ~one batch and the reported marginal
 //! is dominated by what the DECODER retains internally. `full` uses `decode()`,
 //! which materializes the whole image, so its marginal includes that output.
+//! `into-rgba [threads]` allocates and touches the caller's RGBA buffer
+//! *before* the baseline RSS sample and then calls
+//! `decode_into(PixelFormat::Rgba)`, so its marginal is the decoder's own
+//! working set without the output. Build with `--features parallel`, generate
+//! with `dri` and pass threads 0 to measure the fused path.
 //!
 //! TSV row:
 //!   mode  file_bytes  w  h  pixels  pre_rss_kb  vmhwm_kb  marginal_kb  bytes_per_px  checksum
@@ -28,7 +33,7 @@
 use enough::Unstoppable;
 use std::hint::black_box;
 use zenjpeg::decode::Decoder;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 
 /// A `/proc/self/status` field in KiB (e.g. `VmRSS:`, `VmHWM:`).
 fn status_kb(field: &str) -> u64 {
@@ -60,28 +65,42 @@ fn test_image(w: usize, h: usize) -> Vec<u8> {
 
 fn gen_jpeg(args: &[String]) {
     if args.len() < 7 {
-        eprintln!("usage: mem_probe_decode gen <out.jpg> <w> <h> <444|422|420|440> <prog|base>");
+        eprintln!(
+            "usage: mem_probe_decode gen <out.jpg> <w> <h> <444|422|420|440|xyb> <prog|base> [dri]"
+        );
         std::process::exit(2);
     }
     let out_path = &args[2];
     let w: u32 = args[3].parse().expect("w");
     let h: u32 = args[4].parse().expect("h");
+    // `xyb`: an XYB encode (B at quarter resolution), which decodes through
+    // the per-component path rather than a single-pass or fast integer one.
+    let xyb = args[5] == "xyb";
     let sub = match args[5].as_str() {
-        "444" => ChromaSubsampling::None,
+        "444" | "xyb" => ChromaSubsampling::None,
         "422" => ChromaSubsampling::HalfHorizontal,
         "420" => ChromaSubsampling::Quarter,
         "440" => ChromaSubsampling::HalfVertical,
-        other => panic!("subsamp must be 444|422|420|440, got {other}"),
+        other => panic!("subsamp must be 444|422|420|440|xyb, got {other}"),
     };
     let progressive = match args[6].as_str() {
         "prog" => true,
         "base" => false,
         other => panic!("mode must be prog|base, got {other}"),
     };
+    // `dri`: a restart marker every MCU row, which the fused parallel decode
+    // and the wave-parallel scanline reader need.
+    let dri = args.get(7).map(String::as_str) == Some("dri");
 
     let px = test_image(w as usize, h as usize);
-    let mut enc = EncoderConfig::ycbcr(85.0, sub)
+    let config = if xyb {
+        EncoderConfig::xyb(85.0, XybSubsampling::BQuarter)
+    } else {
+        EncoderConfig::ycbcr(85.0, sub)
+    };
+    let mut enc = config
         .progressive(progressive)
+        .restart_mcu_rows(if dri { 1 } else { 0 })
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
     enc.push_packed(&px, Unstoppable).expect("push");
@@ -93,8 +112,10 @@ fn gen_jpeg(args: &[String]) {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: mem_probe_decode <in.jpg> <scanline|full>");
-        eprintln!("       mem_probe_decode gen <out.jpg> <w> <h> <444|422|420|440> <prog|base>");
+        eprintln!("usage: mem_probe_decode <in.jpg> <scanline|full|into-rgba [threads]>");
+        eprintln!(
+            "       mem_probe_decode gen <out.jpg> <w> <h> <444|422|420|440|xyb> <prog|base> [dri]"
+        );
         std::process::exit(2);
     }
     if a[1] == "gen" {
@@ -106,6 +127,15 @@ fn main() {
     let mode = a.get(2).map(String::as_str).unwrap_or("scanline");
     let data = std::fs::read(path).expect("read jpeg");
     let file_bytes = data.len();
+
+    // `into-rgba`: the caller's output buffer exists (and is resident) before
+    // the baseline sample, as it would in a buffer-pool caller.
+    let mut rgba = Vec::new();
+    if mode == "into-rgba" {
+        let info = Decoder::new().read_info(&data).expect("read_info");
+        rgba = vec![1u8; info.dimensions.width as usize * info.dimensions.height as usize * 4];
+        black_box(&mut rgba);
+    }
 
     // Baseline RSS: process + libs + the compressed `data` we hold. Marginal =
     // VmHWM − pre isolates the decode's own working set.
@@ -153,7 +183,29 @@ fn main() {
             black_box(&px);
             (w, h, sum)
         }
-        other => panic!("mode must be scanline|full, got {other}"),
+        "into-rgba" => {
+            let info = Decoder::new().read_info(&data).expect("read_info");
+            let (w, h) = (
+                info.dimensions.width as usize,
+                info.dimensions.height as usize,
+            );
+            // Optional thread count (default 1); 0 lets a `parallel` build
+            // take the fused path on a `dri` file.
+            let threads = a.get(3).map_or(1, |t| t.parse().expect("threads"));
+            Decoder::new()
+                .auto_orient(false)
+                .num_threads(threads)
+                .decode_into(
+                    &data,
+                    zenjpeg::decode::PixelFormat::Rgba,
+                    &mut rgba,
+                    Unstoppable,
+                )
+                .expect("decode_into");
+            let sum = rgba.iter().fold(0u64, |s, &b| s.wrapping_add(b as u64));
+            (w, h, sum)
+        }
+        other => panic!("mode must be scanline|full|into-rgba, got {other}"),
     };
 
     // VmHWM is monotonic, so reading it after the decode reflects the peak

@@ -135,9 +135,12 @@ fn transform_with(
         }
     };
 
-    // Step 4: Re-encode as JPEG
+    // Step 4: Re-encode as JPEG, each preserved segment on its source side
+    // of SOF (`placement`).
     let mut segments: Vec<PreservedSegment> =
         extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    // Source positions, taken before the EXIF edit changes a payload.
+    let positions = super::placement::source_positions(jpeg_data, &segments);
     if reset_exif_orientation {
         for seg in &mut segments {
             if seg.segment_type == SegmentType::Exif {
@@ -145,7 +148,8 @@ fn transform_with(
             }
         }
     }
-    encode_from_coefficients(&transformed, Some(&segments), &carry, 0, stop)
+    let preserved = super::placement::Placed::new(&segments, &positions);
+    encode_from_coefficients(&transformed, Some(preserved), &carry, 0, stop)
 }
 
 /// Each carried secondary is decoded and re-encoded at its declared size, so
@@ -605,7 +609,7 @@ fn refuse_nested(jpeg_data: &[u8], extras: Option<&DecodedExtras>) -> Result<()>
 /// in the primary length once it is known.
 pub(super) fn write_preserved_segments(
     output: &mut Vec<u8>,
-    preserved: Option<&[PreservedSegment]>,
+    preserved: Option<super::placement::Placed<'_>>,
     carry: &Carry<'_>,
 ) -> Result<Option<usize>> {
     let secondaries = carry.images.as_slice();
@@ -618,49 +622,106 @@ pub(super) fn write_preserved_segments(
             mpf_at = Some(off);
         }
     };
+    // Only the segments that sat before SOF in the source; the others go
+    // after the frame header or between scans (`write_after_sof_segments`,
+    // `write_after_first_scan_segments`).
     if let Some(segments) = preserved {
-        for seg in segments {
+        for seg in segments.before_sof() {
             match seg.segment_type {
                 SegmentType::Mpf => place_mpf(output),
-                SegmentType::Xmp if !secondaries.is_empty() => {
-                    let carried: Vec<(&str, usize)> = secondaries
-                        .iter()
-                        .map(|s| (item_semantic(s.image_type), s.data.len()))
-                        .chain(carry.verbatim_items.iter().map(|(s, n)| (s.as_str(), *n)))
-                        .collect();
-                    let rewritten = seg
-                        .data
-                        .strip_prefix(XMP_NAMESPACE)
-                        .and_then(|x| core::str::from_utf8(x).ok())
-                        .and_then(|x| {
-                            Directory::parse(x)
-                                .and_then(|d| d.rewrite_item_lengths(&carried))
-                                .ok()
-                        })
-                        // Must still fit one APP1 segment (the digits may grow).
-                        .filter(|x| XMP_NAMESPACE.len() + x.len() + 2 <= usize::from(u16::MAX));
-                    match rewritten {
-                        Some(x) => {
-                            let mut data = Vec::with_capacity(XMP_NAMESPACE.len() + x.len());
-                            data.extend_from_slice(XMP_NAMESPACE);
-                            data.extend_from_slice(x.as_bytes());
-                            write_marker_segment(output, seg.marker, &data);
-                        }
-                        None => {
-                            return Err(Error::unsupported_feature(
-                                "the XMP GContainer directory describes items the carried \
-                                 secondary images do not match, or the rewritten packet no \
-                                 longer fits one APP1 segment",
-                            ));
-                        }
-                    }
-                }
-                _ => write_marker_segment(output, seg.marker, &seg.data),
+                _ => write_carried_segment(output, seg, carry)?,
             }
         }
     }
     place_mpf(output);
     Ok(mpf_at)
+}
+
+/// Write one preserved segment. With carried secondary images, a GContainer
+/// XMP gets its `Item:Length` values rewritten to the new image lengths, or the
+/// rewrite is refused; this applies wherever the segment sits, since readers
+/// locate the gain map through the directory on either side of SOF. A source
+/// MPF index is never copied (see [`write_preserved_segments`]).
+fn write_carried_segment(
+    output: &mut Vec<u8>,
+    seg: &PreservedSegment,
+    carry: &Carry<'_>,
+) -> Result<()> {
+    let secondaries = carry.images.as_slice();
+    match seg.segment_type {
+        SegmentType::Mpf => {}
+        SegmentType::Xmp if !secondaries.is_empty() => {
+            let carried: Vec<(&str, usize)> = secondaries
+                .iter()
+                .map(|s| (item_semantic(s.image_type), s.data.len()))
+                .chain(carry.verbatim_items.iter().map(|(s, n)| (s.as_str(), *n)))
+                .collect();
+            let rewritten = seg
+                .data
+                .strip_prefix(XMP_NAMESPACE)
+                .and_then(|x| core::str::from_utf8(x).ok())
+                .and_then(|x| {
+                    Directory::parse(x)
+                        .and_then(|d| d.rewrite_item_lengths(&carried))
+                        .ok()
+                })
+                // Must still fit one APP1 segment (the digits may grow).
+                .filter(|x| XMP_NAMESPACE.len() + x.len() + 2 <= usize::from(u16::MAX));
+            match rewritten {
+                Some(x) => {
+                    let mut data = Vec::with_capacity(XMP_NAMESPACE.len() + x.len());
+                    data.extend_from_slice(XMP_NAMESPACE);
+                    data.extend_from_slice(x.as_bytes());
+                    write_marker_segment(output, seg.marker, &data);
+                }
+                None => {
+                    return Err(Error::unsupported_feature(
+                        "the XMP GContainer directory describes items the carried \
+                         secondary images do not match, or the rewritten packet no \
+                         longer fits one APP1 segment",
+                    ));
+                }
+            }
+        }
+        _ => write_marker_segment(output, seg.marker, &seg.data),
+    }
+    Ok(())
+}
+
+/// Write the preserved segments that go right after the output's frame
+/// header: those the source placed between SOF and the first SOS (a JFIF or
+/// Adobe segment there does not decide the colour model, so moving it before
+/// SOF would change how the output decodes), and, for a `single_scan` output,
+/// the source's after-first-SOS segments other than colour signals
+/// ([`super::placement::Placed::after_sof`]).
+pub(super) fn write_after_sof_segments(
+    output: &mut Vec<u8>,
+    preserved: Option<super::placement::Placed<'_>>,
+    single_scan: bool,
+    carry: &Carry<'_>,
+) -> Result<()> {
+    if let Some(segments) = preserved {
+        for seg in segments.after_sof(single_scan) {
+            write_carried_segment(output, seg, carry)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write the preserved segments the source placed after its first SOS, for a
+/// multi-scan output, right before its second scan header: there they have
+/// the same (lack of) effect on the colour model as in the source.
+pub(super) fn write_after_first_scan_segments(
+    output: &mut Vec<u8>,
+    preserved: Option<super::placement::Placed<'_>>,
+    carry: &Carry<'_>,
+) -> Result<()> {
+    if let Some(segments) = preserved {
+        for seg in segments.after_first_scan() {
+            write_carried_segment(output, seg, carry)?;
+        }
+    }
+    Ok(())
 }
 
 /// Complete a container assembled with [`write_preserved_segments`]: after the
@@ -740,7 +801,7 @@ fn mpf_sizes(secondaries: &[MpfImage]) -> Vec<(u32, crate::encode::extras::MpfIm
 /// - Optional restart markers at specified MCU intervals
 pub(super) fn encode_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[PreservedSegment]>,
+    preserved_segments: Option<super::placement::Placed<'_>>,
     carry: &Carry<'_>,
     restart_interval: u16,
     stop: &impl Stop,
@@ -866,6 +927,11 @@ pub(super) fn encode_from_coefficients(
 
     // SOF0 - Start of Frame (baseline)
     write_sof(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+
+    // Preserved segments the source placed after SOF stay there: a JFIF or
+    // Adobe segment there does not decide the colour model (`placement`).
+    // One scan: the source's between-scan segments follow here too.
+    write_after_sof_segments(&mut output, preserved_segments, true, carry)?;
 
     // DHT - Huffman tables
     write_huffman_table(&mut output, 0x00, &dc_luma_table); // DC luma, table 0
@@ -1158,13 +1224,16 @@ pub fn apply_exif_orientation_with_edge_handling(
     // Step 4: Re-encode, rewriting EXIF orientation to 1 (Normal)
     let mut segments: Vec<PreservedSegment> =
         extras.map(|e| e.segments().to_vec()).unwrap_or_default();
+    // Source positions, taken before the EXIF edit changes a payload.
+    let positions = super::placement::source_positions(jpeg_data, &segments);
     for seg in &mut segments {
         if seg.segment_type == SegmentType::Exif {
             set_exif_orientation(&mut seg.data, 1);
         }
     }
 
-    encode_from_coefficients(&transformed, Some(&segments), &carry, 0, &stop)
+    let preserved = super::placement::Placed::new(&segments, &positions);
+    encode_from_coefficients(&transformed, Some(preserved), &carry, 0, &stop)
 }
 
 #[cfg(test)]

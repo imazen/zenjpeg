@@ -1626,3 +1626,47 @@ changes below mean the patch took longer.
 These small local timing differences do not establish a speedup or a substantial
 regression. Float-input performance was not measured; the corrupt baseline is
 not an equivalent-output reference for that path.
+
+## Inlining a per-row helper changed the entropy loop's codegen (2026-10-10)
+
+Moving the streaming baseline output to the shared `RowKernel` (colour-model
+work, `decode/parser/baseline_streaming.rs`) shrank `run_fancy_h2v2_loop` (6,222
+→ 5,614 instructions, 119 → 69 calls) yet raised decode-only Ir on a 2048²
+4:2:0 baseline file from 242.79M to 247.70M (+2.0%, callgrind,
+`valgrind_decode jpegli <file>`, lilith-wsl Zen 4). No decode work was added.
+
+**Localizing it.** Build both revisions with
+`CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`, run callgrind with
+`--dump-instr=yes`, and diff `callgrind_annotate --auto=yes` per source line:
+the whole delta sat in `entropy/decoder.rs` lines inlined into the loop
+(+5.2M), whose source had not changed. `objdump -dl` per-line instruction
+counts showed the fast AC path's `let value = ...` and
+`last_nonzero = (i + 1) as u8` (decoder.rs:841, :849) each one instruction
+longer: register allocation of the inlined entropy decoder had changed because
+the caller's tail changed.
+
+**Fix.** `output_mcu_row` (once per MCU row) went from `#[inline(always)]` to
+`#[inline(never)]`: 239.75M Ir, -1.25% vs the pre-change code. The baseline
+4:2:2 file (`run_simple_loop`, which also calls it) measured 331.75M vs
+331.78M (-0.01%). Making `decode_mcu_row` out of line instead did nothing
+(247.25M). (A first pass measured "4:2:2 / 4:4:4" on encoder-default files,
+which are progressive and never reach these loops: check the SOF before
+attributing a number to a path.)
+
+**Lesson.** In a function that inlines the entropy decoder, any change to the
+surrounding code can move the per-coefficient loop's register allocation.
+Callgrind baseline (SOF0) 4:2:0 and 4:2:2 files after touching anything
+inlined into `run_fancy_h2v2_loop` / `run_simple_loop`, and keep per-row work
+out of line.
+
+**Same day, again (review revision r2).** r2 changed only setup code in
+`decode_baseline_streaming` (geometry from `FrameShape`, `uses_box`, an
+`unreachable!` arm), none of it in a loop, and the baseline 4:4:4 file went
+from 297.41M to 303.09M decode-only Ir while 4:2:0 and 4:2:2 did not move: the
+4:4:4 loop (`decode_baseline_streaming_rgb`, one call site) was inlined into
+that function, so its entropy loop's register allocation followed the setup
+code. `#[inline(never)]` on `run_simple_loop` / `run_fancy_h2v2_loop` changed
+nothing (they were already out of line); on `decode_baseline_streaming_rgb`
+it gave 289.71M (main: 305.64M), every other streaming row within 7K Ir. The
+lesson extends: a hot loop that lives in a function whose other code changes
+for unrelated reasons should be its own out-of-line function.

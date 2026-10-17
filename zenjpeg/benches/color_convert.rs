@@ -36,8 +36,10 @@ fn generate_ycbcr_data(width: usize) -> (Vec<i16>, Vec<i16>, Vec<i16>) {
     (y, cb, cr)
 }
 
-fn bench_ycbcr_to_rgb_i16_x16(c: &mut Criterion) {
-    let mut group = c.benchmark_group("ycbcr_to_rgb_i16_x16");
+/// The live i16 YCbCr→RGB kernel the fast integer and strip paths use
+/// (`turbo == false` is the default 14-bit conversion).
+fn bench_ycbcr_planes_i16_to_rgb_u8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ycbcr_planes_i16_to_rgb_u8");
 
     // Bench at multiple widths to see scaling
     for &width in &[256, 1024, 4096] {
@@ -48,21 +50,13 @@ fn bench_ycbcr_to_rgb_i16_x16(c: &mut Criterion) {
         group.bench_function(format!("{}px", width), |b| {
             let mut rgb = vec![0u8; width * 3];
             b.iter(|| {
-                let mut offset = 0usize;
-                for chunk_start in (0..width).step_by(16) {
-                    let y16: &[i16; 16] = y_data[chunk_start..chunk_start + 16].try_into().unwrap();
-                    let cb16: &[i16; 16] =
-                        cb_data[chunk_start..chunk_start + 16].try_into().unwrap();
-                    let cr16: &[i16; 16] =
-                        cr_data[chunk_start..chunk_start + 16].try_into().unwrap();
-                    ycbcr::ycbcr_to_rgb_i16_x16(
-                        black_box(y16),
-                        black_box(cb16),
-                        black_box(cr16),
-                        &mut rgb,
-                        &mut offset,
-                    );
-                }
+                ycbcr::ycbcr_planes_i16_to_rgb_u8(
+                    black_box(&y_data),
+                    black_box(&cb_data),
+                    black_box(&cr_data),
+                    &mut rgb,
+                    false,
+                );
                 black_box(&rgb);
             });
         });
@@ -143,7 +137,7 @@ fn bench_decode_420(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_ycbcr_to_rgb_i16_x16,
+    bench_ycbcr_planes_i16_to_rgb_u8,
     bench_fused_h2v2_box,
     bench_decode_420,
 );

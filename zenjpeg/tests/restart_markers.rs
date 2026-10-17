@@ -4,7 +4,7 @@
 //! `restart_interval` MCUs. This lets a decoder:
 //!   1. Recover from bitstream corruption at known re-sync points.
 //!   2. Parallelize decode across independent MCU runs (zenjpeg's
-//!      `fused_parallel_decode` / `to_pixels_fast_i16_*_parallel` paths).
+//!      `try_fused_parallel_decode` / threaded fast integer paths).
 //!
 //! This test guarantees that the sequential (non-progressive) encode path
 //! respects `EncoderConfig.restart_interval` and that the decoder produces

@@ -514,9 +514,11 @@ fn adobe(transform: u8) -> Vec<u8> {
 }
 
 /// Finding 5: a baseline 4:2:0 frame decoded to the default u8 RGB output
-/// dequantises and converts colour during its scan; an f32 output does
-/// both at the end. Post-scan DQT and APP14 matter only to the second, and
-/// the parts say so.
+/// dequantises during its scan; an f32 output does it at the end. A
+/// post-scan DQT matters only to the second, and the parts say so. A
+/// post-scan APP14 matters to neither: the colour model is decided at SOF
+/// (jpegli `ProcessSOF`, libjpeg-turbo `default_decompress_parms`, both of
+/// which stop reading markers at the scan), and JFIF means YCbCr anyway.
 #[test]
 fn post_scan_tables_depend_on_the_output_path() {
     let orig = load(TESTORIG);
@@ -546,10 +548,10 @@ fn post_scan_tables_depend_on_the_output_path() {
         show(own)
     );
 
-    // An APP14 after the scan.
+    // An APP14 after the scan changes no output path.
     let d = insert(&orig, eoi, &adobe(0));
     assert_eq!(pixels(&decode(job(), &d).unwrap()), base);
-    assert_ne!(decode_f32(&d), decode_f32(&orig));
+    assert_eq!(decode_f32(&d), decode_f32(&orig));
     let i = inv(&job(), &d);
     let p = leaf_at(&i, eoi + 4);
     assert_eq!(p.disposition(), D::Dropped, "{}", show(p));
