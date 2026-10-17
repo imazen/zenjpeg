@@ -7,6 +7,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- `PixelFormat::Bgr` output from YCbCr frames uses the fused upsample+convert
+  kernels with a per-row R/B swap, and the swap itself goes through garb's SIMD
+  `rgb_to_bgr_inplace`: Bgr now costs 2-3.5% over Rgb on 2048x1360 4:2:0,
+  4:2:2, 4:4:0 and 4:4:4 (it was up to 1.42x on 4:4:0 triangle before);
+  `benchmarks/bgr_output_round3_2026-10-17.txt`. The unclamped store of the
+  AVX2 w16 libjpeg IDCT, which skipped the level shift and bound, is removed.
+  (`b557ca58`, `65a5b2dd`, `6e0d21ed`)
 - Decoder colour model: the stored component model (gray, YCbCr, RGB, XYB,
   CMYK, YCCK) is decided once, when SOF is parsed, with jpegli's `ProcessSOF`
   rule, and every path and report reads that one value
@@ -408,6 +415,20 @@ All notable changes to zenjpeg are documented here. Earlier history
   segment right after SOI. A JFIF or Adobe segment the source carried between
   SOF and SOS moved in front of SOF and changed the output's colour model
   (jpegli: max diff 207). Each preserved segment now keeps its side of SOF. (`ad89eb43`)
+- The same rewrites still moved colour markers that sat after the first SOS
+  (between scans) in front of SOF, and placed every segment before SOF when a
+  stray byte preceded SOF: the output decoded RGB as YCbCr or the reverse
+  (fixtures differed by 168). The source is now walked the way the decoder
+  reads it (stray bytes skipped), and a segment that sat after the first SOS
+  goes before the second scan header of a progressive output; a single-scan
+  output keeps it after the frame header, except JFIF, Adobe and ICC, which had
+  no effect on the source and are dropped. (`24993caa`)
+- A lossless transform of an Ultra HDR file whose GContainer XMP sat after SOF
+  copied the XMP with the source's `Item:Length` next to a transformed gain map
+  of a different length; the rewrite (or its refusal) now applies on both sides
+  of SOF. (`24993caa`)
+- The colour-model check accepted `JFIF` followed by any byte; it now requires
+  `JFIF\0`, as libjpeg-turbo and this crate's segment parser do. (`6cc03ca4`)
 - Honor decode EXIF/ICC/XMP extraction flags across probe, buffered decode, streaming metadata, attached native extras and inventory. Remove the adapter's unconditional preserve-all override; denied XMP is also excluded from gain-map parameter fallback. No public signatures change (follow-up to `d2a417df`).
 
 - Pixel auto-orientation and inventory select the first reported EXIF packet, including post-scan EXIF; fill bytes cannot redirect lookup into another segment's payload. Streaming metadata uses that same packet and reports transformed dimensions. First-EXIF-without-orientation no longer falls through to a later packet. Published signatures are unchanged; these are accepted-input/output corrections (follow-up to `ce321b8b`).
