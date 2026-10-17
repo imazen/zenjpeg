@@ -17,6 +17,8 @@
 //!   header; in a single-scan output, after the frame header, except the
 //!   colour signals (JFIF, Adobe, ICC), which had no effect on the source and
 //!   would start to count there for decoders that decide at the first SOS.
+//!   Preservation writers refuse that single-scan conversion; a multi-scan
+//!   output can retain those signals without activating them.
 //!
 //! The source is walked the way the decoder reads it
 //! ([`MarkerIter::for_decoder_metadata`]): stray bytes between segments are
@@ -73,6 +75,13 @@ impl<'a> Placed<'a> {
     /// The segments written right after SOI, in source order.
     pub(crate) fn before_sof(self) -> impl Iterator<Item = &'a PreservedSegment> {
         self.at(Position::BeforeSof)
+    }
+
+    /// A single-scan output cannot retain these segments in an inert position.
+    /// Preservation writers must reject that output structure or choose a
+    /// multi-scan structure, rather than silently filtering the segments out.
+    pub(crate) fn requires_multiple_scans(self) -> bool {
+        self.at(Position::AfterFirstScan).any(is_colour_signal)
     }
 
     /// The segments written right after the frame header, in source order.

@@ -2763,11 +2763,22 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
     };
     let (seq, prog) = (enc(false), enc(true));
     let exif = exif_orientation(2);
+    let xyb = EncoderConfig::xyb(88, XybSubsampling::Full)
+        .encode_bytes(&src, w, h, PixelLayout::Rgb8Srgb)
+        .expect("xyb encode");
+    let icc: Vec<u8> = jpeg_writer::segments(&xyb)
+        .into_iter()
+        .filter(|&(_, marker, _)| marker == 0xE2)
+        .flat_map(|(p, _, len)| xyb[p..p + len].iter().copied())
+        .collect();
+    assert!(!icc.is_empty(), "XYB fixture must carry an ICC profile");
     let is_colour = |m: u8, p: &[u8]| {
-        (m == 0xEE && p.starts_with(b"Adobe")) || (m == 0xE0 && p.starts_with(b"JFIF"))
+        (m == 0xEE && p.starts_with(b"Adobe"))
+            || (m == 0xE0 && p.starts_with(b"JFIF"))
+            || (m == 0xE2 && p.starts_with(b"ICC_PROFILE\0"))
     };
     // (name, build(pre) -> fixture, control_pre, ids, model, colour position
-    // the output must keep: 2 = after the first SOS or absent, 1 = between
+    // the output must keep: 2 = after the first SOS, 1 = between
     // SOF and the first SOS).
     type Build<'a> = Box<dyn Fn(&[Vec<u8>]) -> Vec<u8> + 'a>;
     let fixtures: Vec<(&str, Build<'_>, Vec<Vec<u8>>, [u8; 3], ColorSpace, u8)> = vec![
@@ -2789,6 +2800,16 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
             vec![],
             [1, 2, 3],
             ColorSpace::YCbCr,
+            2,
+        ),
+        (
+            "progressive ids RGB + XYB ICC between scans",
+            Box::new(|pre: &[Vec<u8>]| {
+                insert_before_second_sos(&resignal(&prog, *b"RGB", pre, &[]), &icc)
+            }),
+            vec![],
+            *b"RGB",
+            ColorSpace::Rgb,
             2,
         ),
         (
@@ -2831,26 +2852,57 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
             "{name}: control model"
         );
         let mut outputs: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+        let assert_refusal = |error: zenjpeg::decoder::Error| {
+            assert!(
+                matches!(
+                    error.kind(),
+                    zenjpeg::decoder::ErrorKind::UnsupportedFeature { feature }
+                        if feature.contains("single-scan output cannot preserve post-scan colour markers")
+                ),
+                "{name}: {error}"
+            );
+        };
         for mode in [OutputMode::Sequential, OutputMode::Progressive] {
             let cfg = RestructureConfig {
                 output_mode: mode,
                 ..Default::default()
             };
-            let run = |j: &[u8]| restructure(j, &cfg, Unstoppable).expect("restructure");
-            outputs.push((format!("restructure {mode:?}"), run(&jpeg), run(&control)));
+            if *keep_at == 2 && mode == OutputMode::Sequential {
+                assert_refusal(
+                    restructure(&jpeg, &cfg, Unstoppable).expect_err("must refuse metadata loss"),
+                );
+                assert!(restructure(&control, &cfg, Unstoppable).is_ok());
+            } else {
+                let run = |j: &[u8]| restructure(j, &cfg, Unstoppable).expect("restructure");
+                outputs.push((format!("restructure {mode:?}"), run(&jpeg), run(&control)));
+            }
         }
         let cfg = TransformConfig {
             transform: LosslessTransform::FlipHorizontal,
             edge_handling: EdgeHandling::TrimPartialBlocks,
         };
-        let run = |j: &[u8]| transform(j, &cfg, Unstoppable).expect("transform");
-        outputs.push(("transform FlipHorizontal".into(), run(&jpeg), run(&control)));
-        let run = |j: &[u8]| apply_exif_orientation(j, Unstoppable).expect("orientation");
-        outputs.push((
-            "apply_exif_orientation 2".into(),
-            run(&jpeg_exif),
-            run(&control_exif),
-        ));
+        if *keep_at == 2 {
+            assert_refusal(
+                transform(&jpeg, &cfg, Unstoppable).expect_err("must refuse metadata loss"),
+            );
+            assert_refusal(
+                apply_exif_orientation(&jpeg_exif, Unstoppable)
+                    .expect_err("must refuse metadata loss"),
+            );
+            assert!(transform(&control, &cfg, Unstoppable).is_ok());
+            assert!(apply_exif_orientation(&control_exif, Unstoppable).is_ok());
+            // The identity fast path carries the entire original byte stream.
+            assert_eq!(apply_exif_orientation(&jpeg, Unstoppable).unwrap(), jpeg);
+        } else {
+            let run = |j: &[u8]| transform(j, &cfg, Unstoppable).expect("transform");
+            outputs.push(("transform FlipHorizontal".into(), run(&jpeg), run(&control)));
+            let run = |j: &[u8]| apply_exif_orientation(j, Unstoppable).expect("orientation");
+            outputs.push((
+                "apply_exif_orientation 2".into(),
+                run(&jpeg_exif),
+                run(&control_exif),
+            ));
+        }
         #[cfg(feature = "recompress")]
         {
             use zenjpeg::recompress::{
@@ -2866,6 +2918,14 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
                     f.check(info.color_space == *model, || {
                         format!("{name} recompress preserve: model {:?}", info.color_space)
                     });
+                    for (m, payload, _) in app_positions_all(&jpeg) {
+                        assert!(
+                            app_positions_all(&bytes)
+                                .iter()
+                                .any(|(om, op, _)| *om == m && *op == payload),
+                            "{name} recompress preserve: lost FF{m:02X} segment"
+                        );
+                    }
                     for (m, p, at) in app_positions_all(&bytes) {
                         f.check(!is_colour(m, &p) || at >= *keep_at, || {
                             format!("{name} recompress preserve: colour FF{m:02X} moved to {at}")
@@ -2884,6 +2944,14 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
         }
         for (op, out, control_out) in outputs {
             let label = format!("{name} {op}");
+            for (m, payload, _) in app_positions_all(&jpeg) {
+                assert!(
+                    app_positions_all(&out)
+                        .iter()
+                        .any(|(om, op, _)| *om == m && *op == payload),
+                    "{label}: lost FF{m:02X} segment"
+                );
+            }
             let info = Decoder::new().read_info(&out).expect("info");
             f.check(info.color_space == *model, || {
                 format!("{label}: model {:?}, source {model:?}", info.color_space)

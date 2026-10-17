@@ -306,6 +306,16 @@ pub(in crate::recompress) fn emit_preserved_placed(
         config.aq_mask.as_ref(),
     );
 
+    // Preserve is metadata-transparent. Between-scan colour signals must
+    // remain after the first scan even when sequential output would be smaller.
+    if placed.requires_multiple_scans() {
+        return emit_progressive_trial(coeffs, edited_components, new_quant_tables, placed).ok_or(
+            Error::Unsupported(
+                "cannot preserve post-scan colour markers in the requested scan structure",
+            ),
+        );
+    }
+
     // 3. Compute optimized Huffman tables from the edited coefficient
     // distributions.
     let out = emit_sequential(
@@ -338,6 +348,11 @@ fn emit_sequential(
     new_quant_tables: &[Option<[u16; 64]>],
     preserved_segments: crate::lossless::placement::Placed<'_>,
 ) -> Result<Vec<u8>, Error> {
+    if preserved_segments.requires_multiple_scans() {
+        return Err(Error::Unsupported(
+            "single-scan output cannot preserve post-scan colour markers without changing interpretation",
+        ));
+    }
     let is_color = coeffs.components.len() >= 3;
     let huff = optimize_huffman_tables(edited_components, is_color)?;
 

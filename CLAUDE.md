@@ -702,6 +702,13 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- PR237 review: single-scan preservation filtered out inert post-scan
+  JFIF/Adobe/ICC segments. The prepared fix refuses impossible lossless
+  conversions and lets recompress Preserve select progressive output.
+  `rewrites_keep_post_scan_and_stray_colour_markers_inert` now requires
+  marker retention as well as exact pixels, with an XYB ICC case. Runtime
+  validation is pending the coordinator's heavy-slot grant.
+
 - Resolved 2026-10-13: sharing strict ICC chunk validation dropped a complete real-world single profile numbered 0 of 1. Native decoding accepts only the complete-header/matching-size/single-chunk case; strict parsing and rewriting reject it. Original malformed-chunk assertions remain. `just metadata-legacy-icc-check` covers corpus pixels, profile bytes, inventory agreement, duplicate chunks and size caps.
 
 - Resolved 2026-10-13: zencodec HDR dispatch tested a literal `hdrgm:` prefix and silently returned SDR for ISO-only/aliased XMP files; reconstruction also mislabeled wide-gamut bases as sRGB. Native metadata resolution and base-color handling now drive the adapter. The corpus Display P3 profile needed a shared zenpixels identification entry (`8f7ee871`). `just metadata-hdr-dispatch-check` covers native pixel parity and the existing corpus inventory/orientation regressions.
