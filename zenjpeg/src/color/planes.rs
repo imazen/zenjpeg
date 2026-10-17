@@ -96,17 +96,20 @@ impl RowKernel {
         self.layout
     }
 
-    /// YCbCr into packed RGB: the one conversion the fused upsample+convert
-    /// row kernels (`fused_h2v2_fancy_*`, `fused_h2v1_fancy_*`,
-    /// `fused_h1v2_fancy_*`) implement. Every other model or layout goes
-    /// through [`Self::row`] after an explicit upsample. The fused kernels
-    /// are x86-64-v3 only.
+    /// Whether the fused upsample+convert row kernels (`fused_h2v2_fancy_*`,
+    /// `fused_h2v1_fancy_*`, `fused_h1v2_fancy_*`) serve this kernel, and if
+    /// so whether each fused row then swaps R and B in place. They implement
+    /// YCbCr into packed RGB; packed BGR is that plus the swap, done per row
+    /// while it is still in cache (`Some(true)`). Every other model or layout
+    /// goes through [`Self::row`] after an explicit upsample (`None`). The
+    /// fused kernels are x86-64-v3 only.
     #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
-    pub(crate) const fn ycbcr_rgb(self) -> bool {
-        matches!(
-            (self.matrix, self.layout),
-            (PlaneMatrix::YCbCr { .. }, Layout8::Rgb)
-        )
+    pub(crate) const fn fused_ycbcr(self) -> Option<bool> {
+        match (self.matrix, self.layout) {
+            (PlaneMatrix::YCbCr { .. }, Layout8::Rgb) => Some(false),
+            (PlaneMatrix::YCbCr { .. }, Layout8::Bgr) => Some(true),
+            _ => None,
+        }
     }
 
     /// Convert one row of full-resolution planes. The row width is

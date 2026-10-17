@@ -600,9 +600,11 @@ pub(crate) fn output_fancy_strip_fused(
     y_start: usize,
     rows: usize,
     turbo: bool,
+    swap_rb: bool,
     cs_cb: &mut [i16],
     cs_cr: &mut [i16],
 ) {
+    use crate::color::ycbcr::rgb_u8_swap_rb_inplace;
     use crate::decode::upsample::h2v2_colsum_ext_avx2;
 
     let w = c_strip_width;
@@ -647,6 +649,9 @@ pub(crate) fn output_fancy_strip_fused(
                 7,
             );
         }
+        if swap_rb {
+            rgb_u8_swap_rb_inplace(&mut rgb[rgb_off..rgb_off + cols * 3]);
+        }
 
         // Lower output row (far = row below near). Alternating bias swaps the
         // rounding taps; turbo keeps (8,7) on both.
@@ -681,6 +686,9 @@ pub(crate) fn output_fancy_strip_fused(
                 bl,
                 br,
             );
+        }
+        if swap_rb {
+            rgb_u8_swap_rb_inplace(&mut rgb[rgb_off..rgb_off + cols * 3]);
         }
     }
 }
@@ -720,7 +728,12 @@ fn output_fancy_h1v2_strip(
     // The fused upsample+convert row kernel is AVX2; other targets
     // upsample then convert through `output_mcu_row`.
     #[cfg(target_arch = "x86_64")]
-    let fused = inputs.idct_v3.is_some() && inputs.kernel.ycbcr_rgb();
+    let fused_swap = inputs
+        .kernel
+        .fused_ycbcr()
+        .filter(|_| inputs.idct_v3.is_some());
+    #[cfg(target_arch = "x86_64")]
+    let fused = fused_swap.is_some();
     #[cfg(not(target_arch = "x86_64"))]
     let (fused, _) = (false, y_start);
 
@@ -754,6 +767,9 @@ fn output_fancy_h1v2_strip(
                 crate::color::ycbcr::fused_h1v2_fancy_ycbcr_row_avx2::<false>(
                     token, y_r, cb_n, cb_f, cr_n, cr_f, out, cols, bias,
                 );
+            }
+            if fused_swap == Some(true) {
+                crate::color::ycbcr::rgb_u8_swap_rb_inplace(out);
             }
             continue;
         }
@@ -957,11 +973,14 @@ pub(super) fn run_fancy_h2v2_loop(
                 );
             } else {
                 #[cfg(target_arch = "x86_64")]
-                let can_fuse = inputs.idct_v3.is_some() && inputs.kernel.ycbcr_rgb();
+                let fused_swap = inputs
+                    .kernel
+                    .fused_ycbcr()
+                    .filter(|_| inputs.idct_v3.is_some());
                 #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
                 let mut used_fused = false;
                 #[cfg(target_arch = "x86_64")]
-                if can_fuse {
+                if let Some(swap_rb) = fused_swap {
                     output_fancy_strip_fused(
                         inputs.idct_v3.unwrap(),
                         &bufs.cb_a,
@@ -975,6 +994,7 @@ pub(super) fn run_fancy_h2v2_loop(
                         y_start,
                         rows,
                         inputs.turbo_color,
+                        swap_rb,
                         &mut bufs.cs_a,
                         &mut bufs.cs_b,
                     );
@@ -1091,11 +1111,14 @@ pub(super) fn run_fancy_h2v2_loop(
             );
         } else {
             #[cfg(target_arch = "x86_64")]
-            let can_fuse = inputs.idct_v3.is_some() && inputs.kernel.ycbcr_rgb();
+            let fused_swap = inputs
+                .kernel
+                .fused_ycbcr()
+                .filter(|_| inputs.idct_v3.is_some());
             #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
             let mut used_fused = false;
             #[cfg(target_arch = "x86_64")]
-            if can_fuse {
+            if let Some(swap_rb) = fused_swap {
                 output_fancy_strip_fused(
                     inputs.idct_v3.unwrap(),
                     &bufs.cb_a,
@@ -1109,6 +1132,7 @@ pub(super) fn run_fancy_h2v2_loop(
                     y_start,
                     rows,
                     inputs.turbo_color,
+                    swap_rb,
                     &mut bufs.cs_a,
                     &mut bufs.cs_b,
                 );
@@ -1245,11 +1269,12 @@ pub(super) fn run_simple_loop(
             // the rightmost column by up to ~11/255 for even widths (#188).
             let real_cw = (width + geom.h_ratio - 1) / geom.h_ratio;
 
-            // Fused h2v1-fancy + convert (RGB output only): the upsampled
-            // chroma planes are never materialized.
+            // Fused h2v1-fancy + convert (packed RGB, or BGR by an in-place
+            // swap per row): the upsampled chroma planes are never
+            // materialized.
             #[cfg(target_arch = "x86_64")]
             let can_fuse = inputs.idct_v3.is_some()
-                && kernel.ycbcr_rgb()
+                && kernel.fused_ycbcr().is_some()
                 && chroma_upsampling == ChromaUpsampling::Triangle
                 && geom.h_ratio == 2
                 && geom.v_ratio == 1;
@@ -1259,6 +1284,7 @@ pub(super) fn run_simple_loop(
             if can_fuse {
                 use crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2;
                 let token = inputs.idct_v3.unwrap();
+                let swap_rb = kernel.fused_ycbcr() == Some(true);
                 let y_start = mcu_y * y_strip_height;
                 let rows = y_strip_height.min(height.saturating_sub(y_start));
                 let cols = width.min(y_strip_width);
@@ -1285,6 +1311,11 @@ pub(super) fn run_simple_loop(
                             &mut bufs.rgb[rgb_off..rgb_off + cols * 3],
                             cols,
                             real_cw,
+                        );
+                    }
+                    if swap_rb {
+                        crate::color::ycbcr::rgb_u8_swap_rb_inplace(
+                            &mut bufs.rgb[rgb_off..rgb_off + cols * 3],
                         );
                     }
                 }

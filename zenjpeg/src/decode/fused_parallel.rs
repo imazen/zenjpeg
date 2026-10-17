@@ -1274,7 +1274,7 @@ impl<'a> JpegParser<'a> {
                     // stay on upsample_fn + the row kernel).
                     #[cfg(target_arch = "x86_64")]
                     if matches!(chroma_upsampling, ChromaUpsampling::Triangle)
-                        && kernel.ycbcr_rgb()
+                        && let Some(swap_rb) = kernel.fused_ycbcr()
                         && let Some(token) = <archmage::X64V3Token as archmage::SimdToken>::summon()
                     {
                         for py in 0..pixel_rows_this {
@@ -1303,6 +1303,11 @@ impl<'a> JpegParser<'a> {
                                     &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
                                     y_cols_this,
                                     real_chroma_width,
+                                );
+                            }
+                            if swap_rb {
+                                crate::color::ycbcr::rgb_u8_swap_rb_inplace(
+                                    &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
                                 );
                             }
                         }
@@ -1772,7 +1777,7 @@ impl<'a> JpegParser<'a> {
                         // (same kernel as the sequential streaming strip path;
                         // YCbCr only, RGB frames take upsample + row kernel).
                         #[cfg(target_arch = "x86_64")]
-                        if kernel.ycbcr_rgb()
+                        if let Some(swap_rb) = kernel.fused_ycbcr()
                             && let Some(token) =
                                 <archmage::X64V3Token as archmage::SimdToken>::summon()
                         {
@@ -1789,6 +1794,7 @@ impl<'a> JpegParser<'a> {
                                 pixel_row_start,
                                 pixel_rows_this,
                                 idct_method == IdctMethod::Libjpeg,
+                                swap_rb,
                                 cs_cb,
                                 cs_cr,
                             );

@@ -7,6 +7,7 @@
 //! Usage:
 //!   decode_wall <file.jpg> [--reps N]
 //!   decode_wall <file.png> [--reps N] [--q 85] [--sub 420|444] [--prog]
+//!   ... [--format rgb|bgr]   zenjpeg output format (mozjpeg-nasm stays RGB)
 //!
 //! PNG input is encoded with mozjpeg-rs (BaselineBalanced / ProgressiveSmallest)
 //! first, so the fixture matches decode_zenbench.rs.
@@ -77,7 +78,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "usage: decode_wall <file.(jpg|png)> [--reps N] [--q Q] [--sub 420|444] [--prog] [--tile WxH] [--save out.jpg] [--only moz|zen|zen-box]"
+            "usage: decode_wall <file.(jpg|png)> [--reps N] [--q Q] [--sub 420|444] [--prog] [--tile WxH] [--save out.jpg] [--only moz|zen|zen-box] [--format rgb|bgr]"
         );
         std::process::exit(1);
     }
@@ -90,6 +91,7 @@ fn main() {
     let mut tile: Option<(u32, u32)> = None;
     let mut save: Option<String> = None;
     let mut only: Option<String> = None;
+    let mut format = PixelFormat::Rgb;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -134,6 +136,17 @@ fn main() {
             }
             "--only" => {
                 only = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--format" => {
+                format = match args[i + 1].as_str() {
+                    "rgb" => PixelFormat::Rgb,
+                    "bgr" => PixelFormat::Bgr,
+                    other => {
+                        eprintln!("unknown format {other}");
+                        std::process::exit(1);
+                    }
+                };
                 i += 2;
             }
             other => {
@@ -181,12 +194,24 @@ fn main() {
     let (w, h) = (reader.width(), reader.height());
     drop(reader);
     let moz = decode_libjpeg_turbo(&jpeg);
-    let zen = Decoder::new()
-        .output_format(PixelFormat::Rgb)
+    let mut zen = Decoder::new()
+        .output_format(format)
         .decode(&jpeg, Unstoppable)
         .expect("zen decode")
         .into_pixels_u8()
         .expect("pixels");
+    if format == PixelFormat::Bgr {
+        let unswapped = moz
+            .iter()
+            .zip(zen.iter())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        eprintln!("bgr output read as rgb: max|zen-moz|={unswapped}");
+        for px in zen.as_chunks_mut::<3>().0 {
+            px.swap(0, 2);
+        }
+    }
     let max_diff = moz
         .iter()
         .zip(zen.iter())
@@ -215,7 +240,7 @@ fn main() {
             Box::new(|d| {
                 black_box(
                     Decoder::new()
-                        .output_format(PixelFormat::Rgb)
+                        .output_format(format)
                         .decode(d, Unstoppable)
                         .expect("zen decode"),
                 );
@@ -237,7 +262,7 @@ fn main() {
             Box::new(|d| {
                 black_box(
                     Decoder::new()
-                        .output_format(PixelFormat::Rgb)
+                        .output_format(format)
                         .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
                         .decode(d, Unstoppable)
                         .expect("zen decode"),

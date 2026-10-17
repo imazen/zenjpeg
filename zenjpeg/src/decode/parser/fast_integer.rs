@@ -60,10 +60,11 @@ pub(super) struct FastIntegerPlan<'p> {
     /// nearest-neighbour 4:2:0, which converts with [`RowKernel::row_h2`]
     /// straight from the half-width chroma rows.
     upsample: Option<UpsampleFn>,
-    /// Triangle 4:2:0 into packed RGB from YCbCr on x86-64-v3: upsample and
-    /// convert in one fused row kernel
+    /// Triangle 4:2:0 into packed RGB or BGR from YCbCr on x86-64-v3:
+    /// upsample and convert in one fused row kernel
     /// (`baseline_streaming::output_fancy_strip_fused`), never materializing
-    /// the upsampled chroma planes. Same math as the upsample-then-convert
+    /// the upsampled chroma planes; BGR swaps R and B per fused row
+    /// ([`RowKernel::fused_ycbcr`]). Same math as the upsample-then-convert
     /// path.
     #[cfg(target_arch = "x86_64")]
     fused_h2v2: Option<archmage::X64V3Token>,
@@ -140,11 +141,12 @@ impl<'a> JpegParser<'a> {
             _ => None,
         };
         #[cfg(target_arch = "x86_64")]
-        let fused_h2v2 = if chroma == ChromaLayout::H2V2 && triangle && kernel.ycbcr_rgb() {
-            <archmage::X64V3Token as archmage::SimdToken>::summon()
-        } else {
-            None
-        };
+        let fused_h2v2 =
+            if chroma == ChromaLayout::H2V2 && triangle && kernel.fused_ycbcr().is_some() {
+                <archmage::X64V3Token as archmage::SimdToken>::summon()
+            } else {
+                None
+            };
         Ok(Some(FastIntegerPlan {
             #[cfg(target_arch = "x86_64")]
             fused_h2v2,
@@ -419,6 +421,7 @@ impl<'a> JpegParser<'a> {
                             y0 - start * p.mcu_height,
                             rows,
                             self.idct_method == IdctMethod::Libjpeg,
+                            p.kernel.fused_ycbcr() == Some(true),
                             &mut cs_cb,
                             &mut cs_cr,
                         );
