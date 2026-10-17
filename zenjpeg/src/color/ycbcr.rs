@@ -735,11 +735,16 @@ pub fn bgra_to_rgba(bgra: &[u8; 4]) -> [u8; 4] {
 
 /// Swaps R and B channels in-place for a packed RGB/BGR u8 buffer.
 ///
-/// The buffer length must be a multiple of 3.
+/// The buffer length must be a multiple of 3. Uses `garb`'s runtime-dispatched
+/// SIMD swap (AVX2, NEON, WASM128, scalar); a length that is not whole pixels
+/// (which no caller passes) falls back to swapping the whole pixels in scalar
+/// code, as before.
 pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
     debug_assert_eq!(data.len() % 3, 0);
-    for pixel in data.as_chunks_mut::<3>().0 {
-        pixel.swap(0, 2);
+    if garb::bytes::rgb_to_bgr_inplace(data).is_err() {
+        for pixel in data.as_chunks_mut::<3>().0 {
+            pixel.swap(0, 2);
+        }
     }
 }
 
