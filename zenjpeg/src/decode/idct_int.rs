@@ -1349,18 +1349,19 @@ mod avx2 {
         let r23 = load_pair!(16, 24);
         let r45 = load_pair!(32, 40);
         let r67 = load_pair!(48, 56);
-        islow_w16_core::<true>(_token, r01, r23, r45, r67, out_vector, stride);
+        islow_w16_core(_token, r01, r23, r45, r67, out_vector, stride);
         true
     }
 
     /// Shared two-pass islow core over loaded row-pair registers
     /// `([r0|r1], [r2|r3], [r4|r5], [r6|r7])` — dodct + transpose + dodct +
-    /// transpose + store. `CLAMPED` selects the +128/saturate-to-[0,255]
-    /// output stage (turbo decode) vs the raw unclamped i16 store (f32
-    /// output targets).
+    /// transpose + store, with the +128 level shift and saturation to
+    /// [0, 255] (turbo decode). There is deliberately no unclamped store:
+    /// one that skipped the level shift and the bound fed f32 targets wrong
+    /// samples. Unclamped output uses the guarded i32 kernels instead.
     #[rite]
     #[allow(clippy::too_many_arguments)]
-    fn islow_w16_core<const CLAMPED: bool>(
+    fn islow_w16_core(
         _token: archmage::X64V3Token,
         r01: __m256i,
         r23: __m256i,
@@ -1527,14 +1528,11 @@ mod avx2 {
         let mut pos = 0usize;
         macro_rules! store_pair {
             ($v:expr) => {{
-                let shifted = if CLAMPED {
-                    // Level shift + clamp to [0, 255]: scalar computes
-                    // (descale + 128).clamp(0,255); adds_epi16 saturating add
-                    // keeps that identical across the i16 edge cases.
-                    _mm256_min_epi16(_mm256_max_epi16(_mm256_adds_epi16($v, v128), v0), v255)
-                } else {
-                    $v
-                };
+                // Level shift + clamp to [0, 255]: scalar computes
+                // (descale + 128).clamp(0,255); adds_epi16 saturating add
+                // keeps that identical across the i16 edge cases.
+                let shifted =
+                    _mm256_min_epi16(_mm256_max_epi16(_mm256_adds_epi16($v, v128), v0), v255);
                 safe_simd::_mm_storeu_si128(
                     <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
                     _mm256_castsi256_si128(shifted),
@@ -1575,15 +1573,13 @@ mod avx2 {
     /// progressive path's `dequantize_*` output). Truncates to the i16
     /// domain exactly as `vpmullw` does, then runs the identical kernel —
     /// bit-identical to mozjpeg's `jsimd_idct_islow_avx2` fed the same
-    /// dequantized coefficients. `clamped` picks the [0,255]+128 decode
-    /// output vs raw unclamped values (f32 targets).
+    /// dequantized coefficients, with the [0,255]+128 decode output.
     #[arcane]
     pub(crate) fn idct_int_libjpeg_avx2_w16_d32(
         _token: archmage::X64V3Token,
         in_vector: &[i32; 64],
         out_vector: &mut [i16],
         stride: usize,
-        clamped: bool,
     ) {
         assert!(out_vector.len() >= stride * 7 + 8);
         let r01 = islow_w16_wrap_pair(
@@ -1606,11 +1602,7 @@ mod avx2 {
             in_vector[48..56].try_into().unwrap(),
             in_vector[56..64].try_into().unwrap(),
         );
-        if clamped {
-            islow_w16_core::<true>(_token, r01, r23, r45, r67, out_vector, stride);
-        } else {
-            islow_w16_core::<false>(_token, r01, r23, r45, r67, out_vector, stride);
-        }
+        islow_w16_core(_token, r01, r23, r45, r67, out_vector, stride);
     }
 }
 
@@ -1937,7 +1929,7 @@ pub fn idct_int_tiered_libjpeg(
     } else {
         #[cfg(target_arch = "x86_64")]
         if let Some(token) = archmage::X64V3Token::summon() {
-            avx2::idct_int_libjpeg_avx2_w16_d32(token, coeffs, output, stride, true);
+            avx2::idct_int_libjpeg_avx2_w16_d32(token, coeffs, output, stride);
             return;
         }
         idct_int_libjpeg_auto(coeffs, output, stride);
