@@ -2809,7 +2809,7 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
             &seq
         };
         let jpeg = build(&[]);
-        let jpeg_exif = build(&[exif.clone()]);
+        let jpeg_exif = build(std::slice::from_ref(&exif));
         let control = resignal(base, *ids, control_pre, &[]);
         let control_exif = resignal(
             base,

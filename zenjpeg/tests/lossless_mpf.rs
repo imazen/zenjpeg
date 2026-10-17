@@ -597,12 +597,9 @@ fn move_xmp_after_sof(jpeg: &[u8]) -> Vec<u8> {
     let (mut count, mut entries) = (0usize, 0usize);
     for i in 0..n {
         let e = ifd + 2 + 12 * i;
-        match rd16(&out, e) {
-            0xB002 => {
-                count = rd32(&out, e + 4) as usize / 16;
-                entries = tiff + rd32(&out, e + 8) as usize;
-            }
-            _ => {}
+        if rd16(&out, e) == 0xB002 {
+            count = rd32(&out, e + 4) as usize / 16;
+            entries = tiff + rd32(&out, e + 8) as usize;
         }
     }
     assert!(count >= 2, "MP entries");
