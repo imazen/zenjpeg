@@ -538,3 +538,8 @@ coz-worker +args:
 coz-fixtures:
     test -n "$ZENJPEG_DC_FIXTURE_DIR"
     ZENJPEG_DC_BUILD_COMMIT="$(jj log -r "latest(ancestors(@) ~ empty())" --no-graph -T commit_id)" cargo test --locked -p zenjpeg --lib lossless::tests::dc_only_fixture_matrix -- --exact
+
+# Independent readback; requires ImageMagick and never skips missing tools.
+coz-fixtures-oracle:
+    test -n "$ZENJPEG_DC_FIXTURE_DIR"
+    python3 internal/coz-loop/check-fixtures.py "$ZENJPEG_DC_FIXTURE_DIR"

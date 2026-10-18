@@ -33,7 +33,10 @@ fixtures: 8x8, 17x33 and 64x64; q0 through q100 in steps of five; 444, 422,
 checks decoded ACs, actual-grid DCs, quantization tables, sampling and geometry.
 It always runs these assertions, even without an output directory. Saved
 fixtures carry the build commit in `MANIFEST.tsv`; keep their hashes beside
-benchmark evidence. They exercise entropy decoding and are not quality data.
+benchmark evidence. Run `just coz-fixtures-oracle` with the same directory to
+read all fixtures with ImageMagick and record input hashes and dimensions.
+This checks independent readback, not agreement between decoder pixels.
+They exercise entropy decoding and are not quality data.
 
 Use whole-image source inputs alongside these structural fixtures. Coz
 attribution and exploratory timing do not establish an accepted speedup;
