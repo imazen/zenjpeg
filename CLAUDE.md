@@ -706,8 +706,11 @@ sensitivity tables, and preset baselines.
   JFIF/Adobe/ICC segments. The prepared fix refuses unsupported single-scan
   preservation and lets recompress Preserve select progressive output.
   `rewrites_keep_post_scan_and_stray_colour_markers_inert` now requires
-  marker retention as well as exact pixels, with an XYB ICC case. Runtime
-  validation is pending the coordinator's heavy-slot grant.
+  marker retention and multiplicity as well as exact pixels, with an XYB ICC
+  case. Full colorspace_paths and lossless_mpf gates pass on the pinned graph.
+  The retained-marker oracle also preserves source/output pixels with native
+  libjpeg-turbo djpeg. The checkout djpegli is a Linux executable and was not
+  used on macOS. Scoped strict clippy passes; broader PR237 review remains open.
 
 - Resolved 2026-10-13: sharing strict ICC chunk validation dropped a complete real-world single profile numbered 0 of 1. Native decoding accepts only the complete-header/matching-size/single-chunk case; strict parsing and rewriting reject it. Original malformed-chunk assertions remain. `just metadata-legacy-icc-check` covers corpus pixels, profile bytes, inventory agreement, duplicate chunks and size caps.
 
