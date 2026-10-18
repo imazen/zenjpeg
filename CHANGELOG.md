@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Dependency integration
 
+- Align codec, metadata and testkit with independent metadata-channel capability probes (`d327434b`), retaining a single shared interface source.
+
 - Align codec, metadata and testkit revisions with the intrinsic-color conformance correction (`802952b7`), keeping the consumer graph on one shared interface source.
 
 
