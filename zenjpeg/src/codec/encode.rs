@@ -1089,6 +1089,9 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     fn finish(mut self) -> Result<EncodeOutput, Self::Error> {
+        // A cancelled encode reports its stop reason, not the row count a
+        // push cut short left behind.
+        self.stop_ref().check().map_err(Error::from)?;
         // Row encoder: finish it. With streaming output this is only the
         // part not yet taken through `consume_output`.
         if let Some(enc) = self.streaming_enc.take() {

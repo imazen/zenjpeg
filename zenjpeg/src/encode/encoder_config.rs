@@ -1119,6 +1119,15 @@ impl EncoderConfig {
     ///
     /// - `0`: disable restart markers entirely
     /// - `4` (default): good balance of parallelism and overhead
+    ///
+    /// # Small images
+    ///
+    /// The value is a minimum. At encode time the interval grows until each
+    /// segment holds at least 64 MCUs and the markers cost at most 0.3% of
+    /// the file size estimated at 0.5 bits per pixel. An image too small for
+    /// one marker within that budget is written as a single segment: the DRI
+    /// segment names the whole image and the scan has no RST markers. A
+    /// 203x131 4:2:0 image at `restart_mcu_rows(1)` is one such image.
     #[must_use]
     pub fn restart_mcu_rows(mut self, rows: u16) -> Self {
         self.restart_mcu_rows = rows;
