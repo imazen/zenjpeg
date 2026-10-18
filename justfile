@@ -537,4 +537,4 @@ coz-worker +args:
 # Optional output is caller-selected; the test always executes the full matrix.
 coz-fixtures:
     test -n "$ZENJPEG_DC_FIXTURE_DIR"
-    ZENJPEG_DC_BUILD_COMMIT="$(jj log -r @ --no-graph -T commit_id)" cargo test --locked -p zenjpeg --lib lossless::tests::dc_only_fixture_matrix -- --exact
+    ZENJPEG_DC_BUILD_COMMIT="$(jj log -r "latest(ancestors(@) ~ empty())" --no-graph -T commit_id)" cargo test --locked -p zenjpeg --lib lossless::tests::dc_only_fixture_matrix -- --exact
