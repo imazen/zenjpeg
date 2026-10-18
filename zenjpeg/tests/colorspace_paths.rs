@@ -3957,3 +3957,85 @@ fn extreme_dc_only_blocks_agree_across_paths() {
     }
     f.finish("extreme DC-only blocks agree across paths");
 }
+
+/// Known Bug 9: `read_rows_ycbcr_native_i16` on a cropped reader must return
+/// `ErrorKind::UnsupportedFeature` (not `InternalError`), and `read_rows_*`
+/// with a too-narrow `ImgRefMut` must return `ErrorKind::InvalidBufferSize`.
+#[test]
+fn scanline_argument_and_crop_errors_use_typed_error_kinds() {
+    use zenjpeg::decoder::ErrorKind;
+
+    let jpeg = frame(LAYOUTS[0], Signal::YCbCr, false, &dc_only);
+    let w = FW as usize;
+
+    let mut cropped = Decoder::new()
+        .crop(CropRegion::Pixels {
+            x: 0,
+            y: 0,
+            width: 32,
+            height: 32,
+        })
+        .scanline_reader(&jpeg)
+        .expect("cropped scanline_reader");
+    let mut y = vec![0i16; 32 * 8];
+    let mut cb = vec![0i16; 32 * 8];
+    let mut cr = vec![0i16; 32 * 8];
+    let crop_err = cropped
+        .read_rows_ycbcr_native_i16(&mut y, 32, &mut cb, &mut cr, 32, 1)
+        .expect_err("cropped native i16 must fail");
+    assert!(
+        matches!(crop_err.kind(), ErrorKind::UnsupportedFeature { .. }),
+        "expected UnsupportedFeature on cropped native i16, got {:?}",
+        crop_err.kind()
+    );
+
+    let mut r = Decoder::new()
+        .scanline_reader(&jpeg)
+        .expect("scanline_reader");
+    let mut narrow_u8 = vec![0u8; w * 3 - 1];
+    let err_u8 = r
+        .read_rows_rgb8(ImgRefMut::new(&mut narrow_u8, w * 3 - 1, 1))
+        .expect_err("narrow rgb8 must fail");
+    assert_eq!(
+        err_u8.kind(),
+        &ErrorKind::InvalidBufferSize {
+            expected: w * 3,
+            actual: w * 3 - 1,
+        }
+    );
+
+    let mut narrow_rgba_f32 = vec![0.0f32; w * 4 - 1];
+    let err_rgba_f32 = r
+        .read_rows_rgba_f32(ImgRefMut::new(&mut narrow_rgba_f32, w * 4 - 1, 1))
+        .expect_err("narrow rgba_f32 must fail");
+    assert_eq!(
+        err_rgba_f32.kind(),
+        &ErrorKind::InvalidBufferSize {
+            expected: w * 4,
+            actual: w * 4 - 1,
+        }
+    );
+
+    let mut narrow_gray_f32 = vec![0.0f32; w - 1];
+    let err_gray_f32 = r
+        .read_rows_gray_f32(ImgRefMut::new(&mut narrow_gray_f32, w - 1, 1))
+        .expect_err("narrow gray_f32 must fail");
+    assert_eq!(
+        err_gray_f32.kind(),
+        &ErrorKind::InvalidBufferSize {
+            expected: w,
+            actual: w - 1,
+        }
+    );
+
+    let err_gray_lin_f32 = r
+        .read_rows_gray_linear_f32(ImgRefMut::new(&mut narrow_gray_f32, w - 1, 1))
+        .expect_err("narrow gray_linear_f32 must fail");
+    assert_eq!(
+        err_gray_lin_f32.kind(),
+        &ErrorKind::InvalidBufferSize {
+            expected: w,
+            actual: w - 1,
+        }
+    );
+}

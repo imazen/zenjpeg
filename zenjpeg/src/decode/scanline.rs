@@ -1794,9 +1794,7 @@ impl<'a> ScanlineReader<'a> {
     fn read_rows_u8(&mut self, mut output: ImgRefMut<'_, u8>, layout: Layout8) -> Result<usize> {
         let row_bytes = self.width() as usize * layout.bytes_per_pixel();
         if output.width() < row_bytes {
-            return Err(Error::internal(
-                "output buffer too narrow for this pixel layout",
-            ));
+            return Err(Error::invalid_buffer_size(row_bytes, output.width()));
         }
         if layout == Layout8::Gray {
             self.check_plane_read(
@@ -1902,7 +1900,7 @@ impl<'a> ScanlineReader<'a> {
     pub fn read_rows_rgba_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
         let row_len = self.width() as usize * 4;
         if output.width() < row_len {
-            return Err(Error::internal("output buffer too narrow for RGBA f32"));
+            return Err(Error::invalid_buffer_size(row_len, output.width()));
         }
         // YCbCr frames convert their planes in f32; the wave-only reader holds
         // 8-bit RGB rows, so it would answer differently from num_threads(1).
@@ -2085,9 +2083,7 @@ impl<'a> ScanlineReader<'a> {
     pub fn read_rows_gray_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
         let out_width = self.width() as usize;
         if output.width() < out_width {
-            return Err(Error::internal(
-                "output buffer too narrow for grayscale f32",
-            ));
+            return Err(Error::invalid_buffer_size(out_width, output.width()));
         }
         self.check_plane_read(
             "read_rows_gray_f32 needs the luma plane, which the wave-parallel reader \
@@ -2140,9 +2136,7 @@ impl<'a> ScanlineReader<'a> {
     pub fn read_rows_gray_linear_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
         let out_width = self.width() as usize;
         if output.width() < out_width {
-            return Err(Error::internal(
-                "output buffer too narrow for linear grayscale f32",
-            ));
+            return Err(Error::invalid_buffer_size(out_width, output.width()));
         }
         self.check_plane_read(
             "read_rows_gray_linear_f32 needs the luma plane, which the wave-parallel \
@@ -2394,7 +2388,7 @@ impl<'a> ScanlineReader<'a> {
             ));
         }
         if self.crop.is_some() {
-            return Err(Error::internal(
+            return Err(Error::unsupported_feature(
                 "read_rows_ycbcr_native_i16 does not support crop",
             ));
         }
