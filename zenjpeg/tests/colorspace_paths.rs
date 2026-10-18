@@ -3662,19 +3662,63 @@ fn per_component_u8_and_f32_outputs_agree() {
     f.finish("per-component u8 vs f32");
 }
 
-/// Mutation reach (r3): CMYK and YCCK frames had no test. DC-only blocks with
-/// quantizer 8 make every plane sample exactly `dc_value`, so the outputs are
-/// known: CMYK output is the planes; YCCK output is 255 minus the BT.601
-/// conversion of (Y, Cb, Cr), with K passed through; RGB output is the
-/// Adobe-inverted product `c * k / 255` (rounded) of the CMYK output.
+/// Mutation reach (r3) + review S3: CMYK and YCCK frames, including non-zero
+/// APP14 transform values (`1`, `2`, `3`, `255`), which both jpegli and
+/// libjpeg-turbo treat as YCCK. DC-only blocks with quantizer 8 make every
+/// plane sample exactly `dc_value`, so the outputs are known: CMYK output is
+/// the planes; YCCK output is 255 minus the BT.601 conversion of (Y, Cb, Cr),
+/// with K passed through; RGB output is the Adobe-inverted product `c * k / 255`
+/// (rounded) of the CMYK output. Also cross-checked against `mozjpeg_sys`
+/// (libjpeg-turbo).
 #[test]
 fn cmyk_and_ycck_known_answer() {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mozjpeg_cmyk(data: &[u8]) -> (bool, Vec<u8>) {
+        use mozjpeg_sys::*;
+        use std::mem;
+        unsafe {
+            let mut err: jpeg_error_mgr = mem::zeroed();
+            jpeg_std_error(&mut err);
+            let mut ci: jpeg_decompress_struct = mem::zeroed();
+            ci.common.err = &mut err;
+            jpeg_create_decompress(&mut ci);
+            jpeg_mem_src(&mut ci, data.as_ptr(), data.len() as _);
+            assert_eq!(jpeg_read_header(&mut ci, 1), 1, "mozjpeg read_header");
+            let is_ycck = ci.jpeg_color_space == J_COLOR_SPACE::JCS_YCCK;
+            assert!(
+                ci.jpeg_color_space == J_COLOR_SPACE::JCS_CMYK || is_ycck,
+                "unexpected mozjpeg jpeg_color_space: {:?}",
+                ci.jpeg_color_space
+            );
+            ci.out_color_space = J_COLOR_SPACE::JCS_CMYK;
+            jpeg_start_decompress(&mut ci);
+            let (w, h) = (ci.output_width, ci.output_height);
+            let stride = w as usize * ci.output_components as usize;
+            let mut out = vec![0u8; h as usize * stride];
+            while ci.output_scanline < h {
+                let off = ci.output_scanline as usize * stride;
+                let mut p = out[off..].as_mut_ptr();
+                jpeg_read_scanlines(&mut ci, &mut p, 1);
+            }
+            jpeg_finish_decompress(&mut ci);
+            jpeg_destroy_decompress(&mut ci);
+            (is_ycck, out)
+        }
+    }
+
     let mut f = Failures::default();
     let (w, h) = (40u32, 24u32);
     for (name, segments, ycck) in [
         ("cmyk, no APP14", vec![], false),
         ("cmyk, APP14 t0", vec![Segment::PreFrame(app14(0))], false),
+        ("ycck, APP14 t1", vec![Segment::PreFrame(app14(1))], true),
         ("ycck, APP14 t2", vec![Segment::PreFrame(app14(2))], true),
+        ("ycck, APP14 t3", vec![Segment::PreFrame(app14(3))], true),
+        (
+            "ycck, APP14 t255",
+            vec![Segment::PreFrame(app14(255))],
+            true,
+        ),
     ] {
         let spec = Spec {
             width: w,
@@ -3686,8 +3730,23 @@ fn cmyk_and_ycck_known_answer() {
             segments,
         };
         let jpeg = jpeg_writer::write(&spec);
+        #[cfg(not(target_arch = "wasm32"))]
+        let (moz_ycck, moz_cmyk) = mozjpeg_cmyk(&jpeg);
+        #[cfg(not(target_arch = "wasm32"))]
+        f.check(moz_ycck == ycck, || {
+            format!("{name}: mozjpeg is_ycck={moz_ycck}, expected {ycck}")
+        });
         for ups in UPS {
             let cmyk = decode_fmt(&jpeg, ups, 1, PixelFormat::Cmyk);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let (max_moz, first_moz) = diff(&cmyk, &moz_cmyk);
+                f.check(max_moz <= 1, || {
+                    format!(
+                        "{name} {ups:?}: CMYK vs mozjpeg max diff {max_moz} at {first_moz:?}"
+                    )
+                });
+            }
             let rgb = decode_fmt(&jpeg, ups, 1, PixelFormat::Rgb);
             for y in 0..h as usize {
                 for x in 0..w as usize {

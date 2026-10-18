@@ -47,15 +47,17 @@ impl ColorModel {
     /// Follows jpegli's `ProcessSOF` (`internal/jpegli-cpp/lib/jpegli/
     /// decode_marker.cc`), which matches libjpeg-turbo's
     /// `default_decompress_parms` except that libjpeg-turbo decides at the
-    /// first SOS and so also honours markers placed between SOF and SOS:
+    /// first SOS (and so also honours markers placed between SOF and SOS) and
+    /// accepts uppercase `'B','G','R'` (`JCS_EXT_BGR`) and lowercase
+    /// `'r','g','b'` (subtract-green) component IDs:
     ///
     /// - 3 components: a JFIF APP0 means YCbCr; else an Adobe APP14 means RGB
     ///   for transform 0 and YCbCr for any other value; else component IDs
     ///   `'R','G','B'` mean RGB and anything else YCbCr. An RGB frame whose
     ///   ICC profile is jpegli's XYB profile is XYB.
-    /// - 4 components: transform 2 means YCCK, anything else Adobe-inverted
-    ///   CMYK (zenjpeg's long-standing rule; jpegli and libjpeg-turbo read any
-    ///   non-zero transform as YCCK).
+    /// - 4 components: any non-zero Adobe APP14 transform means YCCK; no APP14
+    ///   or transform 0 means Adobe-inverted CMYK (matching both jpegli's
+    ///   `ProcessSOF` and libjpeg-turbo's `default_decompress_parms`).
     pub(crate) fn decide(
         components: &[Component],
         markers: ColorMarkers,
@@ -77,7 +79,7 @@ impl ColorModel {
                     (false, _) => Self::YCbCr,
                 }
             }
-            [_, _, _, _] if markers.adobe_transform == Some(2) => Self::Ycck,
+            [_, _, _, _] if matches!(markers.adobe_transform, Some(t) if t != 0) => Self::Ycck,
             [_, _, _, _] => Self::Cmyk,
             _ => Self::Unknown,
         }
@@ -343,10 +345,12 @@ mod tests {
             ColorModel::Gray
         );
         let four = comps(b"CMYK", &[(1, 1); 4]);
-        assert_eq!(
-            ColorModel::decide(&four, m(false, Some(2)), false),
-            ColorModel::Ycck
-        );
+        for t in [1u8, 2, 3, 255] {
+            assert_eq!(
+                ColorModel::decide(&four, m(false, Some(t)), false),
+                ColorModel::Ycck
+            );
+        }
         assert_eq!(
             ColorModel::decide(&four, m(false, Some(0)), false),
             ColorModel::Cmyk

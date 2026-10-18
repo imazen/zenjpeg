@@ -892,6 +892,11 @@ fn parse_adobe(data: &[u8]) -> Option<AdobeInfo> {
     let version = u16::from_be_bytes([data[offset], data[offset + 1]]);
     let color_transform_byte = data[offset + 6];
 
+    // Note: `AdobeColorTransform` is a public exhaustive `#[repr(u8)]` enum,
+    // so both transform 0 and unrecognised values 3..=255 map to `Unknown`
+    // here. The decoder's colour-model decision (`ColorModel::decide`) inspects
+    // the raw APP14 transform byte directly and treats any non-zero value as
+    // YCbCr (3 components) or YCCK (4 components).
     let color_transform = match color_transform_byte {
         0 => AdobeColorTransform::Unknown,
         1 => AdobeColorTransform::YCbCr,
