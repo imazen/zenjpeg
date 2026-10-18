@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- zencodec, zenmeta and the testkit share revision `023a65c7`. This lets consumers use the current shared interface without introducing a second zencodec trait identity.
+
 - zenpixels/zenpixels-convert pinned to main 1d3ddd21 (converged 0.2.17), from e3fab915. HDR metadata types come from `zenpixels::hdr` instead of the root aliases 0.2.17 deprecates.
 
 ### Fixed

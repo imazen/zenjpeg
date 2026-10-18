@@ -505,3 +505,12 @@ shared-contract-ci-check:
     cargo test -p zenjpeg --lib encode::exif::tests
     cargo clippy -p zenjpeg --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,__test-utils -- -D warnings
     cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bins
+
+# Refresh the shared codec/metadata interface in both standalone lockfiles.
+sync-interface-locks:
+    cargo update -p zencodec
+    cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
+
+# Check the consumer-facing feature set after an interface revision change.
+check-interface-pin:
+    cargo clippy --locked -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,inventory,metadata-rewrite -- -D warnings
