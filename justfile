@@ -281,8 +281,14 @@ api-doc-check:
 
 # Native ARM runtime-dispatch comparison; preserve full benchmark output.
 arm-tiers-macos group="":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$HOME/tmp"
-    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p zenjpeg --features _dev --bench tier_isolation -- --group='{{group}}' --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
+    group_args=()
+    if [[ -n '{{group}}' ]]; then group_args+=("--group={{group}}"); fi
+    # macOS cannot enforce a P-core process boundary; this is exploratory.
+    # Local path patches can require a lock refresh before this bench builds.
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zenjpeg --features _dev --bench tier_isolation -- "${group_args[@]}" --cpu-policy=unrestricted --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
 
 # JPEG framing and validated reassembly; existing fixtures and decoder paths.
 metadata-check:
@@ -524,3 +530,41 @@ shared-contract-ci-check:
     cargo test -p zenjpeg --lib encode::exif::tests
     cargo clippy -p zenjpeg --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,__test-utils -- -D warnings
     cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bins
+
+# Refresh the shared codec/metadata interface in both standalone lockfiles.
+sync-interface-locks:
+    cargo update -p zencodec
+    cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
+
+# Check the consumer-facing feature set after an interface revision change.
+check-interface-pin:
+    cargo clippy --locked -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,inventory,metadata-rewrite -- -D warnings
+
+# Native settings must also survive the adapter with generic parallel defaults.
+test-native-configuration:
+    cargo test --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,__test-utils --test streaming_encode
+
+check-native-configuration:
+    cargo clippy --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec --lib -- -D warnings
+    cargo fmt -p zenjpeg --check
+
+# Development-only causal profile and checked external-process worker.
+coz-build:
+    cargo build --release --locked -p coz-loop
+
+coz-check:
+    cargo fmt -p coz-loop -- --check
+    cargo clippy --locked -p coz-loop --all-targets -- -D warnings
+
+coz-worker +args:
+    ./target/release/coz-loop {{args}}
+
+# Optional output is caller-selected; the test always executes the full matrix.
+coz-fixtures:
+    test -n "$ZENJPEG_DC_FIXTURE_DIR"
+    ZENJPEG_DC_BUILD_COMMIT="$(jj log -r "latest(ancestors(@) ~ empty())" --no-graph -T commit_id)" cargo test --locked -p zenjpeg --lib lossless::tests::dc_only_fixture_matrix -- --exact
+
+# Independent readback; requires ImageMagick and never skips missing tools.
+coz-fixtures-oracle:
+    test -n "$ZENJPEG_DC_FIXTURE_DIR"
+    python3 internal/coz-loop/check-fixtures.py "$ZENJPEG_DC_FIXTURE_DIR"

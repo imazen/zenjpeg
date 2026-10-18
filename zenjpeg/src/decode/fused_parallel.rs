@@ -742,12 +742,7 @@ impl<'a> JpegParser<'a> {
                                     count,
                                 );
                             }
-                            idct_fn(
-                                &mut dequant_buf,
-                                &mut strip[base_px..],
-                                strip_width,
-                                count,
-                            );
+                            idct_fn(&mut dequant_buf, &mut strip[base_px..], strip_width, count);
                         }
                     }
 

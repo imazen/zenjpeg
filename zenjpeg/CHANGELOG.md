@@ -46,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- zencodec `Encoder::finish` after a push cut short by the job's stop token
+  reported "encoding finished after N rows but image height is H" instead of
+  the cancellation. It now checks the stop token first and returns the stop
+  reason (`finish_after_a_cancelled_push_reports_the_cancellation`; fails
+  without the fix with `Request(Invalid(State))`).
+- `EncoderConfig::restart_mcu_rows` documents that the value is a minimum: small
+  images get longer segments (at least 64 MCUs, markers at most 0.3% of an
+  estimated 0.5 bpp file), down to one segment with no RST markers.
 - `BytesEncoder::push` (and so the zencodec `push_rows`) required `rows x
   stride` bytes and rejected a strided view whose last row holds only its
   pixels, which is how a crop of a wider image ends; it now needs

@@ -6,7 +6,7 @@
 //! Explicit settings survive the effort preset.
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig, OutputTiming};
-use zencodec::{Metadata, MetadataPolicy, ResourceLimits};
+use zencodec::{CategorizedError, ErrorCategory, Metadata, MetadataPolicy, ResourceLimits};
 use zencodec_testkit as tk;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::{JpegDecoderConfig as D, JpegEncoderConfig as E};
@@ -469,5 +469,86 @@ fn prefer_streaming_picks_fixed_tables_unless_chosen_explicitly() {
     assert_eq!(
         begin(E::new().with_huffman(true).with_prefer_streaming(true)),
         OutputTiming::AT_FINISH
+    );
+}
+
+#[test]
+fn native_mutable_configuration_outranks_effort_and_streaming_preference() {
+    use zenjpeg::encoder::{EncoderConfig as NativeConfig, PixelLayout};
+    let (w, h) = (67, 93);
+    let px = pixels(w, h, 3);
+    for progressive in [false, true] {
+        let native = NativeConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+            .progressive(progressive)
+            .huffman(progressive);
+        let mut encoder = native
+            .request()
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        encoder
+            .push(&px, h as usize, w as usize * 3, zencodec::Unstoppable)
+            .unwrap();
+        let want = encoder.finish().unwrap();
+        for prefer in [false, true] {
+            let mut adapter = E::new()
+                .with_generic_effort(2)
+                .with_prefer_streaming(prefer);
+            *adapter.inner_mut() = native.clone();
+            assert_eq!(one_shot(&adapter, &px, w, h, 3, &Metadata::none()), want);
+            let (timing, got, _) = streamed(&adapter, &px, (w, h, 3), 7, &Metadata::none());
+            assert_eq!(got, want);
+            assert_eq!(timing.streams(), !progressive);
+        }
+    }
+}
+
+/// A push cut short by the job's stop token leaves fewer rows than declared;
+/// `finish` reports the cancellation, not that row count.
+#[test]
+fn finish_after_a_cancelled_push_reports_the_cancellation() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct Trip(Arc<AtomicBool>);
+    impl enough::Stop for Trip {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            if self.0.load(Ordering::Relaxed) {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let (w, h) = (64u32, 64u32);
+    let px = pixels(w, h, 3);
+    let stride = w as usize * 3;
+    let tripped = Arc::new(AtomicBool::new(false));
+    let mut enc = fixed(ChromaSubsampling::Quarter)
+        .job()
+        .with_stop(zencodec::StopToken::new(Trip(tripped.clone())))
+        .encoder()
+        .unwrap();
+    assert!(enc.begin(w, h, desc(3)).unwrap().streams());
+    let strip = |y: u32| {
+        PixelSlice::new(
+            &px[y as usize * stride..][..16 * stride],
+            w,
+            16,
+            stride,
+            desc(3),
+        )
+        .unwrap()
+    };
+    enc.push_rows(strip(0)).unwrap();
+    tripped.store(true, Ordering::Relaxed);
+    let pushed = enc.push_rows(strip(16)).unwrap_err();
+    assert_eq!(
+        pushed.category(),
+        ErrorCategory::Stopped(enough::StopReason::Cancelled)
+    );
+    let finished = enc.finish().unwrap_err();
+    assert_eq!(
+        finished.category(),
+        ErrorCategory::Stopped(enough::StopReason::Cancelled),
+        "{finished}"
     );
 }

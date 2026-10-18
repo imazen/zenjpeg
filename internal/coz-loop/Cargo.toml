@@ -1,0 +1,22 @@
+[package]
+name = "coz-loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Coz causal-profiler loop harness for zenjpeg (dev-only, never published)"
+publish = false
+
+[[bin]]
+name = "coz-loop"
+path = "src/main.rs"
+
+[dependencies]
+zenjpeg = { path = "../../zenjpeg" }
+enough = { workspace = true }
+zenbench = { workspace = true }
+# coz progress counters are dlsym-resolved no-ops outside `coz run`.
+coz = "0.1.3"
+
+[lints]
+workspace = true

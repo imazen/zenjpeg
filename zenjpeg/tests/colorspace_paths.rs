@@ -3087,9 +3087,10 @@ fn gray_output_from_colour_frames_agrees_across_paths() {
     for (name, r) in [("decode", a), ("decode_into", b)] {
         match r {
             Ok(()) => f.check(false, || format!("4-comp {name}(Gray) succeeded")),
-            Err(e) => f.check(e.to_string().contains("unsupported color conversion"), || {
-                format!("4-comp {name}(Gray): unexpected error {e}")
-            }),
+            Err(e) => f.check(
+                e.to_string().contains("unsupported color conversion"),
+                || format!("4-comp {name}(Gray): unexpected error {e}"),
+            ),
         }
     }
     f.finish("gray output from colour frames");
@@ -3843,9 +3844,7 @@ fn cmyk_and_ycck_known_answer() {
             {
                 let (max_moz, first_moz) = diff(&cmyk, &moz_cmyk);
                 f.check(max_moz <= 1, || {
-                    format!(
-                        "{name} {ups:?}: CMYK vs mozjpeg max diff {max_moz} at {first_moz:?}"
-                    )
+                    format!("{name} {ups:?}: CMYK vs mozjpeg max diff {max_moz} at {first_moz:?}")
                 });
             }
             let rgb = decode_fmt(&jpeg, ups, 1, PixelFormat::Rgb);
@@ -4225,9 +4224,7 @@ fn rgb_and_ycbcr_entry_points_agree_under_jpegli_idct() {
             let (w, h) = layout.size;
             let npixels = (w * h) as usize;
             for ups in UPS {
-                let dec = |threads: usize| {
-                    decoder(ups, threads).idct_method(IdctMethod::Jpegli)
-                };
+                let dec = |threads: usize| decoder(ups, threads).idct_method(IdctMethod::Jpegli);
                 let ref_rgb = dec(1)
                     .decode(&jpeg, Unstoppable)
                     .expect("decode t1")

@@ -5,6 +5,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+None.
+
+### Development
+
+- Add a checked fixed-batch Coz worker and explicit DC-only fixture matrix with independent readback tooling (`33c8365f`, `4cc1c6de`). No production optimization is included.
+
+### Dependency integration
+
+- Align codec, metadata and testkit with independent metadata-channel capability probes (`d327434b`), retaining a single shared interface source.
+
+- Align codec, metadata and testkit revisions with the intrinsic-color conformance correction (`802952b7`), keeping the consumer graph on one shared interface source.
+
+
 ### Changed
 
 - `PixelFormat::Bgr` output from YCbCr frames uses the fused upsample+convert
@@ -97,6 +112,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   `decode_rows(Gray)`, `decode_rows_f32` and the zencodec gray / f32 streaming
   decode build their reader without the wave-only route, so they no longer
   fail in that configuration. (`ad89eb43`)
+- zencodec, zenmeta and the testkit share revision `023a65c7`. This lets consumers use the current shared interface without introducing a second zencodec trait identity.
+
 - zenpixels/zenpixels-convert pinned to main 1d3ddd21 (converged 0.2.17), from e3fab915. HDR metadata types come from `zenpixels::hdr` instead of the root aliases 0.2.17 deprecates.
 
 ### Fixed
@@ -137,6 +154,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   Preserve chooses progressive output when necessary. Identity orientation
   retains its byte-preserving fast path.
 
+- Preserve the explicitly supplied native parallel mode when the generic job uses its default parallel policy.
+
+- Native settings supplied through `JpegEncoderConfig::inner_mut` survive the adapter: its generic effort preset no longer replaces an explicitly selected scan mode or Huffman strategy. Streaming preference also leaves the native configuration intact.
 - Ultra HDR SDR bases with BT.709 primaries and the BT.709 transfer now carry an ICC profile; they went out untagged, and readers decoded them with the sRGB curve, which differs across the whole range (encoded 0.5 is linear 0.2140 under sRGB, 0.2597 under BT.709). zenpixels is repinned to `e3fab915`, which adds the (1,1) profile and refuses the primaries-10 profiles whose matrix was singular (zenpixels#88). Test: `bt709_base_is_tagged_only_when_its_curve_is_not_srgb`. (b49d6061)
 
 - Ultra HDR SDR bases in Display P3 or BT.2020 now carry an ICC profile that says what the base holds (zenjpeg#233; zenpixels#86, #87). zenpixels is repinned to `8bec0afe`, whose `synthesize_icc_for_cicp` serves the exact, `cicp`-tagged profile: a BT.2020 base with the sRGB transfer got a profile with the BT.709 curve, and a Display P3 base got a profile libultrahdr does not recognise (it decoded the base and the HDR rendition as BT.709). The `ultrahdr` feature now enables zenpixels-convert's `icc-db`, which those profiles come from; without `zencodec` a BT.2020 + sRGB base had no profile at all. libultrahdr's `readIccColorGamut` reads the new P3 profile as DISPLAY_P3 and the BT.2020 one as BT_2100. (2416d3f7)

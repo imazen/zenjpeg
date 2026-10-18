@@ -482,6 +482,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "coz"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cef55b3fe2f5477d59e12bc792e8b3c95a25bd099eadcfae006ecea136de76e2"
+dependencies = [
+ "libc",
+ "once_cell",
+]
+
+[[package]]
+name = "coz-loop"
+version = "0.1.0"
+dependencies = [
+ "coz",
+ "enough",
+ "zenbench",
+ "zenjpeg",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2508,7 +2528,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=f7f21dc7e22e5940fb5be009cd14b7111c83bca4#f7f21dc7e22e5940fb5be009cd14b7111c83bca4"
+source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "almost-enough",
  "enough",
@@ -2520,7 +2540,7 @@ dependencies = [
 [[package]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=f7f21dc7e22e5940fb5be009cd14b7111c83bca4#f7f21dc7e22e5940fb5be009cd14b7111c83bca4"
+source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "enough",
  "how-far",
@@ -2531,7 +2551,7 @@ dependencies = [
 [[package]]
 name = "zencodec-testkit"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=f7f21dc7e22e5940fb5be009cd14b7111c83bca4#f7f21dc7e22e5940fb5be009cd14b7111c83bca4"
+source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "enough",
  "whereat",
@@ -2648,7 +2668,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=f7f21dc7e22e5940fb5be009cd14b7111c83bca4#f7f21dc7e22e5940fb5be009cd14b7111c83bca4"
+source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "roxmltree",
  "zencodec",

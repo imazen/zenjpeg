@@ -1201,20 +1201,14 @@ impl<'a> JpegParser<'a> {
         output_size: usize,
     ) -> Result<Vec<f32>> {
         let rgb_size = checked_size_2d(output_size, 3)?;
-        let mut rgb = try_alloc_zeroed_f32_pref(
-            self.alloc_pref,
-            true,
-            rgb_size,
-            "3-channel RGB f32 output",
-        )?;
+        let mut rgb =
+            try_alloc_zeroed_f32_pref(self.alloc_pref, true, rgb_size, "3-channel RGB f32 output")?;
 
         let [c0, c1, c2] = [&planes_f32[0], &planes_f32[1], &planes_f32[2]];
         match self.color_model {
             // The inverse XYB → sRGB transform in-decoder (no CMS
             // required): sRGB gamma-encoded f32.
-            ColorModel::Xyb => {
-                crate::color::xyb::xyb_planes_to_srgb_f32_simd(c0, c1, c2, &mut rgb)
-            }
+            ColorModel::Xyb => crate::color::xyb::xyb_planes_to_srgb_f32_simd(c0, c1, c2, &mut rgb),
             // Level-shift and normalize to [0.0, 1.0].
             ColorModel::Rgb => {
                 for (px, ((&r, &g), &b)) in rgb
