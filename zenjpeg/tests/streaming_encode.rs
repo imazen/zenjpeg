@@ -471,3 +471,33 @@ fn prefer_streaming_picks_fixed_tables_unless_chosen_explicitly() {
         OutputTiming::AT_FINISH
     );
 }
+
+#[test]
+fn native_mutable_configuration_outranks_effort_and_streaming_preference() {
+    use zenjpeg::encoder::{EncoderConfig as NativeConfig, PixelLayout};
+    let (w, h) = (67, 93);
+    let px = pixels(w, h, 3);
+    for progressive in [false, true] {
+        let native = NativeConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+            .progressive(progressive)
+            .huffman(progressive);
+        let mut encoder = native
+            .request()
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        encoder
+            .push(&px, h as usize, w as usize * 3, zencodec::Unstoppable)
+            .unwrap();
+        let want = encoder.finish().unwrap();
+        for prefer in [false, true] {
+            let mut adapter = E::new()
+                .with_generic_effort(2)
+                .with_prefer_streaming(prefer);
+            *adapter.inner_mut() = native.clone();
+            assert_eq!(one_shot(&adapter, &px, w, h, 3, &Metadata::none()), want);
+            let (timing, got, _) = streamed(&adapter, &px, (w, h, 3), 7, &Metadata::none());
+            assert_eq!(got, want);
+            assert_eq!(timing.streams(), !progressive);
+        }
+    }
+}

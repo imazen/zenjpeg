@@ -61,6 +61,8 @@ pub struct JpegEncoderConfig {
 /// Explicit settings that outrank the effort preset.
 #[derive(Clone, Debug, Default)]
 struct Overrides {
+    /// A caller supplied native settings through `inner_mut`.
+    native_config: bool,
     /// From `from_preset`: replaces the effort-derived preset.
     preset: Option<crate::encode::encoder_types::OptimizationPreset>,
     /// From `with_progressive`.
@@ -218,7 +220,11 @@ impl JpegEncoderConfig {
     }
 
     /// Mutable access to the underlying [`EncoderConfig`].
+    ///
+    /// Treats the native configuration as explicit: generic effort and a
+    /// streaming preference do not replace its optimization choices.
     pub fn inner_mut(&mut self) -> &mut EncoderConfig {
+        self.overrides.native_config = true;
         &mut self.inner
     }
 
@@ -240,6 +246,9 @@ impl JpegEncoderConfig {
     /// else (including the default `1` and any out-of-range value accepted
     /// by [`with_generic_effort`](Self::with_generic_effort)) = `HybridProgressive`.
     fn effective_config(&self) -> EncoderConfig {
+        if self.overrides.native_config {
+            return self.inner.clone();
+        }
         use crate::encode::encoder_types::OptimizationPreset;
         let preset = self
             .overrides
