@@ -7,6 +7,7 @@ members = [
     "zjpeg",
     "zjr-calibrate",
     "internal/jpegli-internals-sys",
+    "internal/coz-loop",
 ]
 # `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
 # `cargo test` and every CI job (incl. --all-features) never compile its
