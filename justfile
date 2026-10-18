@@ -514,3 +514,11 @@ sync-interface-locks:
 # Check the consumer-facing feature set after an interface revision change.
 check-interface-pin:
     cargo clippy --locked -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,inventory,metadata-rewrite -- -D warnings
+
+# Native settings must also survive the adapter with generic parallel defaults.
+test-native-configuration:
+    cargo test --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,__test-utils --test streaming_encode
+
+check-native-configuration:
+    cargo clippy --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec --lib -- -D warnings
+    cargo fmt -p zenjpeg --check

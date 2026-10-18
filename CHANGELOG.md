@@ -18,6 +18,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Preserve the explicitly supplied native parallel mode when the generic job uses its default parallel policy.
+
 - Native settings supplied through `JpegEncoderConfig::inner_mut` survive the adapter: its generic effort preset no longer replaces an explicitly selected scan mode or Huffman strategy. Streaming preference also leaves the native configuration intact.
 
 - Ultra HDR SDR bases with BT.709 primaries and the BT.709 transfer now carry an ICC profile; they went out untagged, and readers decoded them with the sRGB curve, which differs across the whole range (encoded 0.5 is linear 0.2140 under sRGB, 0.2597 under BT.709). zenpixels is repinned to `e3fab915`, which adds the (1,1) profile and refuses the primaries-10 profiles whose matrix was singular (zenpixels#88). Test: `bt709_base_is_tagged_only_when_its_curve_is_not_srgb`. (b49d6061)

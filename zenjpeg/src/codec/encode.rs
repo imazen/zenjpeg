@@ -591,7 +591,9 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         // `Sequential`/`Parallel`).
         #[cfg(feature = "parallel")]
         {
-            if self.limits.threading.is_parallel() {
+            // A supplied native configuration already chose its parallel
+            // mode. The generic default must not replace that choice.
+            if self.limits.threading.is_parallel() && !self.config.overrides.native_config {
                 cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
             }
             // Otherwise (Sequential): leave cfg.parallel as None.
