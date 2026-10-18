@@ -5,6 +5,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+None.
+
+### Development
+
+- Add a checked fixed-batch Coz worker and explicit DC-only fixture matrix with independent readback tooling (`33c8365f`, `4cc1c6de`). No production optimization is included.
+
 ### Dependency integration
 
 - Align codec, metadata and testkit with independent metadata-channel capability probes (`d327434b`), retaining a single shared interface source.
