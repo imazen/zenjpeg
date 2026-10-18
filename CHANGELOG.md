@@ -5,6 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Dependency integration
+
+- Align codec, metadata and testkit revisions with the intrinsic-color conformance correction (`802952b7`), keeping the consumer graph on one shared interface source.
+
+
 ### Changed
 
 - zencodec, zenmeta and the testkit share revision `023a65c7`. This lets consumers use the current shared interface without introducing a second zencodec trait identity.
