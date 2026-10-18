@@ -692,12 +692,19 @@ impl<'a> JpegParser<'a> {
     }
 
     /// The 8-bit layout a single-pass result can be relaid into for `format`.
-    /// Colour frames never relayout to gray: the luma of decoded RGB is not
-    /// their Y plane, and gray output from colour frames is unsupported on
-    /// every path (Known Bugs 4), so they fall through to the same error.
+    /// A streaming result already written in `Layout8::Gray` serves `Gray`
+    /// directly; an RGB single-pass result only relays to `Gray` for grayscale
+    /// or RGB frames (for YCbCr frames, gray output is the Y plane, not the
+    /// BT.601 luma of clamped RGB).
     fn single_pass_target(&self, format: PixelFormat) -> Option<Layout8> {
-        Layout8::from_pixel_format(format)
-            .filter(|t| *t != Layout8::Gray || self.num_components == 1)
+        let source_is_gray =
+            self.streaming_rgb.is_some() && self.streaming_layout() == Layout8::Gray;
+        Layout8::from_pixel_format(format).filter(|&t| {
+            t != Layout8::Gray
+                || source_is_gray
+                || self.num_components == 1
+                || self.color_model == ColorModel::Rgb
+        })
     }
 
     /// `buf` (packed `source`, `npixels` pixels) in `target`: a move when the
@@ -740,7 +747,6 @@ impl<'a> JpegParser<'a> {
         }
         self.streaming_output_format
             .and_then(Layout8::from_pixel_format)
-            .filter(|l| *l != Layout8::Gray)
             .unwrap_or(Layout8::Rgb)
     }
 
@@ -749,6 +755,7 @@ impl<'a> JpegParser<'a> {
     /// Handles the cross-product of `(num_components, format)`:
     /// - `(1, Gray)`        → level-shifted grayscale
     /// - `(1, RGB-family)`  → gray-expanded RGB, reformatted
+    /// - `(3, Gray)`        → Y plane for YCbCr, BT.601 luma of RGB for RGB / XYB
     /// - `(3, RGB-family)`  → XYB / RGB-JPEG / YCbCr → RGB, reformatted
     /// - `(4, RGB-family)`  → CMYK / YCCK → RGB, reformatted
     /// - `(4, Cmyk)`        → raw CMYK / YCCK → CMYK interleave
@@ -778,6 +785,21 @@ impl<'a> JpegParser<'a> {
                     try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "gray->RGB u8 output")?;
                 gray_f32_to_rgb_u8(&planes_f32[0], &mut rgb);
                 self.relayout_owned(rgb, Layout8::Rgb, rgb_family_layout(f)?, output_size)
+            }
+            (3, PixelFormat::Gray) => {
+                if self.color_model == ColorModel::YCbCr {
+                    let mut output = try_alloc_zeroed_pref(
+                        self.alloc_pref,
+                        true,
+                        output_size,
+                        "grayscale u8 output",
+                    )?;
+                    gray_f32_to_gray_u8(&planes_f32[0], &mut output);
+                    Ok(output)
+                } else {
+                    let rgb = self.three_chan_planes_to_rgb_u8(planes_f32, output_size)?;
+                    self.relayout_owned(rgb, Layout8::Rgb, Layout8::Gray, output_size)
+                }
             }
             (3, f) if is_rgb_family_u8(f) => {
                 let rgb = self.three_chan_planes_to_rgb_u8(planes_f32, output_size)?;
@@ -1149,52 +1171,73 @@ impl<'a> JpegParser<'a> {
                 gray_f32_to_rgb_f32(&planes_f32[0], &mut rgb);
                 Ok(rgb)
             }
-            (3, PixelFormat::Rgb) => {
-                let rgb_size =
-                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed_f32_pref(
+            (3, PixelFormat::Gray) => {
+                let mut output = try_alloc_zeroed_f32_pref(
                     self.alloc_pref,
                     true,
-                    rgb_size,
-                    "3-channel RGB f32 output",
+                    output_size,
+                    "gray f32 output",
                 )?;
-
-                let [c0, c1, c2] = [&planes_f32[0], &planes_f32[1], &planes_f32[2]];
-                match self.color_model {
-                    // The inverse XYB → sRGB transform in-decoder (no CMS
-                    // required): sRGB gamma-encoded f32.
-                    ColorModel::Xyb => {
-                        crate::color::xyb::xyb_planes_to_srgb_f32_simd(c0, c1, c2, &mut rgb)
-                    }
-                    // Level-shift and normalize to [0.0, 1.0].
-                    ColorModel::Rgb => {
-                        for (px, ((&r, &g), &b)) in rgb
-                            .as_chunks_mut::<3>()
-                            .0
-                            .iter_mut()
-                            .zip(c0.iter().zip(c1).zip(c2))
-                        {
-                            px.copy_from_slice(&[
-                                (r + 128.0) / 255.0,
-                                (g + 128.0) / 255.0,
-                                (b + 128.0) / 255.0,
-                            ]);
-                        }
-                    }
-                    ColorModel::YCbCr => ycbcr_planes_f32_to_rgb_f32(c0, c1, c2, &mut rgb),
-                    ColorModel::Gray
-                    | ColorModel::Cmyk
-                    | ColorModel::Ycck
-                    | ColorModel::Unknown => {
-                        return Err(Error::unsupported_feature(
-                            "three-plane RGB conversion of a frame that is not YCbCr, RGB or XYB",
-                        ));
+                if self.color_model == ColorModel::YCbCr {
+                    gray_f32_to_gray_f32(&planes_f32[0], &mut output);
+                } else {
+                    use crate::foundation::consts::{YCBCR_B_TO_Y, YCBCR_G_TO_Y, YCBCR_R_TO_Y};
+                    let rgb = self.three_chan_planes_to_rgb_f32(&planes_f32, output_size)?;
+                    for (o, &[r, g, b]) in output.iter_mut().zip(rgb.as_chunks::<3>().0) {
+                        *o = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
                     }
                 }
-                Ok(rgb)
+                Ok(output)
             }
+            (3, PixelFormat::Rgb) => self.three_chan_planes_to_rgb_f32(&planes_f32, output_size),
             _ => Err(Error::unsupported_feature("unsupported color conversion")),
         }
+    }
+
+    /// XYB / RGB / YCbCr → 3-channel interleaved RGB f32, by the stored model.
+    fn three_chan_planes_to_rgb_f32(
+        &self,
+        planes_f32: &[Vec<f32>],
+        output_size: usize,
+    ) -> Result<Vec<f32>> {
+        let rgb_size = checked_size_2d(output_size, 3)?;
+        let mut rgb = try_alloc_zeroed_f32_pref(
+            self.alloc_pref,
+            true,
+            rgb_size,
+            "3-channel RGB f32 output",
+        )?;
+
+        let [c0, c1, c2] = [&planes_f32[0], &planes_f32[1], &planes_f32[2]];
+        match self.color_model {
+            // The inverse XYB → sRGB transform in-decoder (no CMS
+            // required): sRGB gamma-encoded f32.
+            ColorModel::Xyb => {
+                crate::color::xyb::xyb_planes_to_srgb_f32_simd(c0, c1, c2, &mut rgb)
+            }
+            // Level-shift and normalize to [0.0, 1.0].
+            ColorModel::Rgb => {
+                for (px, ((&r, &g), &b)) in rgb
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(c0.iter().zip(c1).zip(c2))
+                {
+                    px.copy_from_slice(&[
+                        (r + 128.0) / 255.0,
+                        (g + 128.0) / 255.0,
+                        (b + 128.0) / 255.0,
+                    ]);
+                }
+            }
+            ColorModel::YCbCr => ycbcr_planes_f32_to_rgb_f32(c0, c1, c2, &mut rgb),
+            ColorModel::Gray | ColorModel::Cmyk | ColorModel::Ycck | ColorModel::Unknown => {
+                return Err(Error::unsupported_feature(
+                    "three-plane RGB conversion of a frame that is not YCbCr, RGB or XYB",
+                ));
+            }
+        }
+        Ok(rgb)
     }
 
     /// Convert decoded coefficients to YCbCr f32 planes.

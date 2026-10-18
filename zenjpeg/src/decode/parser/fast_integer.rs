@@ -86,8 +86,8 @@ impl FastIntegerPlan<'_> {
 
 impl<'a> JpegParser<'a> {
     /// The fast integer path for `format`, if this frame's model and shape
-    /// have one (RGB-family formats only; dequantization bias and the forced
-    /// f32 IDCT stay on the f32 path).
+    /// have one (8-bit RGB-family and Gray formats; dequantization bias and
+    /// the forced f32 IDCT stay on the f32 path).
     pub(super) fn fast_integer_plan(
         &self,
         format: PixelFormat,
@@ -96,8 +96,7 @@ impl<'a> JpegParser<'a> {
         if self.force_f32_idct || self.coeffs.len() < 3 {
             return Ok(None);
         }
-        let Some(layout) = Layout8::from_pixel_format(format).filter(|l| *l != Layout8::Gray)
-        else {
+        let Some(layout) = Layout8::from_pixel_format(format) else {
             return Ok(None);
         };
         let Some(chroma) = self.plan().fast_integer() else {

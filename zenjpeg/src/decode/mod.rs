@@ -1878,6 +1878,7 @@ impl DecodeConfig {
                         | PixelFormat::Rgba
                         | PixelFormat::Bgra
                         | PixelFormat::Bgrx
+                        | PixelFormat::Gray
                 );
             if needs_coefficients {
                 parser.decode_mode = parser::DecodeMode::Coefficient;
@@ -1945,6 +1946,7 @@ impl DecodeConfig {
                 let is_xyb = parser.color_model == color_model::ColorModel::Xyb;
                 if let Some(target) = self.correct_color
                     && !is_xyb
+                    && output_format != PixelFormat::Gray
                     && let Some(ref icc_profile) = parser.icc_profile
                 {
                     match apply_icc_transform_f32(
@@ -2090,6 +2092,7 @@ impl DecodeConfig {
                 let is_xyb = parser.color_model == color_model::ColorModel::Xyb;
                 if let Some(target) = self.correct_color
                     && !is_xyb
+                    && output_format != PixelFormat::Gray
                     && let Some(ref icc_profile) = parser.icc_profile
                 {
                     match apply_icc_transform(
@@ -2261,9 +2264,9 @@ impl DecodeConfig {
                 // Fall through to allocating decode (caller asked for RGB from a gray JPEG).
                 return self.decode_into_via_decode(data, format, dst, stop);
             }
-            // For color source, PixelFormat::Gray would need RGB→Gray reduction,
-            // not handled by the direct path.
-            if parser.num_components > 1 && format == PixelFormat::Gray {
+            // For 4-component source, PixelFormat::Gray is unsupported; fall through
+            // to allocating decode for the standard error.
+            if parser.num_components > 3 && format == PixelFormat::Gray {
                 return self.decode_into_via_decode(data, format, dst, stop);
             }
 
@@ -2316,8 +2319,8 @@ impl DecodeConfig {
                 "grayscale source needs Gray format for streaming",
             ));
         }
-        if num_components > 1 && format == PixelFormat::Gray {
-            return Err(Error::internal("color source can't stream to Gray"));
+        if num_components > 3 && format == PixelFormat::Gray {
+            return Err(Error::internal("4-component source can't stream to Gray"));
         }
 
         let mut parser = parser::JpegParser::with_strictness(

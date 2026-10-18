@@ -114,6 +114,14 @@ impl<'a> JpegParser<'a> {
         if self.restart_interval == 0 {
             return Ok(false);
         }
+        // Fused parallel kernels write packed 8-bit RGB. For a YCbCr frame,
+        // grayscale output is the Y plane itself, not the BT.601 luma of
+        // clamped RGB, so stay on the streaming or fast-integer path.
+        if self.streaming_output_format == Some(crate::types::PixelFormat::Gray)
+            && self.color_model == super::color_model::ColorModel::YCbCr
+        {
+            return Ok(false);
+        }
 
         let num_comps = self.num_components as usize;
         // Like the streaming path, this renders the WHOLE frame from ONE scan by

@@ -2962,33 +2962,134 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
     f.finish("post-scan and stray-byte colour markers stay inert");
 }
 
-/// Known Bugs 4, pinned: gray output from three-component frames is
-/// unsupported on `decode()` and `decode_into()` alike (the two must not
-/// disagree; scanline `read_rows_gray8` serves these frames).
+/// Known Bugs 4 (resolved): `decode()` and `decode_into()` to `PixelFormat::Gray`
+/// serve three-component frames across streaming, fused/parallel, fast-integer,
+/// and f32 paths: the Y plane for YCbCr frames, and the BT.601 luma (`rgb_luma_u8`
+/// / `YCBCR_*_TO_Y`) for RGB and XYB frames, matching `scanline_reader`'s
+/// `read_rows_gray8` / `read_rows_gray_f32`. Four-component (CMYK / YCCK)
+/// frames continue to refuse `PixelFormat::Gray` on both entry points.
 #[test]
-fn gray_output_from_colour_frames_is_unsupported() {
+fn gray_output_from_colour_frames_agrees_across_paths() {
     let mut f = Failures::default();
     let (w, h) = (96u32, 80u32);
     let src = noise_image(w as usize, h as usize, 47);
+
+    let mut three_comp_cases: Vec<(String, Vec<u8>)> = Vec::new();
     for progressive in [false, true] {
-        let jpeg = encode_ycbcr(&src, w, h, ChromaSubsampling::Quarter, false, progressive);
-        for threads in [1usize, 0] {
-            let dec = decoder(ChromaUpsampling::Triangle, threads).output_format(PixelFormat::Gray);
-            let a = dec.decode(&jpeg, Unstoppable).map(|_| ());
-            let mut dst = vec![0u8; (w * h) as usize];
-            let b = decoder(ChromaUpsampling::Triangle, threads)
-                .decode_into(&jpeg, PixelFormat::Gray, &mut dst, Unstoppable)
-                .map(|_| ());
-            for (name, r) in [("decode", a), ("decode_into", b)] {
-                match r {
-                    Ok(()) => f.check(false, || {
-                        format!("progressive={progressive} t{threads}: {name} to Gray succeeded; update Known Bugs 4 and this test")
-                    }),
-                    Err(e) => f.check(e.to_string().contains("unsupported color conversion"), || {
-                        format!("progressive={progressive} t{threads}: {name} to Gray: unexpected error {e}")
-                    }),
+        for dri in [false, true] {
+            three_comp_cases.push((
+                format!("ycbcr 4:2:0 prog={progressive} dri={dri}"),
+                encode_ycbcr(&src, w, h, ChromaSubsampling::Quarter, dri, progressive),
+            ));
+        }
+    }
+    for layout in [LAYOUTS[0], LAYOUTS[1], LAYOUTS[2], LAYOUTS[3]] {
+        for signal in [Signal::YCbCr, Signal::Rgb] {
+            three_comp_cases.push((
+                format!("{} {signal:?} dri", layout.name),
+                frame(layout, signal, true, &with_ac),
+            ));
+        }
+    }
+    three_comp_cases.push((
+        "411 Rgb dri".into(),
+        frame(LAYOUTS[4], Signal::Rgb, true, &with_ac),
+    ));
+    three_comp_cases.push((
+        "xyb full".into(),
+        EncoderConfig::xyb(88, XybSubsampling::Full)
+            .encode_bytes(&src, w, h, PixelLayout::Rgb8Srgb)
+            .expect("xyb encode"),
+    ));
+
+    for (label, jpeg) in &three_comp_cases {
+        let info = Decoder::new().read_info(jpeg).expect("info");
+        let npixels = (info.dimensions.width * info.dimensions.height) as usize;
+        for ups in UPS {
+            let want = scanline_gray8(&decoder(ups, 1), jpeg);
+            for threads in [1usize, 0] {
+                let dec = decoder(ups, threads).output_format(PixelFormat::Gray);
+                let got_decode = dec
+                    .decode(jpeg, Unstoppable)
+                    .expect("decode Gray")
+                    .into_pixels_u8()
+                    .expect("u8");
+                let mut got_into = vec![0u8; npixels];
+                let n = decoder(ups, threads)
+                    .decode_into(jpeg, PixelFormat::Gray, &mut got_into, Unstoppable)
+                    .expect("decode_into Gray");
+                f.check(n == npixels, || {
+                    format!("{label} {ups:?} t{threads}: decode_into wrote {n}, expected {npixels}")
+                });
+                for (entry, got) in [("decode", &got_decode), ("decode_into", &got_into)] {
+                    let (max, first) = diff(&want, got);
+                    f.check(max == 0, || {
+                        format!(
+                            "{label} {ups:?} t{threads}: {entry}(Gray) differs from scanline gray8 by {max} at {first:?}"
+                        )
+                    });
                 }
             }
+            // f32 Gray path (which applies Laplacian dequant bias on non-XYB)
+            // agrees with u8 Gray within 2 levels.
+            let f32_u8: Vec<u8> = decoder(ups, 1)
+                .output_format(PixelFormat::Gray)
+                .output_target(OutputTarget::SrgbF32)
+                .decode(jpeg, Unstoppable)
+                .expect("decode Gray SrgbF32")
+                .into_pixels_f32()
+                .expect("f32")
+                .iter()
+                .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                .collect();
+            let (max_f32, first_f32) = diff(&want, &f32_u8);
+            f.check(max_f32 <= 2, || {
+                format!(
+                    "{label} {ups:?}: SrgbF32 Gray differs from u8 Gray by {max_f32} at {first_f32:?}"
+                )
+            });
+        }
+    }
+
+    // 4:1:1 YCbCr (per-component path): decode(Gray) and decode_into(Gray) return
+    // the Y plane and agree with each other and with SrgbF32 Gray.
+    let ycbcr_411 = frame(LAYOUTS[4], Signal::YCbCr, true, &with_ac);
+    for ups in UPS {
+        let ref_411 = decode_fmt(&ycbcr_411, ups, 1, PixelFormat::Gray);
+        let mut into_411 = vec![0u8; ref_411.len()];
+        decoder(ups, 0)
+            .decode_into(&ycbcr_411, PixelFormat::Gray, &mut into_411, Unstoppable)
+            .expect("411 decode_into Gray");
+        f.check(ref_411 == into_411, || {
+            format!("411 YCbCr {ups:?}: decode(Gray) != decode_into(Gray)")
+        });
+    }
+
+    // 4-component frames still refuse PixelFormat::Gray on both decode and decode_into.
+    let cmyk_spec = Spec {
+        width: 32,
+        height: 16,
+        comps: (1..=4).map(|id| Comp { id, h: 1, v: 1 }).collect(),
+        block: &dc_only,
+        restart_interval: 0,
+        quant: 8,
+        segments: vec![],
+    };
+    let cmyk_jpeg = jpeg_writer::write(&cmyk_spec);
+    let a = Decoder::new()
+        .output_format(PixelFormat::Gray)
+        .decode(&cmyk_jpeg, Unstoppable)
+        .map(|_| ());
+    let mut dst = vec![0u8; 32 * 16];
+    let b = Decoder::new()
+        .decode_into(&cmyk_jpeg, PixelFormat::Gray, &mut dst, Unstoppable)
+        .map(|_| ());
+    for (name, r) in [("decode", a), ("decode_into", b)] {
+        match r {
+            Ok(()) => f.check(false, || format!("4-comp {name}(Gray) succeeded")),
+            Err(e) => f.check(e.to_string().contains("unsupported color conversion"), || {
+                format!("4-comp {name}(Gray): unexpected error {e}")
+            }),
         }
     }
     f.finish("gray output from colour frames");
@@ -3624,7 +3725,7 @@ fn per_component_u8_and_f32_outputs_agree() {
             files.push((
                 format!("ycbcr {} {cname}", layout.name),
                 frame(layout, Signal::YCbCr, false, content),
-                &[PixelFormat::Rgb],
+                &[PixelFormat::Rgb, PixelFormat::Gray],
                 if cname == "dc-only" { 1 } else { 3 },
             ));
         }
