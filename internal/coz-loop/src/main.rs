@@ -4,7 +4,7 @@
 //! so coz throughput deltas are attributable to whole codec operations.
 //!
 //! Usage:
-//!   coz-loop <encode|decode> <noise|flat|smooth> <444|422|420|440>
+//!   coz-loop <encode|decode> <noise|flat|smooth|solid> <444|422|420|440>
 //!            <base|prog> <quality> <WxH> <iters>
 //!
 //! Example: coz-loop decode noise 420 base 85 512x512 200
@@ -18,8 +18,7 @@ use zenjpeg::{
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 
-/// Noise+patches generator (same shape as zenjpeg/examples/decode_profile.rs):
-/// realistic AC distribution, non-flat chroma. Seed-mixed by `seed`.
+/// Synthetic noise and patches, seed-mixed by `seed`.
 fn noise_image(width: u32, height: u32, seed: u32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];
     let mut rng: u32 = 0xDEADBEEF ^ seed;
@@ -41,8 +40,8 @@ fn noise_image(width: u32, height: u32, seed: u32) -> Vec<u8> {
     data
 }
 
-/// Flat-chroma generator: chroma constant inside each 8x8 block, varying
-/// across blocks. Covers DC-only decode paths (CLAUDE.md: required coverage).
+/// Historical `flat` fixture: random red with block-constant green and blue.
+/// Conversion to YCbCr does not preserve constant chroma for this fixture.
 fn flat_chroma_image(width: u32, height: u32, seed: u32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];
     let mut rng: u32 = 0x9E3779B9 ^ seed;
@@ -50,7 +49,7 @@ fn flat_chroma_image(width: u32, height: u32, seed: u32) -> Vec<u8> {
         for x in 0..width as usize {
             let idx = (y * width as usize + x) * 3;
             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-            // Luma carries texture; chroma is flat per 8x8 via shared base.
+            // Red varies per pixel; green and blue share a block-dependent base.
             let blk = ((x / 8) + (y / 8) * 7) & 255;
             let luma = ((rng >> 16) & 0xFF) as u8;
             data[idx] = luma;
@@ -61,8 +60,7 @@ fn flat_chroma_image(width: u32, height: u32, seed: u32) -> Vec<u8> {
     data
 }
 
-/// Smooth/photographic-ish: low-frequency patches plus mild noise — mid-range
-/// AC activity between `noise` and `flat`.
+/// Synthetic low-frequency patches plus mild noise.
 fn smooth_image(width: u32, height: u32, seed: u32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];
     let mut rng: u32 = 0x13579BDF ^ seed;
@@ -127,6 +125,7 @@ fn gen_pixels(input: &str, width: u32, height: u32) -> Vec<u8> {
         "noise" => noise_image(width, height, 1),
         "flat" => flat_chroma_image(width, height, 1),
         "smooth" => smooth_image(width, height, 1),
+        "solid" => [97, 143, 201].repeat(width as usize * height as usize),
         other => panic!("unknown input {other}"),
     }
 }
@@ -134,12 +133,24 @@ fn gen_pixels(input: &str, width: u32, height: u32) -> Vec<u8> {
 /// `coz-loop bench <decode|encode> <input> <subs> <base|prog> <quality> <W1xH1,W2xH2,...>`
 /// zenbench suite over the listed sizes; one lane per size so old/new binary
 /// runs produce directly comparable paired stats.
-fn run_bench(mode: &str, input: &str, subs: ChromaSubsampling, prog: bool, quality: f32, sizes: &str) {
+fn run_bench(
+    mode: &str,
+    input: &str,
+    subs: ChromaSubsampling,
+    prog: bool,
+    quality: f32,
+    sizes: &str,
+) {
     let dims: Vec<(u32, u32)> = sizes.split(',').map(parse_size).collect();
     zenbench::run(|suite| {
         for &(w, h) in &dims {
             let pixels = gen_pixels(input, w, h);
-            let group = format!("{mode}_{input}_{}_{}x{}", if prog { "prog" } else { "base" }, w, h);
+            let group = format!(
+                "{mode}_{input}_{}_{}x{}",
+                if prog { "prog" } else { "base" },
+                w,
+                h
+            );
             suite.group(group, |g| {
                 g.throughput(Throughput::Elements(u64::from(w) * u64::from(h)));
                 g.config()
@@ -264,8 +275,85 @@ fn run_timed(case_path: &str, out_path: &str) {
     std::fs::write(out_path, &last).unwrap();
 }
 
+/// Fixed work batches for external pairing. Validation and input persistence
+/// happen outside timing; decoding includes allocation and output destruction.
+fn run_pair(case_path: &str, out_path: &str) {
+    let text = std::fs::read_to_string(case_path).unwrap();
+    let mut lines = text.lines();
+    let spec = lines.next().expect("case spec").trim();
+    let iters: usize = lines.next().expect("iterations").trim().parse().unwrap();
+    assert!(iters > 0);
+    let jpeg = spec_jpeg(spec);
+    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+    if spec.starts_with("gen:solid:") {
+        let blocks = verify_dc_only(&jpeg);
+        eprintln!("verified_dc_only_blocks={blocks}");
+    }
+    let run = || {
+        let image = decoder
+            .decode(std::hint::black_box(&jpeg), Unstoppable)
+            .unwrap();
+        std::hint::black_box(image.pixels_u8().expect("u8 output"));
+        coz::progress!("paired-decode-completed");
+    };
+    for _ in 0..5 {
+        run();
+    }
+    let warmup = Instant::now();
+    while warmup.elapsed() < std::time::Duration::from_millis(500) {
+        run();
+    }
+    for _ in 0..3 {
+        let start = Instant::now();
+        for _ in 0..iters {
+            run();
+        }
+        println!("elapsed_ns={}", start.elapsed().as_nanos());
+    }
+    let image = decoder.decode(&jpeg, Unstoppable).unwrap();
+    let write_new = |path: &std::path::Path, bytes: &[u8]| {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap()
+            .write_all(bytes)
+            .unwrap();
+    };
+    let path = std::path::Path::new(out_path);
+    write_new(path, image.pixels_u8().expect("u8 output"));
+    write_new(&path.with_extension("input.jpg"), &jpeg);
+}
+
+fn verify_dc_only(jpeg: &[u8]) -> usize {
+    let coeffs = Decoder::new()
+        .decode_coefficients(jpeg, Unstoppable)
+        .unwrap();
+    let mut blocks = 0;
+    for component in &coeffs.components {
+        let (component_blocks, tail) = component.coeffs.as_chunks::<64>();
+        assert!(tail.is_empty());
+        for block in component_blocks {
+            assert!(
+                block[1..].iter().all(|&v| v == 0),
+                "solid input has AC: component {}, block {blocks}, coeffs {block:?}",
+                component.id
+            );
+            blocks += 1;
+        }
+    }
+    assert!(blocks > 0);
+    blocks
+}
+
 fn main() {
+    coz::thread_init();
     let args: Vec<String> = env::args().collect();
+    if args.len() == 4 && args[1] == "pair" {
+        run_pair(&args[2], &args[3]);
+        return;
+    }
     if args.len() == 8 && args[1] == "bench" {
         let subs = parse_subs(&args[4]);
         let prog = match args[5].as_str() {
@@ -286,12 +374,16 @@ fn main() {
         return;
     }
     if args.len() == 5 && args[1] == "trunc" {
-        run_file(&args[2], args[4].parse().unwrap(), Some(args[3].parse().unwrap()));
+        run_file(
+            &args[2],
+            args[4].parse().unwrap(),
+            Some(args[3].parse().unwrap()),
+        );
         return;
     }
     if args.len() != 8 {
         eprintln!(
-            "usage: {} <encode|decode|bench> <noise|flat|smooth|op-mode> <444|422|420|440> <base|prog> <quality> <WxH[,...]> <iters>",
+            "usage: {} <encode|decode|bench> <noise|flat|smooth|solid|op-mode> <444|422|420|440> <base|prog> <quality> <WxH[,...]> <iters>",
             args[0]
         );
         std::process::exit(2);
@@ -308,14 +400,7 @@ fn main() {
     let (width, height) = parse_size(&args[6]);
     let iters: usize = args[7].parse().unwrap();
 
-    coz::thread_init();
-
-    let pixels = match input.as_str() {
-        "noise" => noise_image(width, height, 1),
-        "flat" => flat_chroma_image(width, height, 1),
-        "smooth" => smooth_image(width, height, 1),
-        other => panic!("unknown input {other}"),
-    };
+    let pixels = gen_pixels(input, width, height);
 
     let t0 = Instant::now();
     match mode.as_str() {

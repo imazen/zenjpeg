@@ -522,3 +522,19 @@ test-native-configuration:
 check-native-configuration:
     cargo clippy --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec --lib -- -D warnings
     cargo fmt -p zenjpeg --check
+
+# Development-only causal profile and checked external-process worker.
+coz-build:
+    cargo build --release --locked -p coz-loop
+
+coz-check:
+    cargo fmt -p coz-loop -- --check
+    cargo clippy --locked -p coz-loop --all-targets -- -D warnings
+
+coz-worker +args:
+    ./target/release/coz-loop {{args}}
+
+# Optional output is caller-selected; the test always executes the full matrix.
+coz-fixtures:
+    test -n "$ZENJPEG_DC_FIXTURE_DIR"
+    ZENJPEG_DC_BUILD_COMMIT="$(jj log -r @ --no-graph -T commit_id)" cargo test --locked -p zenjpeg --lib lossless::tests::dc_only_fixture_matrix -- --exact

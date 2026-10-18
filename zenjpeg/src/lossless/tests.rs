@@ -4064,3 +4064,148 @@ fn apply_exif_orientation_transposes_asymmetric_quant_tables_205() {
     let diff = max_abs_diff(&got, &expected);
     assert!(diff <= 2, "apply_exif_orientation: max pixel diff {diff}");
 }
+
+/// Build explicit DC-only fixtures through the existing coefficient emitters.
+/// Constant RGB alone does not guarantee AC-free partial-MCU chroma blocks.
+/// Every case still checks all encoded AC coefficients, dimensions and DCs.
+#[test]
+fn dc_only_fixture_matrix() {
+    use crate::decode::Decoder;
+    use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use crate::lossless::coeff_transform::TransformedCoefficients;
+    use crate::lossless::pipeline::{Carry, encode_from_coefficients};
+    use crate::lossless::restructure::encode_progressive_from_coefficients;
+    use enough::Unstoppable;
+    use std::io::Write;
+
+    let directory = std::env::var_os("ZENJPEG_DC_FIXTURE_DIR").map(std::path::PathBuf::from);
+    let mut manifest = directory.as_ref().map(|root| {
+        std::fs::create_dir(root).expect("fixture output directory must be new");
+        let revision = std::env::var("ZENJPEG_DC_BUILD_COMMIT").expect("fixture build identity");
+        assert!(revision.len() == 40 && revision.bytes().all(|b| b.is_ascii_hexdigit()));
+        let mut f = std::fs::File::create(root.join("MANIFEST.tsv")).unwrap();
+        writeln!(
+            f,
+            "# build_commit={revision}; explicit DC-only test fixtures, not quality data"
+        )
+        .unwrap();
+        writeln!(f, "file\twidth\theight\tq\tsubsampling\tprogressive\tbytes").unwrap();
+        f
+    });
+    for (width, height) in [(8, 8), (17, 33), (64, 64)] {
+        let pixels = [97, 143, 201].repeat(width as usize * height as usize);
+        for quality in (0..=100).step_by(5) {
+            for (name, sampling) in [
+                ("444", ChromaSubsampling::None),
+                ("422", ChromaSubsampling::HalfHorizontal),
+                ("420", ChromaSubsampling::Quarter),
+                ("440", ChromaSubsampling::HalfVertical),
+            ] {
+                let config = EncoderConfig::ycbcr(quality as f32, sampling);
+                let mut encoder = config
+                    .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                    .unwrap();
+                encoder.push_packed(&pixels, Unstoppable).unwrap();
+                let original = encoder.finish().unwrap();
+                let mut decoded = Decoder::new()
+                    .decode_coefficients(&original, Unstoppable)
+                    .unwrap();
+                for component in &mut decoded.components {
+                    let (blocks, tail) = component.coeffs.as_chunks_mut::<64>();
+                    assert!(tail.is_empty());
+                    for block in blocks {
+                        block[1..].fill(0);
+                    }
+                }
+                let transformed = TransformedCoefficients {
+                    width,
+                    height,
+                    components: decoded.components,
+                    quant_tables: decoded.quant_tables,
+                };
+                let geometry = crate::lossless::geometry::McuGeom::from_components(
+                    width,
+                    height,
+                    &transformed.components,
+                )
+                .unwrap();
+                for progressive in [false, true] {
+                    let bytes = if progressive {
+                        encode_progressive_from_coefficients(
+                            &transformed,
+                            None,
+                            &Carry::none(),
+                            0,
+                            &Unstoppable,
+                        )
+                    } else {
+                        encode_from_coefficients(
+                            &transformed,
+                            None,
+                            &Carry::none(),
+                            0,
+                            &Unstoppable,
+                        )
+                    }
+                    .unwrap();
+                    let result = Decoder::new()
+                        .decode_coefficients(&bytes, Unstoppable)
+                        .unwrap();
+                    assert_eq!((result.width, result.height), (width, height));
+                    assert_eq!(result.components.len(), transformed.components.len());
+                    for ((component, expected), grid) in result
+                        .components
+                        .iter()
+                        .zip(&transformed.components)
+                        .zip(&geometry.comps)
+                    {
+                        assert_eq!(
+                            (component.id, component.h_samp, component.v_samp),
+                            (expected.id, expected.h_samp, expected.v_samp)
+                        );
+                        assert_eq!(
+                            result.quant_tables[component.quant_table_idx as usize],
+                            transformed.quant_tables[expected.quant_table_idx as usize]
+                        );
+                        for by in 0..grid.true_bh {
+                            for bx in 0..grid.true_bw {
+                                assert_eq!(
+                                    component.block_at(bx, by)[0],
+                                    expected.block_at(bx, by)[0]
+                                );
+                            }
+                        }
+                        let (blocks, tail) = component.coeffs.as_chunks::<64>();
+                        assert!(tail.is_empty());
+                        assert!(!blocks.is_empty());
+                        for block in blocks {
+                            assert!(
+                                block[1..].iter().all(|&v| v == 0),
+                                "AC in {width}x{height} q{quality} {name} prog={progressive}"
+                            );
+                        }
+                    }
+                    if let Some(root) = &directory {
+                        let filename = std::format!(
+                            "dc-{width}x{height}-q{quality}-{name}-{}.jpg",
+                            if progressive { "prog" } else { "base" }
+                        );
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(root.join(&filename))
+                            .unwrap()
+                            .write_all(&bytes)
+                            .unwrap();
+                        writeln!(
+                            manifest.as_mut().unwrap(),
+                            "{filename}\t{width}\t{height}\t{quality}\t{name}\t{progressive}\t{}",
+                            bytes.len()
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+        }
+    }
+}
