@@ -32,6 +32,10 @@
 #[path = "support/jpeg_writer.rs"]
 mod jpeg_writer;
 
+#[path = "support/post_scan.rs"]
+mod post_scan;
+use post_scan::insert_before_second_sos;
+
 use enough::Unstoppable;
 use imgref::ImgRefMut;
 use jpeg_writer::{Comp, Segment, Spec, app14, dc_block, jfif, resignal};
@@ -2701,36 +2705,6 @@ fn app_positions_all(jpeg: &[u8]) -> Vec<(u8, Vec<u8>, u8)> {
     out
 }
 
-/// `jpeg` with `seg` inserted right before its second SOS (after the first
-/// scan's entropy-coded data).
-fn insert_before_second_sos(jpeg: &[u8], seg: &[u8]) -> Vec<u8> {
-    let mut sos_seen = 0;
-    let mut p = 2;
-    while p + 4 <= jpeg.len() {
-        if jpeg[p] == 0xFF && jpeg[p + 1] == 0xDA {
-            sos_seen += 1;
-            if sos_seen == 2 {
-                return [&jpeg[..p], seg, &jpeg[p..]].concat();
-            }
-            p += 2 + jpeg_writer::be16(jpeg, p + 2);
-            while p + 1 < jpeg.len()
-                && !(jpeg[p] == 0xFF
-                    && jpeg[p + 1] != 0x00
-                    && !(0xD0..=0xD7).contains(&jpeg[p + 1]))
-            {
-                p += 1;
-            }
-            continue;
-        }
-        if jpeg[p] == 0xFF && jpeg[p + 1] != 0xFF && jpeg[p + 1] != 0x00 {
-            p += 2 + jpeg_writer::be16(jpeg, p + 2);
-        } else {
-            p += 1;
-        }
-    }
-    panic!("no second SOS");
-}
-
 /// `jpeg` with one stray `0x00` byte right before its SOF (decoders skip it
 /// with a warning).
 fn stray_byte_before_sof(jpeg: &[u8]) -> Vec<u8> {
@@ -2803,6 +2777,19 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
             2,
         ),
         (
+            "progressive ids 1,2,3 + duplicate APP14 t0 between scans",
+            Box::new(|pre: &[Vec<u8>]| {
+                insert_before_second_sos(
+                    &resignal(&prog, [1, 2, 3], pre, &[]),
+                    &[app14(0), app14(0)].concat(),
+                )
+            }),
+            vec![],
+            [1, 2, 3],
+            ColorSpace::YCbCr,
+            2,
+        ),
+        (
             "progressive ids RGB + XYB ICC between scans",
             Box::new(|pre: &[Vec<u8>]| {
                 insert_before_second_sos(&resignal(&prog, *b"RGB", pre, &[]), &icc)
@@ -2823,6 +2810,24 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
             1,
         ),
     ];
+    let assert_retained = |source: &[u8], output: &[u8], label: &str| {
+        let source = app_positions_all(source);
+        let output = app_positions_all(output);
+        for (marker, payload, _) in &source {
+            let wanted = source
+                .iter()
+                .filter(|(m, p, _)| m == marker && p == payload)
+                .count();
+            let actual = output
+                .iter()
+                .filter(|(m, p, _)| m == marker && p == payload)
+                .count();
+            assert_eq!(
+                actual, wanted,
+                "{label}: FF{marker:02X} payload multiplicity"
+            );
+        }
+    };
     for (name, build, control_pre, ids, model, keep_at) in &fixtures {
         let base = if name.starts_with("progressive") {
             &prog
@@ -2857,7 +2862,7 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
                 matches!(
                     error.kind(),
                     zenjpeg::decoder::ErrorKind::UnsupportedFeature { feature }
-                        if feature.contains("single-scan output cannot preserve post-scan colour markers")
+                        if feature.contains("current single-scan writer cannot preserve post-scan colour markers")
                 ),
                 "{name}: {error}"
             );
@@ -2918,14 +2923,7 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
                     f.check(info.color_space == *model, || {
                         format!("{name} recompress preserve: model {:?}", info.color_space)
                     });
-                    for (m, payload, _) in app_positions_all(&jpeg) {
-                        assert!(
-                            app_positions_all(&bytes)
-                                .iter()
-                                .any(|(om, op, _)| *om == m && *op == payload),
-                            "{name} recompress preserve: lost FF{m:02X} segment"
-                        );
-                    }
+                    assert_retained(&jpeg, &bytes, &format!("{name} recompress preserve"));
                     for (m, p, at) in app_positions_all(&bytes) {
                         f.check(!is_colour(m, &p) || at >= *keep_at, || {
                             format!("{name} recompress preserve: colour FF{m:02X} moved to {at}")
@@ -2944,14 +2942,7 @@ fn rewrites_keep_post_scan_and_stray_colour_markers_inert() {
         }
         for (op, out, control_out) in outputs {
             let label = format!("{name} {op}");
-            for (m, payload, _) in app_positions_all(&jpeg) {
-                assert!(
-                    app_positions_all(&out)
-                        .iter()
-                        .any(|(om, op, _)| *om == m && *op == payload),
-                    "{label}: lost FF{m:02X} segment"
-                );
-            }
+            assert_retained(&jpeg, &out, &label);
             let info = Decoder::new().read_info(&out).expect("info");
             f.check(info.color_space == *model, || {
                 format!("{label}: model {:?}, source {model:?}", info.color_space)

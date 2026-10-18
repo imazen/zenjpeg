@@ -77,10 +77,11 @@ impl<'a> Placed<'a> {
         self.at(Position::BeforeSof)
     }
 
-    /// A single-scan output cannot retain these segments in an inert position.
+    /// The current single-scan writer has no slot to retain these segments
+    /// after the first scan without activating them.
     /// Preservation writers must reject that output structure or choose a
     /// multi-scan structure, rather than silently filtering the segments out.
-    pub(crate) fn requires_multiple_scans(self) -> bool {
+    pub(crate) fn needs_post_scan_slot(self) -> bool {
         self.at(Position::AfterFirstScan).any(is_colour_signal)
     }
 
@@ -90,8 +91,8 @@ impl<'a> Placed<'a> {
     /// source's after-first-SOS segments, so they follow here too, minus the
     /// colour signals ([`is_colour_signal`]): those had no effect on the
     /// source's decode, and a decoder that decides the colour model at the
-    /// first SOS (libjpeg-turbo) would act on them here. T.81 allows no
-    /// segment after the last scan, so this is the only place left for the
+    /// first SOS (libjpeg-turbo) would act on them here. The current single-scan
+    /// emitter has no post-scan metadata slot, so it uses this position for
     /// other metadata (EXIF, XMP, COM, ...), which decoders do not use to
     /// interpret pixels.
     pub(crate) fn after_sof(self, single_scan: bool) -> impl Iterator<Item = &'a PreservedSegment> {

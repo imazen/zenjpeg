@@ -701,9 +701,9 @@ pub(super) fn write_after_sof_segments(
     carry: &Carry<'_>,
 ) -> Result<()> {
     if let Some(segments) = preserved {
-        if single_scan && segments.requires_multiple_scans() {
+        if single_scan && segments.needs_post_scan_slot() {
             return Err(Error::unsupported_feature(
-                "single-scan output cannot preserve post-scan colour markers without changing interpretation; use progressive output",
+                "current single-scan writer cannot preserve post-scan colour markers without changing interpretation; use progressive output",
             ));
         }
         for seg in segments.after_sof(single_scan) {

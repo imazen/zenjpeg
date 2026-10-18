@@ -35,7 +35,7 @@
 //! What cannot be carried is an error, never silently dropped or left
 //! untransformed beside a transformed primary:
 //! [`ErrorKind::UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature)
-//! when a single-scan output would have to drop or activate a JFIF, Adobe,
+//! when the current single-scan writer would have to drop or activate a JFIF, Adobe,
 //! or ICC segment found after the source's first scan (use progressive
 //! [`lossless::restructure`](fn@crate::lossless::restructure) to retain it),
 //! for a secondary that must be transformed and holds secondary images of

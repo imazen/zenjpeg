@@ -703,8 +703,8 @@ sensitivity tables, and preset baselines.
 ## Known Bugs
 
 - PR237 review: single-scan preservation filtered out inert post-scan
-  JFIF/Adobe/ICC segments. The prepared fix refuses impossible lossless
-  conversions and lets recompress Preserve select progressive output.
+  JFIF/Adobe/ICC segments. The prepared fix refuses unsupported single-scan
+  preservation and lets recompress Preserve select progressive output.
   `rewrites_keep_post_scan_and_stray_colour_markers_inert` now requires
   marker retention as well as exact pixels, with an XYB ICC case. Runtime
   validation is pending the coordinator's heavy-slot grant.

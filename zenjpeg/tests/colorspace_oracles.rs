@@ -41,6 +41,10 @@
 #[path = "support/jpeg_writer.rs"]
 mod jpeg_writer;
 
+#[path = "support/post_scan.rs"]
+mod post_scan;
+use post_scan::insert_before_second_sos;
+
 use enough::Unstoppable;
 use jpeg_writer::{Comp, Segment, Spec, app14, dc_block, jfif, resignal};
 use std::path::{Path, PathBuf};
@@ -675,4 +679,92 @@ fn oracles_agree_on_colour_model_and_rgb_pixels() {
         failures.len(),
         failures.join("\n  ")
     );
+}
+
+/// The retained marker must remain inert for an independent reader too.
+/// This focused gate reuses the installed djpeg runner; unlike the broader
+/// interpretation matrix it needs neither Pillow nor a particular IJG version.
+#[test]
+fn retained_post_scan_markers_match_independent_decoder_pixels() {
+    use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
+    use zenjpeg::lossless::{OutputMode, RestructureConfig, restructure};
+
+    require("djpeg");
+    let run = tmp_dir().join(format!(
+        "retained_markers_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    std::fs::create_dir_all(&run).unwrap();
+    let base = progressive_rgb_fixture(97, 81).jpeg;
+    let xyb = EncoderConfig::xyb(88, XybSubsampling::Full)
+        .encode_bytes(
+            &[40, 90, 150].repeat(97 * 81),
+            97,
+            81,
+            PixelLayout::Rgb8Srgb,
+        )
+        .unwrap();
+    let icc = jpeg_writer::segments(&xyb)
+        .into_iter()
+        .find(|&(_, marker, _)| marker == 0xE2)
+        .expect("XYB ICC segment");
+    for (name, marker) in [
+        ("jfif", jfif()),
+        ("adobe", app14(1)),
+        ("icc", xyb[icc.0..icc.0 + icc.2].to_vec()),
+    ] {
+        let source = insert_before_second_sos(&base, &marker);
+        let output = restructure(
+            &source,
+            &RestructureConfig {
+                output_mode: OutputMode::Progressive,
+                ..Default::default()
+            },
+            Unstoppable,
+        )
+        .unwrap();
+        for (label, jpeg) in [("source", &source), ("output", &output)] {
+            let first_sos = jpeg_writer::segments(jpeg)
+                .into_iter()
+                .find(|&(_, byte, _)| byte == 0xDA)
+                .expect("first SOS")
+                .0;
+            let positions: Vec<_> = jpeg
+                .windows(marker.len())
+                .enumerate()
+                .filter_map(|(at, bytes)| (bytes == marker).then_some(at))
+                .collect();
+            assert_eq!(positions.len(), 1, "{name} {label}: exact retained payload");
+            assert!(
+                positions[0] > first_sos,
+                "{name} {label}: marker activated before first scan"
+            );
+        }
+        let source_path = run.join(format!("{name}-source.jpg"));
+        let output_path = run.join(format!("{name}-output.jpg"));
+        std::fs::write(&source_path, &source).unwrap();
+        std::fs::write(&output_path, &output).unwrap();
+        assert_eq!(
+            djpeg_nosmooth(&source_path),
+            djpeg_nosmooth(&output_path),
+            "{name}: independent decoder changed pixels after preservation"
+        );
+        assert_eq!(
+            zen(&source, ChromaUpsampling::NearestNeighbor),
+            zen(&output, ChromaUpsampling::NearestNeighbor)
+        );
+        if let Some(bin) = std::env::var_os("ZENJPEG_DJPEGLI") {
+            let bin = PathBuf::from(bin);
+            assert!(bin.is_file(), "requested djpegli oracle is missing");
+            assert_eq!(
+                djpegli(&bin, &source_path),
+                djpegli(&bin, &output_path),
+                "{name}: jpegli changed pixels after preservation"
+            );
+        }
+    }
 }

@@ -934,7 +934,7 @@ fn unsupported_feature_is_request_origin(feature: &str) -> bool {
         "decode_rows_f32() only supports",
         "ultrahdr reader only supports baseline JPEG",
         "ultrahdr reader requires",
-        "single-scan output cannot preserve post-scan colour markers",
+        "current single-scan writer cannot preserve post-scan colour markers",
     ];
     REQUEST_ORIGIN_MARKERS.iter().any(|m| feature.contains(m))
 }

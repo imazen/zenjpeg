@@ -102,7 +102,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 ### Fixed
 
 - Preservation of post-scan JFIF, Adobe and ICC markers: single-scan lossless
-  rewrites refuse a conversion that cannot keep both metadata and its inert
+  writers refuse a conversion they cannot retain with both metadata and its inert
   interpretation. Progressive rewrites retain the segments; recompress
   Preserve chooses progressive output when necessary. Identity orientation
   retains its byte-preserving fast path.

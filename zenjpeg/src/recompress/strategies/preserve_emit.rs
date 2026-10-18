@@ -308,7 +308,7 @@ pub(in crate::recompress) fn emit_preserved_placed(
 
     // Preserve is metadata-transparent. Between-scan colour signals must
     // remain after the first scan even when sequential output would be smaller.
-    if placed.requires_multiple_scans() {
+    if placed.needs_post_scan_slot() {
         return emit_progressive_trial(coeffs, edited_components, new_quant_tables, placed).ok_or(
             Error::Unsupported(
                 "cannot preserve post-scan colour markers in the requested scan structure",
@@ -348,9 +348,9 @@ fn emit_sequential(
     new_quant_tables: &[Option<[u16; 64]>],
     preserved_segments: crate::lossless::placement::Placed<'_>,
 ) -> Result<Vec<u8>, Error> {
-    if preserved_segments.requires_multiple_scans() {
+    if preserved_segments.needs_post_scan_slot() {
         return Err(Error::Unsupported(
-            "single-scan output cannot preserve post-scan colour markers without changing interpretation",
+            "current single-scan writer cannot preserve post-scan colour markers without changing interpretation",
         ));
     }
     let is_color = coeffs.components.len() >= 3;
