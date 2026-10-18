@@ -180,7 +180,10 @@ impl<'a> JpegParser<'a> {
         {
             use rayon::prelude::*;
             let batch = plan.mcu_rows.div_ceil(rayon::current_num_threads());
-            let batch_bytes = batch * plan.mcu_height * plan.width * plan.bytes_per_pixel();
+            let batch_bytes = batch
+                .saturating_mul(plan.mcu_height)
+                .saturating_mul(plan.width)
+                .saturating_mul(plan.bytes_per_pixel());
             return out
                 .par_chunks_mut(batch_bytes)
                 .enumerate()

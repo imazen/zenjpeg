@@ -1106,6 +1106,11 @@ impl DecodeConfig {
     ) -> Result<alloc::vec::Vec<u8>> {
         parser.chroma_upsampling = self.chroma_upsampling;
         parser.apply_idct_method(self.effective_idct_method());
+        parser.num_threads = self.num_threads;
+        #[cfg(feature = "parallel")]
+        {
+            parser.parallel_strategy = self.parallel_strategy;
+        }
         parser.decode(&Unstoppable)?;
 
         let output_format = if route.is_grayscale {
@@ -1133,6 +1138,11 @@ impl DecodeConfig {
     ) -> Result<DecodedCoefficients> {
         parser.chroma_upsampling = self.chroma_upsampling;
         parser.apply_idct_method(self.effective_idct_method());
+        parser.num_threads = self.num_threads;
+        #[cfg(feature = "parallel")]
+        {
+            parser.parallel_strategy = self.parallel_strategy;
+        }
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&Unstoppable)?;
         parser.extract_coefficients()

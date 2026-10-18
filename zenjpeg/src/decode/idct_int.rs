@@ -3423,6 +3423,23 @@ mod tests {
             blocks.push((b, 64));
         }
         let stride = 8;
+        for (block, count) in &blocks {
+            // In-domain blocks (`|coeff| <= 3_000`) never saturate internal
+            // 16-bit stages, so the tiered unclamped libjpeg IDCT must match
+            // the scalar 64-bit reference bit for bit.
+            if block.iter().all(|&v| v.abs() <= 3_000) {
+                let mut c_tiered = *block;
+                let mut c_scalar = *block;
+                let mut out_tiered = vec![0i16; stride * 8];
+                let mut out_scalar = vec![0i16; stride * 8];
+                idct_int_tiered_libjpeg_unclamped(&mut c_tiered, &mut out_tiered, stride, *count);
+                idct_int_libjpeg_unclamped(&mut c_scalar, &mut out_scalar, stride);
+                assert_eq!(
+                    out_tiered, out_scalar,
+                    "tiered unclamped libjpeg IDCT disagrees with scalar reference on in-domain block (count={count})"
+                );
+            }
+        }
         let run = || -> Vec<i16> {
             let mut all = Vec::new();
             for (block, count) in &blocks {

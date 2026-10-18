@@ -4210,3 +4210,81 @@ fn scanline_boundary4tap_filters_all_mcu_rows_and_progressive() {
     }
     f.finish("scanline Boundary4Tap filters all MCU rows and progressive");
 }
+
+/// Review round 3, S7: `IdctMethod::Jpegli` must agree across `decode`,
+/// `decode_into`, and `scanline_reader` (borrowed and owned, sequential and
+/// parallel) on RGB and YCbCr frames across 4:4:4, 4:2:0, and 4:2:2.
+#[test]
+fn rgb_and_ycbcr_entry_points_agree_under_jpegli_idct() {
+    use zenjpeg::decode::IdctMethod;
+
+    let mut f = Failures::default();
+    for layout in [LAYOUTS[0], LAYOUTS[1], LAYOUTS[2]] {
+        for signal in [Signal::YCbCr, Signal::Rgb] {
+            let jpeg = frame(layout, signal, true, &with_ac);
+            let (w, h) = layout.size;
+            let npixels = (w * h) as usize;
+            for ups in UPS {
+                let dec = |threads: usize| {
+                    decoder(ups, threads).idct_method(IdctMethod::Jpegli)
+                };
+                let ref_rgb = dec(1)
+                    .decode(&jpeg, Unstoppable)
+                    .expect("decode t1")
+                    .into_pixels_u8()
+                    .expect("u8");
+
+                for threads in [1usize, 0] {
+                    let label = format!("{} {signal:?} {ups:?} t{threads}", layout.name);
+                    let got_dec = dec(threads)
+                        .decode(&jpeg, Unstoppable)
+                        .expect("decode")
+                        .into_pixels_u8()
+                        .expect("u8");
+                    let (max_d, first_d) = diff(&ref_rgb, &got_dec);
+                    f.check(max_d == 0, || {
+                        format!("{label}: decode differs from t1 by {max_d} at {first_d:?}")
+                    });
+
+                    let mut got_into = vec![0u8; npixels * 3];
+                    dec(threads)
+                        .decode_into(&jpeg, PixelFormat::Rgb, &mut got_into, Unstoppable)
+                        .expect("decode_into");
+                    let (max_i, first_i) = diff(&ref_rgb, &got_into);
+                    f.check(max_i == 0, || {
+                        format!("{label}: decode_into differs from t1 by {max_i} at {first_i:?}")
+                    });
+
+                    for owned in [false, true] {
+                        let dec = dec(threads);
+                        let mut r = if owned {
+                            dec.scanline_reader_cow(Cow::Owned(jpeg.clone()))
+                        } else {
+                            dec.scanline_reader(&jpeg)
+                        }
+                        .expect("scanline_reader");
+                        let stride = w as usize * 3;
+                        let mut got_sl = vec![0u8; npixels * 3];
+                        let mut row = 0;
+                        while row < h as usize {
+                            let n = 7.min(h as usize - row);
+                            let img = ImgRefMut::new(
+                                &mut got_sl[row * stride..(row + n) * stride],
+                                stride,
+                                n,
+                            );
+                            row += r.read_rows_rgb8(img).expect("read_rows_rgb8");
+                        }
+                        let (max_s, first_s) = diff(&ref_rgb, &got_sl);
+                        f.check(max_s == 0, || {
+                            format!(
+                                "{label} owned={owned}: scanline differs from t1 by {max_s} at {first_s:?}"
+                            )
+                        });
+                    }
+                }
+            }
+        }
+    }
+    f.finish("Jpegli IDCT entry-point parity");
+}

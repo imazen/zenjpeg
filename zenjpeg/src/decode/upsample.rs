@@ -154,18 +154,6 @@ impl H2v2Bias {
             _ => (8, 7),
         }
     }
-
-    /// Bias of the second output when the chroma plane is a single column.
-    /// Alternating keeps zenjpeg's legacy duplicated first output (bias 8);
-    /// turbo emits the `(4c + 7) >> 4` right-output form its padded
-    /// buffers produce.
-    #[inline(always)]
-    fn single_col_second(self) -> i32 {
-        match self {
-            H2v2Bias::Turbo => 7,
-            H2v2Bias::Alternating { .. } => 8,
-        }
-    }
 }
 
 /// Horizontal 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:2:2 → 4:4:4).
@@ -635,22 +623,22 @@ fn upsample_h2v2_libjpeg_row_generic(
 ) {
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
+    let (bias_left, bias_right) = bias.pair();
     if in_width == 1 {
         let colsum = near[0] as i32 * 3 + far[0] as i32;
         if out_width > 0 {
-            output[0] = ((colsum * 4 + 8) >> 4) as i16;
+            output[0] = ((colsum * 4 + bias_left) >> 4) as i16;
         }
         if out_width > 1 {
-            output[1] = ((colsum * 4 + bias.single_col_second()) >> 4) as i16;
+            output[1] = ((colsum * 4 + bias_right) >> 4) as i16;
         }
         return;
     }
-    let (bias_left, bias_right) = bias.pair();
 
     // First column.
     let cs0 = near[0] as i32 * 3 + far[0] as i32;
     let cs1 = near[1] as i32 * 3 + far[1] as i32;
-    output[0] = ((cs0 * 4 + 8) >> 4) as i16;
+    output[0] = ((cs0 * 4 + bias_left) >> 4) as i16;
     if out_width > 1 {
         output[1] = ((cs0 * 3 + cs1 + bias_right) >> 4) as i16;
     }
@@ -739,18 +727,6 @@ pub fn upsample_h2v2_libjpeg_row_scalar(
     out_width: usize,
     bias: H2v2Bias,
 ) {
-    if in_width == 1 {
-        // Single column: just vertical filter
-        let colsum = near[0] as i32 * 3 + far[0] as i32;
-        if out_width > 0 {
-            output[0] = ((colsum * 4 + 8) >> 4) as i16;
-        }
-        if out_width > 1 {
-            output[1] = ((colsum * 4 + bias.single_col_second()) >> 4) as i16;
-        }
-        return;
-    }
-
     // Rounding biases: libjpeg-turbo's h2v2 uses FIXED (left 8, right 7)
     // for both rows of a pair; the default Triangle mode alternates to
     // (7, 8) on lower rows (like turbo's own h1v2 +1/+2 scheme), which
@@ -761,12 +737,24 @@ pub fn upsample_h2v2_libjpeg_row_scalar(
     // h2v2_triangle_vs_libjpeg_turbo_reference.
     let (bias_left, bias_right) = bias.pair();
 
+    if in_width == 1 {
+        // Single column: just vertical filter
+        let colsum = near[0] as i32 * 3 + far[0] as i32;
+        if out_width > 0 {
+            output[0] = ((colsum * 4 + bias_left) >> 4) as i16;
+        }
+        if out_width > 1 {
+            output[1] = ((colsum * 4 + bias_right) >> 4) as i16;
+        }
+        return;
+    }
+
     // Column sums: near * 3 + far
     let this_colsum = near[0] as i32 * 3 + far[0] as i32;
     let next_colsum = near[1] as i32 * 3 + far[1] as i32;
 
     // First column
-    output[0] = ((this_colsum * 4 + 8) >> 4) as i16;
+    output[0] = ((this_colsum * 4 + bias_left) >> 4) as i16;
     if out_width > 1 {
         output[1] = ((this_colsum * 3 + next_colsum + bias_right) >> 4) as i16;
     }
@@ -837,7 +825,7 @@ fn upsample_h2v2_libjpeg_row_avx2(
     // --- First column (scalar, special edge handling) ---
     let colsum_0 = near[0] as i32 * 3 + far[0] as i32;
     let colsum_1 = near[1] as i32 * 3 + far[1] as i32;
-    output[0] = ((colsum_0 * 4 + 8) >> 4) as i16;
+    output[0] = ((colsum_0 * 4 + bias_left as i32) >> 4) as i16;
     if out_width > 1 {
         output[1] = ((colsum_0 * 3 + colsum_1 + bias_right as i32) >> 4) as i16;
     }

@@ -1026,8 +1026,10 @@ pub struct DecodeConfig {
     pub(crate) parallel_strategy: ParallelStrategy,
     /// Integer IDCT algorithm override.
     ///
-    /// When `None` (default), `IdctMethod::Jpegli` is used for all upsampling
-    /// modes. Set to `IdctMethod::Libjpeg` for pixel-exact mozjpeg matching.
+    /// When `None` (default), `IdctMethod::Libjpeg` is used for colour frames
+    /// and 1-component grayscale frames (which always use `Libjpeg` at the
+    /// parser level, `#154`). Set to `IdctMethod::Jpegli` for the 12-bit
+    /// fixed-point IDCT on colour frames.
     pub(crate) idct_method: Option<IdctMethod>,
     /// Post-decode deblocking mode.
     ///
