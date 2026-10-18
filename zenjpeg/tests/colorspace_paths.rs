@@ -3783,3 +3783,118 @@ fn missing_quant_table_returns_error_on_every_path() {
     }
     f.finish("missing quant table");
 }
+
+/// Review round 3, S4: DC-only blocks (`coeff_count <= 1`) whose dequantized DC
+/// exceeds the 16-bit shift domain (`|DC * quant[0]| > 8191`) wrap in
+/// `idct_int_dc_only_w16` (matching libjpeg-turbo's AVX2 NASM `jidctint`) and
+/// saturate in `idct_int_dc_only`. `StripProcessor::idct_block` and the 7 DC
+/// fast-path sites in `fused_parallel.rs` previously called `idct_int_dc_only`
+/// directly, disagreeing with `baseline_streaming`, `scan`, and `fast_integer`
+/// by up to 255 levels on x86-64-v3 under `IdctMethod::Libjpeg`.
+#[test]
+fn extreme_dc_only_blocks_agree_across_paths() {
+    use zenjpeg::decode::IdctMethod;
+
+    let mut f = Failures::default();
+    let extreme_dc = |c: usize, bx: usize, by: usize| -> [i16; 64] {
+        let mut b = [0i16; 64];
+        // With quant = 64, |200 * 64| = 12800 > 8191: wraps in w16 (`<< 2` in i16
+        // overflows to -14336 -> 0), saturates in i32 (-> 255).
+        b[0] = if (c + bx + by) % 2 == 0 { 200 } else { -200 };
+        b
+    };
+
+    for layout in [LAYOUTS[0], LAYOUTS[1], LAYOUTS[2]] {
+        let mut spec = Spec {
+            width: layout.size.0,
+            height: layout.size.1,
+            comps: (0..3)
+                .map(|i| Comp {
+                    id: (i + 1) as u8,
+                    h: layout.samp[i].0,
+                    v: layout.samp[i].1,
+                })
+                .collect(),
+            block: &extreme_dc,
+            restart_interval: 0,
+            quant: 64,
+            segments: vec![Segment::PreFrame(jfif())],
+        };
+        spec.restart_interval = spec.mcu_cols() as u16;
+        let jpeg = jpeg_writer::write(&spec);
+
+        for method in [IdctMethod::Libjpeg, IdctMethod::Jpegli] {
+            for ups in UPS {
+                let dec_with = |threads: usize| {
+                    Decoder::new()
+                        .idct_method(method)
+                        .chroma_upsampling(ups)
+                        .num_threads(threads)
+                };
+                let ref_px = dec_with(1)
+                    .decode(&jpeg, Unstoppable)
+                    .expect("decode t1")
+                    .into_pixels_u8()
+                    .expect("u8");
+
+                let par_px = dec_with(0)
+                    .decode(&jpeg, Unstoppable)
+                    .expect("decode t0")
+                    .into_pixels_u8()
+                    .expect("u8");
+                let (max_par, first_par) = diff(&ref_px, &par_px);
+                f.check(max_par == 0, || {
+                    format!(
+                        "{} {method:?} {ups:?}: decode(t0) vs decode(t1) max diff {max_par} at {first_par:?}",
+                        layout.name
+                    )
+                });
+
+                for threads in [1usize, 0] {
+                    let mut into_px = vec![0u8; ref_px.len()];
+                    dec_with(threads)
+                        .decode_into(&jpeg, PixelFormat::Rgb, &mut into_px, Unstoppable)
+                        .expect("decode_into");
+                    let (max_into, first_into) = diff(&ref_px, &into_px);
+                    f.check(max_into == 0, || {
+                        format!(
+                            "{} {method:?} {ups:?} t{threads}: decode_into vs decode(t1) max diff {max_into} at {first_into:?}",
+                            layout.name
+                        )
+                    });
+
+                    for owned in [false, true] {
+                        let dec = dec_with(threads);
+                        let mut r = if owned {
+                            dec.scanline_reader_cow(Cow::Owned(jpeg.clone()))
+                        } else {
+                            dec.scanline_reader(&jpeg)
+                        }
+                        .expect("scanline_reader");
+                        let (w, h) = (r.width() as usize, r.height() as usize);
+                        let stride = w * 3;
+                        let mut sl_px = vec![0u8; stride * h];
+                        let mut row = 0;
+                        while row < h {
+                            let n = 7.min(h - row);
+                            let img = ImgRefMut::new(
+                                &mut sl_px[row * stride..(row + n) * stride],
+                                stride,
+                                n,
+                            );
+                            row += r.read_rows_rgb8(img).expect("read_rows_rgb8");
+                        }
+                        let (max_sl, first_sl) = diff(&ref_px, &sl_px);
+                        f.check(max_sl == 0, || {
+                            format!(
+                                "{} {method:?} {ups:?} t{threads} owned={owned}: scanline vs decode(t1) max diff {max_sl} at {first_sl:?}",
+                                layout.name
+                            )
+                        });
+                    }
+                }
+            }
+        }
+    }
+    f.finish("extreme DC-only blocks agree across paths");
+}

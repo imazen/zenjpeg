@@ -9,8 +9,8 @@
 
 use super::config::{ChromaUpsampling, IdctMethod, OutputTarget};
 use super::idct_int::{
-    idct_int_dc_only, idct_int_dc_only_unclamped, idct_int_tiered, idct_int_tiered_libjpeg,
-    idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
+    idct_int_tiered, idct_int_tiered_libjpeg, idct_int_tiered_libjpeg_unclamped,
+    idct_int_tiered_unclamped,
 };
 use super::upsample::{
     H2v2Bias, upsample_h1v2_i16_libjpeg_strided, upsample_h1v2_i16_nearest_strided,
@@ -407,32 +407,27 @@ impl StripProcessor {
         let method = self.idct_method;
 
         if coeff_count <= 1 {
-            let dc = coeffs[0] as i32 * quant[0] as i32;
-            if unclamped {
-                idct_int_dc_only_unclamped(dc, strip, stride);
-            } else {
-                idct_int_dc_only(dc, strip, stride);
-            }
+            self.dequant_buf[0] = coeffs[0] as i32 * quant[0] as i32;
         } else {
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
-            match (unclamped, method) {
-                (false, IdctMethod::Libjpeg) => {
-                    idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
-                }
-                (false, IdctMethod::Jpegli) => {
-                    idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
-                }
-                (true, IdctMethod::Libjpeg) => {
-                    idct_int_tiered_libjpeg_unclamped(
-                        &mut self.dequant_buf,
-                        strip,
-                        stride,
-                        coeff_count,
-                    );
-                }
-                (true, IdctMethod::Jpegli) => {
-                    idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
-                }
+        }
+        match (unclamped, method) {
+            (false, IdctMethod::Libjpeg) => {
+                idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
+            }
+            (false, IdctMethod::Jpegli) => {
+                idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+            }
+            (true, IdctMethod::Libjpeg) => {
+                idct_int_tiered_libjpeg_unclamped(
+                    &mut self.dequant_buf,
+                    strip,
+                    stride,
+                    coeff_count,
+                );
+            }
+            (true, IdctMethod::Jpegli) => {
+                idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
             }
         }
     }

@@ -28,7 +28,7 @@ use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 
-use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
+use super::idct_int::{idct_int_tiered, idct_int_tiered_libjpeg};
 use super::rst_scan::compute_segments;
 /// Max chroma strip width for stack-allocated scratch in triangle upsampling.
 /// Covers images up to 8192px wide (chroma width 4096 at 4:2:0).
@@ -723,9 +723,9 @@ impl<'a> JpegParser<'a> {
                                 _ => &mut cr_strip,
                             };
 
-                            if count == 1 {
-                                let dc = coeffs_buf[0] as i32 * quant_tables[*comp_idx][0] as i32;
-                                idct_int_dc_only(dc, &mut strip[base_px..], strip_width);
+                            if count <= 1 {
+                                dequant_buf[0] =
+                                    coeffs_buf[0] as i32 * quant_tables[*comp_idx][0] as i32;
                             } else {
                                 dequantize_unzigzag_i32_into_partial(
                                     &coeffs_buf,
@@ -733,13 +733,13 @@ impl<'a> JpegParser<'a> {
                                     &mut dequant_buf,
                                     count,
                                 );
-                                idct_fn(
-                                    &mut dequant_buf,
-                                    &mut strip[base_px..],
-                                    strip_width,
-                                    count,
-                                );
                             }
+                            idct_fn(
+                                &mut dequant_buf,
+                                &mut strip[base_px..],
+                                strip_width,
+                                count,
+                            );
                         }
                     }
 
@@ -1051,10 +1051,9 @@ impl<'a> JpegParser<'a> {
                                     let block_py = v * 8;
                                     let strip_off = block_py * strip_stride + block_px;
 
-                                    if count == 1 {
-                                        let dc = coeffs_buf[0] as i32
+                                    if count <= 1 {
+                                        dequant_buf[0] = coeffs_buf[0] as i32
                                             * quant_tables[*comp_idx][0] as i32;
-                                        idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
                                     } else {
                                         dequantize_unzigzag_i32_into_partial(
                                             &coeffs_buf,
@@ -1062,13 +1061,13 @@ impl<'a> JpegParser<'a> {
                                             &mut dequant_buf,
                                             count,
                                         );
-                                        idct_fn(
-                                            &mut dequant_buf,
-                                            &mut strip[strip_off..],
-                                            strip_stride,
-                                            count,
-                                        );
                                     }
+                                    idct_fn(
+                                        &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                        count,
+                                    );
                                 }
                             }
                         }
@@ -1460,10 +1459,9 @@ impl<'a> JpegParser<'a> {
                                     let block_py = v * 8;
                                     let strip_off = block_py * strip_stride + block_px;
 
-                                    if count == 1 {
-                                        let dc = coeffs_buf[0] as i32
+                                    if count <= 1 {
+                                        dequant_buf[0] = coeffs_buf[0] as i32
                                             * quant_tables[*comp_idx][0] as i32;
-                                        idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
                                     } else {
                                         dequantize_unzigzag_i32_into_partial(
                                             &coeffs_buf,
@@ -1471,13 +1469,13 @@ impl<'a> JpegParser<'a> {
                                             &mut dequant_buf,
                                             count,
                                         );
-                                        idct_fn(
-                                            &mut dequant_buf,
-                                            &mut strip[strip_off..],
-                                            strip_stride,
-                                            count,
-                                        );
                                     }
+                                    idct_fn(
+                                        &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                        count,
+                                    );
                                 }
                             }
                         }
@@ -1954,14 +1952,9 @@ impl<'a> JpegParser<'a> {
                                             let block_py = v * 8;
                                             let strip_off = block_py * y_strip_width + block_px;
 
-                                            if count == 1 {
-                                                let dc = coeffs_buf[0] as i32
+                                            if count <= 1 {
+                                                dequant_buf[0] = coeffs_buf[0] as i32
                                                     * quant_tables[*comp_idx][0] as i32;
-                                                idct_int_dc_only(
-                                                    dc,
-                                                    &mut y_strip_b[strip_off..],
-                                                    y_strip_width,
-                                                );
                                             } else {
                                                 dequantize_unzigzag_i32_into_partial(
                                                     &coeffs_buf,
@@ -1969,13 +1962,13 @@ impl<'a> JpegParser<'a> {
                                                     &mut dequant_buf,
                                                     count,
                                                 );
-                                                idct_fn(
-                                                    &mut dequant_buf,
-                                                    &mut y_strip_b[strip_off..],
-                                                    y_strip_width,
-                                                    count,
-                                                );
                                             }
+                                            idct_fn(
+                                                &mut dequant_buf,
+                                                &mut y_strip_b[strip_off..],
+                                                y_strip_width,
+                                                count,
+                                            );
                                         } else {
                                             // Chroma block → ext_cb_b or ext_cr_b data region
                                             // Data region starts at row 1 (row 0 is above context)
@@ -1990,14 +1983,9 @@ impl<'a> JpegParser<'a> {
                                             let strip_off =
                                                 data_offset + block_py * c_strip_width + block_px;
 
-                                            if count == 1 {
-                                                let dc = coeffs_buf[0] as i32
+                                            if count <= 1 {
+                                                dequant_buf[0] = coeffs_buf[0] as i32
                                                     * quant_tables[*comp_idx][0] as i32;
-                                                idct_int_dc_only(
-                                                    dc,
-                                                    &mut ext[strip_off..],
-                                                    c_strip_width,
-                                                );
                                             } else {
                                                 dequantize_unzigzag_i32_into_partial(
                                                     &coeffs_buf,
@@ -2005,13 +1993,13 @@ impl<'a> JpegParser<'a> {
                                                     &mut dequant_buf,
                                                     count,
                                                 );
-                                                idct_fn(
-                                                    &mut dequant_buf,
-                                                    &mut ext[strip_off..],
-                                                    c_strip_width,
-                                                    count,
-                                                );
                                             }
+                                            idct_fn(
+                                                &mut dequant_buf,
+                                                &mut ext[strip_off..],
+                                                c_strip_width,
+                                                count,
+                                            );
                                         }
                                     }
                                 }
@@ -2679,10 +2667,9 @@ impl WaveParallelState {
                                 let block_py = v * 8;
                                 let strip_off = block_py * strip_stride + block_px;
 
-                                if count == 1 {
-                                    let dc = coeffs_buf[0] as i32
+                                if count <= 1 {
+                                    dequant_buf[0] = coeffs_buf[0] as i32
                                         * self.quant_tables[*comp_idx][0] as i32;
-                                    idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
                                 } else {
                                     dequantize_unzigzag_i32_into_partial(
                                         &coeffs_buf,
@@ -2690,13 +2677,13 @@ impl WaveParallelState {
                                         &mut dequant_buf,
                                         count,
                                     );
-                                    idct_fn(
-                                        &mut dequant_buf,
-                                        &mut strip[strip_off..],
-                                        strip_stride,
-                                        count,
-                                    );
                                 }
+                                idct_fn(
+                                    &mut dequant_buf,
+                                    &mut strip[strip_off..],
+                                    strip_stride,
+                                    count,
+                                );
                             }
                         }
                     }
@@ -3008,10 +2995,9 @@ impl WaveParallelState {
                                 let block_py = v * 8;
                                 let strip_off = block_py * strip_stride + block_px;
 
-                                if count == 1 {
-                                    let dc = coeffs_buf[0] as i32
+                                if count <= 1 {
+                                    dequant_buf[0] = coeffs_buf[0] as i32
                                         * self.quant_tables[*comp_idx][0] as i32;
-                                    idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
                                 } else {
                                     dequantize_unzigzag_i32_into_partial(
                                         &coeffs_buf,
@@ -3019,13 +3005,13 @@ impl WaveParallelState {
                                         &mut dequant_buf,
                                         count,
                                     );
-                                    idct_fn(
-                                        &mut dequant_buf,
-                                        &mut strip[strip_off..],
-                                        strip_stride,
-                                        count,
-                                    );
                                 }
+                                idct_fn(
+                                    &mut dequant_buf,
+                                    &mut strip[strip_off..],
+                                    strip_stride,
+                                    count,
+                                );
                             }
                         }
                     }
