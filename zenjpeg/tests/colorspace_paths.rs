@@ -4039,3 +4039,73 @@ fn scanline_argument_and_crop_errors_use_typed_error_kinds() {
         }
     );
 }
+
+/// Known Bug 5: `ScanlineReader` with `DeblockMode::Boundary4Tap` previously
+/// skipped `apply_boundary_deblock()` inside `prepare_streaming_bottom` (leaving
+/// MCU rows `1..` unfiltered on 4:2:0 / 4:4:0 streaming readers) and inside
+/// `decode_mcu_row_from_coefficients` (leaving progressive / non-interleaved
+/// coefficient-strip readers completely unfiltered).
+#[test]
+fn scanline_boundary4tap_filters_all_mcu_rows_and_progressive() {
+    use zenjpeg::decode::DeblockMode;
+
+    let mut f = Failures::default();
+    let (w, h) = (64u32, 48u32);
+    let src = noise_image(w as usize, h as usize, 0xDEB1_0C40);
+
+    for (label, sub, progressive, mcu_h) in [
+        ("baseline 4:2:0", ChromaSubsampling::Quarter, false, 16usize),
+        (
+            "baseline 4:4:0",
+            ChromaSubsampling::HalfVertical,
+            false,
+            16usize,
+        ),
+        (
+            "progressive 4:2:0",
+            ChromaSubsampling::Quarter,
+            true,
+            16usize,
+        ),
+        ("progressive 4:4:4", ChromaSubsampling::None, true, 8usize),
+    ] {
+        let jpeg = EncoderConfig::ycbcr(20, sub)
+            .progressive(progressive)
+            .encode_bytes(&src, w, h, PixelLayout::Rgb8Srgb)
+            .expect("encode");
+
+        let read_with = |deblock: DeblockMode| -> Vec<u8> {
+            let mut r = Decoder::new()
+                .deblock(deblock)
+                .scanline_reader(&jpeg)
+                .expect("scanline_reader");
+            let stride = w as usize * 3;
+            let mut out = vec![0u8; stride * h as usize];
+            let mut row = 0;
+            while row < h as usize {
+                let n = 5.min(h as usize - row);
+                let img = ImgRefMut::new(&mut out[row * stride..(row + n) * stride], stride, n);
+                row += r.read_rows_rgb8(img).expect("read_rows_rgb8");
+            }
+            out
+        };
+
+        let off = read_with(DeblockMode::Off);
+        let b4t = read_with(DeblockMode::Boundary4Tap);
+        let stride = w as usize * 3;
+        let mcu_rows = (h as usize) / mcu_h;
+        for mr in 0..mcu_rows {
+            let r0 = mr * mcu_h * stride;
+            let r1 = (mr + 1) * mcu_h * stride;
+            let changed = off[r0..r1]
+                .iter()
+                .zip(&b4t[r0..r1])
+                .filter(|(a, b)| a != b)
+                .count();
+            f.check(changed > 0, || {
+                format!("{label}: MCU row {mr} had 0 bytes changed by Boundary4Tap")
+            });
+        }
+    }
+    f.finish("scanline Boundary4Tap filters all MCU rows and progressive");
+}

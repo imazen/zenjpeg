@@ -1362,6 +1362,12 @@ impl<'a> ScanlineReader<'a> {
             self.current_mcu_row,
         );
 
+        // Apply boundary 4-tap deblock BEFORE upsampling so each component
+        // is filtered at native resolution (matching the streaming path).
+        if self.deblock_mode == DeblockMode::Boundary4Tap {
+            self.apply_boundary_deblock();
+        }
+
         // Upsample chroma if needed
         self.strip.upsample_chroma();
         self.mcu_row_decoded = true;
@@ -1538,6 +1544,13 @@ impl<'a> ScanlineReader<'a> {
             self.height as usize,
             self.current_mcu_row,
         );
+
+        // Apply boundary 4-tap deblock on the preloaded next MCU row BEFORE
+        // computing the deferred bottom chroma or upsampling the next MCU row,
+        // because advance_mcu_row will mark this preloaded row as already decoded.
+        if self.deblock_mode == DeblockMode::Boundary4Tap {
+            self.apply_boundary_deblock();
+        }
 
         // 4. Now cb_strip[0] has the first chroma row of the next MCU.
         //    prev_cb_row still has the last chroma row of the previous MCU.
