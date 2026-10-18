@@ -702,15 +702,20 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-- PR237 review: single-scan preservation filtered out inert post-scan
-  JFIF/Adobe/ICC segments. The prepared fix refuses unsupported single-scan
-  preservation and lets recompress Preserve select progressive output.
-  `rewrites_keep_post_scan_and_stray_colour_markers_inert` now requires
-  marker retention and multiplicity as well as exact pixels, with an XYB ICC
-  case. Full colorspace_paths and lossless_mpf gates pass on the pinned graph.
-  The retained-marker oracle also preserves source/output pixels with native
-  libjpeg-turbo djpeg. The checkout djpegli is a Linux executable and was not
-  used on macOS. Scoped strict clippy passes; broader PR237 review remains open.
+- Resolved 2026-10-18 (PR237 review): single-scan preservation filtered out inert
+  post-scan JFIF/Adobe/ICC segments (refuses unsupported single-scan preservation
+  and lets recompress Preserve select progressive output); 4-component frames
+  with any non-zero APP14 transform now decode as YCCK (matching jpegli and
+  libjpeg-turbo); fused and wave parallel paths return `Error::missing_quant_table`
+  instead of substituting `[1; 64]`; DC-only blocks in strip and fused paths route
+  through the configured tiered IDCT so extreme `|DC * q[0]|` values never wrap in
+  `i16`; `upsample_h2v2_libjpeg_row` uses `bias_left` at column 0 under
+  `H2v2Bias::Alternating` (`IdctMethod::Jpegli`) to match the padded column-sum
+  kernels; `decode()` and `decode_into()` support `PixelFormat::Gray` on
+  3-component frames; scanline `DeblockMode::Boundary4Tap` filters all MCU rows on
+  streaming and coefficient routes; sequential `emit_preserved` preserves source
+  component IDs in SOF/SOS; scanline crop and buffer-width argument checks return
+  `UnsupportedFeature` and `InvalidBufferSize`.
 
 - Resolved 2026-10-13: sharing strict ICC chunk validation dropped a complete real-world single profile numbered 0 of 1. Native decoding accepts only the complete-header/matching-size/single-chunk case; strict parsing and rewriting reject it. Original malformed-chunk assertions remain. `just metadata-legacy-icc-check` covers corpus pixels, profile bytes, inventory agreement, duplicate chunks and size caps.
 
@@ -815,44 +820,7 @@ entries accumulate here.
    the wave as planes (`decode_wave_planar` exists) and convert rows with the frame's
    `RowKernel`, keeping the parallel conversion.
 
-4. **`decode()` / `decode_into()` to `PixelFormat::Gray` fail on every three-component
-   frame (found 2026-10-10, pre-existing).** `Decoder::new().output_format(PixelFormat::Gray)`
-   on a YCbCr (or RGB) JPEG returns `UnsupportedFeature("unsupported color conversion")`
-   (`parser/output.rs`, `dispatch_planes_to_output_u8` has no `(3, Gray)` arm; the streaming
-   and fused paths only write `Layout8::Gray` for one-component frames). `perf_manifest`'s
-   `full-gray-st` rows record the error on main and on the colour-model change alike. The
-   scanline reader's `read_rows_gray8` does serve these frames. Fix direction: the row
-   kernels already implement `Layout8::Gray` for YCbCr (the Y plane) and RGB
-   (`rgb_luma_u8`), so allow it in `streaming_layout()` and the fast integer plan, and add a
-   `(3, Gray)` arm to the f32 dispatch (Y for YCbCr, the BT.601 luma for RGB/XYB). Repro:
-   `decode_fmt(jpeg, Triangle, 1, PixelFormat::Gray)` on any `encode_ycbcr` fixture in
-   `tests/colorspace_paths.rs`. Pinned by `gray_output_from_colour_frames_is_unsupported`.
-
-5. **Scanline `DeblockMode::Boundary4Tap` filters only part of the image, and never
-   matches `decode()` (found 2026-10-10, pre-existing; same on `96f0f1c2`).** The strip
-   reader filters inside `decode_mcu_row` only. With vertical chroma upsampling
-   (baseline 4:2:0 / 4:4:0, either upsampler) every MCU row after the first is decoded
-   by `prepare_streaming_bottom` -> `decode_mcu_row_streaming`, which skips the filter,
-   so only MCU row 0 (rows 0..=15, plus row 16 through the triangle filter's chroma
-   context) changes; coefficient readers (`decode_mcu_row_from_coefficients`:
-   progressive, non-interleaved) never filter at all. On baseline 4:4:4, where every
-   row is filtered, the result still differs from `decode()` with the same mode on every
-   row: the strip filters the planes, `decode()` filters the interleaved u8 output
-   (`filter_interleaved_u8_boundary_4tap`). Measured on a 256x160 q30 noise/patch encode
-   with `num_threads(1)`: 4:2:0 baseline 17 / 16 rows changed (Triangle / nearest),
-   4:4:4 160, progressive 4:2:0 0; scanline vs `decode()` differs on all 160 rows in
-   every case. Repro: `EncoderConfig::ycbcr(30, ChromaSubsampling::Quarter)
-   .progressive(false)` (the encoder defaults to progressive) of any noisy 256x160
-   image; `read_rows_rgb8` from `Decoder::new().num_threads(1)
-   .deblock(DeblockMode::Boundary4Tap).scanline_reader(..)` equals the `DeblockMode::Off`
-   reader's rows from row 17 down, and differs from `decode()` with Boundary4Tap.
-   The wave reader has no filter at all; since 2026-10-10 a deblock mode never takes
-   the wave route (`compute_wave_state`), so thread count no longer changes the
-   result, but the strip's partial filtering above remains.
-   Fix direction: one filter definition for both routes, applied after the deferred
-   bottom row and on the coefficient route.
-
-6. **The encoder's fused 4:2:0 path leaves stale chroma in the padding rows of a
+4. **The encoder's fused 4:2:0 path leaves stale chroma in the padding rows of a
    partial bottom strip (found 2026-10-10 in the C1 review, pre-existing; C2's first
    fix).** `convert_strip_to_ycbcr_420` (`encode/strip/convert.rs`) writes
    `c_strip_height_for(actual)` chroma rows into `cb_down`/`cr_down` and pads them
@@ -870,40 +838,13 @@ entries accumulate here.
    converters, as the f32 YCbCr path does; regression test: an even-height
    (height % 16 in 2..=14) RGB encode decoded by djpegli, compared on the last row.
 
-7. **`preserve_identity_emit_handles_16bit_dqt` fails with `recompress-expert` (found
-   2026-10-10, pre-existing: fails on `981d45e1`).** `tests/recompress_api.rs`
-   panics at its precondition, "Quarter: Q20 source should have a 16-bit quant
-   table": the encoder's Q20 4:2:0 output no longer carries a 16-bit DQT, so the
-   test no longer reaches the 16-bit emitter path it was written for. No CI job
-   enables `recompress-expert`. Fix direction: build the source with a
-   quality/table setting that still produces a 16-bit table (or force one), and
-   keep the precondition.
-
-8. **Recompress `Preserve` changes RGB-by-component-ID sources to YCbCr on its
-   sequential output (found 2026-10-10 in the C1 review, pre-existing).** The
-   sequential emitter writes component IDs 1, 2, 3 in SOF and SOS
-   (`recompress/strategies/preserve_emit.rs` `write_sof`/`write_sos`), while the
-   progressive trial copies the source IDs. A three-component source signalled as
-   RGB only by IDs `'R','G','B'` (no JFIF, no Adobe APP14) decodes as YCbCr after a
-   sequential preserve. Fix direction: copy the source IDs in `write_sof` and
-   `write_sos` as the progressive trial does.
-
-9. **Some scanline argument errors are `Error::internal` (pre-existing).**
-   `read_rows_ycbcr_native_i16` on a reader with a crop region returns
-   `Error::internal("... does not support crop")`, a path any caller reaches with
-   `.crop(..)`; the "output buffer too narrow" checks of `read_rows_rgb8`/`bgr8`/4bpp,
-   `read_rows_gray8`, `read_rows_gray_f32`, `read_rows_gray_linear_f32` and
-   `read_rows_rgba_f32` do the same. (`read_rows_ycbcr_f32` returns
-   `StrideTooSmall` / `InvalidBufferSize` since 2026-10-10.) Fix direction:
-   `UnsupportedFeature` for crop and `InvalidBufferSize` for narrow buffers.
-
 ### Fixed / Resolved Bugs (historical reference)
 
 - **Gamma-aware input formats (2026-09-15):** preserve linear f32/u16 precision and BGR channel order; see [reproduction and validation](docs/TUNING_HISTORY.md#gamma-aware-input-formats-2026-09-15).
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
-- **Colour model decided per path; RGB-as-RGB wrong on several paths (2026-10-10):** the
+- **Colour model decided per path; RGB-as-RGB wrong on several paths (2026-10-10 / 2026-10-18):** the
   model is now decided once at SOF (jpegli rule) and every MCU- or strip-walking integer
   path converts with one `RowKernel`; fixed RGB pixels on fused/wave/fast-integer/`decode_into`/scanline paths,
   `PixelFormat::Bgr` returning RGB order from the streaming path, scanline `bgr8` != swapped
@@ -911,14 +852,19 @@ One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13)
   column at even non-MCU-aligned 4:2:0 widths, the threaded fast-integer path's missing
   right-edge replication, panics/divergence on fractional, 4:4:0, 4:1:1 and oversampled-gray
   shapes, `decode_into` 4bpp nearest >8192 px panic, `decode_into` + `parallel` dropping the
-  fused result, `decode_into(Gray)` failing on every baseline grayscale file, the fused
+  fused result, `decode_into(Gray)` failing on every baseline grayscale file, `decode()` / `decode_into()` to `PixelFormat::Gray` on 3-component frames, the fused
   path's double `max_memory` charge, owned progressive readers' lossy gray/YCbCr reads,
   non-interleaved sequential files garbled by the scanline strip/wave readers, baseline XYB
   with MCU-row DRI failing under `parallel`, AVX2 YCbCr kernels zero-extending negative Y
   (f32 target + Jpegli IDCT), gray frames + `IdctMethod::Jpegli` on the scanline/wave
   readers, `decode_to_ycbcr_f32` ignoring `IdctMethod`, wave-only 4:2:2 readers reporting
   `S420`, `read_rows_ycbcr_f32` panicking on short planes, native i16 reads failing with an
-  internal error on pixel readers. Gates: `tests/colorspace_paths.rs`; design and path table:
+  internal error on pixel readers, 4-component APP14 non-zero transform codes decoding as YCCK,
+  fused/wave missing quant table error handling, DC-only `i16` overflow guard in strip/fused paths,
+  h2v2 alternating left-edge bias parity under `IdctMethod::Jpegli`, scanline `Boundary4Tap`
+  deblocking on preloaded and coefficient MCU rows, sequential `emit_preserved` preserving source
+  component IDs, and scanline crop/buffer-width errors returning `UnsupportedFeature`/`InvalidBufferSize`.
+  Gates: `tests/colorspace_paths.rs`; design and path table:
   `zenjpeg/docs/DECODER_PATHS.md` "Colour model and sampling shape".
 - **`fuzz_differential` false crashes on malformed-but-recoverable input (#198)** — FIXED 2026-10-15: the target compares pixels with zune-jpeg only on streams `Strictness::Strict` accepts, as `tests/fuzz_regression.rs` does (recoveries of a malformed stream are two policies, not one contract; `truncation-ac-overflow-slow-path` differed by 27).
 - **SA-optimized `PiecewiseV4` quant tables were non-monotonic across quality (issue #12)** — FIXED

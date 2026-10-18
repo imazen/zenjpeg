@@ -141,7 +141,7 @@ Entropy decode runs for full image (DC predictor chain), but IDCT only runs for 
 
 | Method | Default | Effect on path |
 |--------|---------|---------------|
-| `.output_format(PixelFormat)` | `Rgb` | Does not pick the path: `Gray` is served for one-component frames and refused for colour frames (Known Bugs 4); `Cmyk` comes from four-component frames |
+| `.output_format(PixelFormat)` | `Rgb` | `Gray` is served for one- and three-component frames (on a YCbCr frame `decode` skips the RGB-only fused parallel path for the streaming luma path); `Cmyk` comes from four-component frames |
 | `.output_target(OutputTarget)` | `Srgb8` | `decode()`: f32 targets take Path D. Scanline readers keep their route but never the wave |
 | `.chroma_upsampling(ChromaUpsampling)` | `Triangle` | `LibjpegCompat` auto-selects Libjpeg IDCT |
 | `.fancy_upsampling(bool)` | `true` | `false` → `NearestNeighbor` |
@@ -187,7 +187,7 @@ Entropy decode runs for full image (DC predictor chain), but IDCT only runs for 
 | `Bgr` | 3 | Fast path |
 | `Bgra` | 4 | Alpha = 255 |
 | `Bgrx` | 4 | Padding byte |
-| `Gray` | 1 | One-component frames, on their own path; refused for colour frames (Known Bugs 4) |
+| `Gray` | 1 | One-component frames (samples), YCbCr frames (Y plane), RGB/XYB frames (BT.601 luma) |
 
 ## Decision flow
 
@@ -209,10 +209,10 @@ User calls decode() or scanline_reader()
 ```
 
 The model/shape/interleaving checks are one function each in
-`decode/color_model.rs` (`PathPlan`); see the next section. The output format
-does not pick the path: `Gray` output is served for one-component frames by
-whichever path the frame takes (Path A for baseline 1x1 gray) and refused for
-three-component frames (CLAUDE.md Known Bugs 4); `Cmyk` is the four-component
+`decode/color_model.rs` (`PathPlan`); see the next section. `Gray` output is
+served for one- and three-component frames by whichever path the frame takes
+(on a baseline YCbCr frame, `Gray` skips Path B's RGB-only fused parallel output
+and takes Path A's direct Y-plane write); `Cmyk` is the four-component
 per-component path's output.
 
 The default `Decoder::new().decode(&jpeg, stop)` hits Path A for most web JPEGs — the fastest path with no coefficient storage.
@@ -239,8 +239,8 @@ stored on the parser (`decode/color_model.rs`):
   components: a JFIF APP0 means YCbCr; else an Adobe APP14 means RGB for
   transform 0 and YCbCr for any other value; else component IDs `'R','G','B'`
   mean RGB, anything else YCbCr. An RGB frame whose ICC profile is the XYB
-  profile is XYB. Four components: transform 2 is YCCK, anything else
-  Adobe-inverted CMYK.
+  profile is XYB. Four components: any non-zero Adobe APP14 transform is YCCK,
+  transform 0 or no APP14 is Adobe-inverted CMYK.
 - `FrameShape`: the chroma layout relative to component 0 (Gray, 4:4:4, 4:2:2,
   4:2:0, 4:4:0, Other) from exact ratios only, the maximum factors, and whether
   the chroma is 1x1 (the MCU every MCU-walking kernel is written for).

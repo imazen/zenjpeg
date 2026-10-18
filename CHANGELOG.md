@@ -101,6 +101,36 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- PR 237 round-3 review and follow-up fixes:
+  - 4-component frames with any non-zero Adobe APP14 transform byte now decode
+    as YCCK, matching jpegli and libjpeg-turbo (`ColorModel::decide` previously
+    matched only `Some(2)`).
+  - `Decoder::decode` and `Decoder::decode_into` now support `PixelFormat::Gray`
+    on 3-component frames across streaming, fast-integer, and f32/per-component
+    paths (YCbCr frames return the Y plane; RGB and XYB frames return BT.601
+    luma), matching `ScanlineReader::read_rows_gray8`.
+  - Fused-parallel (`build_fused_state`) and wave-parallel (`build_wave_state`)
+    decode return `Error::missing_quant_table` when a scan component references
+    an undefined quantization table instead of substituting `[1; 64]`.
+  - DC-only blocks in `StripProcessor` (`pipeline.rs`) and `fused_parallel.rs`
+    route through the configured tiered IDCT so extreme `|DC * q[0]|` values
+    are properly clamped/widened instead of wrapping in `i16`.
+  - `upsample_h2v2_libjpeg_row` (scalar, AVX2, and magetypes generic) uses
+    `bias_left` at column 0 (and `(bias_left, bias_right)` on single-column
+    rows) instead of hardcoded `8`, matching the padded column-sum kernels on
+    lower rows under `H2v2Bias::Alternating` (`IdctMethod::Jpegli`).
+  - `ScanlineReader` with `DeblockMode::Boundary4Tap` filters all MCU rows on
+    both streaming (`prepare_streaming_bottom` / preloaded rows) and coefficient
+    (`decode_mcu_row_from_coefficients`) routes.
+  - Recompress `Preserve` sequential emitter (`emit_preserved`) preserves the
+    source's component IDs in SOF and SOS instead of numbering `1..=N`, so RGB
+    sources signalled by `'R','G','B'` component IDs remain RGB after sequential
+    preservation.
+  - `ScanlineReader` returns `ErrorKind::UnsupportedFeature` when
+    `read_rows_ycbcr_native_i16` is called with a crop region and
+    `ErrorKind::InvalidBufferSize` when a destination row buffer is narrower
+    than the output width (was `ErrorKind::InternalError`).
+
 - Preservation of post-scan JFIF, Adobe and ICC markers: single-scan lossless
   writers refuse a conversion they cannot retain with both metadata and its inert
   interpretation. Progressive rewrites retain the segments; recompress
