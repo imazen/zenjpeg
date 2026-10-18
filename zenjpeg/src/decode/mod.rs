@@ -1586,7 +1586,7 @@ impl DecodeConfig {
             self.effective_idct_method(),
             kernel,
             wave_size,
-        );
+        )?;
 
         Ok(Some((wave_state, is_wave_only)))
     }

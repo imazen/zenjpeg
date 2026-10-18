@@ -22,7 +22,7 @@
 //! for load balancing.
 
 use crate::entropy::EntropyDecoder;
-use crate::error::{Result, ScanRead};
+use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_bytes_pref};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
@@ -500,9 +500,9 @@ impl<'a> JpegParser<'a> {
             .map(|ci| {
                 self.quant_tables[self.components[ci].quant_table_idx as usize]
                     .as_ref()
-                    .unwrap()
+                    .ok_or_else(|| Error::internal("missing quantization table"))
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness.lenient_entropy_recovery();
@@ -835,9 +835,9 @@ impl<'a> JpegParser<'a> {
             .map(|ci| {
                 self.quant_tables[self.components[ci].quant_table_idx as usize]
                     .as_ref()
-                    .unwrap()
+                    .ok_or_else(|| Error::internal("missing quantization table"))
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness.lenient_entropy_recovery();
@@ -1172,9 +1172,9 @@ impl<'a> JpegParser<'a> {
             .map(|ci| {
                 self.quant_tables[self.components[ci].quant_table_idx as usize]
                     .as_ref()
-                    .unwrap()
+                    .ok_or_else(|| Error::internal("missing quantization table"))
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness.lenient_entropy_recovery();
@@ -1592,9 +1592,9 @@ impl<'a> JpegParser<'a> {
             .map(|ci| {
                 self.quant_tables[self.components[ci].quant_table_idx as usize]
                     .as_ref()
-                    .unwrap()
+                    .ok_or_else(|| Error::internal("missing quantization table"))
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness.lenient_entropy_recovery();
@@ -2391,7 +2391,7 @@ impl WaveParallelState {
         idct_method: IdctMethod,
         kernel: RowKernel,
         wave_size: usize,
-    ) -> Self {
+    ) -> Result<Self> {
         let width = scan_data.width as usize;
         let height = scan_data.height as usize;
         let num_comps = scan_data.num_components as usize;
@@ -2420,9 +2420,10 @@ impl WaveParallelState {
         let quant_tables: Vec<[u16; DCT_BLOCK_SIZE]> = (0..num_comps)
             .map(|ci| {
                 let qt_idx = scan_data.quant_indices[ci];
-                scan_data.quant_tables[qt_idx].unwrap()
+                scan_data.quant_tables[qt_idx]
+                    .ok_or_else(|| Error::internal("missing quantization table"))
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         // Per-component sampling factors
         let comp_h_samps: Vec<usize> = (0..num_comps)
@@ -2457,7 +2458,7 @@ impl WaveParallelState {
 
         let num_segments = seg_starts.len();
 
-        WaveParallelState {
+        Ok(WaveParallelState {
             scan_data_start: scan_data.scan_data_start,
             seg_starts,
             seg_ends,
@@ -2486,7 +2487,7 @@ impl WaveParallelState {
             num_segments,
             mcu_pixel_height: mcu_height,
             pixel_rows_per_seg,
-        }
+        })
     }
 
     /// Decode a wave of segments in parallel, writing RGB output to `wave_buf`.

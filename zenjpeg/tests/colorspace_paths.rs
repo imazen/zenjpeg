@@ -3728,3 +3728,58 @@ fn cmyk_and_ycck_known_answer() {
     }
     f.finish("CMYK / YCCK known answer");
 }
+
+/// Review round 3, S6: when a component's SOF `Tq` references an undefined
+/// quantization table slot, the fused parallel paths (4:4:4, box, h2v1, 4:2:0
+/// fancy) and `WaveParallelState::new` must return an `Err` rather than panic
+/// with `.unwrap()` on `None`.
+#[test]
+fn missing_quant_table_returns_error_on_every_path() {
+    let mut f = Failures::default();
+    for layout in [LAYOUTS[0], LAYOUTS[1], LAYOUTS[2]] {
+        let mut jpeg = frame(layout, Signal::YCbCr, true, &dc_only);
+        // Point component 0's Tq byte in SOF0 at slot 2 (only slot 0 is defined).
+        let (sof_pos, _, _) = jpeg_writer::segments(&jpeg)
+            .into_iter()
+            .find(|&(_, m, _)| m == 0xC0)
+            .expect("SOF0");
+        assert_eq!(jpeg[sof_pos + 12], 0, "component 0 Tq is initially 0");
+        jpeg[sof_pos + 12] = 2;
+
+        for ups in UPS {
+            for threads in [1usize, 0] {
+                let label = format!("{} {ups:?} t{threads}", layout.name);
+                let dec = decoder(ups, threads);
+                f.check(dec.decode(&jpeg, Unstoppable).is_err(), || {
+                    format!("{label}: decode succeeded with missing quant table")
+                });
+                let mut dst = vec![0u8; (FW * FH * 3) as usize];
+                f.check(
+                    dec.decode_into(&jpeg, PixelFormat::Rgb, &mut dst, Unstoppable)
+                        .is_err(),
+                    || format!("{label}: decode_into succeeded with missing quant table"),
+                );
+                let check_scanline = |owned: bool| -> Result<(), String> {
+                    let mut r = if owned {
+                        dec.scanline_reader_cow(Cow::Owned(jpeg.clone()))
+                    } else {
+                        dec.scanline_reader(&jpeg)
+                    }
+                    .map_err(|e| e.to_string())?;
+                    let mut row = vec![0u8; FW as usize * 3 * 8];
+                    r.read_rows_rgb8(ImgRefMut::new(&mut row, FW as usize * 3, 8))
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                };
+                for owned in [false, true] {
+                    f.check(check_scanline(owned).is_err(), || {
+                        format!(
+                            "{label}: scanline(owned={owned}) succeeded with missing quant table"
+                        )
+                    });
+                }
+            }
+        }
+    }
+    f.finish("missing quant table");
+}
