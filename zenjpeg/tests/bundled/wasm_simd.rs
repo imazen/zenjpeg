@@ -32,16 +32,16 @@ fn wide_simd_operations() {
     use wide::i32x8;
 
     // Basic SIMD operations
-    let a = i32x8::splat(10);
-    let b = i32x8::splat(3);
+    let a = i32x8::splat_t(10);
+    let b = i32x8::splat_t(3);
     let sum = a + b;
-    let expected = i32x8::splat(13);
+    let expected = i32x8::splat_t(13);
 
     assert_eq!(sum.to_array(), expected.to_array());
 
     // Multiplication
     let product = a * b;
-    let expected = i32x8::splat(30);
+    let expected = i32x8::splat_t(30);
     assert_eq!(product.to_array(), expected.to_array());
 }
 

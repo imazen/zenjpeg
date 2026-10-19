@@ -568,3 +568,13 @@ coz-fixtures:
 coz-fixtures-oracle:
     test -n "$ZENJPEG_DC_FIXTURE_DIR"
     python3 internal/coz-loop/check-fixtures.py "$ZENJPEG_DC_FIXTURE_DIR"
+
+# Check compatibility after admitting the current archmage/magetypes beta.
+beta-cohort-check:
+    cargo fmt --check
+    cargo clippy --locked --workspace --lib -- -D warnings
+    cargo test --locked --workspace --lib --no-fail-fast
+
+# Constructor spellings changed in examples and benches as well as the library.
+beta-example-check:
+    cargo check --locked --workspace --all-targets

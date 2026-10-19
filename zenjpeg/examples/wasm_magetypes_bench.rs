@@ -44,9 +44,9 @@ mod bench {
         use magetypes::simd::f32x4;
 
         let token = get_token();
-        let a = f32x4::from_array(token, [1.0, 2.0, 3.0, 4.0]);
-        let b = f32x4::from_array(token, [5.0, 6.0, 7.0, 8.0]);
-        let c = f32x4::from_array(token, [0.5, 0.5, 0.5, 0.5]);
+        let a = f32x4::from_array_t(token, [1.0, 2.0, 3.0, 4.0]);
+        let b = f32x4::from_array_t(token, [5.0, 6.0, 7.0, 8.0]);
+        let c = f32x4::from_array_t(token, [0.5, 0.5, 0.5, 0.5]);
 
         let start = Instant::now();
         for _ in 0..iterations {
@@ -90,10 +90,10 @@ mod bench {
         use magetypes::simd::f32x4;
 
         let token = get_token();
-        let r0 = f32x4::from_array(token, [0.0, 1.0, 2.0, 3.0]);
-        let r1 = f32x4::from_array(token, [4.0, 5.0, 6.0, 7.0]);
-        let r2 = f32x4::from_array(token, [8.0, 9.0, 10.0, 11.0]);
-        let r3 = f32x4::from_array(token, [12.0, 13.0, 14.0, 15.0]);
+        let r0 = f32x4::from_array_t(token, [0.0, 1.0, 2.0, 3.0]);
+        let r1 = f32x4::from_array_t(token, [4.0, 5.0, 6.0, 7.0]);
+        let r2 = f32x4::from_array_t(token, [8.0, 9.0, 10.0, 11.0]);
+        let r3 = f32x4::from_array_t(token, [12.0, 13.0, 14.0, 15.0]);
 
         let start = Instant::now();
         for _ in 0..iterations {
@@ -122,7 +122,7 @@ mod bench {
         let start = Instant::now();
         for _ in 0..iterations {
             // wide doesn't have log2, use ln and convert
-            let result = a.ln() * f32x4::splat(core::f32::consts::LOG2_E);
+            let result = a.ln() * f32x4::splat_t(core::f32::consts::LOG2_E);
             std::hint::black_box(&result);
         }
         start.elapsed()
@@ -133,7 +133,7 @@ mod bench {
         use magetypes::simd::f32x4;
 
         let token = get_token();
-        let a = f32x4::from_array(token, [1.0, 2.0, 4.0, 8.0]);
+        let a = f32x4::from_array_t(token, [1.0, 2.0, 4.0, 8.0]);
 
         let start = Instant::now();
         for _ in 0..iterations {
