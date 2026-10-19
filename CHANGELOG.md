@@ -5,6 +5,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Dependency compatibility
+
+- Admit archmage/magetypes 0.9.31-beta.1 and use token-explicit constructor aliases in the WASM examples/tests (`3212f8bf`). Workspace library lint/tests and the all-target build check pass on the current main base; existing ignored tests remain unchanged.
+
 ### QUEUED BREAKING CHANGES
 
 None.
