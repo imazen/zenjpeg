@@ -129,6 +129,7 @@ fn plain_decode_into_matches_decode() {
             PixelFormat::Bgr,
             PixelFormat::Rgba,
             PixelFormat::Bgra,
+            PixelFormat::Gray,
         ] {
             assert_parity(&Decoder::new(), &jpeg, format, &format!("plain {format:?}"));
         }

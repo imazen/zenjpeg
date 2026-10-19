@@ -239,12 +239,30 @@ impl Default for EmitConfig {
 /// Apply edits to coefficients in-place and emit a baseline-sequential
 /// JPEG. The output is exactly the source's structure with new quant
 /// tables, requantized coefficients, optimized Huffman, and no other
-/// changes.
+/// changes. Every preserved segment is written before SOF.
+// The `recompress-expert` surface; in-crate callers use
+// `emit_preserved_placed` with the source's segment positions.
+#[cfg_attr(not(feature = "recompress-expert"), allow(dead_code))]
 pub fn emit_preserved(
     coeffs: &DecodedCoefficients,
     subsampling: Subsampling,
     config: &EmitConfig,
 ) -> Result<Vec<u8>, Error> {
+    emit_preserved_placed(coeffs, subsampling, config, &[])
+}
+
+/// [`emit_preserved`] with each preserved segment's position in the source
+/// (`positions`, from `lossless::placement::source_positions`; empty: all
+/// before SOF). A JFIF or Adobe segment the source placed after SOF, or after
+/// its first SOS, keeps a position where it does not decide the colour model,
+/// so the output's colour model is the source's.
+pub(in crate::recompress) fn emit_preserved_placed(
+    coeffs: &DecodedCoefficients,
+    subsampling: Subsampling,
+    config: &EmitConfig,
+    positions: &[crate::lossless::placement::Position],
+) -> Result<Vec<u8>, Error> {
+    let placed = crate::lossless::placement::Placed::new(&config.preserved_segments, positions);
     for segment in &config.preserved_segments {
         crate::recompress::metadata::check_segment(segment.marker, &segment.data)?;
     }
@@ -288,6 +306,16 @@ pub fn emit_preserved(
         config.aq_mask.as_ref(),
     );
 
+    // Preserve is metadata-transparent. Between-scan colour signals must
+    // remain after the first scan even when sequential output would be smaller.
+    if placed.needs_post_scan_slot() {
+        return emit_progressive_trial(coeffs, edited_components, new_quant_tables, placed).ok_or(
+            Error::Unsupported(
+                "cannot preserve post-scan colour markers in the requested scan structure",
+            ),
+        );
+    }
+
     // 3. Compute optimized Huffman tables from the edited coefficient
     // distributions.
     let out = emit_sequential(
@@ -295,7 +323,7 @@ pub fn emit_preserved(
         subsampling,
         &edited_components,
         &new_quant_tables,
-        &config.preserved_segments,
+        placed,
     )?;
 
     // Smallest-trial (#143 item 2): same coefficients, progressive scan
@@ -303,12 +331,8 @@ pub fn emit_preserved(
     // like the main encoder's trials, so large outputs never pay for a
     // second serialization.
     if out.len() <= crate::encode::ENTROPY_TRIAL_MAX_BYTES
-        && let Some(prog) = emit_progressive_trial(
-            coeffs,
-            edited_components,
-            new_quant_tables,
-            &config.preserved_segments,
-        )
+        && let Some(prog) =
+            emit_progressive_trial(coeffs, edited_components, new_quant_tables, placed)
         && prog.len() < out.len()
     {
         return Ok(prog);
@@ -322,8 +346,13 @@ fn emit_sequential(
     subsampling: Subsampling,
     edited_components: &[EditedComponent],
     new_quant_tables: &[Option<[u16; 64]>],
-    preserved_segments: &[PreservedSegment],
+    preserved_segments: crate::lossless::placement::Placed<'_>,
 ) -> Result<Vec<u8>, Error> {
+    if preserved_segments.needs_post_scan_slot() {
+        return Err(Error::Unsupported(
+            "current single-scan writer cannot preserve post-scan colour markers without changing interpretation",
+        ));
+    }
     let is_color = coeffs.components.len() >= 3;
     let huff = optimize_huffman_tables(edited_components, is_color)?;
 
@@ -331,16 +360,22 @@ fn emit_sequential(
     let mut out = Vec::with_capacity(64 * 1024);
     write_marker_segment(&mut out, MARKER_SOI, &[]); // SOI has no payload
     // Carry the source's APPn/COM metadata (ICC, EXIF, XMP, JFIF, Adobe,
-    // COM) verbatim, right after SOI and before DQT — JPEG requires APPn
-    // segments before the frame header. Written in their original decoded
-    // order (JFIF/APP0 first in well-formed files). `seg.data` is the raw
-    // payload excluding the 2 length bytes, exactly what
+    // COM) verbatim, in their original decoded order, each on its source
+    // side of SOF: those before SOF right after SOI, those the source placed
+    // between SOF and SOS right after SOF (a JFIF or Adobe segment there does
+    // not decide the colour model; `lossless::placement`). `seg.data` is the
+    // raw payload excluding the 2 length bytes, exactly what
     // `write_marker_segment` expects. MPF is filtered out by the caller.
-    for seg in preserved_segments {
+    for seg in preserved_segments.before_sof() {
         write_marker_segment(&mut out, seg.marker, &seg.data);
     }
     let needs_sof1 = write_dqt(&mut out, new_quant_tables)?;
     write_sof(&mut out, coeffs, subsampling, edited_components, needs_sof1)?;
+    // One scan: the source's between-scan segments follow here too, minus
+    // the colour signals (`Placed::after_sof`).
+    for seg in preserved_segments.after_sof(true) {
+        write_marker_segment(&mut out, seg.marker, &seg.data);
+    }
     write_dht(&mut out, &huff, is_color)?;
     write_sos(&mut out, edited_components, is_color)?;
     // Pass the MCU-aligned width to the scan emitter so its computed
@@ -371,15 +406,14 @@ fn emit_progressive_trial(
     coeffs: &DecodedCoefficients,
     edited_components: Vec<EditedComponent>,
     new_quant_tables: Vec<Option<[u16; 64]>>,
-    preserved_segments: &[PreservedSegment],
+    preserved_segments: crate::lossless::placement::Placed<'_>,
 ) -> Option<Vec<u8>> {
     use crate::decode::ComponentCoefficients;
     use crate::lossless::TransformedCoefficients;
     let components = edited_components
         .into_iter()
-        .zip(&coeffs.components)
-        .map(|(e, src)| ComponentCoefficients {
-            id: src.id,
+        .map(|e| ComponentCoefficients {
+            id: e.id,
             coeffs: e.coeffs,
             blocks_wide: e.blocks_wide,
             blocks_high: e.blocks_high,
@@ -409,6 +443,7 @@ fn emit_progressive_trial(
 /// Per-component requantized data (in zigzag order, length =
 /// num_blocks * 64).
 struct EditedComponent {
+    id: u8,
     coeffs: Vec<i16>,
     blocks_wide: usize,
     blocks_high: usize,
@@ -446,7 +481,7 @@ fn build_new_quant_tables(
     // is only ever shared among same-class components — luma tables by
     // luma, chroma tables by chroma — so the class is unambiguous.)
     let mut built = [false; 8];
-    for comp in &coeffs.components {
+    for (comp_idx, comp) in coeffs.components.iter().enumerate() {
         let idx = comp.quant_table_idx as usize;
         if idx >= 8 || built[idx] {
             continue;
@@ -456,7 +491,7 @@ fn build_new_quant_tables(
             .and_then(|t| t.as_ref())
             .copied()
             .ok_or(Error::Internal("missing quant table"))?;
-        new_tables[idx] = Some(build_new_table(old, comp.id == 1, strategy));
+        new_tables[idx] = Some(build_new_table(old, comp_idx == 0, strategy));
         built[idx] = true;
     }
     // Per-component ratio = original_table[idx] / new_table[idx].
@@ -607,6 +642,7 @@ fn edit_coefficients(
             new_coeffs.extend_from_slice(&block_buf);
         }
         out.push(EditedComponent {
+            id: comp.id,
             coeffs: new_coeffs,
             blocks_wide: comp.blocks_wide,
             blocks_high: comp.blocks_high,
@@ -777,15 +813,12 @@ fn write_sof(
     payload.push(8); // sample precision
     payload.extend_from_slice(&(coeffs.height as u16).to_be_bytes());
     payload.extend_from_slice(&(coeffs.width as u16).to_be_bytes());
+    if components.len() > 3 {
+        return Err(Error::Internal("too many components"));
+    }
     payload.push(components.len() as u8);
-    for (i, comp) in components.iter().enumerate() {
-        let component_id = match i {
-            0 => 1,
-            1 => 2,
-            2 => 3,
-            _ => return Err(Error::Internal("too many components")),
-        };
-        payload.push(component_id);
+    for comp in components {
+        payload.push(comp.id);
         // sampling factors: high nibble = H, low nibble = V
         payload.push((comp.h_samp << 4) | (comp.v_samp & 0x0F));
         payload.push(comp.quant_table_idx);
@@ -819,13 +852,12 @@ fn write_sos(
 ) -> Result<(), Error> {
     let mut payload = Vec::new();
     payload.push(components.len() as u8);
-    for (i, _comp) in components.iter().enumerate() {
-        let component_id = (i + 1) as u8;
+    for (i, comp) in components.iter().enumerate() {
         // dc/ac table selector: high nibble = DC, low = AC
         // luma = table 0, chroma = table 1
         let td = if i == 0 { 0 } else { 1 };
         let ta = if i == 0 { 0 } else { 1 };
-        payload.push(component_id);
+        payload.push(comp.id);
         payload.push((td << 4) | (ta & 0x0F));
     }
     // Sequential: Ss=0, Se=63, Ah/Al=0
@@ -1053,8 +1085,9 @@ mod smallest_trial_tests {
             // The two candidates, built exactly as emit_preserved builds them.
             let (tables, scales) = build_new_quant_tables(&coeffs, cfg.quant_strategy).unwrap();
             let edited = edit_coefficients(&coeffs, &scales, None);
-            let seq = emit_sequential(&coeffs, Subsampling::S420, &edited, &tables, &[]).unwrap();
-            let prog = emit_progressive_trial(&coeffs, edited, tables, &[])
+            let none = crate::lossless::placement::Placed::new(&[], &[]);
+            let seq = emit_sequential(&coeffs, Subsampling::S420, &edited, &tables, none).unwrap();
+            let prog = emit_progressive_trial(&coeffs, edited, tables, none)
                 .expect("progressive trial must succeed on a plain 4:2:0 source");
             assert!(
                 seq.len() <= crate::encode::ENTROPY_TRIAL_MAX_BYTES,
@@ -1101,5 +1134,65 @@ mod smallest_trial_tests {
             prog_won > 0,
             "no fixture where progressive wins — the trial gate is untested"
         );
+    }
+
+    /// Known Bug 8: `emit_sequential` (and `emit_preserved` when sequential
+    /// wins) must copy `coeffs.components[i].id` into SOF and SOS rather than
+    /// hardcoding `1, 2, 3`, so an RGB-by-component-IDs source stays RGB even
+    /// without an APP14 segment.
+    #[test]
+    fn sequential_emit_preserves_source_component_ids() {
+        use crate::decoder::Decoder;
+        use crate::encoder::{EncoderConfig, PixelLayout};
+        use crate::types::ColorSpace;
+        use enough::Unstoppable;
+
+        let (w, h) = (32u32, 24u32);
+        let mut rgb = vec![0u8; (w * h * 3) as usize];
+        for (i, b) in rgb.iter_mut().enumerate() {
+            *b = ((i * 73 + 19) & 0xFF) as u8;
+        }
+        let src = EncoderConfig::rgb(85.0)
+            .progressive(false)
+            .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+            .expect("rgb encode");
+        let coeffs = Decoder::new()
+            .decode_coefficients(&src, Unstoppable)
+            .expect("decode_coefficients");
+        assert_eq!(
+            coeffs.components.iter().map(|c| c.id).collect::<Vec<_>>(),
+            b"RGB"
+        );
+
+        let cfg = EmitConfig::default();
+        let (tables, scales) = build_new_quant_tables(&coeffs, cfg.quant_strategy).unwrap();
+        let edited = edit_coefficients(&coeffs, &scales, None);
+        let none = crate::lossless::placement::Placed::new(&[], &[]);
+        let seq = emit_sequential(&coeffs, Subsampling::S444, &edited, &tables, none).unwrap();
+
+        let seq_coeffs = Decoder::new()
+            .decode_coefficients(&seq, Unstoppable)
+            .expect("decode seq coefficients");
+        assert_eq!(
+            seq_coeffs
+                .components
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            b"RGB"
+        );
+        let info = Decoder::new().read_info(&seq).expect("read_info");
+        assert_eq!(info.color_space, ColorSpace::Rgb);
+        let src_px = Decoder::new()
+            .decode(&src, Unstoppable)
+            .expect("decode src")
+            .into_pixels_u8()
+            .unwrap();
+        let seq_px = Decoder::new()
+            .decode(&seq, Unstoppable)
+            .expect("decode seq")
+            .into_pixels_u8()
+            .unwrap();
+        assert_eq!(seq_px, src_px);
     }
 }

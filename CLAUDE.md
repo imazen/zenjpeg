@@ -702,6 +702,21 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Resolved 2026-10-18 (PR237 review): single-scan preservation filtered out inert
+  post-scan JFIF/Adobe/ICC segments (refuses unsupported single-scan preservation
+  and lets recompress Preserve select progressive output); 4-component frames
+  with any non-zero APP14 transform now decode as YCCK (matching jpegli and
+  libjpeg-turbo); fused and wave parallel paths return `Error::missing_quant_table`
+  instead of substituting `[1; 64]`; DC-only blocks in strip and fused paths route
+  through the configured tiered IDCT so extreme `|DC * q[0]|` values never wrap in
+  `i16`; `upsample_h2v2_libjpeg_row` uses `bias_left` at column 0 under
+  `H2v2Bias::Alternating` (`IdctMethod::Jpegli`) to match the padded column-sum
+  kernels; `decode()` and `decode_into()` support `PixelFormat::Gray` on
+  3-component frames; scanline `DeblockMode::Boundary4Tap` filters all MCU rows on
+  streaming and coefficient routes; sequential `emit_preserved` preserves source
+  component IDs in SOF/SOS; scanline crop and buffer-width argument checks return
+  `UnsupportedFeature` and `InvalidBufferSize`.
+
 - Fixed in the streaming consumer review: the trait adapter reapplied a generic effort preset after `inner_mut` supplied an explicit native configuration, changing scan and entropy settings. The native configuration now takes precedence; the zenpipe consumer regression compares its file with the native encoder byte for byte.
 
 - Resolved 2026-10-13: sharing strict ICC chunk validation dropped a complete real-world single profile numbered 0 of 1. Native decoding accepts only the complete-header/matching-size/single-chunk case; strict parsing and rewriting reject it. Original malformed-chunk assertions remain. `just metadata-legacy-icc-check` covers corpus pixels, profile bytes, inventory agreement, duplicate chunks and size caps.
@@ -779,12 +794,80 @@ entries accumulate here.
      encoder builder API, not attempted here — out of scope for the day's actual task
      (removing the `image` dev-dependency to unblock a moxcms upgrade).
 
+2. **Fractional sampling ratios are accepted and decoded to an arbitrary geometry
+   (found 2026-10-10, pre-existing).** `parse_frame_header` accepts any factors 1..=4
+   with no integrality check, e.g. a 3x1 luma over 2x1 chroma. jpegli rejects this at SOF
+   ("Non-integral subsampling ratios", `decode_marker.cc`) and libjpeg-turbo at
+   `jinit_upsampler` ("Fractional sampling not implemented yet"). Since 2026-10-10 no
+   fast path can take such a frame (`FrameShape` classifies it `Other`), so every
+   entry point agrees and nothing panics (`tests/colorspace_paths.rs`
+   `crafted_sampling_shapes_never_panic_and_agree`), but the per-component path
+   floor-divides the ratio (`upsample_planes_f32`: `max_h_samp / h_samp`), so the
+   chroma is not resampled to the frame geometry. Proposal: reject non-integral ratios
+   at SOF in Strict and Balanced, as both references do. Repro: `jpeg_writer` frame
+   with sampling `[(3,1),(2,1),(2,1)]`.
+
+3. **Wave-parallel scanline readers cannot serve plane reads of YCbCr frames (found
+   2026-10-10, pre-existing, narrowed).** A wave-only reader (`parallel`,
+   nearest-neighbour 4:2:2/4:2:0, MCU-row DRI, >= 1024 MCUs, `num_threads != 1`,
+   `OutputTarget::Srgb8`, `DeblockMode::Off`) holds decoded RGB rows. Since 2026-10-10
+   it serves every RGB-family read and crop, RGB frames' derived reads (defined from
+   R, G, B) and `read_rows_ycbcr_native_i16` (from the planar wave); `read_rows_gray8`,
+   `read_rows_gray_f32`, `read_rows_gray_linear_f32`, `read_rows_ycbcr_f32` and
+   `read_rows_rgba_f32` on a YCbCr frame return `UnsupportedFeature` ("... use
+   num_threads(1)") instead of reading the upsampled Y/Cb/Cr planes. zenjpeg's own callers that need those reads (`decode_rows(Gray)`,
+   `decode_rows_f32`, the zencodec gray/f32 streaming decode) build their reader with
+   `DecodeConfig::for_plane_reads()`, which skips the wave-only route. Pinned by
+   `tests/colorspace_paths.rs` `wave_reader_f32_and_plane_reads`. Fix direction: decode
+   the wave as planes (`decode_wave_planar` exists) and convert rows with the frame's
+   `RowKernel`, keeping the parallel conversion.
+
+4. **The encoder's fused 4:2:0 path leaves stale chroma in the padding rows of a
+   partial bottom strip (found 2026-10-10 in the C1 review, pre-existing; C2's first
+   fix).** `convert_strip_to_ycbcr_420` (`encode/strip/convert.rs`) writes
+   `c_strip_height_for(actual)` chroma rows into `cb_down`/`cr_down` and pads them
+   only horizontally (`pad_chroma_down_strip`). `pad_chroma_down_vertically` is
+   called only by `process_strip_ycbcr_f32_subsampled` (`encode/strip/mod.rs`), and
+   `pad_strips_vertically` pads the full-resolution strips the fused path does not
+   use, so the chroma rows below the image in the last MCU row hold the previous
+   strip's rows. It costs AC bits in those blocks, and decoders that interpolate the
+   last real chroma row against the row below (jpegli's upsampler) render the last
+   row of even-height frames from it: the C1 reviewers traced most of the max
+   difference of 22 between zenjpeg's and djpegli's decode of the 1602x1300
+   colour-model oracle fixture to it. The gamma-aware fused path
+   (`convert_strip_gamma_aware`) has the same shape by code reading (not measured).
+   Fix direction: replicate the last real chroma row down after both fused
+   converters, as the f32 YCbCr path does; regression test: an even-height
+   (height % 16 in 2..=14) RGB encode decoded by djpegli, compared on the last row.
+
 ### Fixed / Resolved Bugs (historical reference)
 
 - **Gamma-aware input formats (2026-09-15):** preserve linear f32/u16 precision and BGR channel order; see [reproduction and validation](docs/TUNING_HISTORY.md#gamma-aware-input-formats-2026-09-15).
 
 One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
+- **Colour model decided per path; RGB-as-RGB wrong on several paths (2026-10-10 / 2026-10-18):** the
+  model is now decided once at SOF (jpegli rule) and every MCU- or strip-walking integer
+  path converts with one `RowKernel`; fixed RGB pixels on fused/wave/fast-integer/`decode_into`/scanline paths,
+  `PixelFormat::Bgr` returning RGB order from the streaming path, scanline `bgr8` != swapped
+  `rgb8`, scanline gray8/gray_f32 wrong on the last row of every MCU row (baseline 4:2:0/4:4:0), XYB through `scanline_reader` getting the YCbCr matrix, the strip readers' last
+  column at even non-MCU-aligned 4:2:0 widths, the threaded fast-integer path's missing
+  right-edge replication, panics/divergence on fractional, 4:4:0, 4:1:1 and oversampled-gray
+  shapes, `decode_into` 4bpp nearest >8192 px panic, `decode_into` + `parallel` dropping the
+  fused result, `decode_into(Gray)` failing on every baseline grayscale file, `decode()` / `decode_into()` to `PixelFormat::Gray` on 3-component frames, the fused
+  path's double `max_memory` charge, owned progressive readers' lossy gray/YCbCr reads,
+  non-interleaved sequential files garbled by the scanline strip/wave readers, baseline XYB
+  with MCU-row DRI failing under `parallel`, AVX2 YCbCr kernels zero-extending negative Y
+  (f32 target + Jpegli IDCT), gray frames + `IdctMethod::Jpegli` on the scanline/wave
+  readers, `decode_to_ycbcr_f32` ignoring `IdctMethod`, wave-only 4:2:2 readers reporting
+  `S420`, `read_rows_ycbcr_f32` panicking on short planes, native i16 reads failing with an
+  internal error on pixel readers, 4-component APP14 non-zero transform codes decoding as YCCK,
+  fused/wave missing quant table error handling, DC-only `i16` overflow guard in strip/fused paths,
+  h2v2 alternating left-edge bias parity under `IdctMethod::Jpegli`, scanline `Boundary4Tap`
+  deblocking on preloaded and coefficient MCU rows, sequential `emit_preserved` preserving source
+  component IDs, and scanline crop/buffer-width errors returning `UnsupportedFeature`/`InvalidBufferSize`.
+  Gates: `tests/colorspace_paths.rs`; design and path table:
+  `zenjpeg/docs/DECODER_PATHS.md` "Colour model and sampling shape".
 - **`fuzz_differential` false crashes on malformed-but-recoverable input (#198)** — FIXED 2026-10-15: the target compares pixels with zune-jpeg only on streams `Strictness::Strict` accepts, as `tests/fuzz_regression.rs` does (recoveries of a malformed stream are two policies, not one contract; `truncation-ac-overflow-slow-path` differed by 27).
 - **SA-optimized `PiecewiseV4` quant tables were non-monotonic across quality (issue #12)** — FIXED
   2026-08-27. The raw v4 anchors (each SA-optimized independently) had 1,265 per-cell violations

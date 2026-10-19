@@ -154,16 +154,25 @@ pub struct JfifInfo {
     pub y_density: u16,
 }
 
-/// Adobe segment color transform.
+/// Adobe APP14 segment color transform flag.
+///
+/// When parsed into [`AdobeInfo`], transform byte `0` (RGB or CMYK without
+/// transform) and unrecognised bytes `3..=255` both map to
+/// [`Self::Unknown`] because this enum is `#[repr(u8)]` and exhaustive.
+/// During decoding, however, the frame's colour model is decided from the raw
+/// APP14 transform byte at SOF (matching jpegli and libjpeg-turbo): any
+/// non-zero byte selects YCbCr on 3-component frames and YCCK on 4-component
+/// frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AdobeColorTransform {
-    /// Unknown or RGB/CMYK (no transform)
+    /// Transform byte `0` (RGB/CMYK without transform), or an unrecognised
+    /// byte `3..=255` when read via [`AdobeInfo`].
     #[default]
     Unknown = 0,
-    /// YCbCr
+    /// YCbCr (transform byte `1`)
     YCbCr = 1,
-    /// YCCK
+    /// YCCK (transform byte `2`)
     Ycck = 2,
 }
 

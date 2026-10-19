@@ -92,31 +92,27 @@ quadrant-color test, not by the existing XYB roundtrip test.
 
 ### XYB detection
 
-`decode/parser/mod.rs::JpegInfo` flags the file as XYB when the embedded
-ICC matches `is_xyb_profile`:
+XYB is one of the colour models the parser decides once, at SOF
+(`decode/color_model.rs`, `ColorModel::decide`): a three-component frame
+whose components are signalled RGB (Adobe APP14 transform 0, or component IDs
+`'R','G','B'` without APP14, and no JFIF APP0) and whose ICC profile matches
+`is_xyb_profile` is `ColorModel::Xyb`. Both jpegli's and zenjpeg's XYB
+encoders write exactly that. The APP0/APP14 signals count only before SOF; the
+ICC profile is collected from the whole header, up to the first SOS, before
+marker parsing starts (`extract_icc_profile`), so an XYB profile placed
+between SOF and SOS still counts. An XYB ICC on a YCbCr-signalled frame does
+not make it XYB, and on a one- or four-component frame the model stays
+Gray / CMYK (`is_xyb` is false). `JpegInfo::color_space`, `JpegInfo::is_xyb`
+and `ScanlineReader::info().color_space` all report this one value.
 
-```rust
-// JpegInfo::color_space derivation
-let is_xyb = self.icc_profile.as_ref()
-    .map(|p| is_xyb_profile(p))
-    .unwrap_or(false);
-let color_space = if is_xyb {
-    ColorSpace::Xyb
-} else if /* RGB component IDs */ { ColorSpace::Rgb }
-  else if /* 1 component */ { ColorSpace::Grayscale }
-  else if /* 4 component */ { ColorSpace::Cmyk }
-  else { ColorSpace::YCbCr };
-```
+The model drives the decode-pipeline decisions:
 
-This XYB flag drives several decode-pipeline decisions:
-
-- `decode_baseline_streaming_rgb` (the fast streaming path) refuses XYB,
-  forcing the buffered-coefficient path that has access to the f32 IDCT
-  output (`scan.rs:534-545`)
-- `can_use_fast_i16_path` returns `false` for XYB so the i16 fast IDCT
-  is skipped in favor of the f32 IDCT (`output.rs:133`)
+- `ColorModel::Xyb` has no integer row kernel (`ColorModel::row_kernel` is
+  `None`), so `PathPlan` keeps XYB off the streaming baseline, fused/wave
+  parallel, fast integer and scanline strip paths; it takes the f32
+  coefficient path.
 - The output stage runs `xyb_planes_to_srgb_u8_simd` (the full inverse
-  XYB transform) instead of the YCbCr→RGB conversion (`output.rs`)
+  XYB transform) instead of the YCbCr→RGB conversion (`output.rs`).
 
 ### The scaled-XYB → sRGB inverse transform
 

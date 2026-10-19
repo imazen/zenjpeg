@@ -15,29 +15,6 @@ use magetypes::simd::generic::i32x8 as GenericI32x8;
 // Nearest-Neighbor Upsampling (Box Filter)
 // ============================================================================
 
-/// Horizontal 2x + vertical 2x nearest-neighbor upsampling in i16 (4:2:0 → 4:4:4).
-///
-/// Each chroma sample is replicated to fill the corresponding 2x2 output area.
-pub fn upsample_h2v2_i16_nearest(
-    input: &[i16],
-    in_width: usize,
-    in_height: usize,
-    output: &mut [i16],
-    out_width: usize,
-    out_height: usize,
-) {
-    for out_y in 0..out_height {
-        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
-        let out_row = out_y * out_width;
-        let in_row = in_y * in_width;
-
-        for out_x in 0..out_width {
-            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
-            output[out_row + out_x] = input[in_row + in_x];
-        }
-    }
-}
-
 /// Horizontal 2x nearest-neighbor upsampling in i16 (4:2:2 → 4:4:4).
 pub fn upsample_h2v1_i16_nearest(
     input: &[i16],
@@ -175,18 +152,6 @@ impl H2v2Bias {
         match self {
             H2v2Bias::Alternating { is_upper: false } => (7, 8),
             _ => (8, 7),
-        }
-    }
-
-    /// Bias of the second output when the chroma plane is a single column.
-    /// Alternating keeps zenjpeg's legacy duplicated first output (bias 8);
-    /// turbo emits the `(4c + 7) >> 4` right-output form its padded
-    /// buffers produce.
-    #[inline(always)]
-    fn single_col_second(self) -> i32 {
-        match self {
-            H2v2Bias::Turbo => 7,
-            H2v2Bias::Alternating { .. } => 8,
         }
     }
 }
@@ -658,22 +623,22 @@ fn upsample_h2v2_libjpeg_row_generic(
 ) {
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
+    let (bias_left, bias_right) = bias.pair();
     if in_width == 1 {
         let colsum = near[0] as i32 * 3 + far[0] as i32;
         if out_width > 0 {
-            output[0] = ((colsum * 4 + 8) >> 4) as i16;
+            output[0] = ((colsum * 4 + bias_left) >> 4) as i16;
         }
         if out_width > 1 {
-            output[1] = ((colsum * 4 + bias.single_col_second()) >> 4) as i16;
+            output[1] = ((colsum * 4 + bias_right) >> 4) as i16;
         }
         return;
     }
-    let (bias_left, bias_right) = bias.pair();
 
     // First column.
     let cs0 = near[0] as i32 * 3 + far[0] as i32;
     let cs1 = near[1] as i32 * 3 + far[1] as i32;
-    output[0] = ((cs0 * 4 + 8) >> 4) as i16;
+    output[0] = ((cs0 * 4 + bias_left) >> 4) as i16;
     if out_width > 1 {
         output[1] = ((cs0 * 3 + cs1 + bias_right) >> 4) as i16;
     }
@@ -762,18 +727,6 @@ pub fn upsample_h2v2_libjpeg_row_scalar(
     out_width: usize,
     bias: H2v2Bias,
 ) {
-    if in_width == 1 {
-        // Single column: just vertical filter
-        let colsum = near[0] as i32 * 3 + far[0] as i32;
-        if out_width > 0 {
-            output[0] = ((colsum * 4 + 8) >> 4) as i16;
-        }
-        if out_width > 1 {
-            output[1] = ((colsum * 4 + bias.single_col_second()) >> 4) as i16;
-        }
-        return;
-    }
-
     // Rounding biases: libjpeg-turbo's h2v2 uses FIXED (left 8, right 7)
     // for both rows of a pair; the default Triangle mode alternates to
     // (7, 8) on lower rows (like turbo's own h1v2 +1/+2 scheme), which
@@ -784,12 +737,24 @@ pub fn upsample_h2v2_libjpeg_row_scalar(
     // h2v2_triangle_vs_libjpeg_turbo_reference.
     let (bias_left, bias_right) = bias.pair();
 
+    if in_width == 1 {
+        // Single column: just vertical filter
+        let colsum = near[0] as i32 * 3 + far[0] as i32;
+        if out_width > 0 {
+            output[0] = ((colsum * 4 + bias_left) >> 4) as i16;
+        }
+        if out_width > 1 {
+            output[1] = ((colsum * 4 + bias_right) >> 4) as i16;
+        }
+        return;
+    }
+
     // Column sums: near * 3 + far
     let this_colsum = near[0] as i32 * 3 + far[0] as i32;
     let next_colsum = near[1] as i32 * 3 + far[1] as i32;
 
     // First column
-    output[0] = ((this_colsum * 4 + 8) >> 4) as i16;
+    output[0] = ((this_colsum * 4 + bias_left) >> 4) as i16;
     if out_width > 1 {
         output[1] = ((this_colsum * 3 + next_colsum + bias_right) >> 4) as i16;
     }
@@ -860,7 +825,7 @@ fn upsample_h2v2_libjpeg_row_avx2(
     // --- First column (scalar, special edge handling) ---
     let colsum_0 = near[0] as i32 * 3 + far[0] as i32;
     let colsum_1 = near[1] as i32 * 3 + far[1] as i32;
-    output[0] = ((colsum_0 * 4 + 8) >> 4) as i16;
+    output[0] = ((colsum_0 * 4 + bias_left as i32) >> 4) as i16;
     if out_width > 1 {
         output[1] = ((colsum_0 * 3 + colsum_1 + bias_right as i32) >> 4) as i16;
     }
@@ -1617,16 +1582,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn h2v2_i16_nearest_basic() {
-        let input: Vec<i16> = vec![750; 4 * 4];
-        let mut output = vec![0i16; 8 * 8];
-        upsample_h2v2_i16_nearest(&input, 4, 4, &mut output, 8, 8);
-        for &v in &output {
-            assert_eq!(v, 750);
-        }
-    }
-
-    #[test]
     fn h2v1_i16_nearest_basic() {
         let input: Vec<i16> = vec![300; 4];
         let mut output = vec![0i16; 8];
@@ -2173,5 +2128,86 @@ mod tests {
             "expected >={min_tiers} SIMD tiers, ran {}",
             report.permutations_run
         );
+    }
+
+    /// Strip samples reach the upsamplers bounded to
+    /// `+-SAMPLE_LIMIT` (the unclamped IDCT of f32 output targets bounds them
+    /// there). Every tier must be exact at that bound, where the AVX2 kernels'
+    /// i16 sums are tightest (h2v2: 16 x 2047 = 32752; h1v2: 4 x 2047).
+    #[test]
+    fn upsamplers_exact_at_the_sample_bound() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        let lim = crate::color::planes::SAMPLE_LIMIT as i16;
+        let pattern = |w: usize, kind: u32| -> Vec<i16> {
+            let mut x = kind.wrapping_mul(2_654_435_761).wrapping_add(7);
+            (0..w)
+                .map(|i| match kind {
+                    0 => lim,
+                    1 => -lim,
+                    2 => {
+                        if i % 2 == 0 {
+                            lim
+                        } else {
+                            -lim
+                        }
+                    }
+                    _ => {
+                        x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        ((x >> 8) % (2 * lim as u32 + 1)) as i16 - lim
+                    }
+                })
+                .collect()
+        };
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            for w in [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 64] {
+                for (a, b) in [(0u32, 1u32), (1, 0), (2, 3), (3, 2), (4, 5), (0, 0), (1, 1)] {
+                    let (near, far) = (pattern(w, a), pattern(w, b));
+                    for out_w in [w * 2, (w * 2).saturating_sub(1).max(1)] {
+                        for bias in [
+                            H2v2Bias::Alternating { is_upper: true },
+                            H2v2Bias::Alternating { is_upper: false },
+                            H2v2Bias::Turbo,
+                        ] {
+                            let (mut want, mut got) = (vec![0i16; out_w], vec![0i16; out_w]);
+                            upsample_h2v2_libjpeg_row_scalar(
+                                &near, &far, &mut want, w, out_w, bias,
+                            );
+                            upsample_h2v2_libjpeg_row(&near, &far, &mut got, w, out_w, bias);
+                            assert_eq!(got, want, "h2v2 row w={w} {a}/{b} {bias:?} at {perm}");
+                        }
+                        let (mut want, mut got) = (vec![0i16; out_w], vec![0i16; out_w]);
+                        upsample_h2v1_i16_libjpeg_strided_scalar(
+                            &near, w, w, 1, &mut want, out_w, out_w, 1,
+                        );
+                        upsample_h2v1_i16_libjpeg_strided(
+                            &near, w, w, 1, &mut got, out_w, out_w, 1,
+                        );
+                        assert_eq!(got, want, "h2v1 w={w} {a} at {perm}");
+                    }
+                    // h1v2: two input rows, four output rows, against the
+                    // definition (near * 3 + far + bias) >> 2.
+                    let input: Vec<i16> = near.iter().chain(&far).copied().collect();
+                    let mut got = vec![0i16; w * 4];
+                    upsample_h1v2_i16_libjpeg_strided(&input, w, w, 2, &mut got, w, w, 4);
+                    for oy in 0..4 {
+                        let (n_row, f_row, bias) = match oy {
+                            0 => (&near, &near, 1),
+                            1 => (&near, &far, 2),
+                            2 => (&far, &near, 1),
+                            _ => (&far, &far, 2),
+                        };
+                        for x in 0..w {
+                            let want = ((n_row[x] as i32 * 3 + f_row[x] as i32 + bias) >> 2) as i16;
+                            assert_eq!(
+                                got[oy * w + x],
+                                want,
+                                "h1v2 w={w} row {oy} x={x} at {perm}"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        eprintln!("upsamplers at the sample bound: {report}");
     }
 }
