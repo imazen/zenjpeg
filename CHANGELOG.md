@@ -2682,3 +2682,9 @@ All notable changes to zenjpeg are documented here. Earlier history
   a plain single image, while retaining unresolved gain-map/MPF signals and
   multi-image scope. Discovery scans beyond the first SOS. Header-only probes
   retain Unknown; disabling HDR reconstruction does not erase auxiliary facts.
+
+### Controlled decode fuzz graph (2026-10-25)
+
+- Align the standalone fuzz workspace's direct/patch zencodec revisions with
+  the codec's controlled-decode dependency. Two shared-trait copies previously
+  prevented the inventory target from compiling; no fuzz target is disabled.

@@ -755,3 +755,7 @@ native-branch-compat:
 
 controlled-unit-check:
     cargo test -p zenjpeg --lib --features controlled-decode --locked
+
+# Keep the standalone fuzz workspace on the same shared types as this codec.
+controlled-fuzz-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets --locked
