@@ -796,6 +796,83 @@ impl DecodeConfig {
         Ok(info)
     }
 
+    /// Inspect recognized metadata throughout the primary image, without
+    /// allocating coefficients or pixels. This is metadata scope, not evidence
+    /// that an after-scan profile participated in native color conversion.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn read_full_info_preserving(
+        &self,
+        data: &[u8],
+        preserve: &PreserveConfig,
+        stop: &dyn enough::Stop,
+    ) -> Result<JpegInfo> {
+        use crate::container::{MarkerIter, MarkerKind};
+        use extras::{detect_segment_type, should_preserve_segment};
+        stop.check()?;
+        let mut info = self.read_info_preserving(data, preserve)?;
+        let mut extras = DecodedExtras::new();
+        let mut retained = 0u64;
+        let mut complete = false;
+        for span in MarkerIter::for_decoder_metadata(data) {
+            stop.check()?;
+            if span.kind == MarkerKind::Eoi {
+                complete = true;
+                break;
+            }
+            let MarkerKind::App(index) = span.kind else {
+                continue;
+            };
+            let marker = 0xe0 + index;
+            let kind = detect_segment_type(marker, span.payload);
+            if !matches!(
+                kind,
+                SegmentType::Jfif
+                    | SegmentType::Exif
+                    | SegmentType::Xmp
+                    | SegmentType::XmpExtended
+                    | SegmentType::Icc
+            ) || !should_preserve_segment(preserve, kind)
+            {
+                continue;
+            }
+            if self.strictness.is_strict()
+                && kind == SegmentType::Icc
+                && span.payload.get(12) == Some(&0)
+            {
+                return Err(Error::invalid_jpeg_data(
+                    "ICC sequence numbers must start at 1 in strict mode",
+                ));
+            }
+            retained = retained
+                .checked_add(span.payload.len() as u64)
+                .and_then(|n| n.checked_add(core::mem::size_of::<PreservedSegment>() as u64))
+                .ok_or_else(|| Error::allocation_failed(usize::MAX, "full-probe metadata size"))?;
+            // Admit the retained segment payloads and descriptors before copying.
+            // The existing metadata caches and returned info also allocate;
+            // this is not a whole-operation peak-memory certificate.
+            if self.max_memory != 0 && retained > self.max_memory {
+                return Err(Error::resource_limit_exceeded(
+                    zencodec::LimitKind::Memory,
+                    retained,
+                    self.max_memory,
+                ));
+            }
+            extras.try_add_segment(marker, span.payload, kind)?;
+        }
+        if !complete {
+            return Err(Error::truncated_data(
+                "full primary-image metadata inspection",
+            ));
+        }
+        stop.check()?;
+        info.icc_profile = extras.icc_profile().map(|bytes| bytes.to_vec());
+        info.has_icc_profile = info.icc_profile.is_some();
+        info.exif = extras.exif().map(|bytes| bytes.to_vec());
+        info.xmp = extras.xmp().map(|text| text.to_string());
+        info.jfif = extras.jfif();
+        Ok(info)
+    }
+
     /// Estimates peak memory usage for decoding an image of given dimensions.
     ///
     /// This is useful for checking if an image can be decoded within memory limits

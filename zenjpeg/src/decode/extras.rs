@@ -826,6 +826,29 @@ impl DecodedExtras {
         });
     }
 
+    /// Preserve a full-probe segment without infallible vector growth.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn try_add_segment(
+        &mut self,
+        marker: u8,
+        data: &[u8],
+        segment_type: SegmentType,
+    ) -> crate::error::Result<()> {
+        let mut owned = Vec::new();
+        owned.try_reserve_exact(data.len()).map_err(|_| {
+            crate::error::Error::allocation_failed(data.len(), "full-probe metadata payload")
+        })?;
+        self.segments.try_reserve(1).map_err(|_| {
+            crate::error::Error::allocation_failed(
+                core::mem::size_of::<PreservedSegment>(),
+                "full-probe metadata segment",
+            )
+        })?;
+        owned.extend_from_slice(data);
+        self.add_segment(marker, owned, segment_type);
+        Ok(())
+    }
+
     /// Add a secondary image (internal use during parsing).
     pub(crate) fn add_secondary_image(
         &mut self,

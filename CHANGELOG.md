@@ -7,7 +7,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
-- Header ICC extraction now uses the native decoder chunk validator: missing, duplicate, inconsistent, empty and out-of-range chunk sets no longer become partial profiles. Complete legacy zero-of-one profiles remain readable. Header scope still ends at the first SOS; this does not certify trailing or nested metadata.
+- `probe_full_metadata` walks recognized metadata through the primary image EOI, including inter-scan/post-scan ICC, EXIF and XMP. It rejects incomplete primary input and retains decode-policy filtering; trailers and nested images are outside its scope.
+
+- Header ICC extraction now uses the native decoder chunk validator: missing, duplicate, inconsistent, empty and out-of-range chunk sets no longer become partial profiles. Complete legacy zero-of-one profiles remain readable. Header scope still ends at the first SOS; this does not certify trailing or nested metadata (`2a1f3cbf`).
 
 ### Dependency compatibility
 

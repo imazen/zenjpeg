@@ -254,3 +254,81 @@ fn deeply_nested_xmp_does_not_overflow_the_stack() {
     .expect("the decode panicked");
     assert_eq!(decoded.unwrap(), 16);
 }
+
+#[cfg(feature = "zencodec")]
+#[test]
+fn full_probe_discovers_late_primary_metadata_and_requires_its_end() {
+    use enough::Unstoppable;
+    use zencodec::decode::{DecodeJob, DecoderConfig};
+    use zenjpeg::decoder::Decoder;
+    fn app(marker: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0xff, marker];
+        bytes.extend_from_slice(&u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+    let first = app(0xe2, b"ICC_PROFILE\0\x01\x02abc");
+    let second = app(0xe2, b"ICC_PROFILE\0\x02\x02def");
+    let xmp = app(0xe1, b"http://ns.adobe.com/xap/1.0/\0<fixture/>");
+    let exif = app(0xe1, b"Exif\0\0II*\0\x08\0\0\0\0\0\0\0\0\0");
+    for progressive in [false, true] {
+        let mut encoder = EncoderConfig::grayscale(85)
+            .progressive(progressive)
+            .encode_from_bytes(8, 8, zenjpeg::encoder::PixelLayout::Gray8Srgb)
+            .unwrap();
+        encoder.push_packed(&[128u8; 64], Unstoppable).unwrap();
+        let base = encoder.finish().unwrap();
+        assert_eq!(&base[base.len() - 2..], &[0xff, 0xd9]);
+        let jpeg = [
+            &base[..2],
+            &first,
+            &base[2..base.len() - 2],
+            &second,
+            &xmp,
+            &exif,
+            &base[base.len() - 2..],
+        ]
+        .concat();
+        let config = zenjpeg::JpegDecoderConfig::new();
+        let header = config.probe_header(&jpeg).unwrap();
+        assert!(header.metadata().icc_profile.is_none());
+        assert!(header.metadata().xmp.is_none());
+        assert!(header.metadata().exif.is_none());
+        let full = config.probe_full_metadata(&jpeg).unwrap();
+        assert_eq!(
+            full.metadata().icc_profile.as_deref(),
+            Some(b"abcdef".as_slice())
+        );
+        assert_eq!(
+            full.metadata().xmp.as_deref(),
+            Some(b"<fixture/>".as_slice())
+        );
+        assert_eq!(full.metadata().exif.as_deref(), Some(&exif[10..]));
+        let (_, extras) = Decoder::new()
+            .decode_coefficients_with_extras(&jpeg, Unstoppable)
+            .unwrap();
+        let extras = extras.unwrap();
+        assert_eq!(full.metadata().icc_profile.as_deref(), extras.icc_profile());
+        assert_eq!(
+            full.metadata().xmp.as_deref(),
+            extras.xmp().map(str::as_bytes)
+        );
+        assert!(config.probe_full_metadata(&jpeg[..jpeg.len() - 2]).is_err());
+        let trailer = [&jpeg[..], &app(0xe2, b"ICC_PROFILE\0\x01\x01trailer")].concat();
+        assert_eq!(
+            config.probe_full_metadata(&trailer).unwrap().metadata(),
+            full.metadata()
+        );
+        let filtered = config
+            .job()
+            .with_policy(
+                zencodec::decode::DecodePolicy::none()
+                    .with_allow_icc(false)
+                    .with_allow_xmp(false),
+            )
+            .probe_full(&jpeg)
+            .unwrap();
+        assert!(filtered.metadata().icc_profile.is_none());
+        assert!(filtered.metadata().xmp.is_none());
+    }
+}

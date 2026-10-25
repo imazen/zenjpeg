@@ -163,7 +163,11 @@ impl JpegDecoderConfig {
         self.clone().job().probe(data)
     }
 
-    /// Convenience: probe full image metadata (may be expensive).
+    /// Probe recognized metadata through the primary image's EOI without
+    /// decoding pixels. Requires the complete primary image; excludes trailers,
+    /// nested images and unrecognized carriers. The metadata matches preserved
+    /// native extras, including late carriers, and is not a claim that a late
+    /// profile participated in native pixel color conversion.
     pub fn probe_full_metadata(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
         self.clone().job().probe_full(data)
@@ -395,6 +399,24 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             }
             Ok(image_info)
         }
+    }
+
+    fn probe_full(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
+        self.check_input_size(data)?;
+        let stop: &dyn enough::Stop = match &self.stop {
+            Some(stop) => stop,
+            None => &enough::Unstoppable,
+        };
+        let info = self.limit_adjusted_inner().read_full_info_preserving(
+            data,
+            &metadata_preserve(self.policy.as_ref()),
+            stop,
+        )?;
+        let mut image_info = to_image_info(&info);
+        if let Ok(probe) = crate::detect::probe(data) {
+            image_info = image_info.with_source_encoding_details(probe);
+        }
+        Ok(image_info)
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, Self::Error> {

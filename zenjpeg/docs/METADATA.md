@@ -391,3 +391,26 @@ identification and reassembly, and keep their current output:
    (`tests/extended_metadata.rs::mpf_directories_agree_with_the_decoder_parser`).
    Before routing, `container::mpf` gains the 0xB002 scan, with a synthetic
    test of that layout (the corpus has none).
+
+
+## Header and full probes (2026-10-25)
+
+The zencodec header probe stops before the first SOS. Its ICC extractor now
+requires a complete, consistently numbered profile within that header; a
+partial profile never becomes usable ICC bytes. A complete legacy single chunk
+numbered zero of one remains readable in the native compatibility path.
+
+`JpegDecoderConfig::probe_full_metadata` now walks through the primary EOI,
+without decoding coefficients or pixels. It reports recognized ICC, EXIF, XMP
+and JFIF metadata as native preserved extras do, including carriers between or
+after scans. It rejects a missing primary EOI and respects extraction filters.
+It does not inspect trailing/nested image metadata, validate XML disclosure
+policy, or establish that a late profile governed native color conversion.
+Use structural inspection for a carrier inventory. The legacy optional
+metadata fields do not distinguish absence from failed reassembly.
+
+`just metadata-header-check` covers malformed/complete ICC chunks, the legacy
+profile, baseline/progressive late metadata, missing EOI, trailer exclusion and
+policy filtering. Retained full-probe segments are admitted before copying;
+legacy reassembly caches and returned metadata also allocate, so this is not a
+whole-operation memory guarantee.
