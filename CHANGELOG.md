@@ -2675,3 +2675,10 @@ All notable changes to zenjpeg are documented here. Earlier history
   analysis in `docs/quality_estimation_research.md`).
 - `jpeg_inspect`: `--detect` flag prints encoder family + estimated
   quality.
+
+### Controlled decode auxiliary discovery (2026-10-25)
+
+- Full probes now establish absence of known embedded JPEG gain-map content for
+  a plain single image, while retaining unresolved gain-map/MPF signals and
+  multi-image scope. Discovery scans beyond the first SOS. Header-only probes
+  retain Unknown; disabling HDR reconstruction does not erase auxiliary facts.

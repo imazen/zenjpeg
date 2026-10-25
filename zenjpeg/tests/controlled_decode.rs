@@ -561,3 +561,53 @@ fn limits_and_job_cancellation_precede_pixel_effects() {
     assert_eq!(sink.effects, 0);
     assert_eq!(storage.reserved_bytes(), 0);
 }
+
+#[test]
+fn complete_probe_establishes_plain_image_scope_and_preserves_late_auxiliary_signals() {
+    fn marker(number: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0xff, number];
+        bytes.extend(u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+        bytes.extend(payload);
+        bytes
+    }
+    for progressive in [false, true] {
+        let bytes = base(progressive);
+        let job = JpegDecoderConfig::new().job();
+        assert!(matches!(
+            job.probe(&bytes).unwrap().gain_map,
+            zencodec::GainMapPresence::Unknown
+        ));
+        let plain = job.probe_full(&bytes).unwrap();
+        assert!(matches!(plain.gain_map, zencodec::GainMapPresence::Absent));
+        assert!(matches!(plain.sequence, zencodec::ImageSequence::Single));
+        for signal in [
+            marker(0xe2, b"MPF\0unresolved"),
+            marker(0xe2, b"urn:iso:std:iso:ts:21496:-1\0\0\0"),
+            marker(
+                0xe1,
+                b"http://ns.adobe.com/xap/1.0/\0<x hdrgm:Version='1.0'/>",
+            ),
+        ] {
+            let late = [
+                &bytes[..bytes.len() - 2],
+                signal.as_slice(),
+                &bytes[bytes.len() - 2..],
+            ]
+            .concat();
+            let full = job.probe_full(&late).unwrap();
+            assert!(matches!(full.gain_map, zencodec::GainMapPresence::Unknown));
+            assert!(full.supplements.gain_map || full.supplements.auxiliary);
+        }
+        let multiple = [bytes.as_slice(), bytes.as_slice()].concat();
+        let full = job.probe_full(&multiple).unwrap();
+        assert!(matches!(
+            full.sequence,
+            zencodec::ImageSequence::Multi {
+                image_count: Some(2),
+                ..
+            }
+        ));
+        assert!(full.supplements.auxiliary);
+        assert!(matches!(full.gain_map, zencodec::GainMapPresence::Unknown));
+    }
+}

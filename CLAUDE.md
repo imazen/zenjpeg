@@ -1723,3 +1723,12 @@ fixture's DRI was 70 and `jpeg-decoder` rejected the missing expected RST0;
 ordinary native decode recovered while scanline decode refused. Normalize gray
 input/output geometry before coefficient layout and restart resolution. The
 controlled-decode test uses an independent reader before native row parity.
+
+## Known Bugs: full-probe auxiliary scope (fixed on controlled-decode, 2026-10-25)
+
+Full probes formerly left plain JPEG gain-map presence Unknown and did not carry
+container MPF/multi-image facts into ImageInfo. The controlled transcode adapter
+correctly refused that incomplete scope. Full probes now use the existing
+container probe across scans and image boundaries; unresolved auxiliary signals
+remain explicit. `controlled_decode` covers plain, late-signal and concatenated
+image cases for baseline and progressive sources.

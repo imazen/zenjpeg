@@ -429,6 +429,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             stop,
         )?;
         let mut image_info = to_image_info(&info);
+        // Full-file discovery distinguishes an ordinary primary image from
+        // embedded gain-map/multi-image content, even when the signal is late.
+        // Header probes deliberately retain Unknown.
+        stop.check().map_err(Error::from)?;
+        super::info::populate_complete_container_scope(data, &mut image_info);
+        stop.check().map_err(Error::from)?;
         if let Ok(probe) = crate::detect::probe(data) {
             image_info = image_info.with_source_encoding_details(probe);
         }

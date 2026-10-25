@@ -46,6 +46,34 @@ pub(super) fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     img_info
 }
 
+/// Populate known JPEG auxiliary scope after full primary framing validation.
+/// The existing container probe detects all top-level JPEG boundaries, MPF and
+/// supported gain-map signals. SCAN_COUNT keeps discovery beyond the first SOS.
+/// Recognized auxiliary content stays Unknown until its parameters are parsed;
+/// it is never relabeled Absent just because pixel reconstruction was disabled.
+pub(super) fn populate_complete_container_scope(data: &[u8], info: &mut ImageInfo) {
+    use crate::container::{GainMapPresence, Wants, probe};
+    let probe = probe(
+        data,
+        Wants::ULTRAHDR_DETECT | Wants::IMAGE_RANGES | Wants::SCAN_COUNT,
+    );
+    let multiple = probe.image_ranges().len() > 1;
+    let gain_map = probe.gainmap_presence() != GainMapPresence::None;
+    let auxiliary = multiple || probe.mpf().is_some();
+    info.supplements.gain_map |= gain_map;
+    info.supplements.auxiliary |= auxiliary;
+    if multiple {
+        info.sequence = zencodec::ImageSequence::Multi {
+            image_count: (probe.image_ranges().len() < 8)
+                .then_some(probe.image_ranges().len() as u32),
+            random_access: true,
+        };
+    }
+    if !probe.truncated() && !gain_map && !auxiliary && probe.image_ranges().len() == 1 {
+        info.gain_map = zencodec::GainMapPresence::Absent;
+    }
+}
+
 /// Build a [`SourceColor`] from a JPEG header for descriptor derivation.
 pub(super) fn source_color_from_header(
     info: &crate::decode::JpegInfo,
