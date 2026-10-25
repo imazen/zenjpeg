@@ -83,3 +83,18 @@ ICC; jpeg-decoder independently reads the result. Missing, conflicting or denied
 ICC, incompatible channels and unqualified modes refuse. This does not qualify
 a whole-operation memory bound or authorize implicit alpha removal in an
 application transcode.
+
+## Checked encode color handoff
+
+The checked encode setter accepts the all-default no-op and a verbatim color
+policy. Other explicit fields refuse without changing the job. Tests retain
+Adobe RGB and Display P3 ICC authority through typed and erased jobs, compare
+complete row-encoded bytes with direct output for baseline/progressive JPEG,
+and independently decode the resulting entropy stream. Unsupported embed/strict
+fields cannot clear an already accepted policy.
+
+`just checked-color-check` passed on 2026-10-25: native profile/controlled/stream
+checks, strict library/test Clippy, all fuzz targets and API snapshots. Wrapper:
+rc=0, 20 s, peak RSS 0.63 GiB, minimum available 46031 MiB, peak load 2.63.
+This is test-process usage, not a codec workspace guarantee. API generation
+also reports existing ambiguous rustdoc links; it is not a warning-free docs gate.
