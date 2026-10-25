@@ -417,7 +417,7 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=14726d9125b0468ecb70025631d749495dda278b#14726d9125b0468ecb70025631d749495dda278b"
+source = "git+https://github.com/imazen/zencodec?rev=b28a659e0e6db7c934d6386d4ce3d5868fdfa0ba#b28a659e0e6db7c934d6386d4ce3d5868fdfa0ba"
 dependencies = [
  "almost-enough",
  "enough",
@@ -472,7 +472,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=14726d9125b0468ecb70025631d749495dda278b#14726d9125b0468ecb70025631d749495dda278b"
+source = "git+https://github.com/imazen/zencodec?rev=b28a659e0e6db7c934d6386d4ce3d5868fdfa0ba#b28a659e0e6db7c934d6386d4ce3d5868fdfa0ba"
 dependencies = [
  "roxmltree",
  "zencodec",
