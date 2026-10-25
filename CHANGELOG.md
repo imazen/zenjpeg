@@ -5,6 +5,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+
+- Header ICC extraction now uses the native decoder chunk validator: missing, duplicate, inconsistent, empty and out-of-range chunk sets no longer become partial profiles. Complete legacy zero-of-one profiles remain readable. Header scope still ends at the first SOS; this does not certify trailing or nested metadata.
+
 ### Dependency compatibility
 
 - Admit archmage/magetypes 0.9.31-beta.1 and use token-explicit constructor aliases in the WASM examples/tests (`3212f8bf`). Workspace library lint/tests and the all-target build check pass on the current main base; existing ignored tests remain unchanged.

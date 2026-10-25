@@ -85,6 +85,29 @@ fn native_icc_reassembly_checks_the_same_chunk_contract_as_inspection() {
             jpeg.extend_from_slice(payload);
         }
         jpeg.extend_from_slice(&base[2..]);
+        assert_eq!(
+            zenjpeg::color::icc::extract_icc_profile(&jpeg).as_deref(),
+            expected,
+            "header extractor: {chunks:?}"
+        );
+        let header = Decoder::new().read_info(&jpeg).unwrap();
+        assert_eq!(
+            header.icc_profile.as_deref(),
+            expected,
+            "header: {chunks:?}"
+        );
+        assert_eq!(header.has_icc_profile, expected.is_some());
+        #[cfg(feature = "zencodec")]
+        {
+            let header = zenjpeg::JpegDecoderConfig::new()
+                .probe_header(&jpeg)
+                .unwrap();
+            assert_eq!(
+                header.metadata().icc_profile.as_deref(),
+                expected,
+                "adapter: {chunks:?}"
+            );
+        }
         let (_, extras) = Decoder::new()
             .decode_coefficients_with_extras(&jpeg, Unstoppable)
             .unwrap();

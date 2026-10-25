@@ -1673,3 +1673,7 @@ Only the shared writer delegates to zenmeta; keep native helper tests on their
 native API. `just shared-contract-ci-check` also compiles the independent fuzz
 workspace, whose zencodec pin must match the main workspace to avoid duplicate
 trait identities.
+
+## Known Bugs: partial header ICC fixed (2026-10-25)
+
+The header-only ICC extractor ignored chunk totals and could return a partial profile. It now reuses the native chunk validator, preserving complete legacy zero-of-one profiles and refusing incomplete/duplicate/inconsistent/empty sets. `just metadata-header-check` covers the extractor, header info, zencodec header probe, native extras and structural inspection. This does not fix the separate full-probe scope or late-metadata interpretation contracts tracked in issue238.

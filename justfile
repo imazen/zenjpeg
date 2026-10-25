@@ -578,3 +578,8 @@ beta-cohort-check:
 # Constructor spellings changed in examples and benches as well as the library.
 beta-example-check:
     cargo check --locked --workspace --all-targets
+
+# Header, native decode and inspection must agree on ICC chunk completeness.
+metadata-header-check:
+    cargo test -p zenjpeg --features zencodec,extended-metadata --test metadata_limits
+    cargo clippy -p zenjpeg --features zencodec,extended-metadata --lib --test metadata_limits -- -D warnings
