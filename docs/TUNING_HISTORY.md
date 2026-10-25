@@ -1670,3 +1670,30 @@ nothing (they were already out of line); on `decode_baseline_streaming_rgb`
 it gave 289.71M (main: 305.64M), every other streaming row within 7K Ir. The
 lesson extends: a hot loop that lives in a function whose other code changes
 for unrelated reasons should be its own out-of-line function.
+
+## Release packaging triage (2026-10-25)
+
+Reviewed main `a2a128ab` for the next zenjpeg release (manifest: 0.9.0;
+crates.io latest: 0.8.4, checked via its crate API).
+
+- `cargo package -p zenjpeg --locked --no-verify` fails before creating a
+  package: `zenmeta` has no version requirement. Manifest inspection also
+  finds versionless normal dependencies `zenyuv`, `zensim` and the optional
+  `zenpredict`; each needs a registry version for publication.
+- Registry observations: `zenmeta` returns HTTP 404; `zenanalyze` is 0.1.0
+  while the workspace requires 0.2.0. The lockfile uses zenpredict 0.2.0 and
+  zensim 0.3.0, while their latest registry versions are 0.1.0 and 0.2.7.
+  Optional dependencies also need publishable manifests. Recheck these
+  observations with `https://crates.io/api/v1/crates/<crate>`.
+- The lockfile uses git zencodec 0.1.27 and zenpixels/zenpixels-convert
+  0.2.17; the registry has 0.1.26 and 0.2.16 respectively. Their requirement
+  ranges admit the registry releases, but workspace patches are not inherited
+  by downstream consumers: verify the registry graph before release.
+- Current-main [CI](https://github.com/imazen/zenjpeg/actions/runs/39344604207)
+  passed, including Windows ARM, macOS ARM and i686. That workflow strips
+  workspace dependencies and removes Cargo.lock; it does not establish that
+  the published package resolves.
+- Remaining release gates: registry-only package verification, semver checks
+  against published 0.8.4, required all-target/doc tests on the final candidate,
+  release changelog reconciliation, README review and explicit owner approval.
+  This triage did not rerun the full test suite or semver checks.
