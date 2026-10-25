@@ -7,6 +7,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- Checked encode jobs qualify verbatim color emission without silently accepting
+  unqualified policy fields. Refusal leaves the previous job policy intact;
+  typed and erased baseline/progressive row paths retain ICC interpretation.
+
 - Add borrowed `&dyn how_far::Pulse` decoding and scanline methods, preserving cancellation reasons through native, buffered and parallel wave paths. Minimal reference fixtures and a shared native-component fuzz/regression harness cover stride, malformed input and precision (`935f6fbe`).
 - Native component decoding for up to ten channels, per-component quantization
   table retention across scans, and all sixteen arithmetic conditioning slots.

@@ -771,3 +771,9 @@ controlled-integration-check:
     cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
     just profiled-encode-check
     just controlled-fuzz-check
+
+# Checked color handoff, native controlled route and coordinated public signatures.
+checked-color-check:
+    just profiled-encode-check
+    just controlled-fuzz-check
+    just api-doc

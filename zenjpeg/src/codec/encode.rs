@@ -558,6 +558,23 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::encode::EncodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        use zencodec::{ColorEmitPolicy, encode::EncodePolicy};
+        if policy == EncodePolicy::none() {
+            return Ok(());
+        }
+        // Qualify supplied color carriers; other emission requirements must
+        // not silently fall through to the legacy best-effort setter.
+        if policy != EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim) {
+            return Err(zencodec::UnsupportedOperation::EncodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
+    }
+
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.image_size = Some((width, height));
         self

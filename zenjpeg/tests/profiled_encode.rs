@@ -184,3 +184,63 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
     encoder.push_rows(pixels(desc)).unwrap();
     assert!(!encoder.finish().unwrap().data().is_empty());
 }
+
+#[test]
+fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
+    use zencodec::{CodecSet, ColorEmitPolicy, ImageFormat, UnsupportedOperation};
+    let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
+    for icc in [ADOBE_RGB, DISPLAY_P3_V4] {
+        let raw = [17, 31, 61, 7, 11, 13, 0xee, 0xee, 0xee].repeat(9);
+        let desc = descriptor(PixelDescriptor::RGB8_SRGB, icc);
+        let pixels = || {
+            PixelSlice::new(&raw, 2, 9, 9, desc)
+                .unwrap()
+                .with_color_context(Arc::new(ColorContext::from_icc(icc)))
+        };
+        for progressive in [false, true] {
+            let config = JpegEncoderConfig::new().with_progressive(progressive);
+            let metadata = Metadata::none().with_icc(icc);
+            let mut job = config
+                .clone()
+                .job()
+                .with_metadata_policy(metadata.clone(), MetadataPolicy::PreserveExact)
+                .try_with_policy(policy)
+                .unwrap();
+            for refused in [
+                policy.with_strict(true),
+                policy.with_embed_exif(false),
+                policy.with_embed_xmp(false),
+                policy.with_embed_icc(false),
+            ] {
+                assert_eq!(
+                    job.try_set_policy(refused),
+                    Err(UnsupportedOperation::EncodePolicy)
+                );
+            }
+            job.try_set_policy(EncodePolicy::none()).unwrap();
+            let direct = job.encoder().unwrap().encode(pixels()).unwrap();
+            let registry = CodecSet::new().with_send_encoder(config);
+            let mut job = registry.encode_job(ImageFormat::Jpeg).unwrap();
+            job.try_set_policy(policy).unwrap();
+            job.set_metadata_policy(metadata, MetadataPolicy::PreserveExact);
+            let mut rows = job.into_encoder().unwrap();
+            rows.begin(2, 9, desc).unwrap();
+            for y in 0..9 {
+                rows.push_rows(pixels().sub_rows(y, 1)).unwrap();
+            }
+            let output = rows.finish().unwrap();
+            assert_eq!(output.data(), direct.data());
+            let info = JpegDecoderConfig::new()
+                .job()
+                .probe_full(output.data())
+                .unwrap();
+            assert_eq!(info.source_color.icc_profile.as_deref(), Some(icc));
+            assert_eq!(
+                info.source_color.to_color_context().icc.as_deref(),
+                Some(icc)
+            );
+            let mut oracle = jpeg_decoder::Decoder::new(Cursor::new(output.data()));
+            assert_eq!(oracle.decode().unwrap().len(), 2 * 9 * 3);
+        }
+    }
+}
