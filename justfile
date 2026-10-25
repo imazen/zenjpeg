@@ -585,8 +585,8 @@ metadata-header-check:
 
 # Qualified controlled JPEG route; the caller chooses the feature explicitly.
 controlled-check:
-    cargo test -p zenjpeg --test controlled_decode --test grayscale_geometry --test shared_contracts --features controlled-decode --locked
-    cargo clippy -p zenjpeg --lib --test controlled_decode --test grayscale_geometry --features controlled-decode --locked -- -D warnings
+    cargo test -p zenjpeg --test controlled_decode --test streaming_encode --test grayscale_geometry --test shared_contracts --features controlled-decode --locked
+    cargo clippy -p zenjpeg --lib --test controlled_decode --test streaming_encode --test grayscale_geometry --features controlled-decode --locked -- -D warnings
 
 controlled-sync export:
     test ! -e "{{export}}/.git"
@@ -594,7 +594,7 @@ controlled-sync export:
     mkdir -p "{{export}}/zenjpeg/src/codec/decode"
     cp Cargo.toml justfile "{{export}}/"
     cp zenjpeg/Cargo.toml "{{export}}/zenjpeg/"
-    cp zenjpeg/src/codec/decode.rs zenjpeg/src/codec/info.rs zenjpeg/src/codec/streaming.rs "{{export}}/zenjpeg/src/codec/"
+    cp zenjpeg/src/codec/encode.rs zenjpeg/src/codec/decode.rs zenjpeg/src/codec/info.rs zenjpeg/src/codec/streaming.rs "{{export}}/zenjpeg/src/codec/"
     cp zenjpeg/src/codec/decode/controlled.rs "{{export}}/zenjpeg/src/codec/decode/"
     cp zenjpeg/src/encode/byte_encoders.rs zenjpeg/src/encode/streaming.rs "{{export}}/zenjpeg/src/encode/"
     cp zenjpeg/tests/controlled_decode.rs zenjpeg/tests/grayscale_geometry.rs "{{export}}/zenjpeg/tests/"
