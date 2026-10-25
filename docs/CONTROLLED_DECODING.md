@@ -98,3 +98,10 @@ checks, strict library/test Clippy, all fuzz targets and API snapshots. Wrapper:
 rc=0, 20 s, peak RSS 0.63 GiB, minimum available 46031 MiB, peak load 2.63.
 This is test-process usage, not a codec workspace guarantee. API generation
 also reports existing ambiguous rustdoc links; it is not a warning-free docs gate.
+
+Shared sink-capacity integration (2026-10-25): zencodec `939d5628` splits
+coroutine delivery to fit admitted sink strips without changing the held native
+batch. Native controlled, streaming/profiled encode, fuzz compilation and API
+snapshot checks pass (`just controlled-integration-check api-doc`). run-heavy:
+rc=0, 57 s, peak RSS 0.71 GiB, minimum available 20209 MiB, peak load 13.95.
+This describes validation, not native codec workspace.
