@@ -764,3 +764,10 @@ controlled-fuzz-check:
 profiled-encode-check:
     cargo test -p zenjpeg --features controlled-decode --test profiled_encode --test streaming_encode --test controlled_decode --locked
     cargo clippy -p zenjpeg --features controlled-decode --lib --test profiled_encode --test streaming_encode --test controlled_decode --locked -- -D warnings
+
+# Align all standalone graphs before qualifying the reviewed shared contract.
+controlled-integration-check:
+    cargo update -p zencodec
+    cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
+    just profiled-encode-check
+    just controlled-fuzz-check

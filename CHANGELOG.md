@@ -56,6 +56,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Dependency integration
 
+- Align the controlled route, testkit, metadata and standalone fuzz workspace on zencodec `14726d91`, with the prepared conversion implementation from zenpixels `f8596aae`. Profiled native encode, controlled decode, streaming equivalence and all fuzz target builds pass together.
+
 - Align codec, metadata and testkit with independent metadata-channel capability probes (`d327434b`), retaining a single shared interface source.
 
 - Align codec, metadata and testkit revisions with the intrinsic-color conformance correction (`802952b7`), keeping the consumer graph on one shared interface source.
