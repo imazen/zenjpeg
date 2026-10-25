@@ -1732,3 +1732,13 @@ correctly refused that incomplete scope. Full probes now use the existing
 container probe across scans and image boundaries; unresolved auxiliary signals
 remain explicit. `controlled_decode` covers plain, late-signal and concatenated
 image cases for baseline and progressive sources.
+
+## Known Bugs: profile-tagged encode and fuzz graph (2026-10-25)
+
+The shared JPEG adapter previously rejected nonlinear U8 descriptors produced
+by ICC-aware conversion. The controlled-decode PR qualifies matching retained
+RGB ICC input in YCbCr mode; `just profiled-encode-check` verifies exact bytes,
+strided batches and independent readback. Issue 241 tracks the qualification.
+The standalone fuzz workspace also pinned a different zencodec revision from
+the codec; commit 8a8c1088 aligns both registry/direct edges and
+`just controlled-fuzz-check` verifies the complete target graph.

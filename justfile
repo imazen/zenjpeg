@@ -597,7 +597,7 @@ controlled-sync export:
     cp zenjpeg/src/codec/encode.rs zenjpeg/src/codec/decode.rs zenjpeg/src/codec/info.rs zenjpeg/src/codec/streaming.rs "{{export}}/zenjpeg/src/codec/"
     cp zenjpeg/src/codec/decode/controlled.rs "{{export}}/zenjpeg/src/codec/decode/"
     cp zenjpeg/src/encode/byte_encoders.rs zenjpeg/src/encode/streaming.rs "{{export}}/zenjpeg/src/encode/"
-    cp zenjpeg/tests/controlled_decode.rs zenjpeg/tests/grayscale_geometry.rs "{{export}}/zenjpeg/tests/"
+    cp zenjpeg/tests/controlled_decode.rs zenjpeg/tests/grayscale_geometry.rs zenjpeg/tests/profiled_encode.rs "{{export}}/zenjpeg/tests/"
 
 controlled-lock:
     cargo update -p zencodec
@@ -759,3 +759,8 @@ controlled-unit-check:
 # Keep the standalone fuzz workspace on the same shared types as this codec.
 controlled-fuzz-check:
     cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets --locked
+
+# Packed byte semantics under a retained ICC, without descriptor relabeling.
+profiled-encode-check:
+    cargo test -p zenjpeg --features controlled-decode --test profiled_encode --test streaming_encode --test controlled_decode --locked
+    cargo clippy -p zenjpeg --features controlled-decode --lib --test profiled_encode --test streaming_encode --test controlled_decode --locked -- -D warnings

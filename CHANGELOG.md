@@ -21,6 +21,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Qualify RGB/RGBA/BGRA byte input under a retained RGB ICC profile in the shared JPEG encoder. Profile-tagged one-shot and strided row paths produce identical bytes to the established packing path; conflicting profiles, discarded ICC, premultiplied alpha and unqualified XYB/HDR modes refuse (issue 241).
+
 - Retain the established configuration-specific output-lag bound for gray input after correcting its coding geometry. Images within that bound still expose no bytes before finish; streaming and one-shot bytes remain identical.
 
 - Gray input under a color configuration now uses one-block MCU geometry for coefficient order, Huffman counts and restart intervals. Independent decoder readback and exact native equivalence cover edge and aligned dimensions in baseline and progressive output.

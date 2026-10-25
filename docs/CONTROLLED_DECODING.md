@@ -65,3 +65,21 @@ explicit strictness or partial-image-success policies before mutation. Legacy
 
 Run `just controlled-check` for native route/erasure/registry parity, legacy
 float packing, admission, failure cleanup and the existing shared contracts.
+
+## Profile-preserving transcodes
+
+The shared encoder accepts profile-tagged nonlinear U8 RGB/RGBA/BGRA samples
+when the job retains their RGB ICC profile and uses YCbCr coding. The descriptor
+and any current pixel context must agree with that carrier. These bytes go
+through the established byte packing path without a transfer conversion or an
+external descriptor relabel. The qualified extra transfers are Unknown (opaque
+ICC) and Gamma22; existing sRGB behavior remains available. XYB, HDR, narrow
+range, premultiplied input and gray profiles need separate qualification.
+
+`just profiled-encode-check` compares direct and strided batches of 1, 7, 16, 31
+and 65 rows for RGB/RGBA/BGRA, baseline/progressive and fixed/optimized Huffman
+coding. Encoded bytes match the existing packing path with the same samples and
+ICC; jpeg-decoder independently reads the result. Missing, conflicting or denied
+ICC, incompatible channels and unqualified modes refuse. This does not qualify
+a whole-operation memory bound or authorize implicit alpha removal in an
+application transcode.
