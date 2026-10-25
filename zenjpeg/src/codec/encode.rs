@@ -983,12 +983,22 @@ impl zencodec::encode::Encoder for JpegEncoder {
         self.check_limits(width, height, layout)?;
         let req = self.build_request(Some(layout.channels() as u8))?;
         let mut enc = req.encode_from_bytes(width, height, layout)?;
+        // Keep the configuration's established conservative lag bound even
+        // when gray input uses smaller, single-component coding units. The
+        // bound describes availability, not coefficient/restart geometry.
+        let configured_lag = match self.effective_config.color_mode {
+            crate::encode::encoder_types::ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::Quarter,
+            } => 31,
+            _ => 15,
+        };
+        let lag = enc.output_lag_rows().max(configured_lag);
         // Holding every row would be no stream at all: the header alone is
         // not worth a chunked response.
-        let timing = if enc.can_stream_output() && enc.output_lag_rows() < height {
+        let timing = if enc.can_stream_output() && lag < height {
             enc.start_output()?;
             self.check_total_output(enc.pending_output().len())?;
-            OutputTiming::streaming(enc.output_lag_rows())
+            OutputTiming::streaming(lag)
         } else {
             OutputTiming::AT_FINISH
         };

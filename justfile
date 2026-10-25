@@ -586,4 +586,5 @@ metadata-header-check:
 
 # Gray input must keep header, entropy order and restart geometry in agreement.
 gray-geometry-check:
-    cargo test -p zenjpeg --test grayscale_geometry --features zencodec --locked
+    cargo test -p zenjpeg --test grayscale_geometry --test streaming_encode --features zencodec --locked
+    cargo clippy -p zenjpeg --lib --test grayscale_geometry --test streaming_encode --features zencodec --locked -- -D warnings
