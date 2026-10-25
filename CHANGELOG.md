@@ -5,6 +5,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Preserve non-square JFIF pixel aspect in shared header and decoded metadata.
+  Unknown units remain distinct from physical DPI; square default aspect needs
+  no override. Native serializer/decoder tests cover both axis orders and bounds.
+
 - Align the controlled route, metadata services, testkit and fuzz graph on the
   checked resolution contract at zencodec `008b93c3`. Native controlled decode,
   profiled encode, streaming equivalence, strict Clippy and fuzz target builds

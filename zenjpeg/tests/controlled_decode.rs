@@ -611,3 +611,37 @@ fn complete_probe_establishes_plain_image_scope_and_preserves_late_auxiliary_sig
         assert!(matches!(full.gain_map, zencodec::GainMapPresence::Unknown));
     }
 }
+
+#[test]
+fn non_square_jfif_aspect_survives_header_and_full_decode_info() {
+    use zenjpeg::decoder::{DensityUnits, JfifInfo};
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig as NativeConfig, PixelLayout};
+    for (x, y) in [(120, 80), (80, 120), (65535, 1), (1, 65535), (1, 1)] {
+        let native = NativeConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+        let segments = native
+            .get_segments()
+            .cloned()
+            .unwrap_or_default()
+            .set_jfif(JfifInfo {
+                version_major: 1,
+                version_minor: 2,
+                density_units: DensityUnits::None,
+                x_density: x,
+                y_density: y,
+            });
+        let data = native
+            .with_segments(segments)
+            .encode_bytes(&[19, 83, 201].repeat(17 * 9), 17, 9, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        let config = JpegDecoderConfig::new();
+        let probe = config.clone().job().probe_full(&data).unwrap();
+        let decoded = config.decode(&data).unwrap();
+        let expected = (x != y).then_some(zencodec::Resolution {
+            x: x.into(),
+            y: y.into(),
+            unit: zencodec::ResolutionUnit::Unknown,
+        });
+        assert_eq!(probe.resolution, expected);
+        assert_eq!(decoded.info().resolution, expected);
+    }
+}

@@ -120,3 +120,17 @@ do not claim C++ encoder parity.
 just controlled-integration-check
 run-heavy: done rc=0 50s | peak-RSS 0.78GiB | min-avail 15084MiB | peak-load 1.96
 ```
+
+Non-square JFIF aspect is now reported through `ImageInfo::resolution` with
+`ResolutionUnit::Unknown` by both full probing and decoded extras. Previously
+the adapter discarded every unit-zero density. Equal axes retain the ordinary
+square-pixel interpretation without adding a physical-size claim. Native tests
+exercise both axis orders and 16-bit field limits; downstream exact PNG carriage
+can therefore preserve the ratio instead of treating it as absent.
+
+The focused native regression and unchanged controlled/profiled/streaming gates
+passed (`just profiled-encode-check`, explicit `ZENJPEG_SKIP_CPP=1`):
+
+```text
+run-heavy: done rc=0 5s | peak-RSS 0.52GiB | min-avail 15853MiB | peak-load 0.53
+```

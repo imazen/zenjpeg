@@ -167,7 +167,9 @@ pub(super) fn populate_info_from_jpeg_extras(
 
 /// Convert JFIF density info to a zencodec [`Resolution`](zencodec::Resolution).
 ///
-/// Returns `None` for aspect-ratio-only density (unit = 0) or zero densities.
+/// Retain non-square unknown-unit aspect separately from physical density.
+/// Square unknown-unit pixels need no override of JPEG's ordinary square-pixel
+/// interpretation. Zero density fields remain unavailable.
 pub(super) fn jfif_to_resolution(
     jfif: &crate::encode::extras::JfifInfo,
 ) -> Option<zencodec::Resolution> {
@@ -181,7 +183,8 @@ pub(super) fn jfif_to_resolution(
     let unit = match jfif.density_units {
         DensityUnits::PixelsPerInch => ResolutionUnit::Inch,
         DensityUnits::PixelsPerCm => ResolutionUnit::Centimeter,
-        DensityUnits::None => return None, // aspect ratio only, not real DPI
+        DensityUnits::None if jfif.x_density == jfif.y_density => return None,
+        DensityUnits::None => ResolutionUnit::Unknown,
     };
 
     Some(zencodec::Resolution {
