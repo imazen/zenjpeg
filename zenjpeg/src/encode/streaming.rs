@@ -248,7 +248,12 @@ impl StreamingEncoder {
     }
 
     /// Creates a streaming encoder from builder configuration.
-    pub(crate) fn from_builder(builder: StreamingEncoderBuilder) -> Result<Self> {
+    pub(crate) fn from_builder(mut builder: StreamingEncoderBuilder) -> Result<Self> {
+        // Header, coefficient order, frequency counting and restart units must
+        // all agree for a single-component frame, including direct builders.
+        if builder.gray_output || builder.pixel_format.is_grayscale() {
+            builder.subsampling = Subsampling::S444;
+        }
         let width = builder.width as usize;
         let height = builder.height as usize;
 

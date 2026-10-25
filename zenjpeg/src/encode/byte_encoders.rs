@@ -279,6 +279,14 @@ impl BytesEncoder {
             builder = builder.gray_output(true);
         }
 
+        // A one-component frame has one 8x8 block per MCU, regardless of the
+        // color configuration's unused chroma subsampling. Resolve restart
+        // cadence and every downstream layout from that same geometry.
+        let subsampling = if pixel_format.is_grayscale() {
+            crate::types::Subsampling::S444
+        } else {
+            subsampling
+        };
         Self::apply_common_builder_config(builder, config, width, height, subsampling).start()
     }
 

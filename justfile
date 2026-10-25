@@ -583,3 +583,7 @@ beta-example-check:
 metadata-header-check:
     cargo test -p zenjpeg --features zencodec,extended-metadata --test metadata_limits
     cargo clippy -p zenjpeg --features zencodec,extended-metadata --lib --test metadata_limits -- -D warnings
+
+# Gray input must keep header, entropy order and restart geometry in agreement.
+gray-geometry-check:
+    cargo test -p zenjpeg --test grayscale_geometry --features zencodec --locked
