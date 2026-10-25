@@ -16,11 +16,18 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Native raw-component and typed CMYK16 row readers, lossless CMYK and two-component decoding, and additional integral 12-bit sampling layouts (`0def834c`).
 - Twelve-bit coefficient-preserving sequential/progressive transcoding and spatial transforms using the existing lossless encoder (`e2c872a3`).
 
+
+- Default-off `controlled-decode`: required interpretation suspension through native jobs, erased jobs and stored requests, admitted input/row staging, structured refusal reasons and terminal cleanup. See `docs/CONTROLLED_DECODING.md` for qualification limits.
+
 ### Fixed
 
 - Retain the established configuration-specific output-lag bound for gray input after correcting its coding geometry. Images within that bound still expose no bytes before finish; streaming and one-shot bytes remain identical.
 
 - Gray input under a color configuration now uses one-block MCU geometry for coefficient order, Huffman counts and restart intervals. Independent decoder readback and exact native equivalence cover edge and aligned dimensions in baseline and progressive output.
+
+- Float RGB scanline batches compact RGBA storage before publishing RGB; linear float outputs keep linear labels, and gray float rows use the linear read. The separate one-shot/strip float IDCT gap remains tracked in issue 239.
+- One-shot RGBX/BGRX decoding preserves the selected filler-channel descriptor.
+- Checked decode policy application supports qualified metadata/progressive fields and refuses unqualified strictness/partial-success policies without mutating the job.
 
 - `probe_full_metadata` walks recognized metadata through the primary image EOI, including inter-scan/post-scan ICC, EXIF and XMP. It rejects incomplete primary input and retains decode-policy filtering; trailers and nested images are outside its scope.
 

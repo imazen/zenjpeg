@@ -84,9 +84,9 @@ pub(super) fn decode_descriptor(
         &sc,
         corrected_cicp.as_ref(),
     );
-    if header.is_xyb {
-        // The selected float scanline path returns linear-light RGB; u8
-        // returns sRGB codes. Keep that output transfer after XYB inversion.
+    if header.is_xyb || base.channel_type() == zenpixels::ChannelType::F32 {
+        // Float rows return linear-light samples; source transfer describes the
+        // encoded samples, not these returned pixels.
         decoded.with_transfer(base.transfer())
     } else {
         decoded

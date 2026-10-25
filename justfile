@@ -583,6 +583,25 @@ metadata-header-check:
     cargo test -p zenjpeg --features zencodec,extended-metadata --test metadata_limits
     cargo clippy -p zenjpeg --features zencodec,extended-metadata --lib --test metadata_limits -- -D warnings
 
+# Qualified controlled JPEG route; the caller chooses the feature explicitly.
+controlled-check:
+    cargo test -p zenjpeg --test controlled_decode --test grayscale_geometry --test shared_contracts --features controlled-decode --locked
+    cargo clippy -p zenjpeg --lib --test controlled_decode --test grayscale_geometry --features controlled-decode --locked -- -D warnings
+
+controlled-sync export:
+    test ! -e "{{export}}/.git"
+    test ! -e "{{export}}/.jj"
+    mkdir -p "{{export}}/zenjpeg/src/codec/decode"
+    cp Cargo.toml justfile "{{export}}/"
+    cp zenjpeg/Cargo.toml "{{export}}/zenjpeg/"
+    cp zenjpeg/src/codec/decode.rs zenjpeg/src/codec/info.rs zenjpeg/src/codec/streaming.rs "{{export}}/zenjpeg/src/codec/"
+    cp zenjpeg/src/codec/decode/controlled.rs "{{export}}/zenjpeg/src/codec/decode/"
+    cp zenjpeg/src/encode/byte_encoders.rs zenjpeg/src/encode/streaming.rs "{{export}}/zenjpeg/src/encode/"
+    cp zenjpeg/tests/controlled_decode.rs zenjpeg/tests/grayscale_geometry.rs "{{export}}/zenjpeg/tests/"
+
+controlled-lock:
+    cargo update -p zencodec
+
 # Gray input must keep header, entropy order and restart geometry in agreement.
 gray-geometry-check:
     cargo test -p zenjpeg --test grayscale_geometry --test streaming_encode --features zencodec --locked
@@ -733,3 +752,6 @@ native-branch-compat:
     timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- wave_reader_crop_and_formats
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
     cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+controlled-unit-check:
+    cargo test -p zenjpeg --lib --features controlled-decode --locked

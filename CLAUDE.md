@@ -1705,3 +1705,21 @@ work. Parallel RGB and planar wave decoding now poll at each MCU; collected
 fused decoding uses the same caller token. Gates: `native_hardening`,
 `just native-branch-coverage`, and `fuzz_native_components`. Branch completeness
 must be measured against the common base of the native-precision PR stack.
+
+## Known Bugs: float scanline reconstruction (2026-10-25)
+
+A 97x65 baseline RGB qualification fixture differs at the first float sample
+between `JpegStreamingDecoder` and one-shot `Decode::decode`: strip i16
+reconstruction versus the floating-point IDCT. Issue 239 tracks a shared bounded
+float reconstruction path. Controlled decoding refuses float output before
+pixel effects. RGB float packing, linear row descriptors and gray linear reads
+are repaired on the controlled-decode PR; they do not close the precision gap.
+
+## Known Bugs: grayscale restart geometry fixed on controlled-decode (2026-10-25)
+
+Encoding Gray8 through the default YCbCr configuration retained 4:2:0 MCU
+geometry even though SOF describes one component at 1x1 sampling. A 97x65 baseline
+fixture's DRI was 70 and `jpeg-decoder` rejected the missing expected RST0;
+ordinary native decode recovered while scanline decode refused. Normalize gray
+input/output geometry before coefficient layout and restart resolution. The
+controlled-decode test uses an independent reader before native row parity.

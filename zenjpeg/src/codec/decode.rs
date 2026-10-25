@@ -19,6 +19,9 @@ use super::info::{
 };
 use super::streaming::JpegStreamingDecoder;
 
+#[cfg(feature = "controlled-decode")]
+mod controlled;
+
 static JPEG_DECODE_CAPS: DecodeCapabilities = {
     let caps = DecodeCapabilities::new()
         .with_incremental(true)
@@ -299,6 +302,19 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         self
     }
 
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::decode::DecodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        // Partial-image success and strictness across every probe/decode path
+        // are not qualified. Refuse before changing the stored job.
+        if policy.allow_truncated == Some(true) || policy.strict.is_some() {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
+    }
+
     fn with_crop_hint(mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
         self.crop_hint = Some((x, y, width, height));
         self
@@ -516,6 +532,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             let descriptor =
                 decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
 
+            let cfg = if descriptor.channel_type() == zenpixels::ChannelType::F32 {
+                cfg.output_target(crate::decode::OutputTarget::LinearF32)
+            } else {
+                cfg
+            };
+
             // scanline_reader_cow accepts both Borrowed and Owned data.
             // When Owned, the reader stores the Vec internally.
             let reader = if needs_plane_reads(descriptor) {
@@ -560,6 +582,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         Ok(zencodec::decode::erase_incremental(
             zencodec::helpers::WholeFileIncremental::new(self, preferred),
         ))
+    }
+
+    #[cfg(feature = "controlled-decode")]
+    fn dyn_controlled_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+        storage: zencodec::storage::StorageBudget,
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynControlledDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        controlled::start(self, preferred, storage)
     }
 }
 
@@ -1437,8 +1471,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     .map_err(|_| Error::internal("pixel buffer creation failed"))?
             } else {
                 let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
+                let selected = select_decode_descriptor(preferred, header.num_components);
+                let filler = selected.alpha() == Some(zenpixels::AlphaMode::Undefined);
                 let pf = match format {
                     PixelFormat::Gray => zenpixels::PixelFormat::Gray8,
+                    PixelFormat::Rgba if filler => zenpixels::PixelFormat::Rgbx8,
+                    PixelFormat::Bgra if filler => zenpixels::PixelFormat::Bgrx8,
                     PixelFormat::Rgba => zenpixels::PixelFormat::Rgba8,
                     PixelFormat::Bgra => zenpixels::PixelFormat::Bgra8,
                     _ => zenpixels::PixelFormat::Rgb8,
