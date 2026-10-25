@@ -5,6 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Align the controlled route, metadata services, testkit and fuzz graph on the
+  checked resolution contract at zencodec `008b93c3`. Native controlled decode,
+  profiled encode, streaming equivalence, strict Clippy and fuzz target builds
+  pass with one shared-trait copy. No JPEG density implementation is implied.
+
 ### Added
 
 - Checked encode jobs qualify verbatim color emission without silently accepting

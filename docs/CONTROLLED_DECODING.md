@@ -105,3 +105,18 @@ batch. Native controlled, streaming/profiled encode, fuzz compilation and API
 snapshot checks pass (`just controlled-integration-check api-doc`). run-heavy:
 rc=0, 57 s, peak RSS 0.71 GiB, minimum available 20209 MiB, peak load 13.95.
 This describes validation, not native codec workspace.
+
+### Shared contract alignment (2026-10-25)
+
+The reviewed route and every direct shared-contract dependency now use zencodec
+`008b93c3`, including standalone fuzz builds. Native profiled encode, controlled
+decode and streaming equivalence tests passed with strict Clippy. This dependency
+update does not itself implement required JPEG resolution. The test export used
+zenanalyze `05de3cbc` for the optional research path manifest, outside workspace
+patches. `ZENJPEG_SKIP_CPP=1` explicitly selected the Rust-only run; these tests
+do not claim C++ encoder parity.
+
+```text
+just controlled-integration-check
+run-heavy: done rc=0 50s | peak-RSS 0.78GiB | min-avail 15084MiB | peak-load 1.96
+```
