@@ -177,9 +177,28 @@ const fn descale(x: i64, n: u32) -> i64 {
 /// identical dequantized input.
 #[allow(clippy::too_many_lines)]
 pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
+    idct_libjpeg_precision::<8>(in_vector, out_vector, stride);
+}
+
+/// The same islow transform for both JPEG DCT sample precisions. Twelve-bit
+/// samples use one first-pass guard bit, as in libjpeg-turbo's jidctint.c.
+/// Keep precision at the transform boundary; entropy coefficients do not change.
+pub(crate) fn idct_libjpeg_precision<const BITS: u32>(
+    in_vector: &[i32; 64],
+    out_vector: &mut [i16],
+    stride: usize,
+) {
+    const { assert!(BITS == 8 || BITS == 12) };
+    let pass1_bits = if BITS == 8 { 2 } else { 1 };
+    let center = 1i64 << (BITS - 1);
+    let maximum = (1i64 << BITS) - 1;
     // DC-only fast path (identical to libjpeg)
     if is_dc_only_int(in_vector) {
-        return idct_int_dc_only(in_vector[0], out_vector, stride);
+        let sample = (descale(in_vector[0] as i64, 3) + center).clamp(0, maximum) as i16;
+        for row in 0..8 {
+            out_vector[row * stride..row * stride + 8].fill(sample);
+        }
+        return;
     }
 
     // Single bounds check for all strided writes below
@@ -204,7 +223,7 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
             && in_vector[col + 48] == 0
             && in_vector[col + 56] == 0
         {
-            let dcval = (in_vector[col] as i64) << LJ_PASS1_BITS;
+            let dcval = (in_vector[col] as i64) << pass1_bits;
             workspace[col] = dcval;
             workspace[col + 8] = dcval;
             workspace[col + 16] = dcval;
@@ -262,19 +281,19 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
         tmp3 += z1 + z4;
 
         // Final output: descale by (CONST_BITS - PASS1_BITS)
-        workspace[col] = descale(tmp10 + tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 56] = descale(tmp10 - tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 8] = descale(tmp11 + tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 48] = descale(tmp11 - tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 16] = descale(tmp12 + tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 40] = descale(tmp12 - tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 24] = descale(tmp13 + tmp0, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[col + 32] = descale(tmp13 - tmp0, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col] = descale(tmp10 + tmp3, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 56] = descale(tmp10 - tmp3, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 8] = descale(tmp11 + tmp2, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 48] = descale(tmp11 - tmp2, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 16] = descale(tmp12 + tmp1, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 40] = descale(tmp12 - tmp1, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 24] = descale(tmp13 + tmp0, LJ_CONST_BITS - pass1_bits);
+        workspace[col + 32] = descale(tmp13 - tmp0, LJ_CONST_BITS - pass1_bits);
     }
 
     // Pass 2: process rows from workspace, store into output.
     // Descale by factor of 8 (2^3) plus PASS1_BITS.
-    let total_shift = LJ_CONST_BITS + LJ_PASS1_BITS + 3;
+    let total_shift = LJ_CONST_BITS + pass1_bits + 3;
 
     for row in 0..8 {
         let base = row * 8;
@@ -288,7 +307,8 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
             && workspace[base + 6] == 0
             && workspace[base + 7] == 0
         {
-            let dcval = (descale(workspace[base], LJ_PASS1_BITS + 3) + 128).clamp(0, 255) as i16;
+            let dcval =
+                (descale(workspace[base], pass1_bits + 3) + center).clamp(0, maximum) as i16;
             let out_base = row * stride;
             out_vector[out_base..out_base + 8].fill(dcval);
             continue;
@@ -338,14 +358,22 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
 
         // Final output: descale + level shift (+128) + clamp
         let out_base = row * stride;
-        out_vector[out_base] = (descale(tmp10 + tmp3, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 7] = (descale(tmp10 - tmp3, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 1] = (descale(tmp11 + tmp2, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 6] = (descale(tmp11 - tmp2, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 2] = (descale(tmp12 + tmp1, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 5] = (descale(tmp12 - tmp1, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 3] = (descale(tmp13 + tmp0, total_shift) + 128).clamp(0, 255) as i16;
-        out_vector[out_base + 4] = (descale(tmp13 - tmp0, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base] =
+            (descale(tmp10 + tmp3, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 7] =
+            (descale(tmp10 - tmp3, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 1] =
+            (descale(tmp11 + tmp2, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 6] =
+            (descale(tmp11 - tmp2, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 2] =
+            (descale(tmp12 + tmp1, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 5] =
+            (descale(tmp12 - tmp1, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 3] =
+            (descale(tmp13 + tmp0, total_shift) + center).clamp(0, maximum) as i16;
+        out_vector[out_base + 4] =
+            (descale(tmp13 - tmp0, total_shift) + center).clamp(0, maximum) as i16;
     }
 }
 
@@ -2518,6 +2546,24 @@ pub fn idct_int_tiered_libjpeg_unclamped(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn twelve_bit_dc_reconstruction_and_stride() {
+        // A constant DCT block reconstructs DC/8 with ties rounded upward.
+        // Exercise every legal constant sample and both sides of every tie.
+        for sample in 0..=4095i32 {
+            for remainder in -4..=3 {
+                let mut coeffs = [0; 64];
+                coeffs[0] = (sample - 2048) * 8 + remainder;
+                let mut output = [i16::MIN; 13 * 8];
+                super::idct_libjpeg_precision::<12>(&coeffs, &mut output, 13);
+                for row in output.chunks_exact(13) {
+                    assert_eq!(&row[..8], &[sample as i16; 8]);
+                    assert_eq!(&row[8..], &[i16::MIN; 5]);
+                }
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

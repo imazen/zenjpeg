@@ -600,3 +600,8 @@ analysis-cut-tests:
     cargo test -p zenjpeg --doc
     cargo test -p zenjpeg --features recompress-expert,parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --tests
     just fuzz-check
+
+# Shared 8/12-bit integer reconstruction and existing dispatch regressions.
+precision-kernel-check:
+    cargo test --locked -p zenjpeg --lib decode::idct_int::tests
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
