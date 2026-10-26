@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, decode-12bit-lossless]
   workflow_dispatch:
 
 env:
@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Configure git for private repos
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
@@ -63,12 +65,34 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Build precision and component test references
+        shell: bash
+        run: |
+          bash scripts/build-native-oracle.sh "$HOME/tmp/zenjpeg-oracle"
+          export ZENJPEG_TURBO_SOURCE="$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0"
+          export ZENJPEG_COMPONENT_ORACLE_DIR="$HOME/tmp/zenjpeg-component-reference"
+          python3 scripts/build-component-oracle.py
+          echo "ZENJPEG_TURBO_BIN=$HOME/tmp/zenjpeg-oracle/build" >> "$GITHUB_ENV"
+          echo "ZENJPEG_COMPONENT_ORACLE_DIR=$ZENJPEG_COMPONENT_ORACLE_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/tmp/coverage"
+          echo "TMPDIR=$HOME/tmp/coverage" >> "$GITHUB_ENV"
+
       - name: Generate coverage (lib + integration tests)
         run: |
           cargo llvm-cov clean --workspace
           cargo llvm-cov --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,__test-utils"
           cargo llvm-cov --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- --skip ignored
+          cargo llvm-cov --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
+          ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo llvm-cov --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
+          cargo llvm-cov --no-report -p zenjpeg --features inventory --test multicomponent
+          python3 scripts/component-allocation-check.py --coverage
           cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Require full changed-line coverage
+        if: github.event_name == 'pull_request'
+        env:
+          COVERAGE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check-component-coverage.py "$COVERAGE_BASE" lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

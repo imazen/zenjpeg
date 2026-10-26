@@ -5,7 +5,7 @@ on:
   push:
     branches: [main, review/zenmeta-integration]
   pull_request:
-    branches: [main]
+    branches: [main, decode-12bit-lossless]
 
 concurrency:
   # `github.head_ref` is set ONLY on pull_request events. On a push it is
@@ -80,18 +80,21 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          mkdir -p "$HOME/tmp/zenjpeg-oracle"
-          curl -fL --retry 3 https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz -o "$HOME/tmp/zenjpeg-oracle/turbo.tar.gz"
-          echo "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e  $HOME/tmp/zenjpeg-oracle/turbo.tar.gz" | sha256sum -c -
-          tar -xzf "$HOME/tmp/zenjpeg-oracle/turbo.tar.gz" -C "$HOME/tmp/zenjpeg-oracle"
-          cmake -S "$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0" -B "$HOME/tmp/zenjpeg-oracle/build" -DENABLE_SHARED=OFF -DWITH_SIMD=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$HOME/tmp/zenjpeg-oracle/build" --target cjpeg-static djpeg-static jpegtran-static --parallel 2
+          bash scripts/build-native-oracle.sh "$HOME/tmp/zenjpeg-oracle"
           echo "ZENJPEG_TURBO_BIN=$HOME/tmp/zenjpeg-oracle/build" >> "$GITHUB_ENV"
-          cc -Wall -Wextra -Werror -I"$HOME/tmp/zenjpeg-oracle/build" -I"$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0/src" zenjpeg/tests/support/native_components.c "$HOME/tmp/zenjpeg-oracle/build/libjpeg.a" -lm -o "$HOME/tmp/zenjpeg-oracle/build/native-components-oracle"
 
       - name: Native-precision sample equality with libjpeg-turbo
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p zenjpeg --release --test native_precision -- --ignored --test-threads=1
+
+      - name: Ten-component reference parity
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          export ZENJPEG_TURBO_SOURCE="$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0"
+          export ZENJPEG_COMPONENT_ORACLE_DIR="$HOME/tmp/zenjpeg-component-reference"
+          python3 scripts/build-component-oracle.py
+          ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo test -p zenjpeg --release --test multicomponent -- --ignored ten_component_oracle_matrix
 
       - name: Deferred analysis dependencies stay out of release builds
         if: matrix.os == 'ubuntu-latest'

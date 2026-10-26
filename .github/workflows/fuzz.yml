@@ -27,7 +27,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, decode-12bit-lossless]
 
 # Superseded runs waste runner queue; only the newest commit per ref matters.
 concurrency:
