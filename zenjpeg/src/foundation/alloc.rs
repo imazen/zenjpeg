@@ -580,7 +580,7 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
         .checked_mul(core::mem::size_of::<T>())
         .ok_or_else(|| Error::size_overflow(context))?;
 
-    let mut v = Vec::with_capacity(capacity);
+    let mut v = Vec::new();
     v.try_reserve_exact(capacity)
         .map_err(|_| Error::allocation_failed(byte_size, context))?;
     Ok(v)

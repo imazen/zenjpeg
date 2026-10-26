@@ -1679,3 +1679,11 @@ trait identities.
 ## Known Bugs: partial header ICC fixed (2026-10-25)
 
 The header-only ICC extractor ignored chunk totals and could return a partial profile. It now reuses the native chunk validator, preserving complete legacy zero-of-one profiles and refusing incomplete/duplicate/inconsistent/empty sets. `just metadata-header-check` covers the extractor, header info, zencodec header probe, native extras and structural inspection. This does not fix the separate full-probe scope or late-metadata interpretation contracts tracked in issue238.
+
+## Known Bugs — component decoding allocation review (2026-10-26)
+
+`foundation/alloc.rs::try_with_capacity` allocated through `Vec::with_capacity`
+before its fallible reserve. An injected allocation failure aborted instead of
+returning an error. The component quantization-table failure test reproduces it;
+the fix starts from an empty Vec and performs the fallible reservation first.
+The isolated Linux allocator-interposition test checks the returned context.
