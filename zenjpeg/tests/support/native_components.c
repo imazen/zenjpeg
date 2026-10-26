@@ -12,6 +12,7 @@ int main(int argc, char **argv) {
   struct jpeg_error_mgr err;
   if (argc == 9 && strcmp(argv[1], "encode") == 0) {
     int bits=atoi(argv[2]), n=atoi(argv[3]), lossless=atoi(argv[4]);
+    if(n<1 || n>10 || bits<2 || bits>16) return 2;
     struct jpeg_compress_struct c;
     c.err=jpeg_std_error(&err); jpeg_create_compress(&c);
     jpeg_stdio_dest(&c, stdout);
@@ -26,11 +27,42 @@ int main(int argc, char **argv) {
       c.comp_info[0].v_samp_factor=1;
       if(n==4) { c.comp_info[3].h_samp_factor=atoi(argv[7]); c.comp_info[3].v_samp_factor=1; }
     }
-    if (atoi(argv[8])) jpeg_simple_progression(&c);
+    int mode=atoi(argv[8]);
+    jpeg_scan_info scans[10];
+    if (n>4) {
+      for (int t=0;t<4;t++) {
+        unsigned int quant[64];
+        for(int k=0;k<64;k++) quant[k]=3+t*7+k%5;
+        jpeg_add_quant_table(&c,t,quant,100,FALSE);
+      }
+      for(int k=0;k<n;k++) {
+        c.comp_info[k].quant_tbl_no=lossless ? 0 : k%4;
+        c.comp_info[k].dc_tbl_no=mode>=2 ? k+(mode==3 ? 6 : 0) : k%4;
+        c.comp_info[k].ac_tbl_no=mode>=2 ? k+(mode==3 ? 6 : 0) : k%4;
+      }
+      memset(scans,0,sizeof(scans));
+      int scan=0;
+      for(int start=0;start<n;start+=4) {
+        int count=n-start<4 ? n-start : 4;
+        scans[scan].comps_in_scan=count;
+        for(int j=0;j<count;j++) scans[scan].component_index[j]=start+j;
+        scans[scan].Ss=lossless ? atoi(argv[5]) : 0;
+        scans[scan].Se=lossless ? 0 : 63;
+        scans[scan].Al=lossless ? atoi(argv[6]) : 0;
+        scan++;
+      }
+      c.scan_info=scans; c.num_scans=scan;
+    }
+    if (n>4 && atoi(argv[7])>=5) {
+      c.comp_info[0].h_samp_factor=atoi(argv[7])==5 ? 1 : 2;
+      c.comp_info[0].v_samp_factor=2;
+    }
+    if (mode%2) jpeg_simple_progression(&c);
+    c.arith_code=mode>=2;
     c.restart_in_rows=2;
-    c.optimize_coding=TRUE;
+    c.optimize_coding=!c.arith_code;
     jpeg_start_compress(&c,TRUE);
-    unsigned char row8[35*4]; short row12[35*4]; unsigned short row16[35*4];
+    unsigned char row8[35*10]; short row12[35*10]; unsigned short row16[35*10];
     while(c.next_scanline<c.image_height) {
       unsigned y=c.next_scanline, mask=(1u<<bits)-1;
       for(unsigned x=0;x<35;x++) for(int k=0;k<n;k++) {

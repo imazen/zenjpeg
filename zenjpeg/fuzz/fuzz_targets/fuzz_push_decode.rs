@@ -23,13 +23,18 @@ fuzz_target!(|data: &[u8]| {
     }
 
     if let Ok(mut reader) = Decoder::new().max_pixels(max_px).max_memory(64 * 1024 * 1024).scanline_reader(data) {
-        let width = reader.width() as usize;
-        let mut row = vec![[0u16;4]; width + 3];
-        while !reader.is_finished() {
-            match reader.read_rows_components16(imgref::ImgRefMut::new_stride(&mut row, width, 1, width+3)) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => (),
-            }
+        match reader.component_ids().len() {
+            1 => components::<1>(&mut reader),
+            2 => components::<2>(&mut reader),
+            3 => components::<3>(&mut reader),
+            4 => components::<4>(&mut reader),
+            5 => components::<5>(&mut reader),
+            6 => components::<6>(&mut reader),
+            7 => components::<7>(&mut reader),
+            8 => components::<8>(&mut reader),
+            9 => components::<9>(&mut reader),
+            10 => components::<10>(&mut reader),
+            _ => unreachable!("validated component count"),
         }
     }
 
@@ -49,3 +54,14 @@ fuzz_target!(|data: &[u8]| {
             .decode_rows_f32(data, format, |_row| Ok(()), enough::Unstoppable);
     }
 });
+
+fn components<const N: usize>(reader: &mut zenjpeg::decoder::ScanlineReader<'_>) {
+    let width=reader.width() as usize;
+    let mut row=vec![[0u16;N];width+3];
+    while !reader.is_finished() {
+        match reader.read_rows_components16(imgref::ImgRefMut::new_stride(&mut row,width,1,width+3)) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => (),
+        }
+    }
+}

@@ -653,3 +653,27 @@ native-components-oracle-build:
 # Component counts, scan slots and per-component table selection.
 multicomponent-check:
     cargo test --locked -p zenjpeg --test multicomponent
+
+multicomponent-oracle-build:
+    python3 scripts/build-component-oracle.py
+
+multicomponent-oracle:
+    cargo test --locked -p zenjpeg --test multicomponent -- --ignored ten_component_oracle_matrix
+
+multicomponent-regressions:
+    cargo test --locked -p zenjpeg --lib --test multicomponent --test native_precision --features inventory
+    cargo clippy --locked -p zenjpeg --all-features --lib --test multicomponent -- -D warnings
+
+# Reports include native-precision code from the parent PR as well as this stack.
+multicomponent-coverage:
+    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory --lib --test native_precision --test multicomponent
+    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo llvm-cov --no-report --locked -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
+    python3 scripts/component-allocation-check.py --coverage
+    cargo llvm-cov report --lcov --output-path "$ZENJPEG_COVERAGE_REPORT"
+
+multicomponent-coverage-gate base report:
+    python3 scripts/check-component-coverage.py {{base}} {{report}}
+
+multicomponent-allocation-check:
+    python3 scripts/component-allocation-check.py
