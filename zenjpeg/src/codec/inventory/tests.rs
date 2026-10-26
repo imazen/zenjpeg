@@ -863,10 +863,9 @@ fn junk_before_soi_and_no_soi() {
     inventory(&[], opts()).unwrap().validate().unwrap();
 }
 
-/// 12-bit frames: `probe()` reads the header, `decode()` refuses the
-/// precision, so the scan is not image data.
+/// A supported 12-bit frame retains metadata and attributes its scan to pixels.
 #[test]
-fn twelve_bit_frame_keeps_probe_metadata_only() {
+fn twelve_bit_frame_preserves_metadata_and_image_data() {
     let mut data = vec![0xFF, 0xD8];
     data.extend(exif(1));
     data.extend(dqt());
@@ -887,8 +886,15 @@ fn twelve_bit_frame_keeps_probe_metadata_only() {
     };
     assert_eq!(find(0xE1).disposition(), D::Metadata(M::Exif));
     assert_eq!(find(0xC1).disposition(), D::Structure);
-    assert_eq!(find(0xDA).disposition(), D::Skipped);
-    assert!(inv.parts().iter().all(|p| p.disposition() != D::ImageData));
+    assert_eq!(find(0xDA).disposition(), D::Structure);
+    assert!(inv.parts().iter().any(|p| p.disposition() == D::ImageData));
+    let decoded = crate::decoder::Decoder::new()
+        .output_target(crate::decoder::OutputTarget::Native16)
+        .output_format(crate::decoder::PixelFormat::Gray)
+        .decode(&data, enough::Unstoppable)
+        .unwrap();
+    assert_eq!(decoded.sample_precision(), 12);
+    assert_eq!(decoded.pixels_u16().unwrap(), &[2048; 64]);
 }
 
 #[test]
