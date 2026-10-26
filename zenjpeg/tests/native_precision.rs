@@ -126,6 +126,13 @@ fn compare(jpeg: &[u8], bits: u8, label: &str, nearest: bool) {
         .decode(jpeg, Unstoppable)
         .unwrap_or_else(|e| panic!("{label}: {e}"));
     assert_eq!(result.sample_precision(), bits, "{label}");
+    let assembled = assemble_tiff_jpeg(jpeg);
+    let tiled = config.decode(&assembled, Unstoppable).unwrap();
+    assert_eq!(
+        tiled.pixels_u16().unwrap(),
+        expected,
+        "TIFF shared tables: {label}"
+    );
     let actual = result.pixels_u16().unwrap();
     assert_eq!(actual.len(), expected.len(), "{label}");
     if let Some(i) = actual.iter().zip(&expected).position(|(a, b)| a != b) {
@@ -686,6 +693,85 @@ fn native_eight_bit_reads_preserve_configured_rounding() {
                     expected,
                     "progressive={progressive} idct={idct:?} format={format:?}"
                 );
+            }
+        }
+    }
+}
+
+// TIFF JPEGTables carries SOI + shared tables + EOI; each strip/tile carries
+// its own frame/scan. The consumer joins them after removing the two boundary
+// markers, leaving per-scan table redefinitions in their original positions.
+fn assemble_tiff_jpeg(jpeg: &[u8]) -> Vec<u8> {
+    use zenjpeg::container::marker::{self, MarkerKind};
+    let mut tables = vec![255, 216];
+    let mut image = vec![255, 216];
+    let mut before_scan = true;
+    for span in marker::iter(jpeg) {
+        if span.kind == MarkerKind::Soi {
+            continue;
+        }
+        if span.kind == MarkerKind::Sos {
+            before_scan = false;
+        }
+        let bytes = &jpeg[span.offset..span.offset + span.length];
+        if before_scan && matches!(span.kind, MarkerKind::Dqt | MarkerKind::Dht) {
+            tables.extend_from_slice(bytes);
+        } else {
+            image.extend_from_slice(bytes);
+        }
+    }
+    tables.extend_from_slice(&[255, 217]);
+    tables.truncate(tables.len() - 2);
+    tables.extend_from_slice(&image[2..]);
+    tables
+}
+
+#[test]
+fn tiff_shared_tables_keep_native_precision() {
+    for (bits, lossless) in [(12, false), (12, true), (16, true)] {
+        let jpeg = constant_jpeg(bits, lossless, 7, 0);
+        check_constant_outputs(&assemble_tiff_jpeg(&jpeg), bits);
+    }
+}
+
+#[test]
+fn twelve_bit_native_planes_retain_sample_range_and_stride() {
+    let mut jpeg = vec![255, 216];
+    segment(
+        &mut jpeg,
+        0xc1,
+        &[12, 0, 8, 0, 8, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0],
+    );
+    let mut quant = vec![0];
+    quant.extend_from_slice(&[1; 64]);
+    segment(&mut jpeg, 0xdb, &quant);
+    let mut table = vec![0, 1];
+    table.extend_from_slice(&[0; 15]);
+    table.push(0);
+    segment(&mut jpeg, 0xc4, &table);
+    table[0] = 0x10;
+    segment(&mut jpeg, 0xc4, &table);
+    segment(&mut jpeg, 0xda, &[3, 1, 0, 2, 0, 3, 0, 0, 63, 0]);
+    jpeg.extend_from_slice(&[3, 255, 217]); // three zero DC/EOB blocks, then padding
+    for data in [
+        Cow::Borrowed(jpeg.as_slice()),
+        Cow::Owned(assemble_tiff_jpeg(&jpeg)),
+    ] {
+        let mut reader = Decoder::new().scanline_reader_cow(data).unwrap();
+        assert_eq!(reader.sample_precision(), 12);
+        let mut y = vec![-1; 13 * 8];
+        let mut cb = y.clone();
+        let mut cr = y.clone();
+        assert_eq!(
+            reader
+                .read_rows_ycbcr_native_i16(&mut y, 13, &mut cb, &mut cr, 13, 1)
+                .unwrap(),
+            (8, 8)
+        );
+        for plane in [&y, &cb, &cr] {
+            for row in plane.as_chunks::<13>().0 {
+                assert_eq!(&row[..8], &[2048; 8]);
+                assert_eq!(&row[8..], &[-1; 5]);
             }
         }
     }

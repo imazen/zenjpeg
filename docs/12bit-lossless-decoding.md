@@ -87,3 +87,41 @@ Ordinary tests cover constant streams across the lossless predictor/precision
 matrix, category-16 consumption, tables before SOF, truncations, invalid scan
 parameters, cancellation, memory limits and output padding. Existing decoder,
 metadata and 8-bit dispatch tests remain in the regression gates.
+
+## TIFF consumer integration
+
+Checked against [zentiff at ae920c1](https://github.com/imazen/zenextras/tree/ae920c1e2ac0fe0e6e2fcb709d99934ba36ea49c/zentiff)
+and its pinned [image-tiff da9f8647](https://github.com/lilith/image-tiff/tree/da9f86471ffe04575efaaf8d581e3088bf9ca5a4).
+Zentiff's `jpeg` feature delegates to image-tiff; that revision uses zune-jpeg,
+so upgrading zenjpeg alone does not enable 12-bit JPEG-in-TIFF.
+
+For supported gray/RGB output, the native u16 readers supply the required
+precision without another zenjpeg API. `read_rows_ycbcr_native_i16` also retains
+12-bit raw component samples at native chroma resolution; the signed container
+holds the complete 0–4095 range. The full-resolution f32 plane reader is another
+option when the TIFF layer owns color conversion.
+
+The consumer still needs to:
+
+1. Wire image-tiff's JPEG reader to the reviewed zenjpeg revision and update
+   zentiff's image-tiff pin. Reassemble shared `JPEGTables` with each strip/tile
+   by removing the tables' EOI and the image's SOI. This assembly is tested
+   against the oracle fixtures, including tables preceding SOF.
+2. Treat decoded JPEG u16 samples as unpacked, with explicit byte order. The
+   current [chunk pipeline](https://github.com/lilith/image-tiff/blob/da9f86471ffe04575efaaf8d581e3088bf9ca5a4/src/decoder/image.rs#L1244)
+   sends any 12-to-16-bit layout through packed-bit unpacking; routing native
+   JPEG samples through that branch would corrupt them.
+3. Apply TIFF photometric interpretation exactly once. The current JPEG reader
+   requests the JPEG input color space from zune-jpeg, while zentiff's descriptor
+   mapping groups `YCbCr` with `RGB`. Do not label raw Y/Cb/Cr planes as RGB or
+   apply a second conversion to zenjpeg's RGB rows. TIFF-specific coefficients
+   and reference black/white values need a deliberate raw-component route.
+4. Preserve source precision in metadata and define the pixel-buffer range.
+   Zentiff currently maps 9–16-bit samples to a plain `GRAY16`/`RGB16` descriptor
+   and passes u16 values through. Native 12-bit values are 0–4095, not full-range
+   16-bit values: normalize when handing them to a full-range pixel consumer,
+   or carry a descriptor that explicitly represents the narrower range.
+5. Add end-to-end TIFF tests for shared/per-chunk tables, strips and tiles,
+   padded edge tiles, byte orders, photometric modes, limits and cancellation.
+
+The TIFF wrapper itself was inspected, not modified or certified end to end.
