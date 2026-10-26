@@ -1,7 +1,8 @@
 # Temporary analysis integration removal
 
-Proposal recorded 2026-10-26 against zenjpeg `310c53fa`. Implementation
-awaits explicit approval because it removes public API and Cargo features.
+Approved 2026-10-26 against zenjpeg `310c53fa`. The complete pre-removal
+integration is preserved at [`to-revisit/zenanalyze`](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze),
+commit `fc19be1713ae10f78f35a09ec3d608aca6b87c8d`.
 The aim is a smaller release dependency graph while preserving ordinary
 encoding, decoding, JPEG adaptive quantization, trellis, lossless operations
 and basic recompression.
@@ -14,10 +15,10 @@ and basic recompression.
 - Remove the learned picker, its direct zenpredict dependencies, and the
   zenanalyze/zenanalyze-api dependencies and root patches used by these paths.
 - Remove `target-zq`, `__picker-research`, `__zensim-research` and the associated
-  Zq targeting API if the approved choice is a complete temporary removal.
+  Zq targeting API.
 - A complete zenpredict cut also requires removing zensim-backed targeting
   and recompress-IQA from the published library's dependency graph. Preserve
-  research/calibration tools separately where they remain useful; inspect
+  research/calibration tools on the revisit branch; inspect
   workspace members, examples and fuzz manifests as well as the library.
 
 Zenpicker is not currently a direct zenjpeg dependency. Disabling default
@@ -25,11 +26,12 @@ features alone is insufficient: target-zq is already off by default, while
 zenanalyze is unconditional. Optional dependency declarations also need valid
 publication metadata.
 
-The alternative is to remove content analysis/learned pickers while retaining
-metric targeting. That retains zenpredict through zensim and does not meet a
-complete dependency removal goal.
+The metric-injected `target_quality` search core remains dependency-free; its
+analyzer-based `TargetOptions::seeded_for_image` hook is removed. Dev-only
+metric/oracle dependencies remain available to codec regression tests and
+benchmarks; these are not part of the published library dependency graph.
 
-## Validation for an implementation
+## Validation
 
 Review the actual public API/feature diff and affected consumers. Preserve
 existing codec regression expectations. Check the published package's normal
@@ -37,6 +39,16 @@ dependency graph, minimal/default builds, the remaining feature matrix,
 examples and fuzz manifests. Run all-target and doc tests on the release
 candidate. Confirm byte identity for unchanged encoder configurations; do not
 substitute fallback stubs for removed targeting contracts.
+
+Local validation: `just analysis-cut-check`, `just analysis-cut-tests` and
+`just api-doc`. These cover the all-feature release dependency guard, library
+lints, default library/integration/example tests, bench compilation, doc tests,
+the recompression/parallel/color/HDR/metadata feature matrix, fuzz target
+compilation and regenerated API snapshots. Existing byte/checksum/size and
+streaming regression expectations are retained. The all-target command reached
+bench execution after its tests passed; the benchmark harness waited on other
+workloads and was stopped. No benchmark result or performance conclusion is
+claimed. Live C++ FFI parity remains unavailable without the reference submodule.
 
 Reintroducing the integration later requires a separate API review, current
 feature-definition qualification and model/codec measurements. Existing Git

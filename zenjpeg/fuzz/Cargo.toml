@@ -26,12 +26,9 @@ features = ["zencodec", "inventory", "extended-metadata", "metadata-rewrite"]
 [workspace]
 members = ["."]
 
-# This standalone workspace repeats the root source overrides. Metadata fuzz
-# targets do not enable the optional research picker; use the same remote
-# analysis source as the parent workspace rather than a sibling checkout.
+# This standalone workspace repeats the shared codec interface override.
 [patch.crates-io]
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
-zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "e6c72f99390c190c102275c3b0e4d41fe0a734a4" }
 
 [[bin]]
 name = "fuzz_decode"

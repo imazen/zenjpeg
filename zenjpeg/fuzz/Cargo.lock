@@ -415,19 +415,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 
 [[package]]
-name = "zenanalyze"
-version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=e6c72f99390c190c102275c3b0e4d41fe0a734a4#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
-dependencies = [
- "archmage",
- "garb",
- "linear-srgb",
- "magetypes",
- "zenpixels",
- "zenpixels-convert",
-]
-
-[[package]]
 name = "zencodec"
 version = "0.1.27"
 source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
@@ -458,7 +445,6 @@ dependencies = [
  "tinyvec",
  "ultrahdr-core",
  "whereat",
- "zenanalyze",
  "zencodec",
  "zenmeta",
  "zenpixels",

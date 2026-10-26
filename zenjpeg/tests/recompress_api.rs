@@ -96,37 +96,6 @@ fn recompress_low_source_to_high_target_noops() {
     assert!(matches!(result, RecompressResult::NoOp { .. }));
 }
 
-// Measurement requires the zensim-backed IQA path.
-#[cfg(feature = "recompress-iqa")]
-#[test]
-fn recompress_with_iteration_budget_populates_measurement() {
-    let source = make_source_jpeg(85);
-    let opts = RecompressOptions::new(70.0).with_budget(Budget::MaxIterations(1));
-    let result = recompress(&source, &opts).expect("recompress");
-    match result {
-        RecompressResult::Recompressed {
-            measured_zensim_a: Some(m),
-            ..
-        } => {
-            assert!(
-                (0.0..=100.0).contains(&m),
-                "measured zensim-A out of range: {m}",
-            );
-        }
-        RecompressResult::Recompressed {
-            measured_zensim_a: None,
-            ..
-        } => panic!("MaxIterations(1) should populate measured_zensim_a"),
-        RecompressResult::LosslessOnly { .. } | RecompressResult::NoOp { .. } => {
-            // Both are acceptable outcomes — they just don't carry a
-            // measurement field. The test exists to ensure that *when*
-            // we recompress, we measure. A LosslessOnly fallback is
-            // still a legal outcome here.
-        }
-        _ => panic!("unexpected non_exhaustive RecompressResult variant"),
-    }
-}
-
 #[test]
 fn recompress_high_source_to_low_target_decodes_cleanly() {
     // Encode a source at Q90, recompress to target zensim-A 50.

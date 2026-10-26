@@ -494,12 +494,6 @@ pub struct EncoderConfig {
     /// byte-identical to a feature-off build.
     #[cfg(feature = "boundary-rd")]
     pub(crate) boundary_rd_mode: BoundaryRd,
-    /// Pre-computed zenanalyze source features, as a
-    /// [`zenanalyze::feature::AnalysisResults::pack`] `(u16 id, f32)` blob.
-    /// When set, the `Quality::Zq` closed loop reuses these instead of
-    /// re-analyzing the source — see [`Self::with_packed_source_features`].
-    /// `None` (default) analyzes the source as before.
-    pub(crate) packed_source_features: Option<Vec<(u16, f32)>>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -692,7 +686,6 @@ impl EncoderConfig {
             tiny_file_mode: TinyFileMode::Auto,
             #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
-            packed_source_features: None,
         }
     }
 
@@ -963,41 +956,6 @@ impl EncoderConfig {
     pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.allow_16bit_quant_tables = enable;
         self
-    }
-
-    /// Supply pre-computed zenanalyze source features so the `Quality::Zq`
-    /// closed loop skips re-analyzing the image.
-    ///
-    /// `packed` is a [`zenanalyze::feature::AnalysisResults::pack`] blob — a
-    /// `(stable_u16_id, f32)` list. Because it crosses as plain data (not a
-    /// versioned `AnalysisResults` type), the caller may have produced it with
-    /// a different zenanalyze version; ids are matched by zenanalyze's stable,
-    /// retired-keeps-its-slot id contract.
-    ///
-    /// The loop feeds these to its content-bucket inference (best-effort: a
-    /// malformed or sparse pack quietly falls back to its naive calibration)
-    /// and, when the source-feature picker is compiled in, to the picker. The
-    /// picker holds caller data to a stricter contract: if the pack omits a
-    /// feature it needs, the encode **fails** with the missing ids rather than
-    /// feeding the model zeroed inputs.
-    ///
-    /// Pass a pack from analyzing the *source* pixels with
-    /// [`FeatureSet::SUPPORTED`](zenanalyze::feature::FeatureSet::SUPPORTED).
-    #[must_use]
-    pub fn with_packed_source_features(mut self, packed: Vec<(u16, f32)>) -> Self {
-        self.packed_source_features = Some(packed);
-        self
-    }
-
-    /// The caller-supplied packed source features, if any
-    /// (see [`Self::with_packed_source_features`]).
-    // Only consumed by the `target-zq` closed-loop encoder (`encode/zq.rs`), so it
-    // is genuinely unused in feature sets that don't compile that path (e.g. the CI
-    // clippy set, which omits `target-zq` to avoid the zensim git dep). The public
-    // `with_packed_source_features` setter + field remain available regardless.
-    #[cfg_attr(not(feature = "target-zq"), allow(dead_code))]
-    pub(crate) fn packed_source_features(&self) -> Option<&[(u16, f32)]> {
-        self.packed_source_features.as_deref()
     }
 
     /// Use separate quantization tables for Cb and Cr components.

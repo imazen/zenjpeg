@@ -79,12 +79,7 @@ fn zensim_a_to_ijg_q_estimate(z: f32) -> u8 {
     q as u8
 }
 
-/// Everything `run_preserve` derives from the input before emitting:
-/// decoded coefficients, carried metadata segments, the quant strategy,
-/// and the heuristic AQ mask. Factored out so the diffmap-guided
-/// refinement pass ([`crate::recompress::refine`], `recompress-iqa`) can
-/// rebuild the *identical* emit state for a given `params` and then
-/// evolve only the mask.
+/// Coefficients, metadata, quantization and heuristic AQ state used by `run_preserve`.
 pub(in crate::recompress) struct PreparedPreserve {
     pub(in crate::recompress) coeffs: crate::decode::DecodedCoefficients,
     pub(in crate::recompress) preserved_segments: Vec<crate::decode::PreservedSegment>,

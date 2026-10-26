@@ -14,14 +14,7 @@ use crate::error::{Error, Result};
 
 /// Encoder for raw byte input with explicit pixel layout.
 ///
-/// This encoder wraps `StreamingEncoder` to provide true streaming encoding
-/// without buffering the entire image in memory — except when the
-/// configured [`super::encoder_types::Quality`] is a target-perceptual-
-/// quality variant ([`super::encoder_types::Quality::Zq`] or
-/// [`super::encoder_types::Quality::ZqExplicit`]). In those modes the
-/// encoder must re-encode the same image multiple times to converge on
-/// the perceptual target, so it buffers all incoming pixels until
-/// [`Self::finish_with_metrics`] is called.
+/// This encoder wraps `StreamingEncoder` and accepts rows incrementally.
 pub struct BytesEncoder {
     /// v2 config (no longer holds metadata)
     config: EncoderConfig,
@@ -30,7 +23,7 @@ pub struct BytesEncoder {
     /// Image dimensions
     width: u32,
     height: u32,
-    /// Inner streaming encoder (handles actual encoding when NOT in Zq mode).
+    /// Inner streaming encoder.
     inner: StreamingEncoder,
     /// ICC profile (per-image metadata)
     icc_profile: Option<alloc::vec::Vec<u8>>,
@@ -38,12 +31,6 @@ pub struct BytesEncoder {
     exif_data: Option<super::exif::Exif>,
     /// XMP data (per-image metadata)
     xmp_data: Option<alloc::vec::Vec<u8>>,
-    /// Pixel buffer for the closed-loop target-zq iteration path.
-    /// `Some` when `config.quality.is_zq_target()`; pushes route into
-    /// here instead of the inner streaming encoder. `None` for the
-    /// regular streaming path — pushes go straight into `inner`.
-    /// Capacity = `width * height * bytes_per_pixel`.
-    zq_pixel_buffer: Option<alloc::vec::Vec<u8>>,
 }
 
 // Validate before allocating the pixel encoder or writing any output.
@@ -107,38 +94,7 @@ impl BytesEncoder {
         }
 
         // Build and start the streaming encoder with config from v2.
-        //
-        // For target-zq quality variants, the inner encoder is built using
-        // `Quality::to_internal()` (which resolves Zq → starting jpegli q).
-        // It serves as the pass-0 encoder when the iteration loop runs.
         let inner = Self::build_streaming_encoder(&config, width, height, layout)?;
-
-        // When in target-zq mode AND the `target-zq` feature is enabled,
-        // allocate a pixel buffer so we can re-encode the same image
-        // across iteration passes. The streaming path is bypassed
-        // entirely in that case (see `push`/`push_packed`). Without the
-        // feature, Zq variants degrade to ApproxJpegli at the resolved
-        // starting quality (no iteration, no measurement).
-        // Retained for BOTH the measuring loop (Zq/ZqExplicit) and the one-shot
-        // picker (ZqPicker) — the loop measures the source, the picker analyzes
-        // it. `is_perceptual_target()` covers both.
-        let zq_pixel_buffer = if cfg!(feature = "target-zq")
-            && config.quality.is_perceptual_target()
-        {
-            let bpp = layout.bytes_per_pixel();
-            let total = (width as usize)
-                .checked_mul(height as usize)
-                .and_then(|n| n.checked_mul(bpp))
-                .ok_or_else(|| Error::invalid_dimensions(width, height, "buffer size overflow"))?;
-            let mut buf = alloc::vec::Vec::new();
-            buf.try_reserve_exact(total).map_err(|_| {
-                Error::invalid_dimensions(width, height, "could not allocate Zq pixel buffer")
-            })?;
-            Some(buf)
-        } else {
-            None
-        };
-
         Ok(Self {
             config,
             layout,
@@ -148,7 +104,6 @@ impl BytesEncoder {
             icc_profile,
             exif_data,
             xmp_data,
-            zq_pixel_buffer,
         })
     }
 
@@ -317,13 +272,7 @@ impl BytesEncoder {
             return Err(Error::stride_too_small(self.width, stride_bytes));
         }
 
-        // Validate row count. In Zq mode, rows pushed are tracked by the
-        // buffer length; in streaming mode, by the inner encoder.
-        let current_rows: u32 = if let Some(buf) = &self.zq_pixel_buffer {
-            (buf.len() / min_stride) as u32
-        } else {
-            self.inner.rows_pushed() as u32
-        };
+        let current_rows = self.inner.rows_pushed() as u32;
         let new_total = current_rows + rows as u32;
         if new_total > self.height {
             return Err(Error::too_many_rows(self.height, new_total));
@@ -339,17 +288,7 @@ impl BytesEncoder {
             return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
 
-        if let Some(buf) = self.zq_pixel_buffer.as_mut() {
-            // Target-zq path: store packed rows for later iteration.
-            for row in 0..rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
-                let src_start = row * stride_bytes;
-                let src_end = src_start + min_stride;
-                buf.extend_from_slice(&data[src_start..src_end]);
-            }
-        } else if stride_bytes == min_stride {
+        if stride_bytes == min_stride {
             // Streaming path, packed data — direct push.
             self.inner
                 .push_rows_with_stop(&data[..rows * min_stride], rows, &stop)?;
@@ -421,16 +360,7 @@ impl BytesEncoder {
     /// Get number of rows pushed so far.
     #[must_use]
     pub fn rows_pushed(&self) -> u32 {
-        if let Some(buf) = &self.zq_pixel_buffer {
-            let bpp = self.layout.bytes_per_pixel();
-            let row_bytes = self.width as usize * bpp;
-            buf.len()
-                .checked_div(row_bytes)
-                .map(|n| n as u32)
-                .unwrap_or(0)
-        } else {
-            self.inner.rows_pushed() as u32
-        }
+        self.inner.rows_pushed() as u32
     }
 
     /// Get number of rows remaining.
@@ -453,11 +383,8 @@ impl BytesEncoder {
         self.layout
     }
 
-    /// Install a per-iMCU `AqController` on the inner streaming encoder.
-    /// Used by the target-zq iteration loop in [`super::zq`] to scale
-    /// streaming AQ multiplicatively between passes. Not exposed
-    /// publicly — the public API is [`super::Quality::Zq`].
-    #[allow(dead_code)] // wired only on the Zq path; #[cfg(test)] callers exist via __test-utils.
+    /// Install an internal per-iMCU AQ controller for research instrumentation.
+    #[allow(dead_code)] // Research instrumentation is not part of the normal encoder path.
     pub(crate) fn set_aq_controller(
         &mut self,
         ctrl: Option<Box<dyn super::aq_controller::AqController>>,
@@ -469,16 +396,7 @@ impl BytesEncoder {
 
     /// Finish encoding, return JPEG bytes.
     ///
-    /// For target-zq quality variants, this transparently routes through
-    /// [`Self::finish_with_metrics`] and discards the metrics — call
-    /// `finish_with_metrics` directly if you need them.
     pub fn finish(self) -> Result<Vec<u8>> {
-        // Target-zq path: iteration loop owns finishing.
-        #[cfg(feature = "target-zq")]
-        if self.zq_pixel_buffer.is_some() {
-            let (bytes, _metrics) = self.finish_with_metrics()?;
-            return Ok(bytes);
-        }
         let mut output = Vec::new();
         self.finish_into(&mut output)?;
         Ok(output)
@@ -489,9 +407,6 @@ impl BytesEncoder {
     /// This is the most efficient way to complete encoding as it avoids
     /// intermediate allocations. The buffer is cleared before writing.
     ///
-    /// For target-zq quality variants, transparently routes through
-    /// [`Self::finish_with_metrics`].
-    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -500,14 +415,6 @@ impl BytesEncoder {
     /// // output now contains the JPEG data
     /// ```
     pub fn finish_into(mut self, output: &mut Vec<u8>) -> Result<()> {
-        // Target-zq path: iteration writes its own bytes.
-        #[cfg(feature = "target-zq")]
-        if self.zq_pixel_buffer.is_some() {
-            let (bytes, _metrics) = self.finish_with_metrics()?;
-            output.clear();
-            output.extend_from_slice(&bytes);
-            return Ok(());
-        }
         let rows_pushed = self.inner.rows_pushed() as u32;
         if rows_pushed != self.height {
             return Err(Error::incomplete_image(self.height, rows_pushed));
@@ -534,7 +441,6 @@ impl BytesEncoder {
     #[cfg(feature = "zencodec")]
     pub(crate) fn can_stream_output(&self) -> bool {
         self.inner.is_streaming()
-            && self.zq_pixel_buffer.is_none()
             && !self
                 .config
                 .segments
@@ -620,98 +526,6 @@ impl BytesEncoder {
         self.finish_into(&mut jpeg)?;
         output.write_all(&jpeg)?;
         Ok(output)
-    }
-
-    /// Finish encoding and return JPEG bytes plus
-    /// [`super::zq::EncodeMetrics`].
-    ///
-    /// For non-target-zq quality variants, returns minimal metrics
-    /// (`achieved_score = NaN`, `targets_met = true`) and the same
-    /// bytes [`Self::finish`] would. For target-zq variants
-    /// ([`super::Quality::Zq`] / [`super::Quality::ZqExplicit`]) and
-    /// when the `target-zq` feature is enabled, this triggers the
-    /// closed-loop iteration: encode → decode → measure → adjust
-    /// per-block AQ → repeat, returning the smallest-bytes feasible
-    /// candidate observed across `max_passes`.
-    ///
-    /// Errors when [`super::zq::ZqTarget::max_undershoot`] or
-    /// [`super::zq::BlockArtifactBound::max_overshoot`] strictness was
-    /// set and the achieved value falls outside that band.
-    #[cfg_attr(not(feature = "target-zq"), allow(unused_mut))]
-    pub fn finish_with_metrics(mut self) -> Result<(Vec<u8>, super::zq::EncodeMetrics)> {
-        // Perceptual-target dispatch: the measuring loop (Zq/ZqExplicit) or the
-        // one-shot picker (ZqPicker). Both retain the source pixels
-        // (`is_perceptual_target`), validate the row count, run their path, and
-        // then share the metadata-injection tail — each per-path encode ran
-        // without metadata.
-        #[cfg(feature = "target-zq")]
-        if self.config.quality.is_perceptual_target()
-            && let Some(buf) = self.zq_pixel_buffer.take()
-        {
-            // Validate complete row count was pushed.
-            let bpp = self.layout.bytes_per_pixel();
-            let row_bytes = self.width as usize * bpp;
-            let pushed_rows = buf.len().checked_div(row_bytes).unwrap_or(0);
-            if pushed_rows != self.height as usize {
-                return Err(Error::incomplete_image(self.height, pushed_rows as u32));
-            }
-
-            // The one-shot picker has no ZqTarget; synthesize one carrying only
-            // the target score (the picker + bucket lookup read nothing else).
-            let target = self
-                .config
-                .quality
-                .zq_target()
-                .or_else(|| {
-                    self.config
-                        .quality
-                        .zq_picker_target()
-                        .map(super::zq::ZqTarget::new)
-                })
-                .expect("is_perceptual_target ⇒ zq_target or zq_picker_target");
-            let ctx = super::zq::IterationContext {
-                config: &self.config,
-                width: self.width,
-                height: self.height,
-                layout: self.layout,
-                pixels: &buf,
-                target,
-            };
-            let (mut bytes, metrics) = if self.config.quality.zq_picker_target().is_some() {
-                super::zq::run_picker_oneshot(ctx)?
-            } else {
-                super::zq::run_iteration_loop(ctx)?
-            };
-
-            // Inject metadata after the encode. The same post-encode injection
-            // helpers used by `finish_into` apply here.
-            if let Some(ref exif) = self.exif_data
-                && let Some(exif_bytes) = exif.to_bytes()
-            {
-                inject_exif_inplace(&mut bytes, &exif_bytes)?;
-            }
-            if let Some(ref xmp_data) = self.xmp_data {
-                inject_xmp_inplace(&mut bytes, xmp_data);
-            }
-            if let Some(ref icc_data) = self.icc_profile {
-                inject_icc_profile_inplace(&mut bytes, icc_data);
-            }
-
-            let final_len = bytes.len();
-            return Ok((
-                bytes,
-                super::zq::EncodeMetrics {
-                    bytes: final_len,
-                    ..metrics
-                },
-            ));
-        }
-
-        // Non-perceptual path: existing single-pass encode + minimal metrics.
-        let mut bytes = Vec::new();
-        self.finish_into(&mut bytes)?;
-        let metrics = super::zq::EncodeMetrics::no_target(bytes.len());
-        Ok((bytes, metrics))
     }
 }
 

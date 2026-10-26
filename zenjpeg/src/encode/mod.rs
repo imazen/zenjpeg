@@ -30,43 +30,27 @@
 //! ```
 
 // Internal implementation modules (pub for internal crate re-exports)
-// `adaptive.rs` was already on disk before this commit (vacuumed up
-// by an unrelated commit on main); wiring it in here makes the file
-// actually reachable.
-mod adaptive;
 pub(crate) mod aq_controller;
 mod blocks;
 
 #[doc(hidden)]
 pub mod chroma;
 #[doc(hidden)]
+pub mod config;
+#[doc(hidden)]
 pub mod dct;
 pub(crate) mod layout;
-mod progressive;
-pub(crate) mod scan_optimize;
-#[doc(hidden)]
-pub mod scan_script;
-mod serialize;
-/// Target perceptual-quality (`zq`) types and helpers (issue #113).
-///
-/// See [`Quality::Zq`] and [`Quality::ZqExplicit`] for the entry points.
-pub mod zq;
-
-/// Source-feature quality picker. Powers `Quality::ZqPicker` (realtime
-/// one-shot) and warm-starts the `Quality::Zq` / `ZqExplicit` loop. Pulls the
-/// (currently unpublished) zenpredict v3 runtime + `zenanalyze/hdr`, so it
-/// rides the `target-zq` umbrella feature.
-#[cfg(feature = "target-zq")]
-pub(crate) mod picker;
-
-#[doc(hidden)]
-pub mod config;
 /// Public under `__test-utils` so `benches/tier_isolation.rs` can measure the
 /// fused linear/HDR kernels per-tier. Not public API.
 #[cfg(feature = "__test-utils")]
 pub mod linear_lut;
 #[cfg(not(feature = "__test-utils"))]
 pub(crate) mod linear_lut;
+mod progressive;
+pub(crate) mod scan_optimize;
+#[doc(hidden)]
+pub mod scan_script;
+mod serialize;
 
 // Archmage-based SIMD (token-based safe intrinsics)
 #[cfg(target_arch = "x86_64")]
@@ -162,8 +146,6 @@ pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
 // (Now from encoder_types, encoder_config, byte_encoders - v2 re-exports for compatibility)
-#[allow(unused_imports)] // Public API re-export
-pub use adaptive::{AdaptiveOptions, RestartMarkers};
 #[allow(unused_imports)] // Public API re-export
 pub use blocks::HuffmanSymbolFrequencies;
 pub(crate) use blocks::build_nonzero_mask;

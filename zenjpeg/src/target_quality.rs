@@ -35,7 +35,7 @@ pub struct TargetOptions {
     pub tolerance: f64,
     /// Hard cap on encode→decode→score iterations.
     pub max_encodes: u8,
-    /// Optional starting quality (e.g. a zenpredict Zq seed). `None` uses
+    /// Optional caller-supplied starting quality. `None` uses
     /// [`anchor_guess`].
     pub q_start: Option<f32>,
     /// Quality resolution the search honors. zenjpeg quality is FLOAT end to
@@ -55,22 +55,6 @@ impl Default for TargetOptions {
             max_encodes: 8,
             q_start: None,
             quality_step: 0.25,
-        }
-    }
-}
-
-impl TargetOptions {
-    /// The canonical options for a zensim-targeted encode of `rgb` at
-    /// `target`: defaults plus the census-validated Zq seed head as the
-    /// `q_start` source ([`crate::zq_seed::predict_q0_from_image`]; `None`
-    /// falls back to [`anchor_guess`] inside the search). User-approved
-    /// default wiring 2026-08-28 — plain [`Default`] stays seedless for
-    /// callers that bring their own seed.
-    #[must_use]
-    pub fn seeded_for_image(rgb: &[u8], width: u32, height: u32, target: f64) -> Self {
-        Self {
-            q_start: crate::zq_seed::predict_q0_from_image(rgb, width, height, target),
-            ..Self::default()
         }
     }
 }

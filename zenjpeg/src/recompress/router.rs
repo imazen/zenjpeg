@@ -2,9 +2,8 @@
 //!
 //! Maps `(SourceAnalysis, target_zensim_a, budget)` to one of:
 //! `NoOp`, `Lossless`, or a concrete `(StrategyKind, params)` tuple. The
-//! decision is calibration-table-driven; there is no candidate enumeration
-//! unless the caller asked for it via [`Budget::MaxIterations`] or
-//! [`Budget::MaxTime`].
+//! decision is calibration-table-driven. Measured candidate enumeration is
+//! deferred; all budget preferences currently select one unmeasured strategy.
 
 use crate::recompress::api::{Budget, LosslessReason, NoOpReason, StrategyKind};
 use crate::recompress::calibration::{CalibrationLookup, CellCi, EncoderClass, StrategyChoice};

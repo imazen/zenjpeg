@@ -10,8 +10,8 @@ name: Fuzz
 # rotted silently: by 2026-08-29 the sub-workspace could not even resolve,
 # because 147444fe moved `zenanalyze` to a crates.io version resolved through
 # a `[patch.crates-io]` at the REPO-ROOT manifest, and a `[patch]` table is
-# only read from the workspace root of the build being performed. See the long
-# comment on that table in `zenjpeg/fuzz/Cargo.toml`.
+# only read from the workspace root of the build being performed. The analysis
+# dependency was removed in 2026-10; the independent workspace gate remains.
 #
 # Why `cargo check` and not `cargo fuzz build`: `cargo fuzz` needs a nightly
 # toolchain plus `-Zsanitizer=address`, and it fully codegens the whole codec
@@ -50,34 +50,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # `zenjpeg/fuzz` path-patches exactly one checkout outside this repo.
-      # Verified with `cargo metadata` on 2026-08-29: `zenanalyze` is the only
-      # external path package in the resolved graph — 62 packages, everything
-      # else is crates.io or in-repo. It is required even though `zenpredict`
-      # never enters the graph (it is optional behind `target-zq`, which
-      # nothing here enables): Cargo loads a path dependency's manifest during
-      # resolution regardless of whether the activating feature is on, and
-      # zenjpeg declares `zenpredict = { path = "../../zenanalyze/zenpredict",
-      # optional = true }`.
-      #
-      # `$GITHUB_WORKSPACE/..` is where `../../../zenanalyze` from
-      # `zenjpeg/fuzz/` lands, and where every `Clone sibling repos` step in
-      # ci.yml already puts its clones — same layout, no special casing.
-      #
-      # Deliberately NOT zen-workspace's setup action. That action runs
-      # `cargo superwork ci-clone --add-paths`, which REWRITES manifests and
-      # deletes `patch.crates-io` sections. Rewriting is exactly wrong for this
-      # gate: the failure it exists to catch IS a fuzz manifest whose own patch
-      # table has gone stale, and a rewrite would mask it. Cloning by hand
-      # keeps the committed manifest under test verbatim.
-      - name: Clone the sibling checkout this workspace path-patches
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/.."
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
-
-      # After the clone, not before: rust-cache runs `cargo metadata` on the
-      # declared workspace to build its key, and with the sibling missing that
-      # cannot enumerate the graph.
       - uses: Swatinem/rust-cache@v2
         with:
           key: fuzz-targets
@@ -111,14 +83,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-
-      # Same single sibling, same reason as the job above: zenjpeg's
-      # `zenpredict` path dep must resolve.
-      - name: Clone the sibling checkout this workspace path-patches
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/.."
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       # Unlike the `targets` job, this one builds the LIBRARY's dev-dependency
       # graph, which reaches the `internal/jpegli-cpp` C++ submodule through

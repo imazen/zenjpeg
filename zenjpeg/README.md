@@ -123,9 +123,7 @@ Started as a port of [jpegli](https://github.com/google/jpegli) (Bruse, Versari,
 | `zencodec` | no | zencodec trait implementations for cross-codec pipelines |
 | `layout` | no | Lossless transforms + lossy decode→resize→encode pipeline |
 | `recompress` | no | JPEG→JPEG recompression to a target perceptual quality (see [Recompress](#recompress)). Core path; no heavy deps |
-| `recompress-iqa` | no | Adds the measured closed loop to `recompress` (pulls in `zensim`) |
 | `recompress-expert` | no | Exposes `recompress::expert` internals (unstable, not semver-covered) |
-| `target-zq` | no | `Quality::Zq` / `Quality::ZqExplicit` closed-loop perceptual-quality encoder (pulls in `zensim`) |
 | `boundary-rd` | no | Opt-in block-boundary continuity refinement (off by default; output is byte-identical unless enabled) |
 
 The **decoder and trellis quantization are always compiled** — the historical
@@ -551,13 +549,12 @@ let out: &[u8] = result.output_bytes().unwrap_or(&jpeg_bytes);
 # Ok::<(), zenjpeg::recompress::Error>(())
 ```
 
-The result carries `strategy`, the projected quality vs the original, and (with
-the IQA loop) a measured generation-loss score. **Budget:** `OneShot` (default,
-calibration-only, needs only the `recompress` feature) or — with
-`recompress-iqa` — `MaxIterations(n)` / `MaxTime(d)`, which measure generation
-loss and bump the dial to land closer to target. **Confidence** shifts the
-internal aim so a chosen quantile of images clears the target (content variance
-is large, so a bare target under-delivers on ~half the images at P50).
+The result carries `strategy` and the calibrated projected quality. Measured
+IQA refinement is temporarily removed; `measured_zensim_a` is `None` and
+all budget variants use one-shot routing. Content-adaptive configuration and
+learned picker/targeting APIs are also deferred. The complete integration is
+preserved on [to-revisit/zenanalyze](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze).
+JPEG adaptive quantization and trellis remain available.
 
 Invariants: output is **never larger than the source** (lossless fallback +
 byte-level guard), and the user's target — not the confidence-shifted aim —

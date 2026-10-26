@@ -306,7 +306,6 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
 ///
 /// Calibrated on CID22-512 corpus (209 images) to produce the same median
 /// SSIMULACRA2 as libjpeg-turbo at each quality level.
-#[cfg(not(feature = "target-zq"))]
 fn calibrated_jpeg_quality(generic_q: f32) -> f32 {
     // generic_quality → jpegli native quality
     const TABLE: &[(f32, f32)] = &[
@@ -341,7 +340,6 @@ fn calibrated_jpeg_quality(generic_q: f32) -> f32 {
 }
 
 /// Piecewise linear interpolation with clamping at table bounds.
-#[cfg(not(feature = "target-zq"))]
 fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
     if x <= table[0].0 {
         return table[0].1;
@@ -379,21 +377,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     fn with_generic_quality(mut self, quality: f32) -> Self {
         let clamped = quality.clamp(0.0, 100.0);
         self.generic_quality_input = Some(clamped);
-        // `generic_quality` is the codec-agnostic 0..100 dial. For zenjpeg it
-        // means "target a zensim Profile A score of `quality`": A is the
-        // canonical codec-target metric (`ZensimProfile::codec_target()`), so a
-        // caller asking for generic quality 70 gets an encode whose achieved
-        // zensim:A score lands at ~70 regardless of content. When the
-        // zensim-targeting machinery is compiled in (`target-zq`), route to the
-        // `Quality::Zq` closed loop (warm-started by the picker under
-        // `__picker-research`); otherwise fall back to the CID22-calibrated
-        // jpegli-native approximation of the same perceptual target.
-        #[cfg(feature = "target-zq")]
-        {
-            self.quality = clamped;
-            self.inner = self.inner.quality(Quality::Zq(clamped));
-        }
-        #[cfg(not(feature = "target-zq"))]
+        // Map the generic quality dial through the fixed CID22 calibration.
         {
             let q = calibrated_jpeg_quality(clamped);
             self.quality = q;
@@ -462,7 +446,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
             Quality::ApproxSsim2(s) => Fidelity::ssim2(s),
             Quality::ApproxButteraugli(d) => Fidelity::butteraugli(d),
             Quality::ApproxJpegli(q) => Fidelity::codec_quality(q),
-            // Mozjpeg / Zq / future variants → report on the codec quality scale.
+            // Mozjpeg / future variants → report on the codec quality scale.
             other => Fidelity::codec_quality(other.to_internal()),
         })
     }

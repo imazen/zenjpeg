@@ -1,5 +1,10 @@
 # zenjpeg Encoder Knob Space
 
+> Integration status (2026-10-26): content-adaptive configuration, learned
+> pickers, Zq targeting and measured recompression IQA are deferred. Their
+> implementation is preserved on [to-revisit/zenanalyze](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze)
+> at `fc19be17`. Related APIs/features described below are historical.
+
 Charted 2026-06-09 against `main` @ `7df309e3`. Every constant below was read
 from source, not from docs; file:line references are to `zenjpeg/src/`.
 

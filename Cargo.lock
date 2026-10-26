@@ -2483,24 +2483,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zenanalyze"
-version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
-dependencies = [
- "archmage 0.9.30",
- "garb",
- "linear-srgb",
- "magetypes",
- "zenpixels",
- "zenpixels-convert",
-]
-
-[[package]]
-name = "zenanalyze-api"
-version = "0.1.1"
-source = "git+https://github.com/imazen/zenanalyze#e6c72f99390c190c102275c3b0e4d41fe0a734a4"
-
-[[package]]
 name = "zenbench"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2624,8 +2606,6 @@ dependencies = [
  "web-sys",
  "whereat",
  "wide",
- "zenanalyze",
- "zenanalyze-api",
  "zenbench",
  "zencodec",
  "zencodec-testkit",
@@ -2634,8 +2614,6 @@ dependencies = [
  "zenpixels",
  "zenpixels-convert",
  "zenpng",
- "zenpredict 0.2.0",
- "zenpredict 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df)",
  "zenresize",
  "zensim",
  "zensim-regress",
@@ -2731,16 +2709,6 @@ dependencies = [
 [[package]]
 name = "zenpredict"
 version = "0.2.0"
-dependencies = [
- "archmage 0.9.30",
- "bytemuck",
- "libm",
- "lz4_flex 0.11.6",
-]
-
-[[package]]
-name = "zenpredict"
-version = "0.2.0"
 source = "git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df#05de3cbc44b19d8769077d99710b0146c761d6df"
 dependencies = [
  "archmage 0.9.30",
@@ -2782,7 +2750,7 @@ dependencies = [
  "rayon",
  "rgb",
  "thiserror",
- "zenpredict 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df)",
+ "zenpredict",
 ]
 
 [[package]]
@@ -2872,22 +2840,6 @@ dependencies = [
  "rgb",
  "zenjpeg",
  "zenresize",
-]
-
-[[package]]
-name = "zjr-calibrate"
-version = "0.1.0"
-dependencies = [
- "clap",
- "enough",
- "png",
- "rayon",
- "serde",
- "serde_json",
- "thiserror",
- "walkdir",
- "zenjpeg",
- "zensim",
 ]
 
 [[package]]

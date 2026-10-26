@@ -1,5 +1,5 @@
 # zenjpeg public API — doc(hidden) items and excluded-feature surface
-# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__oracle-exiftool,__oracle-tests,__picker-research,__profile,__test-utils,__wasm-simd,__zensim-research,_dev
+# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__oracle-exiftool,__oracle-tests,__profile,__test-utils,__wasm-simd,_dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,27 +9,27 @@
 
 ## summary
 #
-#   pub modules                                84
-#   pub types (struct/enum/trait/alias)       297
-#   pub consts/statics                        320
+#   pub modules                                83
+#   pub types (struct/enum/trait/alias)       292
+#   pub consts/statics                        314
 #   free functions                            366
-#   inherent methods                         1221
-#   struct fields                             761
-#   enum variants                             506
+#   inherent methods                         1188
+#   struct fields                             744
+#   enum variants                             491
 #   re-exports                                 18
-#   trait roster entries (type × trait)       672
-#   auto-trait-complete types                 132
+#   trait roster entries (type × trait)       645
+#   auto-trait-complete types                 127
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           77
+#   (root)                           71
 #   alloc                             1
 #   color                           110
 #   container                        31
 #   decode                          446
 #   decoder                          54
 #   detect                           40
-#   encode                         1481
+#   encode                         1413
 #   encoder                         134
 #   entropy                         100
 #   foundation                      352
@@ -37,14 +37,14 @@
 #   huffman                         306
 #   layout                            3
 #   lossless                          4
-#   quant                           162
+#   quant                           159
 #   recompress                       12
 #   rgb                              11
 #   test_utils                       95
 #   types                           138
 #   ultrahdr                         13
 
-## items (3397 lines)
+## items (3320 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -76,7 +76,6 @@
 #[non_exhaustive] pub enum encode::QuantTableConfig [also: encode::encoder_types]
 #[non_exhaustive] pub enum encode::QuantTablePreset [also: encode::tables::presets, encoder::tables::presets]
 #[non_exhaustive] pub enum encode::QuantTableSource [also: encode::encoder_types]
-#[non_exhaustive] pub enum encode::RestartMarkers
 #[non_exhaustive] pub enum encode::ScanStrategy [also: encode::encoder_types]
 #[non_exhaustive] pub enum encode::SofMarker [also: encode::plan]
 #[non_exhaustive] pub enum encode::XybSubsampling [also: encode::encoder_types, encode::v2]
@@ -96,15 +95,11 @@
 #[non_exhaustive] pub struct decode::JbrdMetadata
 #[non_exhaustive] pub struct decode::JbrdScanInfo
 #[non_exhaustive] pub struct decode::UltraHdrReaderConfig
-#[non_exhaustive] pub struct encode::AdaptiveOptions
 #[non_exhaustive] pub struct encode::BoundaryRdConfig [also: encode::encoder_config, encode::v2]
 #[non_exhaustive] pub struct encode::EncodePlan [also: encode::plan]
 #[non_exhaustive] pub struct encode::InternalParams [also: encode::internal_params, encoder]
 #[non_exhaustive] pub struct encode::RetryPolicy [also: encode::encoder_config]
 #[non_exhaustive] pub struct encode::SeamPenalty [also: encode::encoder_config]
-#[non_exhaustive] pub struct encode::zq::BlockArtifactBound
-#[non_exhaustive] pub struct encode::zq::EncodeMetrics
-#[non_exhaustive] pub struct encode::zq::ZqTarget
 #[repr(C, align(16))] pub struct foundation::simd_types::Block8x8i16
 #[repr(C, align(32))] pub struct foundation::simd_types::Block8x8f
 #[repr(C, align(32))] pub struct foundation::simd_types::Block8x8i32
@@ -113,12 +108,6 @@
 #[repr(u16)] pub enum encode::Orientation [also: encode::exif]
 #[repr(u8)] pub enum decode::AdobeColorTransform [also: encode::extras]
 #[repr(u8)] pub enum decode::DensityUnits [also: encode::extras]
-pub const fn encode::AdaptiveOptions::allow_progressive(self, bool) -> Self
-pub const fn encode::AdaptiveOptions::allow_xyb(self, bool) -> Self
-pub const fn encode::AdaptiveOptions::best_quality() -> Self
-pub const fn encode::AdaptiveOptions::effort(self, encode::encoder_types::Effort) -> Self
-pub const fn encode::AdaptiveOptions::fast_decode() -> Self
-pub const fn encode::AdaptiveOptions::restart_markers(self, encode::RestartMarkers) -> Self
 pub const fn encode::encoder_config::NeighborScope::includes_above(self) -> bool
 pub const fn encode::encoder_types::ChromaSubsampling::h_factor(&self) -> u8
 pub const fn encode::encoder_types::ChromaSubsampling::h_samp_factor_luma(self) -> u8
@@ -664,19 +653,11 @@ pub fn detect::content::classify_from_luma_coefficients(&[i16], usize) -> (detec
 pub fn detect::content::classify_from_probe(&detect::JpegProbe) -> detect::content::ContentType
 pub fn detect::content::estimate_blocking_severity(&detect::JpegProbe) -> f32
 pub fn detect::content::recommend_deblock(&detect::JpegProbe, detect::content::ContentType, f32) -> detect::content::DeblockRecommendation
-pub fn encode::AdaptiveOptions::clone(&self) -> encode::AdaptiveOptions
-pub fn encode::AdaptiveOptions::default() -> Self
-pub fn encode::AdaptiveOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::HuffmanSymbolFrequencies::add(&mut self, &encode::HuffmanSymbolFrequencies)
 pub fn encode::HuffmanSymbolFrequencies::clone(&self) -> encode::HuffmanSymbolFrequencies
 pub fn encode::HuffmanSymbolFrequencies::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::HuffmanSymbolFrequencies::generate_tables(&self) -> encoder::Result<huffman::optimize::frequency::HuffmanTableSet>
 pub fn encode::HuffmanSymbolFrequencies::generate_tables_with_method(&self, types::HuffmanMethod) -> encoder::Result<huffman::optimize::frequency::HuffmanTableSet>
-pub fn encode::RestartMarkers::assert_fields_are_eq(&self)
-pub fn encode::RestartMarkers::clone(&self) -> encode::RestartMarkers
-pub fn encode::RestartMarkers::default() -> encode::RestartMarkers
-pub fn encode::RestartMarkers::eq(&self, &encode::RestartMarkers) -> bool
-pub fn encode::RestartMarkers::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::bdrd_trace::BdrdBlockEntry::clone(&self) -> encode::bdrd_trace::BdrdBlockEntry
 pub fn encode::bdrd_trace::BdrdBlockEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::bdrd_trace::BoundaryRdTrace::blocks_h(&self) -> u32
@@ -691,7 +672,6 @@ pub fn encode::byte_encoders::BytesEncoder::finish(self) -> encoder::Result<allo
 pub fn encode::byte_encoders::BytesEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
 pub fn encode::byte_encoders::BytesEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
 pub fn encode::byte_encoders::BytesEncoder::finish_with_huffman_frequencies(self) -> encoder::Result<(alloc::vec::Vec<u8>, core::option::Option<alloc::boxed::Box<encode::HuffmanSymbolFrequencies>>)>
-pub fn encode::byte_encoders::BytesEncoder::finish_with_metrics(self) -> encoder::Result<(alloc::vec::Vec<u8>, encode::zq::EncodeMetrics)>
 pub fn encode::byte_encoders::BytesEncoder::height(&self) -> u32
 pub fn encode::byte_encoders::BytesEncoder::layout(&self) -> encode::encoder_types::PixelLayout
 pub fn encode::byte_encoders::BytesEncoder::push(&mut self, &[u8], usize, usize, impl enough::Stop) -> encoder::Result<()>
@@ -757,8 +737,6 @@ pub fn encode::encoder_config::BoundaryRdConfig::with_retry(self, encode::encode
 pub fn encode::encoder_config::BoundaryRdConfig::with_seam(self, encode::encoder_config::SeamPenalty) -> Self
 pub fn encode::encoder_config::BoundaryRdConfig::with_shrink(self, f32) -> Self
 pub fn encode::encoder_config::BoundaryRdConfig::with_threshold(self, f32) -> Self
-pub fn encode::encoder_config::EncoderConfig::adaptive(zenpixels::buffer::PixelSlice<'_>, impl core::convert::Into<encode::encoder_types::Quality>) -> core::result::Result<Self, alloc::string::String>
-pub fn encode::encoder_config::EncoderConfig::adaptive_with(zenpixels::buffer::PixelSlice<'_>, impl core::convert::Into<encode::encoder_types::Quality>, encode::AdaptiveOptions) -> core::result::Result<Self, alloc::string::String>
 pub fn encode::encoder_config::EncoderConfig::add_gainmap(self, alloc::vec::Vec<u8>) -> Self
 pub fn encode::encoder_config::EncoderConfig::add_mpf_image(self, alloc::vec::Vec<u8>, container::types::MpImageType) -> Self
 pub fn encode::encoder_config::EncoderConfig::add_segment(self, u8, alloc::vec::Vec<u8>) -> Self
@@ -823,7 +801,6 @@ pub fn encode::encoder_config::EncoderConfig::tiny_file_mode(self, encode::encod
 pub fn encode::encoder_config::EncoderConfig::trellis(self, encode::trellis::compat::TrellisConfig) -> Self
 pub fn encode::encoder_config::EncoderConfig::validate(&self) -> encoder::Result<()>
 pub fn encode::encoder_config::EncoderConfig::with_internal_params(self, encode::internal_params::InternalParams) -> Self
-pub fn encode::encoder_config::EncoderConfig::with_packed_source_features(self, alloc::vec::Vec<(u16, f32)>) -> Self
 pub fn encode::encoder_config::EncoderConfig::with_segments(self, encode::extras::EncoderSegments) -> Self
 pub fn encode::encoder_config::EncoderConfig::xyb(impl core::convert::Into<encode::encoder_types::Quality>, encode::encoder_types::XybSubsampling) -> Self
 pub fn encode::encoder_config::EncoderConfig::xyb_effort(impl core::convert::Into<encode::encoder_types::Quality>, encode::encoder_types::XybSubsampling, encode::encoder_types::Effort) -> Self
@@ -912,12 +889,8 @@ pub fn encode::encoder_types::Quality::for_mozjpeg_tables(&self) -> u8
 pub fn encode::encoder_types::Quality::from(f32) -> Self
 pub fn encode::encoder_types::Quality::from(i32) -> Self
 pub fn encode::encoder_types::Quality::from(u8) -> Self
-pub fn encode::encoder_types::Quality::is_perceptual_target(&self) -> bool
-pub fn encode::encoder_types::Quality::is_zq_target(&self) -> bool
 pub fn encode::encoder_types::Quality::to_distance(&self) -> f32
 pub fn encode::encoder_types::Quality::to_internal(&self) -> f32
-pub fn encode::encoder_types::Quality::zq_picker_target(&self) -> core::option::Option<f32>
-pub fn encode::encoder_types::Quality::zq_target(&self) -> core::option::Option<encode::zq::ZqTarget>
 pub fn encode::encoder_types::QuantTableConfig::chroma_distance_scales(&self) -> core::option::Option<[f32; 2]>
 pub fn encode::encoder_types::QuantTableConfig::chroma_quality(&self) -> core::option::Option<u8>
 pub fn encode::encoder_types::QuantTableConfig::clone(&self) -> encode::encoder_types::QuantTableConfig
@@ -1285,23 +1258,6 @@ pub fn encode::tuning::ScalingParams::default_ycbcr() -> Self
 pub fn encode::tuning::ScalingParams::eq(&self, &encode::tuning::ScalingParams) -> bool
 pub fn encode::tuning::ScalingParams::exact() -> Self
 pub fn encode::tuning::ScalingParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::zq::BlockArtifactBound::clone(&self) -> encode::zq::BlockArtifactBound
-pub fn encode::zq::BlockArtifactBound::eq(&self, &encode::zq::BlockArtifactBound) -> bool
-pub fn encode::zq::BlockArtifactBound::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::zq::BlockArtifactBound::new(f32) -> Self
-pub fn encode::zq::BlockArtifactBound::with_max_overshoot(self, core::option::Option<f32>) -> Self
-pub fn encode::zq::BlockArtifactBound::with_max_undershoot(self, core::option::Option<f32>) -> Self
-pub fn encode::zq::EncodeMetrics::clone(&self) -> encode::zq::EncodeMetrics
-pub fn encode::zq::EncodeMetrics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::zq::ZqTarget::clone(&self) -> encode::zq::ZqTarget
-pub fn encode::zq::ZqTarget::default() -> Self
-pub fn encode::zq::ZqTarget::eq(&self, &encode::zq::ZqTarget) -> bool
-pub fn encode::zq::ZqTarget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::zq::ZqTarget::new(f32) -> Self
-pub fn encode::zq::ZqTarget::with_block_artifact(self, core::option::Option<encode::zq::BlockArtifactBound>) -> Self
-pub fn encode::zq::ZqTarget::with_max_overshoot(self, core::option::Option<f32>) -> Self
-pub fn encode::zq::ZqTarget::with_max_passes(self, u8) -> Self
-pub fn encode::zq::ZqTarget::with_max_undershoot(self, core::option::Option<f32>) -> Self
 pub fn encoder::Error::from(foundation::aligned_alloc::AllocError) -> Self
 pub fn encoder::Error::unsupported_pixel_format(types::PixelFormat) -> Self
 pub fn encoder::should_activate_tiny_file_mode_for_subsampling(u32, u32, bool, types::Subsampling) -> bool [also: encode::encoder_types]
@@ -2011,7 +1967,6 @@ pub mod encode::trellis::rate
 pub mod encode::tuning
 pub mod encode::tuning::dct
 pub mod encode::v2
-pub mod encode::zq
 pub mod encoder::tables
 pub mod encoder::tables::glassa
 pub mod encoder::tables::presets
@@ -2505,10 +2460,6 @@ pub detect::content::DeblockAction::Skip
 pub detect::content::DeblockRecommendation::action: detect::content::DeblockAction
 pub detect::content::DeblockRecommendation::content_type: detect::content::ContentType
 pub detect::content::DeblockRecommendation::zero_ac_frac: f32
-pub encode::AdaptiveOptions::allow_progressive: bool
-pub encode::AdaptiveOptions::allow_xyb: bool
-pub encode::AdaptiveOptions::effort: encode::encoder_types::Effort
-pub encode::AdaptiveOptions::restart_markers: encode::RestartMarkers
 pub encode::BoundaryRd::Off
 pub encode::BoundaryRd::On(encode::encoder_config::BoundaryRdConfig)
 pub encode::ChromaSubsampling::HalfHorizontal
@@ -2658,9 +2609,6 @@ pub encode::Quality::ApproxButteraugli(f32)
 pub encode::Quality::ApproxJpegli(f32)
 pub encode::Quality::ApproxMozjpeg(u8)
 pub encode::Quality::ApproxSsim2(f32)
-pub encode::Quality::Zq(f32)
-pub encode::Quality::ZqExplicit(encode::zq::ZqTarget)
-pub encode::Quality::ZqPicker(f32)
 pub encode::QuantTableConfig::Custom(alloc::boxed::Box<encode::tuning::EncodingTables>)
 pub encode::QuantTableConfig::GlassaLowBpp
 pub encode::QuantTableConfig::Jpegli
@@ -2681,9 +2629,6 @@ pub encode::QuantTablePreset::Robidoux
 pub encode::QuantTablePreset::Watson
 pub encode::QuantTableSource::Jpegli
 pub encode::QuantTableSource::MozjpegDefault
-pub encode::RestartMarkers::Auto
-pub encode::RestartMarkers::AutoSparse
-pub encode::RestartMarkers::Off
 pub encode::ScanStrategy::Default
 pub encode::ScanStrategy::Mozjpeg
 pub encode::ScanStrategy::Search
@@ -2790,9 +2735,6 @@ pub encode::encoder_types::Quality::ApproxButteraugli(f32)
 pub encode::encoder_types::Quality::ApproxJpegli(f32)
 pub encode::encoder_types::Quality::ApproxMozjpeg(u8)
 pub encode::encoder_types::Quality::ApproxSsim2(f32)
-pub encode::encoder_types::Quality::Zq(f32)
-pub encode::encoder_types::Quality::ZqExplicit(encode::zq::ZqTarget)
-pub encode::encoder_types::Quality::ZqPicker(f32)
 pub encode::encoder_types::QuantTableConfig::Custom(alloc::boxed::Box<encode::tuning::EncodingTables>)
 pub encode::encoder_types::QuantTableConfig::GlassaLowBpp
 pub encode::encoder_types::QuantTableConfig::Jpegli
@@ -3105,9 +3047,6 @@ pub encode::v2::Quality::ApproxButteraugli(f32)
 pub encode::v2::Quality::ApproxJpegli(f32)
 pub encode::v2::Quality::ApproxMozjpeg(u8)
 pub encode::v2::Quality::ApproxSsim2(f32)
-pub encode::v2::Quality::Zq(f32)
-pub encode::v2::Quality::ZqExplicit(encode::zq::ZqTarget)
-pub encode::v2::Quality::ZqPicker(f32)
 pub encode::v2::XybSubsampling::BQuarter
 pub encode::v2::XybSubsampling::Full
 pub encode::v2::YCbCrPlanes::cb: &'a [f32]
@@ -3116,19 +3055,6 @@ pub encode::v2::YCbCrPlanes::cr: &'a [f32]
 pub encode::v2::YCbCrPlanes::cr_stride: usize
 pub encode::v2::YCbCrPlanes::y: &'a [f32]
 pub encode::v2::YCbCrPlanes::y_stride: usize
-pub encode::zq::BlockArtifactBound::ceiling: f32
-pub encode::zq::BlockArtifactBound::max_overshoot: core::option::Option<f32>
-pub encode::zq::BlockArtifactBound::max_undershoot: core::option::Option<f32>
-pub encode::zq::EncodeMetrics::achieved_max_block_artifact: f32
-pub encode::zq::EncodeMetrics::achieved_score: f32
-pub encode::zq::EncodeMetrics::bytes: usize
-pub encode::zq::EncodeMetrics::passes_used: u8
-pub encode::zq::EncodeMetrics::targets_met: bool
-pub encode::zq::ZqTarget::block_artifact: core::option::Option<encode::zq::BlockArtifactBound>
-pub encode::zq::ZqTarget::max_overshoot: core::option::Option<f32>
-pub encode::zq::ZqTarget::max_passes: u8
-pub encode::zq::ZqTarget::max_undershoot: core::option::Option<f32>
-pub encode::zq::ZqTarget::target: f32
 pub encoder::BoundaryRd::On(encode::encoder_config::BoundaryRdConfig)
 pub encoder::ColorMode::Xyb::subsampling: encode::encoder_types::XybSubsampling
 pub encoder::ColorMode::YCbCr::subsampling: encode::encoder_types::ChromaSubsampling
@@ -3351,9 +3277,6 @@ pub quant::Quality::ApproxButteraugli(f32)
 pub quant::Quality::ApproxJpegli(f32)
 pub quant::Quality::ApproxMozjpeg(u8)
 pub quant::Quality::ApproxSsim2(f32)
-pub quant::Quality::Zq(f32)
-pub quant::Quality::ZqExplicit(encode::zq::ZqTarget)
-pub quant::Quality::ZqPicker(f32)
 pub quant::QuantTable::precision: u8
 pub quant::QuantTable::values: [u16; 64]
 pub quant::ZeroBiasParams::mul: [f32; 64]
@@ -3444,7 +3367,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (219 types)
+## trait impls (214 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3505,9 +3428,7 @@ detect::QualityScale: TrivialClone
 detect::content::ContentType: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 detect::content::DeblockAction: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 detect::content::DeblockRecommendation: Clone, Copy, Debug, TrivialClone
-encode::AdaptiveOptions: Clone, Copy, Debug, Default, TrivialClone
 encode::HuffmanSymbolFrequencies: Clone, Debug
-encode::RestartMarkers: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 encode::bdrd_trace::BdrdBlockEntry: Clone, Copy, Debug, TrivialClone
 encode::bdrd_trace::BoundaryRdTrace: Debug, Default
 encode::config::ComputedConfig: Clone, Debug, Default
@@ -3569,9 +3490,6 @@ encode::trellis::rate::RateTable: Clone, Debug
 encode::tuning::EncodingTables: Clone, Debug, PartialEq
 encode::tuning::PerComponent<T>: Clone, Debug, PartialEq
 encode::tuning::ScalingParams: Clone, Debug, PartialEq
-encode::zq::BlockArtifactBound: Clone, Copy, Debug, PartialEq, TrivialClone
-encode::zq::EncodeMetrics: Clone, Copy, Debug, TrivialClone
-encode::zq::ZqTarget: Clone, Copy, Debug, Default, PartialEq, TrivialClone
 encoder::Error: From<foundation::aligned_alloc::AllocError>
 entropy::StreamingEntropyState: Clone, Debug, Default
 entropy::decoder::EntropyDecoderState: Clone, Copy, TrivialClone
@@ -3668,7 +3586,7 @@ ultrahdr::UltraHdrMode: TrivialClone
 
 ## auto traits
 
-132 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+127 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 encode::byte_encoders::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encode::byte_encoders::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encode::byte_encoders::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe

@@ -327,18 +327,10 @@ pub mod profile;
 // quality with no size regression. Moved in from the standalone
 // `zenjpeg-recompress` crate (2026-05-29); reaches the codec's
 // `pub(crate)` internals directly. Behind the `recompress` feature so
-// base builds are unaffected; the closed loop's `zensim` measurement is
-// further gated behind `recompress-iqa`.
+// base builds are unaffected. Measured IQA refinement is deferred.
 #[cfg(feature = "recompress")]
 pub mod recompress;
 pub mod target_quality;
-pub mod zq_seed;
-
-// Image content analysis for `EncoderConfig::adaptive` lives in `zenanalyze`
-// directly — the former `zenjpeg::analyze` re-export shim was removed so this
-// codec no longer leaks version-specific `zenanalyze` types through its surface.
-// Internal callers (`encode::adaptive`) use `zenanalyze::*`; the public surface
-// is the `EncoderConfig::adaptive` constructor in `encode::adaptive`.
 
 // zencodec trait implementations
 #[cfg(feature = "zencodec")]

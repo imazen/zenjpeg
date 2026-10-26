@@ -1,5 +1,10 @@
 # Complete candidate binding in the existing Zq loop — September 8, 2026
 
+> Integration status (2026-10-26): content-adaptive configuration, learned
+> pickers, Zq targeting and measured recompression IQA are deferred. Their
+> implementation is preserved on [to-revisit/zenanalyze](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze)
+> at `fc19be17`. Related APIs/features described below are historical.
+
 Registered before candidate encodes. This continues the recovered July 18
 `46a6ff3083d4` experiment in the current checkout, without importing its stale
 manifest, process-global profile/gradient cache or obsolete global-q correction.

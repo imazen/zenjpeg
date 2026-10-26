@@ -21,7 +21,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### QUEUED BREAKING CHANGES
 
-None.
+- Temporarily remove content-adaptive constructors/types, packed source-feature hooks, Zq variants/metrics, analyzer-seeded targeting, and the `target-zq`, `__picker-research`, `__zensim-research`, `recompress-iqa` features. Preserve the full integration at `to-revisit/zenanalyze` (`fc19be17`). Ordinary JPEG AQ and trellis remain; recompression uses its existing unmeasured one-shot path.
+
 
 ### Development
 

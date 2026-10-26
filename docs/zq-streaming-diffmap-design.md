@@ -1,5 +1,10 @@
 # Streaming measurement for target-zq (zenjpeg #113 PR-F) — design v2
 
+> Integration status (2026-10-26): content-adaptive configuration, learned
+> pickers, Zq targeting and measured recompression IQA are deferred. Their
+> implementation is preserved on [to-revisit/zenanalyze](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze)
+> at `fc19be17`. Related APIs/features described below are historical.
+
 Revised 2026-07-31. **This version supersedes the v1 draft in place** after
 a source-verified coherence review of the proposal against zensim at the
 pinned rev (`9d8f73a5`, what zenjpeg builds today) and zensim `main`

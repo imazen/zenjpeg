@@ -218,8 +218,7 @@ impl StreamingEncoder {
     }
 
     /// Install a per-iMCU [`super::aq_controller::AqController`] on the
-    /// underlying strip processor. Used by the target-zq iteration loop
-    /// in [`super::zq`].
+    /// underlying strip processor for internal research instrumentation.
     pub(crate) fn set_aq_controller(
         &mut self,
         ctrl: Option<Box<dyn super::aq_controller::AqController>>,

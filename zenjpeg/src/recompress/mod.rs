@@ -1,14 +1,10 @@
 //! Recompress an already-encoded JPEG to a target zensim Profile A
 //! quality with minimal generation loss and no size regression.
 //!
-//! Entry point: [`recompress`]. The default [`Budget::OneShot`] path
-//! needs only `zenjpeg` itself; the optional closed loop ([`Budget::
-//! MaxIterations`] > 1 / [`Budget::MaxTime`]) measures generation loss
-//! against the source and is gated behind the `recompress-iqa` feature
-//! (which pulls in `zensim`). Under `recompress-iqa`, leftover iteration
-//! budget on an overshooting Preserve candidate feeds the diffmap-guided
-//! per-block refinement pass (see the `refine` module). The
-//! `recompress-expert` feature exposes the [`expert`] internals.
+//! Entry point: [`recompress`]. Recompression uses the one-shot calibrated
+//! router. Measured IQA refinement is deferred to `to-revisit/zenanalyze`;
+//! results do not report a measured score. The `recompress-expert` feature
+//! exposes the [`expert`] internals.
 //!
 //! Moved into the zenjpeg crate 2026-05-29 (was the standalone
 //! `zenjpeg-recompress` crate); reaches zenjpeg's `pub(crate)` codec
@@ -19,11 +15,9 @@ mod aq;
 mod budget;
 mod calibration;
 mod error;
-#[cfg(feature = "recompress-iqa")]
-mod measure;
+
 mod metadata;
-#[cfg(feature = "recompress-iqa")]
-mod refine;
+
 mod router;
 mod source;
 mod strategies;
@@ -58,10 +52,6 @@ pub mod expert {
         deblock::run_deblock, lossless::run_lossless, preserve::run_preserve, tuned::run_tuned,
     };
     pub use crate::recompress::target::{target_zensim_a_to_ba_distance, target_zensim_a_to_ijg_q};
-
-    /// IQA scoring helpers (require the `recompress-iqa` feature → `zensim`).
-    #[cfg(feature = "recompress-iqa")]
-    pub use crate::recompress::measure::{score_against_reference, score_recompression};
 }
 
 #[cfg(test)]

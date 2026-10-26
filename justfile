@@ -22,7 +22,7 @@ fuzz SECONDS="60":
 # Compile every fuzz target on stable — the same gate .github/workflows/fuzz.yml
 # runs. `zenjpeg/fuzz` is its own workspace, so nothing at the repo root ever
 # compiles it; this is what stops the targets bit-rotting between hand-run
-# fuzzing sessions. Needs the ../zenanalyze sibling checked out.
+# fuzzing sessions.
 fuzz-check:
     cd zenjpeg/fuzz && cargo check --all-targets
 
@@ -51,7 +51,6 @@ colorspace-mutation-reach *ARGS:
     if [ -d .jj ]; then jj file list; else git ls-files; fi \
         | grep -vx 'internal/jpegli-cpp' | rsync -a --files-from=- ./ "$root/tree/"
     ln -s "$(realpath internal/jpegli-cpp)" "$root/tree/internal/jpegli-cpp"
-    if [ -d ../zenanalyze ]; then ln -s "$(realpath ../zenanalyze)" "$root/zenanalyze"; fi
     if [ -d .jj ]; then jj log -r @ --no-graph -T 'commit_id ++ "\n"'; else git rev-parse HEAD; fi > "$root/out/SOURCE"
     echo "tree: $root/tree  results: $root/out"
     python3 scripts/colorspace_mutation_reach.py "$root/tree" "$root/out" {{ARGS}}
@@ -588,3 +587,16 @@ metadata-header-check:
 gray-geometry-check:
     cargo test -p zenjpeg --test grayscale_geometry --test streaming_encode --features zencodec --locked
     cargo clippy -p zenjpeg --lib --test grayscale_geometry --test streaming_encode --features zencodec --locked -- -D warnings
+
+# Validate the temporary release dependency cut and remaining codec paths.
+analysis-cut-check:
+    python3 scripts/check-analysis-dependencies.py
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy -p zenjpeg --all-features --lib -- -D warnings
+
+analysis-cut-tests:
+    cargo test -p zenjpeg --lib --tests --examples
+    cargo check -p zenjpeg --benches
+    cargo test -p zenjpeg --doc
+    cargo test -p zenjpeg --features recompress-expert,parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --tests
+    just fuzz-check

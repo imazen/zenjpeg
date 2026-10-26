@@ -56,14 +56,6 @@ zencodec = { workspace = true }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", default-features = false, features = ["xmp"] }
 zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true, optional = true }
-# Image content analyzers (variance, edges, chroma sharpness, DCT energy)
-# used by `EncoderConfig::adaptive`. Pulls rows on demand from any
-# PixelSlice via zenpixels-convert internally.
-# `experimental` is required for PatchFraction and a handful of other
-# features the adaptive bucket inference reads. HDR features are
-# gated under `experimental` in registry 0.1.0 (a separate `hdr`
-# feature only exists on local-main and isn't required by src/).
-zenanalyze = { workspace = true, features = ["experimental"] }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes
@@ -95,22 +87,6 @@ zentone = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
-# Perceptual metric used by Quality::Zq target-perceptual-quality variants
-# (issue #113). Pulled in only when the `target-zq` feature is enabled.
-zensim = { workspace = true, optional = true }
-# Exact runtime identity required by the complete candidate scoring surface.
-zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
-
-# zenpredict (ZNPR v3 runtime) — pulled in only by the
-# `__picker-research` feature for the dev/picker_v0_3_holdout_ab.rs
-# held-out A/B harness. Path-only because the v3 schema lives on the
-# sibling `../zenanalyze/zenpredict` and isn't published yet.
-zenpredict = { path = "../../zenanalyze/zenpredict", optional = true }
-# zenanalyze-api: the frozen 1.0 feature contract. Optional, enabled by
-# `__picker-research`, so the picker can reuse a shared feature `Offer`. Git-rev
-# (workspace dep) — see the workspace Cargo.toml note.
-zenanalyze-api = { workspace = true, optional = true }
-
 [dev-dependencies]
 # The unit tests' `for_each_token_permutation` needs `testable_dispatch` to
 # disable tokens the build guarantees at compile time (SSE2 on x86-64, NEON on
@@ -247,29 +223,8 @@ __test-utils = []
 __expert = []
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
-# Research-only dev binaries (`dev/picker_v0_3_holdout_ab.rs`) that
-# need the sibling `../../zenanalyze/zenpredict` checked out and use
-# post-0.1.0 zenanalyze symbols. Off by default; off in CI. Local
-# devs running picker A/B experiments enable this.
-#
-# `zenanalyze/hdr` is REQUIRED for the production picker: its 109-input
-# vector is the zenanalyze `SUPPORTED` set (108 features) which only equals
-# the 108 the picker trained on when BOTH `experimental` + `hdr` are on.
-# Without `hdr`, `SUPPORTED` shrinks and the feature order shifts, feeding
-# the MLP misaligned inputs. (The 8 hdr/alpha features are content-constant
-# for SDR inputs — `peak/p99_luminance_nits = 80`, the rest `0` — so they
-# carry no signal, but they must sit at the right positions with the right
-# values; `hdr` produces them via the same code path the training used.)
-# `zenpredict/advanced` unlocks the typed rescue/OOD API the picker uses to
-# stay safe on adversarial inputs: `first_out_of_distribution` (per-input
-# bounds + NaN/inf guard) and the bake's safety/fallback sections. The wire
-# format always parses those sections; this only exposes the Rust API. Lean
-# `predict`/`argmin_masked`-only consumers leave it off.
-#
-# Now a thin alias over `target-zq` (which carries the picker deps since the
-# 2026-07-16 one-shot/iterate fold). Kept as a distinct name only because the
-# `picker_v0_3_holdout_ab` dev binary and some docs reference it.
-__picker-research = ["target-zq"]
+
+
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is
@@ -313,32 +268,9 @@ ultrahdr = [
 # kernels, which the decoder's auto-orient permute delegates to (#150); it
 # adds no dependency (archmage + magetypes are already mandatory here).
 zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
-# Target-perceptual-quality encoder — the umbrella for every `zq*` variant.
-#   - `Quality::Zq` / `Quality::ZqExplicit`: closed loop. Iterates
-#     encode + decode + zensim diffmap to land at a perceptual score target
-#     (issue #113). Needs zensim (the metric).
-#   - `Quality::ZqPicker`: realtime one-shot. The distilled picker predicts the
-#     config, single encode, no measurement. Needs zenpredict + zenanalyze-api
-#     (the picker runtime); it does NOT use zensim, but the fold keeps a single
-#     flag rather than splitting a `picker` feature out (chosen 2026-07-16).
-# So this pulls BOTH the metric and the picker. The picker deps are an
-# unpublished sibling path dep today (`../../zenanalyze/zenpredict`), which is
-# why no CI job enables `target-zq` yet; it resolves once they publish. Kept on
-# one line so the i686 CI manifest-strip can rewrite it to just `["dep:zensim"]`
-# (it deletes the unpublished zenpredict path dep, which would otherwise leave a
-# dangling `dep:zenpredict` reference here — see .github/workflows/ci.yml).
-target-zq = ["dep:zensim", "dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
-# Complete candidate binding in the recovered Zq experiment; explicit opt-in.
-__zensim-research = ["target-zq", "zensim/custom-profiles", "zensim/feature-regime-v2", "dep:zenpredict-serving"]
-# JPEG→JPEG recompression to a target zensim Profile A quality with no size
-# regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
-# core router/strategies/calibration need only the decoder — no heavy deps,
-# so enabling this barely moves compile time. The closed-loop IQA refinement
-# (`Budget::MaxIterations` > 1 / `MaxTime`) needs the perceptual metric, so it
-# is split into `recompress-iqa` (pulls `zensim`, like `target-zq`).
+
+# One-shot JPEG→JPEG recompression with calibrated routing and no metric runtime.
 recompress = []
-# Closed-loop measurement for `recompress` (generation loss vs source).
-recompress-iqa = ["recompress", "dep:zensim"]
 # Expose `recompress::expert` (per-strategy entry points, calibration-table
 # inspection, block classification). Unstable internals; not semver-covered.
 recompress-expert = ["recompress"]
@@ -497,18 +429,6 @@ name = "sweep_cell"
 required-features = ["__expert"]
 
 [[example]]
-name = "zensim_census"
-required-features = ["target-zq"]
-
-[[example]]
-name = "zq_calibrate"
-required-features = ["target-zq"]
-
-[[example]]
-name = "zq_pareto_calibrate"
-required-features = ["target-zq"]
-
-[[example]]
 name = "rd_explore"
 
 [[example]]
@@ -531,22 +451,6 @@ required-features = ["boundary-rd"]
 name = "jpeg_probe"
 required-features = ["boundary-rd"]
 
-# v0.3 picker held-out A/B harness (loads .bin externally; lives in
-# dev/ so the file isn't shipped as part of the public examples dir).
-# See dev/picker_v0_3_holdout_ab.rs for the full methodology block.
-#
-# Requires the `__picker-research` feature, which pulls in the
-# sibling `zenanalyze/zenpredict` (v3, unpublished) and post-0.1.0
-# zenanalyze symbols (`GradientFractionSmooth`, `QuantSurvivalY`,
-# etc.). Off in default / CI builds — these path siblings aren't
-# guaranteed to be checked out next to zenjpeg.
-[[example]]
-name = "picker_v0_3_holdout_ab"
-path = "dev/picker_v0_3_holdout_ab.rs"
-required-features = ["target-zq", "__picker-research"]
-
-# Per-class quant table signal probe (gating experiment, 2026-05-04).
-# See dev/per_class_signal_probe.rs.
 [[example]]
 name = "per_class_signal_probe"
 path = "dev/per_class_signal_probe.rs"
@@ -629,36 +533,8 @@ name = "jxl_phase0_recompress"
 required-features = ["recompress"]
 
 [[example]]
-name = "aq_ablation"
-required-features = ["recompress-expert", "recompress-iqa"]
-
-[[example]]
-name = "aq_direction"
-required-features = ["recompress-expert", "recompress-iqa"]
-
-[[example]]
 name = "dump_estimates"
 required-features = ["recompress-expert"]
-
-[[example]]
-name = "preserve_identity_diag"
-required-features = ["recompress-expert", "recompress-iqa"]
-
-[[example]]
-name = "preserve_requant_diag"
-required-features = ["recompress-expert", "recompress-iqa"]
-
-[[example]]
-name = "preserve_vs_tuned"
-required-features = ["recompress-expert", "recompress-iqa"]
-
-[[example]]
-name = "tri_metric_gen"
-required-features = ["recompress-expert", "recompress-iqa"]
-
-[[example]]
-name = "zenjpeg_param_rd"
-required-features = ["recompress-expert", "recompress-iqa"]
 
 [[example]]
 name = "gm_extract_diff"
@@ -669,10 +545,6 @@ name = "gray_path_diff"
 
 [[example]]
 name = "gray_decode_bench"
-
-[[example]]
-name = "zq_rd_probe"
-required-features = ["__zensim-research"]
 
 [[test]]
 name = "extended_metadata_exiftool"

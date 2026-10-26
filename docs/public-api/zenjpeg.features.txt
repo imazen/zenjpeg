@@ -1,5 +1,5 @@
 # zenjpeg public API — additions from non-default features
-# features: boundary-rd,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,recompress-iqa,target-zq,ultrahdr,web-sys,zencodec
+# features: boundary-rd,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -12,7 +12,7 @@
 #   pub modules                                 5
 #   pub types (struct/enum/trait/alias)        82
 #   pub consts/statics                          4
-#   free functions                             34
+#   free functions                             32
 #   inherent methods                          138
 #   struct fields                             158
 #   enum variants                             146
@@ -28,10 +28,10 @@
 #   encoder                          40
 #   layout                           67
 #   metadata                          1
-#   recompress                      158
+#   recompress                      156
 #   ultrahdr                         73
 
-## items (592 lines)
+## items (590 lines)
 
 #[non_exhaustive] pub enum container::metadata::ItemKind<'a>
 pub container::metadata::ItemKind::Adobe(container::metadata::Adobe)
@@ -458,8 +458,6 @@ pub fn recompress::expert::run_deblock(&[u8], &recompress::expert::SourceAnalysi
 pub fn recompress::expert::run_lossless(&[u8], &recompress::expert::SourceAnalysis) -> core::result::Result<alloc::vec::Vec<u8>, recompress::Error>
 pub fn recompress::expert::run_preserve(&[u8], &recompress::expert::SourceAnalysis, &recompress::expert::StrategyParams, &recompress::RecompressOptions) -> core::result::Result<recompress::strategies::StrategyOutcome, recompress::Error>
 pub fn recompress::expert::run_tuned(&[u8], &recompress::expert::SourceAnalysis, &recompress::expert::StrategyParams, &recompress::RecompressOptions) -> core::result::Result<recompress::strategies::StrategyOutcome, recompress::Error>
-pub fn recompress::expert::score_against_reference(&[u8], u32, u32, &[u8]) -> core::result::Result<f32, recompress::Error>
-pub fn recompress::expert::score_recompression(&[u8], &[u8]) -> core::result::Result<f32, recompress::Error>
 pub fn recompress::expert::target_zensim_a_to_ba_distance(f32) -> f32
 pub fn recompress::expert::target_zensim_a_to_ijg_q(f32) -> u8
 pub fn recompress::expert::tier_histogram(&decoder::DecodedCoefficients) -> [u32; 4]
