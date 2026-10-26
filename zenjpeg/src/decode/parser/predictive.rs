@@ -72,7 +72,7 @@ impl JpegParser<'_> {
         scans.try_reserve_exact(channels).map_err(|_| {
             Error::allocation_failed(channels * core::mem::size_of::<Scan>(), "lossless scans")
         })?;
-        let mut seen = [false; 4];
+        let mut seen = [false; crate::foundation::consts::MAX_COMPONENTS];
         let mut ended = false;
         // The canonical marker walker skips entropy byte stuffing and restarts.
         for span in marker::iter(self.data) {
@@ -89,7 +89,7 @@ impl JpegParser<'_> {
                 MarkerKind::Sos => {
                     let length = self.read_u16()? as usize;
                     let count = self.read_u8()? as usize;
-                    if count == 0 || count > channels || length != 6 + 2 * count {
+                    if count == 0 || count > channels || count > 4 || length != 6 + 2 * count {
                         return Err(Error::invalid_jpeg_data(
                             "invalid lossless scan component count or length",
                         ));

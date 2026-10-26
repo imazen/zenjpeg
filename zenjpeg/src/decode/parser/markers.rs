@@ -164,7 +164,7 @@ impl<'a> JpegParser<'a> {
             return Err(Error::invalid_jpeg_data("number of components is zero"));
         }
         if self.num_components > MAX_COMPONENTS as u8 {
-            return Err(Error::unsupported_feature("more than 4 components"));
+            return Err(Error::unsupported_feature("more than 10 components"));
         }
 
         // Validate marker length matches expected size

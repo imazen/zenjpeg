@@ -996,7 +996,9 @@ impl DecodeConfig {
             return Ok(reader);
         }
 
-        if parser.precision == 12 && !parser.plan().strip() && parser.num_components != 1 {
+        if parser.num_components > 4
+            || (parser.precision == 12 && !parser.plan().strip() && parser.num_components != 1)
+        {
             let source = parser.component_rows(self.chroma_upsampling)?;
             let mut reader = ScanlineReader::from_component_rows(
                 alloc::borrow::Cow::Borrowed(data),
@@ -1327,7 +1329,9 @@ impl DecodeConfig {
                 self.apply_crop(&mut reader, w, h, 1)?;
                 return Ok(reader);
             }
-            if parser.precision == 12 && !parser.plan().strip() && parser.num_components != 1 {
+            if parser.num_components > 4
+                || (parser.precision == 12 && !parser.plan().strip() && parser.num_components != 1)
+            {
                 let source = parser.component_rows(self.chroma_upsampling)?;
                 let (w, h) = (parser.width, parser.height);
                 let mut reader =

@@ -17,7 +17,7 @@ pub const DCT_SIZE: usize = 8;
 pub const DCT_BLOCK_SIZE: usize = 64;
 
 /// Maximum number of color components
-pub const MAX_COMPONENTS: usize = 4;
+pub const MAX_COMPONENTS: usize = 10;
 
 /// Maximum number of quantization tables
 pub const MAX_QUANT_TABLES: usize = 4;

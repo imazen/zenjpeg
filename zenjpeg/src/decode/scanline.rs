@@ -38,7 +38,7 @@ use crate::color::ycbcr_to_rgb_f32;
 use crate::deblock::BoundaryStrength;
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
+use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_COMPONENTS, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
@@ -80,7 +80,7 @@ pub struct ScanlineReader<'a> {
     buffered_rgb: Option<Vec<u8>>,
     precision: u8,
     component_rows: Option<super::parser::component_rows::ComponentRows>,
-    component_ids: [u8; 4],
+    component_ids: [u8; MAX_COMPONENTS],
     predictive: Option<super::parser::predictive::PredictiveReader>,
     buffered_native: Option<Vec<u16>>,
 
@@ -662,7 +662,7 @@ impl<'a> ScanlineReader<'a> {
         precision: u8,
         predictive: super::parser::predictive::PredictiveReader,
         model: ColorModel,
-        ids: [u8; 4],
+        ids: [u8; MAX_COMPONENTS],
     ) -> Self {
         let mut reader = Self::new_buffered_cow(
             data,
@@ -3271,9 +3271,9 @@ fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
     .map(|v| v.clamp(0, max) as u16)
 }
 
-fn frame_component_ids(data: &[u8]) -> [u8; 4] {
+fn frame_component_ids(data: &[u8]) -> [u8; MAX_COMPONENTS] {
     use crate::container::marker::{self, MarkerKind};
-    let mut ids = [0; 4];
+    let mut ids = [0; MAX_COMPONENTS];
     if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
         && let Some(components) = frame.payload.get(6..)
     {
