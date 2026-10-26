@@ -20,7 +20,12 @@ impl DecodeConfig {
             other => other,
         };
         let layout =
-            crate::color::planes::Layout8::from_pixel_format(row_format).ok_or_else(|| {
+            crate::color::planes::Layout8::from_pixel_format(if row_format == PixelFormat::Cmyk {
+                PixelFormat::Rgba
+            } else {
+                row_format
+            })
+            .ok_or_else(|| {
                 Error::unsupported_feature(
                     "native samples require RGB, BGR, RGBA, BGRA or gray output",
                 )
@@ -56,6 +61,8 @@ impl DecodeConfig {
                 parser.num_components,
                 precision,
                 predictive,
+                parser.color_model,
+                core::array::from_fn(|i| parser.components[i].id),
             );
             self.apply_crop(&mut reader, parser.width, parser.height, 1)?;
             reader
@@ -72,6 +79,14 @@ impl DecodeConfig {
         } else {
             OwnedDecodedPixels::U8(try_alloc_vec(count, "native output")?)
         };
+        let mut cmyk_row: Vec<scanline::Cmyk16> = try_alloc_vec(
+            if row_format == PixelFormat::Cmyk {
+                width as usize
+            } else {
+                0
+            },
+            "native CMYK row",
+        )?;
         let mut row: Vec<rgb::RGB<u16>> = try_alloc_vec(width as usize, "native RGB row")?;
         let max = ((1u32 << precision) - 1) as u16;
         for y in 0..height as usize {
@@ -79,6 +94,15 @@ impl DecodeConfig {
             let dest = &mut samples[..];
             if row_format == PixelFormat::Gray {
                 reader.read_rows_gray16(imgref::ImgRefMut::new(dest, width as usize, 1))?;
+            } else if row_format == PixelFormat::Cmyk {
+                reader.read_rows_cmyk16(imgref::ImgRefMut::new(
+                    &mut cmyk_row,
+                    width as usize,
+                    1,
+                ))?;
+                for (dst, p) in dest.as_chunks_mut::<4>().0.iter_mut().zip(&cmyk_row) {
+                    dst.copy_from_slice(&[p.c, p.m, p.y, p.k]);
+                }
             } else {
                 reader.read_rows_rgb16(imgref::ImgRefMut::new(&mut row, width as usize, 1))?;
                 for (dst, p) in dest.chunks_exact_mut(channels).zip(&row) {

@@ -234,7 +234,19 @@ fn twelve_bit_dct_matches_turbo() {
     for (w, h) in [(1, 1), (3, 7), (17, 18), (35, 33)] {
         for channels in [1, 3] {
             for progressive in [false, true] {
-                for sampling in ["1x1", "2x1", "2x2", "1x2"] {
+                for sampling in [
+                    "1x1",
+                    "2x1",
+                    "2x2",
+                    "1x2",
+                    "4x1",
+                    "1x4",
+                    "3x1",
+                    "1x3",
+                    "2x3",
+                    "3x2",
+                    "1x1,2x1,1x1",
+                ] {
                     for (kind, quality, nearest) in [
                         (0, 5, false),
                         (0, 30, true),
@@ -772,6 +784,236 @@ fn twelve_bit_native_planes_retain_sample_range_and_stride() {
             for row in plane.as_chunks::<13>().0 {
                 assert_eq!(&row[..8], &[2048; 8]);
                 assert_eq!(&row[8..], &[-1; 5]);
+            }
+        }
+    }
+}
+
+fn compare_components<const N: usize>(jpeg: &[u8], precision: u8) {
+    let expected: Vec<u16> = tool(
+        "native-components-oracle",
+        &["decode".into(), "raw".into()],
+        jpeg,
+    )
+    .as_chunks::<2>()
+    .0
+    .iter()
+    .map(|p| u16::from_be_bytes([p[0], p[1]]))
+    .collect();
+    for data in [Cow::Borrowed(jpeg), Cow::Owned(jpeg.to_vec())] {
+        let mut reader = Decoder::new()
+            .output_target(OutputTarget::Native16)
+            .scanline_reader_cow(data)
+            .unwrap();
+        assert_eq!(reader.sample_precision(), precision);
+        assert_eq!(reader.component_ids().len(), N);
+        let (w, h) = (reader.width() as usize, reader.height() as usize);
+        let stride = w + 3;
+        let mut output = vec![[65535; N]; stride * 3];
+        let mut y = 0;
+        while y < h {
+            let count = reader
+                .read_rows_components16(ImgRefMut::new_stride(&mut output, w, 3, stride))
+                .unwrap();
+            assert!(count > 0);
+            for row in 0..count {
+                let flat: Vec<u16> = output[row * stride..row * stride + w]
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .collect();
+                assert_eq!(
+                    flat,
+                    expected[(y + row) * w * N..(y + row + 1) * w * N],
+                    "components N={N} precision={precision} row={}",
+                    y + row
+                );
+                assert_eq!(
+                    output[row * stride + w..(row + 1) * stride],
+                    [[65535; N]; 3]
+                );
+            }
+            y += count;
+        }
+    }
+    if N == 4 {
+        let expected: Vec<u16> = tool(
+            "native-components-oracle",
+            &["decode".into(), "cmyk".into()],
+            jpeg,
+        )
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| u16::from_be_bytes([p[0], p[1]]))
+        .collect();
+        let cfg = Decoder::new()
+            .output_target(OutputTarget::Native16)
+            .output_format(PixelFormat::Cmyk);
+        let decoded = cfg.decode(jpeg, Unstoppable).unwrap();
+        assert_eq!(
+            decoded.pixels_u16().unwrap(),
+            expected,
+            "CMYK precision={precision}"
+        );
+        let mut reader = cfg.scanline_reader(jpeg).unwrap();
+        let (w, h) = (reader.width() as usize, reader.height() as usize);
+        let mut pixels = vec![zenjpeg::decoder::Cmyk16::default(); (w + 2) * h];
+        assert_eq!(
+            reader
+                .read_rows_cmyk16(ImgRefMut::new_stride(&mut pixels, w, h, w + 2))
+                .unwrap(),
+            h
+        );
+        let actual: Vec<u16> = pixels
+            .chunks_exact(w + 2)
+            .flat_map(|row| row[..w].iter().flat_map(|p| [p.c, p.m, p.y, p.k]))
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly configured libjpeg-turbo component oracle"]
+fn native_multicomponent_matches_turbo() {
+    for n in [2, 4] {
+        for bits in [2, 8, 9, 12, 13, 16] {
+            for predictor in 1..=7 {
+                for point in [0, bits - 1] {
+                    let args = [
+                        "encode".to_owned(),
+                        bits.to_string(),
+                        n.to_string(),
+                        "1".into(),
+                        predictor.to_string(),
+                        point.to_string(),
+                        "1".into(),
+                        "0".into(),
+                    ];
+                    let jpeg = tool("native-components-oracle", &args, &[]);
+                    if n == 2 {
+                        compare_components::<2>(&jpeg, bits);
+                    } else {
+                        compare_components::<4>(&jpeg, bits);
+                    }
+                }
+            }
+        }
+        for sampling in [1, 2, 3, 4] {
+            for progressive in [0, 1] {
+                let args = [
+                    "encode".to_owned(),
+                    "12".into(),
+                    n.to_string(),
+                    "0".into(),
+                    "1".into(),
+                    "0".into(),
+                    sampling.to_string(),
+                    progressive.to_string(),
+                ];
+                let jpeg = tool("native-components-oracle", &args, &[]);
+                if n == 2 {
+                    compare_components::<2>(&jpeg, 12);
+                } else {
+                    compare_components::<4>(&jpeg, 12);
+                }
+            }
+        }
+    }
+}
+
+fn constant_components(bits: u8, n: u8, lossless: bool) -> Vec<u8> {
+    let mut jpeg = vec![255, 216];
+    let mut frame = vec![bits, 0, 19, 0, 17, n];
+    for c in 0..n {
+        frame.extend_from_slice(&[10 + c, 0x11, 0]);
+    }
+    segment(&mut jpeg, if lossless { 0xc3 } else { 0xc1 }, &frame);
+    let mut table = vec![0, 1];
+    table.extend_from_slice(&[0; 15]);
+    table.push(0);
+    segment(&mut jpeg, 0xc4, &table);
+    if !lossless {
+        table[0] = 0x10;
+        segment(&mut jpeg, 0xc4, &table);
+        let mut quant = vec![0];
+        quant.extend_from_slice(&[1; 64]);
+        segment(&mut jpeg, 0xdb, &quant);
+    }
+    let mut scan = vec![n];
+    for c in (0..n).rev() {
+        scan.extend_from_slice(&[10 + c, 0]);
+    }
+    scan.extend_from_slice(if lossless { &[1, 0, 0] } else { &[0, 63, 0] });
+    segment(&mut jpeg, 0xda, &scan);
+    let bits = if lossless {
+        17 * 19 * n as usize
+    } else {
+        9 * 2 * n as usize
+    };
+    jpeg.resize(jpeg.len() + bits.div_ceil(8), 0);
+    if bits % 8 != 0 {
+        *jpeg.last_mut().unwrap() = (1 << (8 - bits % 8)) - 1;
+    }
+    jpeg.extend_from_slice(&[255, 217]);
+    jpeg
+}
+
+#[test]
+fn component_rows_preserve_order_precision_and_padding() {
+    for (bits, lossless) in [(12, false), (2, true), (8, true), (12, true), (16, true)] {
+        for n in [2, 4] {
+            let jpeg = constant_components(bits, n, lossless);
+            for data in [Cow::Borrowed(jpeg.as_slice()), Cow::Owned(jpeg.clone())] {
+                let mut reader = Decoder::new().scanline_reader_cow(data).unwrap();
+                assert_eq!(
+                    reader.component_ids(),
+                    if n == 2 {
+                        &[10, 11][..]
+                    } else {
+                        &[10, 11, 12, 13][..]
+                    }
+                );
+                let center = 1u16 << (bits - 1);
+                if n == 2 {
+                    let mut invalid = vec![[0; 3]; 17];
+                    assert!(
+                        reader
+                            .read_rows_components16(ImgRefMut::new(&mut invalid, 17, 1))
+                            .is_err()
+                    );
+                    let mut output = vec![[65535; 2]; 20 * 19];
+                    assert_eq!(
+                        reader
+                            .read_rows_components16(ImgRefMut::new_stride(&mut output, 17, 19, 20))
+                            .unwrap(),
+                        19
+                    );
+                    for row in output.as_chunks::<20>().0.iter() {
+                        assert_eq!(row[..17], [[center; 2]; 17]);
+                        assert_eq!(row[17..], [[65535; 2]; 3]);
+                    }
+                } else {
+                    let mut output = vec![zenjpeg::decoder::Cmyk16::default(); 20 * 19];
+                    assert_eq!(
+                        reader
+                            .read_rows_cmyk16(ImgRefMut::new_stride(&mut output, 17, 19, 20))
+                            .unwrap(),
+                        19
+                    );
+                    for row in output.as_chunks::<20>().0.iter() {
+                        for p in &row[..17] {
+                            assert_eq!([p.c, p.m, p.y, p.k], [center; 4]);
+                        }
+                        assert_eq!(row[17..], [zenjpeg::decoder::Cmyk16::default(); 3]);
+                    }
+                    let decoded = Decoder::new()
+                        .output_target(OutputTarget::Native16)
+                        .output_format(PixelFormat::Cmyk)
+                        .decode(&jpeg, Unstoppable)
+                        .unwrap();
+                    assert_eq!(decoded.pixels_u16().unwrap(), vec![center; 17 * 19 * 4]);
+                }
             }
         }
     }

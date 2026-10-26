@@ -613,6 +613,7 @@ lossless-entropy-check:
 
 # Native sample decode: mandatory oracle binaries are supplied by the caller.
 native-precision-oracle:
+    just native-components-oracle-build
     test -n "$ZENJPEG_TURBO_BIN"
     cargo test --locked -p zenjpeg --test native_precision -- --ignored --test-threads=1
 
@@ -639,3 +640,11 @@ native-portability-check:
     cargo check --locked -p zenjpeg --lib --target wasm32-unknown-unknown
     cargo check --locked -p zenjpeg --lib --target i686-unknown-linux-gnu
     cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings
+
+# Compile the component-independent native row reader.
+native-components-check:
+    cargo check --locked -p zenjpeg --lib
+
+native-components-oracle-build:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"${ZENJPEG_TURBO_SOURCE:-$ZENJPEG_TURBO_BIN/..}/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"

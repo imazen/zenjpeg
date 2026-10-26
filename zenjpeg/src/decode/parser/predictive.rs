@@ -58,11 +58,6 @@ impl JpegParser<'_> {
     ) -> Result<PredictiveReader> {
         let width = self.width as usize;
         let channels = self.num_components as usize;
-        if !matches!(channels, 1 | 3) {
-            return Err(Error::unsupported_feature(
-                "lossless output requires gray or RGB components",
-            ));
-        }
         self.charge_memory(width * channels * 4, "lossless row buffers")?;
         if self.height == 0 {
             return Err(Error::unsupported_feature("lossless JPEG with DNL height"));

@@ -91,7 +91,7 @@ use parser::JpegParser;
 pub use pool::DecodePool;
 pub use request::DecodeRequest;
 pub use row_slice::{RowSlice, RowSliceF32};
-pub use scanline::{ScanlineInfo, ScanlineReader};
+pub use scanline::{Cmyk16, ScanlineInfo, ScanlineReader};
 
 // UltraHDR streaming reader
 #[cfg(feature = "ultrahdr")]
@@ -989,6 +989,19 @@ impl DecodeConfig {
                 parser.num_components,
                 parser.precision,
                 predictive,
+                parser.color_model,
+                core::array::from_fn(|i| parser.components[i].id),
+            );
+            self.apply_crop(&mut reader, parser.width, parser.height, 1)?;
+            return Ok(reader);
+        }
+
+        if parser.precision == 12 && !parser.plan().strip() && parser.num_components != 1 {
+            let source = parser.component_rows(self.chroma_upsampling)?;
+            let mut reader = ScanlineReader::from_component_rows(
+                alloc::borrow::Cow::Borrowed(data),
+                &parser,
+                source,
             );
             self.apply_crop(&mut reader, parser.width, parser.height, 1)?;
             return Ok(reader);
@@ -1129,9 +1142,7 @@ impl DecodeConfig {
                 "native precision decoding does not support deblocking, dequantization bias or ICC conversion",
             ));
         }
-        if !matches!(parser.num_components, 1 | 3)
-            || parser.color_model == color_model::ColorModel::Xyb
-        {
+        if parser.color_model == color_model::ColorModel::Xyb {
             return Err(Error::unsupported_feature(
                 "native precision output requires gray, RGB or YCbCr components",
             ));
@@ -1301,8 +1312,27 @@ impl DecodeConfig {
                     parser.precision,
                 );
                 let predictive = parser.predictive_reader(&Unstoppable)?;
+                let model = parser.color_model;
+                let ids = core::array::from_fn(|i| parser.components[i].id);
+                let mut reader = ScanlineReader::from_predictive(
+                    Cow::Owned(vec),
+                    w,
+                    h,
+                    n,
+                    p,
+                    predictive,
+                    model,
+                    ids,
+                );
+                self.apply_crop(&mut reader, w, h, 1)?;
+                return Ok(reader);
+            }
+            if parser.precision == 12 && !parser.plan().strip() && parser.num_components != 1 {
+                let source = parser.component_rows(self.chroma_upsampling)?;
+                let (w, h) = (parser.width, parser.height);
                 let mut reader =
-                    ScanlineReader::from_predictive(Cow::Owned(vec), w, h, n, p, predictive);
+                    ScanlineReader::from_component_rows(Cow::Borrowed(&[]), &parser, source);
+                reader.replace_data(vec);
                 self.apply_crop(&mut reader, w, h, 1)?;
                 return Ok(reader);
             }

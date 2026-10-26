@@ -79,6 +79,8 @@ pub struct ScanlineReader<'a> {
     // When Some, we serve from this buffer instead of decoding on-the-fly
     buffered_rgb: Option<Vec<u8>>,
     precision: u8,
+    component_rows: Option<super::parser::component_rows::ComponentRows>,
+    component_ids: [u8; 4],
     predictive: Option<super::parser::predictive::PredictiveReader>,
     buffered_native: Option<Vec<u16>>,
 
@@ -186,6 +188,20 @@ pub struct ScanlineReader<'a> {
     deblock_prev_rows: Vec<i16>,
     /// Whether `deblock_prev_rows` contains valid data from a previous MCU row.
     deblock_has_prev: bool,
+}
+
+/// CMYK channel values in the JPEG sample range, without ICC conversion.
+/// Values retain JPEG's channel convention, including Adobe inversion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cmyk16 {
+    /// Cyan channel.
+    pub c: u16,
+    /// Magenta channel.
+    pub m: u16,
+    /// Yellow channel.
+    pub y: u16,
+    /// Black channel.
+    pub k: u16,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -305,6 +321,7 @@ impl<'a> ScanlineReader<'a> {
         };
 
         Ok(Self {
+            component_ids: frame_component_ids(&data_cow),
             data: data_cow,
             width,
             height,
@@ -312,6 +329,7 @@ impl<'a> ScanlineReader<'a> {
             buffered_rgb: None,
             precision,
             predictive: None,
+            component_rows: None,
             buffered_native: None,
             strip,
             current_row: 0,
@@ -466,6 +484,7 @@ impl<'a> ScanlineReader<'a> {
         };
 
         Ok(Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
@@ -473,6 +492,7 @@ impl<'a> ScanlineReader<'a> {
             buffered_rgb: None,
             precision,
             predictive: None,
+            component_rows: None,
             buffered_native: None,
             strip,
             current_row: 0,
@@ -567,6 +587,7 @@ impl<'a> ScanlineReader<'a> {
         color_model: ColorModel,
     ) -> Self {
         Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
@@ -574,6 +595,7 @@ impl<'a> ScanlineReader<'a> {
             buffered_rgb: Some(pixels),
             precision: 8,
             predictive: None,
+            component_rows: None,
             buffered_native: None,
             strip: StripProcessor::new_dummy(subsampling),
             current_row: 0,
@@ -639,12 +661,9 @@ impl<'a> ScanlineReader<'a> {
         channels: u8,
         precision: u8,
         predictive: super::parser::predictive::PredictiveReader,
+        model: ColorModel,
+        ids: [u8; 4],
     ) -> Self {
-        let model = if channels == 1 {
-            ColorModel::Gray
-        } else {
-            ColorModel::Rgb
-        };
         let mut reader = Self::new_buffered_cow(
             data,
             width,
@@ -657,6 +676,7 @@ impl<'a> ScanlineReader<'a> {
         reader.buffered_rgb = None;
         reader.precision = precision;
         reader.predictive = Some(predictive);
+        reader.component_ids = ids;
         reader
     }
 
@@ -673,7 +693,9 @@ impl<'a> ScanlineReader<'a> {
             channels,
             Subsampling::S444,
             Vec::new(),
-            if channels == 1 {
+            if result.format() == crate::types::PixelFormat::Cmyk {
+                ColorModel::Cmyk
+            } else if channels == 1 {
                 ColorModel::Gray
             } else {
                 ColorModel::Rgb
@@ -691,6 +713,108 @@ impl<'a> ScanlineReader<'a> {
     /// Sample precision declared by the JPEG frame, before output conversion.
     pub fn sample_precision(&self) -> u8 {
         self.precision
+    }
+
+    pub(super) fn replace_data(&mut self, data: Vec<u8>) {
+        self.data = Cow::Owned(data);
+    }
+
+    pub(super) fn from_component_rows(
+        data: Cow<'a, [u8]>,
+        parser: &super::parser::JpegParser<'_>,
+        source: super::parser::component_rows::ComponentRows,
+    ) -> Self {
+        let mut reader = Self::new_buffered_cow(
+            data,
+            parser.width,
+            parser.height,
+            parser.num_components,
+            Subsampling::S444,
+            Vec::new(),
+            parser.color_model,
+        );
+        reader.buffered_rgb = None;
+        reader.precision = parser.precision;
+        reader.component_ids = core::array::from_fn(|i| parser.components[i].id);
+        reader.component_rows = Some(source);
+        reader
+    }
+
+    /// Component identifiers in frame order. Raw component pixels use this order.
+    pub fn component_ids(&self) -> &[u8] {
+        &self.component_ids[..self.num_components as usize]
+    }
+
+    /// Read full-resolution components in frame order, without color conversion.
+    /// `N` must equal the frame component count. Stride is in N-channel pixels.
+    /// Samples retain source precision and transfer function; DCT components are
+    /// upsampled using the configured filter. No ICC conversion is performed.
+    pub fn read_rows_components16<const N: usize>(
+        &mut self,
+        mut output: ImgRefMut<'_, [u16; N]>,
+    ) -> Result<usize> {
+        let width = self.width() as usize;
+        if N != self.num_components as usize {
+            return Err(Error::unsupported_feature(
+                "component pixel channel count does not match frame",
+            ));
+        }
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        if self.buffered_rgb.is_some() || self.buffered_native.is_some() || self.is_wave_only() {
+            return Err(Error::unsupported_feature(
+                "reader holds converted pixels, not source components",
+            ));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let buf = output.buf_mut();
+        self.read_component_rows_with(rows, true, |i, row| {
+            for x in 0..width {
+                buf[i * stride + x] = core::array::from_fn(|c| match row {
+                    RowSrc::Native(p, n, _) => p[x * n + c],
+                    RowSrc::Planes(y, cb, cr) => [y, cb, cr][c][x] as u16,
+                    _ => unreachable!(),
+                });
+            }
+        })
+    }
+
+    /// Read CMYK samples, preserving the source range and JPEG inversion convention.
+    /// YCCK is converted to CMYK with the libjpeg matrix; no ICC conversion is done.
+    /// Stride is measured in CMYK pixels.
+    pub fn read_rows_cmyk16(&mut self, mut output: ImgRefMut<'_, Cmyk16>) -> Result<usize> {
+        if !matches!(self.color_model, ColorModel::Cmyk | ColorModel::Ycck)
+            || (self.predictive.is_none()
+                && self.component_rows.is_none()
+                && self.buffered_native.is_none())
+        {
+            return Err(Error::unsupported_feature(
+                "CMYK16 requires native CMYK/YCCK components",
+            ));
+        }
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let precision = self.precision;
+        let max = ((1u32 << precision) - 1) as u16;
+        let buf = output.buf_mut();
+        self.read_component_rows_with(rows, true, |i, row| {
+            let RowSrc::Native(p, 4, model) = row else {
+                unreachable!()
+            };
+            for x in 0..width {
+                let p = &p[x * 4..x * 4 + 4];
+                let [c, m, y] = if model == ColorModel::Ycck {
+                    native_ycbcr([p[0], p[1], p[2]], precision).map(|v| max - v)
+                } else {
+                    [p[0], p[1], p[2]]
+                };
+                buf[i * stride + x] = Cmyk16 { c, m, y, k: p[3] };
+            }
+        })
     }
 
     /// Read RGB in the frame's native integer range (0–4095 for 12-bit JPEG).
@@ -769,6 +893,7 @@ impl<'a> ScanlineReader<'a> {
         let wave_buf = vec![0u8; wave_buf_size];
 
         Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
@@ -776,6 +901,7 @@ impl<'a> ScanlineReader<'a> {
             buffered_rgb: None,
             precision: 8,
             predictive: None,
+            component_rows: None,
             buffered_native: None,
             strip: StripProcessor::new_dummy(wave_state.subsampling()),
             current_row: 0,
@@ -1845,8 +1971,22 @@ impl<'a> ScanlineReader<'a> {
     fn read_rows_with(
         &mut self,
         max_rows: usize,
+        emit: impl FnMut(usize, RowSrc<'_>),
+    ) -> Result<usize> {
+        self.read_component_rows_with(max_rows, false, emit)
+    }
+
+    fn read_component_rows_with(
+        &mut self,
+        max_rows: usize,
+        raw: bool,
         mut emit: impl FnMut(usize, RowSrc<'_>),
     ) -> Result<usize> {
+        if !raw && self.color_model == ColorModel::Unknown {
+            return Err(Error::unsupported_feature(
+                "unknown component color space: use read_rows_components16",
+            ));
+        }
         let out_width = self.width() as usize;
         let out_height = self.height() as usize;
         let crop_x = self.crop.map_or(0, |c| c.x as usize);
@@ -1860,7 +2000,31 @@ impl<'a> ScanlineReader<'a> {
                 let start = ((crop_y + self.current_row) * self.width as usize + crop_x) * channels;
                 emit(
                     n,
-                    RowSrc::Native(&samples[start..start + out_width * channels], channels),
+                    RowSrc::Native(
+                        &samples[start..start + out_width * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+            }
+            return Ok(n);
+        }
+
+        if let Some(source) = &mut self.component_rows {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                while source.current_row <= crop_y + self.current_row {
+                    source.next_row(&self.data)?;
+                }
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &source.row[crop_x * channels..(crop_x + out_width) * channels],
+                        channels,
+                        self.color_model,
+                    ),
                 );
                 n += 1;
                 self.current_row += 1;
@@ -1880,6 +2044,7 @@ impl<'a> ScanlineReader<'a> {
                     RowSrc::Native(
                         &predictive.row[crop_x * channels..(crop_x + out_width) * channels],
                         channels,
+                        self.color_model,
                     ),
                 );
                 n += 1;
@@ -2244,6 +2409,28 @@ impl<'a> ScanlineReader<'a> {
                 (y[px], cb[px], cr[px]) = (vy, vcb, vcr);
             };
             match row {
+                RowSrc::Native(p, n, ColorModel::Gray | ColorModel::YCbCr) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    let center = (1u32 << (precision - 1)) as f32;
+                    for x in 0..row.len() {
+                        put(
+                            x,
+                            (
+                                p[x * n] as f32 / max,
+                                if n == 1 {
+                                    0.0
+                                } else {
+                                    (p[x * n + 1] as f32 - center) / max
+                                },
+                                if n == 1 {
+                                    0.0
+                                } else {
+                                    (p[x * n + 2] as f32 - center) / max
+                                },
+                            ),
+                        );
+                    }
+                }
                 RowSrc::Native(..) => {
                     let max = ((1u32 << precision) - 1) as f32;
                     for x in 0..row.len() {
@@ -2675,6 +2862,7 @@ impl<'a> ScanlineReader<'a> {
         if self.buffered_rgb.is_some()
             || self.predictive.is_some()
             || self.buffered_native.is_some()
+            || self.component_rows.is_some()
         {
             return Err(Error::unsupported_feature(
                 "read_rows_ycbcr_native_i16: this reader holds decoded pixels, not planes \
@@ -2805,7 +2993,7 @@ fn lin_i16(v: i16) -> f32 {
 /// One output row's source data, cropped to the output columns.
 #[derive(Clone, Copy)]
 enum RowSrc<'r> {
-    Native(&'r [u16], usize),
+    Native(&'r [u16], usize, ColorModel),
     /// Decoded RGB, three bytes per pixel (buffered and wave readers).
     Rgb8(&'r [u8]),
     /// Decoded gray, one byte per pixel (buffered reader of a grayscale frame).
@@ -2818,7 +3006,7 @@ enum RowSrc<'r> {
 impl RowSrc<'_> {
     fn len(self) -> usize {
         match self {
-            Self::Native(p, c) => p.len() / c,
+            Self::Native(p, c, _) => p.len() / c,
             Self::Planes(y, _, _) => y.len(),
             Self::Rgb8(p) => p.len() / 3,
             Self::Gray8(p) => p.len(),
@@ -2826,8 +3014,23 @@ impl RowSrc<'_> {
     }
     fn rgb16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> [u16; 3] {
         match self {
-            Self::Native(p, 1) => [p[x]; 3],
-            Self::Native(p, c) => [p[x * c], p[x * c + 1], p[x * c + 2]],
+            Self::Native(p, 1, _) => [p[x]; 3],
+            Self::Native(p, c, model) => {
+                let p = &p[x * c..(x + 1) * c];
+                let max = (1u32 << precision) - 1;
+                match model {
+                    ColorModel::YCbCr => native_ycbcr([p[0], p[1], p[2]], precision),
+                    ColorModel::Cmyk | ColorModel::Ycck => {
+                        let cmy = if model == ColorModel::Ycck {
+                            native_ycbcr([p[0], p[1], p[2]], precision).map(|v| max as u16 - v)
+                        } else {
+                            [p[0], p[1], p[2]]
+                        };
+                        cmy.map(|v| ((v as u32 * p[3] as u32 + max / 2) / max) as u16)
+                    }
+                    _ => [p[0], p[1], p[2]],
+                }
+            }
             Self::Gray8(p) => [p[x] as u16; 3],
             Self::Rgb8(p) => [p[x * 3] as u16, p[x * 3 + 1] as u16, p[x * 3 + 2] as u16],
             Self::Planes(y, cb, cr) => {
@@ -2848,18 +3051,10 @@ impl RowSrc<'_> {
                     PlaneMatrix::Identity => {
                         [clamp(y[x] as i64), clamp(cb[x] as i64), clamp(cr[x] as i64)]
                     }
-                    PlaneMatrix::YCbCr { .. } => {
-                        let (yy, b, r) = (
-                            y[x] as i64,
-                            cb[x] as i64 - (1 << (precision - 1)),
-                            cr[x] as i64 - (1 << (precision - 1)),
-                        );
-                        [
-                            clamp(yy + ((91881 * r + 32768) >> 16)),
-                            clamp(yy + ((-22554 * b - 46802 * r + 32768) >> 16)),
-                            clamp(yy + ((116130 * b + 32768) >> 16)),
-                        ]
-                    }
+                    PlaneMatrix::YCbCr { .. } => native_ycbcr(
+                        [clamp(y[x] as i64), clamp(cb[x] as i64), clamp(cr[x] as i64)],
+                        precision,
+                    ),
                 }
             }
         }
@@ -2886,6 +3081,9 @@ impl RowSrc<'_> {
     }
 
     fn gray16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> u16 {
+        if let Self::Native(p, n, ColorModel::Gray | ColorModel::YCbCr) = self {
+            return p[x * n];
+        }
         if let Self::Planes(y, _, _) = self
             && matrix != PlaneMatrix::Identity
         {
@@ -4758,4 +4956,29 @@ mod tests {
             );
         });
     }
+}
+
+fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
+    let max = (1i64 << precision) - 1;
+    let [y, b, r] = p.map(i64::from);
+    let (b, r) = (b - (1 << (precision - 1)), r - (1 << (precision - 1)));
+    [
+        y + ((91881 * r + 32768) >> 16),
+        y + ((-22554 * b - 46802 * r + 32768) >> 16),
+        y + ((116130 * b + 32768) >> 16),
+    ]
+    .map(|v| v.clamp(0, max) as u16)
+}
+
+fn frame_component_ids(data: &[u8]) -> [u8; 4] {
+    use crate::container::marker::{self, MarkerKind};
+    let mut ids = [0; 4];
+    if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
+        && let Some(components) = frame.payload.get(6..)
+    {
+        for (id, c) in ids.iter_mut().zip(components.as_chunks::<3>().0.iter()) {
+            *id = c[0];
+        }
+    }
+    ids
 }

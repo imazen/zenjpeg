@@ -87,6 +87,7 @@ jobs:
           cmake -S "$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0" -B "$HOME/tmp/zenjpeg-oracle/build" -DENABLE_SHARED=OFF -DWITH_SIMD=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build "$HOME/tmp/zenjpeg-oracle/build" --target cjpeg-static djpeg-static --parallel 2
           echo "ZENJPEG_TURBO_BIN=$HOME/tmp/zenjpeg-oracle/build" >> "$GITHUB_ENV"
+          cc -Wall -Wextra -Werror -I"$HOME/tmp/zenjpeg-oracle/build" -I"$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0/src" zenjpeg/tests/support/native_components.c "$HOME/tmp/zenjpeg-oracle/build/libjpeg.a" -lm -o "$HOME/tmp/zenjpeg-oracle/build/native-components-oracle"
 
       - name: Native-precision sample equality with libjpeg-turbo
         if: matrix.os == 'ubuntu-latest'

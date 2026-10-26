@@ -222,6 +222,13 @@ impl<'a> JpegParser<'a> {
             .as_deref()
             .is_some_and(crate::color::icc::is_xyb_profile);
         self.color_model = ColorModel::decide(components, self.color_markers, icc_is_xyb);
+        if self.mode == JpegMode::Lossless
+            && self.num_components == 3
+            && !self.color_markers.saw_jfif
+            && self.color_markers.adobe_transform.is_none()
+        {
+            self.color_model = ColorModel::Rgb;
+        }
         self.shape = FrameShape::classify(components);
         self.interleaved = self.num_components == 1
             || peek_first_scan_components(self.data, self.position) == Some(self.num_components);
