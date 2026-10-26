@@ -2556,7 +2556,7 @@ mod tests {
                 coeffs[0] = (sample - 2048) * 8 + remainder;
                 let mut output = [i16::MIN; 13 * 8];
                 super::idct_libjpeg_precision::<12>(&coeffs, &mut output, 13);
-                for row in output.chunks_exact(13) {
+                for row in output.as_chunks::<13>().0 {
                     assert_eq!(&row[..8], &[sample as i16; 8]);
                     assert_eq!(&row[8..], &[i16::MIN; 5]);
                 }

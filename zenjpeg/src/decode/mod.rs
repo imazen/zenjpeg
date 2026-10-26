@@ -2040,11 +2040,16 @@ impl DecodeConfig {
             self.alloc_pref,
         )?;
 
-        parser.read_header()?;
-        if parser.precision != 8
-            || parser.mode == JpegMode::Lossless
-            || self.output_target == OutputTarget::Native16
-        {
+        let native_frame = crate::container::marker::iter(data)
+            .find_map(|span| match span.kind {
+                crate::container::marker::MarkerKind::Sof(n) => {
+                    Some(n == 3 || span.payload.first() != Some(&8))
+                }
+                _ => None,
+            })
+            .unwrap_or(false);
+        if native_frame || self.output_target == OutputTarget::Native16 {
+            parser.read_header()?;
             return self.decode_native(data, &mut parser, stop, forced_exif);
         }
 
