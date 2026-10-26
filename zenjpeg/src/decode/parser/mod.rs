@@ -1403,6 +1403,7 @@ impl<'a> JpegParser<'a> {
         let quant_tables: Vec<Option<[u16; 64]>> = self.quant_tables.to_vec();
 
         Ok(DecodedCoefficients {
+            sample_precision: self.precision,
             width: self.width,
             height: self.height,
             components,

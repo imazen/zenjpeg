@@ -85,7 +85,7 @@ jobs:
           echo "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e  $HOME/tmp/zenjpeg-oracle/turbo.tar.gz" | sha256sum -c -
           tar -xzf "$HOME/tmp/zenjpeg-oracle/turbo.tar.gz" -C "$HOME/tmp/zenjpeg-oracle"
           cmake -S "$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0" -B "$HOME/tmp/zenjpeg-oracle/build" -DENABLE_SHARED=OFF -DWITH_SIMD=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$HOME/tmp/zenjpeg-oracle/build" --target cjpeg-static djpeg-static --parallel 2
+          cmake --build "$HOME/tmp/zenjpeg-oracle/build" --target cjpeg-static djpeg-static jpegtran-static --parallel 2
           echo "ZENJPEG_TURBO_BIN=$HOME/tmp/zenjpeg-oracle/build" >> "$GITHUB_ENV"
           cc -Wall -Wextra -Werror -I"$HOME/tmp/zenjpeg-oracle/build" -I"$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0/src" zenjpeg/tests/support/native_components.c "$HOME/tmp/zenjpeg-oracle/build/libjpeg.a" -lm -o "$HOME/tmp/zenjpeg-oracle/build/native-components-oracle"
 

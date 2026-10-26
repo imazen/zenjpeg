@@ -647,4 +647,5 @@ native-components-check:
 
 native-components-oracle-build:
     test -n "$ZENJPEG_TURBO_BIN"
+    cmake --build "$ZENJPEG_TURBO_BIN" --target jpegtran-static --parallel 2
     cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"${ZENJPEG_TURBO_SOURCE:-$ZENJPEG_TURBO_BIN/..}/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"

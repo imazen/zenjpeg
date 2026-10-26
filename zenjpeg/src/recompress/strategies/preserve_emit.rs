@@ -262,6 +262,9 @@ pub(in crate::recompress) fn emit_preserved_placed(
     config: &EmitConfig,
     positions: &[crate::lossless::placement::Position],
 ) -> Result<Vec<u8>, Error> {
+    if coeffs.sample_precision != 8 {
+        return Err(Error::Internal("recompression requires 8-bit coefficients"));
+    }
     let placed = crate::lossless::placement::Placed::new(&config.preserved_segments, positions);
     for segment in &config.preserved_segments {
         crate::recompress::metadata::check_segment(segment.marker, &segment.data)?;
@@ -423,6 +426,7 @@ fn emit_progressive_trial(
         })
         .collect();
     let tc = TransformedCoefficients {
+        sample_precision: coeffs.sample_precision,
         width: coeffs.width,
         height: coeffs.height,
         components,

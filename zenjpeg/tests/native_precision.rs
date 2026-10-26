@@ -1018,3 +1018,227 @@ fn component_rows_preserve_order_precision_and_padding() {
         }
     }
 }
+
+fn verify_transcoding(jpeg: &[u8]) {
+    use zenjpeg::lossless::{OutputMode, RestructureConfig, restructure};
+    let original = Decoder::new()
+        .decode_coefficients(jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(original.sample_precision, 12);
+    let raw = tool(
+        "native-components-oracle",
+        &["decode".into(), "raw".into()],
+        jpeg,
+    );
+    for output_mode in [OutputMode::Sequential, OutputMode::Progressive] {
+        let bytes = restructure(
+            jpeg,
+            &RestructureConfig {
+                output_mode,
+                ..Default::default()
+            },
+            Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(Decoder::new().read_info(&bytes).unwrap().precision, 12);
+        let roundtrip = Decoder::new()
+            .decode_coefficients(&bytes, Unstoppable)
+            .unwrap();
+        assert_eq!(roundtrip.sample_precision, 12);
+        assert_eq!(original.quant_tables, roundtrip.quant_tables);
+        let max_h = original
+            .components
+            .iter()
+            .map(|c| c.h_samp as usize)
+            .max()
+            .unwrap();
+        let max_v = original
+            .components
+            .iter()
+            .map(|c| c.v_samp as usize)
+            .max()
+            .unwrap();
+        for (a, b) in original.components.iter().zip(&roundtrip.components) {
+            assert_eq!((a.id, a.h_samp, a.v_samp), (b.id, b.h_samp, b.v_samp));
+            let w = (original.width as usize * a.h_samp as usize).div_ceil(max_h * 8);
+            let h = (original.height as usize * a.v_samp as usize).div_ceil(max_v * 8);
+            for y in 0..h {
+                for x in 0..w {
+                    assert_eq!(
+                        a.block(y * a.blocks_wide + x),
+                        b.block(y * b.blocks_wide + x)
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            tool(
+                "native-components-oracle",
+                &["decode".into(), "raw".into()],
+                &bytes
+            ),
+            raw,
+            "{output_mode:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly configured libjpeg-turbo component oracle"]
+fn twelve_bit_coefficient_transcoding_matches_turbo() {
+    for n in [1, 3] {
+        for sampling in ["1x1", "2x2", "4x1"] {
+            for quality in [5, 60, 100] {
+                let args = vec![
+                    "-precision".into(),
+                    "12".into(),
+                    "-quality".into(),
+                    quality.to_string(),
+                    "-sample".into(),
+                    sampling.into(),
+                    "-progressive".into(),
+                ];
+                let jpeg = tool("cjpeg-static", &args, &pnm(35, 33, n, 12, 0));
+                verify_transcoding(&jpeg);
+            }
+        }
+    }
+    for n in [2, 4] {
+        for sampling in [1, 2, 4] {
+            let args = [
+                "encode".to_owned(),
+                "12".into(),
+                n.to_string(),
+                "0".into(),
+                "1".into(),
+                "0".into(),
+                sampling.to_string(),
+                "0".into(),
+            ];
+            verify_transcoding(&tool("native-components-oracle", &args, &[]));
+        }
+    }
+}
+
+#[test]
+fn native_coefficient_precision_survives_restructure() {
+    use zenjpeg::lossless::{OutputMode, RestructureConfig, restructure};
+    for n in [1, 2, 3, 4] {
+        let jpeg = constant_components(12, n, false);
+        for output_mode in [OutputMode::Sequential, OutputMode::Progressive] {
+            let bytes = restructure(
+                &jpeg,
+                &RestructureConfig {
+                    output_mode,
+                    ..Default::default()
+                },
+                Unstoppable,
+            )
+            .unwrap();
+            let coeffs = Decoder::new()
+                .decode_coefficients(&bytes, Unstoppable)
+                .unwrap();
+            assert_eq!(coeffs.sample_precision, 12);
+            assert_eq!(coeffs.components.len(), n as usize);
+            assert!(
+                coeffs
+                    .components
+                    .iter()
+                    .all(|c| c.coeffs.iter().all(|&v| v == 0))
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly configured libjpeg-turbo jpegtran oracle"]
+fn twelve_bit_coefficient_transforms_match_jpegtran() {
+    use zenjpeg::lossless::{LosslessTransform as T, TransformConfig, transform};
+    let transforms = [
+        (T::FlipHorizontal, vec!["-flip", "horizontal"]),
+        (T::FlipVertical, vec!["-flip", "vertical"]),
+        (T::Rotate90, vec!["-rotate", "90"]),
+        (T::Rotate180, vec!["-rotate", "180"]),
+        (T::Rotate270, vec!["-rotate", "270"]),
+        (T::Transpose, vec!["-transpose"]),
+        (T::Transverse, vec!["-transverse"]),
+    ];
+    for n in [1, 3] {
+        for sampling in ["1x1", "2x2", "4x1"] {
+            for kind in [0, 1] {
+                let jpeg = tool(
+                    "cjpeg-static",
+                    &[
+                        "-precision".into(),
+                        "12".into(),
+                        "-quality".into(),
+                        "60".into(),
+                        "-sample".into(),
+                        sampling.into(),
+                    ],
+                    &pnm(32, 32, n, 12, kind),
+                );
+                for (op, args) in &transforms {
+                    let mut args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+                    args.extend(["-copy".into(), "all".into()]);
+                    let reference = tool("jpegtran-static", &args, &jpeg);
+                    let ours = transform(
+                        &jpeg,
+                        &TransformConfig {
+                            transform: *op,
+                            ..Default::default()
+                        },
+                        Unstoppable,
+                    )
+                    .unwrap();
+                    let decode = ["decode".into(), "raw".into()];
+                    assert_eq!(
+                        tool("native-components-oracle", &decode, &ours),
+                        tool("native-components-oracle", &decode, &reference),
+                        "{op:?} channels={n} sampling={sampling} kind={kind}"
+                    );
+                }
+            }
+        }
+    }
+    let jpeg = tool(
+        "native-components-oracle",
+        &[
+            "encode".into(),
+            "12".into(),
+            "4".into(),
+            "0".into(),
+            "1".into(),
+            "0".into(),
+            "2".into(),
+            "0".into(),
+        ],
+        &[],
+    );
+    let reference = tool(
+        "jpegtran-static",
+        &["-transpose".into(), "-copy".into(), "all".into()],
+        &jpeg,
+    );
+    let ours = transform(
+        &jpeg,
+        &TransformConfig {
+            transform: T::Transpose,
+            ..Default::default()
+        },
+        Unstoppable,
+    )
+    .unwrap();
+    assert_eq!(
+        tool(
+            "native-components-oracle",
+            &["decode".into(), "cmyk".into()],
+            &ours
+        ),
+        tool(
+            "native-components-oracle",
+            &["decode".into(), "cmyk".into()],
+            &reference
+        )
+    );
+}

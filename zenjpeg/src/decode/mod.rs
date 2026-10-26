@@ -2814,6 +2814,7 @@ impl DecodeConfig {
         )?;
         // Disable streaming - we need coefficients stored
         parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.native_precision = true;
         parser.decode(&stop)?;
 
         // Extract coefficients from parser
@@ -2928,6 +2929,7 @@ impl DecodeConfig {
             self.alloc_pref,
         )?;
         parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.native_precision = true;
         parser.decode(&stop)?;
 
         let extras = finalize_extras(parser.take_extras(), data, false);
