@@ -790,5 +790,23 @@
     ],
     "jpeg_sha256": "5558e8962cdb922510929e040a019f7c2b52907b75b7f0cfc72993aa5e50662a",
     "samples_sha256": "166c4d323a9898a276d9bf4ffd6d16fce575dc11ab9dfc25e64fc0f0a6d97bf6"
+  },
+  {
+    "name": "44-p12-c4-sof30-mode0-s2",
+    "reference": "stock-3.2.0",
+    "args": [
+      "encode",
+      "12",
+      "4",
+      "0",
+      "1",
+      "0",
+      "2",
+      "0",
+      "9",
+      "9"
+    ],
+    "jpeg_sha256": "c5b61a8712a1d4a11da8bca8a3c2dc8cbf6901d63a6aa3d7815992bd93f8bf17",
+    "samples_sha256": "2a57c9382c04de25d8ddf54064907f593dee16aa302a0480057e9365106fbd7e"
   }
 ]

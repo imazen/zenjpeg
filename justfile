@@ -666,9 +666,9 @@ multicomponent-regressions:
 
 # Reports include native-precision code from the parent PR as well as this stack.
 multicomponent-coverage:
-    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory --lib --test native_precision --test multicomponent
-    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory --test native_precision -- --ignored
-    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo llvm-cov --no-report --locked -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
+    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent
+    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory,parallel --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo llvm-cov --no-report --locked -p zenjpeg --features inventory,parallel --test multicomponent -- --ignored ten_component_oracle_matrix
     python3 scripts/component-allocation-check.py --coverage
     cargo llvm-cov report --lcov --output-path "$ZENJPEG_COVERAGE_REPORT"
 
@@ -696,14 +696,17 @@ native-fuzz-seeds:
 
 # LLVM branch instrumentation requires nightly; use a dedicated target directory.
 native-branch-coverage:
-    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --lib --test native_precision --test multicomponent --test native_hardening
-    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
-    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
+    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening
+    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test multicomponent -- --ignored ten_component_oracle_matrix
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
 
 native-branch-gate base report:
     python3 scripts/check-native-branches.py {{base}} {{report}} --require-complete
 
 native-branch-fuzz-corpus:
-    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_hardening -- --ignored native_fuzz_corpus_replay
+    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_hardening -- --ignored native_fuzz_corpus_replay
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+native-pulse-check:
+    cargo test -p zenjpeg --features inventory,parallel --test native_hardening

@@ -2493,6 +2493,7 @@ impl WaveParallelState {
         seg_range_start: usize,
         seg_range_end: usize,
         wave_buf: &mut [u8],
+        stop: &dyn enough::Stop,
     ) -> Result<usize> {
         let wave_count = seg_range_end - seg_range_start;
         if wave_count == 0 {
@@ -2592,6 +2593,7 @@ impl WaveParallelState {
                 };
 
                 for mcu_idx in mcu_start..mcu_end {
+                    stop.check()?;
                     let mcu_row = mcu_idx / self.mcu_cols;
                     let mcu_col = mcu_idx % self.mcu_cols;
 
@@ -2747,6 +2749,7 @@ impl WaveParallelState {
         wave_y: &mut [i16],
         wave_cb: &mut [i16],
         wave_cr: &mut [i16],
+        stop: &dyn enough::Stop,
     ) -> Result<(usize, usize)> {
         let wave_count = seg_range_end - seg_range_start;
         if wave_count == 0 {
@@ -2893,6 +2896,7 @@ impl WaveParallelState {
 
                 // Main decode loop
                 for mcu_idx in mcu_start..mcu_end {
+                    stop.check()?;
                     let mcu_row = mcu_idx / self.mcu_cols;
                     let mcu_col = mcu_idx % self.mcu_cols;
 

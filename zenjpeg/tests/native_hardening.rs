@@ -51,7 +51,7 @@ fn oracle_seeds_and_all_truncated_prefixes() {
             component_checks::check(&data[..end]);
         }
     }
-    assert_eq!(count, 44);
+    assert_eq!(count, 45);
 }
 
 fn samples<const N: usize>(reader: &mut zenjpeg::decoder::ScanlineReader<'_>) -> Vec<u8> {
@@ -384,18 +384,320 @@ fn malformed_native_headers_are_bounded() {
 #[test]
 fn native_component_options_never_silently_drop_processing() {
     use zenjpeg::decoder::{DeblockMode, TargetColorSpace};
-    for name in ["05-p8-c2-sof30-mode0-s1", "15-p8-c4-sof30-mode0-s1", "16-p12-c4-sof30-mode0-s1"] {
-        let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("fuzz/seeds/native/{name}.jpg"))).unwrap();
-        for config in [
-            Decoder::new().output_target(OutputTarget::Native16).deblock(DeblockMode::Boundary4Tap),
+    for name in [
+        "05-p8-c2-sof30-mode0-s1",
+        "15-p8-c4-sof30-mode0-s1",
+        "16-p12-c4-sof30-mode0-s1",
+    ] {
+        let data = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("fuzz/seeds/native/{name}.jpg")),
+        )
+        .unwrap();
+        for (index, config) in [
+            Decoder::new()
+                .output_target(OutputTarget::Native16)
+                .deblock(DeblockMode::Boundary4Tap),
             Decoder::new().output_target(OutputTarget::SrgbF32Precise),
-            Decoder::new().output_target(OutputTarget::Native16).correct_color(Some(TargetColorSpace::Srgb)),
-            Decoder::new().output_target(OutputTarget::SrgbF32).correct_color(Some(TargetColorSpace::Srgb)),
-        ] {
+            Decoder::new()
+                .output_target(OutputTarget::Native16)
+                .correct_color(Some(TargetColorSpace::Srgb)),
+            Decoder::new()
+                .output_target(OutputTarget::SrgbF32)
+                .correct_color(Some(TargetColorSpace::Srgb)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             // Ordinary 8-bit CMYK float output keeps its existing buffered route.
-            if name.starts_with("15-") && config.output_target_value() != OutputTarget::Native16 { continue; }
+            if name.starts_with("15-") && matches!(index, 1 | 3) {
+                continue;
+            }
             assert!(config.scanline_reader(&data).is_err(), "{name}");
         }
     }
+}
+
+fn seed(name: &str) -> Vec<u8> {
+    std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("fuzz/seeds/native/{name}.jpg")),
+    )
+    .unwrap()
+}
+fn app(data: &[u8], marker: u8, payload: &[u8]) -> Vec<u8> {
+    let mut out = vec![255, 216, 255, marker];
+    out.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(payload);
+    out.extend_from_slice(&data[2..]);
+    out
+}
+
+#[test]
+fn native_color_markers_and_planar_guards() {
+    use zenjpeg::decoder::{Cmyk16, CropRegion, PixelFormat};
+    let rgb = app(
+        &seed("11-p12-c3-sof30-mode0-s1"),
+        0xee,
+        b"Adobe\0d\0\0\0\0\0",
+    );
+    let ycbcr = app(
+        &seed("32-p12-c3-sof31-mode0-s1"),
+        0xe0,
+        b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0",
+    );
+    for data in [&rgb, &ycbcr] {
+        let cfg = Decoder::new().output_target(OutputTarget::Native16);
+        let mut raw = cfg.scanline_reader(data).unwrap();
+        let mut channels = [[0u16; 3]; 9];
+        raw.read_rows_components16(ImgRefMut::new(&mut channels, 9, 1))
+            .unwrap();
+        for method in 0..3 {
+            let mut reader = cfg.scanline_reader(data).unwrap();
+            let mut y = [0.0; 9];
+            let mut cb = [0.0; 9];
+            let mut cr = [0.0; 9];
+            let rows = match method {
+                0 => reader.read_rows_ycbcr_f32(&mut y, &mut cb, &mut cr, 9, 1),
+                1 => reader.read_rows_gray_f32(ImgRefMut::new(&mut y, 9, 1)),
+                _ => reader.read_rows_gray_linear_f32(ImgRefMut::new(&mut y, 9, 1)),
+            }
+            .unwrap();
+            assert_eq!(rows, 1);
+            assert!(y.iter().all(|v| v.is_finite()));
+            if core::ptr::eq(data, &ycbcr) && method == 0 {
+                for x in 0..9 {
+                    assert_eq!(y[x], channels[x][0] as f32 / 4095.0);
+                    assert_eq!(cb[x], (channels[x][1] as f32 - 2048.0) / 4095.0);
+                    assert_eq!(cr[x], (channels[x][2] as f32 - 2048.0) / 4095.0);
+                }
+            }
+        }
+    }
+    let gray = seed("01-p12-c1-sof30-mode0-s1");
+    let cmyk = seed("15-p8-c4-sof30-mode0-s1");
+    let mut reader = Decoder::new().scanline_reader(&gray).unwrap();
+    let mut ink = [Cmyk16::default(); 9];
+    assert!(
+        reader
+            .read_rows_cmyk16(ImgRefMut::new(&mut ink, 9, 1))
+            .is_err()
+    );
+    let mut reader = Decoder::new().scanline_reader(&cmyk).unwrap();
+    assert!(
+        reader
+            .read_rows_cmyk16(ImgRefMut::new(&mut ink, 9, 1))
+            .is_err()
+    );
+    let mut reader = Decoder::new()
+        .output_target(OutputTarget::Native16)
+        .scanline_reader(&cmyk)
+        .unwrap();
+    assert!(
+        reader
+            .read_rows_cmyk16(ImgRefMut::new_stride(&mut ink, 8, 1, 9))
+            .is_err()
+    );
+
+    // Converted pixels cannot masquerade as source components or native planes.
+    for data in [
+        gray.clone(),
+        seed("30-p2-c1-sof31-mode0-s1"),
+        seed("05-p8-c2-sof30-mode0-s1"),
+    ] {
+        for transformed in [false, true] {
+            let mut config = Decoder::new().output_target(OutputTarget::Native16);
+            if transformed {
+                config = config.transform(zenjpeg::lossless::LosslessTransform::Transpose);
+            }
+            // Unknown two-channel data has no implicit pixel-domain transform.
+            if transformed && data == seed("05-p8-c2-sof30-mode0-s1") {
+                continue;
+            }
+            let mut reader = config.scanline_reader(&data).unwrap();
+            let mut y = [0i16; 9 * 16];
+            let mut cb = y;
+            let mut cr = y;
+            if transformed || data != seed("01-p12-c1-sof30-mode0-s1") {
+                assert!(
+                    reader
+                        .read_rows_ycbcr_native_i16(&mut y, 9, &mut cb, &mut cr, 9, 1)
+                        .is_err()
+                );
+            }
+            if transformed {
+                let mut row = [[0; 1]; 9];
+                assert!(
+                    reader
+                        .read_rows_components16(ImgRefMut::new(&mut row, 9, 1))
+                        .is_err()
+                );
+            }
+        }
+    }
+    // Both non-native buffered output variants crop and report successfully.
+    for target in [OutputTarget::Srgb8, OutputTarget::SrgbF32] {
+        let pulse = TestPulse::new(u64::MAX);
+        let result = Decoder::new()
+            .output_target(target)
+            .output_format(PixelFormat::Gray)
+            .transform(zenjpeg::lossless::LosslessTransform::Transpose)
+            .crop(CropRegion::pixels(1, 1, 3, 3))
+            .decode_with_pulse(&rgb, &pulse)
+            .unwrap();
+        assert_eq!(result.dimensions(), (3, 3));
+        assert_eq!(pulse.rows.load(Ordering::Relaxed), 3);
+    }
+}
+
+#[test]
+fn planar_pulse_counts_partial_mcu_rows() {
+    let data = seed("00-p8-c1-sof30-mode0-s1");
+    let pulse = TestPulse::new(u64::MAX);
+    let mut reader = Decoder::new()
+        .scanline_reader_with_pulse(&data, &pulse)
+        .unwrap();
+    let mut y = [0i16; 9 * 16];
+    let mut cb = [];
+    let mut cr = [];
+    assert_eq!(
+        reader
+            .read_rows_ycbcr_native_i16(&mut y, 9, &mut cb, &mut cr, 0, 3)
+            .unwrap(),
+        (9, 0)
+    );
+    assert_eq!(pulse.rows.load(Ordering::Relaxed), 9);
+    let stopped = TestPulse::new(0);
+    assert!(
+        Decoder::new()
+            .scanline_reader_with_pulse(&data, &stopped)
+            .is_err()
+    );
+}
+
+#[cfg(feature = "inventory")]
+#[test]
+fn permissive_inventory_retains_huffman_table_mapping() {
+    use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+    let data = seed("11-p12-c3-sof30-mode0-s1");
+    let mut config = zenjpeg::JpegDecoderConfig::new();
+    *config.inner_mut() = Decoder::new().strictness(zenjpeg::decoder::Strictness::Permissive);
+    config.job().inventory(&data).unwrap().validate().unwrap();
+}
+
+#[test]
+fn eight_bit_buffered_pulse_and_owned_transform() {
+    use zenjpeg::encoder::{EncoderConfig, PixelLayout};
+    let pixels: Vec<u8> = (0..81).map(|i| (i * 73) as u8).collect();
+    let data = EncoderConfig::grayscale(88)
+        .progressive(true)
+        .encode_bytes(&pixels, 9, 9, PixelLayout::Gray8Srgb)
+        .unwrap();
+    let pulse = TestPulse::new(u64::MAX);
+    let result = Decoder::new().decode_with_pulse(&data, &pulse).unwrap();
+    assert_eq!(result.dimensions(), (9, 9));
+    assert_eq!(pulse.rows.load(Ordering::Relaxed), 9);
+    let pulse = TestPulse::new(u64::MAX);
+    let mut reader = Decoder::new()
+        .scanline_reader_with_pulse(&data, &pulse)
+        .unwrap();
+    let mut row = [0u8; 81 * 3];
+    assert_eq!(
+        reader
+            .read_rows_rgb8(ImgRefMut::new(&mut row, 27, 9))
+            .unwrap(),
+        9
+    );
+    assert_eq!(pulse.rows.load(Ordering::Relaxed), 9);
+    let mut y = [0i16; 144];
+    assert!(
+        reader
+            .read_rows_ycbcr_native_i16(&mut y, 9, &mut [], &mut [], 0, 1)
+            .is_err()
+    );
+    drop(reader);
+    let mut owned = Decoder::new()
+        .transform(zenjpeg::lossless::LosslessTransform::Transpose)
+        .scanline_reader_cow(std::borrow::Cow::Owned(data))
+        .unwrap();
+    assert_eq!(
+        owned
+            .read_rows_rgb8(ImgRefMut::new(&mut row, 27, 9))
+            .unwrap(),
+        9
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn wave_pulse_reports_pixel_and_planar_rows() {
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    let (w, h) = (512usize, 513usize);
+    let pixels: Vec<u8> = (0..w * h * 3)
+        .map(|i| (i.wrapping_mul(73) ^ (i >> 7)) as u8)
+        .collect();
+    let data = EncoderConfig::ycbcr(40, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .restart_mcu_rows(1)
+        .encode_bytes(&pixels, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    let config = Decoder::new()
+        .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::NearestNeighbor)
+        .num_threads(2);
+    let pulse = TestPulse::new(u64::MAX);
+    let mut reader = config.scanline_reader_with_pulse(&data, &pulse).unwrap();
+    let construction_checks = pulse.checks.load(Ordering::Relaxed);
+    for planar in [false, true] {
+        let stopped = TestPulse::new(construction_checks + 2);
+        let mut cancelled = config.scanline_reader_with_pulse(&data, &stopped).unwrap();
+        let error = if planar {
+            let mut y = vec![0i16; w * 16];
+            let mut cb = vec![0i16; w / 2 * 8];
+            let mut cr = cb.clone();
+            cancelled
+                .read_rows_ycbcr_native_i16(&mut y, w, &mut cb, &mut cr, w / 2, 1)
+                .unwrap_err()
+        } else {
+            let mut rgb = vec![0u8; w * 3];
+            cancelled
+                .read_rows_rgb8(ImgRefMut::new(&mut rgb, w * 3, 1))
+                .unwrap_err()
+        };
+        assert!(matches!(
+            error.kind(),
+            zenjpeg::decoder::ErrorKind::Cancelled(enough::StopReason::TimedOut)
+        ));
+        assert_eq!(stopped.rows.load(Ordering::Relaxed), 0);
+    }
+    let mut components = vec![[0u16; 3]; w];
+    assert!(
+        reader
+            .read_rows_components16(ImgRefMut::new(&mut components, w, 1))
+            .is_err()
+    );
+    let mut row = vec![0u8; w * 3];
+    for _ in 0..h {
+        assert_eq!(
+            reader
+                .read_rows_rgb8(ImgRefMut::new(&mut row, w * 3, 1))
+                .unwrap(),
+            1
+        );
+    }
+    assert_eq!(pulse.rows.load(Ordering::Relaxed), h as u64);
+    let pulse = TestPulse::new(u64::MAX);
+    let mut reader = config.scanline_reader_with_pulse(&data, &pulse).unwrap();
+    let mut y = vec![0i16; w * 16];
+    let mut cb = vec![0i16; w / 2 * 8];
+    let mut cr = cb.clone();
+    let mut rows = 0;
+    while rows < h {
+        let (n, _) = reader
+            .read_rows_ycbcr_native_i16(&mut y, w, &mut cb, &mut cr, w / 2, 1)
+            .unwrap();
+        assert!(n > 0);
+        rows += n;
+    }
+    assert_eq!(rows, h);
+    assert_eq!(pulse.rows.load(Ordering::Relaxed), h as u64);
 }

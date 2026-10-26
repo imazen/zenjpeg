@@ -2708,8 +2708,13 @@ impl<'a> ScanlineReader<'a> {
         let wave_count = seg_end - seg_start;
         let _ = wave_count;
 
-        let row_count =
-            state.decode_wave_box(&self.data, seg_start, seg_end, &mut self.wave_buf)?;
+        let row_count = state.decode_wave_box(
+            &self.data,
+            seg_start,
+            seg_end,
+            &mut self.wave_buf,
+            self.stop,
+        )?;
 
         self.wave_first_row = seg_start * state.pixel_rows_per_seg;
         self.wave_row_count = row_count;
@@ -2843,6 +2848,7 @@ impl<'a> ScanlineReader<'a> {
             &mut self.wave_y,
             &mut self.wave_cb,
             &mut self.wave_cr,
+            self.stop,
         )?;
 
         self.wave_planar_first_luma_row = seg_start * luma_rows_per_seg;
@@ -5027,5 +5033,40 @@ mod tests {
                 "Non-MCU-aligned crop differs from reference at {perm}"
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod native_reader_guards {
+    use super::*;
+    #[test]
+    fn component_id_probe_refuses_short_frame_payload() {
+        assert_eq!(
+            frame_component_ids(&[255, 216, 255, 193, 0, 2, 255, 217]),
+            [0; MAX_COMPONENTS]
+        );
+    }
+    #[test]
+    fn cmyk_row_invariant_is_checked() {
+        let result = super::super::DecodeResult::new_u16(
+            1,
+            1,
+            crate::types::PixelFormat::Cmyk,
+            12,
+            vec![0; 4],
+            None,
+            Vec::new(),
+        );
+        let mut reader = ScanlineReader::from_native_result(Cow::Borrowed(&[]), result).unwrap();
+        // A broken internal channel invariant must fail rather than indexing
+        // a three-channel pixel as CMYK. Public construction always sets four.
+        reader.num_components = 3;
+        let mut pixel = [Cmyk16::default()];
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reader.read_rows_cmyk16(imgref::ImgRefMut::new(&mut pixel, 1, 1))
+            }))
+            .is_err()
+        );
     }
 }

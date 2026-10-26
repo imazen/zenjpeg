@@ -1010,7 +1010,7 @@ impl DecodeConfig {
             self.strictness,
             self.alloc_pref,
         )?;
-        parser.read_header()?;
+        parser.read_header_with_stop(stop)?;
 
         self.validate_native_options(&parser)?;
         if parser.mode == JpegMode::Lossless {
@@ -1029,12 +1029,7 @@ impl DecodeConfig {
             return Ok(reader);
         }
 
-        if parser.num_components == 2
-            || parser.num_components > 4
-            || ((parser.precision == 12 || self.output_target == OutputTarget::Native16)
-                && !parser.plan().strip()
-                && parser.num_components != 1)
-        {
+        if self.uses_component_rows(&parser) {
             let source = parser.component_rows(self.chroma_upsampling, stop)?;
             let mut reader = ScanlineReader::from_component_rows(
                 alloc::borrow::Cow::Borrowed(data),
@@ -1163,13 +1158,23 @@ impl DecodeConfig {
         }
     }
 
+    fn uses_component_rows(&self, parser: &JpegParser<'_>) -> bool {
+        parser.num_components == 2
+            || parser.num_components > 4
+            || ((parser.precision == 12 || self.output_target == OutputTarget::Native16)
+                && !parser.plan().strip()
+                && parser.num_components != 1)
+    }
+
     fn validate_native_options(&self, parser: &JpegParser<'_>) -> Result<()> {
         if self.output_target == OutputTarget::Native16 && self.correct_color.is_some() {
             return Err(Error::unsupported_feature(
                 "ICC conversion is unavailable for native integer output",
             ));
         }
-        if parser.precision == 8 && parser.mode != JpegMode::Lossless && parser.num_components <= 4
+        if parser.precision == 8
+            && parser.mode != JpegMode::Lossless
+            && !self.uses_component_rows(parser)
         {
             return Ok(());
         }
@@ -1234,10 +1239,10 @@ impl DecodeConfig {
             ScanlineMode::Pixels
         } else if !needs_coefficients {
             ScanlineMode::Streaming
-        } else if plan.model.has_row_kernel() || (parser.precision == 12 && is_grayscale) {
-            ScanlineMode::Coefficients
-        } else {
+        } else if is_grayscale && parser.precision == 8 {
             ScanlineMode::Pixels
+        } else {
+            ScanlineMode::Coefficients
         };
 
         Ok(ScanlineRoute {
@@ -1368,12 +1373,7 @@ impl DecodeConfig {
                 self.apply_crop(&mut reader, w, h, 1)?;
                 return Ok(reader);
             }
-            if parser.num_components == 2
-                || parser.num_components > 4
-                || ((parser.precision == 12 || self.output_target == OutputTarget::Native16)
-                    && !parser.plan().strip()
-                    && parser.num_components != 1)
-            {
+            if self.uses_component_rows(&parser) {
                 let source = parser.component_rows(self.chroma_upsampling, &Unstoppable)?;
                 let (w, h) = (parser.width, parser.height);
                 let mut reader =
@@ -1626,7 +1626,11 @@ impl DecodeConfig {
     /// regions on the scanline transform paths (the pre-transform sampling
     /// factors, as before); the model is decided at SOF, so it matches every
     /// decode path.
-    fn source_header(&self, data: &[u8]) -> Result<(usize, color_model::ColorModel, bool)> {
+    fn source_header(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<(usize, color_model::ColorModel, bool)> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
@@ -1635,7 +1639,7 @@ impl DecodeConfig {
             self.strictness,
             self.alloc_pref,
         )?;
-        parser.read_header()?;
+        parser.read_header_with_stop(stop)?;
         Ok((
             parser.shape.max_v as usize * 8,
             parser.color_model,
@@ -1659,7 +1663,7 @@ impl DecodeConfig {
         use crate::types::Subsampling;
         use alloc::borrow::Cow;
 
-        let (mcu_height, color_model, native) = self.source_header(&vec)?;
+        let (mcu_height, color_model, native) = self.source_header(&vec, &enough::Unstoppable)?;
         let mut config_no_crop = self.buffered_fallback_config(color_model);
         config_no_crop.crop_region = None;
         if native {
@@ -1893,7 +1897,7 @@ impl DecodeConfig {
         data: &'a [u8],
         stop: &dyn Stop,
     ) -> Result<ScanlineReader<'a>> {
-        let (_, color_model, _) = self.source_header(data)?;
+        let (_, color_model, _) = self.source_header(data, stop)?;
         let result = self
             .buffered_fallback_config(color_model)
             .decode(data, stop)?;
@@ -1921,7 +1925,7 @@ impl DecodeConfig {
         &self,
         data: alloc::vec::Vec<u8>,
     ) -> Result<ScanlineReader<'a>> {
-        let (_, color_model, _) = self.source_header(&data)?;
+        let (_, color_model, _) = self.source_header(&data, &enough::Unstoppable)?;
         let result = self
             .buffered_fallback_config(color_model)
             .decode(&data, Unstoppable)?;
@@ -1956,7 +1960,7 @@ impl DecodeConfig {
         data: &'a [u8],
         stop: &dyn Stop,
     ) -> Result<ScanlineReader<'a>> {
-        let (mcu_height, color_model, native) = self.source_header(data)?;
+        let (mcu_height, color_model, native) = self.source_header(data, stop)?;
         let mut config_no_crop = self.buffered_fallback_config(color_model);
         config_no_crop.crop_region = None;
         if native {
@@ -2166,18 +2170,18 @@ impl DecodeConfig {
             self.alloc_pref,
         )?;
 
-        let native_frame = crate::container::marker::iter(data)
-            .find_map(|span| match span.kind {
-                crate::container::marker::MarkerKind::Sof(n) => Some(
-                    n == 3
-                        || span.payload.first() != Some(&8)
-                        || span.payload.get(5).is_some_and(|n| *n > 4),
-                ),
-                _ => None,
-            })
-            .unwrap_or(false);
+        let mut native_frame = false;
+        for span in crate::container::marker::iter(data) {
+            stop.check()?;
+            if let crate::container::marker::MarkerKind::Sof(n) = span.kind {
+                native_frame = n == 3
+                    || span.payload.first() != Some(&8)
+                    || span.payload.get(5).is_some_and(|n| *n == 2 || *n > 4);
+                break;
+            }
+        }
         if native_frame || self.output_target == OutputTarget::Native16 {
-            parser.read_header()?;
+            parser.read_header_with_stop(stop)?;
             return self.decode_native(data, &mut parser, stop, progress, forced_exif);
         }
 
@@ -4419,3 +4423,6 @@ pub fn decode_coefficients(
     parser.decode(&Unstoppable)?;
     Ok(parser.coeffs)
 }
+
+#[cfg(test)]
+mod native_guards_tests;

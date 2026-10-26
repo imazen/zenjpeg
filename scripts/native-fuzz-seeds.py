@@ -15,6 +15,8 @@ out = Path('zenjpeg/fuzz/seeds/native')
 out.mkdir(parents=True, exist_ok=True)
 stock = Path(os.environ['ZENJPEG_TURBO_BIN']) / 'native-components-oracle'
 components = Path(os.environ['ZENJPEG_COMPONENT_ORACLE_DIR']) / 'build/native-components-oracle'
+for oracle in (stock, components):
+    assert subprocess.check_output([oracle, "version"]).strip() == b"3002000"
 cases = []
 for n in (1, 2, 3, 4, 5, 10):
     for precision, mode in ((8, 0), (12, 0), (12, 1), (12, 2), (12, 3)):
@@ -26,6 +28,7 @@ for precision, n, predictor, point in ((2, 1, 1, 0), (8, 2, 2, 0), (12, 3, 3, 2)
 for sampling in (2, 3, 4, 5, 6):
     cases.append((12, 10, 0, 1, 0, sampling, 0, 9, 9))
 cases.extend(((12, 1, 0, 1, 0, 1, 0, 1, 1), (16, 4, 1, 1, 0, 1, 0, 1, 1)))
+cases.append((12, 4, 0, 1, 0, 2, 0, 9, 9))  # YCCK
 manifest = []
 for i, case in enumerate(cases):
     precision, n, lossless, predictor, point, sampling, mode, w, h = case
@@ -35,7 +38,11 @@ for i, case in enumerate(cases):
     raw = subprocess.check_output([oracle, 'decode', 'raw'], input=jpeg)
     assert len(raw) == w * h * n * 2
     name = f'{i:02d}-p{precision}-c{n}-sof3{lossless}-mode{mode}-s{sampling}'
-    (out / (name + '.jpg')).write_bytes(jpeg)
+    destination = out / (name + '.jpg')
+    if destination.exists():
+        assert destination.read_bytes() == jpeg, f'fixture changed: {destination}'
+    else:
+        destination.write_bytes(jpeg)
     manifest.append(dict(name=name, reference='stock-3.2.0' if n <= 4 else 'component-bounds-repaired-3.2.0',
                          args=args, jpeg_sha256=hashlib.sha256(jpeg).hexdigest(),
                          samples_sha256=hashlib.sha256(raw).hexdigest()))

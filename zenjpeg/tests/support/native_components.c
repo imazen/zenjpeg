@@ -10,6 +10,7 @@
 
 int main(int argc, char **argv) {
   struct jpeg_error_mgr err;
+  if(argc==2 && strcmp(argv[1],"version")==0) { printf("%d\n", LIBJPEG_TURBO_VERSION_NUMBER); return 0; }
   if ((argc == 9 || argc == 11) && strcmp(argv[1], "encode") == 0) {
     int bits=atoi(argv[2]), n=atoi(argv[3]), lossless=atoi(argv[4]);
     if(n<1 || n>10 || bits<2 || bits>16) return 2;

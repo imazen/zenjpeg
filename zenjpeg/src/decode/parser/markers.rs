@@ -22,7 +22,12 @@ use super::JpegParser;
 impl<'a> JpegParser<'a> {
     /// Read and parse the JPEG header up to (but not including) SOS.
     pub(crate) fn read_header(&mut self) -> Result<()> {
+        self.read_header_with_stop(&enough::Unstoppable)
+    }
+
+    pub(crate) fn read_header_with_stop(&mut self, stop: &dyn enough::Stop) -> Result<()> {
         loop {
+            stop.check()?;
             let marker = self.read_marker()?;
 
             match marker {

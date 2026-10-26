@@ -870,7 +870,7 @@ impl<'a> JpegParser<'a> {
         // SOF decision on this pass sees exactly the markers before SOF.
         self.position = 2; // Skip SOI
         self.color_markers = ColorMarkers::default();
-        self.read_header()?;
+        self.read_header_with_stop(stop)?;
 
         // Reject non-8-bit precision before attempting decode.
         // 12-bit Extended Sequential uses different level shift (+2048 vs +128)

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Report LLVM true/false branch outcomes on added Rust production lines.
 
-BASE is the common base of the 12-bit and component support stack. No error-path
-or module exclusions. Use --require-complete to enforce every measured outcome.
+BASE is the common base of the 12-bit and component support stack. No production error-path or module exclusions; cfg(test) assertions are excluded. Use --require-complete to enforce every measured outcome.
 """
 import argparse
 import json
@@ -35,17 +34,17 @@ for line in diff.splitlines():
 # Production functions called by those tests remain fully included.
 functions = [f for data in json.loads(a.report.read_text())['data'] for f in data['functions']]
 names = subprocess.check_output(['rustfilt'], input='\n'.join(f['name'] for f in functions), text=True).splitlines()
-test_modules = {}
+test_modules = set()
 for name in added:
     source = Path(name).read_text()
-    test_modules[name] = re.findall(r'#\[cfg\(test\)\]\s*(?:pub\s+)?mod\s+(\w+)', source)
+    test_modules.update(re.findall(r'#\[cfg\(test\)\]\s*(?:pub\s+)?mod\s+(\w+)', source))
 branches = {}
 for function, identity in zip(functions, names, strict=True):
     for b in function['branches']:
         name = str(Path(function['filenames'][b[6]]).resolve())
         if b[0] not in added.get(name, set()):
             continue
-        if any('::' + module + '::' in identity for module in test_modules.get(name, [])):
+        if any('::' + module + '::' in identity for module in test_modules):
             continue
         key = (name, *b[:4])
         hits = branches.setdefault(key, [0, 0])

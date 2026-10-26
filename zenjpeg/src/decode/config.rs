@@ -1849,3 +1849,23 @@ mod tests {
         assert!(crop.resolve(640, 480, 16).is_err());
     }
 }
+
+#[cfg(test)]
+mod native_result_guards {
+    use super::*;
+    #[test]
+    fn absent_pixels_are_an_internal_error() {
+        let mut result = DecodeResult::new_u8(
+            0,
+            0,
+            crate::types::PixelFormat::Gray,
+            OutputTarget::Srgb8,
+            Vec::new(),
+            None,
+            Vec::new(),
+        );
+        result.pixels_u8 = None;
+        assert!(std::panic::catch_unwind(|| result.pixels()).is_err());
+        assert!(std::panic::catch_unwind(|| result.into_pixels()).is_err());
+    }
+}
