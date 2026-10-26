@@ -50,6 +50,11 @@ bench execution after its tests passed; the benchmark harness waited on other
 workloads and was stopped. No benchmark result or performance conclusion is
 claimed. Live C++ FFI parity remains unavailable without the reference submodule.
 
+Implementation landed as `adcbc608`. A fresh packaging dry run
+(`cargo package --locked -p zenjpeg --no-verify`) still stops because the
+`zenmeta` dependency has no version requirement. The analysis cut does not
+resolve the remaining metadata/publication chain, and no crate was published.
+
 Reintroducing the integration later requires a separate API review, current
 feature-definition qualification and model/codec measurements. Existing Git
 history and the preserved research artifacts provide the recovery source.
