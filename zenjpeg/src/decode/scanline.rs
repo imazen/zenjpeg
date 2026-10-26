@@ -780,11 +780,7 @@ impl<'a> ScanlineReader<'a> {
         let buf = output.buf_mut();
         self.read_component_rows_with(rows, true, |i, row| {
             for x in 0..width {
-                buf[i * stride + x] = core::array::from_fn(|c| match row {
-                    RowSrc::Native(p, n, _) => p[x * n + c],
-                    RowSrc::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
-                    _ => unreachable!(),
-                });
+                buf[i * stride + x] = row.components16(x, max);
             }
         })
     }
@@ -3057,6 +3053,14 @@ enum RowSrc<'r> {
 }
 
 impl RowSrc<'_> {
+    fn components16<const N: usize>(self, x: usize, max: i32) -> [u16; N] {
+        core::array::from_fn(|c| match self {
+            Self::Native(p, n, _) => p[x * n + c],
+            Self::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
+            _ => unreachable!("converted rows cannot supply source components"),
+        })
+    }
+
     fn len(self) -> usize {
         match self {
             Self::Native(p, c, _) => p.len() / c,
@@ -3339,6 +3343,20 @@ fn frame_component_ids(data: &[u8]) -> [u8; MAX_COMPONENTS] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converted_row_lengths_and_gray_rgb() {
+        let gray = RowSrc::Gray8(&[17, 29]);
+        assert_eq!(gray.len(), 2);
+        assert_eq!(gray.rgb16(1, 8, PlaneMatrix::Identity), [29; 3]);
+        assert_eq!(RowSrc::Rgb8(&[1, 2, 3, 4, 5, 6]).len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "converted rows cannot supply source components")]
+    fn converted_rows_cannot_be_mislabeled_as_native() {
+        RowSrc::Rgb8(&[1, 2, 3]).components16::<3>(0, 255);
+    }
 
     #[test]
     fn test_filter_strip_vertical_i16() {

@@ -6,6 +6,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Added
+
+- Add borrowed `&dyn how_far::Pulse` decoding and scanline methods, preserving cancellation reasons through native, buffered and parallel wave paths. Minimal reference fixtures and a shared native-component fuzz/regression harness cover stride, malformed input and precision (`935f6fbe`).
 - Native component decoding for up to ten channels, per-component quantization
   table retention across scans, and all sixteen arithmetic conditioning slots.
 
@@ -29,6 +31,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Admit archmage/magetypes 0.9.31-beta.1 and use token-explicit constructor aliases in the WASM examples/tests (`3212f8bf`). Workspace library lint/tests and the all-target build check pass on the current main base; existing ignored tests remain unchanged.
 
 ### QUEUED BREAKING CHANGES
+
+- `ScanlineReader` and `UltraHdrReader` no longer automatically implement `UnwindSafe` / `RefUnwindSafe` because readers can borrow unrestricted Pulse callbacks. Send/Sync and existing Stop signatures are retained (`935f6fbe`).
 
 - Add `sample_precision` to `DecodedCoefficients` and `TransformedCoefficients`; struct constructors must supply 8 or 12 (`e2c872a3`).
 

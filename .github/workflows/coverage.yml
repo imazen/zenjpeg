@@ -21,6 +21,7 @@ concurrency:
 jobs:
   coverage:
     name: Code Coverage
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -30,12 +31,16 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-12
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install branch-name demangler
+        run: timeout --kill-after=15s 5m cargo install rustfilt --version 0.2.1 --locked
 
       - name: Clone sibling repos
         shell: bash
@@ -80,19 +85,24 @@ jobs:
       - name: Generate coverage (lib + integration tests)
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,__test-utils"
-          cargo llvm-cov --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- --skip ignored
-          cargo llvm-cov --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
-          ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo llvm-cov --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
-          cargo llvm-cov --no-report -p zenjpeg --features inventory --test multicomponent
-          python3 scripts/component-allocation-check.py --coverage
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils"
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils" -- --skip ignored
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
+          ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent
+          timeout --kill-after=15s 10m python3 scripts/component-allocation-check.py --coverage
           cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --json --output-path native-branches.json
 
-      - name: Require full changed-line coverage
+      - name: Require full changed-line and branch coverage
         if: github.event_name == 'pull_request'
         env:
           COVERAGE_BASE: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/check-component-coverage.py "$COVERAGE_BASE" lcov.info
+        run: |
+          python3 scripts/check-component-coverage.py "$COVERAGE_BASE" lcov.info
+          # Include parent changes when this PR is stacked on another feature PR.
+          BRANCH_BASE=$(git merge-base HEAD origin/main)
+          python3 scripts/check-native-branches.py "$BRANCH_BASE" native-branches.json --require-complete
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -163,7 +173,7 @@ jobs:
           # codec_coverage is now a module inside the `bundled` test binary
           # (see bundle PR #69). Filter by the `codec_coverage::` prefix so
           # only that module's 62 tests run.
-          cargo llvm-cov --no-report -p zenjpeg --test bundled --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- codec_coverage::
+          timeout --kill-after=15s 20m cargo llvm-cov --no-report -p zenjpeg --test bundled --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils" -- codec_coverage::
           cargo llvm-cov report --json --output-path codec-coverage.json
 
       - name: Check encode/decode coverage

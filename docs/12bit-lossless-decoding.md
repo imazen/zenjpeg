@@ -225,3 +225,64 @@ Fresh local coverage on 2026-10-26 against parent `12f25aad`: **113/113 changed
 executable production lines covered**. The run included the reference matrices
 and the allocation-failure subprocess. This does not claim 100% branch coverage
 or 100% coverage of every pre-existing decoder line.
+
+## Cancellation and hardening
+
+`scanline_reader_with_pulse(data, &dyn how_far::Pulse)` borrows cancellation and
+progress for the reader's lifetime. `decode_with_pulse` supplies the same contract
+for collected output. Existing entry points remain available. Header walks,
+entropy decoding, native reconstruction, crop skipping and parallel wave work
+poll the caller's cancellation token and preserve its `StopReason`, including
+`TimedOut`. Reader progress advances by completed output rows; collected buffered
+output reports its final height. The decoder does not finish a borrowed pulse.
+
+`tests/native_hardening.rs` checks every observed cancellation checkpoint for the
+minimal native fixtures, borrowed/owned reader parity, poisoned stride padding,
+truncated prefixes, malformed marker fields, native output formats and rejected
+processing combinations. It also checks cancellation inside RGB and planar wave
+decoding. Unsupported native deblocking, dequantization bias and ICC conversion
+are errors rather than silently ignored settings.
+
+The minimal JPEG fixtures live in `zenjpeg/fuzz/seeds/native`. Their generation
+arguments, reference identity, JPEG hashes and independently decoded sample
+hashes are recorded in `zenjpeg/tests/support/native_manifest.json`.
+`scripts/native-fuzz-seeds.py` verifies reference version 3.2.0 and refuses to
+replace an existing fixture with different bytes. Larger evolving corpora and
+crash artifacts remain outside git. The `fuzz_native_components` target shares
+its invariants with stable regression tests through `fuzz/component_checks.rs`.
+
+`just native-branch-coverage` measures LLVM true/false outcomes with nightly and
+both reference implementations. `just native-branch-gate BASE REPORT` requires
+all measured changed-production branch outcomes; unit-test assertions are not
+production branches. The intended base is the common base of the native-precision
+and multicomponent PRs, not just the latest hardening commit. A passing line gate
+alone does not establish branch completeness.
+
+The Linux hardening recipes use GNU `timeout`: ten minutes for stable checks,
+fifteen minutes per instrumented test command, and the requested fuzz duration
+plus two minutes for startup. Each has a fifteen-second termination grace;
+libFuzzer separately limits an individual input to ten seconds. Preserve logs
+and artifacts from deadline failures and report them as incomplete runs.
+
+### Panic recovery compatibility
+
+Pulse and Stop callbacks remain unrestricted. Ordinary callers need no new
+bounds. Because a reader can retain a caller's callback, `ScanlineReader` and
+`UltraHdrReader` no longer automatically implement `UnwindSafe` or
+`RefUnwindSafe`; containing types can inherit that change. Send and Sync are
+retained. Callers recovering from panics with `catch_unwind` must review their
+recovery boundary and may choose a narrowly scoped `AssertUnwindSafe`. A mutable
+reader reference already required that consideration before this change.
+These marker traits do not prevent panics or establish memory safety, and
+`forbid(unsafe_code)` remains in force. No how-far or enough trait changes are
+required; passing `FnStop` through `&dyn Stop` or `&dyn Pulse` keeps its existing
+contracts.
+
+### Bounded fuzz validation (2026-10-27)
+
+The native-component ASan/libFuzzer run completed 274,893 executions in 301
+seconds without a crash artifact. It started with the curated fixtures and the
+preserved exploratory corpus, with a ten-second input timeout, 1 GiB fuzzer
+RSS limit and 16 KiB maximum input length. The reference fixture set contains
+47 JPEGs totaling 41,316 bytes. This bounded run is evidence from the exercised
+inputs, not a claim that fuzzing proves correctness.

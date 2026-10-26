@@ -715,4 +715,4 @@ JpegDecoderConfig: !RefUnwindSafe !UnwindSafe
 JpegEncodeJob: !RefUnwindSafe !UnwindSafe
 JpegEncoder: !RefUnwindSafe !Sync !UnwindSafe
 JpegStreamingDecoder<'a>: !RefUnwindSafe !UnwindSafe
-ultrahdr::UltraHdrReader<'a>: !Freeze
+ultrahdr::UltraHdrReader<'a>: !Freeze !RefUnwindSafe !UnwindSafe

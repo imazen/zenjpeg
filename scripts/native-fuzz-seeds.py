@@ -29,6 +29,7 @@ for sampling in (2, 3, 4, 5, 6):
     cases.append((12, 10, 0, 1, 0, sampling, 0, 9, 9))
 cases.extend(((12, 1, 0, 1, 0, 1, 0, 1, 1), (16, 4, 1, 1, 0, 1, 0, 1, 1)))
 cases.append((12, 4, 0, 1, 0, 2, 0, 9, 9))  # YCCK
+cases.extend(((12, 3, 0, 1, 0, 3, 0, 9, 9), (8, 1, 1, 1, 0, 1, 0, 9, 9)))
 manifest = []
 for i, case in enumerate(cases):
     precision, n, lossless, predictor, point, sampling, mode, w, h = case

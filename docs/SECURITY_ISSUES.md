@@ -214,11 +214,16 @@ These CVEs affect libjpeg-turbo and may inform our security posture.
 | **CVE** | [CVE-2023-2804](https://nvd.nist.gov/vuln/detail/CVE-2023-2804) |
 | **CVSS** | 6.5 (Medium) |
 | **Affected** | libjpeg-turbo < 2.1.90 |
-| **Rust Status** | ✅ **Not Vulnerable** - No 12-bit support |
+| **Rust Status** | Separate Rust implementation; 12-bit decoding is supported. See analysis below. |
 
 **Root Cause**: Heap overflow in `h2v2_merged_upsample_internal()` when processing 12-bit lossless JPEG with out-of-range sample data.
 
-**Rust Analysis**: zenjpeg only supports 8-bit precision. 12-bit mode not implemented.
+**Rust Analysis**: zenjpeg supports 12-bit DCT and 2–16-bit Huffman lossless decoding.
+It does not call the affected C merged-upsampling routine. Its native reconstruction
+uses widened integer arithmetic and checked Rust slices. Native sample parity,
+malformed headers and truncated inputs are tested in `native_precision`,
+`multicomponent` and `native_hardening`; this is not a claim that safe Rust rules
+out every decoding or resource bug. See [native decoding](12bit-lossless-decoding.md).
 
 ---
 
@@ -383,7 +388,7 @@ Original IJG libjpeg vulnerabilities.
 | Vulnerability Class | libjpeg-turbo | mozjpeg | IJG | zenjpeg Status |
 |---------------------|---------------|---------|-----|------------------|
 | Integer overflow in size calc | CVE-2019-2201, CVE-2018-20330 | CVE-2020-1895 | - | ✅ Fixed (`50b104ee`) |
-| Heap overflow (12-bit) | CVE-2023-2804 | - | - | ✅ N/A (8-bit only) |
+| Heap overflow (12-bit) | CVE-2023-2804 | - | - | Separate Rust native-precision path; affected C routine not used |
 | PPM/BMP reader bugs | CVE-2020-13790, CVE-2018-14498 | same | - | ✅ N/A (no readers) |
 | Memory exhaustion | - | - | CVE-2020-14152 | ✅ Fixed (`50b104ee`) |
 | Huffman table OOB | CVE-2024-11403 (via jpegli) | - | - | ✅ Not vulnerable |

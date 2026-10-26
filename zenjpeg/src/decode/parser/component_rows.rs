@@ -5,7 +5,7 @@ use super::*;
 use crate::decode::{ChromaUpsampling, DecodedCoefficients};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::ScanRead;
-use crate::foundation::alloc::try_alloc_vec;
+use crate::foundation::alloc::{try_alloc_vec, try_with_capacity};
 
 struct Plane {
     h: usize,
@@ -74,10 +74,7 @@ impl JpegParser<'_> {
         let width = self.width as usize;
         let height = self.height as usize;
         let columns = width.div_ceil(max_h * 8);
-        let mut planes = Vec::new();
-        planes.try_reserve_exact(n).map_err(|_| {
-            Error::allocation_failed(n * core::mem::size_of::<Plane>(), "component strips")
-        })?;
+        let mut planes = try_with_capacity(n, "component strips")?;
         // Parse tables before reserving component storage.
         let coefficients;
         let scan;

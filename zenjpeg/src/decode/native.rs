@@ -88,11 +88,7 @@ impl DecodeConfig {
             OwnedDecodedPixels::U8(try_alloc_vec(count, "native output")?)
         };
         let mut cmyk_row: Vec<scanline::Cmyk16> = try_alloc_vec(
-            if row_format == PixelFormat::Cmyk {
-                width as usize
-            } else {
-                0
-            },
+            width as usize * usize::from(row_format == PixelFormat::Cmyk),
             "native CMYK row",
         )?;
         let mut row: Vec<rgb::RGB<u16>> = try_alloc_vec(width as usize, "native RGB row")?;

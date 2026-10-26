@@ -2092,16 +2092,6 @@ impl DecodeConfig {
         self.decode_dyn(data, &stop)
     }
 
-    /// Non-generic body of [`decode`](Self::decode).
-    ///
-    /// Every public decode entry point is a thin `impl Stop` shim over a
-    /// `&dyn Stop` body like this one, so the decode pipeline is
-    /// monomorphized ONCE, here in zenjpeg, instead of once per `Stop` type
-    /// in every dependent crate (#190: a 300-line consumer used to pull
-    /// ~50k LLVM lines of decoder internals into its own codegen). The
-    /// cancellation checks are per-row / per-scan, so the indirect call is
-    /// noise. `&dyn Stop: Stop` (via `enough`'s blanket `&T` impl), so the
-    /// parser-level `&impl Stop` helpers instantiate for `&dyn Stop` only.
     /// Decode with cancellation and progress in completed output rows.
     /// Native-precision decoding reports rows as they complete; buffered paths
     /// report their completed rows after decoding. Never finishes the caller's pulse.
@@ -2113,6 +2103,16 @@ impl DecodeConfig {
         self.decode_reporting(data, pulse, Some(pulse))
     }
 
+    /// Non-generic body of [`decode`](Self::decode).
+    ///
+    /// Every public decode entry point is a thin `impl Stop` shim over a
+    /// `&dyn Stop` body like this one, so the decode pipeline is
+    /// monomorphized ONCE, here in zenjpeg, instead of once per `Stop` type
+    /// in every dependent crate (#190: a 300-line consumer used to pull
+    /// ~50k LLVM lines of decoder internals into its own codegen). The
+    /// cancellation checks are per-row / per-scan, so the indirect call is
+    /// noise. `&dyn Stop: Stop` (via `enough`'s blanket `&T` impl), so the
+    /// parser-level `&impl Stop` helpers instantiate for `&dyn Stop` only.
     pub(crate) fn decode_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodeResult> {
         self.decode_reporting(data, stop, None)
     }
@@ -2587,10 +2587,11 @@ impl DecodeConfig {
                 self.strictness,
                 self.alloc_pref,
             )?;
-            parser.read_header()?;
+            parser.read_header_with_stop(stop)?;
 
             if parser.precision != 8
                 || parser.mode == JpegMode::Lossless
+                || parser.num_components == 2
                 || parser.num_components > 4
             {
                 return self.decode_into_via_decode(data, format, dst, stop);

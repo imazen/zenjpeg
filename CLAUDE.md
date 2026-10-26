@@ -1694,3 +1694,14 @@ The isolated Linux allocator-interposition test checks the returned context.
   through to the RGB reader's 1/3/4-component admission check. Route them through
   the same native component reader as higher component counts. Regression:
   `tests/native_hardening.rs::oracle_seeds_and_all_truncated_prefixes`.
+
+## Native decoder hardening (2026-10-26)
+
+Minimal reference fixtures exposed inconsistent routing of 8-bit two-component
+frames and Native16 CMYK rows; both now use the shared component source. Native
+processing options are validated on those routes instead of silently ignored.
+Pulse checkpoint tests preserve typed timeout errors through header and entropy
+work. Parallel RGB and planar wave decoding now poll at each MCU; collected
+fused decoding uses the same caller token. Gates: `native_hardening`,
+`just native-branch-coverage`, and `fuzz_native_components`. Branch completeness
+must be measured against the common base of the native-precision PR stack.

@@ -680,14 +680,14 @@ multicomponent-allocation-check:
 
 # Native component reader invariants, shared with the fuzz target.
 native-hardening-check:
-    cargo test --locked -p zenjpeg --features inventory --test multicomponent --test native_hardening
-    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_native_components
+    timeout --kill-after=15s 10m cargo test --locked -p zenjpeg --features inventory --test multicomponent --test native_hardening
+    timeout --kill-after=15s 10m cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_native_components
 
 native-fuzz-build:
-    cd zenjpeg && cargo +nightly fuzz build fuzz_native_components
+    cd zenjpeg && timeout --kill-after=15s 15m cargo +nightly fuzz build fuzz_native_components
 
 native-fuzz corpus artifacts seconds="300":
-    cd zenjpeg && cargo +nightly fuzz run fuzz_native_components {{corpus}} -- -artifact_prefix={{artifacts}}/ -max_total_time={{seconds}} -timeout=10 -rss_limit_mb=1024 -max_len=16384 -dict=fuzz/jpeg.dict -print_final_stats=1
+    cd zenjpeg && timeout --kill-after=15s $(({{seconds}} + 120))s cargo +nightly fuzz run fuzz_native_components {{corpus}} -- -artifact_prefix={{artifacts}}/ -max_total_time={{seconds}} -timeout=10 -rss_limit_mb=1024 -max_len=16384 -dict=fuzz/jpeg.dict -print_final_stats=1
 
 native-fuzz-seeds:
     cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"$ZENJPEG_TURBO_SOURCE/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"
@@ -696,17 +696,31 @@ native-fuzz-seeds:
 
 # LLVM branch instrumentation requires nightly; use a dedicated target directory.
 native-branch-coverage:
-    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening
-    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_precision -- --ignored
-    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test multicomponent -- --ignored ten_component_oracle_matrix
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening
+    just native-branch-oracles native-branch-allocation
+
+native-branch-oracles:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test multicomponent -- --ignored ten_component_oracle_matrix
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
 
 native-branch-gate base report:
     python3 scripts/check-native-branches.py {{base}} {{report}} --require-complete
 
 native-branch-fuzz-corpus:
-    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_hardening -- --ignored native_fuzz_corpus_replay
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_hardening -- --ignored native_fuzz_corpus_replay
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
 
 native-pulse-check:
-    cargo test -p zenjpeg --features inventory,parallel --test native_hardening
+    timeout --kill-after=15s 10m cargo test -p zenjpeg --features inventory,parallel --test native_hardening
+
+# Fast branch iteration; the complete recipe above remains the validation gate.
+native-branch-targeted:
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening -- --skip malformed_native_headers_are_bounded
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+# The injector runs only in its isolated test subprocess; use matching LLVM tools.
+native-branch-allocation:
+    RUSTUP_TOOLCHAIN=nightly timeout --kill-after=15s 10m python3 scripts/component-allocation-check.py --coverage
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"

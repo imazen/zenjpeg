@@ -1278,7 +1278,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Shared Huffman difference decoding. In predictive JPEG (T.81 H.1.2.2),
     /// category 16 denotes -32768 without magnitude bits. DCT DC coding
-    /// retains its existing magnitude-bit interpretation.
+    /// accepts categories 0–15; category 16 is specific to lossless coding.
     pub(crate) fn decode_difference<const LOSSLESS: bool>(
         &mut self,
         table_idx: usize,

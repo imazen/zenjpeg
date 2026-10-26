@@ -178,7 +178,7 @@ impl<'a> JpegParser<'a> {
                 // Baseline/Extended Huffman modes
                 // Try fused parallel decode first (MCU-row-aligned DRI only)
                 #[cfg(feature = "parallel")]
-                let used_fused = self.try_fused_parallel_decode(&scan_components)?;
+                let used_fused = self.try_fused_parallel_decode(&scan_components, stop)?;
                 #[cfg(not(feature = "parallel"))]
                 let used_fused = false;
 

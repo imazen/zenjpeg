@@ -808,5 +808,41 @@
     ],
     "jpeg_sha256": "c5b61a8712a1d4a11da8bca8a3c2dc8cbf6901d63a6aa3d7815992bd93f8bf17",
     "samples_sha256": "2a57c9382c04de25d8ddf54064907f593dee16aa302a0480057e9365106fbd7e"
+  },
+  {
+    "name": "45-p12-c3-sof30-mode0-s3",
+    "reference": "stock-3.2.0",
+    "args": [
+      "encode",
+      "12",
+      "3",
+      "0",
+      "1",
+      "0",
+      "3",
+      "0",
+      "9",
+      "9"
+    ],
+    "jpeg_sha256": "519d54083209b3d9e5656b416eff59b172a778bf942b26c3def3b85513c8d18c",
+    "samples_sha256": "693d86c083b615b7847a4ac9a08616d7644e9e28765050190e07750e2ab8b897"
+  },
+  {
+    "name": "46-p8-c1-sof31-mode0-s1",
+    "reference": "stock-3.2.0",
+    "args": [
+      "encode",
+      "8",
+      "1",
+      "1",
+      "1",
+      "0",
+      "1",
+      "0",
+      "9",
+      "9"
+    ],
+    "jpeg_sha256": "9490cbda74fd1ab77f0b3bc758189057738e775cf33261e712c5a2e245aa1491",
+    "samples_sha256": "a65d40abe2c79cfe6dac22e6a8bf04406f7e476e00d93f6aa35d95c8c35cf062"
   }
 ]
