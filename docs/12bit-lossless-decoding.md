@@ -1,12 +1,12 @@
 # Native-precision JPEG decoding
 
-Work in progress. Twelve-bit DCT and predictive lossless decoding are not yet
-available through the public decoder. The acceptance criterion is sample-for-sample
-agreement with libjpeg-turbo, including scanline reads.
+Work in progress. Twelve-bit DCT and predictive lossless decoding are wired into
+native integer output and scanline reads. The acceptance criterion is
+sample-for-sample agreement with libjpeg-turbo.
 
-## Proposed public surface
+## Public surface
 
-The existing decoder exposes u8 and f32 output. Native integer output would add:
+Native integer output extends the existing u8 and f32 outputs:
 
 ```rust,ignore
 OutputTarget::Native16
@@ -17,7 +17,7 @@ ScanlineReader::read_rows_rgb16(&mut self, output: ImgRefMut<'_, rgb::RGB<u16>>)
 ScanlineReader::read_rows_gray16(&mut self, output: ImgRefMut<'_, u16>) -> Result<usize>
 ```
 
-These are proposals awaiting owner approval, not implemented API. Native samples
+The native integer API was approved before implementation. Native samples
 retain the frame's range: 0–4095 for 12-bit, rather than expanding to 0–65535.
 Point transforms restore the low zero bits. RGB output retains the source RGB
 primaries and transfer function unless color correction is explicitly requested;
@@ -57,5 +57,15 @@ The shared IDCT passes the existing scalar/SIMD comparisons and an exhaustive
 12-bit constant-block rounding/stride test. The shared difference decoder passes
 signed category-boundary tests and a category-16 bit-consumption test. The default
 library suite passes (1160 passed, one pre-existing ignored test), and library
-Clippy passes with warnings denied. End-to-end 12-bit/lossless oracle parity has
-not been measured: those paths are not wired yet.
+Clippy passes with warnings denied. The end-to-end oracle matrix passes for lossless precisions 2–16, all seven
+predictors, three point transforms, gray/RGB, and restart markers. The 12-bit
+matrix passes sequential/progressive, four sampling shapes, four image sizes,
+noise/flat blocks/checkerboards, quality 5/30/60/91/100, and triangle/nearest
+upsampling. Each case compares collected output and borrowed/owned strided reads.
+Ordinary tests exercise constant streams, every lossless precision/predictor,
+truncations, scan parameters, u8 conversion and memory limits without oracle tools.
+
+Still under review: transformed output, multi-scan lossless, full feature-matrix
+regressions, resource accounting across buffered stages, and CI oracle setup.
+Native decoding currently rejects CMYK/XYB, subsampled lossless, DNL lossless,
+and optional deblocking/dequantization-bias/ICC conversion.

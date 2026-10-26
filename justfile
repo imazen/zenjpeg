@@ -610,3 +610,13 @@ precision-kernel-check:
 lossless-entropy-check:
     cargo test --locked -p zenjpeg --lib entropy::decoder::tests
     cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Native sample decode: mandatory oracle binaries are supplied by the caller.
+native-precision-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --test native_precision -- --ignored --test-threads=1
+
+native-precision-check:
+    cargo test --locked -p zenjpeg --test native_precision
+    cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
+    cargo test --locked -p zenjpeg --lib

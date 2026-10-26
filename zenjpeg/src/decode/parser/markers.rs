@@ -29,6 +29,9 @@ impl<'a> JpegParser<'a> {
                 MARKER_SOF0 | MARKER_SOF1 => {
                     self.mode = JpegMode::Baseline;
                     self.parse_frame_header()?;
+                    if marker == MARKER_SOF0 && self.precision != 8 {
+                        return Err(Error::invalid_jpeg_data("SOF0 requires 8-bit precision"));
+                    }
                     return Ok(());
                 }
                 MARKER_SOF2 => {
@@ -47,9 +50,9 @@ impl<'a> JpegParser<'a> {
                     return Ok(());
                 }
                 MARKER_SOF3 => {
-                    return Err(Error::unsupported_feature(
-                        "lossless JPEG (SOF3) is not supported",
-                    ));
+                    self.mode = JpegMode::Lossless;
+                    self.parse_frame_header()?;
+                    return Ok(());
                 }
                 MARKER_SOF7 => {
                     return Err(Error::unsupported_feature(
@@ -120,7 +123,11 @@ impl<'a> JpegParser<'a> {
 
         self.precision = self.read_u8()?;
         // Validate precision: must be 8 for baseline JPEG, 8 or 12 for extended
-        if self.precision != 8 && self.precision != 12 {
+        if if self.mode == JpegMode::Lossless {
+            !(2..=16).contains(&self.precision)
+        } else {
+            self.precision != 8 && self.precision != 12
+        } {
             return Err(Error::invalid_jpeg_data(
                 "invalid data precision (must be 8 or 12)",
             ));
@@ -168,6 +175,12 @@ impl<'a> JpegParser<'a> {
 
         for i in 0..self.num_components as usize {
             self.components[i].id = self.read_u8()?;
+            if self.components[..i]
+                .iter()
+                .any(|c| c.id == self.components[i].id)
+            {
+                return Err(Error::invalid_jpeg_data("duplicate frame component"));
+            }
             let sampling = self.read_u8()?;
             let h_samp = sampling >> 4;
             let v_samp = sampling & 0x0F;
@@ -190,6 +203,11 @@ impl<'a> JpegParser<'a> {
             if quant_idx as usize >= MAX_QUANT_TABLES {
                 return Err(Error::invalid_jpeg_data(
                     "quantization table index out of range",
+                ));
+            }
+            if self.mode == JpegMode::Lossless && quant_idx != 0 {
+                return Err(Error::invalid_jpeg_data(
+                    "lossless frame quantization selector must be zero",
                 ));
             }
             self.components[i].quant_table_idx = quant_idx;
@@ -400,7 +418,22 @@ impl<'a> JpegParser<'a> {
 
             if table_class == 0 {
                 // DC table - use standard lookup
-                let table = HuffmanDecodeTable::from_bits_values_dc(&bits, &values)?;
+                let lossless = self.mode == JpegMode::Lossless
+                    || (self.width == 0
+                        && crate::container::marker::iter(self.data)
+                            .find_map(|span| match span.kind {
+                                crate::container::marker::MarkerKind::Sof(n) => Some(n == 3),
+                                _ => None,
+                            })
+                            .unwrap_or(false));
+                let table = if lossless {
+                    if values.iter().any(|&v| v > 16) {
+                        return Err(Error::invalid_jpeg_data("lossless DC symbol above 16"));
+                    }
+                    HuffmanDecodeTable::from_bits_values(&bits, &values)?
+                } else {
+                    HuffmanDecodeTable::from_bits_values_dc(&bits, &values)?
+                };
                 self.dc_tables[table_idx] = Some(table);
             } else {
                 // AC table - use fast AC lookup for combined decode + sign extend

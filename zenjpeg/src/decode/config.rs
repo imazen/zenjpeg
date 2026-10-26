@@ -680,6 +680,10 @@ pub enum OutputTarget {
     #[default]
     Srgb8,
 
+    /// Integer samples in the JPEG frame's native range (0–4095 for 12-bit).
+    /// RGB retains the source primaries and transfer function; no range expansion.
+    Native16,
+
     /// f32 sRGB output (gamma-encoded, \[0,1\] nominal) with unclamped integer IDCT.
     ///
     /// Same speed as `Srgb8` but preserves ringing outside \[0, 255\] as values
@@ -713,7 +717,7 @@ impl OutputTarget {
     #[inline]
     #[must_use]
     pub fn is_f32(self) -> bool {
-        !matches!(self, Self::Srgb8)
+        !matches!(self, Self::Srgb8 | Self::Native16)
     }
 
     /// Returns `true` if output is in linear light.
@@ -1129,6 +1133,8 @@ impl Default for DecodeConfig {
 pub enum DecodedPixels<'a> {
     /// 8-bit pixel data (from [`OutputTarget::Srgb8`]).
     U8(&'a [u8]),
+    /// Native-range integer samples.
+    U16(&'a [u16]),
     /// 32-bit float pixel data (from [`OutputTarget::SrgbF32`], [`OutputTarget::LinearF32`], etc.).
     F32(&'a [f32]),
 }
@@ -1140,6 +1146,8 @@ pub enum DecodedPixels<'a> {
 pub enum OwnedDecodedPixels {
     /// 8-bit pixel data.
     U8(Vec<u8>),
+    /// Native-range integer samples.
+    U16(Vec<u16>),
     /// 32-bit float pixel data.
     F32(Vec<f32>),
 }
@@ -1165,6 +1173,8 @@ pub struct DecodeResult {
     output_target: OutputTarget,
     pixels_u8: Option<Vec<u8>>,
     pixels_f32: Option<Vec<f32>>,
+    pixels_u16: Option<Vec<u16>>,
+    sample_precision: u8,
     /// Gain map from UltraHDR images. `None` for regular JPEGs or Discard mode.
     pub gain_map: Option<GainMapResult>,
     pub(crate) extras: Option<DecodedExtras>,
@@ -1204,6 +1214,8 @@ impl DecodeResult {
             output_target,
             pixels_u8: Some(pixels),
             pixels_f32: None,
+            pixels_u16: None,
+            sample_precision: 8,
             gain_map: None,
             extras,
             warnings,
@@ -1227,10 +1239,50 @@ impl DecodeResult {
             output_target,
             pixels_u8: None,
             pixels_f32: Some(pixels),
+            pixels_u16: None,
+            sample_precision: 8,
             gain_map: None,
             extras,
             warnings,
         }
+    }
+
+    /// Samples in the JPEG frame's native integer range, with the layout in `format`.
+    pub fn pixels_u16(&self) -> Option<&[u16]> {
+        self.pixels_u16.as_deref()
+    }
+
+    /// Sample precision declared by the source JPEG frame.
+    pub fn sample_precision(&self) -> u8 {
+        self.sample_precision
+    }
+
+    pub(crate) fn set_sample_precision(&mut self, precision: u8) {
+        self.sample_precision = precision;
+    }
+
+    pub(crate) fn new_u16(
+        width: u32,
+        height: u32,
+        format: crate::types::PixelFormat,
+        precision: u8,
+        pixels: Vec<u16>,
+        extras: Option<DecodedExtras>,
+        warnings: Vec<DecodeWarning>,
+    ) -> Self {
+        let mut result = Self::new_u8(
+            width,
+            height,
+            format,
+            OutputTarget::Native16,
+            Vec::new(),
+            extras,
+            warnings,
+        );
+        result.pixels_u8 = None;
+        result.pixels_u16 = Some(pixels);
+        result.sample_precision = precision;
+        result
     }
 
     /// Set the gain map result.
@@ -1261,6 +1313,15 @@ impl DecodeResult {
             let ch = self.format.num_channels();
             self.pixels_f32 = Some(permute_interleaved(&px, w, h, ch, transform));
         }
+        if let Some(px) = self.pixels_u16.take() {
+            self.pixels_u16 = Some(permute_interleaved(
+                &px,
+                w,
+                h,
+                self.format.num_channels(),
+                transform,
+            ));
+        }
         if transform.swaps_dimensions() {
             core::mem::swap(&mut self.width, &mut self.height);
         }
@@ -1281,6 +1342,17 @@ impl DecodeResult {
         if let Some(px) = self.pixels_f32.take() {
             let ch = self.format.num_channels();
             self.pixels_f32 = Some(crop_interleaved(&px, w, x, y, new_w, new_h, ch));
+        }
+        if let Some(px) = self.pixels_u16.take() {
+            self.pixels_u16 = Some(crop_interleaved(
+                &px,
+                w,
+                x,
+                y,
+                new_w,
+                new_h,
+                self.format.num_channels(),
+            ));
         }
         self.width = new_w as u32;
         self.height = new_h as u32;
@@ -1356,6 +1428,8 @@ impl DecodeResult {
             DecodedPixels::U8(data)
         } else if let Some(ref data) = self.pixels_f32 {
             DecodedPixels::F32(data)
+        } else if let Some(ref data) = self.pixels_u16 {
+            DecodedPixels::U16(data)
         } else {
             panic!("DecodeResult contains no pixel data")
         }
@@ -1372,6 +1446,8 @@ impl DecodeResult {
             OwnedDecodedPixels::U8(data)
         } else if let Some(data) = self.pixels_f32 {
             OwnedDecodedPixels::F32(data)
+        } else if let Some(data) = self.pixels_u16 {
+            OwnedDecodedPixels::U16(data)
         } else {
             panic!("DecodeResult contains no pixel data")
         }
@@ -1435,6 +1511,8 @@ impl DecodeResult {
     }
 
     /// Decompose into parts: (pixels_u8, pixels_f32, width, height, format, extras).
+    /// Native integer samples are normalized into the f32 slot. Use
+    /// [`Self::into_pixels`] to retain native integer samples without conversion.
     #[must_use]
     pub fn into_parts(
         self,
@@ -1446,9 +1524,15 @@ impl DecodeResult {
         crate::types::PixelFormat,
         Option<DecodedExtras>,
     ) {
+        let floats = self.pixels_f32.or_else(|| {
+            self.pixels_u16.map(|samples| {
+                let max = ((1u32 << self.sample_precision) - 1) as f32;
+                samples.into_iter().map(|v| v as f32 / max).collect()
+            })
+        });
         (
             self.pixels_u8,
-            self.pixels_f32,
+            floats,
             self.width,
             self.height,
             self.format,

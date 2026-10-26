@@ -1301,6 +1301,35 @@ fn upsample_h2v2_i16_libjpeg_strided_with(
     }
 }
 
+/// Twelve-bit samples need i32 intermediates for the 16-weight triangle sum.
+pub(super) fn upsample_h2v2_12bit(
+    input: &[i16],
+    width: usize,
+    stride: usize,
+    height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    for y in 0..out_height {
+        let near = (y / 2).min(height - 1);
+        let far = if y % 2 == 0 {
+            near.saturating_sub(1)
+        } else {
+            (near + 1).min(height - 1)
+        };
+        upsample_h2v2_libjpeg_row_scalar(
+            &input[near * stride..near * stride + width],
+            &input[far * stride..far * stride + width],
+            &mut output[y * out_stride..],
+            width,
+            out_width,
+            H2v2Bias::Turbo,
+        );
+    }
+}
+
 // ============================================================================
 // f32 Nearest-Neighbor and libjpeg-compat Upsampling
 // ============================================================================

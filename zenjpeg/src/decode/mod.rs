@@ -54,6 +54,7 @@ mod extras;
 #[cfg(feature = "parallel")]
 mod fused_parallel;
 mod image;
+mod native;
 mod parser;
 mod pipeline;
 mod pool;
@@ -978,6 +979,21 @@ impl DecodeConfig {
         )?;
         parser.read_header()?;
 
+        self.validate_native_options(&parser)?;
+        if parser.mode == JpegMode::Lossless {
+            let predictive = parser.predictive_reader(&Unstoppable)?;
+            let mut reader = ScanlineReader::from_predictive(
+                alloc::borrow::Cow::Borrowed(data),
+                parser.width,
+                parser.height,
+                parser.num_components,
+                parser.precision,
+                predictive,
+            );
+            self.apply_crop(&mut reader, parser.width, parser.height, 1)?;
+            return Ok(reader);
+        }
+
         // Knusperli needs full coefficient access. When requested (explicitly or
         // via Auto at low Q), fall back to decode() + buffered scanline reader
         // transparently — the caller gets correct deblocked output without
@@ -1009,6 +1025,7 @@ impl DecodeConfig {
                     self.deblock_mode,
                     self.alloc_pref,
                     route.color_model,
+                    parser.precision,
                 )?;
                 self.apply_crop(&mut reader, width, height, mcu_height)?;
                 return Ok(reader);
@@ -1040,7 +1057,9 @@ impl DecodeConfig {
 
         // Try wave-parallel mode for images with DRI restart markers
         #[cfg(feature = "parallel")]
-        if self.num_threads != 1
+        if scan_data.precision == 8
+            && self.output_target != OutputTarget::Native16
+            && self.num_threads != 1
             && let Some(result) = self.try_wave_parallel(&scan_data, mcu_height)?
         {
             match result {
@@ -1093,6 +1112,28 @@ impl DecodeConfig {
         }
     }
 
+    fn validate_native_options(&self, parser: &JpegParser<'_>) -> Result<()> {
+        if parser.precision == 8 && parser.mode != JpegMode::Lossless {
+            return Ok(());
+        }
+        if self.deblock_mode != DeblockMode::Off
+            || self.output_target.uses_dequant_bias()
+            || self.correct_color.is_some()
+        {
+            return Err(Error::unsupported_feature(
+                "native precision decoding does not support deblocking, dequantization bias or ICC conversion",
+            ));
+        }
+        if !matches!(parser.num_components, 1 | 3)
+            || parser.color_model == color_model::ColorModel::Xyb
+        {
+            return Err(Error::unsupported_feature(
+                "native precision output requires gray, RGB or YCbCr components",
+            ));
+        }
+        Ok(())
+    }
+
     /// Shared routing decisions for `scanline_reader` / `scanline_reader_owned`.
     ///
     /// Validates the header (DNL / precision / component count) and computes
@@ -1108,13 +1149,6 @@ impl DecodeConfig {
             ));
         }
 
-        if parser.precision != 8 {
-            return Err(Error::unsupported_feature(
-                "12-bit precision JPEG (Extended Sequential) is not yet supported. \
-                 Only 8-bit precision is currently implemented.",
-            ));
-        }
-
         if parser.num_components != 1 && parser.num_components != 3 && parser.num_components != 4 {
             return Err(Error::unsupported_feature(
                 "scanline reader requires 1, 3, or 4 component image",
@@ -1123,7 +1157,11 @@ impl DecodeConfig {
 
         let is_grayscale = parser.num_components == 1;
         let plan = parser.plan();
-        let mcu_height = plan.shape.max_v as usize * 8;
+        let mcu_height = if is_grayscale && parser.precision == 12 {
+            8
+        } else {
+            plan.shape.max_v as usize * 8
+        };
         // Progressive and arithmetic frames need full coefficient storage, and
         // so do non-interleaved sequential frames (one scan per component).
         let needs_coefficients = !plan.interleaved
@@ -1137,11 +1175,11 @@ impl DecodeConfig {
         // factors up to 2 for YCbCr / RGB (`PathPlan::strip`); everything else
         // decodes to pixels up front. Grayscale progressive also stays on
         // pixels: its gray buffer already serves every read natively.
-        let mode = if !plan.strip() {
+        let mode = if !plan.strip() && !(is_grayscale && parser.precision == 12) {
             ScanlineMode::Pixels
         } else if !needs_coefficients {
             ScanlineMode::Streaming
-        } else if plan.model.has_row_kernel() {
+        } else if plan.model.has_row_kernel() || (parser.precision == 12 && is_grayscale) {
             ScanlineMode::Coefficients
         } else {
             ScanlineMode::Pixels
@@ -1221,6 +1259,7 @@ impl DecodeConfig {
             parser.parallel_strategy = self.parallel_strategy;
         }
         parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.native_precision = true;
         parser.decode(&Unstoppable)?;
         parser.extract_coefficients()
     }
@@ -1238,6 +1277,32 @@ impl DecodeConfig {
             return self.scanline_reader_with_transform_owned(vec);
         }
 
+        {
+            let mut parser = JpegParser::with_strictness(
+                &vec,
+                self.max_pixels,
+                self.max_memory,
+                None,
+                self.strictness,
+                self.alloc_pref,
+            )?;
+            parser.read_header()?;
+            self.validate_native_options(&parser)?;
+            if parser.mode == JpegMode::Lossless {
+                let (w, h, n, p) = (
+                    parser.width,
+                    parser.height,
+                    parser.num_components,
+                    parser.precision,
+                );
+                let predictive = parser.predictive_reader(&Unstoppable)?;
+                let mut reader =
+                    ScanlineReader::from_predictive(Cow::Owned(vec), w, h, n, p, predictive);
+                self.apply_crop(&mut reader, w, h, 1)?;
+                return Ok(reader);
+            }
+        }
+
         // Phase 1: parse the JPEG data, extract everything we need.
         // The parser borrows &vec; we must drop all parser-derived borrows
         // before moving vec into Cow::Owned.
@@ -1253,6 +1318,7 @@ impl DecodeConfig {
                 mcu_height: usize,
             },
             Coefficients {
+                precision: u8,
                 coeffs: DecodedCoefficients,
                 width: u32,
                 height: u32,
@@ -1310,6 +1376,7 @@ impl DecodeConfig {
                 let (width, height) = (parser.width, parser.height);
                 let coeffs = self.decode_buffered_coefficients(&mut parser)?;
                 ParseResult::Coefficients {
+                    precision: parser.precision,
                     coeffs,
                     width,
                     height,
@@ -1389,6 +1456,7 @@ impl DecodeConfig {
                 Ok(reader)
             }
             ParseResult::Coefficients {
+                precision,
                 coeffs,
                 width,
                 height,
@@ -1404,6 +1472,7 @@ impl DecodeConfig {
                     self.deblock_mode,
                     self.alloc_pref,
                     color_model,
+                    precision,
                 )?;
                 self.apply_crop(&mut reader, width, height, mcu_height)?;
                 Ok(reader)
@@ -1476,7 +1545,7 @@ impl DecodeConfig {
     /// regions on the scanline transform paths (the pre-transform sampling
     /// factors, as before); the model is decided at SOF, so it matches every
     /// decode path.
-    fn source_header(&self, data: &[u8]) -> Result<(usize, color_model::ColorModel)> {
+    fn source_header(&self, data: &[u8]) -> Result<(usize, color_model::ColorModel, bool)> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
@@ -1486,7 +1555,13 @@ impl DecodeConfig {
             self.alloc_pref,
         )?;
         parser.read_header()?;
-        Ok((parser.shape.max_v as usize * 8, parser.color_model))
+        Ok((
+            parser.shape.max_v as usize * 8,
+            parser.color_model,
+            parser.precision != 8
+                || parser.mode == JpegMode::Lossless
+                || self.output_target == OutputTarget::Native16,
+        ))
     }
 
     /// Transform path for owned data: fully decodes and stores owned data.
@@ -1503,13 +1578,21 @@ impl DecodeConfig {
         use crate::types::Subsampling;
         use alloc::borrow::Cow;
 
-        let (mcu_height, color_model) = self.source_header(&vec)?;
+        let (mcu_height, color_model, native) = self.source_header(&vec)?;
         let mut config_no_crop = self.buffered_fallback_config(color_model);
         config_no_crop.crop_region = None;
+        if native {
+            config_no_crop.output_target = OutputTarget::Native16;
+        }
         let result = config_no_crop.decode(&vec, Unstoppable)?;
         let vis_w = result.width();
         let vis_h = result.height();
         let num_components = result.format().num_channels() as u8;
+        if native {
+            let mut reader = ScanlineReader::from_native_result(Cow::Owned(vec), result)?;
+            self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+            return Ok(reader);
+        }
         let pixels = result
             .into_pixels_u8()
             .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
@@ -1544,6 +1627,9 @@ impl DecodeConfig {
         use fused_parallel::{WaveParallelState, build_huffman_tables_from_scan_data};
         use rst_scan::{compute_segments, scan_rst_markers};
 
+        if scan_data.precision != 8 || self.output_target == OutputTarget::Native16 {
+            return Ok(None);
+        }
         let num_comps = scan_data.num_components as usize;
 
         let ri = scan_data.restart_interval as usize;
@@ -1716,7 +1802,7 @@ impl DecodeConfig {
     /// Fallback for deblock modes that need coefficient access (Knusperli, Auto at low Q).
     /// Runs full `decode()` then wraps the result in a buffered `ScanlineReader`.
     fn scanline_reader_deblock_fallback<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let (_, color_model) = self.source_header(data)?;
+        let (_, color_model, _) = self.source_header(data)?;
         let result = self
             .buffered_fallback_config(color_model)
             .decode(data, Unstoppable)?;
@@ -1744,7 +1830,7 @@ impl DecodeConfig {
         &self,
         data: alloc::vec::Vec<u8>,
     ) -> Result<ScanlineReader<'a>> {
-        let (_, color_model) = self.source_header(&data)?;
+        let (_, color_model, _) = self.source_header(&data)?;
         let result = self
             .buffered_fallback_config(color_model)
             .decode(&data, Unstoppable)?;
@@ -1775,13 +1861,22 @@ impl DecodeConfig {
     /// IDCT for dimension swaps). Serve the oriented pixels from a buffered
     /// reader so the scanline path matches decode() exactly.
     fn scanline_reader_with_transform<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let (mcu_height, color_model) = self.source_header(data)?;
+        let (mcu_height, color_model, native) = self.source_header(data)?;
         let mut config_no_crop = self.buffered_fallback_config(color_model);
         config_no_crop.crop_region = None;
+        if native {
+            config_no_crop.output_target = OutputTarget::Native16;
+        }
         let result = config_no_crop.decode(data, Unstoppable)?;
         let vis_w = result.width();
         let vis_h = result.height();
         let num_components = result.format().num_channels() as u8;
+        if native {
+            let mut reader =
+                ScanlineReader::from_native_result(alloc::borrow::Cow::Borrowed(data), result)?;
+            self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+            return Ok(reader);
+        }
         let pixels = result
             .into_pixels_u8()
             .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
@@ -1944,6 +2039,14 @@ impl DecodeConfig {
             self.strictness,
             self.alloc_pref,
         )?;
+
+        parser.read_header()?;
+        if parser.precision != 8
+            || parser.mode == JpegMode::Lossless
+            || self.output_target == OutputTarget::Native16
+        {
+            return self.decode_native(data, &mut parser, stop, forced_exif);
+        }
 
         // Streaming decode produces RGB u8 directly — disable it when the output
         // needs coefficients (f32, u16, precise, dequant_bias, non-RGB formats,
@@ -2345,6 +2448,10 @@ impl DecodeConfig {
                 self.alloc_pref,
             )?;
             parser.read_header()?;
+
+            if parser.precision != 8 || parser.mode == JpegMode::Lossless {
+                return self.decode_into_via_decode(data, format, dst, stop);
+            }
 
             // For grayscale source, only PixelFormat::Gray is meaningful.
             if parser.num_components == 1 && format != PixelFormat::Gray {

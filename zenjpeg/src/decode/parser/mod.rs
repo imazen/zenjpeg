@@ -15,6 +15,7 @@ mod fast_integer;
 mod markers;
 mod output;
 pub(crate) mod output_helpers;
+pub(in crate::decode) mod predictive;
 mod progressive;
 mod scan;
 
@@ -115,6 +116,7 @@ pub(super) fn component_block_grid(
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
 /// the previous 16-parameter constructor. Created via `JpegParser::into_scan_data()`.
 pub(super) struct ParsedScanData<'a> {
+    pub precision: u8,
     pub data: &'a [u8],
     pub width: u32,
     pub height: u32,
@@ -144,6 +146,7 @@ impl<'a> ParsedScanData<'a> {
     /// supply owned data separately (via `ScanlineReader::from_scan_data_cow`).
     pub(super) fn into_owned(self) -> ParsedScanData<'static> {
         ParsedScanData {
+            precision: self.precision,
             data: &[],
             width: self.width,
             height: self.height,
@@ -182,6 +185,7 @@ pub(super) struct JpegParser<'a> {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) precision: u8,
+    pub(super) native_precision: bool,
     pub(super) num_components: u8,
     pub(super) mode: JpegMode,
 
@@ -412,6 +416,7 @@ impl<'a> JpegParser<'a> {
             width: 0,
             height: 0,
             precision: 8,
+            native_precision: false,
             num_components: 0,
             mode: JpegMode::Baseline,
             components: std::array::from_fn(|_| Component::default()),
@@ -861,13 +866,18 @@ impl<'a> JpegParser<'a> {
         // Reject non-8-bit precision before attempting decode.
         // 12-bit Extended Sequential uses different level shift (+2048 vs +128)
         // and output scaling — decoding as 8-bit produces completely wrong pixels.
-        if self.precision != 8 {
+        if self.precision != 8 && !self.native_precision {
             return Err(Error::unsupported_feature(
                 "12-bit precision JPEG (Extended Sequential) is not yet supported. \
                  Only 8-bit precision is currently implemented.",
             ));
         }
 
+        if self.mode == JpegMode::Lossless {
+            return Err(Error::unsupported_feature(
+                "predictive JPEG has samples, not DCT coefficients",
+            ));
+        }
         // Track whether we've decoded at least one scan (for truncation recovery)
         let mut scans_decoded = 0u32;
 
@@ -1220,7 +1230,15 @@ impl<'a> JpegParser<'a> {
     pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
         // Extract sampling factors
         let h_samp = if is_grayscale {
-            [self.components[0].h_samp_factor, 1, 1]
+            [
+                if self.precision == 12 {
+                    1
+                } else {
+                    self.components[0].h_samp_factor
+                },
+                1,
+                1,
+            ]
         } else {
             [
                 self.components[0].h_samp_factor,
@@ -1229,7 +1247,15 @@ impl<'a> JpegParser<'a> {
             ]
         };
         let v_samp = if is_grayscale {
-            [self.components[0].v_samp_factor, 1, 1]
+            [
+                if self.precision == 12 {
+                    1
+                } else {
+                    self.components[0].v_samp_factor
+                },
+                1,
+                1,
+            ]
         } else {
             [
                 self.components[0].v_samp_factor,
@@ -1264,6 +1290,7 @@ impl<'a> JpegParser<'a> {
         }
 
         Ok(ParsedScanData {
+            precision: self.precision,
             data: self.data,
             width: self.width,
             height: self.height,
