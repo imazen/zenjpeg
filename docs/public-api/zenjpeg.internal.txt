@@ -15,7 +15,7 @@
 #   free functions                            366
 #   inherent methods                         1188
 #   struct fields                             744
-#   enum variants                             491
+#   enum variants                             494
 #   re-exports                                 18
 #   trait roster entries (type × trait)       645
 #   auto-trait-complete types                 127
@@ -26,7 +26,7 @@
 #   alloc                             1
 #   color                           110
 #   container                        31
-#   decode                          446
+#   decode                          449
 #   decoder                          54
 #   detect                           40
 #   encode                         1413
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3320 lines)
+## items (3323 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -2227,6 +2227,7 @@ pub decode::DecodedImageF32::format: types::PixelFormat
 pub decode::DecodedImageF32::height: u32
 pub decode::DecodedImageF32::width: u32
 pub decode::DecodedPixels::F32(&'a [f32])
+pub decode::DecodedPixels::U16(&'a [u16])
 pub decode::DecodedPixels::U8(&'a [u8])
 pub decode::DecodedYCbCr::cb: alloc::vec::Vec<f32>
 pub decode::DecodedYCbCr::cr: alloc::vec::Vec<f32>
@@ -2346,10 +2347,12 @@ pub decode::OrientationHint::ExactTransform(zenpixels::orientation::Orientation)
 pub decode::OrientationHint::Preserve
 pub decode::OutputTarget::LinearF32
 pub decode::OutputTarget::LinearF32Precise
+pub decode::OutputTarget::Native16
 pub decode::OutputTarget::Srgb8
 pub decode::OutputTarget::SrgbF32
 pub decode::OutputTarget::SrgbF32Precise
 pub decode::OwnedDecodedPixels::F32(alloc::vec::Vec<f32>)
+pub decode::OwnedDecodedPixels::U16(alloc::vec::Vec<u16>)
 pub decode::OwnedDecodedPixels::U8(alloc::vec::Vec<u8>)
 pub decode::ParallelStrategy::Auto
 pub decode::ParallelStrategy::FixedStride(usize)

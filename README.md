@@ -41,6 +41,11 @@ let rgb_pixels: &[u8] = result.pixels_u8().expect("u8 output");
 let (width, height) = result.dimensions();
 ```
 
+Twelve-bit DCT and predictive lossless JPEG can retain their native sample range
+with `OutputTarget::Native16` or strided `read_rows_rgb16` / `read_rows_gray16`.
+See [native-precision decoding](docs/12bit-lossless-decoding.md) for supported modes,
+precision semantics, and the libjpeg-turbo parity checks.
+
 ### Streaming Decode (Row-by-Row)
 
 ```rust
