@@ -87,7 +87,7 @@ impl<'a> JpegParser<'a> {
 
         // Configure decoder with conditioning parameters and restart interval
         decoder.set_restart_interval(self.restart_interval);
-        for tbl in 0..4 {
+        for tbl in 0..crate::entropy::arithmetic::NUM_ARITH_TBLS {
             let (l, u) = self.arith_dc_cond[tbl];
             decoder.set_dc_conditioning(tbl, l, u);
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
@@ -307,7 +307,7 @@ impl<'a> JpegParser<'a> {
 
         // Configure decoder
         decoder.set_restart_interval(self.restart_interval);
-        for tbl in 0..4 {
+        for tbl in 0..crate::entropy::arithmetic::NUM_ARITH_TBLS {
             let (l, u) = self.arith_dc_cond[tbl];
             decoder.set_dc_conditioning(tbl, l, u);
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);

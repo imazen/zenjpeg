@@ -485,7 +485,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// Format per table: Tc/Th (1 byte) + Cs (1 byte)
     /// - Tc: 0=DC, 1=AC
-    /// - Th: table destination (0-3)
+    /// - Th: table destination (0-15)
     /// - Cs: For DC: L in low 4 bits, U in high 4 bits
     ///       For AC: Kx value (0-63)
     pub(super) fn parse_dac(&mut self) -> Result<()> {
@@ -496,8 +496,8 @@ impl<'a> JpegParser<'a> {
             let table_class = info >> 4; // 0=DC, 1=AC
             let table_idx = (info & 0x0F) as usize;
 
-            if table_idx >= 4 {
-                return Err(Error::invalid_jpeg_data("DAC table index out of range"));
+            if table_class > 1 {
+                return Err(Error::invalid_jpeg_data("DAC table class out of range"));
             }
 
             let cs = self.read_u8()?;

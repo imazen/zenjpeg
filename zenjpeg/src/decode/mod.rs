@@ -1133,7 +1133,8 @@ impl DecodeConfig {
                 "ICC conversion is unavailable for native integer output",
             ));
         }
-        if parser.precision == 8 && parser.mode != JpegMode::Lossless {
+        if parser.precision == 8 && parser.mode != JpegMode::Lossless && parser.num_components <= 4
+        {
             return Ok(());
         }
         if self.deblock_mode != DeblockMode::Off
@@ -2093,9 +2094,11 @@ impl DecodeConfig {
 
         let native_frame = crate::container::marker::iter(data)
             .find_map(|span| match span.kind {
-                crate::container::marker::MarkerKind::Sof(n) => {
-                    Some(n == 3 || span.payload.first() != Some(&8))
-                }
+                crate::container::marker::MarkerKind::Sof(n) => Some(
+                    n == 3
+                        || span.payload.first() != Some(&8)
+                        || span.payload.get(5).is_some_and(|n| *n > 4),
+                ),
                 _ => None,
             })
             .unwrap_or(false);
@@ -2505,7 +2508,10 @@ impl DecodeConfig {
             )?;
             parser.read_header()?;
 
-            if parser.precision != 8 || parser.mode == JpegMode::Lossless {
+            if parser.precision != 8
+                || parser.mode == JpegMode::Lossless
+                || parser.num_components > 4
+            {
                 return self.decode_into_via_decode(data, format, dst, stop);
             }
 

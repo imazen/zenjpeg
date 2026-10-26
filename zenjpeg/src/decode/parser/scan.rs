@@ -69,6 +69,14 @@ impl<'a> JpegParser<'a> {
         let mut scan_components = Vec::with_capacity(num_components as usize);
 
         let permissive = self.strictness.is_permissive();
+        let table_limit = if matches!(
+            self.mode,
+            JpegMode::ArithmeticSequential | JpegMode::ArithmeticProgressive
+        ) {
+            crate::entropy::arithmetic::NUM_ARITH_TBLS
+        } else {
+            MAX_HUFFMAN_TABLES
+        };
 
         for _ in 0..num_components {
             let component_id = self.read_u8()?;
@@ -77,7 +85,7 @@ impl<'a> JpegParser<'a> {
             let mut ac_table = tables & 0x0F;
 
             // Validate Huffman table indexes
-            if dc_table as usize >= MAX_HUFFMAN_TABLES {
+            if dc_table as usize >= table_limit {
                 if permissive {
                     dc_table = 0; // Fallback to table 0
                 } else {
@@ -86,7 +94,7 @@ impl<'a> JpegParser<'a> {
                     ));
                 }
             }
-            if ac_table as usize >= MAX_HUFFMAN_TABLES {
+            if ac_table as usize >= table_limit {
                 if permissive {
                     ac_table = 0; // Fallback to table 0
                 } else {
@@ -145,6 +153,14 @@ impl<'a> JpegParser<'a> {
             return Err(Error::invalid_jpeg_data(
                 "SOS Al (successive approximation low) out of range (max 13)",
             ));
+        }
+
+        // Components keep the quantization table in force at their first scan.
+        for &(component, _, _) in &scan_components {
+            if self.component_quant[component].is_none() {
+                self.component_quant[component] =
+                    self.quant_tables[self.components[component].quant_table_idx as usize];
+            }
         }
 
         // Decode entropy-coded segment based on mode

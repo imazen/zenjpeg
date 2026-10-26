@@ -423,11 +423,11 @@ struct App {
 #[derive(Clone, Copy)]
 struct Frame {
     components: u8,
-    ids: [u8; 4],
+    ids: [u8; crate::foundation::consts::MAX_COMPONENTS],
     /// Quantisation table index per component.
-    qidx: [u8; 4],
+    qidx: [u8; crate::foundation::consts::MAX_COMPONENTS],
     /// Sampling factors per component, `h << 4 | v`.
-    samp: [u8; 4],
+    samp: [u8; crate::foundation::consts::MAX_COMPONENTS],
     width: u16,
     height: u16,
     /// The SOF marker: 0xC0/C1 sequential and 0xC2 progressive Huffman,
@@ -455,7 +455,7 @@ impl Frame {
         let standard = match self.components {
             1 => self.samp[0] == 0x11,
             3 => {
-                let [y, cb, cr, _] = self.samp;
+                let [y, cb, cr, ..] = self.samp;
                 cb == cr && cb == 0x11 && matches!(y, 0x11 | 0x22 | 0x21)
             }
             _ => false,
@@ -583,8 +583,8 @@ struct Defs {
     dc: [Option<Def>; 4],
     ac: [Option<Def>; 4],
     dri: Option<Def>,
-    dac_dc: [Option<Def>; 4],
-    dac_ac: [Option<Def>; 4],
+    dac_dc: [Option<Def>; 16],
+    dac_ac: [Option<Def>; 16],
     /// Every definition a decode path used, recorded once.
     used: Vec<Used>,
     segs: Vec<DefSeg>,
@@ -1003,7 +1003,7 @@ fn check_dac(avail: &[u8], declared: usize) -> Result<(), Bad> {
         let Some(&info) = avail.get(at) else {
             return ran_out(k, "truncated");
         };
-        if info & 0x0F >= 4 {
+        if info >> 4 > 1 {
             return bad(k, "invalid DAC conditioning table");
         }
         let Some(&cs) = avail.get(at + 1) else {
@@ -1247,7 +1247,7 @@ fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8], permissive: bool) {
         }
     };
     for &[_, tables] in comps.as_chunks::<2>().0 {
-        let (td, ta) = scan_tables(tables, permissive);
+        let (td, ta) = scan_tables(tables, permissive && !arithmetic);
         let (dc, ac) = if arithmetic {
             (DefKind::DacDc(td), DefKind::DacAc(ta))
         } else {
@@ -2356,10 +2356,13 @@ impl Walk<'_> {
                                     && !matches!(f.frame.components, 1 | 3)
                                 {
                                     Some((decode, "native precision output requires gray or RGB"))
-                                } else if f.frame.components == 2 {
+                                } else if f.frame.components == 2 || f.frame.components > 4 {
                                     // The output stage (decode/parser/output.rs)
                                     // converts 1, 3 and 4 components only.
-                                    Some((decode, "no colour conversion for 2 components"))
+                                    Some((
+                                        decode,
+                                        "no colour conversion for unknown component layout",
+                                    ))
                                 } else {
                                     None
                                 };
@@ -3567,15 +3570,15 @@ fn check_sof(body: &[u8], max_pixels: u64, mode: u8) -> Result<SofInfo, &'static
     if nc == 0 {
         return Err("number of components is zero");
     }
-    if nc > 4 {
-        return Err("more than 4 components");
+    if nc as usize > crate::foundation::consts::MAX_COMPONENTS {
+        return Err("more than 10 components");
     }
     if body.len() + 2 != 8 + 3 * nc as usize {
         return Err("SOF marker length mismatch");
     }
-    let mut ids = [0u8; 4];
-    let mut qidx = [0u8; 4];
-    let mut samp = [0u8; 4];
+    let mut ids = [0u8; crate::foundation::consts::MAX_COMPONENTS];
+    let mut qidx = [0u8; crate::foundation::consts::MAX_COMPONENTS];
+    let mut samp = [0u8; crate::foundation::consts::MAX_COMPONENTS];
     for (c, id) in ids.iter_mut().enumerate().take(nc as usize) {
         let at = 6 + 3 * c;
         *id = body[at];
@@ -3621,16 +3624,19 @@ fn check_sos(
     if ns == 0 {
         return fail("scan with zero components");
     }
+    if ns > 4 {
+        return fail("scan has more than four components");
+    }
     if ns > frame.components {
         return fail("scan has more components than the frame");
     }
-    let mut seen = [false; 4];
+    let mut seen = [false; crate::foundation::consts::MAX_COMPONENTS];
     let mut bad_table = false;
     for c in 0..ns as usize {
         let at = pos + 5 + 2 * c;
         let (id, tables) = (data[at], data[at + 1]);
         // Permissive clamps an out-of-range selector to 0 and goes on.
-        bad_table |= tables >> 4 >= 4 || tables & 0x0F >= 4;
+        bad_table |= !matches!(frame.mode, 0xc9 | 0xca) && (tables >> 4 >= 4 || tables & 0x0F >= 4);
         if bad_table {
             return Some((Fails::UnlessPermissive, "Huffman table index out of range"));
         }

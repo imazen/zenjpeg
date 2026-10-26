@@ -48,6 +48,9 @@ impl JpegParser<'_> {
         &mut self,
         fancy: ChromaUpsampling,
     ) -> Result<ComponentRows> {
+        if self.height == 0 {
+            return Err(Error::unsupported_feature("component rows with DNL height"));
+        }
         let n = self.num_components as usize;
         let max_h = self.components[..n]
             .iter()
@@ -97,8 +100,12 @@ impl JpegParser<'_> {
             let c = &self.components[i];
             let (h, v) = (c.h_samp_factor as usize, c.v_samp_factor as usize);
             let (stride, strip_rows) = (columns * h * 8, v * 8);
-            let quant = self.quant_tables[c.quant_table_idx as usize]
-                .ok_or_else(|| Error::invalid_jpeg_data("missing component quantization table"))?;
+            let quant = if let Some(coeffs) = &coefficients {
+                coeffs.quant_tables[coeffs.components[i].quant_table_idx as usize]
+            } else {
+                self.quant_tables[c.quant_table_idx as usize]
+            }
+            .ok_or_else(|| Error::invalid_jpeg_data("missing component quantization table"))?;
             self.charge_memory(stride * strip_rows * 6, "component strips")?;
             planes.push(Plane {
                 h,
