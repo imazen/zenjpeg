@@ -1276,6 +1276,33 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.reader.position()
     }
 
+    /// Shared Huffman difference decoding. In predictive JPEG (T.81 H.1.2.2),
+    /// category 16 denotes -32768 without magnitude bits. DCT DC coding
+    /// retains its existing magnitude-bit interpretation.
+    pub(crate) fn decode_difference<const LOSSLESS: bool>(
+        &mut self,
+        table_idx: usize,
+    ) -> ScanResult<i32> {
+        let table = self.get_dc_table(table_idx)?;
+        let category = match self.decode_huffman(table)? {
+            ScanRead::Value(v) => v,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
+        match category {
+            0 => Ok(ScanRead::Value(0)),
+            16 if LOSSLESS => Ok(ScanRead::Value(-32768)),
+            1..=16 => self.reader.read_bits(category).map(|value| match value {
+                ScanRead::Value(bits) => {
+                    ScanRead::Value(decode_value(category, bits as u16) as i32)
+                }
+                ScanRead::EndOfScan => ScanRead::EndOfScan,
+                ScanRead::Truncated => ScanRead::Truncated,
+            }),
+            _ => Err(Error::invalid_jpeg_data("difference category exceeds 16")),
+        }
+    }
+
     /// Aligns to byte boundary (call before reading restart marker).
     pub fn align_to_byte(&mut self) {
         self.reader.align_to_byte();
@@ -1349,31 +1376,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         dc_table_idx: usize,
         al: u8,
     ) -> ScanResult<i16> {
-        let dc_table = self.get_dc_table(dc_table_idx)?;
-
-        let dc_cat = match self.decode_huffman(dc_table)? {
-            ScanRead::Value(v) => v,
+        let dc_diff = match self.decode_difference::<false>(dc_table_idx)? {
+            ScanRead::Value(v) => v as i16,
             ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
             ScanRead::Truncated => return Ok(ScanRead::Truncated),
-        };
-
-        // DC category must be 0-16; values > 16 would cause shift overflow in
-        // decode_value (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
-        if dc_cat > 16 {
-            return Err(Error::invalid_jpeg_data(
-                "DC Huffman category out of range (0-16)",
-            ));
-        }
-
-        let dc_diff = if dc_cat == 0 {
-            0
-        } else {
-            let bits = match self.reader.read_bits(dc_cat)? {
-                ScanRead::Value(v) => v as u16,
-                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                ScanRead::Truncated => return Ok(ScanRead::Truncated),
-            };
-            decode_value(dc_cat, bits)
         };
 
         let shifted_dc = self.prev_dc[component].wrapping_add(dc_diff);
@@ -2457,6 +2463,60 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 mod tests {
     use super::*;
     use crate::huffman::HuffmanDecodeTable;
+
+    #[test]
+    fn lossless_category_sixteen_consumes_no_magnitude_bits() {
+        // Canonical codes: 0 -> category 16, 10 -> category 0.
+        // The second difference immediately follows the one-bit first code.
+        let table = HuffmanDecodeTable::from_bits_values(
+            &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[16, 0],
+        )
+        .unwrap();
+        let mut decoder = EntropyDecoder::new(&[0b01011111, 0xff, 0xd9]);
+        decoder.set_dc_table(0, &table);
+        assert!(matches!(
+            decoder.decode_difference::<true>(0).unwrap(),
+            ScanRead::Value(-32768)
+        ));
+        assert!(matches!(
+            decoder.decode_difference::<true>(0).unwrap(),
+            ScanRead::Value(0)
+        ));
+    }
+
+    #[test]
+    fn lossless_difference_categories_cover_signed_extremes() {
+        use crate::foundation::bitstream::BitWriter;
+        for category in 1..=15u8 {
+            let table = HuffmanDecodeTable::from_bits_values_dc(
+                &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                &[category],
+            )
+            .unwrap();
+            for magnitude in [
+                0,
+                (1u32 << (category - 1)) - 1,
+                1u32 << (category - 1),
+                (1u32 << category) - 1,
+            ] {
+                let mut writer = BitWriter::new();
+                writer.write_bits(0, 1);
+                writer.write_bits(magnitude, category);
+                let data = writer.into_bytes();
+                let mut decoder = EntropyDecoder::new(&data);
+                decoder.set_dc_table(0, &table);
+                let expected = if magnitude < 1 << (category - 1) {
+                    magnitude as i32 + 1 - (1 << category)
+                } else {
+                    magnitude as i32
+                };
+                assert!(
+                    matches!(decoder.decode_difference::<true>(0).unwrap(), ScanRead::Value(v) if v == expected)
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_entropy_decoder_new() {

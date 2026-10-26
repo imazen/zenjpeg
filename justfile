@@ -605,3 +605,8 @@ analysis-cut-tests:
 precision-kernel-check:
     cargo test --locked -p zenjpeg --lib decode::idct_int::tests
     cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Predictive JPEG differences share Huffman framing, but not DCT DC prediction.
+lossless-entropy-check:
+    cargo test --locked -p zenjpeg --lib entropy::decoder::tests
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
