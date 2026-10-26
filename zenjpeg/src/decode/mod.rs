@@ -1113,6 +1113,11 @@ impl DecodeConfig {
     }
 
     fn validate_native_options(&self, parser: &JpegParser<'_>) -> Result<()> {
+        if self.output_target == OutputTarget::Native16 && self.correct_color.is_some() {
+            return Err(Error::unsupported_feature(
+                "ICC conversion is unavailable for native integer output",
+            ));
+        }
         if parser.precision == 8 && parser.mode != JpegMode::Lossless {
             return Ok(());
         }

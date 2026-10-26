@@ -1158,9 +1158,9 @@ pub enum OwnedDecodedPixels {
 
 /// Unified decode result, replacing `DecodedImage` and `DecodedImageF32`.
 ///
-/// Contains decoded pixel data in either u8 or f32 format depending on the
-/// [`OutputTarget`] used. Access pixels via [`pixels_u8()`](Self::pixels_u8)
-/// or [`pixels_f32()`](Self::pixels_f32).
+/// Contains decoded pixel data in u8, native-range u16, or f32 format depending
+/// on the [`OutputTarget`]. Use [`Self::pixels`] for a typed view, or the
+/// corresponding [`Self::pixels_u8`], [`Self::pixels_u16`] or [`Self::pixels_f32`].
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecodeResult {
@@ -1461,7 +1461,7 @@ impl DecodeResult {
 
     /// Stride (elements per row) of the image.
     ///
-    /// For u8: bytes per row. For f32: floats per row.
+    /// For u8: bytes per row. For u16/f32: samples per row.
     #[must_use]
     pub fn stride(&self) -> usize {
         if self.output_target.is_f32() {
@@ -1739,7 +1739,7 @@ pub struct JpegInfo {
     pub dimensions: Dimensions,
     /// Color space
     pub color_space: crate::types::ColorSpace,
-    /// Sample precision (8 or 12 bits)
+    /// Sample precision (8 or 12 for DCT; 2–16 for predictive lossless).
     pub precision: u8,
     /// Number of components
     pub num_components: u8,

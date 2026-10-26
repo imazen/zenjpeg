@@ -420,12 +420,15 @@ impl<'a> JpegParser<'a> {
                 // DC table - use standard lookup
                 let lossless = self.mode == JpegMode::Lossless
                     || (self.width == 0
-                        && crate::container::marker::iter(self.data)
-                            .find_map(|span| match span.kind {
-                                crate::container::marker::MarkerKind::Sof(n) => Some(n == 3),
-                                _ => None,
-                            })
-                            .unwrap_or(false));
+                        && values.contains(&16)
+                        && *self.lossless_tables.get_or_insert_with(|| {
+                            crate::container::marker::iter(self.data)
+                                .find_map(|span| match span.kind {
+                                    crate::container::marker::MarkerKind::Sof(n) => Some(n == 3),
+                                    _ => None,
+                                })
+                                .unwrap_or(false)
+                        }));
                 let table = if lossless {
                     if values.iter().any(|&v| v > 16) {
                         return Err(Error::invalid_jpeg_data("lossless DC symbol above 16"));

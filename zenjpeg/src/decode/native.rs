@@ -10,34 +10,60 @@ impl DecodeConfig {
         stop: &dyn Stop,
         forced_exif: bool,
     ) -> Result<DecodeResult> {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
         self.validate_native_options(parser)?;
         let precision = parser.precision;
         let format = self.output_format.unwrap_or(PixelFormat::Rgb);
-        let layout = crate::color::planes::Layout8::from_pixel_format(format).ok_or_else(|| {
-            Error::unsupported_feature("native samples require RGB, BGR, RGBA, BGRA or gray output")
-        })?;
+        let row_format = match format {
+            PixelFormat::GrayF32 if self.output_target.is_f32() => PixelFormat::Gray,
+            PixelFormat::RgbaF32 if self.output_target.is_f32() => PixelFormat::Rgba,
+            other => other,
+        };
+        let layout =
+            crate::color::planes::Layout8::from_pixel_format(row_format).ok_or_else(|| {
+                Error::unsupported_feature(
+                    "native samples require RGB, BGR, RGBA, BGRA or gray output",
+                )
+            })?;
         let channels = layout.bytes_per_pixel();
-        let mut reader = self.scanline_reader(data)?;
-        let (width, height) = (reader.width(), reader.height());
-        let count = (width as usize)
-            .checked_mul(height as usize)
+        // Reserve the output budget before constructing a coefficient-backed
+        // reader, so the two stages cannot each spend the whole memory limit.
+        // Crops conservatively reserve the uncropped output, as transforms do.
+        let output_bytes = (parser.width as usize)
+            .checked_mul(parser.height as usize)
             .and_then(|n| n.checked_mul(channels))
-            .ok_or_else(|| Error::size_overflow("native output"))?;
-        parser.charge_memory(
-            count
-                .checked_mul(if self.output_target.is_f32() {
+            .and_then(|n| {
+                n.checked_mul(if self.output_target.is_f32() {
                     4
                 } else if self.output_target == OutputTarget::Native16 {
                     2
                 } else {
                     1
                 })
-                .ok_or_else(|| Error::size_overflow("native output"))?,
-            "native output",
-        )?;
+            })
+            .ok_or_else(|| Error::size_overflow("native output"))?;
+        parser.charge_memory(output_bytes, "native output")?;
+        let mut row_config = self.clone();
+        if self.max_memory != 0 && self.max_memory != u64::MAX {
+            row_config.max_memory = (self.max_memory - output_bytes as u64).max(1);
+        }
+        let mut reader = if parser.mode == JpegMode::Lossless {
+            let predictive = parser.predictive_reader(stop)?;
+            let mut reader = ScanlineReader::from_predictive(
+                alloc::borrow::Cow::Borrowed(data),
+                parser.width,
+                parser.height,
+                parser.num_components,
+                precision,
+                predictive,
+            );
+            self.apply_crop(&mut reader, parser.width, parser.height, 1)?;
+            reader
+        } else {
+            row_config.scanline_reader(data)?
+        };
+        let (width, height) = (reader.width(), reader.height());
+        let count = width as usize * height as usize * channels;
         let mut samples: Vec<u16> = try_alloc_vec(width as usize * channels, "native row")?;
         let mut output = if self.output_target == OutputTarget::Native16 {
             OwnedDecodedPixels::U16(try_alloc_vec(count, "native output")?)
@@ -49,11 +75,9 @@ impl DecodeConfig {
         let mut row: Vec<rgb::RGB<u16>> = try_alloc_vec(width as usize, "native RGB row")?;
         let max = ((1u32 << precision) - 1) as u16;
         for y in 0..height as usize {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
             let dest = &mut samples[..];
-            if format == PixelFormat::Gray {
+            if row_format == PixelFormat::Gray {
                 reader.read_rows_gray16(imgref::ImgRefMut::new(dest, width as usize, 1))?;
             } else {
                 reader.read_rows_rgb16(imgref::ImgRefMut::new(&mut row, width as usize, 1))?;
@@ -95,6 +119,11 @@ impl DecodeConfig {
         }
         // Metadata uses the shared marker framing, including inter/post-scan APPs.
         parser.collect_native_metadata(stop)?;
+        let gain_map = if self.gain_map != GainMapHandling::Discard {
+            self.extract_gain_map(parser, data, stop)?
+        } else {
+            None
+        };
         let extras = finalize_extras(parser.take_extras(), data, forced_exif);
         let warnings = parser.take_warnings();
         let mut result = match output {
@@ -121,6 +150,7 @@ impl DecodeConfig {
             ),
         };
         result.set_sample_precision(precision);
+        result.gain_map = gain_map;
         Ok(result)
     }
 }

@@ -186,6 +186,8 @@ pub(super) struct JpegParser<'a> {
     pub(super) height: u32,
     pub(super) precision: u8,
     pub(super) native_precision: bool,
+    /// Lazily resolve category-16 tables preceding SOF, once per parser.
+    pub(super) lossless_tables: Option<bool>,
     pub(super) num_components: u8,
     pub(super) mode: JpegMode,
 
@@ -417,6 +419,7 @@ impl<'a> JpegParser<'a> {
             height: 0,
             precision: 8,
             native_precision: false,
+            lossless_tables: None,
             num_components: 0,
             mode: JpegMode::Baseline,
             components: std::array::from_fn(|_| Component::default()),

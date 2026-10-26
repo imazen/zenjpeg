@@ -719,6 +719,7 @@ impl<'a> ScanlineReader<'a> {
         if output.width() < width {
             return Err(Error::invalid_buffer_size(width, output.width()));
         }
+        self.check_plane_read("read_rows_gray16 needs the luma plane (use num_threads(1))")?;
         let (rows, stride) = (output.height(), output.stride());
         let (precision, matrix) = (self.precision, self.planes);
         let buf = output.buf_mut();
@@ -2001,45 +2002,9 @@ impl<'a> ScanlineReader<'a> {
         self.read_rows_with(max_rows, |i, row| {
             let out = &mut buf[i * stride..i * stride + row_bytes];
             match row {
-                RowSrc::Native(..) => {
-                    for (x, dst) in out.chunks_exact_mut(layout.bytes_per_pixel()).enumerate() {
-                        let max = ((1u32 << precision) - 1) as u64;
-                        let scale = |v: u16| ((v as u64 * 255 + max / 2) / max) as u8;
-                        if layout == Layout8::Gray {
-                            dst[0] = scale(row.gray16(x, precision, planes));
-                        } else {
-                            let [r, g, b] = row.rgb16(x, precision, planes).map(scale);
-                            let p = if matches!(layout, Layout8::Bgr | Layout8::Bgrx) {
-                                [b, g, r]
-                            } else {
-                                [r, g, b]
-                            };
-                            dst[..3].copy_from_slice(&p);
-                            if dst.len() == 4 {
-                                dst[3] = 255;
-                            }
-                        }
-                    }
-                }
+                RowSrc::Native(..) => row.write_native_u8(precision, planes, layout, out),
                 RowSrc::Planes(..) if precision != 8 => {
-                    for (x, dst) in out.chunks_exact_mut(layout.bytes_per_pixel()).enumerate() {
-                        let max = ((1u32 << precision) - 1) as u64;
-                        let scale = |v: u16| ((v as u64 * 255 + max / 2) / max) as u8;
-                        if layout == Layout8::Gray {
-                            dst[0] = scale(row.gray16(x, precision, planes));
-                        } else {
-                            let [r, g, b] = row.rgb16(x, precision, planes).map(scale);
-                            let p = if matches!(layout, Layout8::Bgr | Layout8::Bgrx) {
-                                [b, g, r]
-                            } else {
-                                [r, g, b]
-                            };
-                            dst[..3].copy_from_slice(&p);
-                            if dst.len() == 4 {
-                                dst[3] = 255;
-                            }
-                        }
-                    }
+                    row.write_native_u8(precision, planes, layout, out)
                 }
                 RowSrc::Planes(c0, c1, c2) => kernel.row(c0, c1, c2, out),
                 RowSrc::Rgb8(rgb) => rgb8_row(rgb, layout, out),
@@ -2461,6 +2426,12 @@ impl<'a> ScanlineReader<'a> {
                         *o = weighted(r, g, b);
                     }
                 }
+                RowSrc::Planes(y, _, _) if precision != 8 && planes != PlaneMatrix::Identity => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (dst, &sample) in out.iter_mut().zip(y) {
+                        *dst = srgb_to_linear_f32(sample as f32 / max);
+                    }
+                }
                 RowSrc::Planes(..) if precision != 8 => {
                     let max = ((1u32 << precision) - 1) as f32;
                     for (x, o) in out.iter_mut().enumerate() {
@@ -2860,6 +2831,16 @@ impl RowSrc<'_> {
             Self::Gray8(p) => [p[x] as u16; 3],
             Self::Rgb8(p) => [p[x * 3] as u16, p[x * 3 + 1] as u16, p[x * 3 + 2] as u16],
             Self::Planes(y, cb, cr) => {
+                if precision == 8 {
+                    let mut pixel = [0u8; 3];
+                    RowKernel::new(matrix, Layout8::Rgb).row(
+                        &y[x..x + 1],
+                        if cb.is_empty() { &[] } else { &cb[x..x + 1] },
+                        if cr.is_empty() { &[] } else { &cr[x..x + 1] },
+                        &mut pixel,
+                    );
+                    return pixel.map(u16::from);
+                }
                 let max = (1i64 << precision) - 1;
                 let clamp = |v: i64| v.clamp(0, max) as u16;
                 match matrix {
@@ -2883,6 +2864,27 @@ impl RowSrc<'_> {
             }
         }
     }
+    fn write_native_u8(self, precision: u8, matrix: PlaneMatrix, layout: Layout8, out: &mut [u8]) {
+        let max = (1u32 << precision) - 1;
+        let scale = |v: u16| ((v as u32 * 255 + max / 2) / max) as u8;
+        for (x, dst) in out.chunks_exact_mut(layout.bytes_per_pixel()).enumerate() {
+            if layout == Layout8::Gray {
+                dst[0] = scale(self.gray16(x, precision, matrix));
+            } else {
+                let [r, g, b] = self.rgb16(x, precision, matrix).map(scale);
+                let pixel = if matches!(layout, Layout8::Bgr | Layout8::Bgrx) {
+                    [b, g, r]
+                } else {
+                    [r, g, b]
+                };
+                dst[..3].copy_from_slice(&pixel);
+                if dst.len() == 4 {
+                    dst[3] = 255;
+                }
+            }
+        }
+    }
+
     fn gray16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> u16 {
         if let Self::Planes(y, _, _) = self
             && matrix != PlaneMatrix::Identity

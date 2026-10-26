@@ -39,9 +39,7 @@ impl JpegParser<'_> {
             if span.offset < self.position {
                 continue;
             }
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
             self.position = span.offset + 2;
             match span.kind {
                 MarkerKind::App(n) => self.process_app_or_com(0xe0 + n)?,
@@ -76,13 +74,14 @@ impl JpegParser<'_> {
             return Err(Error::unsupported_feature("subsampled lossless JPEG"));
         }
         let mut scans = Vec::new();
+        scans.try_reserve_exact(channels).map_err(|_| {
+            Error::allocation_failed(channels * core::mem::size_of::<Scan>(), "lossless scans")
+        })?;
         let mut seen = [false; 4];
         let mut ended = false;
         // The canonical marker walker skips entropy byte stuffing and restarts.
         for span in marker::iter(self.data) {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
             if span.offset < self.position {
                 continue;
             }
@@ -101,6 +100,12 @@ impl JpegParser<'_> {
                         ));
                     }
                     let mut components = Vec::new();
+                    components.try_reserve_exact(count).map_err(|_| {
+                        Error::allocation_failed(
+                            count * core::mem::size_of::<(usize, usize)>(),
+                            "lossless scan components",
+                        )
+                    })?;
                     for _ in 0..count {
                         let id = self.read_u8()?;
                         let selector = self.read_u8()?;
@@ -160,7 +165,7 @@ impl JpegParser<'_> {
             }
         }
         if !ended || seen[..channels].contains(&false) {
-            return Err(Error::invalid_jpeg_data("incomplete lossless JPEG scans"));
+            return Err(Error::invalid_jpeg_data("incomplete lossless SOF3 scans"));
         }
         Ok(PredictiveReader {
             scans,
