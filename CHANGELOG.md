@@ -6,6 +6,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 ## [Unreleased]
 
 ### Added
+- Native component decoding for up to ten channels, per-component quantization
+  table retention across scans, and all sixteen arithmetic conditioning slots.
 
 - Decode 12-bit DCT and 2–16-bit predictive lossless JPEG into native integer samples, including strided scanline reads. Sample equality is checked against libjpeg-turbo 3.2.0 (`bba8efa8`).
 

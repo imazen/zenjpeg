@@ -52,15 +52,15 @@ component reader supplies full-resolution components for all supported layouts.
 ## Supported modes and limits
 
 - Twelve-bit sequential and progressive DCT, including arithmetic coding;
-  gray, RGB, YCbCr, CMYK/YCCK and raw two-component images. Integral sampling
+  gray, RGB, YCbCr, CMYK/YCCK and raw component images (up to ten channels). Integral sampling
   ratios use the libjpeg interpolation rules, including 4:1:1, vertical 4:1,
   3:1 and asymmetric component sampling.
-- Lossless one- through four-component images, including CMYK, predictors 1–7,
+- Lossless one- through ten-component images, including CMYK, predictors 1–7,
   point transforms, interleaved or separate component scans, and row-aligned
   restart intervals.
 - Crops, pixel transforms, strided/chunked reads and metadata preservation.
 
-Native decoding currently rejects XYB, more than four components, fractional
+Native decoding currently rejects XYB, more than ten components, fractional
 sampling ratios, subsampled lossless, lossless DNL, differential lossless and
 arithmetic lossless.
 Deblocking, dequantization bias and ICC conversion are not supported for these
@@ -112,7 +112,7 @@ The oracle compares every sample, with no tolerance. Its matrix covers:
 
 - All lossless precisions 2–16, seven predictors, three point transforms,
   restart boundaries, gray/RGB and separate scans.
-- Sequential/progressive 12-bit DCT, the four supported sampling layouts,
+- Sequential/progressive 12-bit DCT, the supported integral sampling layouts,
   tiny/partial-MCU dimensions, noise, constant blocks and checkerboards,
   quality 5/30/60/91/100, triangle and nearest upsampling, RGB and arithmetic.
 - Raw two-component and CMYK/YCCK equality with a test-only libjpeg API helper,
@@ -164,3 +164,64 @@ The consumer still needs to:
    padded edge tiles, byte orders, photometric modes, limits and cancellation.
 
 The TIFF wrapper itself was inspected, not modified or certified end to end.
+
+## More than four components
+
+Frames support 1–10 components; each scan still carries at most four. Entropy
+predictors are indexed by scan slot, not frame component index. Unknown layouts
+are available through `read_rows_components16`; RGB/gray conversion rejects them.
+The reader keeps frame component identifiers and preserves pixel stride.
+
+DQT selectors remain 0–3 and Huffman selectors remain 0–3. Arithmetic conditioning
+selectors support 0–15. Components latch the quantization table at their first
+scan, so later DQT redefinitions do not change earlier components. Extracted
+coefficients use indices into their owned table list; redefined tables are
+compacted, not confused with the current marker-slot contents. Encoding and
+coefficient transcoding retain their existing four-component limit.
+
+`just multicomponent-check` covers counts, table redefinition, invalid headers,
+truncated prefixes, limits, crops and strided borrowed/owned readers.
+`just multicomponent-oracle` requires an explicitly built component reference.
+
+### Reference limitation and provenance
+
+The unmodified pinned libjpeg-turbo 3.2.0 encoder produces a five-component JPEG,
+but its decoder rejects the fifth component: `get_sos()` searches only the first
+four frame components. Its lossless multi-scan controllers also index four-entry
+scratch arrays using frame component indices. The six-component lossless encoder
+terminated with a stack-smashing diagnostic in the test helper.
+
+`scripts/build-component-oracle.py` builds a separate, test-only copy with the
+component-ID search corrected and those two scratch arrays sized for frame
+components. Pixel reconstruction, prediction, entropy coding, quantization and
+upsampling are unchanged. This is a **modified reference**, not evidence that the
+unmodified release decodes these files. The native-precision matrix for one through
+four components continues to use the original unmodified release.
+
+The multicomponent matrix compares every sample for counts 5–10, 8/12-bit DCT,
+sequential/progressive Huffman and arithmetic coding, horizontal sampling factors
+1–4 and vertical 2:1 layouts, lossless precisions 2–16, all seven predictors and point transforms
+0, precision/2 and precision-1. Known-value fixtures independently check component
+order and quantization-slot redefinition. The reference implementation is never
+linked into the shipped library.
+
+The proposed encoding work is scoped in [JPEG encoding extensions](jpeg-encoding-extensions.md).
+
+### Coverage gate
+
+`just multicomponent-coverage` runs library/native tests, both reference matrices,
+and the isolated allocation-failure test, then writes LCOV to
+`ZENJPEG_COVERAGE_REPORT`. `just multicomponent-coverage-gate BASE REPORT` requires
+100% of changed executable production lines, without excluding error paths.
+CI runs the gate against the pull request's base commit. Codecov's patch target
+is also 100%, with zero tolerance. This is line coverage, not branch coverage.
+
+The allocation subprocess injects one exact-size allocation failure using a
+Linux-only C interposer; Cargo, rustc and normal test processes never load it.
+It caught and verifies the correction to `try_with_capacity`, which previously
+allocated infallibly before attempting its fallible reservation.
+
+Fresh local coverage on 2026-10-26 against parent `12f25aad`: **113/113 changed
+executable production lines covered**. The run included the reference matrices
+and the allocation-failure subprocess. This does not claim 100% branch coverage
+or 100% coverage of every pre-existing decoder line.
