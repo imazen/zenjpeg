@@ -182,3 +182,220 @@ fn every_native_checkpoint_preserves_timeout_and_reports_completed_rows() {
         }
     }
 }
+
+#[test]
+#[ignore = "explicit corpus replay; set ZENJPEG_FUZZ_CORPUS"]
+fn native_fuzz_corpus_replay() {
+    let root = std::env::var_os("ZENJPEG_FUZZ_CORPUS").expect("set ZENJPEG_FUZZ_CORPUS");
+    let mut count = 0;
+    for entry in std::fs::read_dir(root).unwrap() {
+        let data = std::fs::read(entry.unwrap().path()).unwrap();
+        component_checks::check(&data);
+        #[cfg(feature = "inventory")]
+        {
+            use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+            if let Ok(inventory) = zenjpeg::JpegDecoderConfig::new().job().inventory(&data) {
+                inventory.validate().unwrap();
+            }
+        }
+        count += 1;
+    }
+    assert!(count > 0);
+}
+
+#[test]
+fn native_output_formats_and_precision_options() {
+    use zenjpeg::decoder::{CropRegion, GainMapHandling, PixelFormat};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
+    for entry in std::fs::read_dir(root).unwrap() {
+        let data = std::fs::read(entry.unwrap().path()).unwrap();
+        let reader = Decoder::new().scanline_reader(&data).unwrap();
+        let n = reader.component_ids().len();
+        if n == 2 || n > 4 || reader.sample_precision() == 8 {
+            continue;
+        }
+        for target in [
+            OutputTarget::Srgb8,
+            OutputTarget::Native16,
+            OutputTarget::SrgbF32,
+            OutputTarget::LinearF32,
+        ] {
+            for format in [
+                PixelFormat::Rgb,
+                PixelFormat::Bgr,
+                PixelFormat::Rgba,
+                PixelFormat::Bgra,
+                PixelFormat::Gray,
+                PixelFormat::GrayF32,
+                PixelFormat::RgbaF32,
+                PixelFormat::Cmyk,
+            ] {
+                if format == PixelFormat::Cmyk && n != 4 {
+                    continue;
+                }
+                let config = Decoder::new()
+                    .output_target(target)
+                    .output_format(format)
+                    .gain_map(GainMapHandling::PreserveRaw);
+                let result = config.decode(&data, enough::Unstoppable);
+                // Float pixel layouts require a float target; CMYK has no implicit EOTF.
+                if (matches!(format, PixelFormat::GrayF32 | PixelFormat::RgbaF32)
+                    && !target.is_f32())
+                    || (format == PixelFormat::Cmyk && target.is_linear())
+                {
+                    assert!(result.is_err());
+                } else {
+                    let result = result.unwrap_or_else(|e| {
+                        panic!("n={n}, target={target:?}, format={format:?}: {e}")
+                    });
+                    assert_eq!(result.height(), reader.height());
+                    let _ = result.pixels();
+                    let _ = result.into_pixels();
+                }
+            }
+        }
+        for limit in [0, u64::MAX] {
+            Decoder::new()
+                .max_memory(limit)
+                .output_target(OutputTarget::Native16)
+                .decode(&data, enough::Unstoppable)
+                .unwrap();
+        }
+        if reader.width() > 1 {
+            let pulse = TestPulse::new(u64::MAX);
+            let config = Decoder::new()
+                .output_target(OutputTarget::Native16)
+                .transform(zenjpeg::lossless::LosslessTransform::Transpose)
+                .crop(CropRegion::pixels(1, 1, 3, 3));
+            let result = config.decode_with_pulse(&data, &pulse).unwrap();
+            assert_eq!(
+                pulse.rows.load(Ordering::Relaxed),
+                u64::from(result.height())
+            );
+            let mut transformed = config.scanline_reader_with_pulse(&data, &pulse).unwrap();
+            let mut row = vec![rgb::RGB::new(0, 0, 0); 3 * 4];
+            assert_eq!(
+                transformed
+                    .read_rows_rgb16(ImgRefMut::new(&mut row, 3, 4))
+                    .unwrap(),
+                3
+            );
+        }
+    }
+}
+
+#[test]
+fn native_row_formats_report_and_check_buffers() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
+    for entry in std::fs::read_dir(root).unwrap() {
+        let data = std::fs::read(entry.unwrap().path()).unwrap();
+        let cfg = Decoder::new().output_target(OutputTarget::Native16);
+        let info = cfg.scanline_reader(&data).unwrap();
+        let (w, h, n) = (
+            info.width() as usize,
+            info.height() as usize,
+            info.component_ids().len(),
+        );
+        if n == 2 || n > 4 {
+            continue;
+        }
+        for method in 0..10 {
+            let pulse = TestPulse::new(u64::MAX);
+            let mut reader = cfg.scanline_reader_with_pulse(&data, &pulse).unwrap();
+            let mut bytes = vec![0; w * (h + 1) * 4];
+            let mut floats = vec![0.0; bytes.len()];
+            let rows = match method {
+                0 => reader.read_rows_rgb8(ImgRefMut::new(&mut bytes, w * 3, h + 1)),
+                1 => reader.read_rows_rgba8(ImgRefMut::new(&mut bytes, w * 4, h + 1)),
+                2 => reader.read_rows_bgr8(ImgRefMut::new(&mut bytes, w * 3, h + 1)),
+                3 => reader.read_rows_gray8(ImgRefMut::new(&mut bytes, w, h + 1)),
+                4 => reader.read_rows_rgba_f32(ImgRefMut::new(&mut floats, w * 4, h + 1)),
+                5 => reader.read_rows_gray_f32(ImgRefMut::new(&mut floats, w, h + 1)),
+                6 => reader.read_rows_gray_linear_f32(ImgRefMut::new(&mut floats, w, h + 1)),
+                7 => {
+                    let mut cb = floats.clone();
+                    let mut cr = floats.clone();
+                    reader.read_rows_ycbcr_f32(&mut floats, &mut cb, &mut cr, w, h + 1)
+                }
+                8 => {
+                    let mut row = vec![rgb::RGB::new(0, 0, 0); w * (h + 1)];
+                    assert!(
+                        reader
+                            .read_rows_rgb16(ImgRefMut::new_stride(&mut row, w - 1, 1, w))
+                            .is_err()
+                    );
+                    reader.read_rows_rgb16(ImgRefMut::new(&mut row, w, h + 1))
+                }
+                _ => {
+                    let mut row = vec![0; w * (h + 1)];
+                    assert!(
+                        reader
+                            .read_rows_gray16(ImgRefMut::new_stride(&mut row, w - 1, 1, w))
+                            .is_err()
+                    );
+                    reader.read_rows_gray16(ImgRefMut::new(&mut row, w, h + 1))
+                }
+            }
+            .unwrap();
+            assert_eq!(rows, h);
+            assert_eq!(pulse.rows.load(Ordering::Relaxed), h as u64);
+            assert!(reader.is_finished());
+        }
+    }
+}
+
+#[test]
+fn malformed_native_headers_are_bounded() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
+    for entry in std::fs::read_dir(root).unwrap() {
+        let data = std::fs::read(entry.unwrap().path()).unwrap();
+        let mut mutations = Vec::new();
+        for span in zenjpeg::container::iter(&data) {
+            let start = span.offset + 4;
+            // Exercise every byte in SOF/SOS and table definition prefixes.
+            let end = (span.offset + span.length).min(data.len());
+            let marker = data[span.offset + 1];
+            if matches!(
+                marker,
+                0xc0..=0xc3 | 0xc9 | 0xca | 0xda | 0xc4 | 0xdb | 0xcc | 0xdd
+            ) {
+                for pos in start..end.min(start + 20) {
+                    for value in [0, 1, 4, 5, 8, 12, 16, 17, 63, 255] {
+                        let mut changed = data.clone();
+                        changed[pos] = value;
+                        mutations.push(changed);
+                    }
+                }
+            }
+        }
+        for changed in mutations {
+            component_checks::check(&changed);
+            #[cfg(feature = "inventory")]
+            {
+                use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+                if let Ok(inventory) = zenjpeg::JpegDecoderConfig::new().job().inventory(&changed) {
+                    inventory.validate().unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn native_component_options_never_silently_drop_processing() {
+    use zenjpeg::decoder::{DeblockMode, TargetColorSpace};
+    for name in ["05-p8-c2-sof30-mode0-s1", "15-p8-c4-sof30-mode0-s1", "16-p12-c4-sof30-mode0-s1"] {
+        let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("fuzz/seeds/native/{name}.jpg"))).unwrap();
+        for config in [
+            Decoder::new().output_target(OutputTarget::Native16).deblock(DeblockMode::Boundary4Tap),
+            Decoder::new().output_target(OutputTarget::SrgbF32Precise),
+            Decoder::new().output_target(OutputTarget::Native16).correct_color(Some(TargetColorSpace::Srgb)),
+            Decoder::new().output_target(OutputTarget::SrgbF32).correct_color(Some(TargetColorSpace::Srgb)),
+        ] {
+            // Ordinary 8-bit CMYK float output keeps its existing buffered route.
+            if name.starts_with("15-") && config.output_target_value() != OutputTarget::Native16 { continue; }
+            assert!(config.scanline_reader(&data).is_err(), "{name}");
+        }
+    }
+}

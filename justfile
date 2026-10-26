@@ -693,3 +693,17 @@ native-fuzz-seeds:
     cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"$ZENJPEG_TURBO_SOURCE/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"
     just multicomponent-oracle-build
     python3 scripts/native-fuzz-seeds.py
+
+# LLVM branch instrumentation requires nightly; use a dedicated target directory.
+native-branch-coverage:
+    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --lib --test native_precision --test multicomponent --test native_hardening
+    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+native-branch-gate base report:
+    python3 scripts/check-native-branches.py {{base}} {{report}} --require-complete
+
+native-branch-fuzz-corpus:
+    cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_hardening -- --ignored native_fuzz_corpus_replay
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"

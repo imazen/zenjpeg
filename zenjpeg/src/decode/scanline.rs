@@ -1222,6 +1222,7 @@ impl<'a> ScanlineReader<'a> {
         let mcu_cols = self.strip.mcu_cols();
 
         while self.current_mcu_row < skip_target {
+            self.stop.check()?;
             // Decode one MCU row (entropy only, no IDCT)
             for _mcu_x in 0..mcu_cols {
                 // Check for restart marker
@@ -1328,6 +1329,7 @@ impl<'a> ScanlineReader<'a> {
     }
 
     fn decode_mcu_row(&mut self) -> Result<()> {
+        self.stop.check()?;
         if self.mcu_row_decoded {
             return Ok(());
         }
@@ -2761,6 +2763,7 @@ impl<'a> ScanlineReader<'a> {
         let mut total_chroma_rows = 0usize;
 
         for _ in 0..max_mcu_rows {
+            self.stop.check()?;
             if self.current_mcu_row >= total_mcu_rows {
                 break;
             }
@@ -2810,6 +2813,9 @@ impl<'a> ScanlineReader<'a> {
             total_luma_rows += luma_rows_this;
             total_chroma_rows += chroma_rows_this;
             self.current_row += luma_rows_this;
+            if let Some(progress) = self.progress {
+                progress.advance(luma_rows_this as u64);
+            }
             self.current_mcu_row += 1;
         }
 
@@ -2875,6 +2881,7 @@ impl<'a> ScanlineReader<'a> {
         c_stride: usize,
         max_mcu_rows: usize,
     ) -> Result<(usize, usize)> {
+        self.stop.check()?;
         match self.color_model {
             ColorModel::Rgb => {
                 return Err(Error::unsupported_feature(
@@ -2943,6 +2950,7 @@ impl<'a> ScanlineReader<'a> {
         let mut total_chroma_rows = 0usize;
 
         for _ in 0..max_mcu_rows {
+            self.stop.check()?;
             if self.current_mcu_row >= total_mcu_rows {
                 break;
             }
@@ -2992,6 +3000,9 @@ impl<'a> ScanlineReader<'a> {
 
             // Advance to next MCU row
             self.current_row += luma_rows_this;
+            if let Some(progress) = self.progress {
+                progress.advance(luma_rows_this as u64);
+            }
             self.advance_mcu_row();
         }
 
