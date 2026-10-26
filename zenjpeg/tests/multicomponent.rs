@@ -401,7 +401,12 @@ fn inventory_component_and_table_boundaries() {
     use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
     let valid = fixture(10, 8, false);
     let sos = valid.windows(2).position(|p| p == [255, 218]).unwrap();
-    let mut cases = vec![valid.clone(), fixture(10, 12, false), fixture(10, 16, true)];
+    let mut cases = vec![
+        valid.clone(),
+        fixture(3, 8, false),
+        fixture(10, 12, false),
+        fixture(10, 16, true),
+    ];
     let mut bad = valid.clone();
     bad[11] = 11;
     cases.push(bad);

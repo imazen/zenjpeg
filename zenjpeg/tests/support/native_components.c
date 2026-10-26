@@ -10,13 +10,15 @@
 
 int main(int argc, char **argv) {
   struct jpeg_error_mgr err;
-  if (argc == 9 && strcmp(argv[1], "encode") == 0) {
+  if ((argc == 9 || argc == 11) && strcmp(argv[1], "encode") == 0) {
     int bits=atoi(argv[2]), n=atoi(argv[3]), lossless=atoi(argv[4]);
     if(n<1 || n>10 || bits<2 || bits>16) return 2;
     struct jpeg_compress_struct c;
     c.err=jpeg_std_error(&err); jpeg_create_compress(&c);
     jpeg_stdio_dest(&c, stdout);
-    c.image_width=35; c.image_height=33; c.input_components=n;
+    c.image_width=argc==11 ? atoi(argv[9]) : 35;
+    c.image_height=argc==11 ? atoi(argv[10]) : 33; c.input_components=n;
+    if(c.image_width<1 || c.image_width>35 || c.image_height<1 || c.image_height>33) return 2;
     c.in_color_space=n==4 ? JCS_CMYK : JCS_UNKNOWN;
     jpeg_set_defaults(&c); c.data_precision=bits;
     jpeg_set_quality(&c,73,FALSE);
@@ -65,7 +67,7 @@ int main(int argc, char **argv) {
     unsigned char row8[35*10]; short row12[35*10]; unsigned short row16[35*10];
     while(c.next_scanline<c.image_height) {
       unsigned y=c.next_scanline, mask=(1u<<bits)-1;
-      for(unsigned x=0;x<35;x++) for(int k=0;k<n;k++) {
+      for(unsigned x=0;x<c.image_width;x++) for(int k=0;k<n;k++) {
         unsigned v=(x*197+y*331+k*613+x*y*29)&mask;
         row8[x*n+k]=v; row12[x*n+k]=v; row16[x*n+k]=v;
       }

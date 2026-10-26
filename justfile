@@ -677,3 +677,19 @@ multicomponent-coverage-gate base report:
 
 multicomponent-allocation-check:
     python3 scripts/component-allocation-check.py
+
+# Native component reader invariants, shared with the fuzz target.
+native-hardening-check:
+    cargo test --locked -p zenjpeg --features inventory --test multicomponent --test native_hardening
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_native_components
+
+native-fuzz-build:
+    cd zenjpeg && cargo +nightly fuzz build fuzz_native_components
+
+native-fuzz corpus artifacts seconds="300":
+    cd zenjpeg && cargo +nightly fuzz run fuzz_native_components {{corpus}} -- -artifact_prefix={{artifacts}}/ -max_total_time={{seconds}} -timeout=10 -rss_limit_mb=1024 -max_len=16384 -dict=fuzz/jpeg.dict -print_final_stats=1
+
+native-fuzz-seeds:
+    cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"$ZENJPEG_TURBO_SOURCE/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"
+    just multicomponent-oracle-build
+    python3 scripts/native-fuzz-seeds.py

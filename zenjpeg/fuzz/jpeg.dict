@@ -73,3 +73,5 @@
 "\xFF\xD8\xFF\xC0"
 # Byte-stuffed 0xFF
 "\xFF\x00"
+# DAC - Define Arithmetic Conditioning
+"\xFF\xCC"

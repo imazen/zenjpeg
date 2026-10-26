@@ -150,3 +150,10 @@ path = "fuzz_targets/fuzz_metadata_rewrite.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_native_components"
+path = "fuzz_targets/fuzz_native_components.rs"
+test = false
+doc = false
+bench = false
