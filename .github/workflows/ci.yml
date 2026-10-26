@@ -76,6 +76,22 @@ jobs:
       - name: Test (defaults)
         run: cargo test -p zenjpeg --release --lib --tests
 
+      - name: Build pinned native-precision JPEG oracle
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          mkdir -p "$HOME/tmp/zenjpeg-oracle"
+          curl -fL --retry 3 https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz -o "$HOME/tmp/zenjpeg-oracle/turbo.tar.gz"
+          echo "d31968b44f4bf962948a97232459e03658806f608e06ca25e72c72b42347b02c  $HOME/tmp/zenjpeg-oracle/turbo.tar.gz" | sha256sum -c -
+          tar -xzf "$HOME/tmp/zenjpeg-oracle/turbo.tar.gz" -C "$HOME/tmp/zenjpeg-oracle"
+          cmake -S "$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0" -B "$HOME/tmp/zenjpeg-oracle/build" -DENABLE_SHARED=OFF -DWITH_SIMD=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$HOME/tmp/zenjpeg-oracle/build" --target cjpeg-static djpeg-static --parallel 2
+          echo "ZENJPEG_TURBO_BIN=$HOME/tmp/zenjpeg-oracle/build" >> "$GITHUB_ENV"
+
+      - name: Native-precision sample equality with libjpeg-turbo
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --release --test native_precision -- --ignored --test-threads=1
+
       - name: Deferred analysis dependencies stay out of release builds
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/check-analysis-dependencies.py

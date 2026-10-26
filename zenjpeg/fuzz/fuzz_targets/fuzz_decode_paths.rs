@@ -30,12 +30,13 @@ fuzz_target!(|input: FuzzInput| {
         _ => PixelFormat::Bgra,
     };
 
-    let output_target = match input.output_target % 5 {
+    let output_target = match input.output_target % 6 {
         0 => OutputTarget::Srgb8,
         1 => OutputTarget::SrgbF32,
         2 => OutputTarget::LinearF32,
         3 => OutputTarget::SrgbF32Precise,
-        _ => OutputTarget::LinearF32Precise,
+        4 => OutputTarget::LinearF32Precise,
+        _ => OutputTarget::Native16,
     };
 
     let strictness = match input.strictness % 4 {

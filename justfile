@@ -620,3 +620,22 @@ native-precision-check:
     cargo test --locked -p zenjpeg --test native_precision
     cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
     cargo test --locked -p zenjpeg --lib
+
+native-decoder-regressions:
+    cargo test --locked -p zenjpeg --lib --tests -- --test-threads=1
+
+native-feature-regressions:
+    cargo test --locked -p zenjpeg --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings
+
+native-integration-check:
+    cargo test --locked -p zenjpeg --features "parallel,zencodec,inventory" --test native_precision
+    just fuzz-check
+    cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
+    cargo test --locked -p zenjpeg --doc
+
+native-portability-check:
+    cargo check --locked -p zenjpeg --lib --target wasm32-unknown-unknown
+    cargo check --locked -p zenjpeg --lib --target i686-unknown-linux-gnu
+    cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings

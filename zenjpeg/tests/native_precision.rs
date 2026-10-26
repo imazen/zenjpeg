@@ -134,6 +134,25 @@ fn compare(jpeg: &[u8], bits: u8, label: &str, nearest: bool) {
             actual[i], expected[i]
         );
     }
+    let max = ((1u32 << bits) - 1) as f32;
+    let floats = config
+        .clone()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(jpeg, Unstoppable)
+        .unwrap();
+    let expected_float: Vec<f32> = expected.iter().map(|&v| v as f32 / max).collect();
+    assert_eq!(floats.pixels_f32().unwrap(), expected_float, "f32 {label}");
+    let bytes = config
+        .clone()
+        .output_target(OutputTarget::Srgb8)
+        .decode(jpeg, Unstoppable)
+        .unwrap();
+    let max = (1u32 << bits) - 1;
+    let expected_bytes: Vec<u8> = expected
+        .iter()
+        .map(|&v| ((v as u32 * 255 + max / 2) / max) as u8)
+        .collect();
+    assert_eq!(bytes.pixels_u8().unwrap(), expected_bytes, "u8 {label}");
     for owned in [false, true] {
         let data = if owned {
             Cow::Owned(jpeg.to_vec())
@@ -370,6 +389,304 @@ fn lossless_truncations_and_invalid_scan_parameters() {
             let mut invalid = jpeg.clone();
             invalid[sos + offset] = value;
             assert!(Decoder::new().decode(&invalid, Unstoppable).is_err());
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly configured libjpeg-turbo 3.2.0 cjpeg/djpeg"]
+fn separate_lossless_scans_match_turbo() {
+    for bits in [8, 12, 16] {
+        let input = pnm(19, 17, 3, bits, 0);
+        let jpeg = tool(
+            "cjpeg-static",
+            &[
+                "-precision".into(),
+                bits.to_string(),
+                "-lossless".into(),
+                "1".into(),
+                "-scans".into(),
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/scan_scripts/lossless.txt"
+                )
+                .into(),
+                "-restart".into(),
+                "2".into(),
+            ],
+            &input,
+        );
+        compare(&jpeg, bits, "separate lossless scans", false);
+        compare_transformed(&jpeg);
+    }
+}
+
+fn compare_transformed(jpeg: &[u8]) {
+    use zenjpeg::lossless::LosslessTransform as T;
+    let config = Decoder::new().output_target(OutputTarget::Native16);
+    let source = config.decode(jpeg, Unstoppable).unwrap();
+    let (w, h) = (source.width() as usize, source.height() as usize);
+    let input = source.pixels_u16().unwrap();
+    let cropped = config
+        .clone()
+        .crop(zenjpeg::decoder::CropRegion::pixels(3, 2, 7, 9));
+    let expected_crop: Vec<u16> = (2..11)
+        .flat_map(|y| input[(y * w + 3) * 3..(y * w + 10) * 3].iter().copied())
+        .collect();
+    assert_eq!(
+        cropped
+            .decode(jpeg, Unstoppable)
+            .unwrap()
+            .pixels_u16()
+            .unwrap(),
+        expected_crop
+    );
+    for data in [Cow::Borrowed(jpeg), Cow::Owned(jpeg.to_vec())] {
+        let mut reader = cropped.scanline_reader_cow(data).unwrap();
+        let mut row = vec![rgb::RGB::new(0, 0, 0); 7];
+        let mut actual = Vec::new();
+        while !reader.is_finished() {
+            assert_eq!(
+                reader
+                    .read_rows_rgb16(ImgRefMut::new(&mut row, 7, 1))
+                    .unwrap(),
+                1
+            );
+            actual.extend(row.iter().flat_map(|p| [p.r, p.g, p.b]));
+        }
+        assert_eq!(actual, expected_crop);
+    }
+    for transform in [
+        T::FlipHorizontal,
+        T::FlipVertical,
+        T::Rotate90,
+        T::Rotate180,
+        T::Rotate270,
+        T::Transpose,
+        T::Transverse,
+    ] {
+        let cfg = config.clone().transform(transform);
+        let actual = cfg.decode(jpeg, Unstoppable).unwrap();
+        let (ow, oh) = (actual.width() as usize, actual.height() as usize);
+        let mut expected = Vec::new();
+        for y in 0..oh {
+            for x in 0..ow {
+                let (sx, sy) = match transform {
+                    T::FlipHorizontal => (w - 1 - x, y),
+                    T::FlipVertical => (x, h - 1 - y),
+                    T::Rotate90 => (y, h - 1 - x),
+                    T::Rotate180 => (w - 1 - x, h - 1 - y),
+                    T::Rotate270 => (w - 1 - y, x),
+                    T::Transpose => (y, x),
+                    T::Transverse => (w - 1 - y, h - 1 - x),
+                    T::None => unreachable!(),
+                };
+                expected.extend_from_slice(&input[(sy * w + sx) * 3..(sy * w + sx + 1) * 3]);
+            }
+        }
+        assert_eq!(actual.pixels_u16().unwrap(), expected, "{transform:?}");
+        for data in [Cow::Borrowed(jpeg), Cow::Owned(jpeg.to_vec())] {
+            let mut reader = cfg.scanline_reader_cow(data).unwrap();
+            let mut output = vec![rgb::RGB::new(0, 0, 0); ow * oh];
+            assert_eq!(
+                reader
+                    .read_rows_rgb16(ImgRefMut::new(&mut output, ow, oh))
+                    .unwrap(),
+                oh
+            );
+            let flat: Vec<u16> = output.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+            assert_eq!(flat, expected, "scanline {transform:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly configured libjpeg-turbo 3.2.0 cjpeg/djpeg"]
+fn rgb_and_arithmetic_twelve_bit_match_turbo() {
+    for rgb in [false, true] {
+        for progressive in [false, true] {
+            for arithmetic in [false, true] {
+                let mut args = vec![
+                    "-precision".into(),
+                    "12".into(),
+                    "-quality".into(),
+                    "73".into(),
+                ];
+                if rgb {
+                    args.push("-rgb".into());
+                }
+                if progressive {
+                    args.push("-progressive".into());
+                }
+                if arithmetic {
+                    args.push("-arithmetic".into());
+                }
+                let jpeg = tool("cjpeg-static", &args, &pnm(19, 17, 3, 12, 0));
+                compare(
+                    &jpeg,
+                    12,
+                    &format!("RGB={rgb} progressive={progressive} arithmetic={arithmetic}"),
+                    false,
+                );
+                compare_transformed(&jpeg);
+            }
+        }
+    }
+}
+
+#[test]
+fn lossless_category_sixteen_and_tables_before_frame() {
+    for table_first in [false, true] {
+        let mut jpeg = vec![255, 216];
+        let mut table = vec![0];
+        table.extend_from_slice(&[0, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        table.extend(0..=16);
+        if table_first {
+            segment(&mut jpeg, 0xc4, &table);
+        }
+        segment(&mut jpeg, 0xc3, &[16, 0, 1, 0, 3, 1, 1, 0x11, 0]);
+        if !table_first {
+            segment(&mut jpeg, 0xc4, &table);
+        }
+        segment(&mut jpeg, 0xda, &[1, 1, 0, 1, 0, 0]);
+        // Differences -32768 (category 16, no magnitude), -1 and -32767.
+        let bits = "1000000001001111000000000000000";
+        let mut padded = bits.to_owned();
+        while padded.len() % 8 != 0 {
+            padded.push('1');
+        }
+        for chunk in padded.as_bytes().as_chunks::<8>().0 {
+            let byte = chunk.iter().fold(0u8, |v, b| (v << 1) | (b - b'0'));
+            jpeg.push(byte);
+            if byte == 255 {
+                jpeg.push(0);
+            }
+        }
+        jpeg.extend_from_slice(&[255, 217]);
+        let config = Decoder::new()
+            .output_target(OutputTarget::Native16)
+            .output_format(PixelFormat::Gray);
+        assert_eq!(
+            config
+                .decode(&jpeg, Unstoppable)
+                .unwrap()
+                .pixels_u16()
+                .unwrap(),
+            [0, 65535, 32768]
+        );
+    }
+}
+
+#[test]
+fn native_cancellation_preserves_reason() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct StopAfter(AtomicUsize);
+    impl enough::Stop for StopAfter {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            if self.0.fetch_sub(1, Ordering::Relaxed) <= 1 {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    for lossless in [false, true] {
+        for check in [1, 3, 8] {
+            let jpeg = constant_jpeg(12, lossless, 1, 0);
+            let error = Decoder::new()
+                .decode(&jpeg, StopAfter(AtomicUsize::new(check)))
+                .unwrap_err();
+            assert!(matches!(
+                error.kind(),
+                zenjpeg::decoder::ErrorKind::Cancelled(_)
+            ));
+        }
+    }
+}
+
+#[cfg(feature = "inventory")]
+#[test]
+fn inventory_recognizes_native_image_data() {
+    use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+    for bits in 2..=16 {
+        for lossless in [true, false] {
+            if !lossless && bits != 12 {
+                continue;
+            }
+            let jpeg = constant_jpeg(bits, lossless, 7, 0);
+            let inventory = zenjpeg::JpegDecoderConfig::new()
+                .job()
+                .inventory(&jpeg)
+                .unwrap();
+            inventory.validate().unwrap();
+            assert!(
+                inventory
+                    .parts()
+                    .iter()
+                    .any(|p| p.disposition() == zencodec::inventory::Disposition::ImageData),
+                "p={bits} lossless={lossless}: {inventory}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_metadata_is_preserved_once_before_and_after_scans() {
+    let xml = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><value>native samples</value></x:xmpmeta>";
+    let mut payload = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+    payload.extend_from_slice(xml.as_bytes());
+    let mut app = Vec::new();
+    segment(&mut app, 0xe1, &payload);
+    for lossless in [false, true] {
+        for late in [false, true] {
+            let mut jpeg = constant_jpeg(12, lossless, 1, 0);
+            let at = if late { jpeg.len() - 2 } else { 2 };
+            jpeg.splice(at..at, app.iter().copied());
+            let result = Decoder::new()
+                .preserve_all_metadata()
+                .output_target(OutputTarget::Native16)
+                .decode(&jpeg, Unstoppable)
+                .unwrap();
+            assert_eq!(result.extras().unwrap().xmp(), Some(xml));
+            assert_eq!(result.sample_precision(), 12);
+        }
+    }
+}
+
+#[test]
+fn native_eight_bit_reads_preserve_configured_rounding() {
+    use zenjpeg::decoder::IdctMethod;
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    let pixels: Vec<u8> = (0..19 * 17 * 3)
+        .map(|i| ((i * 197 + i * i * 31) & 255) as u8)
+        .collect();
+    for progressive in [false, true] {
+        let mut encoder = EncoderConfig::ycbcr(73.0, ChromaSubsampling::Quarter)
+            .progressive(progressive)
+            .encode_from_bytes(19, 17, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        encoder.push_packed(&pixels, Unstoppable).unwrap();
+        let jpeg = encoder.finish().unwrap();
+        for idct in [IdctMethod::Libjpeg, IdctMethod::Jpegli] {
+            for format in [PixelFormat::Rgb, PixelFormat::Gray] {
+                let config = Decoder::new().idct_method(idct).output_format(format);
+                let bytes = config.decode(&jpeg, Unstoppable).unwrap();
+                let native = config
+                    .output_target(OutputTarget::Native16)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let expected: Vec<u16> = bytes
+                    .pixels_u8()
+                    .unwrap()
+                    .iter()
+                    .map(|&v| v as u16)
+                    .collect();
+                assert_eq!(
+                    native.pixels_u16().unwrap(),
+                    expected,
+                    "progressive={progressive} idct={idct:?} format={format:?}"
+                );
+            }
         }
     }
 }

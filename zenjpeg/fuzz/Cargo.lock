@@ -458,7 +458,9 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "enough",
+ "imgref",
  "libfuzzer-sys",
+ "rgb",
  "zencodec",
  "zenjpeg",
  "zenpixels",
