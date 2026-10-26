@@ -1,11 +1,12 @@
 //! Shared by libFuzzer and stable regression tests. Native samples have no
 //! implied color space: compare component order and values without RGB conversion.
 use imgref::ImgRefMut;
-use zenjpeg::decoder::{ChromaUpsampling, Decoder, ScanlineReader, Strictness};
+use zenjpeg::decoder::{ChromaUpsampling, Decoder, OutputTarget, ScanlineReader, Strictness};
 
 pub fn check(data: &[u8]) {
     for strictness in [Strictness::Strict, Strictness::Balanced] {
         let config = Decoder::new()
+            .output_target(OutputTarget::Native16)
             .max_pixels(262_144)
             .max_memory(16 * 1024 * 1024)
             .strictness(strictness)

@@ -1790,8 +1790,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
-            if block_y & 15 == 0 && stop.should_stop() {
-                return Err(Error::cancelled());
+            if block_y & 15 == 0 {
+                stop.check()?;
             }
 
             for block_x in 0..blocks_h {
@@ -2182,8 +2182,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
-            if block_y & 15 == 0 && stop.should_stop() {
-                return Err(Error::cancelled());
+            if block_y & 15 == 0 {
+                stop.check()?;
             }
 
             for block_x in 0..blocks_h {

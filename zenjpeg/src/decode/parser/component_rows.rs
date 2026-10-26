@@ -47,6 +47,7 @@ impl JpegParser<'_> {
     pub(in crate::decode) fn component_rows(
         &mut self,
         fancy: ChromaUpsampling,
+        stop: &dyn enough::Stop,
     ) -> Result<ComponentRows> {
         if self.height == 0 {
             return Err(Error::unsupported_feature("component rows with DNL height"));
@@ -92,7 +93,7 @@ impl JpegParser<'_> {
         } else {
             self.native_precision = true;
             self.decode_mode = DecodeMode::Coefficient;
-            self.decode(&enough::Unstoppable)?;
+            self.decode(&stop)?;
             coefficients = Some(self.extract_coefficients()?);
             scan = None;
         }
@@ -147,7 +148,7 @@ impl JpegParser<'_> {
 }
 
 impl ComponentRows {
-    fn load(&mut self, data: &[u8]) -> Result<()> {
+    fn load(&mut self, data: &[u8], stop: &dyn enough::Stop) -> Result<()> {
         let mut entropy = EntropyDecoder::new(&data[self.start..]);
         for i in 0..MAX_HUFFMAN_TABLES {
             if let Some(t) = &self.dc[i] {
@@ -164,6 +165,7 @@ impl ComponentRows {
         let mut dequant = [0i32; 64];
         let mut pixels = [0i16; 64];
         for x in 0..self.columns {
+            stop.check()?;
             if self.coefficients.is_none()
                 && self.restart != 0
                 && self.mcus != 0
@@ -233,14 +235,14 @@ impl ComponentRows {
         Ok(())
     }
 
-    pub fn next_row(&mut self, data: &[u8]) -> Result<()> {
+    pub fn next_row(&mut self, data: &[u8], stop: &dyn enough::Stop) -> Result<()> {
         if self.current_row >= self.height {
             return Err(Error::invalid_jpeg_data("component row past image"));
         }
         let y = self.current_row;
         let needed = (y / self.strip_height + 2).min(self.strips);
         while self.loaded < needed {
-            self.load(data)?;
+            self.load(data, stop)?;
         }
         let max_h = self.planes.iter().map(|p| p.h).max().unwrap();
         let max_v = self.planes.iter().map(|p| p.v).max().unwrap();

@@ -178,7 +178,7 @@ impl PredictiveReader {
     pub(in crate::decode) fn current_row(&self) -> usize {
         self.current_row
     }
-    pub(in crate::decode) fn next_row(&mut self, data: &[u8]) -> Result<()> {
+    pub(in crate::decode) fn next_row(&mut self, data: &[u8], stop: &dyn Stop) -> Result<()> {
         if self.current_row >= self.height {
             return Err(Error::invalid_jpeg_data("read past lossless image"));
         }
@@ -203,6 +203,9 @@ impl PredictiveReader {
             let mut left = [0i32; 4];
             let mut upper_left = [0i32; 4];
             for x in 0..self.width {
+                if x % 64 == 0 {
+                    stop.check()?;
+                }
                 for (slot, &(component, table)) in scan.components.iter().enumerate() {
                     let above = scan.previous[x * count + slot] as i32;
                     let prediction = if first {

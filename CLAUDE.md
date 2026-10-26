@@ -1687,3 +1687,10 @@ before its fallible reserve. An injected allocation failure aborted instead of
 returning an error. The component quantization-table failure test reproduces it;
 the fix starts from an empty Vec and performs the fallible reservation first.
 The isolated Linux allocator-interposition test checks the returned context.
+
+## Native component hardening (2026-10-26)
+
+- Minimal libjpeg-turbo fixtures exposed that 8-bit two-component frames fell
+  through to the RGB reader's 1/3/4-component admission check. Route them through
+  the same native component reader as higher component counts. Regression:
+  `tests/native_hardening.rs::oracle_seeds_and_all_truncated_prefixes`.

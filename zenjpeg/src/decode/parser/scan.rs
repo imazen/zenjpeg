@@ -383,9 +383,7 @@ impl<'a> JpegParser<'a> {
 
             for block_y in 0..grid.comp_blocks_v {
                 // Check for cancellation at each block row
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
 
                 for block_x in 0..grid.comp_blocks_h {
                     if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -480,9 +478,7 @@ impl<'a> JpegParser<'a> {
 
             for mcu_y in 0..mcu_rows {
                 // Check for cancellation at each MCU row
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
 
                 for mcu_x in 0..mcu_cols {
                     // Check for restart marker
@@ -872,9 +868,7 @@ impl<'a> JpegParser<'a> {
         // Process MCU row by row
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             // Decode one MCU row's worth of blocks
             for mcu_x in 0..mcu_cols {

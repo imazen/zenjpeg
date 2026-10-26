@@ -893,9 +893,7 @@ impl<'a> JpegParser<'a> {
         // Continue parsing until we hit EOI
         loop {
             // Check for cancellation
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             let marker = match self.read_marker() {
                 Ok(m) => m,

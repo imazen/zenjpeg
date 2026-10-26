@@ -154,9 +154,7 @@ fn decode_dc_scan_non_interleaved(
 
     'ni_dc: for block_y in 0..grid.comp_blocks_v {
         // Check for cancellation at each block row
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         for block_x in 0..grid.comp_blocks_h {
             // Check for restart marker
@@ -226,9 +224,7 @@ fn decode_dc_scan_interleaved(
 
     'dc_scan: for mcu_y in 0..geom.mcu_rows {
         // Check for cancellation at each MCU row
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         for mcu_x in 0..geom.mcu_cols {
             // Check for restart marker

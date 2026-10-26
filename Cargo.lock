@@ -2575,6 +2575,7 @@ dependencies = [
  "garb",
  "getrandom 0.3.4",
  "half",
+ "how-far",
  "img-parts",
  "imgref",
  "jpeg-decoder",

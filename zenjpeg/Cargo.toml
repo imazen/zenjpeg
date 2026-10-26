@@ -52,6 +52,7 @@ bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
+how-far = { version = "0.1.0", default-features = false }
 zencodec = { workspace = true }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", default-features = false, features = ["xmp"] }
 zenpixels = { workspace = true }
@@ -99,6 +100,7 @@ zenyuv = { workspace = true }
 zenpixels-convert = { workspace = true }
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
+how-far = { version = "0.1.0", default-features = false }
 test-case = { workspace = true }
 fast-ssim2 = { workspace = true }
 serde = { workspace = true }

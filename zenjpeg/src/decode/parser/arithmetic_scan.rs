@@ -118,9 +118,7 @@ impl<'a> JpegParser<'a> {
             let mut unit_count = 0usize;
 
             for block_y in 0..grid.comp_blocks_v {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
                 for block_x in 0..grid.comp_blocks_h {
                     let block_idx = block_y * grid.padded_blocks_h + block_x;
                     match decoder.decode_block(
@@ -166,9 +164,7 @@ impl<'a> JpegParser<'a> {
         let mut mcu_count = 0usize;
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 // For each component in the scan
@@ -464,9 +460,7 @@ impl<'a> JpegParser<'a> {
 
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 for (slot, (comp_idx, dc_tbl, _ac_tbl)) in scan_components.iter().enumerate() {
@@ -517,9 +511,7 @@ impl<'a> JpegParser<'a> {
 
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 for (comp_idx, _dc_tbl, _ac_tbl) in scan_components {
@@ -568,9 +560,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
 
         for block_y in 0..comp_blocks_v {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -613,9 +603,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
 
         for block_y in 0..comp_blocks_v {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -662,9 +650,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -715,9 +701,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;

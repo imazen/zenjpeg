@@ -36,9 +36,8 @@ for i, case in enumerate(cases):
     assert len(raw) == w * h * n * 2
     name = f'{i:02d}-p{precision}-c{n}-sof3{lossless}-mode{mode}-s{sampling}'
     (out / (name + '.jpg')).write_bytes(jpeg)
-    (out / (name + '.raw')).write_bytes(raw)
     manifest.append(dict(name=name, reference='stock-3.2.0' if n <= 4 else 'component-bounds-repaired-3.2.0',
                          args=args, jpeg_sha256=hashlib.sha256(jpeg).hexdigest(),
                          samples_sha256=hashlib.sha256(raw).hexdigest()))
-(out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+Path('zenjpeg/tests/support/native_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 print(f'{len(cases)} fixtures, {sum(p.stat().st_size for p in out.glob("*.jpg"))} JPEG bytes')
