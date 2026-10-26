@@ -27,19 +27,48 @@ samples do not retain out-of-range IDCT ringing.
 The existing `into_parts()` tuple has no integer slot; it converts native
 samples to normalized f32. Use `into_pixels()` for ownership without conversion.
 
+## Component output
+
+`ScanlineReader::read_rows_components16` accepts `ImgRefMut<[u16; N]>`, where
+`N` must equal the frame component count. `component_ids()` identifies the
+channels in frame order. It preserves reconstructed component samples without
+color conversion; DCT samples are upsampled to full resolution using the selected
+filter. A two-component frame has no implied RGB meaning: RGB reads reject it.
+This interface requires source components, so readers holding already-converted
+or pixel-transformed buffers reject raw component reads.
+
+`read_rows_cmyk16` accepts `ImgRefMut<Cmyk16>` and retains JPEG's channel/inversion
+convention (including Adobe-inverted CMYK). YCCK is converted with the libjpeg
+matrix. `output_format(PixelFormat::Cmyk)` supports collected native u16, scaled
+u8 and normalized f32 output. Crops and pixel transforms retain all four channels.
+ICC conversion remains external; requesting linear-sRGB CMYK output is rejected. These APIs do not normalize Adobe-inverted
+samples to a different ink convention.
+
+The existing subsampling enum describes only the four common three-plane layouts;
+use header/component metadata when handling other layouts. Native-resolution
+YCbCr plane reads remain specific to the optimized three-plane reader; the new
+component reader supplies full-resolution components for all supported layouts.
+
 ## Supported modes and limits
 
 - Twelve-bit sequential and progressive DCT, including arithmetic coding;
-  grayscale, RGB and YCbCr; 4:4:4, 4:2:2, 4:2:0 and 4:4:0 sampling.
-- Lossless gray and RGB, predictors 1–7, point transforms, interleaved or
-  separate component scans, and row-aligned restart intervals.
+  gray, RGB, YCbCr, CMYK/YCCK and raw two-component images. Integral sampling
+  ratios use the libjpeg interpolation rules, including 4:1:1, vertical 4:1,
+  3:1 and asymmetric component sampling.
+- Lossless one- through four-component images, including CMYK, predictors 1–7,
+  point transforms, interleaved or separate component scans, and row-aligned
+  restart intervals.
 - Crops, pixel transforms, strided/chunked reads and metadata preservation.
 
-Native decoding currently rejects CMYK/XYB, other 12-bit sampling shapes,
-subsampled lossless, lossless DNL, differential lossless and arithmetic lossless.
+Native decoding currently rejects XYB, more than four components, fractional
+sampling ratios, subsampled lossless, lossless DNL, differential lossless and
+arithmetic lossless.
 Deblocking, dequantization bias and ICC conversion are not supported for these
 sources. Twelve-bit DCT always uses the libjpeg integer reconstruction.
-Coefficient extraction/re-encoding remains restricted to 8-bit DCT images.
+Coefficient extraction and lossless JPEG-domain transforms/restructuring support
+8- and 12-bit DCT with one through four components. Coefficient containers retain
+`sample_precision`; sequential output uses SOF1 for 12-bit data. This is coefficient
+transcoding, not a predictive SOF3 encoder. Lossy recompression and JBRD reconstruction-metadata extraction remain 8-bit only.
 
 Sequential DCT and lossless readers keep row buffers. Progressive and
 non-interleaved DCT retain coefficients between scans; pixel transforms use the
@@ -53,6 +82,12 @@ The integer islow IDCT shares its butterfly between 8 and 12 bits. Twelve-bit
 reconstruction uses one first-pass guard bit instead of two; the established
 8-bit SIMD dispatch is unchanged. Twelve-bit chroma interpolation uses widened
 scalar intermediates where an 8-bit SIMD kernel would overflow.
+
+The uncommon DCT component layouts share one component-independent row stage:
+three MCU strips retain the interpolation context. It reuses the entropy decoder,
+integer IDCT and vertical interpolation kernels rather than defining a decoder
+for each color space or sampling ratio. The existing optimized three-plane paths
+remain unchanged.
 
 SOF3 shares marker framing, Huffman tables, bit reading and restart handling with
 DCT JPEG. Its small prediction module retains one previous row per scan and
@@ -80,6 +115,10 @@ The oracle compares every sample, with no tolerance. Its matrix covers:
 - Sequential/progressive 12-bit DCT, the four supported sampling layouts,
   tiny/partial-MCU dimensions, noise, constant blocks and checkerboards,
   quality 5/30/60/91/100, triangle and nearest upsampling, RGB and arithmetic.
+- Raw two-component and CMYK/YCCK equality with a test-only libjpeg API helper,
+  including lossless precision boundaries, all predictors and point transforms.
+- Sequential/progressive coefficient preservation and independent jpegtran
+  transform comparisons for 12-bit DCT, including CMYK/YCCK.
 - Native integers, normalized floats, u8 conversion, owned/borrowed strided
   reads, crops and all seven pixel transforms.
 

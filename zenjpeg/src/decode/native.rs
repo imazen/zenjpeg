@@ -14,6 +14,11 @@ impl DecodeConfig {
         self.validate_native_options(parser)?;
         let precision = parser.precision;
         let format = self.output_format.unwrap_or(PixelFormat::Rgb);
+        if format == PixelFormat::Cmyk && self.output_target.is_linear() {
+            return Err(Error::unsupported_feature(
+                "CMYK has no implicit sRGB transfer function",
+            ));
+        }
         let row_format = match format {
             PixelFormat::GrayF32 if self.output_target.is_f32() => PixelFormat::Gray,
             PixelFormat::RgbaF32 if self.output_target.is_f32() => PixelFormat::Rgba,

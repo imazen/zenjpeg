@@ -768,12 +768,13 @@ impl<'a> ScanlineReader<'a> {
             ));
         }
         let (rows, stride) = (output.height(), output.stride());
+        let max = ((1u32 << self.precision) - 1) as i32;
         let buf = output.buf_mut();
         self.read_component_rows_with(rows, true, |i, row| {
             for x in 0..width {
                 buf[i * stride + x] = core::array::from_fn(|c| match row {
                     RowSrc::Native(p, n, _) => p[x * n + c],
-                    RowSrc::Planes(y, cb, cr) => [y, cb, cr][c][x] as u16,
+                    RowSrc::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
                     _ => unreachable!(),
                 });
             }
@@ -3258,6 +3259,31 @@ fn filter_inter_mcu_horizontal_i16(
     }
 }
 
+fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
+    let max = (1i64 << precision) - 1;
+    let [y, b, r] = p.map(i64::from);
+    let (b, r) = (b - (1 << (precision - 1)), r - (1 << (precision - 1)));
+    [
+        y + ((91881 * r + 32768) >> 16),
+        y + ((-22554 * b - 46802 * r + 32768) >> 16),
+        y + ((116130 * b + 32768) >> 16),
+    ]
+    .map(|v| v.clamp(0, max) as u16)
+}
+
+fn frame_component_ids(data: &[u8]) -> [u8; 4] {
+    use crate::container::marker::{self, MarkerKind};
+    let mut ids = [0; 4];
+    if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
+        && let Some(components) = frame.payload.get(6..)
+    {
+        for (id, c) in ids.iter_mut().zip(components.as_chunks::<3>().0.iter()) {
+            *id = c[0];
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4956,29 +4982,4 @@ mod tests {
             );
         });
     }
-}
-
-fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
-    let max = (1i64 << precision) - 1;
-    let [y, b, r] = p.map(i64::from);
-    let (b, r) = (b - (1 << (precision - 1)), r - (1 << (precision - 1)));
-    [
-        y + ((91881 * r + 32768) >> 16),
-        y + ((-22554 * b - 46802 * r + 32768) >> 16),
-        y + ((116130 * b + 32768) >> 16),
-    ]
-    .map(|v| v.clamp(0, max) as u16)
-}
-
-fn frame_component_ids(data: &[u8]) -> [u8; 4] {
-    use crate::container::marker::{self, MarkerKind};
-    let mut ids = [0; 4];
-    if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
-        && let Some(components) = frame.payload.get(6..)
-    {
-        for (id, c) in ids.iter_mut().zip(components.as_chunks::<3>().0.iter()) {
-            *id = c[0];
-        }
-    }
-    ids
 }

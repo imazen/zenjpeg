@@ -10,14 +10,14 @@
 ## summary
 #
 #   pub modules                                83
-#   pub types (struct/enum/trait/alias)       292
+#   pub types (struct/enum/trait/alias)       293
 #   pub consts/statics                        314
 #   free functions                            366
-#   inherent methods                         1188
-#   struct fields                             744
+#   inherent methods                         1189
+#   struct fields                             749
 #   enum variants                             494
 #   re-exports                                 18
-#   trait roster entries (type × trait)       645
+#   trait roster entries (type × trait)       646
 #   auto-trait-complete types                 127
 #   auto-trait exceptions                       7
 #
@@ -26,8 +26,8 @@
 #   alloc                             1
 #   color                           110
 #   container                        31
-#   decode                          449
-#   decoder                          54
+#   decode                          455
+#   decoder                          55
 #   detect                           40
 #   encode                         1413
 #   encoder                         134
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3323 lines)
+## items (3330 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -598,6 +598,7 @@ pub fn decode::upsample::upsample_h2v2_libjpeg_row_scalar(&[i16], &[i16], &mut [
 pub fn decode::upsample::upsample_libjpeg_f32(&[f32], usize, usize, usize, usize, usize, usize) -> alloc::vec::Vec<f32>
 pub fn decode::upsample::upsample_nearest_f32(&[f32], usize, usize, &mut [f32], usize, usize, usize, usize)
 pub fn decoder::ChromaUpsampling::assert_fields_are_eq(&self)
+pub fn decoder::Cmyk16::assert_fields_are_eq(&self)
 pub fn decoder::DeblockMode::assert_fields_are_eq(&self)
 pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<color::icc::TargetColorSpace>) -> Self
 pub fn decoder::DecodeConfig::decode_coefficients_with_jbrd_metadata(&self, &[u8], impl enough::Stop) -> encoder::Result<(decoder::DecodedCoefficients, decode::JbrdMetadata)>
@@ -2005,6 +2006,7 @@ pub mod test_utils::thresholds
 pub mod types
 pub static quant::identify::IJG_LUMA_BASES: [[u16; 64]; 9]
 pub struct decode::AdobeInfo [also: encode::extras]
+pub struct decode::Cmyk16
 pub struct decode::CoefficientComparison
 pub struct decode::ComponentCoefficients
 pub struct decode::DecodeConfig
@@ -2141,6 +2143,10 @@ pub decode::AdobeInfo::color_transform: encode::extras::AdobeColorTransform
 pub decode::AdobeInfo::version: u16
 pub decode::ChromaUpsampling::NearestNeighbor
 pub decode::ChromaUpsampling::Triangle
+pub decode::Cmyk16::c: u16
+pub decode::Cmyk16::k: u16
+pub decode::Cmyk16::m: u16
+pub decode::Cmyk16::y: u16
 pub decode::CoefficientComparison::diff_by_position: [u64; 64]
 pub decode::CoefficientComparison::differing_blocks: usize
 pub decode::CoefficientComparison::max_diff: i16
@@ -2217,6 +2223,7 @@ pub decode::DecodeWarning::ZeroQuantValue::table_idx: u8
 pub decode::DecodedCoefficients::components: alloc::vec::Vec<decode::ComponentCoefficients>
 pub decode::DecodedCoefficients::height: u32
 pub decode::DecodedCoefficients::quant_tables: alloc::vec::Vec<core::option::Option<[u16; 64]>>
+pub decode::DecodedCoefficients::sample_precision: u8
 pub decode::DecodedCoefficients::width: u32
 pub decode::DecodedImage::data: alloc::vec::Vec<u8>
 pub decode::DecodedImage::format: types::PixelFormat
@@ -3370,7 +3377,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (214 types)
+## trait impls (215 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3413,6 +3420,7 @@ decode::OwnedDecodedPixels: Clone, Debug
 decode::ParallelStrategy: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 decode::upsample::H2v2Bias: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 decoder::ChromaUpsampling: TrivialClone
+decoder::Cmyk16: TrivialClone
 decoder::CropRegion: TrivialClone
 decoder::DeblockMode: TrivialClone
 decoder::DepthSource: TrivialClone

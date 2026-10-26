@@ -1618,6 +1618,12 @@ impl DecodeConfig {
         config_no_crop.crop_region = None;
         if native {
             config_no_crop.output_target = OutputTarget::Native16;
+            if matches!(
+                color_model,
+                color_model::ColorModel::Cmyk | color_model::ColorModel::Ycck
+            ) {
+                config_no_crop.output_format = Some(PixelFormat::Cmyk);
+            }
         }
         let result = config_no_crop.decode(&vec, Unstoppable)?;
         let vis_w = result.width();
@@ -1901,6 +1907,12 @@ impl DecodeConfig {
         config_no_crop.crop_region = None;
         if native {
             config_no_crop.output_target = OutputTarget::Native16;
+            if matches!(
+                color_model,
+                color_model::ColorModel::Cmyk | color_model::ColorModel::Ycck
+            ) {
+                config_no_crop.output_format = Some(PixelFormat::Cmyk);
+            }
         }
         let result = config_no_crop.decode(data, Unstoppable)?;
         let vis_w = result.width();

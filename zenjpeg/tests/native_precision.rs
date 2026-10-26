@@ -836,6 +836,24 @@ fn compare_components<const N: usize>(jpeg: &[u8], precision: u8) {
             y += count;
         }
     }
+    let mut cropped = Decoder::new()
+        .crop(zenjpeg::decoder::CropRegion::pixels(3, 2, 7, 9))
+        .scanline_reader(jpeg)
+        .unwrap();
+    let mut crop = vec![[0u16; N]; 7 * 9];
+    assert_eq!(
+        cropped
+            .read_rows_components16(ImgRefMut::new(&mut crop, 7, 9))
+            .unwrap(),
+        9
+    );
+    for y in 0..9 {
+        let actual: Vec<u16> = crop[y * 7..y * 7 + 7].iter().flatten().copied().collect();
+        assert_eq!(
+            actual,
+            expected[((y + 2) * 35 + 3) * N..((y + 2) * 35 + 10) * N]
+        );
+    }
     if N == 4 {
         let expected: Vec<u16> = tool(
             "native-components-oracle",
@@ -870,6 +888,24 @@ fn compare_components<const N: usize>(jpeg: &[u8], precision: u8) {
             .flat_map(|row| row[..w].iter().flat_map(|p| [p.c, p.m, p.y, p.k]))
             .collect();
         assert_eq!(actual, expected);
+        let cfg = cfg
+            .transform(zenjpeg::lossless::LosslessTransform::Transpose)
+            .crop(zenjpeg::decoder::CropRegion::pixels(2, 3, 7, 5));
+        let mut reader = cfg.scanline_reader(jpeg).unwrap();
+        let mut pixels = vec![zenjpeg::decoder::Cmyk16::default(); 7 * 5];
+        assert_eq!(
+            reader
+                .read_rows_cmyk16(ImgRefMut::new(&mut pixels, 7, 5))
+                .unwrap(),
+            5
+        );
+        for y in 0..5 {
+            for x in 0..7 {
+                let p = pixels[y * 7 + x];
+                let start = ((x + 2) * 35 + y + 3) * 4;
+                assert_eq!([p.c, p.m, p.y, p.k], expected[start..start + 4]);
+            }
+        }
     }
 }
 
@@ -1241,4 +1277,65 @@ fn twelve_bit_coefficient_transforms_match_jpegtran() {
             &reference
         )
     );
+}
+
+#[test]
+fn native_component_readers_reject_bad_inputs_without_panicking() {
+    for lossless in [false, true] {
+        let jpeg = constant_components(12, 4, lossless);
+        assert!(Decoder::new().max_memory(1).scanline_reader(&jpeg).is_err());
+        for end in 0..jpeg.len() {
+            let attempt = std::panic::catch_unwind(|| {
+                if let Ok(mut reader) = Decoder::new().scanline_reader(&jpeg[..end]) {
+                    let mut pixels = vec![[0u16; 4]; 17 * 19];
+                    let _ = reader.read_rows_components16(ImgRefMut::new(&mut pixels, 17, 19));
+                }
+            });
+            assert!(attempt.is_ok(), "lossless={lossless} prefix={end}");
+        }
+        let mut malformed = jpeg.clone();
+        let sos = malformed.windows(2).position(|w| w == [255, 218]).unwrap();
+        malformed[sos + 7] = malformed[sos + 5]; // duplicate scan component
+        assert!(Decoder::new().scanline_reader(&malformed).is_err());
+    }
+    let jpeg = constant_components(12, 2, false);
+    let mut reader = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let mut pixels = vec![rgb::RGB::new(0, 0, 0); 17];
+    assert!(
+        reader
+            .read_rows_rgb16(ImgRefMut::new(&mut pixels, 17, 1))
+            .is_err()
+    );
+}
+
+#[test]
+fn cmyk_crop_and_pixel_transforms_preserve_native_channels() {
+    use zenjpeg::lossless::LosslessTransform;
+    for lossless in [false, true] {
+        let jpeg = constant_components(12, 4, lossless);
+        let cfg = Decoder::new()
+            .output_target(OutputTarget::Native16)
+            .output_format(PixelFormat::Cmyk)
+            .transform(LosslessTransform::Transpose)
+            .crop(zenjpeg::decoder::CropRegion::pixels(2, 3, 7, 5));
+        let result = cfg.decode(&jpeg, Unstoppable).unwrap();
+        assert_eq!(result.pixels_u16().unwrap(), vec![2048; 7 * 5 * 4]);
+        for data in [Cow::Borrowed(jpeg.as_slice()), Cow::Owned(jpeg.clone())] {
+            let mut reader = cfg.scanline_reader_cow(data).unwrap();
+            assert_eq!((reader.width(), reader.height()), (7, 5));
+            let mut pixels = vec![zenjpeg::decoder::Cmyk16::default(); 9 * 5];
+            assert_eq!(
+                reader
+                    .read_rows_cmyk16(ImgRefMut::new_stride(&mut pixels, 7, 5, 9))
+                    .unwrap(),
+                5
+            );
+            for row in pixels.as_chunks::<9>().0 {
+                for p in &row[..7] {
+                    assert_eq!([p.c, p.m, p.y, p.k], [2048; 4]);
+                }
+                assert_eq!(row[7..], [zenjpeg::decoder::Cmyk16::default(); 2]);
+            }
+        }
+    }
 }

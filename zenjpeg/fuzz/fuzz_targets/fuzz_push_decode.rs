@@ -22,6 +22,17 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
+    if let Ok(mut reader) = Decoder::new().max_pixels(max_px).max_memory(64 * 1024 * 1024).scanline_reader(data) {
+        let width = reader.width() as usize;
+        let mut row = vec![[0u16;4]; width + 3];
+        while !reader.is_finished() {
+            match reader.read_rows_components16(imgref::ImgRefMut::new_stride(&mut row, width, 1, width+3)) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => (),
+            }
+        }
+    }
+
     // u8 row callbacks — all formats
     for format in [
         PixelFormat::Rgb, PixelFormat::Bgr,
