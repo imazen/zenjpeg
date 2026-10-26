@@ -892,7 +892,7 @@ fn twelve_bit_frame_keeps_probe_metadata_only() {
 }
 
 #[test]
-fn lossless_frame_is_skipped() {
+fn lossless_frame_with_invalid_predictor_has_no_image_data() {
     let mut data = vec![0xFF, 0xD8];
     data.extend(dht());
     data.extend(sof(0xC3, 8, 8));
@@ -906,11 +906,15 @@ fn lossless_frame_is_skipped() {
         .iter()
         .find(|p| *p.tag() == PartTag::Marker(0xC3))
         .unwrap();
-    assert_eq!(sof3.disposition(), D::Skipped);
-    assert!(sof3.detail().unwrap().contains("SOF3"));
+    assert_eq!(sof3.disposition(), D::Structure);
     assert!(
-        inv.parts().iter().all(|p| !p.disposition().is_consumed()),
+        inv.parts().iter().all(|p| p.disposition() != D::ImageData),
         "{inv}"
+    );
+    assert!(
+        crate::decoder::Decoder::new()
+            .decode(&data, enough::Unstoppable)
+            .is_err()
     );
 }
 
