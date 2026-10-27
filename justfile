@@ -805,3 +805,13 @@ library-research-branch-coverage:
 library-research-focused-check:
     timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --lib
     timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --test bundled -- compare_sizes::compare_420_sizes --exact
+
+# Temporary exclusions only: use a disposable jj workspace, never the main checkout.
+wasm-size-experiment workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}'
+
+wasm-size-experiment-simd workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}' --simd
+
+wasm-size-raster-check output:
+    python3 scripts/wasm-size-raster-check.py '{{output}}'

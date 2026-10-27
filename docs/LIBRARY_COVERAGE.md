@@ -69,3 +69,11 @@ including expert/research examples and benches. This was compilation, not test
 execution: existing deprecated helper calls and float-inference warnings remain.
 The C++ build wrapper now respects an explicit CMake job limit or Cargo's
 `NUM_JOBS`, instead of replacing the budget with the host CPU count.
+
+The all-feature execution on 2026-10-27 completed with two failing targets:
+a newly introduced size-test pixel oracle used a different IDCT, and the
+ExifTool module lookup lacked PERL5LIB. The corrected size test uses the existing
+libjpeg-turbo oracle and passes for the retained cases plus noise and flat-chroma
+bands. The ExifTool test passes with its pinned distribution's lib directory on
+PERL5LIB. Added diagnostic behavior tests and the all-feature library suite pass.
+These focused reruns do not constitute a fresh full-library coverage measurement.
