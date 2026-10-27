@@ -218,16 +218,41 @@ fn checked_request_binds_display_p3_from_the_current_pixels() {
     }
 }
 
-/// `RGB16_SRGB` is advertised as a native encode descriptor. Its samples are
-/// sRGB-encoded and must decode to the same values as the 8-bit encode.
+/// `RGB16_SRGB` is advertised as an encode descriptor. Its samples are
+/// sRGB-encoded and must decode to the same values as the 8-bit encode; the
+/// native 16-bit layouts hold linear light, so the advertised linear 16-bit
+/// descriptor decodes to the same values from linear samples.
 #[test]
-fn sixteen_bit_srgb_samples_are_not_reinterpreted_as_linear_light() {
-    let raster = rgb16();
-    let pixels = raster.slice(PixelDescriptor::RGB16_SRGB);
-    let jpeg = checked(pixels, None).expect("RGB16_SRGB is a supported descriptor");
+fn sixteen_bit_samples_decode_to_their_stored_values() {
+    let srgb16 = rgb16();
+    let jpeg = checked(srgb16.slice(PixelDescriptor::RGB16_SRGB), None)
+        .expect("RGB16_SRGB is a supported descriptor");
     let (samples, icc) = oracle(&jpeg);
     assert_eq!(icc, None, "sRGB needs no carrier");
     assert_samples(&samples, 4, "RGB16_SRGB");
+
+    let linear16 = JpegEncoderConfig::supported_descriptors()
+        .iter()
+        .copied()
+        .find(|d| {
+            d.channel_type() == zenpixels::ChannelType::U16
+                && d.layout() == zenpixels::ChannelLayout::Rgb
+                && d.transfer() == zenpixels::TransferFunction::Linear
+        })
+        .expect("a linear 16-bit RGB descriptor is advertised");
+    let mut raster = Raster::new(6, 2, 0x5a);
+    for y in 0..H {
+        for x in 0..W {
+            for (c, v) in colour_at(x, y).into_iter().enumerate() {
+                let linear = (srgb_to_linear(f32::from(v) / 255.0) * 65535.0).round() as u16;
+                raster.row(y)[x as usize * 6 + c * 2..][..2].copy_from_slice(&linear.to_ne_bytes());
+            }
+        }
+    }
+    let jpeg = checked(raster.slice(linear16), None).expect("advertised descriptor");
+    let (samples, icc) = oracle(&jpeg);
+    assert_eq!(icc, None, "sRGB needs no carrier");
+    assert_samples(&samples, 4, "linear 16-bit");
 }
 
 /// Linear input is stored sRGB-encoded. A profile describing the linear

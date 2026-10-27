@@ -290,7 +290,11 @@ impl Default for JpegEncoderConfig {
     }
 }
 
-/// Supported encode pixel formats (native, zero-conversion paths).
+/// Supported encode pixel formats.
+///
+/// The native 16-bit layouts hold linear light, like the f32 ones.
+/// sRGB-encoded 16-bit samples are decoded to linear f32 on the way in
+/// ([`srgb16_layout`]); the linear 16-bit descriptors need no conversion.
 static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
@@ -304,7 +308,25 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBF32_LINEAR,
     PixelDescriptor::RGBAF32_LINEAR,
     PixelDescriptor::GRAYF32_LINEAR,
+    linear16(zenpixels::ChannelLayout::Rgb, None),
+    linear16(
+        zenpixels::ChannelLayout::Rgba,
+        Some(zenpixels::AlphaMode::Straight),
+    ),
+    linear16(zenpixels::ChannelLayout::Gray, None),
 ];
+
+const fn linear16(
+    layout: zenpixels::ChannelLayout,
+    alpha: Option<zenpixels::AlphaMode>,
+) -> PixelDescriptor {
+    PixelDescriptor::new(
+        zenpixels::ChannelType::U16,
+        layout,
+        alpha,
+        TransferFunction::Linear,
+    )
+}
 
 /// Map generic quality (libjpeg-turbo scale) to jpegli native quality.
 ///
@@ -647,6 +669,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             begun: false,
             bound: None,
             checked_context: None,
+            srgb16_rows: Vec::new(),
         })
     }
 
@@ -688,6 +711,8 @@ pub struct JpegEncoder {
     bound: Option<ColorBinding>,
     /// The last row colour context found consistent with `bound`.
     checked_context: Option<Arc<ColorContext>>,
+    /// Reused linear f32 rows for 16-bit sRGB input (`decode_srgb16`).
+    srgb16_rows: Vec<u8>,
 }
 
 /// Internal buffer for accumulating pushed rows.
@@ -740,6 +765,17 @@ enum ColorBinding {
 /// Linear-light layouts, which the encoder stores sRGB-encoded.
 fn stores_linear_as_srgb(layout: PixelLayout) -> bool {
     layout.is_16bit() || (layout.is_float() && !layout.is_ycbcr())
+}
+
+/// Whether the encoder's sRGB encoding changes what the input samples mean:
+/// linear input does, 16-bit sRGB input (decoded to linear first) does not.
+fn transfer_changes(layout: PixelLayout, descriptor: PixelDescriptor) -> bool {
+    stores_linear_as_srgb(layout) && descriptor.transfer() != TransferFunction::Srgb
+}
+
+/// U8 bytes whose interpretation only a retained ICC gives (`pixel_layout`).
+fn is_profile_tagged(descriptor: PixelDescriptor) -> bool {
+    descriptor_to_layout(descriptor).is_err() && srgb16_layout(descriptor).is_none()
 }
 
 /// `primaries` with the sRGB transfer: what sRGB-encoded storage of linear
@@ -903,6 +939,9 @@ impl JpegEncoder {
         if let Ok(layout) = descriptor_to_layout(desc) {
             return Ok(layout);
         }
+        if let Some(layout) = srgb16_layout(desc) {
+            return Ok(layout);
+        }
         if desc.channel_type() != ChannelType::U8
             || desc.signal_range != SignalRange::Full
             || desc.alpha() == Some(AlphaMode::Premultiplied)
@@ -1016,7 +1055,7 @@ impl JpegEncoder {
         layout: PixelLayout,
     ) -> Result<StoredColor, Error> {
         let gray = layout.is_grayscale();
-        let linear = stores_linear_as_srgb(layout);
+        let linear = transfer_changes(layout, descriptor);
         // BT.709 is what every untagged buffer is labelled with, so only other
         // primaries are an assertion. Grayscale has no primaries.
         let asserted = match descriptor.primaries {
@@ -1096,7 +1135,7 @@ impl JpegEncoder {
         context: Option<&ColorContext>,
         layout: PixelLayout,
     ) -> Result<ColorBinding, Error> {
-        if descriptor_to_layout(descriptor).is_err() {
+        if is_profile_tagged(descriptor) {
             // Profile-tagged bytes: `pixel_layout` admitted them only with a
             // matching retained ICC, and the context must be that profile.
             self.check_declared_context(descriptor, context)?;
@@ -1125,7 +1164,7 @@ impl JpegEncoder {
         };
         let explicit = context.is_some_and(|c| c.icc.is_some() || c.cicp.is_some());
         if !explicit {
-            if stores_linear_as_srgb(layout)
+            if transfer_changes(layout, descriptor)
                 && matches!(identify(metadata), Some((_, TransferFunction::Linear)))
             {
                 return Err(Error::icc_error(
@@ -1163,7 +1202,7 @@ impl JpegEncoder {
             return Ok(());
         }
         let descriptor = rows.descriptor();
-        if descriptor_to_layout(descriptor).is_err() {
+        if is_profile_tagged(descriptor) {
             self.check_declared_context(descriptor, Some(context))?;
         } else {
             let stored = self.stored_color(descriptor, Some(context), layout)?;
@@ -1522,8 +1561,16 @@ impl zencodec::encode::Encoder for JpegEncoder {
         let binding = self.bind_color(descriptor, pixels.color_context().map(|c| &**c), layout)?;
         let width = pixels.width();
         let height = pixels.rows();
-        let data = pixels.contiguous_bytes();
-        self.encode_bytes_inner(&data, width, height, layout, &binding)
+        let contiguous;
+        let mut converted = Vec::new();
+        let data: &[u8] = if srgb16_layout(descriptor).is_some() {
+            decode_srgb16(&pixels, &mut converted)?;
+            &converted
+        } else {
+            contiguous = pixels.contiguous_bytes();
+            &contiguous
+        };
+        self.encode_bytes_inner(data, width, height, layout, &binding)
             .map_err(Into::into)
     }
 
@@ -1637,13 +1684,23 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 None => &enough::Unstoppable,
             };
             let enc = self.streaming_enc.as_mut().expect("started above");
-            // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
-            enc.push(
-                rows.as_strided_bytes(),
-                rows.rows() as usize,
-                rows.stride(),
-                stop,
-            )?;
+            if srgb16_layout(desc).is_some() {
+                decode_srgb16(&rows, &mut self.srgb16_rows)?;
+                enc.push(
+                    &self.srgb16_rows,
+                    rows.rows() as usize,
+                    rows.width() as usize * layout.bytes_per_pixel(),
+                    stop,
+                )?;
+            } else {
+                // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
+                enc.push(
+                    rows.as_strided_bytes(),
+                    rows.rows() as usize,
+                    rows.stride(),
+                    stop,
+                )?;
+            }
             let pending = enc.pending_output().len();
             self.check_total_output(pending)?;
             return Ok(());
@@ -1654,7 +1711,14 @@ impl zencodec::encode::Encoder for JpegEncoder {
             self.check_rows_color(&rows, layout)?;
         }
         let width = rows.width();
-        let data = rows.contiguous_bytes();
+        let contiguous;
+        let data: &[u8] = if srgb16_layout(desc).is_some() {
+            decode_srgb16(&rows, &mut self.srgb16_rows)?;
+            &self.srgb16_rows
+        } else {
+            contiguous = rows.contiguous_bytes();
+            &contiguous
+        };
         match &mut self.accumulator {
             None => {
                 self.bound =
@@ -1665,7 +1729,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 let mut buf = Vec::new();
                 buf.try_reserve(estimated_total)
                     .map_err(|_| Error::allocation_failed(estimated_total, "push_rows buffer"))?;
-                buf.extend_from_slice(&data);
+                buf.extend_from_slice(data);
                 self.accumulator = Some(RowAccumulator {
                     data: buf,
                     width,
@@ -1681,7 +1745,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                     )
                     .into());
                 }
-                acc.data.extend_from_slice(&data);
+                acc.data.extend_from_slice(data);
                 acc.total_rows += rows.rows();
             }
         }
@@ -1810,20 +1874,22 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
         (ChannelType::U8, ChannelLayout::Gray, TransferFunction::Srgb) => {
             Ok(PixelLayout::Gray8Srgb)
         }
+        // The native 16-bit layouts are linear light; sRGB-encoded 16-bit
+        // samples are decoded to linear f32 first (`srgb16_layout`).
         (
             ChannelType::U16,
             ChannelLayout::Rgb,
-            TransferFunction::Srgb | TransferFunction::Unknown,
+            TransferFunction::Linear | TransferFunction::Unknown,
         ) => Ok(PixelLayout::Rgb16Linear),
         (
             ChannelType::U16,
             ChannelLayout::Rgba,
-            TransferFunction::Srgb | TransferFunction::Unknown,
+            TransferFunction::Linear | TransferFunction::Unknown,
         ) => Ok(PixelLayout::Rgba16Linear),
         (
             ChannelType::U16,
             ChannelLayout::Gray,
-            TransferFunction::Srgb | TransferFunction::Unknown,
+            TransferFunction::Linear | TransferFunction::Unknown,
         ) => Ok(PixelLayout::Gray16Linear),
         (ChannelType::F32, ChannelLayout::Rgb, TransferFunction::Linear) => {
             Ok(PixelLayout::RgbF32Linear)
@@ -1840,6 +1906,64 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
         // Pattern-B follow-up finding #1 investigation).
         _ => Err(zencodec::UnsupportedOperation::PixelFormat.into()),
     }
+}
+
+/// The native layout 16-bit sRGB-encoded input is encoded through. No native
+/// layout holds it as stored, so its rows are decoded to linear f32 on the
+/// way in ([`decode_srgb16`]); the encoder's sRGB encoding then restores
+/// them at f32 precision.
+fn srgb16_layout(desc: PixelDescriptor) -> Option<PixelLayout> {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    if desc.channel_type() != ChannelType::U16 || desc.transfer() != TransferFunction::Srgb {
+        return None;
+    }
+    match desc.layout() {
+        ChannelLayout::Rgb => Some(PixelLayout::RgbF32Linear),
+        ChannelLayout::Rgba => Some(PixelLayout::RgbaF32Linear),
+        ChannelLayout::Gray => Some(PixelLayout::GrayF32Linear),
+        _ => None,
+    }
+}
+
+/// Decode 16-bit sRGB-encoded rows to the linear f32 rows of
+/// [`srgb16_layout`], packed, into `out`. Alpha is scaled, not decoded.
+fn decode_srgb16(rows: &PixelSlice<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
+    use linear_srgb::default::{srgb_u16_to_linear_rgba_slice, srgb_u16_to_linear_slice};
+    let desc = rows.descriptor();
+    let samples = rows.width() as usize * desc.layout().channels();
+    let rgba = desc.layout() == zenpixels::ChannelLayout::Rgba;
+    let len = samples
+        .checked_mul(4 * rows.rows() as usize)
+        .ok_or_else(|| Error::allocation_failed(usize::MAX, "16-bit sRGB rows"))?;
+    out.clear();
+    out.try_reserve(len)
+        .map_err(|_| Error::allocation_failed(len, "16-bit sRGB rows"))?;
+    let mut encoded: Vec<u16> = Vec::new();
+    let mut linear: Vec<f32> = Vec::new();
+    encoded
+        .try_reserve(samples)
+        .and_then(|()| linear.try_reserve(samples))
+        .map_err(|_| Error::allocation_failed(samples * 6, "16-bit sRGB row"))?;
+    linear.resize(samples, 0.0);
+    for y in 0..rows.rows() {
+        encoded.clear();
+        encoded.extend(
+            rows.row(y)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| u16::from_ne_bytes(*b)),
+        );
+        if rgba {
+            srgb_u16_to_linear_rgba_slice(&encoded, &mut linear);
+        } else {
+            srgb_u16_to_linear_slice(&encoded, &mut linear);
+        }
+        for value in &linear {
+            out.extend_from_slice(&value.to_ne_bytes());
+        }
+    }
+    Ok(())
 }
 
 // ============================================================================
