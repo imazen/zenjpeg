@@ -305,3 +305,10 @@ not needed for either gate. `just native-branch-coverage` includes these routes.
 A follow-up ASan/libFuzzer run against the final implementation completed
 47,457 executions in 61 seconds without a crash artifact, using the same limits.
 The corpus was preserved after both runs.
+
+`native_fixture_raster_hashes` checks all 47 committed fixtures against the
+reference-decoded raster SHA-256, independently for borrowed and owned readers.
+The canonical raster is row-major, frame-component order, with each native
+sample serialized as big-endian u16. Reads use padded strides and verify that
+padding is untouched. `native_fixture_truncated_prefixes` is a separate test, so
+raster correctness remains an explicit gate independent of fuzz-style checks.

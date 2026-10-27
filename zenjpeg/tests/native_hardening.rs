@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use zenjpeg::decoder::{Decoder, OutputTarget};
 
 #[test]
-fn oracle_seeds_and_all_truncated_prefixes() {
+fn native_fixture_raster_hashes() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
     let manifest: serde_json::Value =
         serde_json::from_str(include_str!("support/native_manifest.json")).unwrap();
@@ -28,44 +28,62 @@ fn oracle_seeds_and_all_truncated_prefixes() {
             format!("{:x}", Sha256::digest(&data)),
             expected["jpeg_sha256"].as_str().unwrap()
         );
-        let mut reader = Decoder::new()
-            .output_target(OutputTarget::Native16)
-            .scanline_reader(&data)
+        let config = Decoder::new().output_target(OutputTarget::Native16);
+        for owned in [false, true] {
+            let mut reader = if owned {
+                config.scanline_reader_cow(std::borrow::Cow::Owned(data.clone()))
+            } else {
+                config.scanline_reader(&data)
+            }
             .unwrap();
-        let actual = match reader.component_ids().len() {
-            1 => samples::<1>(&mut reader),
-            2 => samples::<2>(&mut reader),
-            3 => samples::<3>(&mut reader),
-            4 => samples::<4>(&mut reader),
-            5 => samples::<5>(&mut reader),
-            10 => samples::<10>(&mut reader),
-            _ => panic!("unexpected seed component count"),
-        };
-        assert_eq!(
-            format!("{:x}", Sha256::digest(&actual)),
-            expected["samples_sha256"].as_str().unwrap(),
-            "{}",
-            path.display()
-        );
-        for end in 0..=data.len() {
-            component_checks::check(&data[..end]);
+            let actual = match reader.component_ids().len() {
+                1 => samples::<1>(&mut reader),
+                2 => samples::<2>(&mut reader),
+                3 => samples::<3>(&mut reader),
+                4 => samples::<4>(&mut reader),
+                5 => samples::<5>(&mut reader),
+                10 => samples::<10>(&mut reader),
+                _ => panic!("unexpected seed component count"),
+            };
+            assert_eq!(
+                format!("{:x}", Sha256::digest(&actual)),
+                expected["samples_sha256"].as_str().unwrap(),
+                "{}",
+                path.display()
+            );
         }
     }
     assert_eq!(count, 47);
 }
 
+#[test]
+fn native_fixture_truncated_prefixes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
+    for entry in std::fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "jpg") {
+            continue;
+        }
+        let data = std::fs::read(path).unwrap();
+        for end in 0..=data.len() {
+            component_checks::check(&data[..end]);
+        }
+    }
+}
+
 fn samples<const N: usize>(reader: &mut zenjpeg::decoder::ScanlineReader<'_>) -> Vec<u8> {
     let w = reader.width() as usize;
-    let mut row = vec![[0; N]; w];
+    let mut row = vec![[0xbeef; N]; w + 3];
     let mut out = Vec::new();
     while !reader.is_finished() {
         assert_eq!(
             reader
-                .read_rows_components16(ImgRefMut::new(&mut row, w, 1))
+                .read_rows_components16(ImgRefMut::new_stride(&mut row, w, 1, w + 3))
                 .unwrap(),
             1
         );
-        for pixel in &row {
+        assert!(row[w..].iter().all(|pixel| *pixel == [0xbeef; N]));
+        for pixel in &row[..w] {
             for sample in pixel {
                 out.extend_from_slice(&sample.to_be_bytes());
             }
