@@ -12,6 +12,8 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('base')
 p.add_argument('report', type=Path)
 p.add_argument('--require-complete', action='store_true')
+p.add_argument('--whole-library', action='store_true',
+               help='Measure every compiled zenjpeg/src production branch, not only added lines')
 a = p.parse_args()
 root = Path.cwd()
 diff = subprocess.check_output(['git', 'diff', '--no-ext-diff', '--unified=0',
@@ -29,6 +31,9 @@ for line in diff.splitlines():
         line_no += 1
     elif line.startswith(' '):
         line_no += 1
+if a.whole_library:
+    added = {str(path.resolve()): set(range(1, len(path.read_text().splitlines()) + 1))
+             for path in (root / 'zenjpeg/src').rglob('*.rs')}
 # Unit-test assertions live in src/ too. They are not production branches;
 # derive their module names from cfg(test), then demangle function identities.
 # Production functions called by those tests remain fully included.
@@ -57,6 +62,7 @@ for key, hits in sorted(branches.items()):
     if not all(hits):
         name, line, column, _, _ = key
         print(f'{Path(name).relative_to(root)}:{line}:{column}: true={hits[0]} false={hits[1]}')
-print(f'Changed branch outcomes: {covered}/{total}')
+scope = 'Whole-library compiled production' if a.whole_library else 'Changed'
+print(f'{scope} branch outcomes: {covered}/{total}')
 if not total or (a.require_complete and covered != total):
     raise SystemExit('Complete branch coverage gate failed.')
