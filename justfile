@@ -827,6 +827,7 @@ extended-jpeg-check:
 extended-jpeg-branch-coverage:
     timeout --kill-after=10s 8m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --lib --test extended_jpeg_feature
     timeout --kill-after=10s 5m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --no-default-features --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --test native_precision --test native_hardening
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
 
 # Measure the shipped capability, retaining all source implementations.

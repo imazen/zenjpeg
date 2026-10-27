@@ -115,3 +115,11 @@ measurements above remain prototype results, not measurements of this commit.
 Validation wrapper: `run-heavy: done rc=0 39s | peak-RSS 0.53GiB |
 min-avail 23665MiB | peak-load 0.94`. This is build-process memory, not decoder
 memory usage.
+
+Coverage validation of this capability change currently measures **44/52 changed
+branch outcomes**. The eight missing outcomes are the 12-bit chroma strip/peek
+arms in `decode/pipeline.rs` and `decode/scanline.rs`; their reachability and
+coverage still need investigation. The full native hardening and non-oracle
+precision tests passed under instrumentation (233 seconds, wrapper peak RSS
+0.25 GiB). Seven explicitly opt-in oracle tests were not selected in that run.
+This is not complete branch coverage, and the PR remains draft.
