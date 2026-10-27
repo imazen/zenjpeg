@@ -1427,6 +1427,38 @@ impl JpegEncoder {
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
     }
 
+    /// One-shot encode of 16-bit sRGB-encoded pixels. Each strip is decoded
+    /// to linear f32 ([`decode_srgb16`]) and pushed before the next, so the
+    /// converted copy holds one strip, not the image. The bytes equal those of
+    /// a single push of the whole converted image (no pre-blur applies to the
+    /// f32 layouts).
+    fn encode_srgb16(
+        &self,
+        pixels: &PixelSlice<'_>,
+        layout: PixelLayout,
+        binding: &ColorBinding,
+    ) -> Result<EncodeOutput, Error> {
+        let (width, height) = (pixels.width(), pixels.rows());
+        self.check_limits(width, height, layout)?;
+        let mut enc = self
+            .build_request(layout, binding)?
+            .encode_from_bytes(width, height, layout)?;
+        let stop = self.stop_ref();
+        let row_bytes = width as usize * layout.bytes_per_pixel();
+        let strip = zencodec::encode::Encoder::preferred_strip_height(self);
+        let mut linear = Vec::new();
+        let mut y = 0;
+        while y < height {
+            let rows = strip.min(height - y);
+            decode_srgb16(&pixels.sub_rows(y, rows), &mut linear)?;
+            enc.push(&linear, rows as usize, row_bytes, stop)?;
+            y += rows;
+        }
+        let output = enc.finish()?;
+        self.check_output_size(&output)?;
+        Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
+    }
+
     /// Create the native row encoder for a `width` x `height` image in
     /// `descriptor`, with the configuration as given. The first rows' colour
     /// context is the declaration when `begin` was not called.
@@ -1561,18 +1593,13 @@ impl zencodec::encode::Encoder for JpegEncoder {
         let descriptor = pixels.descriptor();
         let layout = self.pixel_layout(descriptor)?;
         let binding = self.bind_color(descriptor, pixels.color_context().map(|c| &**c), layout)?;
-        let width = pixels.width();
-        let height = pixels.rows();
-        let contiguous;
-        let mut converted = Vec::new();
-        let data: &[u8] = if srgb16_layout(descriptor).is_some() {
-            decode_srgb16(&pixels, &mut converted)?;
-            &converted
-        } else {
-            contiguous = pixels.contiguous_bytes();
-            &contiguous
-        };
-        self.encode_bytes_inner(data, width, height, layout, &binding)
+        if srgb16_layout(descriptor).is_some() {
+            return self
+                .encode_srgb16(&pixels, layout, &binding)
+                .map_err(Into::into);
+        }
+        let contiguous = pixels.contiguous_bytes();
+        self.encode_bytes_inner(&contiguous, pixels.width(), pixels.rows(), layout, &binding)
             .map_err(Into::into)
     }
 

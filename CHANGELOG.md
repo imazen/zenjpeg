@@ -61,7 +61,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 - sRGB-encoded 16-bit input (`RGB16_SRGB` and its RGBA/gray forms) was encoded
   as linear light: stored (200, 40, 40) decoded as (229, 111, 111). Its rows are
   now decoded to linear f32 on the way in and encode at their stored values;
-  16-bit linear descriptors are advertised as well.
+  16-bit linear descriptors are advertised as well. One-shot encodes convert one
+  16-row strip at a time, row encodes each pushed batch; both write identical
+  bytes (`sixteen_bit_one_shot_bytes_equal_row_encodes`).
 
 - Qualify RGB/RGBA/BGRA byte input under a retained RGB ICC profile in the shared JPEG encoder. Profile-tagged one-shot and strided row paths produce identical bytes to the established packing path; conflicting profiles, discarded ICC, premultiplied alpha and unqualified XYB/HDR modes refuse (issue 241).
 

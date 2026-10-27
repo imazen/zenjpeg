@@ -255,6 +255,68 @@ fn sixteen_bit_samples_decode_to_their_stored_values() {
     assert_samples(&samples, 4, "linear 16-bit");
 }
 
+/// One-shot 16-bit sRGB encodes decode and push one strip at a time. The bytes
+/// must equal row encodes of the same strided pixels in any batch size, with
+/// or without a declared image, for every advertised 16-bit sRGB layout, a
+/// height ending in a partial strip, and a streaming configuration.
+#[test]
+fn sixteen_bit_one_shot_bytes_equal_row_encodes() {
+    let (width, height) = (37u32, 53u32);
+    let configs = [
+        ("default", quality()),
+        (
+            "sequential fixed tables",
+            quality().with_progressive(false).with_huffman(false),
+        ),
+    ];
+    for (descriptor, channels) in [
+        (PixelDescriptor::RGB16_SRGB, 3),
+        (PixelDescriptor::RGBA16_SRGB, 4),
+        (PixelDescriptor::GRAY16_SRGB, 1),
+    ] {
+        let stride = (width as usize + 3) * channels * 2;
+        let mut buf = vec![0x5a; stride * height as usize + 16];
+        let start = buf.as_ptr().align_offset(16);
+        for y in 0..height as usize {
+            for s in 0..width as usize * channels {
+                let v = ((s * 7919 + y * 104_729) ^ (s * y * 31)) as u16;
+                let at = start + y * stride + s * 2;
+                buf[at..at + 2].copy_from_slice(&v.to_ne_bytes());
+            }
+        }
+        let pixels = || PixelSlice::new(&buf[start..], width, height, stride, descriptor).unwrap();
+        for (what, config) in &configs {
+            let one_shot = config
+                .clone()
+                .job()
+                .encoder()
+                .unwrap()
+                .encode(pixels())
+                .unwrap();
+            for batch in [1, 7, 16, 53] {
+                for declared in [true, false] {
+                    let mut rows = config.clone().job().encoder().unwrap();
+                    if declared {
+                        rows.begin(width, height, descriptor).unwrap();
+                    }
+                    let mut file = Vec::new();
+                    for y in (0..height).step_by(batch) {
+                        rows.push_rows(pixels().sub_rows(y, (batch as u32).min(height - y)))
+                            .unwrap();
+                        rows.take_output(&mut file);
+                    }
+                    file.extend_from_slice(rows.finish().unwrap().data());
+                    assert!(
+                        file == one_shot.data(),
+                        "{descriptor:?} {what}: rows in batches of {batch} \
+                         (declared {declared}) differ from the one-shot encode"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Linear input is stored sRGB-encoded. A profile describing the linear
 /// samples would be a stale carrier after that transform; the written carrier
 /// must describe P3 primaries with the sRGB transfer instead.

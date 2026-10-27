@@ -43,7 +43,8 @@ The written ICC describes the stored samples:
 Linear input (f32, 16-bit linear) is stored sRGB-encoded, so its carrier is its
 primaries with the sRGB transfer. A profile for the linear samples is not carried,
 and an unidentified profile refuses. sRGB-encoded 16-bit input is decoded to
-linear f32 on the way in and encodes at its stored values. XYB refuses non-sRGB
+linear f32 on the way in and encodes at its stored values: one 16-row strip at a
+time in a one-shot encode, each pushed batch in a row encode. XYB refuses non-sRGB
 pixels. A policy that leaves no ICC for colour identified as non-sRGB refuses; an
 unidentified metadata ICC can still be stripped.
 
