@@ -11,10 +11,12 @@
 
 mod arithmetic_scan;
 pub(crate) mod baseline_streaming;
+pub(in crate::decode) mod component_rows;
 mod fast_integer;
 mod markers;
 mod output;
 pub(crate) mod output_helpers;
+pub(in crate::decode) mod predictive;
 mod progressive;
 mod scan;
 
@@ -26,7 +28,9 @@ use super::{DecodeWarning, JpegInfo, Strictness};
 /// Information about a scan needed for scanline reading.
 struct ScanInfo {
     /// Huffman table mapping: (dc_table_idx, ac_table_idx) per component
-    table_mapping: [(usize, usize); 3],
+    table_mapping: [(usize, usize); 4],
+    order: [usize; 4],
+    sequential_valid: bool,
     /// Components in this scan (Ns).
     num_components: u8,
     /// Position in data where entropy-coded scan data begins
@@ -115,6 +119,7 @@ pub(super) fn component_block_grid(
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
 /// the previous 16-parameter constructor. Created via `JpegParser::into_scan_data()`.
 pub(super) struct ParsedScanData<'a> {
+    pub precision: u8,
     pub data: &'a [u8],
     pub width: u32,
     pub height: u32,
@@ -144,6 +149,7 @@ impl<'a> ParsedScanData<'a> {
     /// supply owned data separately (via `ScanlineReader::from_scan_data_cow`).
     pub(super) fn into_owned(self) -> ParsedScanData<'static> {
         ParsedScanData {
+            precision: self.precision,
             data: &[],
             width: self.width,
             height: self.height,
@@ -182,6 +188,9 @@ pub(super) struct JpegParser<'a> {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) precision: u8,
+    pub(super) native_precision: bool,
+    /// Lazily resolve category-16 tables preceding SOF, once per parser.
+    pub(super) lossless_tables: Option<bool>,
     pub(super) num_components: u8,
     pub(super) mode: JpegMode,
 
@@ -412,6 +421,8 @@ impl<'a> JpegParser<'a> {
             width: 0,
             height: 0,
             precision: 8,
+            native_precision: false,
+            lossless_tables: None,
             num_components: 0,
             mode: JpegMode::Baseline,
             components: std::array::from_fn(|_| Component::default()),
@@ -861,13 +872,18 @@ impl<'a> JpegParser<'a> {
         // Reject non-8-bit precision before attempting decode.
         // 12-bit Extended Sequential uses different level shift (+2048 vs +128)
         // and output scaling — decoding as 8-bit produces completely wrong pixels.
-        if self.precision != 8 {
+        if self.precision != 8 && !self.native_precision {
             return Err(Error::unsupported_feature(
                 "12-bit precision JPEG (Extended Sequential) is not yet supported. \
                  Only 8-bit precision is currently implemented.",
             ));
         }
 
+        if self.mode == JpegMode::Lossless {
+            return Err(Error::unsupported_feature(
+                "predictive JPEG has samples, not DCT coefficients",
+            ));
+        }
         // Track whether we've decoded at least one scan (for truncation recovery)
         let mut scans_decoded = 0u32;
 
@@ -1032,14 +1048,15 @@ impl<'a> JpegParser<'a> {
                     let num_components = self.read_u8()?;
 
                     // Support grayscale (1) and color (3) scans
-                    if num_components != 1 && num_components != 3 {
+                    if num_components == 0 || num_components > 4 {
                         return Err(Error::unsupported_feature(
-                            "scanline reader requires 1 or 3 components in scan",
+                            "scanline reader requires 1 to 4 components in scan",
                         ));
                     }
 
                     // Initialize with defaults for unused components (grayscale case)
-                    let mut table_mapping = [(0usize, 0usize); 3];
+                    let mut table_mapping = [(0usize, 0usize); 4];
+                    let mut order = [0; 4];
 
                     for _i in 0..num_components as usize {
                         let component_id = self.read_u8()?;
@@ -1065,6 +1082,10 @@ impl<'a> JpegParser<'a> {
                             .position(|c| c.id == component_id)
                             .ok_or(Error::invalid_jpeg_data("unknown component in scan"))?;
 
+                        if order[.._i].contains(&comp_idx) {
+                            return Err(Error::invalid_jpeg_data("duplicate scan component"));
+                        }
+                        order[_i] = comp_idx;
                         table_mapping[comp_idx] = (dc_table, ac_table);
                     }
 
@@ -1075,6 +1096,11 @@ impl<'a> JpegParser<'a> {
 
                     return Ok(ScanInfo {
                         table_mapping,
+                        order,
+                        sequential_valid: _length == 6 + 2 * num_components as u16
+                            && _ss == 0
+                            && _se == 63
+                            && _ah_al == 0,
                         num_components,
                         data_start: self.position,
                     });
@@ -1220,7 +1246,15 @@ impl<'a> JpegParser<'a> {
     pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
         // Extract sampling factors
         let h_samp = if is_grayscale {
-            [self.components[0].h_samp_factor, 1, 1]
+            [
+                if self.precision == 12 {
+                    1
+                } else {
+                    self.components[0].h_samp_factor
+                },
+                1,
+                1,
+            ]
         } else {
             [
                 self.components[0].h_samp_factor,
@@ -1229,7 +1263,15 @@ impl<'a> JpegParser<'a> {
             ]
         };
         let v_samp = if is_grayscale {
-            [self.components[0].v_samp_factor, 1, 1]
+            [
+                if self.precision == 12 {
+                    1
+                } else {
+                    self.components[0].v_samp_factor
+                },
+                1,
+                1,
+            ]
         } else {
             [
                 self.components[0].v_samp_factor,
@@ -1264,6 +1306,7 @@ impl<'a> JpegParser<'a> {
         }
 
         Ok(ParsedScanData {
+            precision: self.precision,
             data: self.data,
             width: self.width,
             height: self.height,
@@ -1274,7 +1317,7 @@ impl<'a> JpegParser<'a> {
             quant_indices,
             dc_tables: self.dc_tables,
             ac_tables: self.ac_tables,
-            table_mapping: scan_info.table_mapping,
+            table_mapping: core::array::from_fn(|i| scan_info.table_mapping[i]),
             scan_data_start: scan_info.data_start,
             restart_interval: self.restart_interval,
             color_model: self.color_model,
@@ -1360,6 +1403,7 @@ impl<'a> JpegParser<'a> {
         let quant_tables: Vec<Option<[u16; 64]>> = self.quant_tables.to_vec();
 
         Ok(DecodedCoefficients {
+            sample_precision: self.precision,
             width: self.width,
             height: self.height,
             components,

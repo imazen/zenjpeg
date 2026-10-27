@@ -396,6 +396,8 @@ impl ComponentCoefficients {
 /// For analysis of large images, consider streaming APIs.
 #[derive(Debug, Clone)]
 pub struct DecodedCoefficients {
+    /// Sample precision of the source DCT frame (8 or 12).
+    pub sample_precision: u8,
     /// Image width in pixels
     pub width: u32,
     /// Image height in pixels

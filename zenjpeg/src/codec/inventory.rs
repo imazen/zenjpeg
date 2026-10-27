@@ -433,6 +433,7 @@ struct Frame {
     /// The SOF marker: 0xC0/C1 sequential and 0xC2 progressive Huffman,
     /// 0xC9/CA arithmetic.
     mode: u8,
+    precision: u8,
 }
 
 /// The decode paths that use a definition or a part, as bits.
@@ -663,6 +664,9 @@ impl Defs {
 
     /// The quantisation tables every frame component refers to.
     fn mark_quant(&mut self, f: &Frame, paths: u8) {
+        if f.mode == 0xc3 {
+            return;
+        }
         for c in 0..f.components as usize {
             self.mark(DefKind::Quant(f.qidx[c]), paths);
         }
@@ -942,7 +946,7 @@ fn has_zero_quant(body: &[u8]) -> bool {
 /// as for [`check_dqt`]: the parser reads a table's counts and symbols
 /// before it compares them with the declared length, so a short length
 /// field makes it read on into whatever follows.
-fn check_dht(avail: &[u8], declared: usize) -> Result<(), Bad> {
+fn check_dht(avail: &[u8], declared: usize, lossless: bool) -> Result<(), Bad> {
     use crate::huffman::HuffmanDecodeTable;
     let (mut at, mut k) = (0, 0);
     while at < declared {
@@ -971,7 +975,14 @@ fn check_dht(avail: &[u8], declared: usize) -> Result<(), Bad> {
             return bad(k, "DHT length mismatch");
         }
         let built = if info >> 4 == 0 {
-            HuffmanDecodeTable::from_bits_values_dc(&counts, values).map(|_| ())
+            if lossless {
+                if values.iter().any(|&v| v > 16) {
+                    return bad(k, "lossless DC symbol above 16");
+                }
+                HuffmanDecodeTable::from_bits_values(&counts, values).map(|_| ())
+            } else {
+                HuffmanDecodeTable::from_bits_values_dc(&counts, values).map(|_| ())
+            }
         } else {
             HuffmanDecodeTable::from_bits_values_ac(&counts, values).map(|_| ())
         };
@@ -1222,6 +1233,7 @@ fn mark_scan_uses(defs: &mut Defs, f: &Frame, spec: &[u8], permissive: bool) {
     let (need_dc, need_ac) = match f.mode {
         // Sequential: every block decodes DC then AC.
         0xC0 | 0xC1 | 0xC9 => (true, true),
+        0xC3 => (true, false),
         // Progressive arithmetic (entropy/arithmetic.rs): DC first scans read
         // the DC conditioning, AC first scans the AC conditioning (Kx);
         // refinement scans use fixed or per-scan statistics only.
@@ -1403,7 +1415,7 @@ fn sof_kind(m: u8) -> Option<(&'static str, bool)> {
         0xC2 => ("SOF2", true),
         0xC9 => ("SOF9", true),
         0xCA => ("SOF10", true),
-        0xC3 => ("SOF3", false),
+        0xC3 => ("SOF3", true),
         0xC7 => ("SOF7", false),
         0xCB => ("SOF11", false),
         _ => return None,
@@ -1745,6 +1757,12 @@ impl Walk<'_> {
         // Scan-data parts: (node, scan header offset).
         let mut scan_parts: Vec<(usize, usize)> = Vec::new();
         let mut pos = start + 2;
+        let lossless_frame = crate::container::marker::iter(&data[start..limit])
+            .find_map(|span| match span.kind {
+                crate::container::marker::MarkerKind::Sof(n) => Some(n == 3),
+                _ => None,
+            })
+            .unwrap_or(false);
         let mut phase = Phase::Header;
         let mut scans = 0u32;
         let mut seen_sos = false;
@@ -2092,7 +2110,7 @@ impl Walk<'_> {
                         be16(&data[..limit], pos + 2).map_or(0, |n| (n as usize).saturating_sub(2));
                     let content = match m {
                         MARKER_DQT => check_dqt(avail, declared),
-                        MARKER_DHT => check_dht(avail, declared),
+                        MARKER_DHT => check_dht(avail, declared, lossless_frame),
                         MARKER_DAC => check_dac(avail, declared),
                         _ => Ok(()),
                     };
@@ -2146,7 +2164,7 @@ impl Walk<'_> {
                     let verdict = if m == MARKER_DQT {
                         check_dqt(avail, body.len())
                     } else {
-                        check_dht(avail, body.len())
+                        check_dht(avail, body.len(), lossless_frame)
                     };
                     let ranges = table_ranges(m, body, payload.start);
                     // The tables before a bad one are stored before the
@@ -2294,7 +2312,7 @@ impl Walk<'_> {
                     let header = at(Phase::Header, 0, false);
                     let decode = decode_only(Phase::Header, 0, false);
                     if !supported {
-                        // `read_header` rejects SOF3/SOF7/SOF11.
+                        // `read_header` rejects differential and arithmetic lossless.
                         self.set(
                             node,
                             Disposition::Skipped,
@@ -2309,7 +2327,7 @@ impl Walk<'_> {
                             "unsupported frame type",
                         );
                     } else {
-                        match check_sof(body, rules.max_pixels) {
+                        match check_sof(body, rules.max_pixels, m) {
                             Err(why) => {
                                 self.set(node, Disposition::Malformed, None);
                                 self.fail(&mut st, rules, node, header, Fails::Always, why);
@@ -2334,10 +2352,10 @@ impl Walk<'_> {
                                     ))
                                 } else if !rules.allow_progressive && matches!(m, 0xC2 | 0xCA) {
                                     Some((decode, "progressive JPEG rejected by the decode policy"))
-                                } else if f.precision != 8 {
-                                    // `JpegParser::decode`: probe() reports the
-                                    // header, decode() refuses the precision.
-                                    Some((decode, "12-bit precision is not supported"))
+                                } else if (f.precision != 8 || m == 0xc3)
+                                    && !matches!(f.frame.components, 1 | 3)
+                                {
+                                    Some((decode, "native precision output requires gray or RGB"))
                                 } else if f.frame.components == 2 {
                                     // The output stage (decode/parser/output.rs)
                                     // converts 1, 3 and 4 components only.
@@ -3511,12 +3529,18 @@ struct SofInfo {
 
 /// The decoder's verdict on a supported frame header (`parse_frame_header`,
 /// in `read_header`). `body` follows the length word.
-fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
+fn check_sof(body: &[u8], max_pixels: u64, mode: u8) -> Result<SofInfo, &'static str> {
     if body.len() + 2 < 8 {
         return Err("frame header too short");
     }
     let precision = body[0];
-    if precision != 8 && precision != 12 {
+    if if mode == 0xc3 {
+        !(2..=16).contains(&precision)
+    } else if mode == 0xc0 {
+        precision != 8
+    } else {
+        precision != 8 && precision != 12
+    } {
         return Err("invalid data precision");
     }
     let height = be16(body, 1).unwrap_or(0);
@@ -3573,7 +3597,8 @@ fn check_sof(body: &[u8], max_pixels: u64) -> Result<SofInfo, &'static str> {
             samp,
             width,
             height,
-            mode: 0,
+            mode,
+            precision,
         },
         width,
         height,
@@ -3622,6 +3647,13 @@ fn check_sos(
     }
     let at = pos + 5 + 2 * ns as usize;
     let (ss, se, ahal) = (data[at], data[at + 1], data[at + 2]);
+    if frame.mode == 0xc3 {
+        return if !(1..=7).contains(&ss) || se != 0 || ahal >= frame.precision {
+            fail("invalid lossless predictor or point transform")
+        } else {
+            None
+        };
+    }
     if ss > 63 || se > 63 {
         return fail("spectral selection beyond 63");
     }

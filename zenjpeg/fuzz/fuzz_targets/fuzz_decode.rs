@@ -22,9 +22,9 @@ fuzz_target!(|data: &[u8]| {
             .decode(data, enough::Unstoppable);
     }
 
-    // 3. f32 output targets
+    // 3. Native integer and f32 output targets
     for target in [
-        OutputTarget::SrgbF32, OutputTarget::LinearF32,
+        OutputTarget::Native16, OutputTarget::SrgbF32, OutputTarget::LinearF32,
         OutputTarget::SrgbF32Precise, OutputTarget::LinearF32Precise,
     ] {
         let _ = Decoder::new().output_target(target).max_pixels(max_px)

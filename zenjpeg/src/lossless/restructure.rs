@@ -105,6 +105,7 @@ pub fn restructure(
             .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?
     } else {
         TransformedCoefficients {
+            sample_precision: decoded_coeffs.sample_precision,
             width: decoded_coeffs.width,
             height: decoded_coeffs.height,
             components: decoded_coeffs.components,
@@ -304,7 +305,12 @@ pub(crate) fn encode_progressive_from_coefficients(
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
     let num_components = coeffs.components.len();
-    let is_color = num_components >= 3;
+    if !(1..=4).contains(&num_components) || !matches!(coeffs.sample_precision, 8 | 12) {
+        return Err(Error::unsupported_feature(
+            "coefficient encoding requires 1–4 components and 8/12-bit precision",
+        ));
+    }
+    let is_color = num_components > 1;
 
     // An interleaved DC scan walks each component's blocks one per MCU, which
     // is the interleaved order only when every component is sampled 1x1. Any
@@ -422,7 +428,13 @@ pub(crate) fn encode_progressive_from_coefficients(
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
 
     // SOF2 (progressive)
-    write_sof2(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+    write_sof2(
+        &mut output,
+        coeffs.width,
+        coeffs.height,
+        &coeffs.components,
+        coeffs.sample_precision,
+    );
 
     // Preserved segments the source placed after SOF stay there; those it
     // placed after its first SOS go before the second scan header, or here
@@ -479,7 +491,7 @@ pub(crate) fn encode_progressive_from_coefficients(
             &token_buffer,
             scan_idx,
             scan,
-            is_color,
+            num_components,
             &context_config,
             &tables,
             num_dc_tables,
@@ -503,7 +515,13 @@ pub(crate) fn encode_progressive_from_coefficients(
 }
 
 /// Write SOF2 (progressive) frame header using actual component IDs.
-fn write_sof2(output: &mut Vec<u8>, width: u32, height: u32, components: &[ComponentCoefficients]) {
+fn write_sof2(
+    output: &mut Vec<u8>,
+    width: u32,
+    height: u32,
+    components: &[ComponentCoefficients],
+    precision: u8,
+) {
     let num_components = components.len();
     let len = 2 + 1 + 2 + 2 + 1 + num_components * 3;
 
@@ -511,7 +529,7 @@ fn write_sof2(output: &mut Vec<u8>, width: u32, height: u32, components: &[Compo
     output.push(MARKER_SOF2);
     output.push((len >> 8) as u8);
     output.push((len & 0xFF) as u8);
-    output.push(8); // Sample precision
+    output.push(precision); // Sample precision
     output.push((height >> 8) as u8);
     output.push((height & 0xFF) as u8);
     output.push((width >> 8) as u8);
@@ -628,7 +646,7 @@ fn replay_scan(
     token_buffer: &ProgressiveTokenBuffer,
     scan_idx: usize,
     scan: &ProgressiveScan,
-    is_color: bool,
+    num_components: usize,
     context_config: &ContextConfig,
     tables: &[crate::huffman::optimize::OptimizedTable],
     num_dc_tables: usize,
@@ -640,7 +658,6 @@ fn replay_scan(
         .map(|s| s.num_tokens + s.ref_tokens.len())
         .unwrap_or(1024);
     let mut encoder = EntropyEncoder::with_capacity(estimated_tokens * 2);
-    let num_components = if is_color { 3 } else { 1 };
 
     // Set up DC tables
     for (i, table) in tables.iter().take(num_dc_tables).enumerate() {

@@ -10,6 +10,29 @@ use zenjpeg::decoder::{Decoder, PixelFormat};
 fuzz_target!(|data: &[u8]| {
     let max_px = 4_000_000u64;
 
+    if let Ok(mut reader) = Decoder::new().max_pixels(max_px).scanline_reader(data) {
+        let width = reader.width() as usize;
+        let stride = width + 3;
+        let mut row = vec![rgb::RGB::new(0u16, 0, 0); stride];
+        while !reader.is_finished() {
+            match reader.read_rows_rgb16(imgref::ImgRefMut::new_stride(&mut row, width, 1, stride)) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => (),
+            }
+        }
+    }
+
+    if let Ok(mut reader) = Decoder::new().max_pixels(max_px).max_memory(64 * 1024 * 1024).scanline_reader(data) {
+        let width = reader.width() as usize;
+        let mut row = vec![[0u16;4]; width + 3];
+        while !reader.is_finished() {
+            match reader.read_rows_components16(imgref::ImgRefMut::new_stride(&mut row, width, 1, width+3)) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => (),
+            }
+        }
+    }
+
     // u8 row callbacks — all formats
     for format in [
         PixelFormat::Rgb, PixelFormat::Bgr,

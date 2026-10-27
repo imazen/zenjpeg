@@ -254,6 +254,7 @@ mod tests {
             quant_table_idx: 0,
         };
         DecodedCoefficients {
+            sample_precision: 8,
             width: (n * 8) as u32,
             height: 8,
             components: vec![comp],

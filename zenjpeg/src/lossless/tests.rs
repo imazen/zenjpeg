@@ -381,6 +381,7 @@ fn make_test_coefficients() -> DecodedCoefficients {
     coeffs[3 * 64] = 40; // block 3 = (bx=1, by=1)
 
     DecodedCoefficients {
+        sample_precision: 8,
         width: 16,
         height: 16,
         components: vec![ComponentCoefficients {
@@ -515,6 +516,7 @@ fn test_transform_nonsquare_transpose() {
     }
 
     let coeffs = DecodedCoefficients {
+        sample_precision: 8,
         width: 24,
         height: 16,
         components: vec![ComponentCoefficients {
@@ -3674,6 +3676,7 @@ mod trim_sentinel_tests {
         let chroma_bw = (w as usize).div_ceil(2).div_ceil(8);
         let chroma_bh = (h as usize).div_ceil(2).div_ceil(8);
         DecodedCoefficients {
+            sample_precision: 8,
             width: w,
             height: h,
             components: vec![
@@ -4118,6 +4121,7 @@ fn dc_only_fixture_matrix() {
                     }
                 }
                 let transformed = TransformedCoefficients {
+                    sample_precision: decoded.sample_precision,
                     width,
                     height,
                     components: decoded.components,

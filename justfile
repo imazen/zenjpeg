@@ -600,3 +600,52 @@ analysis-cut-tests:
     cargo test -p zenjpeg --doc
     cargo test -p zenjpeg --features recompress-expert,parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --tests
     just fuzz-check
+
+# Shared 8/12-bit integer reconstruction and existing dispatch regressions.
+precision-kernel-check:
+    cargo test --locked -p zenjpeg --lib decode::idct_int::tests
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Predictive JPEG differences share Huffman framing, but not DCT DC prediction.
+lossless-entropy-check:
+    cargo test --locked -p zenjpeg --lib entropy::decoder::tests
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Native sample decode: mandatory oracle binaries are supplied by the caller.
+native-precision-oracle:
+    just native-components-oracle-build
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --test native_precision -- --ignored --test-threads=1
+
+native-precision-check:
+    cargo test --locked -p zenjpeg --test native_precision
+    cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
+    cargo test --locked -p zenjpeg --lib
+
+native-decoder-regressions:
+    cargo test --locked -p zenjpeg --lib --tests -- --test-threads=1
+
+native-feature-regressions:
+    cargo test --locked -p zenjpeg --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings
+
+native-integration-check:
+    cargo test --locked -p zenjpeg --features "parallel,zencodec,inventory" --test native_precision
+    just fuzz-check
+    cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
+    cargo test --locked -p zenjpeg --doc
+
+native-portability-check:
+    cargo check --locked -p zenjpeg --lib --target wasm32-unknown-unknown
+    cargo check --locked -p zenjpeg --lib --target i686-unknown-linux-gnu
+    cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings
+
+# Compile the component-independent native row reader.
+native-components-check:
+    cargo check --locked -p zenjpeg --lib
+
+native-components-oracle-build:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cmake --build "$ZENJPEG_TURBO_BIN" --target jpegtran-static --parallel 2
+    cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"${ZENJPEG_TURBO_SOURCE:-$ZENJPEG_TURBO_BIN/..}/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"

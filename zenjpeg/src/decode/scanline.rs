@@ -78,6 +78,11 @@ pub struct ScanlineReader<'a> {
     // Buffered mode for progressive JPEGs
     // When Some, we serve from this buffer instead of decoding on-the-fly
     buffered_rgb: Option<Vec<u8>>,
+    precision: u8,
+    component_rows: Option<super::parser::component_rows::ComponentRows>,
+    component_ids: [u8; 4],
+    predictive: Option<super::parser::predictive::PredictiveReader>,
+    buffered_native: Option<Vec<u16>>,
 
     // Strip processing (IDCT + upsampling)
     strip: StripProcessor,
@@ -185,6 +190,20 @@ pub struct ScanlineReader<'a> {
     deblock_has_prev: bool,
 }
 
+/// CMYK channel values in the JPEG sample range, without ICC conversion.
+/// Values retain JPEG's channel convention, including Adobe inversion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cmyk16 {
+    /// Cyan channel.
+    pub c: u16,
+    /// Magenta channel.
+    pub m: u16,
+    /// Yellow channel.
+    pub y: u16,
+    /// Black channel.
+    pub k: u16,
+}
+
 impl<'a> ScanlineReader<'a> {
     /// Creates a new scanline reader from parsed JPEG scan data.
     ///
@@ -224,6 +243,7 @@ impl<'a> ScanlineReader<'a> {
         alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
+            precision,
             data: _,
             width,
             height,
@@ -242,7 +262,7 @@ impl<'a> ScanlineReader<'a> {
             interleaved: _,
         } = scan;
 
-        let strip = StripProcessor::new(
+        let mut strip = StripProcessor::new(
             width,
             num_components,
             h_samp,
@@ -252,6 +272,14 @@ impl<'a> ScanlineReader<'a> {
             output_target,
             alloc_pref,
         )?;
+
+        strip.precision = precision;
+        if precision == 12 {
+            strip.idct_method = super::IdctMethod::Libjpeg;
+            if width <= 4 && matches!(strip.subsampling, Subsampling::S422 | Subsampling::S420) {
+                strip.chroma_upsampling = super::ChromaUpsampling::NearestNeighbor;
+            }
+        }
 
         // Resolve deblock mode: Auto/AutoStreamable select Boundary4Tap in streaming.
         // (Knusperli requires coefficients, not available here — but Auto with Knusperli
@@ -293,11 +321,16 @@ impl<'a> ScanlineReader<'a> {
         };
 
         Ok(Self {
+            component_ids: frame_component_ids(&data_cow),
             data: data_cow,
             width,
             height,
             num_components,
             buffered_rgb: None,
+            precision,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
             strip,
             current_row: 0,
             current_mcu_row: 0,
@@ -377,6 +410,7 @@ impl<'a> ScanlineReader<'a> {
         deblock_mode: DeblockMode,
         alloc_pref: zencodec::AllocPreference,
         color_model: ColorModel,
+        precision: u8,
     ) -> Result<Self> {
         let width = coeffs.width;
         let height = coeffs.height;
@@ -391,12 +425,16 @@ impl<'a> ScanlineReader<'a> {
             quant_indices[i] = c.quant_table_idx as usize;
         }
 
+        if num_components == 1 && precision == 12 {
+            h_samp = [1; 3];
+            v_samp = [1; 3];
+        }
         let mut quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4] = [None; 4];
         for (i, slot) in quant_tables.iter_mut().enumerate() {
             *slot = coeffs.quant_tables.get(i).copied().flatten();
         }
 
-        let strip = StripProcessor::new(
+        let mut strip = StripProcessor::new(
             width,
             num_components,
             h_samp,
@@ -406,6 +444,14 @@ impl<'a> ScanlineReader<'a> {
             output_target,
             alloc_pref,
         )?;
+
+        strip.precision = precision;
+        if precision == 12 {
+            strip.idct_method = super::IdctMethod::Libjpeg;
+            if width <= 4 && matches!(strip.subsampling, Subsampling::S422 | Subsampling::S420) {
+                strip.chroma_upsampling = super::ChromaUpsampling::NearestNeighbor;
+            }
+        }
 
         // Deblock setup — identical to the streaming constructor.
         let effective_deblock = match deblock_mode {
@@ -438,11 +484,16 @@ impl<'a> ScanlineReader<'a> {
         };
 
         Ok(Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
             num_components,
             buffered_rgb: None,
+            precision,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
             strip,
             current_row: 0,
             current_mcu_row: 0,
@@ -536,11 +587,16 @@ impl<'a> ScanlineReader<'a> {
         color_model: ColorModel,
     ) -> Self {
         Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
             num_components,
             buffered_rgb: Some(pixels),
+            precision: 8,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
             strip: StripProcessor::new_dummy(subsampling),
             current_row: 0,
             current_mcu_row: 0,
@@ -598,6 +654,207 @@ impl<'a> ScanlineReader<'a> {
         }
     }
 
+    pub(super) fn from_predictive(
+        data: Cow<'a, [u8]>,
+        width: u32,
+        height: u32,
+        channels: u8,
+        precision: u8,
+        predictive: super::parser::predictive::PredictiveReader,
+        model: ColorModel,
+        ids: [u8; 4],
+    ) -> Self {
+        let mut reader = Self::new_buffered_cow(
+            data,
+            width,
+            height,
+            channels,
+            Subsampling::S444,
+            Vec::new(),
+            model,
+        );
+        reader.buffered_rgb = None;
+        reader.precision = precision;
+        reader.predictive = Some(predictive);
+        reader.component_ids = ids;
+        reader
+    }
+
+    pub(super) fn from_native_result(
+        data: Cow<'a, [u8]>,
+        result: super::DecodeResult,
+    ) -> Result<Self> {
+        let precision = result.sample_precision();
+        let channels = result.format().num_channels() as u8;
+        let mut reader = Self::new_buffered_cow(
+            data,
+            result.width(),
+            result.height(),
+            channels,
+            Subsampling::S444,
+            Vec::new(),
+            if result.format() == crate::types::PixelFormat::Cmyk {
+                ColorModel::Cmyk
+            } else if channels == 1 {
+                ColorModel::Gray
+            } else {
+                ColorModel::Rgb
+            },
+        );
+        let super::OwnedDecodedPixels::U16(samples) = result.into_pixels() else {
+            return Err(Error::internal("expected native samples"));
+        };
+        reader.buffered_rgb = None;
+        reader.buffered_native = Some(samples);
+        reader.precision = precision;
+        Ok(reader)
+    }
+
+    /// Sample precision declared by the JPEG frame, before output conversion.
+    pub fn sample_precision(&self) -> u8 {
+        self.precision
+    }
+
+    pub(super) fn replace_data(&mut self, data: Vec<u8>) {
+        self.data = Cow::Owned(data);
+    }
+
+    pub(super) fn from_component_rows(
+        data: Cow<'a, [u8]>,
+        parser: &super::parser::JpegParser<'_>,
+        source: super::parser::component_rows::ComponentRows,
+    ) -> Self {
+        let mut reader = Self::new_buffered_cow(
+            data,
+            parser.width,
+            parser.height,
+            parser.num_components,
+            Subsampling::S444,
+            Vec::new(),
+            parser.color_model,
+        );
+        reader.buffered_rgb = None;
+        reader.precision = parser.precision;
+        reader.component_ids = core::array::from_fn(|i| parser.components[i].id);
+        reader.component_rows = Some(source);
+        reader
+    }
+
+    /// Component identifiers in frame order. Raw component pixels use this order.
+    pub fn component_ids(&self) -> &[u8] {
+        &self.component_ids[..self.num_components as usize]
+    }
+
+    /// Read full-resolution components in frame order, without color conversion.
+    /// `N` must equal the frame component count. Stride is in N-channel pixels.
+    /// Samples retain source precision and transfer function; DCT components are
+    /// upsampled using the configured filter. No ICC conversion is performed.
+    pub fn read_rows_components16<const N: usize>(
+        &mut self,
+        mut output: ImgRefMut<'_, [u16; N]>,
+    ) -> Result<usize> {
+        let width = self.width() as usize;
+        if N != self.num_components as usize {
+            return Err(Error::unsupported_feature(
+                "component pixel channel count does not match frame",
+            ));
+        }
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        if self.buffered_rgb.is_some() || self.buffered_native.is_some() || self.is_wave_only() {
+            return Err(Error::unsupported_feature(
+                "reader holds converted pixels, not source components",
+            ));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let max = ((1u32 << self.precision) - 1) as i32;
+        let buf = output.buf_mut();
+        self.read_component_rows_with(rows, true, |i, row| {
+            for x in 0..width {
+                buf[i * stride + x] = core::array::from_fn(|c| match row {
+                    RowSrc::Native(p, n, _) => p[x * n + c],
+                    RowSrc::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
+                    _ => unreachable!(),
+                });
+            }
+        })
+    }
+
+    /// Read CMYK samples, preserving the source range and JPEG inversion convention.
+    /// YCCK is converted to CMYK with the libjpeg matrix; no ICC conversion is done.
+    /// Stride is measured in CMYK pixels.
+    pub fn read_rows_cmyk16(&mut self, mut output: ImgRefMut<'_, Cmyk16>) -> Result<usize> {
+        if !matches!(self.color_model, ColorModel::Cmyk | ColorModel::Ycck)
+            || (self.predictive.is_none()
+                && self.component_rows.is_none()
+                && self.buffered_native.is_none())
+        {
+            return Err(Error::unsupported_feature(
+                "CMYK16 requires native CMYK/YCCK components",
+            ));
+        }
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let precision = self.precision;
+        let max = ((1u32 << precision) - 1) as u16;
+        let buf = output.buf_mut();
+        self.read_component_rows_with(rows, true, |i, row| {
+            let RowSrc::Native(p, 4, model) = row else {
+                unreachable!()
+            };
+            for x in 0..width {
+                let p = &p[x * 4..x * 4 + 4];
+                let [c, m, y] = if model == ColorModel::Ycck {
+                    native_ycbcr([p[0], p[1], p[2]], precision).map(|v| max - v)
+                } else {
+                    [p[0], p[1], p[2]]
+                };
+                buf[i * stride + x] = Cmyk16 { c, m, y, k: p[3] };
+            }
+        })
+    }
+
+    /// Read RGB in the frame's native integer range (0–4095 for 12-bit JPEG).
+    /// Retains source primaries and transfer function. Stride is in RGB pixels.
+    pub fn read_rows_rgb16(&mut self, mut output: ImgRefMut<'_, rgb::RGB<u16>>) -> Result<usize> {
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let (precision, matrix) = (self.precision, self.planes);
+        let buf = output.buf_mut();
+        self.read_rows_with(rows, |i, row| {
+            for x in 0..width {
+                let [r, g, b] = row.rgb16(x, precision, matrix);
+                buf[i * stride + x] = rgb::RGB::new(r, g, b);
+            }
+        })
+    }
+
+    /// Read gray/luma samples in the frame's native integer range.
+    /// Gray and YCbCr retain their gray/Y channel; RGB uses BT.601 luma.
+    /// Stride is in single-channel u16 samples.
+    pub fn read_rows_gray16(&mut self, mut output: ImgRefMut<'_, u16>) -> Result<usize> {
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        self.check_plane_read("read_rows_gray16 needs the luma plane (use num_threads(1))")?;
+        let (rows, stride) = (output.height(), output.stride());
+        let (precision, matrix) = (self.precision, self.planes);
+        let buf = output.buf_mut();
+        self.read_rows_with(rows, |i, row| {
+            for x in 0..width {
+                buf[i * stride + x] = row.gray16(x, precision, matrix);
+            }
+        })
+    }
+
     /// Sets the crop region for this reader.
     ///
     /// Must be called before reading any rows.
@@ -637,11 +894,16 @@ impl<'a> ScanlineReader<'a> {
         let wave_buf = vec![0u8; wave_buf_size];
 
         Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
             num_components: 3,
             buffered_rgb: None,
+            precision: 8,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
             strip: StripProcessor::new_dummy(wave_state.subsampling()),
             current_row: 0,
             current_mcu_row: 0,
@@ -1439,22 +1701,30 @@ impl<'a> ScanlineReader<'a> {
                             coeff_count,
                         );
                         let mut temp_pixels = [0i16; 64];
-                        match self.strip.idct_method {
-                            super::IdctMethod::Libjpeg => {
-                                super::idct_int::idct_int_tiered_libjpeg(
-                                    &mut dequant_buf,
-                                    &mut temp_pixels,
-                                    8,
-                                    coeff_count,
-                                );
-                            }
-                            super::IdctMethod::Jpegli => {
-                                super::idct_int::idct_int_tiered(
-                                    &mut dequant_buf,
-                                    &mut temp_pixels,
-                                    8,
-                                    coeff_count,
-                                );
+                        if self.precision == 12 {
+                            super::idct_int::idct_libjpeg_precision::<12>(
+                                &dequant_buf,
+                                &mut temp_pixels,
+                                8,
+                            );
+                        } else {
+                            match self.strip.idct_method {
+                                super::IdctMethod::Libjpeg => {
+                                    super::idct_int::idct_int_tiered_libjpeg(
+                                        &mut dequant_buf,
+                                        &mut temp_pixels,
+                                        8,
+                                        coeff_count,
+                                    );
+                                }
+                                super::IdctMethod::Jpegli => {
+                                    super::idct_int::idct_int_tiered(
+                                        &mut dequant_buf,
+                                        &mut temp_pixels,
+                                        8,
+                                        coeff_count,
+                                    );
+                                }
                             }
                         }
                         for px in 0..8 {
@@ -1702,14 +1972,87 @@ impl<'a> ScanlineReader<'a> {
     fn read_rows_with(
         &mut self,
         max_rows: usize,
+        emit: impl FnMut(usize, RowSrc<'_>),
+    ) -> Result<usize> {
+        self.read_component_rows_with(max_rows, false, emit)
+    }
+
+    fn read_component_rows_with(
+        &mut self,
+        max_rows: usize,
+        raw: bool,
         mut emit: impl FnMut(usize, RowSrc<'_>),
     ) -> Result<usize> {
+        if !raw && self.color_model == ColorModel::Unknown {
+            return Err(Error::unsupported_feature(
+                "unknown component color space: use read_rows_components16",
+            ));
+        }
         let out_width = self.width() as usize;
         let out_height = self.height() as usize;
         let crop_x = self.crop.map_or(0, |c| c.x as usize);
         let crop_y = self.crop.map_or(0, |c| c.y as usize);
         let cols = crop_x..crop_x + out_width;
         let mut n = 0;
+
+        if let Some(samples) = &self.buffered_native {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                let start = ((crop_y + self.current_row) * self.width as usize + crop_x) * channels;
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &samples[start..start + out_width * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+            }
+            return Ok(n);
+        }
+
+        if let Some(source) = &mut self.component_rows {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                while source.current_row <= crop_y + self.current_row {
+                    source.next_row(&self.data)?;
+                }
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &source.row[crop_x * channels..(crop_x + out_width) * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+            }
+            return Ok(n);
+        }
+
+        if let Some(predictive) = &mut self.predictive {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                let source_y = crop_y + self.current_row;
+                while predictive.current_row() <= source_y {
+                    predictive.next_row(&self.data)?;
+                }
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &predictive.row[crop_x * channels..(crop_x + out_width) * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+            }
+            return Ok(n);
+        }
 
         // Wave-parallel reader: decoded RGB rows, one wave of restart
         // segments at a time.
@@ -1815,14 +2158,20 @@ impl<'a> ScanlineReader<'a> {
                  does not keep for YCbCr frames (use num_threads(1))",
             )?;
         }
+        let planes = self.planes;
         let kernel = RowKernel::new(self.planes, layout);
         let (max_rows, stride) = (output.height(), output.stride());
         // Rows are addressed through the flat buffer, so the last row only
         // needs `row_bytes`, not a full stride.
         let buf = output.buf_mut();
+        let precision = self.precision;
         self.read_rows_with(max_rows, |i, row| {
             let out = &mut buf[i * stride..i * stride + row_bytes];
             match row {
+                RowSrc::Native(..) => row.write_native_u8(precision, planes, layout, out),
+                RowSrc::Planes(..) if precision != 8 => {
+                    row.write_native_u8(precision, planes, layout, out)
+                }
                 RowSrc::Planes(c0, c1, c2) => kernel.row(c0, c1, c2, out),
                 RowSrc::Rgb8(rgb) => rgb8_row(rgb, layout, out),
                 RowSrc::Gray8(gray) => gray8_row(gray, layout, out),
@@ -1924,12 +2273,31 @@ impl<'a> ScanlineReader<'a> {
         let planes = self.planes;
         let (max_rows, stride) = (output.height(), output.stride());
         let buf = output.buf_mut();
+        let precision = self.precision;
         self.read_rows_with(max_rows, |i, row| {
             let out = &mut buf[i * stride..i * stride + row_len];
             let mut put = |px: usize, r: f32, g: f32, b: f32| {
                 out[px * 4..px * 4 + 4].copy_from_slice(&[r, g, b, 1.0]);
             };
             match row {
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        put(x, r, g, b);
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        put(x, r, g, b);
+                    }
+                }
                 RowSrc::Planes(c0, c1, c2) => match planes {
                     PlaneMatrix::YCbCr { .. } => {
                         for (px, ((&y, &cb), &cr)) in c0.iter().zip(c1).zip(c2).enumerate() {
@@ -2030,6 +2398,7 @@ impl<'a> ScanlineReader<'a> {
              does not keep for YCbCr frames (use num_threads(1))",
         )?;
         let planes = self.planes;
+        let precision = self.precision;
         self.read_rows_with(max_rows, |i, row| {
             let o = i * stride;
             let (y, cb, cr) = (
@@ -2041,6 +2410,66 @@ impl<'a> ScanlineReader<'a> {
                 (y[px], cb[px], cr[px]) = (vy, vcb, vcr);
             };
             match row {
+                RowSrc::Native(p, n, ColorModel::Gray | ColorModel::YCbCr) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    let center = (1u32 << (precision - 1)) as f32;
+                    for x in 0..row.len() {
+                        put(
+                            x,
+                            (
+                                p[x * n] as f32 / max,
+                                if n == 1 {
+                                    0.0
+                                } else {
+                                    (p[x * n + 1] as f32 - center) / max
+                                },
+                                if n == 1 {
+                                    0.0
+                                } else {
+                                    (p[x * n + 2] as f32 - center) / max
+                                },
+                            ),
+                        );
+                    }
+                }
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row.rgb16(x, precision, planes).map(|v| v as f32 / max);
+                        let yy = 0.299 * r + 0.587 * g + 0.114 * b;
+                        put(x, (yy, (b - yy) / 1.772, (r - yy) / 1.402));
+                    }
+                }
+                RowSrc::Planes(c0, c1, c2) if precision != 8 && planes != PlaneMatrix::Identity => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    let center = (1u32 << (precision - 1)) as f32;
+                    for x in 0..c0.len() {
+                        put(
+                            x,
+                            (
+                                c0[x] as f32 / max,
+                                if planes == PlaneMatrix::Gray {
+                                    0.0
+                                } else {
+                                    (c1[x] as f32 - center) / max
+                                },
+                                if planes == PlaneMatrix::Gray {
+                                    0.0
+                                } else {
+                                    (c2[x] as f32 - center) / max
+                                },
+                            ),
+                        );
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row.rgb16(x, precision, planes).map(|v| v as f32 / max);
+                        let yy = 0.299 * r + 0.587 * g + 0.114 * b;
+                        put(x, (yy, (b - yy) / 1.772, (r - yy) / 1.402));
+                    }
+                }
                 RowSrc::Planes(c0, c1, c2) => match planes {
                     PlaneMatrix::YCbCr { .. } => {
                         for (px, ((&a, &b), &c)) in c0.iter().zip(c1).zip(c2).enumerate() {
@@ -2105,9 +2534,22 @@ impl<'a> ScanlineReader<'a> {
         let planes = self.planes;
         let (max_rows, stride) = (output.height(), output.stride());
         let buf = output.buf_mut();
+        let precision = self.precision;
         self.read_rows_with(max_rows, |i, row| {
             let out = &mut buf[i * stride..i * stride + out_width];
             match row {
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        *o = row.gray16(x, precision, planes) as f32 / max;
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        *o = row.gray16(x, precision, planes) as f32 / max;
+                    }
+                }
                 RowSrc::Planes(c0, c1, c2) if planes == PlaneMatrix::Identity => {
                     for (o, ((&r, &g), &b)) in out.iter_mut().zip(c0.iter().zip(c1).zip(c2)) {
                         *o = rgb_luma_f32(u8c(r), u8c(g), u8c(b));
@@ -2159,9 +2601,34 @@ impl<'a> ScanlineReader<'a> {
         let (max_rows, stride) = (output.height(), output.stride());
         let buf = output.buf_mut();
         let weighted = |r: f32, g: f32, b: f32| 0.299 * r + 0.587 * g + 0.114 * b;
+        let precision = self.precision;
         self.read_rows_with(max_rows, |i, row| {
             let out = &mut buf[i * stride..i * stride + out_width];
             match row {
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        *o = weighted(r, g, b);
+                    }
+                }
+                RowSrc::Planes(y, _, _) if precision != 8 && planes != PlaneMatrix::Identity => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (dst, &sample) in out.iter_mut().zip(y) {
+                        *dst = srgb_to_linear_f32(sample as f32 / max);
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        *o = weighted(r, g, b);
+                    }
+                }
                 RowSrc::Planes(c0, c1, c2) if planes == PlaneMatrix::Identity => {
                     for (o, ((&r, &g), &b)) in out.iter_mut().zip(c0.iter().zip(c1).zip(c2)) {
                         *o = weighted(lin_i16(r), lin_i16(g), lin_i16(b));
@@ -2393,7 +2860,11 @@ impl<'a> ScanlineReader<'a> {
             }
             ColorModel::Gray | ColorModel::YCbCr => {}
         }
-        if self.buffered_rgb.is_some() {
+        if self.buffered_rgb.is_some()
+            || self.predictive.is_some()
+            || self.buffered_native.is_some()
+            || self.component_rows.is_some()
+        {
             return Err(Error::unsupported_feature(
                 "read_rows_ycbcr_native_i16: this reader holds decoded pixels, not planes \
                  (progressive grayscale, a sampling shape the strip reader does not serve, \
@@ -2521,7 +2992,9 @@ fn lin_i16(v: i16) -> f32 {
 }
 
 /// One output row's source data, cropped to the output columns.
+#[derive(Clone, Copy)]
 enum RowSrc<'r> {
+    Native(&'r [u16], usize, ColorModel),
     /// Decoded RGB, three bytes per pixel (buffered and wave readers).
     Rgb8(&'r [u8]),
     /// Decoded gray, one byte per pixel (buffered reader of a grayscale frame).
@@ -2529,6 +3002,97 @@ enum RowSrc<'r> {
     /// Strip planes (streaming and coefficient readers). `c1`/`c2` are empty
     /// for grayscale; their meaning is the reader's [`PlaneMatrix`].
     Planes(&'r [i16], &'r [i16], &'r [i16]),
+}
+
+impl RowSrc<'_> {
+    fn len(self) -> usize {
+        match self {
+            Self::Native(p, c, _) => p.len() / c,
+            Self::Planes(y, _, _) => y.len(),
+            Self::Rgb8(p) => p.len() / 3,
+            Self::Gray8(p) => p.len(),
+        }
+    }
+    fn rgb16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> [u16; 3] {
+        match self {
+            Self::Native(p, 1, _) => [p[x]; 3],
+            Self::Native(p, c, model) => {
+                let p = &p[x * c..(x + 1) * c];
+                let max = (1u32 << precision) - 1;
+                match model {
+                    ColorModel::YCbCr => native_ycbcr([p[0], p[1], p[2]], precision),
+                    ColorModel::Cmyk | ColorModel::Ycck => {
+                        let cmy = if model == ColorModel::Ycck {
+                            native_ycbcr([p[0], p[1], p[2]], precision).map(|v| max as u16 - v)
+                        } else {
+                            [p[0], p[1], p[2]]
+                        };
+                        cmy.map(|v| ((v as u32 * p[3] as u32 + max / 2) / max) as u16)
+                    }
+                    _ => [p[0], p[1], p[2]],
+                }
+            }
+            Self::Gray8(p) => [p[x] as u16; 3],
+            Self::Rgb8(p) => [p[x * 3] as u16, p[x * 3 + 1] as u16, p[x * 3 + 2] as u16],
+            Self::Planes(y, cb, cr) => {
+                if precision == 8 {
+                    let mut pixel = [0u8; 3];
+                    RowKernel::new(matrix, Layout8::Rgb).row(
+                        &y[x..x + 1],
+                        if cb.is_empty() { &[] } else { &cb[x..x + 1] },
+                        if cr.is_empty() { &[] } else { &cr[x..x + 1] },
+                        &mut pixel,
+                    );
+                    return pixel.map(u16::from);
+                }
+                let max = (1i64 << precision) - 1;
+                let clamp = |v: i64| v.clamp(0, max) as u16;
+                match matrix {
+                    PlaneMatrix::Gray => [clamp(y[x] as i64); 3],
+                    PlaneMatrix::Identity => {
+                        [clamp(y[x] as i64), clamp(cb[x] as i64), clamp(cr[x] as i64)]
+                    }
+                    PlaneMatrix::YCbCr { .. } => native_ycbcr(
+                        [clamp(y[x] as i64), clamp(cb[x] as i64), clamp(cr[x] as i64)],
+                        precision,
+                    ),
+                }
+            }
+        }
+    }
+    fn write_native_u8(self, precision: u8, matrix: PlaneMatrix, layout: Layout8, out: &mut [u8]) {
+        let max = (1u32 << precision) - 1;
+        let scale = |v: u16| ((v as u32 * 255 + max / 2) / max) as u8;
+        for (x, dst) in out.chunks_exact_mut(layout.bytes_per_pixel()).enumerate() {
+            if layout == Layout8::Gray {
+                dst[0] = scale(self.gray16(x, precision, matrix));
+            } else {
+                let [r, g, b] = self.rgb16(x, precision, matrix).map(scale);
+                let pixel = if matches!(layout, Layout8::Bgr | Layout8::Bgrx) {
+                    [b, g, r]
+                } else {
+                    [r, g, b]
+                };
+                dst[..3].copy_from_slice(&pixel);
+                if dst.len() == 4 {
+                    dst[3] = 255;
+                }
+            }
+        }
+    }
+
+    fn gray16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> u16 {
+        if let Self::Native(p, n, ColorModel::Gray | ColorModel::YCbCr) = self {
+            return p[x * n];
+        }
+        if let Self::Planes(y, _, _) = self
+            && matrix != PlaneMatrix::Identity
+        {
+            return (y[x] as i64).clamp(0, (1i64 << precision) - 1) as u16;
+        }
+        let [r, g, b] = self.rgb16(x, precision, matrix).map(u64::from);
+        ((19595 * r + 38470 * g + 7471 * b + 32768) >> 16) as u16
+    }
 }
 
 /// Convert sRGB f32 (0.0-1.0) to linear f32.
@@ -2693,6 +3257,31 @@ fn filter_inter_mcu_horizontal_i16(
         // Only modify the current MCU row's side (q0).
         curr_plane[x] = (q0 + delta_q).round() as i16;
     }
+}
+
+fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
+    let max = (1i64 << precision) - 1;
+    let [y, b, r] = p.map(i64::from);
+    let (b, r) = (b - (1 << (precision - 1)), r - (1 << (precision - 1)));
+    [
+        y + ((91881 * r + 32768) >> 16),
+        y + ((-22554 * b - 46802 * r + 32768) >> 16),
+        y + ((116130 * b + 32768) >> 16),
+    ]
+    .map(|v| v.clamp(0, max) as u16)
+}
+
+fn frame_component_ids(data: &[u8]) -> [u8; 4] {
+    use crate::container::marker::{self, MarkerKind};
+    let mut ids = [0; 4];
+    if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
+        && let Some(components) = frame.payload.get(6..)
+    {
+        for (id, c) in ids.iter_mut().zip(components.as_chunks::<3>().0.iter()) {
+            *id = c[0];
+        }
+    }
+    ids
 }
 
 #[cfg(test)]

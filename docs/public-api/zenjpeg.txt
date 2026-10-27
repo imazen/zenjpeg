@@ -6,21 +6,21 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1697 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3542 lines (913 hidden + 7076 excluded-feature)
+# files: zenjpeg.txt 1713 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3553 lines (915 hidden + 7085 excluded-feature)
 
 ## summary
 #
 #   pub modules                                19
-#   pub types (struct/enum/trait/alias)       147
+#   pub types (struct/enum/trait/alias)       148
 #   pub consts/statics                         94
 #   pub macros                                  2
 #   free functions                             65
-#   inherent methods                          495
-#   struct fields                             389
-#   enum variants                             403
+#   inherent methods                          503
+#   struct fields                             394
+#   enum variants                             404
 #   re-exports                                  2
-#   trait roster entries (type × trait)       502
-#   auto-trait-complete types                 107
+#   trait roster entries (type × trait)       508
+#   auto-trait-complete types                 108
 #   auto-trait exceptions                      13
 #
 # per-module pub lines:
@@ -28,7 +28,7 @@
 #   blur                              1
 #   container                       295
 #   deblock                          16
-#   decoder                         558
+#   decoder                         573
 #   detect                           56
 #   encoder                         530
 #   heuristics                       24
@@ -36,7 +36,7 @@
 #   profile                           7
 #   target_quality                   18
 
-## items (1560 lines)
+## items (1575 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -494,6 +494,7 @@ pub fn container::types::MpImageType::type_code(self) -> u32
 #[non_exhaustive] pub enum decoder::OutputTarget
 pub decoder::OutputTarget::LinearF32
 pub decoder::OutputTarget::LinearF32Precise
+pub decoder::OutputTarget::Native16
 pub decoder::OutputTarget::Srgb8
 pub decoder::OutputTarget::SrgbF32
 pub decoder::OutputTarget::SrgbF32Precise
@@ -581,6 +582,11 @@ pub decoder::TargetColorSpace::Srgb
 pub struct decoder::AdobeInfo
 pub decoder::AdobeInfo::color_transform: decoder::AdobeColorTransform
 pub decoder::AdobeInfo::version: u16
+pub struct decoder::Cmyk16
+pub decoder::Cmyk16::c: u16
+pub decoder::Cmyk16::k: u16
+pub decoder::Cmyk16::m: u16
+pub decoder::Cmyk16::y: u16
 pub struct decoder::DecodeConfig
 pub decoder::DecodeConfig::chroma_upsampling: decoder::ChromaUpsampling
 pub decoder::DecodeConfig::correct_color: core::option::Option<decoder::TargetColorSpace>
@@ -664,7 +670,9 @@ pub fn decoder::DecodeResult::into_pixels_u8(self) -> core::option::Option<alloc
 pub fn decoder::DecodeResult::output_target(&self) -> decoder::OutputTarget
 pub fn decoder::DecodeResult::pixels(&self) -> decode::config::DecodedPixels<'_>
 pub fn decoder::DecodeResult::pixels_f32(&self) -> core::option::Option<&[f32]>
+pub fn decoder::DecodeResult::pixels_u16(&self) -> core::option::Option<&[u16]>
 pub fn decoder::DecodeResult::pixels_u8(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodeResult::sample_precision(&self) -> u8
 pub fn decoder::DecodeResult::stride(&self) -> usize
 pub fn decoder::DecodeResult::take_extras(&mut self) -> core::option::Option<decoder::DecodedExtras>
 pub fn decoder::DecodeResult::to_u16(&self) -> core::option::Option<alloc::vec::Vec<u16>>
@@ -674,6 +682,7 @@ pub struct decoder::DecodedCoefficients
 pub decoder::DecodedCoefficients::components: alloc::vec::Vec<decode::image::ComponentCoefficients>
 pub decoder::DecodedCoefficients::height: u32
 pub decoder::DecodedCoefficients::quant_tables: alloc::vec::Vec<core::option::Option<[u16; 64]>>
+pub decoder::DecodedCoefficients::sample_precision: u8
 pub decoder::DecodedCoefficients::width: u32
 pub fn decoder::DecodedCoefficients::compare(&self, &decoder::DecodedCoefficients) -> decode::image::CoefficientComparison
 pub fn decoder::DecodedCoefficients::huffman_tables(&self) -> core::option::Option<&encoder::HuffmanTableSet>
@@ -911,6 +920,7 @@ pub struct decoder::ScanlineReader<'a>
 pub fn decoder::ScanlineReader<'a>::chroma_height(&self) -> u32
 pub fn decoder::ScanlineReader<'a>::chroma_rows_per_mcu(&self) -> usize
 pub fn decoder::ScanlineReader<'a>::chroma_width(&self) -> u32
+pub fn decoder::ScanlineReader<'a>::component_ids(&self) -> &[u8]
 pub fn decoder::ScanlineReader<'a>::current_row(&self) -> usize
 pub fn decoder::ScanlineReader<'a>::height(&self) -> u32
 pub fn decoder::ScanlineReader<'a>::info(&self) -> decoder::ScanlineInfo
@@ -922,15 +932,20 @@ pub fn decoder::ScanlineReader<'a>::num_components(&self) -> u8
 pub fn decoder::ScanlineReader<'a>::read_rows_bgr8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_bgra8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_bgrx8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_cmyk16(&mut self, imgref::ImgRefMut<'_, decoder::Cmyk16>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_components16<const N: usize>(&mut self, imgref::ImgRefMut<'_, [u16; N]>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_gray16(&mut self, imgref::ImgRefMut<'_, u16>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_gray8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_gray_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_gray_linear_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_rgb16(&mut self, imgref::ImgRefMut<'_, rgb::formats::rgb::Rgb<u16>>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgb8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgba8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgba_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_rgbx8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_f32(&mut self, &mut [f32], &mut [f32], &mut [f32], usize, usize) -> encoder::Result<usize>
 pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_native_i16(&mut self, &mut [i16], usize, &mut [i16], &mut [i16], usize, usize) -> encoder::Result<(usize, usize)>
+pub fn decoder::ScanlineReader<'a>::sample_precision(&self) -> u8
 pub fn decoder::ScanlineReader<'a>::subsampling(&self) -> decoder::Subsampling
 pub fn decoder::ScanlineReader<'a>::width(&self) -> u32
 pub trait decoder::MpfImageTypeExt
@@ -1599,7 +1614,7 @@ pub fn target_quality::search_target<E, Err>(f64, &target_quality::TargetOptions
 pub macro profile_block!
 pub macro profile_scope!
 
-## trait impls (123 types)
+## trait impls (124 types)
 
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
@@ -1619,6 +1634,7 @@ deblock::boundary::BoundaryStrength: Clone, Copy, Debug
 decoder::AdobeColorTransform: Clone, Copy, Debug, Default, Eq, PartialEq
 decoder::AdobeInfo: Clone, Debug, Default
 decoder::ChromaUpsampling: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::Cmyk16: Clone, Copy, Debug, Default, Eq, PartialEq
 decoder::ColorSpace: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 decoder::CropRegion: Clone, Copy, Debug, PartialEq
 decoder::DeblockMode: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -1727,7 +1743,7 @@ whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder
 
 ## auto traits
 
-107 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+108 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 decoder::DecodeConfig: !RefUnwindSafe !UnwindSafe
 decoder::DecodeInfo: !Freeze
 decoder::DecodePool: !Freeze

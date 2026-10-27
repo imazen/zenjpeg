@@ -330,6 +330,8 @@ const fn build_zigzag_from_linear() -> [u8; 64] {
 
 /// Result of transforming decoded coefficients.
 pub struct TransformedCoefficients {
+    /// Sample precision retained from the source frame (8 or 12).
+    pub sample_precision: u8,
     /// New image width in pixels.
     pub width: u32,
     /// New image height in pixels.
@@ -372,6 +374,7 @@ pub fn transform_coefficients(
 ) -> Result<TransformedCoefficients, TransformError> {
     if config.transform == LosslessTransform::None {
         return Ok(TransformedCoefficients {
+            sample_precision: coeffs.sample_precision,
             width: coeffs.width,
             height: coeffs.height,
             components: coeffs.components.clone(),
@@ -535,6 +538,7 @@ pub fn transform_coefficients(
     };
 
     Ok(TransformedCoefficients {
+        sample_precision: coeffs.sample_precision,
         width: new_width,
         height: new_height,
         components: transformed_components,

@@ -702,6 +702,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Resolved during native-precision decoding: routing through a second metadata-preserving header parse duplicated extended XMP packets. Native routing now probes marker spans without extracting metadata; existing extended-XMP round-trip assertions cover the regression.
+
 - Resolved 2026-10-18 (PR237 review): single-scan preservation filtered out inert
   post-scan JFIF/Adobe/ICC segments (refuses unsupported single-scan preservation
   and lets recompress Preserve select progressive output); 4-component frames

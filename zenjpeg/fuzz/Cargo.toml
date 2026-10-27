@@ -9,6 +9,8 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
+rgb = "0.8.53"
+imgref = "1.12.3"
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }

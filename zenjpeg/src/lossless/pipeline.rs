@@ -812,16 +812,12 @@ pub(super) fn encode_from_coefficients(
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
     let num_components = coeffs.components.len();
-    // The emitter writes luma tables for component 0 and shared chroma tables
-    // for components 1..3. Anything else (e.g. 4-component Adobe CMYK) would
-    // previously have been silently dropped from the scan while still being
-    // declared in the SOF — refuse loudly instead of emitting a corrupt file.
-    if num_components != 1 && num_components != 3 {
+    if !(1..=4).contains(&num_components) || !matches!(coeffs.sample_precision, 8 | 12) {
         return Err(Error::unsupported_feature(
-            "lossless re-encode of JPEGs with other than 1 or 3 components",
+            "coefficient encoding requires 1–4 components and 8/12-bit precision",
         ));
     }
-    let is_color = num_components == 3;
+    let is_color = num_components > 1;
 
     // Validated grid geometry — the single source of truth for the scan
     // traversal. Fails loudly if any component grid is inconsistent with the
@@ -845,7 +841,7 @@ pub(super) fn encode_from_coefficients(
     let mut dc_freq = [[0u64; 256]; 2];
     let mut ac_freq = [[0u64; 256]; 2];
     {
-        let mut prev_dc = [0i16; 3];
+        let mut prev_dc = [0i16; 4];
         let mut restart_counter = restart_interval;
         let mut uncodable = false;
         for_each_interleaved_event(&geom, |ev| match ev {
@@ -863,7 +859,7 @@ pub(super) fn encode_from_coefficients(
                 if restart_interval > 0 && mcu_idx + 1 < total_mcus {
                     restart_counter -= 1;
                     if restart_counter == 0 {
-                        prev_dc = [0i16; 3];
+                        prev_dc = [0i16; 4];
                         restart_counter = restart_interval;
                     }
                 }
@@ -931,7 +927,13 @@ pub(super) fn encode_from_coefficients(
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
 
     // SOF0 - Start of Frame (baseline)
-    write_sof(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+    write_sof(
+        &mut output,
+        coeffs.width,
+        coeffs.height,
+        &coeffs.components,
+        coeffs.sample_precision,
+    );
 
     // Preserved segments the source placed after SOF stay there: a JFIF or
     // Adobe segment there does not decide the colour model (`placement`).
@@ -1080,15 +1082,20 @@ pub(super) fn write_sof(
     width: u32,
     height: u32,
     components: &[crate::decode::ComponentCoefficients],
+    precision: u8,
 ) {
     let num_components = components.len();
     let len = 2 + 1 + 2 + 2 + 1 + num_components * 3;
 
     output.push(0xFF);
-    output.push(MARKER_SOF0);
+    output.push(if precision == 12 {
+        crate::foundation::consts::MARKER_SOF1
+    } else {
+        MARKER_SOF0
+    });
     output.push((len >> 8) as u8);
     output.push((len & 0xFF) as u8);
-    output.push(8); // Sample precision (8-bit)
+    output.push(precision); // Sample precision
     output.push((height >> 8) as u8);
     output.push((height & 0xFF) as u8);
     output.push((width >> 8) as u8);
