@@ -783,3 +783,14 @@ controlled-branch-coverage:
     timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features controlled-decode,inventory,parallel --lib --test controlled_decode --test profiled_encode --test streaming_encode --test shared_contracts --test native_hardening -- --skip malformed_native_headers_are_bounded --skip native_fixture_truncated_prefixes
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
     cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+# Whole production feature matrix; raw reports retain every measured outcome.
+# Set CARGO_TARGET_DIR and ZENJPEG_BRANCH_REPORT to durable absolute paths.
+library-branch-coverage:
+    timeout --kill-after=15s 30m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,recompress-expert,layout --lib --tests
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    python3 scripts/check-native-branches.py HEAD "$ZENJPEG_BRANCH_REPORT" --whole-library
+
+# Compile every feature, including research instrumentation and oracle test gates.
+library-all-features-check:
+    timeout --kill-after=15s 20m cargo check --locked -p zenjpeg --all-features --all-targets

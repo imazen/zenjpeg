@@ -62,3 +62,10 @@ baseline: `c227934a`. Command: `just library-branch-coverage`, with test debug
 level 1 and incremental compilation disabled. Wrapper result:
 `run-heavy: done rc=0 1039s | peak-RSS 2.70GiB | min-avail 21563MiB | peak-load 10.10`.
 These resource figures describe the validation process, not codec memory usage.
+
+`just library-all-features-check` passed after initializing the pinned jpegli,
+Highway and libjpeg header sources. It checks every feature and every target,
+including expert/research examples and benches. This was compilation, not test
+execution: existing deprecated helper calls and float-inference warnings remain.
+The C++ build wrapper now respects an explicit CMake job limit or Cargo's
+`NUM_JOBS`, instead of replacing the budget with the host CPU count.

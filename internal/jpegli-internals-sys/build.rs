@@ -336,9 +336,10 @@ fn build_with_cmake(
     // Release build for performance
     config.profile("Release");
 
-    // Parallel build support (from jpegxl-src pattern)
-    if let Ok(p) = std::thread::available_parallelism() {
-        config.env("CMAKE_BUILD_PARALLEL_LEVEL", format!("{p}"));
+    // Honor explicit CMake limits, otherwise inherit Cargo's job budget.
+    // Counting host CPUs here would bypass the caller's build resource limit.
+    if let Ok(jobs) = env::var("CMAKE_BUILD_PARALLEL_LEVEL").or_else(|_| env::var("NUM_JOBS")) {
+        config.env("CMAKE_BUILD_PARALLEL_LEVEL", jobs);
     }
 
     // Sanitizer support (from jpegxl-src pattern)
