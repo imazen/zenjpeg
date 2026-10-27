@@ -300,7 +300,9 @@ fn cancelled_planning_refuses_with_its_reason() {
     }
     let job = JpegEncoderConfig::new()
         .job()
-        .with_stop(zencodec::StopToken::new(Expired));
+        .with_pulse(zencodec::how_far::SharedPulse::new(
+            zencodec::how_far::StopOnly::new(Expired),
+        ));
     let error = job
         .plan_rows(
             32,

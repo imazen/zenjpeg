@@ -533,7 +533,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     fn job(self) -> Self::Job {
         JpegEncodeJob {
             config: self,
-            stop: None,
+            pulse: None,
             metadata: None,
             limits: ResourceLimits::none(),
             policy: None,
@@ -551,7 +551,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
 #[derive(Clone)]
 pub struct JpegEncodeJob {
     config: JpegEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    pulse: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -593,8 +593,8 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     type Enc = JpegEncoder;
     type AnimationFrameEnc = ();
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: zencodec::SharedPulse) -> Self {
+        self.pulse = Some(pulse);
         self
     }
 
@@ -657,7 +657,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
 
         Ok(JpegEncoder {
             effective_config: cfg,
-            stop: self.stop,
+            pulse: self.pulse,
             metadata: self.metadata,
             limits: self.limits,
             policy: self.policy,
@@ -686,7 +686,9 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
 /// and the `encode_srgba8()` convenience method.
 pub struct JpegEncoder {
     effective_config: EncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// Cancellation and progress control. The native encoder polls it as a
+    /// `Stop`; nothing reports progress through it yet.
+    pulse: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -859,7 +861,7 @@ fn is_default_meaning((icc, cicp): (Option<&[u8]>, Option<Cicp>), gray: bool) ->
 impl JpegEncoder {
     /// Get a reference to the stop token, defaulting to Unstoppable.
     fn stop_ref(&self) -> &dyn enough::Stop {
-        match self.stop {
+        match self.pulse {
             Some(ref s) => s,
             None => &enough::Unstoppable,
         }
@@ -1361,8 +1363,8 @@ impl JpegEncoder {
             // have no carrier in JPEG or UltraHDR and are dropped.
             let _ = (&meta.content_light_level, &meta.mastering_display);
         }
-        if let Some(ref stop) = self.stop {
-            req = req.stop(stop);
+        if let Some(ref pulse) = self.pulse {
+            req = req.stop(pulse);
         }
         Ok(req)
     }
@@ -1679,7 +1681,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 )
                 .into());
             }
-            let stop: &dyn enough::Stop = match self.stop {
+            let stop: &dyn enough::Stop = match self.pulse {
                 Some(ref s) => s,
                 None => &enough::Unstoppable,
             };

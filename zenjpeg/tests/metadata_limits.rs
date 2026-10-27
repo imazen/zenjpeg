@@ -125,6 +125,7 @@ fn native_icc_reassembly_checks_the_same_chunk_contract_as_inspection() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn complete_real_world_zero_of_one_icc_is_readable_by_default() {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;
@@ -200,7 +201,10 @@ fn complete_real_world_zero_of_one_icc_is_readable_by_default() {
             .is_err()
     );
     #[cfg(feature = "metadata-rewrite")]
-    assert!(zenjpeg::metadata::rewrite(&zencodec::metadata_rewrite::Request::new(&jpeg)).is_err());
+    assert!(
+        zenjpeg::metadata::rewrite(&zencodec::metadata_rewrite::RewriteRequest::new(&jpeg))
+            .is_err()
+    );
 }
 
 /// Run `f` on a thread with Rust's default spawned-thread stack (2 MiB, as
@@ -257,6 +261,7 @@ fn deeply_nested_xmp_does_not_overflow_the_stack() {
 
 #[cfg(feature = "zencodec")]
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn full_probe_discovers_late_primary_metadata_and_requires_its_end() {
     use enough::Unstoppable;
     use zencodec::decode::{DecodeJob, DecoderConfig};

@@ -1,6 +1,6 @@
 #![cfg(feature = "metadata-rewrite")]
 // Reused unchanged expectations from zencodecs at aa21cba0.
-use zencodec::metadata_rewrite::{Action, Error, Request as ScrubRequest};
+use zencodec::metadata_rewrite::{Action, Error, RewriteRequest as ScrubRequest};
 trait PlanRequest<'a> {
     fn plan(&self) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error>;
 }

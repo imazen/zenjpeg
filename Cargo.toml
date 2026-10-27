@@ -131,7 +131,7 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { version = ">=0.1.26, <0.3.0", git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a" }
+zencodec = { version = ">=0.1.26, <0.3.0", git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54" }
 zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
 garb = { version = "0.2.6", default-features = false }
@@ -222,5 +222,9 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54" }
+# zenpng (dev-dependency here and via zensim-regress, which needs 0.1.x)
+# implements zencodec traits, so one zencodec graph needs a zenpng 0.1.x that
+# speaks the Pulse controls of the zencodec pin above.
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "14d65e47b42fda28ae8648b8328e27034d213f11" }

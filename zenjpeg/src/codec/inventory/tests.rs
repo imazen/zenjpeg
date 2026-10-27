@@ -543,6 +543,7 @@ fn everything_fixture_dispositions_match_the_decoder() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn metadata_policy_agrees_across_probe_decode_streaming_and_inventory() {
     use alloc::borrow::Cow;
     use zencodec::decode::{DecodePolicy, StreamingDecode as _};

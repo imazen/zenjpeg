@@ -269,7 +269,8 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
 /// [`JpegDecoder`] or [`JpegStreamingDecoder`].
 pub struct JpegDecodeJob {
     config: JpegDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// Cancellation (and progress) control, polled as a `Stop`.
+    stop: Option<zencodec::SharedPulse>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
@@ -287,8 +288,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     type StreamDec = JpegStreamingDecoder<'a>;
     type AnimationFrameDec = Unsupported<At<CodecError>>;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: zencodec::SharedPulse) -> Self {
+        self.stop = Some(pulse);
         self
     }
 
@@ -1275,7 +1276,8 @@ pub(super) fn select_decode_descriptor(
 /// One-shot JPEG decoder implementing [`zencodec::decode::Decode`].
 pub struct JpegDecoder<'a> {
     config: JpegDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// Cancellation (and progress) control, polled as a `Stop`.
+    stop: Option<zencodec::SharedPulse>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,

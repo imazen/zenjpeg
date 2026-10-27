@@ -86,7 +86,7 @@ fn rewrite_preserves_independently_decoded_pixels_and_requested_xmp() {
         (MetadataPolicy::PreserveExact, true),
     ] {
         tk::check_metadata_rewrite(
-            zencodec::metadata_rewrite::Request::new(bytes.data()).with_policy(policy),
+            zencodec::metadata_rewrite::RewriteRequest::new(bytes.data()).with_policy(policy),
             zenjpeg::metadata::rewrite,
             |out| {
                 assert_eq!(pixels(out), before);

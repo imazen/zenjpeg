@@ -72,6 +72,7 @@ mod api_tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
     fn encoding_with_policy_strips_metadata() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
@@ -1039,7 +1040,9 @@ mod streaming_test {
         let config = JpegEncoderConfig::default();
         let job = config
             .job() // config consumed — no config borrow
-            .with_stop(zencodec::StopToken::new(stop)) // owned token
+            .with_pulse(zencodec::how_far::SharedPulse::new(
+                zencodec::how_far::StopOnly::new(stop),
+            )) // owned cancellation-only control
             .with_canvas_size(64, 64);
         let mut enc = job.dyn_encoder().unwrap();
         // enc borrows stop, both in same scope — compiles fine

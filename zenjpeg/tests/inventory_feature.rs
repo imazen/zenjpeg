@@ -61,15 +61,15 @@ fn configured_limits_and_cancellation_survive_dispatch() {
             Err(enough::StopReason::Cancelled)
         }
     }
-    let stop = zencodec::StopToken::new(Cancelled);
+    let pulse = zencodec::how_far::SharedPulse::new(zencodec::how_far::StopOnly::new(Cancelled));
     let native = config
         .clone()
         .job()
-        .with_stop(stop.clone())
+        .with_pulse(pulse.clone())
         .inventory(&data)
         .unwrap_err();
     let mut erased_job = dynamic.dyn_job();
-    erased_job.set_stop(stop);
+    erased_job.set_pulse(pulse);
     let erased = erased_job.inventory(&data).unwrap_err();
     assert_eq!(
         native.category(),

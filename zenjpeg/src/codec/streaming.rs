@@ -22,8 +22,8 @@ pub struct JpegStreamingDecoder<'a> {
     pub(super) current_row: u32,
     /// MCU height in pixels (8 or 16 depending on subsampling).
     pub(super) mcu_height: u32,
-    /// Cooperative cancellation token.
-    pub(super) stop: Option<zencodec::StopToken>,
+    /// Cooperative cancellation (and progress) control, polled as a `Stop`.
+    pub(super) stop: Option<zencodec::SharedPulse>,
 }
 
 impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {

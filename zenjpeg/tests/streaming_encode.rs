@@ -524,7 +524,9 @@ fn finish_after_a_cancelled_push_reports_the_cancellation() {
     let tripped = Arc::new(AtomicBool::new(false));
     let mut enc = fixed(ChromaSubsampling::Quarter)
         .job()
-        .with_stop(zencodec::StopToken::new(Trip(tripped.clone())))
+        .with_pulse(zencodec::how_far::SharedPulse::new(
+            zencodec::how_far::StopOnly::new(Trip(tripped.clone())),
+        ))
         .encoder()
         .unwrap();
     assert!(enc.begin(w, h, desc(3)).unwrap().streams());
