@@ -359,6 +359,12 @@ name = "decode_zenbench"
 harness = false
 required-features = ["zencodec"]
 
+# Heap profile of effective-job planning vs native startup (no pixels read).
+# Profile with scripts/profile-encode-planning.py under heaptrack.
+[[example]]
+name = "encode_planning_probe"
+required-features = ["zencodec"]
+
 # Auto-orient permute A/B (#150). No required-features on purpose: run with
 # and without `zencodec` to compare the scalar gather against the
 # zenpixels-convert delegate.
