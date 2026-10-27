@@ -34,6 +34,10 @@ cross Rust frames holding live values. Cancellation via Pulse is not suspension.
 The existing row interfaces, native component/precision decoding, coefficient
 transforms and oracle rasters supply useful building blocks. They do not prove
 C API equivalence, all libjpeg output-mode parity, or 12-bit/lossless encoding.
+Ordinary 8-bit XYB decoding exists, but controlled decoding and the new
+native-precision/general-component path reject XYB. The profile-tagged byte
+encoder qualification also requires YCbCr. These are distinct admission limits.
+
 A compatibility claim needs an explicit symbol/behavior matrix and tests using
 unmodified C callers against both libraries, including refill at every byte
 boundary and exact qualified raster comparisons.

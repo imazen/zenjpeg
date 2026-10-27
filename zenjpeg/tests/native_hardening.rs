@@ -28,6 +28,28 @@ fn native_fixture_raster_hashes() {
             format!("{:x}", Sha256::digest(&data)),
             expected["jpeg_sha256"].as_str().unwrap()
         );
+        if matches!(expected["args"][2].as_str().unwrap(), "1" | "3" | "4") {
+            let format = match expected["converted_format"].as_str().unwrap() {
+                "rgb" => zenjpeg::decoder::PixelFormat::Rgb,
+                "gray" => zenjpeg::decoder::PixelFormat::Gray,
+                "cmyk" => zenjpeg::decoder::PixelFormat::Cmyk,
+                other => panic!("unexpected reference output format: {other}"),
+            };
+            let decoded = Decoder::new()
+                .output_target(OutputTarget::Native16)
+                .output_format(format)
+                .decode(&data, enough::Unstoppable)
+                .unwrap();
+            let mut hash = Sha256::new();
+            for sample in decoded.pixels_u16().unwrap() {
+                hash.update(sample.to_be_bytes());
+            }
+            assert_eq!(
+                format!("{:x}", hash.finalize()),
+                expected["converted_samples_sha256"].as_str().unwrap(),
+                "{name}"
+            );
+        }
         let config = Decoder::new().output_target(OutputTarget::Native16);
         for owned in [false, true] {
             let mut reader = if owned {
@@ -36,6 +58,17 @@ fn native_fixture_raster_hashes() {
                 config.scanline_reader(&data)
             }
             .unwrap();
+            let argument = |index: usize| {
+                expected["args"][index]
+                    .as_str()
+                    .unwrap()
+                    .parse::<u32>()
+                    .unwrap()
+            };
+            assert_eq!(u32::from(reader.sample_precision()), argument(1), "{name}");
+            assert_eq!(reader.width(), argument(8), "{name}");
+            assert_eq!(reader.height(), argument(9), "{name}");
+            assert_eq!(reader.component_ids().len(), argument(2) as usize, "{name}");
             let actual = match reader.component_ids().len() {
                 1 => samples::<1>(&mut reader),
                 2 => samples::<2>(&mut reader),

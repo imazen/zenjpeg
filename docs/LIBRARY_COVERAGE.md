@@ -35,7 +35,30 @@ source precision, dimensions, component count, untouched row padding and SHA256
 of every decoded native sample serialized as big-endian u16. The expected
 rasters come from the reference identified in `tests/support/native_manifest.json`;
 reference provenance is documented in `12bit-lossless-decoding.md`.
+An additional 23 hashes assert collected RGB/CMYK output, or native grayscale
+for lossless grayscale streams whose reference refuses RGB expansion. The
+generator verifies that the original JPEG bytes are unchanged.
 
 `controlled_grayscale_fixtures_match_reference_raster_hashes` also checks both
 qualified 8-bit grayscale fixtures through controlled decoding. Truncated-prefix
 and fuzz tests are additional hardening, not substitutes for raster assertions.
+
+## Expert and diagnostic gates
+
+The current manifest has no target-zq or picker-research feature. The research
+coverage target comprises boundary-rd (optional encoding refinement), __expert
+(parameter overrides and sweep plans), recompress-expert (strategy internals),
+and the diagnostic features __bdrd-trace, __debug-tokens, __profile and
+__alloc-instrument. _dev enables SIMD test dispatch controls. The remaining
+__ffi-tests, __corpus-tests, __oracle-tests, __oracle-exiftool and __wasm-simd
+gates select test infrastructure rather than alternative production algorithms.
+__test-utils exposes generators and verification helpers.
+
+The expanded Linux production-feature baseline completed on 2026-10-27:
+7,692/9,844 compiled production branch outcomes (2,152 missing), excluding
+cfg(test) modules. This run adds recompression and layout to the earlier matrix;
+it does not include the research/diagnostic features yet. Source production
+baseline: `c227934a`. Command: `just library-branch-coverage`, with test debug
+level 1 and incremental compilation disabled. Wrapper result:
+`run-heavy: done rc=0 1039s | peak-RSS 2.70GiB | min-avail 21563MiB | peak-load 10.10`.
+These resource figures describe the validation process, not codec memory usage.
