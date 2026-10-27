@@ -1160,7 +1160,12 @@ mod tests {
     }
     #[test]
     fn progressive_eob_runs_use_exact_codes_or_individual_eobs() {
-        for (run, bytes) in [(0, vec![]), (1, vec![0xaf]), (2, vec![0xaa]), (3, vec![0xaa, 0xaf])] {
+        for (run, bytes) in [
+            (0, vec![]),
+            (1, vec![0xaf]),
+            (2, vec![0xaa]),
+            (3, vec![0xaa, 0xaf]),
+        ] {
             let mut encoder = encoder_with_tables();
             encoder.flush_eob_run(0, run).unwrap();
             assert_eq!(encoder.finish(), bytes);
@@ -1187,7 +1192,10 @@ mod tests {
     fn progressive_ac_missing_symbol_returns_error() {
         let mut coeffs = [0; 64];
         coeffs[1] = 2047;
-        assert!(encoder_with_tables().encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut 0).is_err());
+        assert!(
+            encoder_with_tables()
+                .encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut 0)
+                .is_err()
+        );
     }
-
 }
