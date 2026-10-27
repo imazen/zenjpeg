@@ -706,12 +706,16 @@ impl JpegEncoder {
         {
             return Err(zencodec::UnsupportedOperation::PixelFormat.into());
         }
-        let metadata = self.metadata.as_ref().ok_or_else(|| {
-            Error::icc_error("profile-tagged bytes require retained ICC metadata".into())
-        })?;
-        let icc = metadata.icc_profile.as_deref().ok_or_else(|| {
-            Error::icc_error("profile-tagged bytes require retained ICC metadata".into())
-        })?;
+        let Some(zencodec::Metadata {
+            icc_profile: Some(icc),
+            cicp,
+            ..
+        }) = &self.metadata
+        else {
+            return Err(Error::icc_error(
+                "profile-tagged bytes require retained ICC metadata".into(),
+            ));
+        };
         if zenpixels::icc::profile_color_space(icc) != Some(zenpixels::ColorModel::Rgb) {
             return Err(Error::icc_error(
                 "RGB samples require an RGB ICC carrier".into(),
@@ -734,9 +738,8 @@ impl JpegEncoder {
             ));
         }
         let policy = self.policy.unwrap_or_default();
-        let mut source = zencodec::SourceColor::default()
-            .with_icc_profile(metadata.icc_profile.clone().unwrap());
-        source.cicp = metadata.cicp;
+        let mut source = zencodec::SourceColor::default().with_icc_profile(icc.clone());
+        source.cicp = *cicp;
         if !policy.resolve_icc(true)
             || !matches!(
                 zencodec::resolve_color_emit(

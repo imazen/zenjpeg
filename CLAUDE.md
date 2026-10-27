@@ -1693,7 +1693,7 @@ The isolated Linux allocator-interposition test checks the returned context.
 - Minimal libjpeg-turbo fixtures exposed that 8-bit two-component frames fell
   through to the RGB reader's 1/3/4-component admission check. Route them through
   the same native component reader as higher component counts. Regression:
-  `tests/native_hardening.rs::oracle_seeds_and_all_truncated_prefixes`.
+  `tests/native_hardening.rs::native_fixture_raster_hashes`.
 
 ## Native decoder hardening (2026-10-26)
 

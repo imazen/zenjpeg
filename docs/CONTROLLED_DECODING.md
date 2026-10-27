@@ -134,3 +134,27 @@ passed (`just profiled-encode-check`, explicit `ZENJPEG_SKIP_CPP=1`):
 ```text
 run-heavy: done rc=0 5s | peak-RSS 0.52GiB | min-avail 15853MiB | peak-load 0.53
 ```
+
+### Coverage and raster regression gates (2026-10-27)
+
+After rebasing onto the native precision/component support, the focused gate
+covers 132/132 changed production branch outcomes and 369/369 changed executable
+source lines relative to `0d1ac7f7`. These are changed-code measurements, not
+whole-decoder coverage. No production error paths are excluded.
+
+Run `ZENJPEG_BRANCH_REPORT=<absolute-path>.json just controlled-branch-coverage`,
+then `python3 scripts/check-native-branches.py origin/main <absolute-path>.json
+--require-complete` and `python3 scripts/check-component-coverage.py origin/main
+<absolute-path>.lcov`. The focused run omits the two long malformed-input/prefix
+sweeps; CI retains those tests and enables `controlled-decode` in broad coverage.
+
+All 47 native fixtures assert libjpeg-turbo reference raster hashes through
+borrowed and owned strided readers, including unchanged padding. The two 8-bit
+grayscale fixtures also assert those reference hashes through controlled output.
+Linear grayscale streaming compares every sample with the native row reader.
+Admission tests independently exercise configuration guards, unsupported frame
+interpretations, incomplete ICC, storage refusal and ICC/descriptor conflicts.
+
+The covered cleanup shares container-probe interpretation in one private helper
+and destructures retained ICC metadata once, removing duplicate lookups and an
+`unwrap`. It changes no public signatures or admission policy.
