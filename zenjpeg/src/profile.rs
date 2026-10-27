@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn profiling_preserves_block_results() {
         ProfileStats::reset();
-        assert_eq!(crate::profile_block!("result", { 6 * 7 }), 42);
+        assert_eq!(crate::profile_block!("result", 6 * 7), 42);
         ProfileStats::print_summary();
         ProfileStats::reset();
     }
