@@ -201,6 +201,31 @@ impl BytesEncoder {
         builder
     }
 
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn plan_output(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        exif: Option<&super::exif::Exif>,
+    ) -> Result<Option<u32>> {
+        validate_metadata(config, exif)?;
+        if width as u64 * height as u64 > u32::MAX as u64 {
+            return Err(Error::invalid_dimensions(
+                width,
+                height,
+                "dimensions too large",
+            ));
+        }
+        let lag = Self::streaming_builder(config, width, height, layout).planned_output_lag()?;
+        // An MPF index records the primary image's length, so it is written
+        // once that length is known: no bytes before `finish`.
+        if config.segments.as_ref().is_some_and(|s| s.has_mpf_images()) {
+            return Ok(None);
+        }
+        Ok(lag)
+    }
+
     /// Build a StreamingEncoder from v2 config.
     fn build_streaming_encoder(
         config: &EncoderConfig,
@@ -208,6 +233,15 @@ impl BytesEncoder {
         height: u32,
         layout: PixelLayout,
     ) -> Result<StreamingEncoder> {
+        Self::streaming_builder(config, width, height, layout).start()
+    }
+
+    fn streaming_builder(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> crate::encode::streaming_builder::StreamingEncoderBuilder {
         use crate::encode::streaming::StreamingEncoder as SE;
         use crate::types::PixelFormat;
 
@@ -242,7 +276,7 @@ impl BytesEncoder {
         } else {
             subsampling
         };
-        Self::apply_common_builder_config(builder, config, width, height, subsampling).start()
+        Self::apply_common_builder_config(builder, config, width, height, subsampling)
     }
 
     /// Push rows with explicit stride.
