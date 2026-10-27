@@ -1763,3 +1763,21 @@ helper: a run of two blocks with the standard AC table panics on missing symbol
 table presence before the asserting accessor; missing EOB symbols return an
 error, standard tables emit individual EOB codes, and run-capable tables retain
 compact coding. All exact-code regressions pass.
+
+## Known Bugs: zencodec colour carrier and 16-bit transfer (fixed on native-preflight, 2026-10-27)
+
+Reproduced on aeba4cf6 by `tests/source_color_binding.rs` (jpeg-decoder reads the
+samples and the ICC): the adapter chose its ICC from job `Metadata` only, so a checked
+`EncodeRequest` (no metadata) wrote Display P3 pixels untagged, whether the P3 came
+from the context ICC, context CICP or descriptor primaries (issue 154). Also: a stale
+metadata ICC survived an explicit sRGB context, Verbatim and `embed_icc(false)`
+dropped the only description, XYB accepted P3 pixels, linear P3 input got no carrier,
+and `RGB16_SRGB` (advertised) was encoded as linear light ((200,40,40) decoded as
+(229,111,111)). The colour contract now: the carrier describes the stored samples;
+context ICC > context CICP > non-default descriptor primaries; linear layouts are
+stored sRGB-encoded, so their carrier is (primaries, sRGB TRC) and an unidentified
+profile refuses. Metadata still labels pixels without an explicit colour context, even
+a non-default descriptor (`emit_integration` and zenpng's
+`explicit_icc_is_not_overridden_by_descriptor_derived_cicp` pin that contract), so only
+an explicit `ColorContext` can expose a stale metadata carrier. `JpegEncodeJob::plan_rows` / `JpegEncoder::begin_declared` share one
+preparation with `begin`; `tests/row_planning.rs` compares them over 3,332 cells.

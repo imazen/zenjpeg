@@ -312,3 +312,76 @@ fn cancelled_planning_refuses_with_its_reason() {
         .unwrap_err();
     assert!(format!("{error:?}").contains("TimedOut"), "{error:?}");
 }
+
+/// An MPF index (gain map, depth map) records the primary image's length, so
+/// the file is written at finish: plan and startup both report `AT_FINISH`
+/// for a configuration that otherwise streams, and the rows path writes the
+/// one-shot file. The generic job does not take gain maps at all.
+#[test]
+fn mpf_secondary_images_plan_at_finish_and_generic_gain_maps_refuse() {
+    use zenjpeg::encode::EncoderSegments;
+    use zenjpeg::encoder::HuffmanStrategy;
+    let (data, stride) = strided_rgb(17, 65);
+    let pixels = || PixelSlice::new(&data, 17, 65, stride, PixelDescriptor::RGB8_SRGB).unwrap();
+    let secondary = JpegEncoderConfig::new()
+        .encode(PixelSlice::new(&data, 8, 8, stride, PixelDescriptor::RGB8_SRGB).unwrap())
+        .unwrap()
+        .into_vec();
+    let native = NativeConfig::ycbcr(83.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .huffman(HuffmanStrategy::Fixed);
+    let streaming = || {
+        let mut config = JpegEncoderConfig::new();
+        *config.inner_mut() = native.clone();
+        config
+    };
+    let with_mpf = || {
+        let mut config = JpegEncoderConfig::new();
+        *config.inner_mut() = native
+            .clone()
+            .with_segments(EncoderSegments::new().add_gainmap(secondary.clone()));
+        config
+    };
+    let plan = |config: JpegEncoderConfig| {
+        config
+            .job()
+            .plan_rows(
+                17,
+                65,
+                PixelDescriptor::RGB8_SRGB,
+                None,
+                OutputAccess::SeekBack,
+            )
+            .unwrap()
+    };
+    assert!(
+        plan(streaming()).streams(),
+        "control: the base configuration streams"
+    );
+    assert_eq!(plan(with_mpf()), OutputTiming::AT_FINISH);
+    let one_shot = with_mpf()
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(pixels())
+        .unwrap();
+    let mut rows = with_mpf().job().encoder().unwrap();
+    let timing = rows
+        .begin_output(17, 65, PixelDescriptor::RGB8_SRGB, OutputAccess::SeekBack)
+        .unwrap();
+    assert_eq!(timing, OutputTiming::AT_FINISH);
+    for y in (0..65).step_by(9) {
+        rows.push_rows(pixels().sub_rows(y, 9.min(65 - y))).unwrap();
+        assert!(rows.pending_output().is_empty());
+    }
+    let finished = rows.finish().unwrap();
+    assert_eq!(finished.data(), one_shot.data());
+    assert!(
+        finished
+            .data()
+            .windows(secondary.len())
+            .any(|w| w == secondary.as_slice()),
+        "the secondary image is carried"
+    );
+    assert!(!JpegEncoderConfig::capabilities().gain_map());
+}

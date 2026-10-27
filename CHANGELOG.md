@@ -14,7 +14,24 @@ All notable changes to zenjpeg are documented here. Earlier history
   profiled encode, streaming equivalence, strict Clippy and fuzz target builds
   pass with one shared-trait copy. No JPEG density implementation is implied.
 
+### QUEUED BREAKING CHANGES
+
+- The zencodec adapter refuses encodes it previously relabelled: job colour
+  metadata contradicting the pixels' explicit colour context, metadata that
+  describes linear samples for linear input, XYB with non-sRGB pixels, linear
+  input whose profile cannot be identified, and policies that leave no ICC for
+  colour identified as non-sRGB (an unidentified metadata ICC can still be
+  stripped).
+
 ### Added
+
+- Experimental effective-job planning for the zencodec adapter:
+  `JpegEncodeJob::plan_rows` reports the output timing that
+  `JpegEncoder::begin_declared` reports for the same retained job, descriptor,
+  colour context and destination access. Both run one preparation (validation,
+  limits, colour binding, native builder geometry); `begin_declared` checks the
+  native encoder against the plan before exposing a byte, and planning starts no
+  pixel or coefficient storage. Names may change to match zencodec's common hook.
 
 - Checked encode jobs qualify verbatim color emission without silently accepting
   unqualified policy fields. Refusal leaves the previous job policy intact;
@@ -33,6 +50,18 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Default-off `controlled-decode`: required interpretation suspension through native jobs, erased jobs and stored requests, admitted input/row staging, structured refusal reasons and terminal cleanup. See `docs/CONTROLLED_DECODING.md` for qualification limits.
 
 ### Fixed
+
+- The zencodec adapter wrote its ICC carrier from job metadata only (issue 154):
+  a checked `EncodeRequest`, which carries no metadata, wrote Display P3 pixels
+  untagged. The carrier now describes the stored samples: the pixels' context
+  ICC verbatim, or a profile synthesized for their code points or descriptor
+  primaries. Linear input is stored sRGB-encoded, so its carrier follows that
+  transform. `tests/source_color_binding.rs` reproduced 7 of 8 cases with
+  jpeg-decoder before the fix.
+- sRGB-encoded 16-bit input (`RGB16_SRGB` and its RGBA/gray forms) was encoded
+  as linear light: stored (200, 40, 40) decoded as (229, 111, 111). Its rows are
+  now decoded to linear f32 on the way in and encode at their stored values;
+  16-bit linear descriptors are advertised as well.
 
 - Qualify RGB/RGBA/BGRA byte input under a retained RGB ICC profile in the shared JPEG encoder. Profile-tagged one-shot and strided row paths produce identical bytes to the established packing path; conflicting profiles, discarded ICC, premultiplied alpha and unqualified XYB/HDR modes refuse (issue 241).
 
