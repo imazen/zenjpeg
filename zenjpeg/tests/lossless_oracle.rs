@@ -14,7 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use enough::Unstoppable;
+#[cfg(feature = "metadata")]
 use zenjpeg::container::xmp::generate_primary_xmp;
+#[cfg(feature = "metadata")]
 use zenjpeg::encode::EncoderSegments;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg::foundation::consts::JPEG_NATURAL_ORDER;
@@ -204,6 +206,7 @@ fn transforms_match_jpegtran_under_djpeg() {
 /// carried secondary through the rebuilt MPF index (`-b -MPImage2` walks the
 /// MP entry offsets) and get exactly the bytes we appended, and `-validate`
 /// must not complain about the file.
+#[cfg(feature = "metadata")]
 #[test]
 fn mpf_secondary_is_reachable_through_exiftool() {
     if !oracles_requested() {

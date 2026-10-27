@@ -7,6 +7,8 @@
 //! encoder (the same assembly `ultrahdr::encode_with_gainmap` uses); no
 //! `ultrahdr` feature is needed because the container code is unconditional.
 
+#![cfg(feature = "metadata")]
+
 use enough::Unstoppable;
 use zenjpeg::container::xmp::{generate_primary_xmp, parse_xmp_full};
 use zenjpeg::decode::{DecodeConfig, PreserveConfig};

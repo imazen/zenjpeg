@@ -34,6 +34,7 @@ pub use crate::encode::extras::{
 };
 
 // Re-export detect types for quality estimation through extras
+#[cfg(feature = "metadata")]
 pub use crate::detect::{
     Confidence, DqtTable, EncoderFamily, JpegProbe, QualityEstimate, QualityScale,
 };
@@ -362,6 +363,7 @@ pub struct DecodedExtras {
     /// Secondary images extracted from MPF
     pub(crate) secondary_images: Vec<PreservedMpfImage>,
     /// Probe result from header analysis (encoder ID, quality estimate, DQT tables).
+    #[cfg(feature = "metadata")]
     pub(crate) probe: Option<JpegProbe>,
 
     // Lazy parse cache
@@ -375,7 +377,16 @@ impl core::fmt::Debug for DecodedExtras {
         f.debug_struct("DecodedExtras")
             .field("segments", &self.segments.len())
             .field("secondary_images", &self.secondary_images.len())
-            .field("has_probe", &self.probe.is_some())
+            .field("has_probe", &{
+                #[cfg(feature = "metadata")]
+                {
+                    self.probe.is_some()
+                }
+                #[cfg(not(feature = "metadata"))]
+                {
+                    false
+                }
+            })
             .finish()
     }
 }
@@ -385,6 +396,7 @@ impl Clone for DecodedExtras {
         Self {
             segments: self.segments.clone(),
             secondary_images: self.secondary_images.clone(),
+            #[cfg(feature = "metadata")]
             probe: self.probe.clone(),
             xmp_cache: OnceLock::new(),
             icc_cache: OnceLock::new(),
@@ -399,6 +411,7 @@ impl DecodedExtras {
         Self {
             segments: Vec::new(),
             secondary_images: Vec::new(),
+            #[cfg(feature = "metadata")]
             probe: None,
             xmp_cache: OnceLock::new(),
             icc_cache: OnceLock::new(),
@@ -515,6 +528,7 @@ impl DecodedExtras {
     ///     println!("Quality: {:.0} ({:?})", probe.quality.value, probe.quality.scale);
     /// }
     /// ```
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn probe(&self) -> Option<&JpegProbe> {
         self.probe.as_ref()
@@ -524,12 +538,14 @@ impl DecodedExtras {
     ///
     /// Returns the quality estimate with a value on the appropriate scale
     /// for the detected encoder (IJG 1-100, mozjpeg 1-100, or butteraugli distance).
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn quality_estimate(&self) -> Option<&QualityEstimate> {
         self.probe.as_ref().map(|p| &p.quality)
     }
 
     /// Detected encoder family (libjpeg-turbo, mozjpeg, jpegli, Photoshop, etc.).
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn encoder(&self) -> Option<EncoderFamily> {
         self.probe.as_ref().map(|p| p.encoder)
@@ -539,6 +555,7 @@ impl DecodedExtras {
     ///
     /// This is DQT table 0, which is typically the luminance (Y) table.
     /// Values are in the range 1-255 for baseline JPEG, 1-65535 for extended.
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn luminance_qt(&self) -> Option<&[u16; 64]> {
         self.probe
@@ -553,6 +570,7 @@ impl DecodedExtras {
     ///
     /// This is DQT table 1, which is typically the chrominance (Cb/Cr) table.
     /// Returns `None` for grayscale images (only one DQT table).
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn chrominance_qt(&self) -> Option<&[u16; 64]> {
         self.probe
@@ -567,6 +585,7 @@ impl DecodedExtras {
     ///
     /// Typically 1 table for grayscale, 2 for standard color, 3 for jpegli.
     /// Tables are in natural (row-major) order with their original table indices.
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn dqt_tables(&self) -> Option<&[DqtTable]> {
         self.probe.as_ref().map(|p| p.dqt_tables.as_slice())

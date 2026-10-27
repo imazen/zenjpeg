@@ -410,7 +410,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             // Check input size limits
             self.check_input_size(data)?;
             let info = read_job_info(&self.limit_adjusted_inner(), data, self.policy.as_ref())?;
+            #[cfg_attr(not(feature = "metadata"), allow(unused_mut))]
             let mut image_info = to_image_info(&info);
+            #[cfg(feature = "metadata")]
             if let Ok(probe) = crate::detect::probe(data) {
                 image_info = image_info.with_source_encoding_details(probe);
             }
@@ -436,6 +438,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         stop.check().map_err(Error::from)?;
         super::info::populate_complete_container_scope(data, &mut image_info);
         stop.check().map_err(Error::from)?;
+        #[cfg(feature = "metadata")]
         if let Ok(probe) = crate::detect::probe(data) {
             image_info = image_info.with_source_encoding_details(probe);
         }
@@ -1527,6 +1530,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             if let Some(extras) = jpeg_extras {
                 output = output.with_extras(extras);
             }
+            #[cfg(feature = "metadata")]
             if let Ok(probe) = crate::detect::probe(&data) {
                 output = output.with_source_encoding_details(probe);
             }
@@ -1763,6 +1767,7 @@ impl JpegDecoder<'_> {
         ));
 
         let mut output = DecodeOutput::new(hdr, info).with_extras(extras);
+        #[cfg(feature = "metadata")]
         if let Ok(probe) = crate::detect::probe(&self.data) {
             output = output.with_source_encoding_details(probe);
         }

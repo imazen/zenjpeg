@@ -13,6 +13,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 /// MP Entry type codes (CIPA DC-007): baseline primary, undefined (gain map).
 const PRIMARY: u32 = 0x03_0000;
 const UNDEFINED: u32 = 0x00_0000;
+#[cfg(feature = "metadata")]
 const LARGE_THUMBNAIL_VGA: u32 = 0x01_0001;
 /// File offset of the MPF TIFF header when the APP2 directly follows SOI:
 /// SOI (2) + marker (2) + length (2) + `MPF\0` (4).
@@ -224,10 +225,12 @@ fn embedded_mpf_entries_are_readable_except_in_strict_mode() {
 // The lossless pipeline on crafted and partly signalled containers.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "metadata")]
 use zenjpeg::container::{
-    ContainerItem, ItemSemantic, MpImageType, find_jpeg_boundaries, generate_primary_xmp,
-    generate_primary_xmp_with_items, parse_mpf, parse_xmp_full,
+    ContainerItem, ItemSemantic, generate_primary_xmp, generate_primary_xmp_with_items,
+    parse_xmp_full,
 };
+use zenjpeg::container::{MpImageType, find_jpeg_boundaries, parse_mpf};
 use zenjpeg::decoder::ErrorKind;
 use zenjpeg::encode::EncoderSegments;
 use zenjpeg::lossless::{
@@ -371,6 +374,7 @@ fn lossless_carries_a_gain_map_without_an_mpf_index() {
 /// rewritten: the gain map's to its new size, the video's as it was. It was
 /// refused; the carry policy decided on 2026-10-11 refuses only real loss.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_carries_a_motion_photo_video_verbatim() {
     let gm = gray_jpeg(16, 8, 4);
     let video = mp4(&[]);
@@ -421,6 +425,7 @@ fn lossless_carries_a_motion_photo_video_verbatim() {
 /// and the directory names only the gain map. (Before, the first carried
 /// secondary's length went to the first `Item:Length`: the thumbnail's.)
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_matches_directory_lengths_by_semantic() {
     let thumb = gray_jpeg(32, 16, 11);
     let gm = gray_jpeg(16, 16, 12);
@@ -476,6 +481,7 @@ fn lossless_matches_directory_lengths_by_semantic() {
 /// stays InvalidConfig (it was re-wrapped as DecodeError). The other kinds
 /// (cancellation) are covered by `lossless::pipeline` unit tests.
 #[test]
+#[cfg(feature = "metadata")]
 fn secondary_failures_keep_their_kind() {
     // 32x32 primary (aligned), 16x8 4:2:0 gain map: a 180-degree rotation
     // would trim its 8 rows.
@@ -514,6 +520,7 @@ fn rotate90() -> TransformConfig {
 }
 
 /// An EXIF TIFF structure holding only an orientation tag.
+#[cfg(feature = "metadata")]
 fn exif_orientation(o: u16) -> Vec<u8> {
     let mut t = b"MM\x00\x2a\x00\x00\x00\x08\x00\x01".to_vec();
     t.extend_from_slice(&0x0112u16.to_be_bytes());
@@ -548,6 +555,7 @@ fn mp4(inner: &[u8]) -> Vec<u8> {
     out
 }
 
+#[cfg(feature = "metadata")]
 fn xmp_of(jpeg: &[u8]) -> String {
     DecodeConfig::new()
         .preserve(PreserveConfig::all())
@@ -569,6 +577,7 @@ fn dims(jpeg: &[u8]) -> (u32, u32) {
 /// the index, which names bytes the output does not hold, is not written.
 /// All three refused it.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_passes_a_stripped_mpf_trailer_through() {
     let gm = gray_jpeg(16, 8, 3);
     let full = primary_with(
@@ -607,6 +616,7 @@ fn lossless_passes_a_stripped_mpf_trailer_through() {
 /// offset counted from the end of the file, no index): the video is carried
 /// verbatim at the end, so the XMP offset stays right. It was dropped.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_carries_a_microvideo_trailer() {
     let video = mp4(&[]);
     let xmp = format!(
@@ -720,6 +730,7 @@ fn lossless_does_not_take_a_jpeg_inside_a_video_as_the_gain_map() {
 /// no directory parses, so every lossless call failed with "invalid XMP
 /// directory". The extended chunk is carried unchanged.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_reads_the_directory_from_the_standard_xmp_packet() {
     let gm = gray_jpeg(16, 8, 8);
     let jpeg = primary_with(

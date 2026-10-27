@@ -118,6 +118,7 @@ Started as a port of [jpegli](https://github.com/google/jpegli) (Bruse, Versari,
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `extended-jpeg` | yes | Arithmetic, 12-bit DCT and predictive lossless decoding; disable defaults for the smaller core decoder |
+| `metadata` | yes | XMP container directories (`container::xmp`), gain-map and depth-map detection, and the `detect` encoder probe; disabling drops the XML parser from the binary (~185 KB code) — pixel decode, ICC extraction, MPF and EXIF orientation are unaffected |
 | `parallel` | no | Multi-threaded encode/decode via rayon |
 | `moxcms` | no | ICC color management (pure Rust), required for `.correct_color()` |
 | `ultrahdr` | no | UltraHDR HDR gain map encode/decode |
