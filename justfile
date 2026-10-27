@@ -255,6 +255,11 @@ test-cross:
     just test-i686
     just test-aarch64
 
+# Reader construction must fit 1 MiB threads at the opt-level consumers'
+# debug and test builds use (tests/stack_demand.rs).
+stack-demand-check:
+    cargo test -p zenjpeg --profile unoptimized --features zencodec,controlled-decode --test stack_demand
+
 # Pinned rustdoc-JSON nightly for the API snapshots (keep in sync with the
 # public-api job in .github/workflows/ci.yml). An unpinned tracking nightly
 # churns cross-crate path rendering (e.g. the 2026-07 core::io re-homing

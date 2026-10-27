@@ -175,6 +175,13 @@ opt-level = 2
 [profile.release]
 debug = true
 
+# Consumers build zenjpeg unoptimized in their own debug and test profiles;
+# `just stack-demand-check` runs tests/stack_demand.rs at that level.
+[profile.unoptimized]
+inherits = "dev"
+opt-level = 0
+debug = false
+
 [workspace.lints.rust]
 # unsafe_code is allowed - we have intentional unsafe for performance-critical
 # allocation (try_alloc_uninitialized) and SIMD operations

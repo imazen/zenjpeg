@@ -21,8 +21,8 @@ struct Plane {
 pub(in crate::decode) struct ComponentRows {
     planes: Vec<Plane>,
     coefficients: Option<DecodedCoefficients>,
-    dc: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    ac: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    dc: HuffmanTables,
+    ac: HuffmanTables,
     mapping: [(usize, usize); 4],
     order: [usize; 4],
     start: usize,

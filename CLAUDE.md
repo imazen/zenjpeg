@@ -702,6 +702,15 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
+  unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
+  `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:
+  inline `[Option<HuffmanDecodeTable>; 4]` pairs (2 KiB fast-lookup each) in
+  the parser, scan handoff, scanline reader and component-row reader, copied
+  per by-value move. Boxed (`parser::HuffmanTables`); 574-581 KiB after.
+  Gate: `just stack-demand-check` (opt-level 0, 1 MiB threads; CI on Linux).
+  zenjpeg's own dev profile is opt-level 2, so its suites never saw this.
+
 - Fixed 2026-10-28: `BytesEncoder::push` and the planar pushes collapsed every
   stop reason into `Error::cancelled()` (`should_stop()` instead of `check()`),
   so a timed-out pulse surfaced as `Stopped(Cancelled)`. Regression:

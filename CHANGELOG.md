@@ -65,6 +65,17 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Reader construction overflowed 2 MiB threads in consumers' unoptimized
+  builds (test harness, tokio and rayon threads): two inline Huffman table
+  sets (about 18 KiB) were moved by value through every `Result` from the
+  controlled decoder down to the scanline reader, about 2.1 MB of frames. The
+  parser, its scan handoff and the component-row reader hold boxed sets,
+  allocated fallibly; the scanline reader holds them only on the streaming
+  route. At opt-level 0, `tests/stack_demand.rs` (one-shot, streaming and
+  controlled decodes of baseline, progressive and gray files) needed
+  2,158-2,164 KiB before and 574-581 KiB after; `just stack-demand-check` and
+  CI run it on 1 MiB threads.
+
 - `BytesEncoder::push` and `YCbCrPlanarEncoder::push`/`push_subsampled`
   reported every stop as `Cancelled`, so a deadline surfaced as a cancellation
   through the zencodec adapter (found by the zenpipe lane's `pulse_retention`).

@@ -104,6 +104,11 @@ jobs:
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
       - name: Shared contracts without inventory
         run: cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+      # Consumers build zenjpeg unoptimized in their debug/test profiles and
+      # decode on 2 MiB threads; reader construction must fit 1 MiB there.
+      - name: Decoder stack demand (unoptimized)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --profile unoptimized --features zencodec,controlled-decode --test stack_demand
 
 
       - name: Install lossless metadata oracles
