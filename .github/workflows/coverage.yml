@@ -21,6 +21,8 @@ concurrency:
 jobs:
   coverage:
     name: Code Coverage
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-10-12
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:

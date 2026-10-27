@@ -724,3 +724,12 @@ native-branch-allocation:
     RUSTUP_TOOLCHAIN=nightly timeout --kill-after=15s 10m python3 scripts/component-allocation-check.py --coverage
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
     cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+# Existing buffered, row-callback and crop routes affected by retained cancellation.
+native-branch-compat:
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test decode_cancellation
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- buffered_fallbacks_ignore_caller_format_and_target
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- wave_reader_f32_and_plane_reads
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- wave_reader_crop_and_formats
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
