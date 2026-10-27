@@ -205,8 +205,10 @@ mod scope_tests {
 
     #[test]
     fn incomplete_and_empty_containers_do_not_prove_gain_map_absence() {
-        let mut truncated = crate::container::ContainerProbe::default();
-        truncated.truncated = true;
+        let truncated = crate::container::ContainerProbe {
+            truncated: true,
+            ..Default::default()
+        };
         let mut info = ImageInfo::new(1, 1, ImageFormat::Jpeg);
         populate_probe_scope(&truncated, &mut info);
         assert_eq!(info.gain_map, zencodec::GainMapPresence::Unknown);
