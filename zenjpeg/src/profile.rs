@@ -200,3 +200,43 @@ macro_rules! profile_block {
         $block
     }};
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profiling_preserves_block_results() {
+        ProfileStats::reset();
+        assert_eq!(crate::profile_block!("result", { 6 * 7 }), 42);
+        ProfileStats::print_summary();
+        ProfileStats::reset();
+    }
+
+    #[cfg(feature = "__profile")]
+    #[test]
+    fn recorded_durations_aggregate_in_first_seen_order() {
+        ProfileStats::reset();
+        ProfileStats::print_summary();
+        ProfileStats::record("zero", Duration::ZERO);
+        ProfileStats::print_summary();
+        ProfileStats::record("phase", Duration::from_nanos(9));
+        ProfileStats::record("phase", Duration::from_nanos(3));
+        STATS.with(|stats| {
+            let stats = stats.borrow();
+            assert_eq!(stats.call_order, ["zero", "phase"]);
+            let phase = &stats.timings["phase"];
+            assert_eq!(phase.count, 2);
+            assert_eq!(phase.total, Duration::from_nanos(12));
+            assert_eq!(phase.min, Duration::from_nanos(3));
+            assert_eq!(phase.max, Duration::from_nanos(9));
+        });
+        ProfileStats::print_summary();
+        ProfileStats::reset();
+        STATS.with(|stats| {
+            let stats = stats.borrow();
+            assert!(stats.timings.is_empty());
+            assert!(stats.call_order.is_empty());
+        });
+    }
+}

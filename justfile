@@ -794,3 +794,14 @@ library-branch-coverage:
 # Compile every feature, including research instrumentation and oracle test gates.
 library-all-features-check:
     timeout --kill-after=15s 20m cargo check --locked -p zenjpeg --all-features --all-targets
+
+# Includes research/diagnostic features. PATH must provide the pinned test oracles.
+library-research-branch-coverage:
+    timeout --kill-after=15s 30m cargo +nightly llvm-cov --branch --no-report --no-fail-fast -p zenjpeg --all-features --lib --tests
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    python3 scripts/check-native-branches.py HEAD "$ZENJPEG_BRANCH_REPORT" --whole-library
+
+# Behavioral tests for research diagnostics and size-dependent raster output.
+library-research-focused-check:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --lib
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --test bundled -- compare_sizes::compare_420_sizes --exact

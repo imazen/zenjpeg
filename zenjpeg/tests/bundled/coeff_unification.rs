@@ -25,7 +25,7 @@ use zenjpeg::decode::Decoder;
 use zenjpeg::encode::EncoderConfig;
 use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 
-fn color_noise(w: usize, h: usize) -> Vec<u8> {
+pub(super) fn color_noise(w: usize, h: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; w * h * 3];
     let mut s = 0x1234_5678u32;
     for (i, px) in rgb.chunks_exact_mut(3).enumerate() {
@@ -48,7 +48,7 @@ fn color_noise(w: usize, h: usize) -> Vec<u8> {
 /// `(dc + 4 + 1024) >> 3`) that only fires on DC-only blocks — so every
 /// noise-based test passed while a real photo (waterhouse.jpg, 2048×1153 4:2:0
 /// progressive) was wrong by 76/255 on the last row of every MCU row.
-fn smooth_chroma_bands(w: usize, h: usize) -> Vec<u8> {
+pub(super) fn smooth_chroma_bands(w: usize, h: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; w * h * 3];
     for y in 0..h {
         for x in 0..w {
