@@ -1149,11 +1149,44 @@ mod tests {
         coeffs[1] = -3;
         let mut encoder = encoder_with_tables();
         let mut eob_run = 0;
-        encoder.encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut eob_run).unwrap();
+        encoder
+            .encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut eob_run)
+            .unwrap();
         // Annex K luminance symbol 0x02 is 01; -3 has category-two bits 00.
         // Padding the resulting 0100 with ones gives 0x4f.
         assert_eq!(encoder.finish(), [0x4f]);
         assert_eq!(eob_run, 0);
+    }
+    #[test]
+    fn progressive_eob_runs_use_exact_codes_or_individual_eobs() {
+        for (run, bytes) in [(0, vec![]), (1, vec![0xaf]), (2, vec![0xaa]), (3, vec![0xaa, 0xaf])] {
+            let mut encoder = encoder_with_tables();
+            encoder.flush_eob_run(0, run).unwrap();
+            assert_eq!(encoder.finish(), bytes);
+        }
+        let mut bits = [0; 16];
+        bits[..3].copy_from_slice(&[1, 1, 1]);
+        let table = HuffmanEncodeTable::from_bits_values(&bits, &[0, 0x10, 0x20]).unwrap();
+        for (run, byte) in [(3, 0xbf), (4, 0xc7)] {
+            let mut encoder = EntropyEncoder::new();
+            encoder.set_ac_table(0, &table);
+            encoder.flush_eob_run(0, run).unwrap();
+            assert_eq!(encoder.finish(), [byte]);
+        }
+        assert!(EntropyEncoder::new().flush_eob_run(0, 1).is_err());
+        bits.fill(0);
+        bits[0] = 1;
+        let no_eob = HuffmanEncodeTable::from_bits_values(&bits, &[1]).unwrap();
+        let mut encoder = EntropyEncoder::new();
+        encoder.set_ac_table(0, &no_eob);
+        assert!(encoder.flush_eob_run(0, 1).is_err());
+    }
+
+    #[test]
+    fn progressive_ac_missing_symbol_returns_error() {
+        let mut coeffs = [0; 64];
+        coeffs[1] = 2047;
+        assert!(encoder_with_tables().encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut 0).is_err());
     }
 
 }

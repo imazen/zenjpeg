@@ -1755,3 +1755,8 @@ before the helper can return its documented error. Regressions:
 `progressive_dc_emits_exact_annex_k_codes_and_refinement_bits`. Both pass after
 complementing the negative magnitude bits and checking symbol presence before
 calling the asserting Huffman accessor.
+
+The same coverage pass reproduced an EOB-run fallback defect in the legacy
+helper: a run of two blocks with the standard AC table panics on missing symbol
+0x10 before falling back to individual EOB codes. The exact-code regression is
+`progressive_eob_runs_use_exact_codes_or_individual_eobs`.
