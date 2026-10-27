@@ -1743,7 +1743,7 @@ The standalone fuzz workspace also pinned a different zencodec revision from
 the codec; commit 8a8c1088 aligns both registry/direct edges and
 `just controlled-fuzz-check` verifies the complete target graph.
 
-## Known Bugs: legacy progressive entropy helpers (2026-10-27)
+## Fixed: legacy progressive entropy helpers (2026-10-27)
 
 Whole-library coverage work reproduced two defects in `entropy/encoder.rs`'s
 progressive helper methods (currently no production call sites found): first AC
@@ -1752,4 +1752,6 @@ negative coefficients (`-3` emits `0x6f`, Annex K requires `0x4f` for a single
 category-two coefficient); missing DC symbols hit the Huffman debug assertion
 before the helper can return its documented error. Regressions:
 `progressive_negative_ac_uses_ones_complement_magnitude` and
-`progressive_dc_emits_exact_annex_k_codes_and_refinement_bits`.
+`progressive_dc_emits_exact_annex_k_codes_and_refinement_bits`. Both pass after
+complementing the negative magnitude bits and checking symbol presence before
+calling the asserting Huffman accessor.

@@ -356,10 +356,10 @@ impl<'a> EntropyEncoder<'a> {
                 .ok_or_else(|| Error::internal("DC table not set"))?;
 
             let dc_cat = category(dc_diff);
-            let (code, len) = dc_table.encode(dc_cat);
-            if len == 0 {
+            if dc_table.lengths[dc_cat as usize] == 0 {
                 return Err(Error::internal("DC symbol not in Huffman table"));
             }
+            let (code, len) = dc_table.encode(dc_cat);
             self.writer.write_bits(code, len);
 
             if dc_cat > 0 {
@@ -444,16 +444,16 @@ impl<'a> EntropyEncoder<'a> {
             let nbits = 16 - abs_shifted.leading_zeros();
             let symbol = ((r as u16) << 4) | nbits as u16;
 
-            let (code, len) = ac_table.encode(symbol as u8);
-            if len == 0 {
+            if ac_table.lengths[symbol as usize] == 0 {
                 return Err(Error::internal("AC symbol not in Huffman table"));
             }
+            let (code, len) = ac_table.encode(symbol as u8);
             self.writer.write_bits(code, len);
 
             // Additional bits (magnitude and sign)
             // For progressive encoding, we encode the shifted value
             let bits = if coef < 0 {
-                (abs_shifted - 1) as u32
+                u32::from(!abs_shifted) & ((1u32 << nbits) - 1)
             } else {
                 abs_shifted as u32
             };
