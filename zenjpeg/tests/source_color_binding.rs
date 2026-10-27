@@ -383,3 +383,20 @@ fn default_srgb_bytes_are_identical_across_routes() {
     assert_eq!(rows.finish().unwrap().into_vec(), plain);
     assert_eq!(oracle(&plain).1, None);
 }
+
+/// Descriptor primaries without an explicit colour context do not override
+/// or contradict job colour metadata: the metadata labels the output, as in
+/// zenpng's `explicit_icc_is_not_overridden_by_descriptor_derived_cicp`.
+#[test]
+fn descriptor_primaries_do_not_override_colour_metadata() {
+    let raster = rgb8();
+    let bt2020 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::Bt2020);
+    let jpeg = with_metadata(
+        Metadata::none().with_icc(DISPLAY_P3_V4),
+        raster.slice(bt2020),
+    )
+    .expect("metadata labels descriptor-only pixels");
+    let (samples, icc) = oracle(&jpeg);
+    assert_eq!(icc.as_deref(), Some(DISPLAY_P3_V4));
+    assert_samples(&samples, 4, "metadata over descriptor");
+}
