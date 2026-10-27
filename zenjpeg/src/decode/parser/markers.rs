@@ -22,7 +22,12 @@ use super::JpegParser;
 impl<'a> JpegParser<'a> {
     /// Read and parse the JPEG header up to (but not including) SOS.
     pub(crate) fn read_header(&mut self) -> Result<()> {
+        self.read_header_with_stop(&enough::Unstoppable)
+    }
+
+    pub(crate) fn read_header_with_stop(&mut self, stop: &dyn enough::Stop) -> Result<()> {
         loop {
+            stop.check()?;
             let marker = self.read_marker()?;
 
             match marker {
@@ -164,7 +169,7 @@ impl<'a> JpegParser<'a> {
             return Err(Error::invalid_jpeg_data("number of components is zero"));
         }
         if self.num_components > MAX_COMPONENTS as u8 {
-            return Err(Error::unsupported_feature("more than 4 components"));
+            return Err(Error::unsupported_feature("more than 10 components"));
         }
 
         // Validate marker length matches expected size
@@ -485,7 +490,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// Format per table: Tc/Th (1 byte) + Cs (1 byte)
     /// - Tc: 0=DC, 1=AC
-    /// - Th: table destination (0-3)
+    /// - Th: table destination (0-15)
     /// - Cs: For DC: L in low 4 bits, U in high 4 bits
     ///       For AC: Kx value (0-63)
     pub(super) fn parse_dac(&mut self) -> Result<()> {
@@ -496,8 +501,8 @@ impl<'a> JpegParser<'a> {
             let table_class = info >> 4; // 0=DC, 1=AC
             let table_idx = (info & 0x0F) as usize;
 
-            if table_idx >= 4 {
-                return Err(Error::invalid_jpeg_data("DAC table index out of range"));
+            if table_class > 1 {
+                return Err(Error::invalid_jpeg_data("DAC table class out of range"));
             }
 
             let cs = self.read_u8()?;

@@ -87,7 +87,7 @@ impl<'a> JpegParser<'a> {
 
         // Configure decoder with conditioning parameters and restart interval
         decoder.set_restart_interval(self.restart_interval);
-        for tbl in 0..4 {
+        for tbl in 0..crate::entropy::arithmetic::NUM_ARITH_TBLS {
             let (l, u) = self.arith_dc_cond[tbl];
             decoder.set_dc_conditioning(tbl, l, u);
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
@@ -118,14 +118,12 @@ impl<'a> JpegParser<'a> {
             let mut unit_count = 0usize;
 
             for block_y in 0..grid.comp_blocks_v {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
                 for block_x in 0..grid.comp_blocks_h {
                     let block_idx = block_y * grid.padded_blocks_h + block_x;
                     match decoder.decode_block(
                         &mut self.coeffs[comp_idx][block_idx],
-                        comp_idx,
+                        0,
                         dc_table as usize,
                         ac_table as usize,
                     )? {
@@ -166,13 +164,11 @@ impl<'a> JpegParser<'a> {
         let mut mcu_count = 0usize;
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 // For each component in the scan
-                for (comp_idx, dc_table, ac_table) in scan_components {
+                for (slot, (comp_idx, dc_table, ac_table)) in scan_components.iter().enumerate() {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                     let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                     let comp_blocks_h = mcu_cols * h_samp;
@@ -187,7 +183,7 @@ impl<'a> JpegParser<'a> {
                             // Decode block
                             match decoder.decode_block(
                                 &mut self.coeffs[*comp_idx][block_idx],
-                                *comp_idx,
+                                slot,
                                 *dc_table as usize,
                                 *ac_table as usize,
                             )? {
@@ -307,7 +303,7 @@ impl<'a> JpegParser<'a> {
 
         // Configure decoder
         decoder.set_restart_interval(self.restart_interval);
-        for tbl in 0..4 {
+        for tbl in 0..crate::entropy::arithmetic::NUM_ARITH_TBLS {
             let (l, u) = self.arith_dc_cond[tbl];
             decoder.set_dc_conditioning(tbl, l, u);
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
@@ -464,12 +460,10 @@ impl<'a> JpegParser<'a> {
 
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
-                for (comp_idx, dc_tbl, _ac_tbl) in scan_components {
+                for (slot, (comp_idx, dc_tbl, _ac_tbl)) in scan_components.iter().enumerate() {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                     let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                     let comp_blocks_h = mcu_cols * h_samp;
@@ -480,7 +474,7 @@ impl<'a> JpegParser<'a> {
                             let block_y = mcu_y * v_samp + v;
                             let block_idx = block_y * comp_blocks_h + block_x;
 
-                            match decoder.decode_dc_first(*comp_idx, *dc_tbl as usize, al)? {
+                            match decoder.decode_dc_first(slot, *dc_tbl as usize, al)? {
                                 ScanRead::Value(dc) => {
                                     self.coeffs[*comp_idx][block_idx][0] = dc;
                                 }
@@ -517,9 +511,7 @@ impl<'a> JpegParser<'a> {
 
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 for (comp_idx, _dc_tbl, _ac_tbl) in scan_components {
@@ -568,14 +560,12 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
 
         for block_y in 0..comp_blocks_v {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
 
-                match decoder.decode_dc_first(comp_idx, dc_tbl, al)? {
+                match decoder.decode_dc_first(0, dc_tbl, al)? {
                     ScanRead::Value(dc) => {
                         self.coeffs[comp_idx][block_idx][0] = dc;
                     }
@@ -613,9 +603,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
 
         for block_y in 0..comp_blocks_v {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -662,9 +650,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -715,9 +701,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;

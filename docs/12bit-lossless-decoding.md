@@ -52,15 +52,15 @@ component reader supplies full-resolution components for all supported layouts.
 ## Supported modes and limits
 
 - Twelve-bit sequential and progressive DCT, including arithmetic coding;
-  gray, RGB, YCbCr, CMYK/YCCK and raw two-component images. Integral sampling
+  gray, RGB, YCbCr, CMYK/YCCK and raw component images (up to ten channels). Integral sampling
   ratios use the libjpeg interpolation rules, including 4:1:1, vertical 4:1,
   3:1 and asymmetric component sampling.
-- Lossless one- through four-component images, including CMYK, predictors 1–7,
+- Lossless one- through ten-component images, including CMYK, predictors 1–7,
   point transforms, interleaved or separate component scans, and row-aligned
   restart intervals.
 - Crops, pixel transforms, strided/chunked reads and metadata preservation.
 
-Native decoding currently rejects XYB, more than four components, fractional
+Native decoding currently rejects XYB, more than ten components, fractional
 sampling ratios, subsampled lossless, lossless DNL, differential lossless and
 arithmetic lossless.
 Deblocking, dequantization bias and ICC conversion are not supported for these
@@ -112,7 +112,7 @@ The oracle compares every sample, with no tolerance. Its matrix covers:
 
 - All lossless precisions 2–16, seven predictors, three point transforms,
   restart boundaries, gray/RGB and separate scans.
-- Sequential/progressive 12-bit DCT, the four supported sampling layouts,
+- Sequential/progressive 12-bit DCT, the supported integral sampling layouts,
   tiny/partial-MCU dimensions, noise, constant blocks and checkerboards,
   quality 5/30/60/91/100, triangle and nearest upsampling, RGB and arithmetic.
 - Raw two-component and CMYK/YCCK equality with a test-only libjpeg API helper,
@@ -164,3 +164,151 @@ The consumer still needs to:
    padded edge tiles, byte orders, photometric modes, limits and cancellation.
 
 The TIFF wrapper itself was inspected, not modified or certified end to end.
+
+## More than four components
+
+Frames support 1–10 components; each scan still carries at most four. Entropy
+predictors are indexed by scan slot, not frame component index. Unknown layouts
+are available through `read_rows_components16`; RGB/gray conversion rejects them.
+The reader keeps frame component identifiers and preserves pixel stride.
+
+DQT selectors remain 0–3 and Huffman selectors remain 0–3. Arithmetic conditioning
+selectors support 0–15. Components latch the quantization table at their first
+scan, so later DQT redefinitions do not change earlier components. Extracted
+coefficients use indices into their owned table list; redefined tables are
+compacted, not confused with the current marker-slot contents. Encoding and
+coefficient transcoding retain their existing four-component limit.
+
+`just multicomponent-check` covers counts, table redefinition, invalid headers,
+truncated prefixes, limits, crops and strided borrowed/owned readers.
+`just multicomponent-oracle` requires an explicitly built component reference.
+
+### Reference limitation and provenance
+
+The unmodified pinned libjpeg-turbo 3.2.0 encoder produces a five-component JPEG,
+but its decoder rejects the fifth component: `get_sos()` searches only the first
+four frame components. Its lossless multi-scan controllers also index four-entry
+scratch arrays using frame component indices. The six-component lossless encoder
+terminated with a stack-smashing diagnostic in the test helper.
+
+`scripts/build-component-oracle.py` builds a separate, test-only copy with the
+component-ID search corrected and those two scratch arrays sized for frame
+components. Pixel reconstruction, prediction, entropy coding, quantization and
+upsampling are unchanged. This is a **modified reference**, not evidence that the
+unmodified release decodes these files. The native-precision matrix for one through
+four components continues to use the original unmodified release.
+
+The multicomponent matrix compares every sample for counts 5–10, 8/12-bit DCT,
+sequential/progressive Huffman and arithmetic coding, horizontal sampling factors
+1–4 and vertical 2:1 layouts, lossless precisions 2–16, all seven predictors and point transforms
+0, precision/2 and precision-1. Known-value fixtures independently check component
+order and quantization-slot redefinition. The reference implementation is never
+linked into the shipped library.
+
+The proposed encoding work is scoped in [JPEG encoding extensions](jpeg-encoding-extensions.md).
+
+### Coverage gate
+
+`just multicomponent-coverage` runs library/native tests, both reference matrices,
+and the isolated allocation-failure test, then writes LCOV to
+`ZENJPEG_COVERAGE_REPORT`. `just multicomponent-coverage-gate BASE REPORT` requires
+100% of changed executable production lines, without excluding error paths.
+CI runs the gate against the pull request's base commit. Codecov's patch target
+is also 100%, with zero tolerance. This is line coverage, not branch coverage.
+
+The allocation subprocess injects one exact-size allocation failure using a
+Linux-only C interposer; Cargo, rustc and normal test processes never load it.
+It caught and verifies the correction to `try_with_capacity`, which previously
+allocated infallibly before attempting its fallible reservation.
+
+Fresh local coverage on 2026-10-26 against parent `12f25aad`: **113/113 changed
+executable production lines covered**. The run included the reference matrices
+and the allocation-failure subprocess. This does not claim 100% branch coverage
+or 100% coverage of every pre-existing decoder line.
+
+## Cancellation and hardening
+
+`scanline_reader_with_pulse(data, &dyn how_far::Pulse)` borrows cancellation and
+progress for the reader's lifetime. `decode_with_pulse` supplies the same contract
+for collected output. Existing entry points remain available. Header walks,
+entropy decoding, native reconstruction, crop skipping and parallel wave work
+poll the caller's cancellation token and preserve its `StopReason`, including
+`TimedOut`. Reader progress advances by completed output rows; collected buffered
+output reports its final height. The decoder does not finish a borrowed pulse.
+
+`tests/native_hardening.rs` checks every observed cancellation checkpoint for the
+minimal native fixtures, borrowed/owned reader parity, poisoned stride padding,
+truncated prefixes, malformed marker fields, native output formats and rejected
+processing combinations. It also checks cancellation inside RGB and planar wave
+decoding. Unsupported native deblocking, dequantization bias and ICC conversion
+are errors rather than silently ignored settings.
+
+The minimal JPEG fixtures live in `zenjpeg/fuzz/seeds/native`. Their generation
+arguments, reference identity, JPEG hashes and independently decoded sample
+hashes are recorded in `zenjpeg/tests/support/native_manifest.json`.
+`scripts/native-fuzz-seeds.py` verifies reference version 3.2.0 and refuses to
+replace an existing fixture with different bytes. Larger evolving corpora and
+crash artifacts remain outside git. The `fuzz_native_components` target shares
+its invariants with stable regression tests through `fuzz/component_checks.rs`.
+
+`just native-branch-coverage` measures LLVM true/false outcomes with nightly and
+both reference implementations. `just native-branch-gate BASE REPORT` requires
+all measured changed-production branch outcomes; unit-test assertions are not
+production branches. The intended base is the common base of the native-precision
+and multicomponent PRs, not just the latest hardening commit. A passing line gate
+alone does not establish branch completeness.
+
+The Linux hardening recipes use GNU `timeout`: ten minutes for stable checks,
+fifteen minutes per instrumented test command, and the requested fuzz duration
+plus two minutes for startup. Each has a fifteen-second termination grace;
+libFuzzer separately limits an individual input to ten seconds. Preserve logs
+and artifacts from deadline failures and report them as incomplete runs.
+
+### Panic recovery compatibility
+
+Pulse and Stop callbacks remain unrestricted. Ordinary callers need no new
+bounds. Because a reader can retain a caller's callback, `ScanlineReader` and
+`UltraHdrReader` no longer automatically implement `UnwindSafe` or
+`RefUnwindSafe`; containing types can inherit that change. Send and Sync are
+retained. Callers recovering from panics with `catch_unwind` must review their
+recovery boundary and may choose a narrowly scoped `AssertUnwindSafe`. A mutable
+reader reference already required that consideration before this change.
+These marker traits do not prevent panics or establish memory safety, and
+`forbid(unsafe_code)` remains in force. No how-far or enough trait changes are
+required; passing `FnStop` through `&dyn Stop` or `&dyn Pulse` keeps its existing
+contracts.
+
+### Bounded fuzz validation (2026-10-27)
+
+The native-component ASan/libFuzzer run completed 274,893 executions in 301
+seconds without a crash artifact. It started with the curated fixtures and the
+preserved exploratory corpus, with a ten-second input timeout, 1 GiB fuzzer
+RSS limit and 16 KiB maximum input length. The reference fixture set contains
+47 JPEGs totaling 41,316 bytes. This bounded run is evidence from the exercised
+inputs, not a claim that fuzzing proves correctness.
+
+### Complete changed-code coverage (2026-10-27)
+
+Measured from stack base `e82a4b4052776387b0d0b1d476fe0f261d0c737b`:
+**564/564 changed production branch outcomes** and **1,898/1,898 changed
+executable lines**. The line gate also includes executable unit-test lines in
+changed source files; the branch gate excludes test assertions. No production
+error paths are excluded. This covers the changes in both stacked PRs, not every
+pre-existing decoder line or every possible input.
+
+The profiles were rebuilt from scratch, using committed tests, the two pinned
+reference matrices, an isolated allocation-failure subprocess and existing
+buffered/callback/crop regressions. Two final row-conversion/crop assertions were
+then instrumented without changing production code. The evolving fuzz corpus was
+not needed for either gate. `just native-branch-coverage` includes these routes.
+
+A follow-up ASan/libFuzzer run against the final implementation completed
+47,457 executions in 61 seconds without a crash artifact, using the same limits.
+The corpus was preserved after both runs.
+
+`native_fixture_raster_hashes` checks all 47 committed fixtures against the
+reference-decoded raster SHA-256, independently for borrowed and owned readers.
+The canonical raster is row-major, frame-component order, with each native
+sample serialized as big-endian u16. Reads use padded strides and verify that
+padding is untouched. `native_fixture_truncated_prefixes` is a separate test, so
+raster correctness remains an explicit gate independent of fuzz-style checks.

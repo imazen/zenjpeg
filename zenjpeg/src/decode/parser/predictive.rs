@@ -6,7 +6,7 @@ use super::JpegParser;
 use crate::container::marker::{self, MarkerKind};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::try_alloc_vec;
+use crate::foundation::alloc::{try_alloc_vec, try_with_capacity};
 use crate::huffman::HuffmanDecodeTable;
 use enough::Stop;
 
@@ -68,11 +68,8 @@ impl JpegParser<'_> {
         {
             return Err(Error::unsupported_feature("subsampled lossless JPEG"));
         }
-        let mut scans = Vec::new();
-        scans.try_reserve_exact(channels).map_err(|_| {
-            Error::allocation_failed(channels * core::mem::size_of::<Scan>(), "lossless scans")
-        })?;
-        let mut seen = [false; 4];
+        let mut scans = try_with_capacity(channels, "lossless scans")?;
+        let mut seen = [false; crate::foundation::consts::MAX_COMPONENTS];
         let mut ended = false;
         // The canonical marker walker skips entropy byte stuffing and restarts.
         for span in marker::iter(self.data) {
@@ -89,18 +86,12 @@ impl JpegParser<'_> {
                 MarkerKind::Sos => {
                     let length = self.read_u16()? as usize;
                     let count = self.read_u8()? as usize;
-                    if count == 0 || count > channels || length != 6 + 2 * count {
+                    if count == 0 || count > channels || count > 4 || length != 6 + 2 * count {
                         return Err(Error::invalid_jpeg_data(
                             "invalid lossless scan component count or length",
                         ));
                     }
-                    let mut components = Vec::new();
-                    components.try_reserve_exact(count).map_err(|_| {
-                        Error::allocation_failed(
-                            count * core::mem::size_of::<(usize, usize)>(),
-                            "lossless scan components",
-                        )
-                    })?;
+                    let mut components = try_with_capacity(count, "lossless scan components")?;
                     for _ in 0..count {
                         let id = self.read_u8()?;
                         let selector = self.read_u8()?;
@@ -178,7 +169,7 @@ impl PredictiveReader {
     pub(in crate::decode) fn current_row(&self) -> usize {
         self.current_row
     }
-    pub(in crate::decode) fn next_row(&mut self, data: &[u8]) -> Result<()> {
+    pub(in crate::decode) fn next_row(&mut self, data: &[u8], stop: &dyn Stop) -> Result<()> {
         if self.current_row >= self.height {
             return Err(Error::invalid_jpeg_data("read past lossless image"));
         }
@@ -203,6 +194,9 @@ impl PredictiveReader {
             let mut left = [0i32; 4];
             let mut upper_left = [0i32; 4];
             for x in 0..self.width {
+                if x % 64 == 0 {
+                    stop.check()?;
+                }
                 for (slot, &(component, table)) in scan.components.iter().enumerate() {
                     let above = scan.previous[x * count + slot] as i32;
                     let prediction = if first {
@@ -245,5 +239,14 @@ fn predict(selector: u8, a: i32, b: i32, c: i32) -> i32 {
         6 => b + ((a - c) >> 1),
         7 => (a + b) >> 1,
         _ => unreachable!("validated predictor"),
+    }
+}
+
+#[cfg(test)]
+mod predictor_guards {
+    #[test]
+    #[should_panic(expected = "validated predictor")]
+    fn invalid_selector_cannot_predict() {
+        super::predict(0, 1, 2, 3);
     }
 }

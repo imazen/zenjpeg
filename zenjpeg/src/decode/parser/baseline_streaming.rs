@@ -912,9 +912,7 @@ pub(super) fn run_fancy_h2v2_loop(
     let ext_height = bufs.ext_height;
 
     for mcu_y in 0..mcu_rows {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         // Decode into B buffers (y_strip_b, cb_b, cr_b)
         decode_mcu_row(
@@ -1211,9 +1209,7 @@ pub(super) fn run_simple_loop(
     let kernel = inputs.kernel;
 
     for mcu_y in 0..mcu_rows {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         decode_mcu_row(
             decoder,

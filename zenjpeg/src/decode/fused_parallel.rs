@@ -101,6 +101,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn try_fused_parallel_decode(
         &mut self,
         scan_components: &[(usize, u8, u8)],
+        stop: &dyn enough::Stop,
     ) -> Result<bool> {
         use super::rst_scan::scan_rst_markers;
 
@@ -292,6 +293,7 @@ impl<'a> JpegParser<'a> {
                 group_stride,
                 idct_method,
                 kernel,
+                stop,
             )?,
             FusedKernel::Box => self.decode_fused_subsampled_box(
                 scan_components,
@@ -308,6 +310,7 @@ impl<'a> JpegParser<'a> {
                 chroma_upsampling,
                 idct_method,
                 kernel,
+                stop,
             )?,
             FusedKernel::Fancy => self.decode_fused_subsampled_fancy(
                 scan_components,
@@ -324,6 +327,7 @@ impl<'a> JpegParser<'a> {
                 chroma_upsampling,
                 idct_method,
                 kernel,
+                stop,
             )?,
             FusedKernel::H2v1 => self.decode_fused_subsampled_h2v1(
                 scan_components,
@@ -340,6 +344,7 @@ impl<'a> JpegParser<'a> {
                 chroma_upsampling,
                 idct_method,
                 kernel,
+                stop,
             )?,
         };
 
@@ -484,6 +489,7 @@ impl<'a> JpegParser<'a> {
         group_stride: usize,
         idct_method: IdctMethod,
         kernel: RowKernel,
+        stop: &dyn enough::Stop,
     ) -> FusedDecodeResult {
         // Rows below are addressed at 3 bytes per pixel.
         debug_assert_eq!(kernel.layout(), Layout8::Rgb);
@@ -650,6 +656,7 @@ impl<'a> JpegParser<'a> {
                     let mut current_mcu_row = first_mcu_row;
 
                     for mcu_idx in mcu_start..mcu_end {
+                        stop.check()?;
                         let mcu_row = mcu_idx / mcu_cols;
                         let mcu_col = mcu_idx % mcu_cols;
 
@@ -807,6 +814,7 @@ impl<'a> JpegParser<'a> {
         _chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
         kernel: RowKernel,
+        stop: &dyn enough::Stop,
     ) -> FusedDecodeResult {
         // Rows below are addressed at 3 bytes per pixel.
         debug_assert_eq!(kernel.layout(), Layout8::Rgb);
@@ -967,6 +975,7 @@ impl<'a> JpegParser<'a> {
                     let mut current_mcu_row = first_mcu_row;
 
                     for mcu_idx in mcu_start..mcu_end {
+                        stop.check()?;
                         let mcu_row = mcu_idx / mcu_cols;
                         let mcu_col = mcu_idx % mcu_cols;
 
@@ -1127,6 +1136,7 @@ impl<'a> JpegParser<'a> {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
         kernel: RowKernel,
+        stop: &dyn enough::Stop,
     ) -> FusedDecodeResult {
         // Rows below are addressed at 3 bytes per pixel.
         debug_assert_eq!(kernel.layout(), Layout8::Rgb);
@@ -1374,6 +1384,7 @@ impl<'a> JpegParser<'a> {
                     let mut current_mcu_row = first_mcu_row;
 
                     for mcu_idx in mcu_start..mcu_end {
+                        stop.check()?;
                         let mcu_row = mcu_idx / mcu_cols;
                         let mcu_col = mcu_idx % mcu_cols;
 
@@ -1548,6 +1559,7 @@ impl<'a> JpegParser<'a> {
         _chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
         kernel: RowKernel,
+        stop: &dyn enough::Stop,
     ) -> FusedDecodeResult {
         // Rows below are addressed at 3 bytes per pixel.
         debug_assert_eq!(kernel.layout(), Layout8::Rgb);
@@ -1884,6 +1896,7 @@ impl<'a> JpegParser<'a> {
                         // Decode all MCUs in this row into b buffers
                         // Y blocks → y_strip_b, chroma blocks → ext_cb_b/ext_cr_b data region
                         for mcu_idx in row_mcu_start..row_mcu_end {
+                            stop.check()?;
                             let mcu_col = mcu_idx % mcu_cols;
 
                             for (sc_idx, (comp_idx, dc_table, ac_table)) in
@@ -2493,6 +2506,7 @@ impl WaveParallelState {
         seg_range_start: usize,
         seg_range_end: usize,
         wave_buf: &mut [u8],
+        stop: &dyn enough::Stop,
     ) -> Result<usize> {
         let wave_count = seg_range_end - seg_range_start;
         if wave_count == 0 {
@@ -2592,6 +2606,7 @@ impl WaveParallelState {
                 };
 
                 for mcu_idx in mcu_start..mcu_end {
+                    stop.check()?;
                     let mcu_row = mcu_idx / self.mcu_cols;
                     let mcu_col = mcu_idx % self.mcu_cols;
 
@@ -2747,6 +2762,7 @@ impl WaveParallelState {
         wave_y: &mut [i16],
         wave_cb: &mut [i16],
         wave_cr: &mut [i16],
+        stop: &dyn enough::Stop,
     ) -> Result<(usize, usize)> {
         let wave_count = seg_range_end - seg_range_start;
         if wave_count == 0 {
@@ -2893,6 +2909,7 @@ impl WaveParallelState {
 
                 // Main decode loop
                 for mcu_idx in mcu_start..mcu_end {
+                    stop.check()?;
                     let mcu_row = mcu_idx / self.mcu_cols;
                     let mcu_col = mcu_idx % self.mcu_cols;
 

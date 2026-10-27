@@ -14,7 +14,7 @@ pub const DC_STAT_BINS: usize = 64;
 pub const AC_STAT_BINS: usize = 256;
 
 /// Maximum number of arithmetic coding tables.
-pub const NUM_ARITH_TBLS: usize = 4;
+pub const NUM_ARITH_TBLS: usize = 16;
 
 /// QE probability table from ITU-T T.81 Table D.2.
 ///

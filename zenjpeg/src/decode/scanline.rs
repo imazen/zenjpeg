@@ -38,7 +38,7 @@ use crate::color::ycbcr_to_rgb_f32;
 use crate::deblock::BoundaryStrength;
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
+use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_COMPONENTS, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
@@ -65,6 +65,8 @@ pub struct ScanlineInfo {
 /// from a buffer, since progressive encoding requires all scans to be
 /// processed before final pixels are available.
 pub struct ScanlineReader<'a> {
+    pub(super) stop: &'a dyn enough::Stop,
+    pub(super) progress: Option<&'a dyn how_far::Report>,
     // Raw JPEG data (unused in buffered mode).
     // `Cow::Borrowed` when created from a slice; `Cow::Owned` when the caller
     // donates a `Vec<u8>` so the reader can be `'static`.
@@ -80,7 +82,7 @@ pub struct ScanlineReader<'a> {
     buffered_rgb: Option<Vec<u8>>,
     precision: u8,
     component_rows: Option<super::parser::component_rows::ComponentRows>,
-    component_ids: [u8; 4],
+    component_ids: [u8; MAX_COMPONENTS],
     predictive: Option<super::parser::predictive::PredictiveReader>,
     buffered_native: Option<Vec<u16>>,
 
@@ -328,6 +330,8 @@ impl<'a> ScanlineReader<'a> {
             num_components,
             buffered_rgb: None,
             precision,
+            stop: &enough::Unstoppable,
+            progress: None,
             predictive: None,
             component_rows: None,
             buffered_native: None,
@@ -491,6 +495,8 @@ impl<'a> ScanlineReader<'a> {
             num_components,
             buffered_rgb: None,
             precision,
+            stop: &enough::Unstoppable,
+            progress: None,
             predictive: None,
             component_rows: None,
             buffered_native: None,
@@ -594,6 +600,8 @@ impl<'a> ScanlineReader<'a> {
             num_components,
             buffered_rgb: Some(pixels),
             precision: 8,
+            stop: &enough::Unstoppable,
+            progress: None,
             predictive: None,
             component_rows: None,
             buffered_native: None,
@@ -662,7 +670,7 @@ impl<'a> ScanlineReader<'a> {
         precision: u8,
         predictive: super::parser::predictive::PredictiveReader,
         model: ColorModel,
-        ids: [u8; 4],
+        ids: [u8; MAX_COMPONENTS],
     ) -> Self {
         let mut reader = Self::new_buffered_cow(
             data,
@@ -772,11 +780,7 @@ impl<'a> ScanlineReader<'a> {
         let buf = output.buf_mut();
         self.read_component_rows_with(rows, true, |i, row| {
             for x in 0..width {
-                buf[i * stride + x] = core::array::from_fn(|c| match row {
-                    RowSrc::Native(p, n, _) => p[x * n + c],
-                    RowSrc::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
-                    _ => unreachable!(),
-                });
+                buf[i * stride + x] = row.components16(x, max);
             }
         })
     }
@@ -901,6 +905,8 @@ impl<'a> ScanlineReader<'a> {
             num_components: 3,
             buffered_rgb: None,
             precision: 8,
+            stop: &enough::Unstoppable,
+            progress: None,
             predictive: None,
             component_rows: None,
             buffered_native: None,
@@ -1212,6 +1218,7 @@ impl<'a> ScanlineReader<'a> {
         let mcu_cols = self.strip.mcu_cols();
 
         while self.current_mcu_row < skip_target {
+            self.stop.check()?;
             // Decode one MCU row (entropy only, no IDCT)
             for _mcu_x in 0..mcu_cols {
                 // Check for restart marker
@@ -1318,6 +1325,7 @@ impl<'a> ScanlineReader<'a> {
     }
 
     fn decode_mcu_row(&mut self) -> Result<()> {
+        self.stop.check()?;
         if self.mcu_row_decoded {
             return Ok(());
         }
@@ -1983,6 +1991,7 @@ impl<'a> ScanlineReader<'a> {
         raw: bool,
         mut emit: impl FnMut(usize, RowSrc<'_>),
     ) -> Result<usize> {
+        self.stop.check()?;
         if !raw && self.color_model == ColorModel::Unknown {
             return Err(Error::unsupported_feature(
                 "unknown component color space: use read_rows_components16",
@@ -1998,6 +2007,7 @@ impl<'a> ScanlineReader<'a> {
         if let Some(samples) = &self.buffered_native {
             let channels = self.num_components as usize;
             while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
                 let start = ((crop_y + self.current_row) * self.width as usize + crop_x) * channels;
                 emit(
                     n,
@@ -2009,6 +2019,9 @@ impl<'a> ScanlineReader<'a> {
                 );
                 n += 1;
                 self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
             return Ok(n);
         }
@@ -2016,8 +2029,9 @@ impl<'a> ScanlineReader<'a> {
         if let Some(source) = &mut self.component_rows {
             let channels = self.num_components as usize;
             while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
                 while source.current_row <= crop_y + self.current_row {
-                    source.next_row(&self.data)?;
+                    source.next_row(&self.data, self.stop)?;
                 }
                 emit(
                     n,
@@ -2029,6 +2043,9 @@ impl<'a> ScanlineReader<'a> {
                 );
                 n += 1;
                 self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
             return Ok(n);
         }
@@ -2036,9 +2053,10 @@ impl<'a> ScanlineReader<'a> {
         if let Some(predictive) = &mut self.predictive {
             let channels = self.num_components as usize;
             while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
                 let source_y = crop_y + self.current_row;
                 while predictive.current_row() <= source_y {
-                    predictive.next_row(&self.data)?;
+                    predictive.next_row(&self.data, self.stop)?;
                 }
                 emit(
                     n,
@@ -2050,6 +2068,9 @@ impl<'a> ScanlineReader<'a> {
                 );
                 n += 1;
                 self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
             return Ok(n);
         }
@@ -2060,6 +2081,7 @@ impl<'a> ScanlineReader<'a> {
         if self.is_wave_only() {
             let row_bytes = self.width as usize * 3;
             while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
                 let image_row = crop_y + self.current_row;
                 while image_row >= self.wave_first_row + self.wave_row_count {
                     let next = self.wave_next_seg;
@@ -2072,6 +2094,9 @@ impl<'a> ScanlineReader<'a> {
                 emit(n, RowSrc::Rgb8(&self.wave_buf[off..off + out_width * 3]));
                 n += 1;
                 self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
             return Ok(n);
         }
@@ -2080,6 +2105,7 @@ impl<'a> ScanlineReader<'a> {
         if let Some(buffer) = &self.buffered_rgb {
             let (bpp, row_bytes, _) = self.buffered_geometry(buffer.len(), out_height)?;
             while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
                 let off = (crop_y + self.current_row) * row_bytes + crop_x * bpp;
                 let src = &buffer[off..off + out_width * bpp];
                 emit(
@@ -2092,6 +2118,9 @@ impl<'a> ScanlineReader<'a> {
                 );
                 n += 1;
                 self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
             return Ok(n);
         }
@@ -2100,6 +2129,7 @@ impl<'a> ScanlineReader<'a> {
         self.ensure_crop_initialized()?;
         let strip_cols = (self.width as usize).min(self.strip.strip_width);
         while n < max_rows && self.current_row < out_height {
+            self.stop.check()?;
             self.ensure_row_ready()?;
             let row = if self.num_components == 1 {
                 RowSrc::Planes(
@@ -2114,6 +2144,9 @@ impl<'a> ScanlineReader<'a> {
             emit(n, row);
             n += 1;
             self.current_row += 1;
+            if let Some(progress) = self.progress {
+                progress.advance(1);
+            }
             self.row_in_mcu += 1;
             if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
@@ -2671,8 +2704,13 @@ impl<'a> ScanlineReader<'a> {
         let wave_count = seg_end - seg_start;
         let _ = wave_count;
 
-        let row_count =
-            state.decode_wave_box(&self.data, seg_start, seg_end, &mut self.wave_buf)?;
+        let row_count = state.decode_wave_box(
+            &self.data,
+            seg_start,
+            seg_end,
+            &mut self.wave_buf,
+            self.stop,
+        )?;
 
         self.wave_first_row = seg_start * state.pixel_rows_per_seg;
         self.wave_row_count = row_count;
@@ -2726,6 +2764,7 @@ impl<'a> ScanlineReader<'a> {
         let mut total_chroma_rows = 0usize;
 
         for _ in 0..max_mcu_rows {
+            self.stop.check()?;
             if self.current_mcu_row >= total_mcu_rows {
                 break;
             }
@@ -2775,6 +2814,9 @@ impl<'a> ScanlineReader<'a> {
             total_luma_rows += luma_rows_this;
             total_chroma_rows += chroma_rows_this;
             self.current_row += luma_rows_this;
+            if let Some(progress) = self.progress {
+                progress.advance(luma_rows_this as u64);
+            }
             self.current_mcu_row += 1;
         }
 
@@ -2802,6 +2844,7 @@ impl<'a> ScanlineReader<'a> {
             &mut self.wave_y,
             &mut self.wave_cb,
             &mut self.wave_cr,
+            self.stop,
         )?;
 
         self.wave_planar_first_luma_row = seg_start * luma_rows_per_seg;
@@ -2840,6 +2883,7 @@ impl<'a> ScanlineReader<'a> {
         c_stride: usize,
         max_mcu_rows: usize,
     ) -> Result<(usize, usize)> {
+        self.stop.check()?;
         match self.color_model {
             ColorModel::Rgb => {
                 return Err(Error::unsupported_feature(
@@ -2908,6 +2952,7 @@ impl<'a> ScanlineReader<'a> {
         let mut total_chroma_rows = 0usize;
 
         for _ in 0..max_mcu_rows {
+            self.stop.check()?;
             if self.current_mcu_row >= total_mcu_rows {
                 break;
             }
@@ -2957,6 +3002,9 @@ impl<'a> ScanlineReader<'a> {
 
             // Advance to next MCU row
             self.current_row += luma_rows_this;
+            if let Some(progress) = self.progress {
+                progress.advance(luma_rows_this as u64);
+            }
             self.advance_mcu_row();
         }
 
@@ -3005,6 +3053,14 @@ enum RowSrc<'r> {
 }
 
 impl RowSrc<'_> {
+    fn components16<const N: usize>(self, x: usize, max: i32) -> [u16; N] {
+        core::array::from_fn(|c| match self {
+            Self::Native(p, n, _) => p[x * n + c],
+            Self::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
+            _ => unreachable!("converted rows cannot supply source components"),
+        })
+    }
+
     fn len(self) -> usize {
         match self {
             Self::Native(p, c, _) => p.len() / c,
@@ -3271,9 +3327,9 @@ fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
     .map(|v| v.clamp(0, max) as u16)
 }
 
-fn frame_component_ids(data: &[u8]) -> [u8; 4] {
+fn frame_component_ids(data: &[u8]) -> [u8; MAX_COMPONENTS] {
     use crate::container::marker::{self, MarkerKind};
-    let mut ids = [0; 4];
+    let mut ids = [0; MAX_COMPONENTS];
     if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
         && let Some(components) = frame.payload.get(6..)
     {
@@ -3287,6 +3343,22 @@ fn frame_component_ids(data: &[u8]) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converted_row_lengths_and_gray_rgb() {
+        let gray = RowSrc::Gray8(&[17, 29]);
+        assert_eq!(gray.len(), 2);
+        assert_eq!(gray.rgb16(1, 8, PlaneMatrix::Identity), [29; 3]);
+        let rgb = RowSrc::Rgb8(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(rgb.len(), 2);
+        assert_eq!(rgb.rgb16(1, 8, PlaneMatrix::Identity), [4, 5, 6]);
+    }
+
+    #[test]
+    #[should_panic(expected = "converted rows cannot supply source components")]
+    fn converted_rows_cannot_be_mislabeled_as_native() {
+        RowSrc::Rgb8(&[1, 2, 3]).components16::<3>(0, 255);
+    }
 
     #[test]
     fn test_filter_strip_vertical_i16() {
@@ -4981,5 +5053,40 @@ mod tests {
                 "Non-MCU-aligned crop differs from reference at {perm}"
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod native_reader_guards {
+    use super::*;
+    #[test]
+    fn component_id_probe_refuses_short_frame_payload() {
+        assert_eq!(
+            frame_component_ids(&[255, 216, 255, 193, 0, 2, 255, 217]),
+            [0; MAX_COMPONENTS]
+        );
+    }
+    #[test]
+    fn cmyk_row_invariant_is_checked() {
+        let result = super::super::DecodeResult::new_u16(
+            1,
+            1,
+            crate::types::PixelFormat::Cmyk,
+            12,
+            vec![0; 4],
+            None,
+            Vec::new(),
+        );
+        let mut reader = ScanlineReader::from_native_result(Cow::Borrowed(&[]), result).unwrap();
+        // A broken internal channel invariant must fail rather than indexing
+        // a three-channel pixel as CMYK. Public construction always sets four.
+        reader.num_components = 3;
+        let mut pixel = [Cmyk16::default()];
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reader.read_rows_cmyk16(imgref::ImgRefMut::new(&mut pixel, 1, 1))
+            }))
+            .is_err()
+        );
     }
 }

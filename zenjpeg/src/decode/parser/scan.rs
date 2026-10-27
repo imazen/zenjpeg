@@ -51,7 +51,7 @@ impl<'a> JpegParser<'a> {
                 "SOS num_components exceeds frame components",
             ));
         }
-        if num_components > crate::foundation::consts::MAX_COMPONENTS as u8 {
+        if num_components > 4 {
             return Err(Error::invalid_jpeg_data("SOS num_components too large"));
         }
 
@@ -69,6 +69,14 @@ impl<'a> JpegParser<'a> {
         let mut scan_components = Vec::with_capacity(num_components as usize);
 
         let permissive = self.strictness.is_permissive();
+        let table_limit = if matches!(
+            self.mode,
+            JpegMode::ArithmeticSequential | JpegMode::ArithmeticProgressive
+        ) {
+            crate::entropy::arithmetic::NUM_ARITH_TBLS
+        } else {
+            MAX_HUFFMAN_TABLES
+        };
 
         for _ in 0..num_components {
             let component_id = self.read_u8()?;
@@ -77,7 +85,7 @@ impl<'a> JpegParser<'a> {
             let mut ac_table = tables & 0x0F;
 
             // Validate Huffman table indexes
-            if dc_table as usize >= MAX_HUFFMAN_TABLES {
+            if dc_table as usize >= table_limit {
                 if permissive {
                     dc_table = 0; // Fallback to table 0
                 } else {
@@ -86,7 +94,7 @@ impl<'a> JpegParser<'a> {
                     ));
                 }
             }
-            if ac_table as usize >= MAX_HUFFMAN_TABLES {
+            if ac_table as usize >= table_limit {
                 if permissive {
                     ac_table = 0; // Fallback to table 0
                 } else {
@@ -147,6 +155,14 @@ impl<'a> JpegParser<'a> {
             ));
         }
 
+        // Components keep the quantization table in force at their first scan.
+        for &(component, _, _) in &scan_components {
+            if self.component_quant[component].is_none() {
+                self.component_quant[component] =
+                    self.quant_tables[self.components[component].quant_table_idx as usize];
+            }
+        }
+
         // Decode entropy-coded segment based on mode
         match self.mode {
             JpegMode::Progressive => {
@@ -162,7 +178,7 @@ impl<'a> JpegParser<'a> {
                 // Baseline/Extended Huffman modes
                 // Try fused parallel decode first (MCU-row-aligned DRI only)
                 #[cfg(feature = "parallel")]
-                let used_fused = self.try_fused_parallel_decode(&scan_components)?;
+                let used_fused = self.try_fused_parallel_decode(&scan_components, stop)?;
                 #[cfg(not(feature = "parallel"))]
                 let used_fused = false;
 
@@ -367,9 +383,7 @@ impl<'a> JpegParser<'a> {
 
             for block_y in 0..grid.comp_blocks_v {
                 // Check for cancellation at each block row
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
 
                 for block_x in 0..grid.comp_blocks_h {
                     if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -390,14 +404,14 @@ impl<'a> JpegParser<'a> {
                     let block_idx = block_y * grid.padded_blocks_h + block_x;
                     match decoder.decode_block_into(
                         &mut self.coeffs[comp_idx][block_idx],
-                        prev_coeff_counts[comp_idx],
-                        comp_idx,
+                        prev_coeff_counts[0],
+                        0,
                         dc_table,
                         ac_table,
                     )? {
                         ScanRead::Value(count) => {
                             self.coeff_counts[comp_idx][block_idx] = count;
-                            prev_coeff_counts[comp_idx] = count;
+                            prev_coeff_counts[0] = count;
                         }
                         ScanRead::EndOfScan | ScanRead::Truncated => {
                             // Truncation: Strict errors via warn(), Balanced/Lenient
@@ -407,7 +421,7 @@ impl<'a> JpegParser<'a> {
                             }
                             self.coeffs[comp_idx][block_idx] = [0i16; 64];
                             self.coeff_counts[comp_idx][block_idx] = 1;
-                            prev_coeff_counts[comp_idx] = 64;
+                            prev_coeff_counts[0] = 64;
                         }
                     }
 
@@ -421,6 +435,7 @@ impl<'a> JpegParser<'a> {
             // These values are constant for the entire scan but were being recomputed
             // per MCU × per component (~1.5M times), costing ~57M instructions.
             struct CompScanInfo {
+                slot: usize,
                 comp_idx: usize,
                 dc_table: usize,
                 ac_table: usize,
@@ -433,7 +448,8 @@ impl<'a> JpegParser<'a> {
             }
             let comp_scan_infos: Vec<CompScanInfo> = scan_components
                 .iter()
-                .map(|(comp_idx, dc_table, ac_table)| {
+                .enumerate()
+                .map(|(slot, (comp_idx, dc_table, ac_table))| {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                     let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                     let comp_blocks_h = mcu_cols * h_samp;
@@ -446,6 +462,7 @@ impl<'a> JpegParser<'a> {
                     let has_any_padding =
                         actual_blocks_h < comp_blocks_h || actual_blocks_v < mcu_rows * v_samp;
                     CompScanInfo {
+                        slot,
                         comp_idx: *comp_idx,
                         dc_table: *dc_table as usize,
                         ac_table: *ac_table as usize,
@@ -461,9 +478,7 @@ impl<'a> JpegParser<'a> {
 
             for mcu_y in 0..mcu_rows {
                 // Check for cancellation at each MCU row
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
 
                 for mcu_x in 0..mcu_cols {
                     // Check for restart marker
@@ -523,8 +538,8 @@ impl<'a> JpegParser<'a> {
                                         // Strict: require padding blocks, propagate errors
                                         let count = match decoder.decode_block_into(
                                             &mut self.coeffs[info.comp_idx][block_idx],
-                                            prev_coeff_counts[info.comp_idx],
-                                            info.comp_idx,
+                                            prev_coeff_counts[info.slot],
+                                            info.slot,
                                             info.dc_table,
                                             info.ac_table,
                                         )? {
@@ -536,20 +551,20 @@ impl<'a> JpegParser<'a> {
                                             }
                                         };
                                         self.coeff_counts[info.comp_idx][block_idx] = count;
-                                        prev_coeff_counts[info.comp_idx] = count;
+                                        prev_coeff_counts[info.slot] = count;
                                     } else {
                                         // Balanced/Lenient: speculative decoding with recovery
                                         let saved_state = decoder.save_state();
                                         match decoder.decode_block_into(
                                             &mut self.coeffs[info.comp_idx][block_idx],
-                                            prev_coeff_counts[info.comp_idx],
-                                            info.comp_idx,
+                                            prev_coeff_counts[info.slot],
+                                            info.slot,
                                             info.dc_table,
                                             info.ac_table,
                                         ) {
                                             Ok(ScanRead::Value(count)) => {
                                                 self.coeff_counts[info.comp_idx][block_idx] = count;
-                                                prev_coeff_counts[info.comp_idx] = count;
+                                                prev_coeff_counts[info.slot] = count;
                                             }
                                             Ok(ScanRead::EndOfScan) => {
                                                 // The encoder omitted this padding block:
@@ -557,7 +572,7 @@ impl<'a> JpegParser<'a> {
                                                 decoder.restore_state(saved_state);
                                                 self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
                                                 self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                                prev_coeff_counts[info.comp_idx] = 64;
+                                                prev_coeff_counts[info.slot] = 64;
                                                 had_padding_error = true;
                                             }
                                             Ok(ScanRead::Truncated) => {
@@ -571,13 +586,13 @@ impl<'a> JpegParser<'a> {
                                                 }
                                                 self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
                                                 self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                                prev_coeff_counts[info.comp_idx] = 64;
+                                                prev_coeff_counts[info.slot] = 64;
                                             }
                                             Err(_e) => {
                                                 decoder.restore_state(saved_state);
                                                 self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
                                                 self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                                prev_coeff_counts[info.comp_idx] = 64;
+                                                prev_coeff_counts[info.slot] = 64;
                                                 had_padding_error = true;
                                             }
                                         }
@@ -586,8 +601,8 @@ impl<'a> JpegParser<'a> {
                                     // Non-padding block: decode with strictness-aware truncation handling
                                     let count = match decoder.decode_block_into(
                                         &mut self.coeffs[info.comp_idx][block_idx],
-                                        prev_coeff_counts[info.comp_idx],
-                                        info.comp_idx,
+                                        prev_coeff_counts[info.slot],
+                                        info.slot,
                                         info.dc_table,
                                         info.ac_table,
                                     )? {
@@ -599,12 +614,12 @@ impl<'a> JpegParser<'a> {
                                             }
                                             self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
                                             self.coeff_counts[info.comp_idx][block_idx] = 1;
-                                            prev_coeff_counts[info.comp_idx] = 64;
+                                            prev_coeff_counts[info.slot] = 64;
                                             continue;
                                         }
                                     };
                                     self.coeff_counts[info.comp_idx][block_idx] = count;
-                                    prev_coeff_counts[info.comp_idx] = count;
+                                    prev_coeff_counts[info.slot] = count;
                                 }
                             }
                         }
@@ -853,9 +868,7 @@ impl<'a> JpegParser<'a> {
         // Process MCU row by row
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             // Decode one MCU row's worth of blocks
             for mcu_x in 0..mcu_cols {

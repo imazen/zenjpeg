@@ -199,6 +199,8 @@ pub(super) struct JpegParser<'a> {
 
     // Tables
     pub(super) quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_QUANT_TABLES],
+    // Latch at the first scan for each component: DQT slots can be redefined.
+    pub(super) component_quant: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_COMPONENTS],
     pub(super) dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
     pub(super) ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
 
@@ -294,9 +296,9 @@ pub(super) struct JpegParser<'a> {
 
     // Arithmetic coding conditioning parameters (from DAC marker)
     /// DC conditioning: (L, U) per table, default (0, 1)
-    pub(super) arith_dc_cond: [(u8, u8); 4],
+    pub(super) arith_dc_cond: [(u8, u8); crate::entropy::arithmetic::NUM_ARITH_TBLS],
     /// AC conditioning: Kx per table, default 5
-    pub(super) arith_ac_kx: [u8; 4],
+    pub(super) arith_ac_kx: [u8; crate::entropy::arithmetic::NUM_ARITH_TBLS],
 
     /// JBRD per-scan metadata accumulator. Set to `Some(Vec::new())` by
     /// [`Decoder::decode_coefficients_with_jbrd_metadata`] before decode;
@@ -427,6 +429,7 @@ impl<'a> JpegParser<'a> {
             mode: JpegMode::Baseline,
             components: std::array::from_fn(|_| Component::default()),
             quant_tables: [None, None, None, None],
+            component_quant: [None; MAX_COMPONENTS],
             dc_tables: [None, None, None, None],
             ac_tables: [None, None, None, None],
             restart_interval: 0,
@@ -457,8 +460,8 @@ impl<'a> JpegParser<'a> {
             #[cfg(feature = "parallel")]
             parallel_strategy: super::config::ParallelStrategy::default(),
             warnings: Vec::new(),
-            arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
-            arith_ac_kx: [5; 4],        // Default Kx=5
+            arith_dc_cond: [(0, 1); crate::entropy::arithmetic::NUM_ARITH_TBLS], // Default L=0, U=1
+            arith_ac_kx: [5; crate::entropy::arithmetic::NUM_ARITH_TBLS],        // Default Kx=5
             force_f32_idct: false,
             jbrd_scans: None,
             jbrd_padding_bits: None,
@@ -867,7 +870,7 @@ impl<'a> JpegParser<'a> {
         // SOF decision on this pass sees exactly the markers before SOF.
         self.position = 2; // Skip SOI
         self.color_markers = ColorMarkers::default();
-        self.read_header()?;
+        self.read_header_with_stop(stop)?;
 
         // Reject non-8-bit precision before attempting decode.
         // 12-bit Extended Sequential uses different level shift (+2048 vs +128)
@@ -890,9 +893,7 @@ impl<'a> JpegParser<'a> {
         // Continue parsing until we hit EOI
         loop {
             // Check for cancellation
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             let marker = match self.read_marker() {
                 Ok(m) => m,
@@ -1361,7 +1362,22 @@ impl<'a> JpegParser<'a> {
         let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
         let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
 
-        let mut components = Vec::with_capacity(self.num_components as usize);
+        let mut components =
+            try_with_capacity(self.num_components as usize, "coefficient components")?;
+        let mut quant_tables = try_with_capacity(
+            MAX_QUANT_TABLES + self.num_components as usize,
+            "component quantization tables",
+        )?;
+        quant_tables.extend_from_slice(&self.quant_tables);
+        if (0..self.num_components as usize).any(|i| {
+            self.component_quant[i].is_some()
+                && self.component_quant[i]
+                    != self.quant_tables[self.components[i].quant_table_idx as usize]
+        }) {
+            // Redefined slots no longer describe the component tables. Compact
+            // the latched tables so <=4-component transcoding still uses <=4 slots.
+            quant_tables.clear();
+        }
 
         for i in 0..self.num_components as usize {
             let h_samp = self.components[i].h_samp_factor as usize;
@@ -1388,6 +1404,16 @@ impl<'a> JpegParser<'a> {
             }
             drop(src);
 
+            let original = self.components[i].quant_table_idx as usize;
+            let table = self.component_quant[i].or(self.quant_tables[original]);
+            let quant_table_idx = if quant_tables.get(original) == Some(&table) {
+                original
+            } else if let Some(index) = quant_tables.iter().position(|t| *t == table) {
+                index
+            } else {
+                quant_tables.push(table);
+                quant_tables.len() - 1
+            };
             components.push(ComponentCoefficients {
                 id: self.components[i].id,
                 coeffs,
@@ -1395,12 +1421,9 @@ impl<'a> JpegParser<'a> {
                 blocks_high,
                 h_samp: h_samp as u8,
                 v_samp: v_samp as u8,
-                quant_table_idx: self.components[i].quant_table_idx,
+                quant_table_idx: quant_table_idx as u8,
             });
         }
-
-        // Collect quantization tables
-        let quant_tables: Vec<Option<[u16; 64]>> = self.quant_tables.to_vec();
 
         Ok(DecodedCoefficients {
             sample_precision: self.precision,

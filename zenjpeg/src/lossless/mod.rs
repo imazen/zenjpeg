@@ -92,3 +92,45 @@ pub use coeff_transform::{
 pub use exif::{parse_exif_orientation, set_exif_orientation};
 pub use pipeline::{apply_exif_orientation, apply_exif_orientation_with_edge_handling, transform};
 pub use restructure::{OutputMode, RestartInterval, RestructureConfig, restructure};
+
+#[cfg(test)]
+mod native_precision_guards {
+    use super::*;
+    #[test]
+    fn coefficient_writers_reject_invalid_precision_and_count() {
+        let data = include_bytes!("../../fuzz/seeds/native/01-p12-c1-sof30-mode0-s1.jpg");
+        let decoded = crate::decode::Decoder::new()
+            .decode_coefficients(data, enough::Unstoppable)
+            .unwrap();
+        for invalid_precision in [false, true] {
+            let mut coefficients =
+                transform_coefficients(&decoded, &TransformConfig::default()).unwrap();
+            if invalid_precision {
+                coefficients.sample_precision = 16;
+            } else {
+                coefficients.components.clear();
+            }
+            let carry = pipeline::Carry::none();
+            assert!(
+                pipeline::encode_from_coefficients(
+                    &coefficients,
+                    None,
+                    &carry,
+                    0,
+                    &enough::Unstoppable
+                )
+                .is_err()
+            );
+            assert!(
+                restructure::encode_progressive_from_coefficients(
+                    &coefficients,
+                    None,
+                    &carry,
+                    0,
+                    &enough::Unstoppable
+                )
+                .is_err()
+            );
+        }
+    }
+}

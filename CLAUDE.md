@@ -1679,3 +1679,29 @@ trait identities.
 ## Known Bugs: partial header ICC fixed (2026-10-25)
 
 The header-only ICC extractor ignored chunk totals and could return a partial profile. It now reuses the native chunk validator, preserving complete legacy zero-of-one profiles and refusing incomplete/duplicate/inconsistent/empty sets. `just metadata-header-check` covers the extractor, header info, zencodec header probe, native extras and structural inspection. This does not fix the separate full-probe scope or late-metadata interpretation contracts tracked in issue238.
+
+## Known Bugs — component decoding allocation review (2026-10-26)
+
+`foundation/alloc.rs::try_with_capacity` allocated through `Vec::with_capacity`
+before its fallible reserve. An injected allocation failure aborted instead of
+returning an error. The component quantization-table failure test reproduces it;
+the fix starts from an empty Vec and performs the fallible reservation first.
+The isolated Linux allocator-interposition test checks the returned context.
+
+## Native component hardening (2026-10-26)
+
+- Minimal libjpeg-turbo fixtures exposed that 8-bit two-component frames fell
+  through to the RGB reader's 1/3/4-component admission check. Route them through
+  the same native component reader as higher component counts. Regression:
+  `tests/native_hardening.rs::oracle_seeds_and_all_truncated_prefixes`.
+
+## Native decoder hardening (2026-10-26)
+
+Minimal reference fixtures exposed inconsistent routing of 8-bit two-component
+frames and Native16 CMYK rows; both now use the shared component source. Native
+processing options are validated on those routes instead of silently ignored.
+Pulse checkpoint tests preserve typed timeout errors through header and entropy
+work. Parallel RGB and planar wave decoding now poll at each MCU; collected
+fused decoding uses the same caller token. Gates: `native_hardening`,
+`just native-branch-coverage`, and `fuzz_native_components`. Branch completeness
+must be measured against the common base of the native-precision PR stack.

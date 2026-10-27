@@ -30,6 +30,9 @@
 //! Contract under test is "no panic, no hang, no broken invariant" — NOT
 //! "decodes successfully". Every helper deliberately ignores `Err`.
 
+#[path = "../fuzz/component_checks.rs"]
+mod component_checks;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -178,6 +181,7 @@ fn run_decode_matrix(data: &[u8]) {
 
 /// `fuzz_push_decode` (and `fuzz_decode` step 9) — the streaming row paths.
 fn run_push_decode(data: &[u8]) {
+    component_checks::check(data);
     for format in [
         PixelFormat::Rgb,
         PixelFormat::Bgr,

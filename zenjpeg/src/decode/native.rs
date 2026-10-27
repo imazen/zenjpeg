@@ -8,6 +8,7 @@ impl DecodeConfig {
         data: &[u8],
         parser: &mut JpegParser<'_>,
         stop: &dyn Stop,
+        progress: Option<&dyn how_far::Report>,
         forced_exif: bool,
     ) -> Result<DecodeResult> {
         stop.check()?;
@@ -72,8 +73,10 @@ impl DecodeConfig {
             self.apply_crop(&mut reader, parser.width, parser.height, 1)?;
             reader
         } else {
-            row_config.scanline_reader(data)?
+            row_config.scanline_reader_stopped(data, stop)?
         };
+        reader.stop = stop;
+        reader.progress = progress;
         let (width, height) = (reader.width(), reader.height());
         let count = width as usize * height as usize * channels;
         let mut samples: Vec<u16> = try_alloc_vec(width as usize * channels, "native row")?;
@@ -85,11 +88,7 @@ impl DecodeConfig {
             OwnedDecodedPixels::U8(try_alloc_vec(count, "native output")?)
         };
         let mut cmyk_row: Vec<scanline::Cmyk16> = try_alloc_vec(
-            if row_format == PixelFormat::Cmyk {
-                width as usize
-            } else {
-                0
-            },
+            width as usize * usize::from(row_format == PixelFormat::Cmyk),
             "native CMYK row",
         )?;
         let mut row: Vec<rgb::RGB<u16>> = try_alloc_vec(width as usize, "native RGB row")?;

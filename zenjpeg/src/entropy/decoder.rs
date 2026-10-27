@@ -1278,7 +1278,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Shared Huffman difference decoding. In predictive JPEG (T.81 H.1.2.2),
     /// category 16 denotes -32768 without magnitude bits. DCT DC coding
-    /// retains its existing magnitude-bit interpretation.
+    /// accepts categories 0–15; category 16 is specific to lossless coding.
     pub(crate) fn decode_difference<const LOSSLESS: bool>(
         &mut self,
         table_idx: usize,
@@ -1292,14 +1292,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         match category {
             0 => Ok(ScanRead::Value(0)),
             16 if LOSSLESS => Ok(ScanRead::Value(-32768)),
-            1..=16 => self.reader.read_bits(category).map(|value| match value {
+            1..=15 => self.reader.read_bits(category).map(|value| match value {
                 ScanRead::Value(bits) => {
                     ScanRead::Value(decode_value(category, bits as u16) as i32)
                 }
                 ScanRead::EndOfScan => ScanRead::EndOfScan,
                 ScanRead::Truncated => ScanRead::Truncated,
             }),
-            _ => Err(Error::invalid_jpeg_data("difference category exceeds 16")),
+            _ => Err(Error::invalid_jpeg_data(
+                "invalid difference category for coding mode",
+            )),
         }
     }
 
@@ -1790,8 +1792,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
-            if block_y & 15 == 0 && stop.should_stop() {
-                return Err(Error::cancelled());
+            if block_y & 15 == 0 {
+                stop.check()?;
             }
 
             for block_x in 0..blocks_h {
@@ -2182,8 +2184,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
-            if block_y & 15 == 0 && stop.should_stop() {
-                return Err(Error::cancelled());
+            if block_y & 15 == 0 {
+                stop.check()?;
             }
 
             for block_x in 0..blocks_h {
@@ -2562,5 +2564,21 @@ mod tests {
         let data = [0u8; 10];
         let decoder = EntropyDecoder::new(&data);
         assert_eq!(decoder.position(), 0);
+    }
+}
+
+#[cfg(test)]
+mod native_category_guards {
+    use super::*;
+    #[test]
+    fn category_sixteen_is_lossless_only() {
+        let table = HuffmanDecodeTable::from_bits_values(
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[16],
+        )
+        .unwrap();
+        let mut decoder = EntropyDecoder::new(&[0, 0, 0]);
+        decoder.set_dc_table(0, &table);
+        assert!(decoder.decode_difference::<false>(0).is_err());
     }
 }

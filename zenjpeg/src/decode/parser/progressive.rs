@@ -154,9 +154,7 @@ fn decode_dc_scan_non_interleaved(
 
     'ni_dc: for block_y in 0..grid.comp_blocks_v {
         // Check for cancellation at each block row
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         for block_x in 0..grid.comp_blocks_h {
             // Check for restart marker
@@ -176,7 +174,7 @@ fn decode_dc_scan_non_interleaved(
 
             let block_idx = block_y * grid.padded_blocks_h + block_x;
             if is_first_scan {
-                match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
+                match decoder.decode_dc_first(0, dc_table as usize, al)? {
                     ScanRead::Value(dc) => {
                         coeffs[comp_idx][block_idx][0] = dc;
                     }
@@ -226,9 +224,7 @@ fn decode_dc_scan_interleaved(
 
     'dc_scan: for mcu_y in 0..geom.mcu_rows {
         // Check for cancellation at each MCU row
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         for mcu_x in 0..geom.mcu_cols {
             // Check for restart marker
@@ -246,7 +242,7 @@ fn decode_dc_scan_interleaved(
                 decoder.reset_dc();
             }
 
-            for (comp_idx, dc_table, _ac_table) in scan_components {
+            for (slot, (comp_idx, dc_table, _ac_table)) in scan_components.iter().enumerate() {
                 let h_samp = components[*comp_idx].h_samp_factor as usize;
                 let v_samp = components[*comp_idx].v_samp_factor as usize;
                 let padded_blocks_h = geom.mcu_cols * h_samp;
@@ -258,7 +254,7 @@ fn decode_dc_scan_interleaved(
                         let block_idx = block_y * padded_blocks_h + block_x;
 
                         if is_first_scan {
-                            match decoder.decode_dc_first(*comp_idx, *dc_table as usize, al)? {
+                            match decoder.decode_dc_first(slot, *dc_table as usize, al)? {
                                 ScanRead::Value(dc) => {
                                     coeffs[*comp_idx][block_idx][0] = dc;
                                 }

@@ -5,7 +5,7 @@ use super::*;
 use crate::decode::{ChromaUpsampling, DecodedCoefficients};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::ScanRead;
-use crate::foundation::alloc::try_alloc_vec;
+use crate::foundation::alloc::{try_alloc_vec, try_with_capacity};
 
 struct Plane {
     h: usize,
@@ -47,7 +47,11 @@ impl JpegParser<'_> {
     pub(in crate::decode) fn component_rows(
         &mut self,
         fancy: ChromaUpsampling,
+        stop: &dyn enough::Stop,
     ) -> Result<ComponentRows> {
+        if self.height == 0 {
+            return Err(Error::unsupported_feature("component rows with DNL height"));
+        }
         let n = self.num_components as usize;
         let max_h = self.components[..n]
             .iter()
@@ -70,10 +74,7 @@ impl JpegParser<'_> {
         let width = self.width as usize;
         let height = self.height as usize;
         let columns = width.div_ceil(max_h * 8);
-        let mut planes = Vec::new();
-        planes.try_reserve_exact(n).map_err(|_| {
-            Error::allocation_failed(n * core::mem::size_of::<Plane>(), "component strips")
-        })?;
+        let mut planes = try_with_capacity(n, "component strips")?;
         // Parse tables before reserving component storage.
         let coefficients;
         let scan;
@@ -89,7 +90,7 @@ impl JpegParser<'_> {
         } else {
             self.native_precision = true;
             self.decode_mode = DecodeMode::Coefficient;
-            self.decode(&enough::Unstoppable)?;
+            self.decode(&stop)?;
             coefficients = Some(self.extract_coefficients()?);
             scan = None;
         }
@@ -97,8 +98,12 @@ impl JpegParser<'_> {
             let c = &self.components[i];
             let (h, v) = (c.h_samp_factor as usize, c.v_samp_factor as usize);
             let (stride, strip_rows) = (columns * h * 8, v * 8);
-            let quant = self.quant_tables[c.quant_table_idx as usize]
-                .ok_or_else(|| Error::invalid_jpeg_data("missing component quantization table"))?;
+            let quant = if let Some(coeffs) = &coefficients {
+                coeffs.quant_tables[coeffs.components[i].quant_table_idx as usize]
+            } else {
+                self.quant_tables[c.quant_table_idx as usize]
+            }
+            .ok_or_else(|| Error::invalid_jpeg_data("missing component quantization table"))?;
             self.charge_memory(stride * strip_rows * 6, "component strips")?;
             planes.push(Plane {
                 h,
@@ -140,7 +145,7 @@ impl JpegParser<'_> {
 }
 
 impl ComponentRows {
-    fn load(&mut self, data: &[u8]) -> Result<()> {
+    fn load(&mut self, data: &[u8], stop: &dyn enough::Stop) -> Result<()> {
         let mut entropy = EntropyDecoder::new(&data[self.start..]);
         for i in 0..MAX_HUFFMAN_TABLES {
             if let Some(t) = &self.dc[i] {
@@ -157,6 +162,7 @@ impl ComponentRows {
         let mut dequant = [0i32; 64];
         let mut pixels = [0i16; 64];
         for x in 0..self.columns {
+            stop.check()?;
             if self.coefficients.is_none()
                 && self.restart != 0
                 && self.mcus != 0
@@ -226,14 +232,14 @@ impl ComponentRows {
         Ok(())
     }
 
-    pub fn next_row(&mut self, data: &[u8]) -> Result<()> {
+    pub fn next_row(&mut self, data: &[u8], stop: &dyn enough::Stop) -> Result<()> {
         if self.current_row >= self.height {
             return Err(Error::invalid_jpeg_data("component row past image"));
         }
         let y = self.current_row;
         let needed = (y / self.strip_height + 2).min(self.strips);
         while self.loaded < needed {
-            self.load(data)?;
+            self.load(data, stop)?;
         }
         let max_h = self.planes.iter().map(|p| p.h).max().unwrap();
         let max_v = self.planes.iter().map(|p| p.v).max().unwrap();
