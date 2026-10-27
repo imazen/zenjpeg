@@ -288,6 +288,92 @@ fn invalid_input_limits_canvas_and_metadata_refuse_during_planning() {
     }
 }
 
+/// A configured pre-blur filters the whole image before encoding, which only
+/// a packed RGB8 push applies (one-shot and accumulated encodes). Planning,
+/// `begin`, a canvas-sized row push and a pull encode cannot apply it, so they
+/// refuse instead of writing a file that differs from the one-shot encode.
+#[test]
+fn row_encodes_refuse_a_pre_blur_they_cannot_apply() {
+    let (width, height) = (64u32, 48u32);
+    let row_bytes = width as usize * 3;
+    let stride = row_bytes + 9;
+    let data: Vec<u8> = (0..stride * height as usize)
+        .map(|i| ((i * 7919) ^ (i >> 5)) as u8)
+        .collect();
+    let pixels =
+        || PixelSlice::new(&data, width, height, stride, PixelDescriptor::RGB8_SRGB).unwrap();
+    let config = |sigma: f32| {
+        let mut config = JpegEncoderConfig::new()
+            .with_progressive(false)
+            .with_huffman(false);
+        let native = config.inner_mut().clone().pre_blur(sigma);
+        *config.inner_mut() = native;
+        config
+    };
+    let blurred = config(0.4)
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(pixels())
+        .unwrap();
+    let sharp = config(0.0)
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(pixels())
+        .unwrap();
+    assert_ne!(
+        blurred.data(),
+        sharp.data(),
+        "one-shot applies the pre-blur"
+    );
+    let mut accumulated = config(0.4).job().encoder().unwrap();
+    for y in (0..height).step_by(16) {
+        accumulated
+            .push_rows(pixels().sub_rows(y, 16.min(height - y)))
+            .unwrap();
+    }
+    assert!(
+        accumulated.finish().unwrap().data() == blurred.data(),
+        "accumulated rows apply the pre-blur"
+    );
+
+    let job = config(0.4).job();
+    let plan = job.plan_rows(
+        width,
+        height,
+        PixelDescriptor::RGB8_SRGB,
+        None,
+        OutputAccess::Forward,
+    );
+    assert!(plan.is_err(), "planning");
+    let mut begun = job.clone().encoder().unwrap();
+    assert!(
+        begun
+            .begin(width, height, PixelDescriptor::RGB8_SRGB)
+            .is_err(),
+        "begin"
+    );
+    let mut canvas = job
+        .clone()
+        .with_canvas_size(width, height)
+        .encoder()
+        .unwrap();
+    assert!(canvas.push_rows(pixels()).is_err(), "canvas-sized rows");
+    let pulled = job
+        .with_canvas_size(width, height)
+        .encoder()
+        .unwrap()
+        .encode_from(&mut |y, mut out: zenpixels::PixelSliceMut<'_>| {
+            for row in 0..out.rows() {
+                let at = (y + row) as usize * stride;
+                out.row_mut(row).copy_from_slice(&data[at..at + row_bytes]);
+            }
+            out.rows() as usize
+        });
+    assert!(pulled.is_err(), "pull encode");
+}
+
 /// Cancellation refuses planning and keeps its original reason.
 #[test]
 fn cancelled_planning_refuses_with_its_reason() {

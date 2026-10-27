@@ -22,6 +22,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   input whose profile cannot be identified, and policies that leave no ICC for
   colour identified as non-sRGB (an unidentified metadata ICC can still be
   stripped).
+- Row encodes (planning, `begin`, canvas-sized `push_rows`, `encode_from`)
+  refuse a configured pre-blur on RGB8 input instead of skipping it.
 
 ### Added
 
@@ -64,6 +66,10 @@ All notable changes to zenjpeg are documented here. Earlier history
   16-bit linear descriptors are advertised as well. One-shot encodes convert one
   16-row strip at a time, row encodes each pushed batch; both write identical
   bytes (`sixteen_bit_one_shot_bytes_equal_row_encodes`).
+- A configured pre-blur (`EncoderConfig::pre_blur`) filtered one-shot and
+  accumulated RGB8 encodes but was skipped by row encodes, which wrote a
+  different file for the same pixels. Row encodes now refuse it before any
+  output (`row_encodes_refuse_a_pre_blur_they_cannot_apply`).
 
 - Qualify RGB/RGBA/BGRA byte input under a retained RGB ICC profile in the shared JPEG encoder. Profile-tagged one-shot and strided row paths produce identical bytes to the established packing path; conflicting profiles, discarded ICC, premultiplied alpha and unqualified XYB/HDR modes refuse (issue 241).
 

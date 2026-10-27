@@ -887,6 +887,7 @@ impl JpegEncoder {
             ));
         }
         let layout = self.pixel_layout(descriptor)?;
+        self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
         let binding = self.bind_color(descriptor, context, layout)?;
         let lag = self
@@ -1470,6 +1471,7 @@ impl JpegEncoder {
         context: Option<&ColorContext>,
     ) -> Result<(), Error> {
         let layout = self.pixel_layout(descriptor)?;
+        self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
         let binding = self.bind_color(descriptor, context, layout)?;
         let enc = self
@@ -1478,6 +1480,19 @@ impl JpegEncoder {
         self.streaming_enc = Some(enc);
         self.row_descriptor = Some(descriptor);
         self.bound = Some(binding);
+        Ok(())
+    }
+
+    /// Pre-blur filters the whole image before encoding, and only a packed
+    /// RGB8 push applies it (one-shot and accumulated encodes). Row encodes
+    /// cannot, so they refuse rather than write a file that differs from the
+    /// one-shot encode of the same pixels.
+    fn check_row_filters(&self, layout: PixelLayout) -> Result<(), Error> {
+        if self.effective_config.pre_blur > 0.0 && layout == PixelLayout::Rgb8Srgb {
+            return Err(Error::unsupported_feature(
+                "pre-blur filters the whole image; encode it one-shot",
+            ));
+        }
         Ok(())
     }
 
@@ -1824,6 +1839,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // supported list — JPEG always wants RGB8 or RGBA8.
         let desc = PixelDescriptor::RGB8_SRGB;
         let layout = self.pixel_layout(desc)?;
+        self.check_row_filters(layout)?;
         self.check_limits(img_w, img_h, layout)?;
         let binding = self.bind_color(desc, None, layout)?;
 

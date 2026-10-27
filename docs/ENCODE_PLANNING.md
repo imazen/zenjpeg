@@ -29,7 +29,8 @@ The plan reports byte availability only. It is not a memory bound, privacy
 evidence or permission to apply backpressure. Input is always one pass of rows.
 Progressive and optimized-Huffman configurations retain coefficients until
 `finish`. An MPF index (gain map, depth map) is written at `finish`. The generic
-job refuses gain maps.
+job refuses gain maps. A pre-blur filters the whole image, so planning and row
+encodes of RGB8 input refuse it; one-shot and accumulated encodes apply it.
 
 ## Colour
 
