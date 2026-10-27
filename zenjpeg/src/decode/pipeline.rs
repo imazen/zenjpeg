@@ -405,7 +405,7 @@ impl StripProcessor {
             }
         };
 
-        if self.precision == 12 {
+        if crate::decode::precision::is_12_bit(self.precision) {
             self.dequant_buf.fill(0);
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
             super::idct_int::idct_libjpeg_precision::<12>(&self.dequant_buf, strip, stride);
@@ -669,7 +669,9 @@ impl StripProcessor {
             // IdctMethod::Libjpeg selects turbo's fixed rounding bias so the
             // whole decode is libjpeg-turbo-exact (see H2v2Bias).
             ChromaUpsampling::Triangle => match self.idct_method {
-                super::IdctMethod::Libjpeg if self.precision == 12 => {
+                super::IdctMethod::Libjpeg
+                    if crate::decode::precision::is_12_bit(self.precision) =>
+                {
                     super::upsample::upsample_h2v2_12bit
                 }
                 super::IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_strided_turbo,
@@ -750,7 +752,7 @@ impl StripProcessor {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_stride];
-                let row_fn = if self.precision == 12 {
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
                     super::upsample::upsample_h2v2_libjpeg_row_scalar
                 } else {
                     upsample_h2v2_libjpeg_row
@@ -764,7 +766,7 @@ impl StripProcessor {
                     H2v2Bias::for_idct_method(self.idct_method, false), // lower half
                 );
                 let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_stride];
-                let row_fn = if self.precision == 12 {
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
                     super::upsample::upsample_h2v2_libjpeg_row_scalar
                 } else {
                     upsample_h2v2_libjpeg_row
@@ -841,7 +843,7 @@ impl StripProcessor {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.deferred_cb_row[..out_width];
-                let row_fn = if self.precision == 12 {
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
                     super::upsample::upsample_h2v2_libjpeg_row_scalar
                 } else {
                     upsample_h2v2_libjpeg_row
@@ -855,7 +857,7 @@ impl StripProcessor {
                     H2v2Bias::for_idct_method(self.idct_method, false), // lower
                 );
                 let cr_out = &mut self.deferred_cr_row[..out_width];
-                let row_fn = if self.precision == 12 {
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
                     super::upsample::upsample_h2v2_libjpeg_row_scalar
                 } else {
                     upsample_h2v2_libjpeg_row
@@ -967,7 +969,7 @@ impl StripProcessor {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.cb_upsampled[..out_stride];
-                let row_fn = if self.precision == 12 {
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
                     super::upsample::upsample_h2v2_libjpeg_row_scalar
                 } else {
                     upsample_h2v2_libjpeg_row
@@ -981,7 +983,7 @@ impl StripProcessor {
                     H2v2Bias::for_idct_method(self.idct_method, true), // upper
                 );
                 let cr_out = &mut self.cr_upsampled[..out_stride];
-                let row_fn = if self.precision == 12 {
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
                     super::upsample::upsample_h2v2_libjpeg_row_scalar
                 } else {
                     upsample_h2v2_libjpeg_row

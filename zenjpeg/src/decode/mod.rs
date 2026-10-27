@@ -58,6 +58,7 @@ mod native;
 mod parser;
 mod pipeline;
 mod pool;
+mod precision;
 mod request;
 mod row_slice;
 #[cfg(feature = "parallel")]
@@ -1161,7 +1162,8 @@ impl DecodeConfig {
     fn uses_component_rows(&self, parser: &JpegParser<'_>) -> bool {
         parser.num_components == 2
             || parser.num_components > 4
-            || ((parser.precision == 12 || self.output_target == OutputTarget::Native16)
+            || ((crate::decode::precision::is_12_bit(parser.precision)
+                || self.output_target == OutputTarget::Native16)
                 && !parser.plan().strip()
                 && parser.num_components != 1)
     }
@@ -1217,7 +1219,7 @@ impl DecodeConfig {
 
         let is_grayscale = parser.num_components == 1;
         let plan = parser.plan();
-        let mcu_height = if is_grayscale && parser.precision == 12 {
+        let mcu_height = if is_grayscale && crate::decode::precision::is_12_bit(parser.precision) {
             8
         } else {
             plan.shape.max_v as usize * 8
@@ -1235,7 +1237,9 @@ impl DecodeConfig {
         // factors up to 2 for YCbCr / RGB (`PathPlan::strip`); everything else
         // decodes to pixels up front. Grayscale progressive also stays on
         // pixels: its gray buffer already serves every read natively.
-        let mode = if !plan.strip() && !(is_grayscale && parser.precision == 12) {
+        let mode = if !plan.strip()
+            && !(is_grayscale && crate::decode::precision::is_12_bit(parser.precision))
+        {
             ScanlineMode::Pixels
         } else if !needs_coefficients {
             ScanlineMode::Streaming

@@ -165,12 +165,20 @@ impl<'a> JpegParser<'a> {
 
         // Decode entropy-coded segment based on mode
         match self.mode {
+            #[cfg(not(feature = "extended-jpeg"))]
+            JpegMode::ArithmeticSequential | JpegMode::ArithmeticProgressive => {
+                return Err(Error::unsupported_feature(
+                    "arithmetic JPEG requires extended-jpeg",
+                ));
+            }
             JpegMode::Progressive => {
                 self.decode_progressive_scan(&scan_components, ss, se, ah, al, stop)?;
             }
+            #[cfg(feature = "extended-jpeg")]
             JpegMode::ArithmeticSequential => {
                 self.decode_arithmetic_scan(&scan_components, stop)?;
             }
+            #[cfg(feature = "extended-jpeg")]
             JpegMode::ArithmeticProgressive => {
                 self.decode_arithmetic_progressive_scan(&scan_components, ss, se, ah, al, stop)?;
             }

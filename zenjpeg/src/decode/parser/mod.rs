@@ -9,13 +9,19 @@
 //! - `progressive` - Progressive scan accumulation and refinement
 //! - `output` - Pixel conversion and output formatting
 
+#[cfg(feature = "extended-jpeg")]
 mod arithmetic_scan;
 pub(crate) mod baseline_streaming;
 pub(in crate::decode) mod component_rows;
 mod fast_integer;
 mod markers;
+mod native_metadata;
 mod output;
 pub(crate) mod output_helpers;
+#[cfg(feature = "extended-jpeg")]
+pub(in crate::decode) mod predictive;
+#[cfg(not(feature = "extended-jpeg"))]
+#[path = "predictive_disabled.rs"]
 pub(in crate::decode) mod predictive;
 mod progressive;
 mod scan;
@@ -1248,7 +1254,7 @@ impl<'a> JpegParser<'a> {
         // Extract sampling factors
         let h_samp = if is_grayscale {
             [
-                if self.precision == 12 {
+                if crate::decode::precision::is_12_bit(self.precision) {
                     1
                 } else {
                     self.components[0].h_samp_factor
@@ -1265,7 +1271,7 @@ impl<'a> JpegParser<'a> {
         };
         let v_samp = if is_grayscale {
             [
-                if self.precision == 12 {
+                if crate::decode::precision::is_12_bit(self.precision) {
                     1
                 } else {
                     self.components[0].v_samp_factor

@@ -218,6 +218,20 @@ impl<'a> JpegParser<'a> {
             self.components[i].quant_table_idx = quant_idx;
         }
 
+        if !cfg!(feature = "extended-jpeg")
+            && (self.precision != 8
+                || matches!(
+                    self.mode,
+                    JpegMode::Lossless
+                        | JpegMode::ArithmeticSequential
+                        | JpegMode::ArithmeticProgressive
+                ))
+        {
+            return Err(Error::unsupported_feature(
+                "this JPEG requires extended-jpeg",
+            ));
+        }
+
         // The colour model and sampling shape are decided here, once, from
         // the markers seen before SOF (jpegli `ProcessSOF`). Every entry point
         // reads the header up to SOF, so they all see the same decision.

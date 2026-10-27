@@ -119,8 +119,11 @@ jobs:
       - name: Inventory disabled through configured jobs
         run: cargo test -p zenjpeg --release --features zencodec --test inventory_feature
 
-      - name: Test (no defaults, minimal)
-        run: cargo test -p zenjpeg --release --no-default-features --lib --tests
+      - name: Test (explicit extended JPEG, no other defaults)
+        run: cargo test -p zenjpeg --release --no-default-features --features extended-jpeg --lib --tests
+
+      - name: Test (core JPEG without extended capability)
+        run: cargo test -p zenjpeg --release --no-default-features --test extended_jpeg_feature
 
       - name: Test (__expert + all user features)
         run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,boundary-rd,__expert" --lib --tests

@@ -117,14 +117,21 @@ Started as a port of [jpegli](https://github.com/google/jpegli) (Bruse, Versari,
 
 | Feature | Default | Description |
 |---------|---------|-------------|
+| `extended-jpeg` | yes | Arithmetic, 12-bit DCT and predictive lossless decoding; disable defaults for the smaller core decoder |
 | `parallel` | no | Multi-threaded encode/decode via rayon |
-| `moxcms` | no | Color management (pure Rust). Required for `.correct_color()` and XYB decode |
+| `moxcms` | no | ICC color management (pure Rust), required for `.correct_color()` |
 | `ultrahdr` | no | UltraHDR HDR gain map encode/decode |
 | `zencodec` | no | zencodec trait implementations for cross-codec pipelines |
 | `layout` | no | Lossless transforms + lossy decode→resize→encode pipeline |
 | `recompress` | no | JPEG→JPEG recompression to a target perceptual quality (see [Recompress](#recompress)). Core path; no heavy deps |
 | `recompress-expert` | no | Exposes `recompress::expert` internals (unstable, not semver-covered) |
 | `boundary-rd` | no | Opt-in block-boundary continuity refinement (off by default; output is byte-identical unless enabled) |
+
+Ordinary 8-bit sequential/progressive Huffman JPEG and XYB decoding remain
+available without `extended-jpeg`. Applications already using
+`default-features = false` must explicitly enable `extended-jpeg` to retain
+arithmetic, 12-bit DCT and predictive lossless decoding. Excluded formats return
+an unsupported-feature error; internal arithmetic precision is unchanged.
 
 The **decoder and trellis quantization are always compiled** — the historical
 `decoder` and `trellis` feature flags are now no-ops kept only so existing
