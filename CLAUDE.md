@@ -702,6 +702,11 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed 2026-10-28: `BytesEncoder::push` and the planar pushes collapsed every
+  stop reason into `Error::cancelled()` (`should_stop()` instead of `check()`),
+  so a timed-out pulse surfaced as `Stopped(Cancelled)`. Regression:
+  `tests/encode_stop_reasons.rs` (every poll, one-shot/row/packed/strided/planar).
+
 - Open (found 2026-10-27 at zencodec `f5a7fd46`; the deprecation dates from `f73a7e0e`): nine test calls to the
   deprecated `DecodeJob::with_policy` warn whenever `inventory` is enabled: `tests/bundled/ultrahdr_roundtrip.rs:1314,1404`
   (`zencodec` + `inventory`) and `tests/bundled/inventory_review.rs:421,429,431,459,460,882,1225`. No strict-Clippy CI

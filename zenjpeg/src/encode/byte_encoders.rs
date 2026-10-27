@@ -294,9 +294,7 @@ impl BytesEncoder {
         stop: impl Stop,
     ) -> Result<()> {
         // Check cancellation
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         let bpp = self.layout.bytes_per_pixel();
         let min_stride = self.width as usize * bpp;
@@ -329,9 +327,7 @@ impl BytesEncoder {
         } else {
             // Streaming path, strided data — row by row.
             for row in 0..rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
 
                 let src_start = row * stride_bytes;
                 let src_end = src_start + min_stride;
@@ -1211,9 +1207,7 @@ impl YCbCrPlanarEncoder {
     /// - Y: 0.0 to 255.0
     /// - Cb, Cr: -128.0 to 127.0
     pub fn push(&mut self, planes: &YCbCrPlanes<'_>, rows: usize, stop: impl Stop) -> Result<()> {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         let width = self.width as usize;
 
@@ -1225,9 +1219,7 @@ impl YCbCrPlanarEncoder {
 
         let mut src_row = 0;
         while src_row < rows {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             // How many rows can we add to the buffer?
             let rows_to_add = (rows - src_row).min(self.strip_height - self.buffered_rows);
@@ -1325,9 +1317,7 @@ impl YCbCrPlanarEncoder {
         y_rows: usize,
         stop: impl Stop,
     ) -> Result<()> {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         // Check that we don't have buffered full-resolution data
         // (can't mix push() and push_subsampled())
@@ -1388,9 +1378,7 @@ impl YCbCrPlanarEncoder {
 
             // Copy Y plane
             for row in 0..y_rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
                 let dst_start = row * width;
                 let dst_end = dst_start + width;
                 let src_start = row * planes.y_stride;

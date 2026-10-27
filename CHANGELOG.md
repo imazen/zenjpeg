@@ -65,6 +65,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `BytesEncoder::push` and `YCbCrPlanarEncoder::push`/`push_subsampled`
+  reported every stop as `Cancelled`, so a deadline surfaced as a cancellation
+  through the zencodec adapter (found by the zenpipe lane's `pulse_retention`).
+  Their stop checks now keep the stop's own reason. `tests/encode_stop_reasons.rs`
+  stops one-shot, row, packed, strided and planar encodes at every poll.
+
 - The zencodec adapter wrote its ICC carrier from job metadata only (issue 154):
   a checked `EncodeRequest`, which carries no metadata, wrote Display P3 pixels
   untagged. The carrier now describes the stored samples: the pixels' context
