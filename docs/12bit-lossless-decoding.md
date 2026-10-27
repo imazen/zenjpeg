@@ -301,3 +301,7 @@ reference matrices, an isolated allocation-failure subprocess and existing
 buffered/callback/crop regressions. Two final row-conversion/crop assertions were
 then instrumented without changing production code. The evolving fuzz corpus was
 not needed for either gate. `just native-branch-coverage` includes these routes.
+
+A follow-up ASan/libFuzzer run against the final implementation completed
+47,457 executions in 61 seconds without a crash artifact, using the same limits.
+The corpus was preserved after both runs.
