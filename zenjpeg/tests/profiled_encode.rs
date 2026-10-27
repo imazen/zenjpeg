@@ -102,6 +102,7 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation() {
     let desc = descriptor(PixelDescriptor::RGB8_SRGB, ADOBE_RGB);
     let raw = [17, 31, 61].repeat(16);
@@ -318,6 +319,7 @@ fn profile_descriptor_admission_checks_each_interpretation_guard() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn profile_bytes_refuse_color_carrier_removal_and_cicp_override() {
     let desc = descriptor(PixelDescriptor::RGB8_SRGB, ADOBE_RGB);
     let job = || {

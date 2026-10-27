@@ -11,7 +11,7 @@ cargo-fuzz = true
 [dependencies]
 rgb = "0.8.53"
 imgref = "1.12.3"
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a" }
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 enough = "0.4.3"
@@ -30,7 +30,7 @@ members = ["."]
 
 # This standalone workspace repeats the shared codec interface override.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a" }
 
 [[bin]]
 name = "fuzz_decode"

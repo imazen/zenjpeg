@@ -54,8 +54,8 @@ imgref = { workspace = true }
 enough = { workspace = true }
 how-far = { version = "0.1.0", default-features = false }
 zencodec = { workspace = true }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694", optional = true }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694", default-features = false, features = ["xmp"] }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a", optional = true }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a", default-features = false, features = ["xmp"] }
 zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true, optional = true }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
@@ -118,7 +118,7 @@ tempfile = "3"
 # `[patch.crates-io]` needed. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 zencodec-testkit = ">=0.1.0, <0.3.0"
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694", features = ["std"] }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "d6ed434656478e32d79eb89115bacafbfa02678a", features = ["std"] }
 
 
 # WASM testing dependencies (browser + Node.js)
