@@ -1009,7 +1009,7 @@ mod tests {
     fn test_entropy_encoder_finish() {
         let encoder = EntropyEncoder::new();
         let bytes = encoder.finish();
-        assert!(bytes.is_empty() || !bytes.is_empty()); // Just ensure it doesn't panic
+        assert!(bytes.is_empty());
     }
 
     #[test]
@@ -1017,7 +1017,7 @@ mod tests {
         let mut encoder = EntropyEncoder::new();
         encoder.write_bits(0b1010, 4);
         let bytes = encoder.finish();
-        assert!(!bytes.is_empty());
+        assert_eq!(bytes, [0xaf]); // Four payload bits, then JPEG one-bit padding.
     }
 
     #[test]
@@ -1120,4 +1120,40 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn progressive_dc_emits_exact_annex_k_codes_and_refinement_bits() {
+        for (dc, expected) in [(4, 0x71), (-4, 0x69)] {
+            let mut encoder = encoder_with_tables();
+            encoder.encode_dc_progressive(dc, 0, 0, 1, 0).unwrap();
+            encoder.encode_dc_progressive(dc, 0, 0, 1, 0).unwrap();
+            assert_eq!(encoder.finish(), [expected]);
+        }
+        let mut encoder = EntropyEncoder::new();
+        encoder.encode_dc_progressive(3, 0, 0, 0, 1).unwrap();
+        encoder.encode_dc_progressive(2, 0, 0, 0, 1).unwrap();
+        assert_eq!(encoder.finish(), [0xbf]);
+        assert!(
+            EntropyEncoder::new()
+                .encode_dc_progressive(4, 0, 0, 0, 0)
+                .is_err()
+        );
+        assert!(
+            encoder_with_tables()
+                .encode_dc_progressive(i16::MAX, 0, 0, 0, 0)
+                .is_err()
+        );
+    }
+    #[test]
+    fn progressive_negative_ac_uses_ones_complement_magnitude() {
+        let mut coeffs = [0i16; 64];
+        coeffs[1] = -3;
+        let mut encoder = encoder_with_tables();
+        let mut eob_run = 0;
+        encoder.encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut eob_run).unwrap();
+        // Annex K luminance symbol 0x02 is 01; -3 has category-two bits 00.
+        // Padding the resulting 0100 with ones gives 0x4f.
+        assert_eq!(encoder.finish(), [0x4f]);
+        assert_eq!(eob_run, 0);
+    }
+
 }
