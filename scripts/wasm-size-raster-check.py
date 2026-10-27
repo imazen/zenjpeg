@@ -24,7 +24,7 @@ rows=[]
 for fixture in fixtures:
     data=fixture.read_bytes(); marker,precision=frame(data)
     expected=None
-    for variant in ['full','no-arithmetic','no-extended','no-both']:
+    for variant in (['full','no-both'] if '--capability' in sys.argv else ['full','no-arithmetic','no-extended','no-both']):
         r=subprocess.run(['node','--no-warnings',str(root/'scripts/wasm-size-run.mjs'),str(out/f'{variant}-1.wasm')],input=data,capture_output=True,timeout=15)
         refused=(variant in ('no-arithmetic','no-both') and marker in (0xc9,0xca)) or (variant in ('no-extended','no-both') and (precision!=8 or marker==0xc3))
         if refused:

@@ -11,6 +11,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('workspace', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('--simd', action='store_true')
+p.add_argument('--capability', action='store_true', help='Measure the real extended-jpeg feature without source exclusions')
 a = p.parse_args()
 w, out = a.workspace.resolve(), a.output.resolve()
 if w == Path(__file__).resolve().parent.parent or not (w / '.jj/repo').is_file():
@@ -75,8 +76,14 @@ def stub(source, name):
 
 rows = []
 try:
-    for variant in ['full', 'no-arithmetic', 'no-extended', 'no-both']:
-        for f, s in original.items():
+    for variant in (['full', 'no-both'] if a.capability else ['full', 'no-arithmetic', 'no-extended', 'no-both']):
+        if a.capability:
+            probe_manifest = probe / 'Cargo.toml'
+            text = probe_manifest.read_text().replace(', features = ["extended-jpeg"]', '')
+            if variant == 'full':
+                text = text.replace('default-features = false', 'default-features = false, features = ["extended-jpeg"]')
+            probe_manifest.write_text(text)
+        for f, s in ([] if a.capability else original.items()):
             if variant in ('no-arithmetic', 'no-both') and f.name == 'arithmetic_scan.rs':
                 for name in ['decode_arithmetic_scan', 'decode_arithmetic_progressive_scan']:
                     s = stub(s, name)
@@ -97,7 +104,7 @@ try:
             artifact.write_bytes(data)
             row = dict(variant=variant, repeat=repeat, bytes=len(data), gzip_bytes=len(gzip.compress(data, mtime=0)), sha256=hashlib.sha256(data).hexdigest())
             rows.append(row)
-            (out / 'measurements.json').write_text(json.dumps(dict(source=source_id, target='wasm32-wasip1', profile='opt=s, thin LTO, CGU=1, stripped', simd128=a.simd, results=rows), indent=2)+'\n')
+            (out / 'measurements.json').write_text(json.dumps(dict(source=source_id, target='wasm32-wasip1', profile='opt=s, thin LTO, CGU=1, stripped', simd128=a.simd, capability=a.capability, results=rows), indent=2)+'\n')
             print(json.dumps(row), flush=True)
 finally:
     for f, s in original.items(): f.write_text(s)
