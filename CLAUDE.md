@@ -1759,4 +1759,7 @@ calling the asserting Huffman accessor.
 The same coverage pass reproduced an EOB-run fallback defect in the legacy
 helper: a run of two blocks with the standard AC table panics on missing symbol
 0x10 before falling back to individual EOB codes. The exact-code regression is
-`progressive_eob_runs_use_exact_codes_or_individual_eobs`.
+`progressive_eob_runs_use_exact_codes_or_individual_eobs`. Fixed by checking
+table presence before the asserting accessor; missing EOB symbols return an
+error, standard tables emit individual EOB codes, and run-capable tables retain
+compact coding. All exact-code regressions pass.

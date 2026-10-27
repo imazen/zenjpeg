@@ -495,17 +495,18 @@ impl<'a> EntropyEncoder<'a> {
         };
         let symbol = (nbits << 4) as u8;
 
-        let (code, len) = ac_table.encode(symbol);
-
-        // Check if this symbol exists in the table (length 0 means not present)
-        if len == 0 && symbol != 0x00 {
-            // Symbol not in table (e.g., standard tables don't have EOB run symbols)
-            // Fall back to emitting individual EOBs
+        // Inspect presence before the accessor's debug assertion. Standard
+        // tables omit multi-block EOB symbols, so emit individual EOBs instead.
+        if ac_table.lengths[symbol as usize] == 0 {
+            if ac_table.lengths[0] == 0 {
+                return Err(Error::internal("AC table has no EOB symbol"));
+            }
             let (eob_code, eob_len) = ac_table.encode(0x00);
             for _ in 0..eob_run {
                 self.writer.write_bits(eob_code, eob_len);
             }
         } else {
+            let (code, len) = ac_table.encode(symbol);
             self.writer.write_bits(code, len);
 
             if nbits > 0 {
