@@ -702,6 +702,13 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Open (found 2026-10-27 at zencodec `f5a7fd46`; the deprecation dates from `f73a7e0e`): nine test calls to the
+  deprecated `DecodeJob::with_policy` warn whenever `inventory` is enabled: `tests/bundled/ultrahdr_roundtrip.rs:1314,1404`
+  (`zencodec` + `inventory`) and `tests/bundled/inventory_review.rs:421,429,431,459,460,882,1225`. No strict-Clippy CI
+  set enables `inventory`, so CI stays green. `try_with_policy` is not a drop-in: `JpegDecodeJob::try_set_policy`
+  (`src/codec/decode.rs:306`) refuses `strict` and `allow_truncated: Some(true)`, which several of these tests set,
+  so each call needs a decision about what it should check.
+
 - Resolved during native-precision decoding: routing through a second metadata-preserving header parse duplicated extended XMP packets. Native routing now probes marker spans without extracting metadata; existing extended-XMP round-trip assertions cover the regression.
 
 - Resolved 2026-10-18 (PR237 review): single-scan preservation filtered out inert
