@@ -22,6 +22,8 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
         PixelDescriptor::RGB8_SRGB,
         PixelDescriptor::RGBA8_SRGB,
         PixelDescriptor::BGRA8_SRGB,
+        PixelDescriptor::RGBX8_SRGB,
+        PixelDescriptor::BGRX8_SRGB,
     ] {
         let width = 97;
         let height = 65;
@@ -243,4 +245,104 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
             assert_eq!(oracle.decode().unwrap().len(), 2 * 9 * 3);
         }
     }
+}
+
+#[test]
+fn profile_descriptor_admission_checks_each_interpretation_guard() {
+    let known = descriptor(PixelDescriptor::RGB8_SRGB, ADOBE_RGB);
+    let unknown = known
+        .with_primaries(ColorPrimaries::Unknown)
+        .with_transfer(TransferFunction::Unknown);
+    let mut opaque = vec![0u8; 132];
+    opaque[..4].copy_from_slice(&132u32.to_be_bytes());
+    opaque[16..20].copy_from_slice(b"RGB ");
+    opaque[20..24].copy_from_slice(b"XYZ ");
+    opaque[36..40].copy_from_slice(b"acsp");
+    assert!(ColorProfileSource::Icc(&opaque).resolve().is_none());
+    for (profile, desc, accepted) in [
+        (ADOBE_RGB, unknown, true),
+        (
+            ADOBE_RGB,
+            known.with_transfer(TransferFunction::Unknown),
+            true,
+        ),
+        (
+            ADOBE_RGB,
+            known.with_primaries(PixelDescriptor::RGB8_SRGB.primaries),
+            false,
+        ),
+        (opaque.as_slice(), unknown, true),
+        (
+            opaque.as_slice(),
+            known.with_transfer(TransferFunction::Unknown),
+            false,
+        ),
+        (
+            opaque.as_slice(),
+            unknown.with_transfer(TransferFunction::Gamma22),
+            false,
+        ),
+        (
+            ADOBE_RGB,
+            descriptor(PixelDescriptor::RGBA8_SRGB, ADOBE_RGB)
+                .with_alpha(Some(zenpixels::AlphaMode::Premultiplied)),
+            false,
+        ),
+        (
+            ADOBE_RGB,
+            descriptor(PixelDescriptor::RGBF32_LINEAR, ADOBE_RGB),
+            false,
+        ),
+        (
+            ADOBE_RGB,
+            descriptor(PixelDescriptor::GRAY8_SRGB, ADOBE_RGB),
+            false,
+        ),
+    ] {
+        let mut encoder = JpegEncoderConfig::new()
+            .job()
+            .with_metadata_policy(
+                Metadata::none().with_icc(profile),
+                MetadataPolicy::PreserveExact,
+            )
+            .encoder()
+            .unwrap();
+        assert_eq!(encoder.begin(4, 4, desc).is_ok(), accepted, "{desc:?}");
+    }
+    let mut encoder = JpegEncoderConfig::new()
+        .job()
+        .with_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
+        .encoder()
+        .unwrap();
+    assert!(encoder.begin(4, 4, known).is_err());
+}
+
+#[test]
+fn profile_bytes_refuse_color_carrier_removal_and_cicp_override() {
+    let desc = descriptor(PixelDescriptor::RGB8_SRGB, ADOBE_RGB);
+    let job = || {
+        JpegEncoderConfig::new().job().with_metadata_policy(
+            Metadata::none().with_icc(ADOBE_RGB),
+            MetadataPolicy::PreserveExact,
+        )
+    };
+    let mut encoder = job()
+        .with_policy(
+            EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Custom(
+                zencodec::ColorEmitFields::new(
+                    zencodec::IccRetention::Drop,
+                    zencodec::CicpEmission::Never,
+                ),
+            )),
+        )
+        .encoder()
+        .unwrap();
+    assert!(encoder.begin(4, 4, desc).is_err());
+    let raw = [17, 31, 61].repeat(16);
+    let mut context = ColorContext::from_icc(ADOBE_RGB);
+    context.cicp = Some(zenpixels::Cicp::SRGB);
+    let pixels = PixelSlice::new(&raw, 4, 4, 12, desc)
+        .unwrap()
+        .with_color_context(Arc::new(context));
+    assert!(job().encoder().unwrap().encode(pixels).is_err());
 }

@@ -87,8 +87,8 @@ jobs:
       - name: Generate coverage (lib + integration tests)
         run: |
           cargo llvm-cov clean --workspace
-          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils"
-          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils" -- --skip ignored
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils"
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils" -- --skip ignored
           timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
           ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
           timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent

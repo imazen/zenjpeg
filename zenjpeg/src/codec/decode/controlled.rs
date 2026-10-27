@@ -203,3 +203,58 @@ pub(super) fn start(
     )?;
     Ok(erase_controlled(decoder))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zencodec::decode::DecoderConfig;
+
+    #[test]
+    fn unqualified_configuration_guards_are_independent() {
+        let changes: &[fn(&mut JpegDecodeJob)] = &[
+            |j| j.gain_map_render = zencodec::GainMapRender::Components,
+            |j| j.config.inner.crop_region = Some(crate::decode::CropRegion::pixels(0, 0, 1, 1)),
+            |j| {
+                j.config.inner.decode_transform = Some(crate::lossless::LosslessTransform::Rotate90)
+            },
+            |j| j.config.inner.force_f32_idct = true,
+            |j| j.config.inner.output_target = crate::decode::OutputTarget::Native16,
+            |j| j.config.inner.gain_map = crate::decode::GainMapHandling::PreserveRaw,
+            |j| {
+                j.orientation = zencodec::OrientationHint::Correct;
+                j.config.inner.auto_orient = false;
+            },
+            |j| {
+                j.orientation =
+                    zencodec::OrientationHint::ExactTransform(zencodec::Orientation::Identity)
+            },
+        ];
+        for change in changes {
+            let mut job = JpegDecoderConfig::new().job();
+            change(&mut job);
+            let storage = StorageBudget::new(1 << 20, 4);
+            let error = start(job, &[], storage.clone())
+                .err()
+                .expect("unqualified configuration refused");
+            assert_eq!(
+                zencodec::find_cause::<ControlError>(&*error),
+                Some(&ControlError::NotControlled)
+            );
+            assert_eq!(storage.reserved_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn error_context_and_sources_survive_wrapping() {
+        use core::error::Error as _;
+        let native: ControlledError = Error::invalid_jpeg_data("controlled native failure").into();
+        assert!(native.to_string().contains("controlled native failure"));
+        assert!(native.source().is_some());
+        let storage: ControlledError = StorageError::SizeOverflow.into();
+        assert_eq!(
+            storage.to_string(),
+            CoroutineError::from(StorageError::SizeOverflow).to_string()
+        );
+        assert!(storage.source().is_some());
+    }
+}

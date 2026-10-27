@@ -777,3 +777,9 @@ checked-color-check:
     just profiled-encode-check
     just controlled-fuzz-check
     just api-doc
+
+# Focused changed-code coverage before controlled-route refactoring.
+controlled-branch-coverage:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features controlled-decode,inventory,parallel --lib --test controlled_decode --test profiled_encode --test streaming_encode --test shared_contracts --test native_hardening -- --skip malformed_native_headers_are_bounded --skip native_fixture_truncated_prefixes
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"

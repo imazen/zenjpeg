@@ -52,11 +52,16 @@ pub(super) fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
 /// Recognized auxiliary content stays Unknown until its parameters are parsed;
 /// it is never relabeled Absent just because pixel reconstruction was disabled.
 pub(super) fn populate_complete_container_scope(data: &[u8], info: &mut ImageInfo) {
-    use crate::container::{GainMapPresence, Wants, probe};
+    use crate::container::{Wants, probe};
     let probe = probe(
         data,
         Wants::ULTRAHDR_DETECT | Wants::IMAGE_RANGES | Wants::SCAN_COUNT,
     );
+    populate_probe_scope(&probe, info);
+}
+
+fn populate_probe_scope(probe: &crate::container::ContainerProbe, info: &mut ImageInfo) {
+    use crate::container::GainMapPresence;
     let multiple = probe.image_ranges().len() > 1;
     let gain_map = probe.gainmap_presence() != GainMapPresence::None;
     let auxiliary = multiple || probe.mpf().is_some();
@@ -192,4 +197,25 @@ pub(super) fn jfif_to_resolution(
         y: jfif.y_density as f64,
         unit,
     })
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[test]
+    fn incomplete_and_empty_containers_do_not_prove_gain_map_absence() {
+        let mut truncated = crate::container::ContainerProbe::default();
+        truncated.truncated = true;
+        let mut info = ImageInfo::new(1, 1, ImageFormat::Jpeg);
+        populate_probe_scope(&truncated, &mut info);
+        assert_eq!(info.gain_map, zencodec::GainMapPresence::Unknown);
+        for data in [&[][..], &[0xff, 0xd8][..]] {
+            let mut info = ImageInfo::new(1, 1, ImageFormat::Jpeg);
+            populate_complete_container_scope(data, &mut info);
+            assert_eq!(info.gain_map, zencodec::GainMapPresence::Unknown);
+            assert!(!info.supplements.auxiliary);
+            assert!(!info.supplements.gain_map);
+        }
+    }
 }

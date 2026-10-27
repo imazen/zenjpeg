@@ -645,3 +645,172 @@ fn non_square_jfif_aspect_survives_header_and_full_decode_info() {
         assert_eq!(decoded.info().resolution, expected);
     }
 }
+
+#[test]
+fn controlled_grayscale_fixtures_match_reference_raster_hashes() {
+    use sha2::{Digest, Sha256};
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("support/native_manifest.json")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
+    let mut checked = 0;
+    for entry in manifest.as_array().unwrap() {
+        if entry["args"][1] != "8" || entry["args"][2] != "1" {
+            continue;
+        }
+        let name = entry["name"].as_str().unwrap();
+        let data = std::fs::read(root.join(format!("{name}.jpg"))).unwrap();
+        let native = JpegDecoderConfig::new()
+            .job()
+            .dyn_controlled_decoder(&[PixelDescriptor::GRAY8_SRGB], budget())
+            .unwrap();
+        let mut session = PolicyDecoder::new(native, PolicySet::new());
+        let mut sink = CollectSink::new();
+        drive_from_slice(&mut session, &data, &mut sink, None, 7).unwrap();
+        let pixels = sink.as_pixel_slice().unwrap();
+        assert_eq!(pixels.descriptor(), PixelDescriptor::GRAY8_SRGB);
+        let mut hash = Sha256::new();
+        for y in 0..pixels.rows() {
+            for &sample in pixels.row(y) {
+                hash.update(u16::from(sample).to_be_bytes());
+            }
+        }
+        assert_eq!(
+            format!("{:x}", hash.finalize()),
+            entry["samples_sha256"].as_str().unwrap(),
+            "{name}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 2);
+}
+
+#[test]
+fn controlled_admission_refuses_small_storage_and_unqualified_headers() {
+    let error = match JpegDecoderConfig::new()
+        .job()
+        .dyn_controlled_decoder(&[], StorageBudget::new(0, 0))
+    {
+        Ok(_) => panic!("zero storage admitted"),
+        Err(error) => error,
+    };
+    assert!(zencodec::find_cause::<zencodec::storage::StorageError>(&*error).is_some());
+    let mut policy = JpegDecoderConfig::new().job();
+    for denied in [
+        DecodePolicy::none().with_allow_truncated(true),
+        DecodePolicy::none().with_strict(true),
+    ] {
+        assert_eq!(
+            policy.try_set_policy(denied),
+            Err(zencodec::UnsupportedOperation::DecodePolicy)
+        );
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/native");
+    for name in ["01-p12-c1-sof30-mode0-s1", "15-p8-c4-sof30-mode0-s1"] {
+        let data = std::fs::read(root.join(format!("{name}.jpg"))).unwrap();
+        let native = JpegDecoderConfig::new()
+            .job()
+            .dyn_controlled_decoder(&[], budget())
+            .unwrap();
+        let mut session = PolicyDecoder::new(native, PolicySet::new());
+        let mut sink = Sink::default();
+        assert!(drive_from_slice(&mut session, &data, &mut sink, None, 7).is_err());
+        assert_eq!(sink.effects, 0);
+    }
+    let data = base(false);
+    let incomplete = [&data[..2], &part(&profile()[..32], 1, 2), &data[2..]].concat();
+    let native = JpegDecoderConfig::new()
+        .job()
+        .dyn_controlled_decoder(&[], budget())
+        .unwrap();
+    let mut session = PolicyDecoder::new(native, PolicySet::new());
+    let mut sink = Sink::default();
+    assert!(drive_from_slice(&mut session, &incomplete, &mut sink, None, 7).is_err());
+    assert_eq!(sink.effects, 0);
+    let ordinary_app2 = [
+        &data[..2],
+        &[0xff, 0xe2, 0, 5, b'x', b'y', b'z'],
+        &data[2..],
+    ]
+    .concat();
+    let native = JpegDecoderConfig::new()
+        .job()
+        .dyn_controlled_decoder(&[], budget())
+        .unwrap();
+    let mut session = PolicyDecoder::new(native, PolicySet::new());
+    let mut sink = Sink::default();
+    drive_from_slice(&mut session, &ordinary_app2, &mut sink, None, 7).unwrap();
+}
+
+#[test]
+fn controlled_xyb_refusal_precedes_output() {
+    let mut config = JpegEncoderConfig::new();
+    *config.inner_mut() =
+        zenjpeg::encode::EncoderConfig::xyb(87.0, zenjpeg::encode::XybSubsampling::Full);
+    let raw = [17, 31, 61].repeat(16);
+    let bytes = config
+        .encode(PixelSlice::new(&raw, 4, 4, 12, PixelDescriptor::RGB8_SRGB).unwrap())
+        .unwrap();
+    let native = JpegDecoderConfig::new()
+        .job()
+        .dyn_controlled_decoder(&[], budget())
+        .unwrap();
+    let mut session = PolicyDecoder::new(native, PolicySet::new());
+    let mut sink = Sink::default();
+    assert!(drive_from_slice(&mut session, bytes.data(), &mut sink, None, 7).is_err());
+    assert_eq!(sink.effects, 0);
+}
+
+#[test]
+fn linear_grayscale_streaming_rows_match_native_samples() {
+    for progressive in [false, true] {
+        let raw: Vec<u8> = (0..WIDTH * HEIGHT)
+            .map(|i| (i ^ (i / WIDTH * 13)) as u8)
+            .collect();
+        let bytes = JpegEncoderConfig::new()
+            .with_progressive(progressive)
+            .encode(
+                PixelSlice::new(
+                    &raw,
+                    WIDTH,
+                    HEIGHT,
+                    WIDTH as usize,
+                    PixelDescriptor::GRAY8_SRGB,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .into_vec();
+        let mut native = zenjpeg::decode::DecodeConfig::new()
+            .scanline_reader(&bytes)
+            .unwrap();
+        let mut expected = vec![0.0f32; (WIDTH * HEIGHT) as usize];
+        assert_eq!(
+            native
+                .read_rows_gray_linear_f32(imgref::ImgRefMut::new(
+                    &mut expected,
+                    WIDTH as usize,
+                    HEIGHT as usize
+                ))
+                .unwrap(),
+            HEIGHT as usize
+        );
+        let mut reader = JpegDecoderConfig::new()
+            .job()
+            .streaming_decoder(Cow::Borrowed(&bytes), &[PixelDescriptor::GRAYF32_LINEAR])
+            .unwrap();
+        let mut count = 0;
+        while let Some((y, pixels)) = reader.next_batch().unwrap() {
+            assert_eq!(pixels.descriptor(), PixelDescriptor::GRAYF32_LINEAR);
+            for row in 0..pixels.rows() {
+                assert_eq!(
+                    pixels.row(row),
+                    bytemuck::cast_slice::<f32, u8>(
+                        &expected[((y + row) * WIDTH) as usize..((y + row + 1) * WIDTH) as usize]
+                    )
+                );
+            }
+            count += pixels.rows();
+        }
+        assert_eq!(count, HEIGHT);
+    }
+}
