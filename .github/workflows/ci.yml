@@ -272,7 +272,10 @@ jobs:
             # LOUDLY if djpeg still isn't installed — a silent miss surfaces
             # later as baffling "program not found" test failures.
             for i in 1 2 3; do
-              choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums && break
+              if choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums \
+                  && test -x "/c/libjpeg-turbo64/bin/djpeg.exe"; then
+                break
+              fi
               echo "choco attempt $i failed; retrying in 20s" && sleep 20
             done
             test -x "/c/libjpeg-turbo64/bin/djpeg.exe" || { echo "::error::libjpeg-turbo install failed (djpeg missing)"; exit 1; }
