@@ -265,4 +265,26 @@ mod tests {
             vec![(0, 0), (0, 1), (0, 10), (0, 11), (1, 0), (2, 0)]
         );
     }
+    #[test]
+    fn rejects_invalid_dimensions_sampling_and_storage() {
+        assert!(McuGeom::from_components(8, 8, &[]).is_err());
+        for (width, height) in [(0, 8), (8, 0)] {
+            assert!(McuGeom::from_components(width, height, &[comp(1, 1, 1, 1, 1)]).is_err());
+        }
+        for (h, v) in [(0, 1), (1, 0)] {
+            assert!(McuGeom::from_components(8, 8, &[comp(1, 1, 1, h, v)]).is_err());
+            assert!(
+                McuGeom::from_components(8, 8, &[comp(1, 1, 1, 1, 1), comp(2, 1, 1, h, v),])
+                    .is_err()
+            );
+        }
+        for (bw, bh) in [(2, 1), (1, 2)] {
+            assert!(McuGeom::from_components(8, 8, &[comp(1, bw, bh, 1, 1)]).is_err());
+        }
+        for length in [0, 63, 65] {
+            let mut component = comp(1, 1, 1, 1, 1);
+            component.coeffs.resize(length, 0);
+            assert!(McuGeom::from_components(8, 8, &[component]).is_err());
+        }
+    }
 }
