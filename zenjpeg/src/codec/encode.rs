@@ -560,34 +560,6 @@ pub struct JpegEncodeJob {
     image_size: Option<(u32, u32)>,
 }
 
-impl JpegEncodeJob {
-    /// Experimental effective-job preflight: the output timing
-    /// [`JpegEncoder::begin_declared`] would report for this declaration.
-    ///
-    /// Runs the same validation, limits, colour binding and native builder
-    /// geometry as `begin_declared`, without starting native pixel or
-    /// coefficient storage. Configuration and metadata preparation may
-    /// allocate (a synthesized ICC profile, for example); this is not a memory
-    /// bound. `context` is the current colour interpretation of the rows that
-    /// will follow; retain this exact job, because the plan describes it and
-    /// nothing else. JPEG never patches earlier bytes, so `access` does not
-    /// change the layout.
-    pub fn plan_rows(
-        &self,
-        width: u32,
-        height: u32,
-        descriptor: PixelDescriptor,
-        context: Option<&ColorContext>,
-        access: zencodec::output_patch::OutputAccess,
-    ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
-        use zencodec::encode::EncodeJob;
-        let encoder = self.clone().encoder()?;
-        Ok(encoder
-            .prepare_rows(width, height, descriptor, context, access)?
-            .timing)
-    }
-}
-
 impl zencodec::encode::EncodeJob for JpegEncodeJob {
     type Error = At<CodecError>;
     type Enc = JpegEncoder;
@@ -633,6 +605,30 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.image_size = Some((width, height));
         self
+    }
+
+    /// The plan [`Encoder::begin_declared`](zencodec::encode::Encoder::begin_declared)
+    /// returns for this job and declaration: one ordered row pass, with the
+    /// output timing of the native row encoder.
+    ///
+    /// Runs the same validation, limits, colour binding and native builder
+    /// geometry as `begin_declared`, without starting native pixel or
+    /// coefficient storage. Configuration and metadata preparation may
+    /// allocate (a synthesized ICC profile, for example); this is not a memory
+    /// bound. `declaration.color` is the current interpretation of the rows
+    /// that will follow; retain this exact job, because the plan describes it
+    /// and nothing else. JPEG never patches earlier bytes, so the declared
+    /// access does not change the layout. Colour carriers are not reported
+    /// yet (`carriers: None`, unknown). Errors are the job's own
+    /// `At<CodecError>`, boxed.
+    fn plan_encode(
+        &self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, zencodec::encode::BoxedError> {
+        let start = zencodec::encode::EncodeJob::encoder(self.clone())
+            .and_then(|encoder| encoder.prepare_rows(declaration).map_err(Into::into))
+            .map_err(|e| Box::new(e) as zencodec::encode::BoxedError)?;
+        Ok(zencodec::encode::EncodePlan::rows(start.timing))
     }
 
     fn encoder(self) -> Result<JpegEncoder, Self::Error> {
@@ -868,18 +864,19 @@ impl JpegEncoder {
     }
 
     /// Everything `begin_declared` decides before native startup: layout,
-    /// colour carrier and output timing. Planning returns it, and
-    /// `begin_declared` starts the native encoder from the same value.
+    /// colour carrier and output timing. `plan_encode` reports it, and
+    /// startup begins the native encoder from the same value.
     fn prepare_rows(
         &self,
-        width: u32,
-        height: u32,
-        descriptor: PixelDescriptor,
-        context: Option<&ColorContext>,
-        access: zencodec::output_patch::OutputAccess,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
     ) -> Result<RowStart, Error> {
         // JPEG output is append-only: seek-back access permits nothing more.
-        let _ = access;
+        let (width, height, descriptor, context) = (
+            declaration.width,
+            declaration.height,
+            declaration.descriptor,
+            declaration.color,
+        );
         self.stop_ref().check()?;
         if self.image_size.is_some_and(|s| s != (width, height)) {
             return Err(Error::invalid_state(
@@ -1540,25 +1537,18 @@ impl JpegEncoder {
 }
 
 impl JpegEncoder {
-    /// Declare the image and the current colour context of the rows that
-    /// will follow, then start the row encoder. Experimental.
-    ///
-    /// The same as [`Encoder::begin_output`](zencodec::encode::Encoder::begin_output),
-    /// with the rows' colour declared before the header is written. The
-    /// header carries that colour: the context's ICC profile verbatim, or a
-    /// profile synthesized for its code points or for the primaries the
-    /// descriptor asserts. Rows pushed later must mean the same thing.
-    /// [`JpegEncodeJob::plan_rows`] reports the timing this returns for the
-    /// same job and declaration; the native encoder's own lag is checked
-    /// against that plan before any byte is exposed.
-    pub fn begin_declared(
+    /// Start the row encoder for a declaration: what `begin`, `begin_output`
+    /// and `begin_declared` share. The native encoder's own lag is checked
+    /// against the prepared plan before any byte is exposed.
+    fn start_declared(
         &mut self,
-        width: u32,
-        height: u32,
-        descriptor: PixelDescriptor,
-        context: Option<&ColorContext>,
-        access: zencodec::output_patch::OutputAccess,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
     ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
+        let (width, height, descriptor) = (
+            declaration.width,
+            declaration.height,
+            declaration.descriptor,
+        );
         if self.begun {
             return Err(Error::invalid_state("begin called twice").into());
         }
@@ -1567,7 +1557,7 @@ impl JpegEncoder {
         }
         // Build and check everything before storing any of it: a failed
         // `begin` leaves the encoder as it was.
-        let start = self.prepare_rows(width, height, descriptor, context, access)?;
+        let start = self.prepare_rows(declaration)?;
         let mut enc = self
             .build_request(start.layout, &start.binding)?
             .encode_from_bytes(width, height, start.layout)?;
@@ -1656,20 +1646,35 @@ impl zencodec::encode::Encoder for JpegEncoder {
     ///
     /// The header's colour carrier is decided here, before any row: rows
     /// pushed later must not carry a colour context that means something
-    /// else. Use [`JpegEncoder::begin_declared`] to declare that context.
+    /// else. Use [`begin_declared`](Self::begin_declared) to declare that context.
     fn begin(
         &mut self,
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
-        self.begin_declared(
-            width,
-            height,
-            descriptor,
-            None,
-            zencodec::output_patch::OutputAccess::Forward,
-        )
+        self.start_declared(&zencodec::encode::EncodeDeclaration::new(
+            width, height, descriptor,
+        ))
+    }
+
+    /// Declare the image and the current colour context of the rows that
+    /// will follow, then start the row encoder.
+    ///
+    /// The same as [`begin_output`](Self::begin_output), with the rows'
+    /// colour declared before the header is written. The header carries that
+    /// colour: the context's ICC profile verbatim, or a profile synthesized
+    /// for its code points or for the primaries the descriptor asserts. Rows
+    /// pushed later must mean the same thing. Returns the plan
+    /// [`EncodeJob::plan_encode`](zencodec::encode::EncodeJob::plan_encode)
+    /// reports for the same job and declaration.
+    fn begin_declared(
+        &mut self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, Self::Error> {
+        Ok(zencodec::encode::EncodePlan::rows(
+            self.start_declared(declaration)?,
+        ))
     }
 
     /// JPEG never patches earlier bytes: forward and seek-back destinations
@@ -1681,7 +1686,10 @@ impl zencodec::encode::Encoder for JpegEncoder {
         descriptor: PixelDescriptor,
         access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
-        self.begin_declared(width, height, descriptor, None, access)
+        self.start_declared(
+            &zencodec::encode::EncodeDeclaration::new(width, height, descriptor)
+                .with_access(access),
+        )
     }
 
     fn pending_output(&self) -> &[u8] {

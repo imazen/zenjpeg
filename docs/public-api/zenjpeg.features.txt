@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)        82
 #   pub consts/statics                          4
 #   free functions                             32
-#   inherent methods                          140
+#   inherent methods                          138
 #   struct fields                             158
 #   enum variants                             146
 #   re-exports                                 25
@@ -22,7 +22,7 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                           41
+#   (root)                           39
 #   container                       211
 #   decoder                           3
 #   encoder                          40
@@ -31,7 +31,7 @@
 #   recompress                      156
 #   ultrahdr                         73
 
-## items (592 lines)
+## items (590 lines)
 
 #[non_exhaustive] pub enum container::metadata::ItemKind<'a>
 pub container::metadata::ItemKind::Adobe(container::metadata::Adobe)
@@ -606,9 +606,7 @@ pub fn JpegDecoderConfig::new() -> Self
 pub fn JpegDecoderConfig::probe_full_metadata(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, whereat::at::At<zencodec::error::CodecError>>
 pub fn JpegDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zencodec::info::ImageInfo, whereat::at::At<zencodec::error::CodecError>>
 pub struct JpegEncodeJob
-pub fn JpegEncodeJob::plan_rows(&self, u32, u32, zenpixels::descriptor::PixelDescriptor, core::option::Option<&zenpixels::color::ColorContext>, zencodec::output_patch::OutputAccess) -> core::result::Result<zencodec::output::OutputTiming, whereat::at::At<zencodec::error::CodecError>>
 pub struct JpegEncoder
-pub fn JpegEncoder::begin_declared(&mut self, u32, u32, zenpixels::descriptor::PixelDescriptor, core::option::Option<&zenpixels::color::ColorContext>, zencodec::output_patch::OutputAccess) -> core::result::Result<zencodec::output::OutputTiming, whereat::at::At<zencodec::error::CodecError>>
 pub struct JpegEncoderConfig
 pub fn JpegEncoderConfig::encode(&self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zencodec::output::EncodeOutput, whereat::at::At<zencodec::error::CodecError>>
 pub fn JpegEncoderConfig::from_preset(&str, f32) -> core::option::Option<Self>

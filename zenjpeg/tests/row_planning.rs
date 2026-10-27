@@ -6,12 +6,68 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use zencodec::encode::{EncodeJob, Encoder, EncoderConfig, OutputTiming};
+use zencodec::encode::{
+    BoxedError, EncodeDeclaration, EncodeJob, EncodePlan, Encoder, EncoderConfig, InputRequirement,
+    OutputPhase, OutputTiming,
+};
 use zencodec::output_patch::OutputAccess;
-use zenjpeg::JpegEncoderConfig;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig as NativeConfig, XybSubsampling};
+use zenjpeg::{JpegEncodeJob, JpegEncoder, JpegEncoderConfig};
 use zenpixels::{Cicp, ColorContext, ColorPrimaries, PixelDescriptor, PixelSlice};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+
+fn declaration(
+    width: u32,
+    height: u32,
+    descriptor: PixelDescriptor,
+    context: Option<&ColorContext>,
+    access: OutputAccess,
+) -> EncodeDeclaration<'_> {
+    let declaration = EncodeDeclaration::new(width, height, descriptor).with_access(access);
+    match context {
+        Some(context) => declaration.with_color(context),
+        None => declaration,
+    }
+}
+
+/// JPEG rows are one ordered pass that emits in that (final) pass, and the
+/// plan does not report colour carriers yet; only the timing varies.
+fn row_timing(plan: EncodePlan, declaration: &EncodeDeclaration<'_>) -> OutputTiming {
+    assert_eq!(plan.input, InputRequirement::Rows);
+    assert_eq!(plan.output_phase, OutputPhase::FinalPass);
+    assert_eq!(plan.carriers, None, "carrier evidence is not reported");
+    plan.validate(declaration).unwrap();
+    plan.timing
+}
+
+/// `EncodeJob::plan_encode` for a row declaration, as its output timing.
+fn plan_rows(
+    job: &JpegEncodeJob,
+    width: u32,
+    height: u32,
+    descriptor: PixelDescriptor,
+    context: Option<&ColorContext>,
+    access: OutputAccess,
+) -> Result<OutputTiming, BoxedError> {
+    let declaration = declaration(width, height, descriptor, context, access);
+    job.plan_encode(&declaration)
+        .map(|plan| row_timing(plan, &declaration))
+}
+
+/// `Encoder::begin_declared`, as its output timing.
+fn begin_declared(
+    encoder: &mut JpegEncoder,
+    width: u32,
+    height: u32,
+    descriptor: PixelDescriptor,
+    context: Option<&ColorContext>,
+    access: OutputAccess,
+) -> Result<OutputTiming, zencodec::At<zencodec::CodecError>> {
+    let declaration = declaration(width, height, descriptor, context, access);
+    encoder
+        .begin_declared(&declaration)
+        .map(|plan| row_timing(plan, &declaration))
+}
 
 fn configurations() -> Vec<JpegEncoderConfig> {
     let mut configs = vec![JpegEncoderConfig::new()];
@@ -84,8 +140,9 @@ fn effective_plan_matches_native_startup_across_modes_geometry_and_colour() {
                     for access in [OutputAccess::Forward, OutputAccess::SeekBack] {
                         let job = config.clone().job();
                         let planned =
-                            job.plan_rows(width, height, descriptor, context.as_ref(), access);
-                        let actual = job.encoder().unwrap().begin_declared(
+                            plan_rows(&job, width, height, descriptor, context.as_ref(), access);
+                        let actual = begin_declared(
+                            &mut job.encoder().unwrap(),
                             width,
                             height,
                             descriptor,
@@ -114,6 +171,51 @@ fn effective_plan_matches_native_startup_across_modes_geometry_and_colour() {
     assert!(refusals >= 17 * 2 * 7 * 2, "{refusals}");
 }
 
+/// The type-erased path forwards both hooks: the same plan from the erased
+/// job and from the encoder it builds, and a planning refusal that still
+/// downcasts to the job's own error.
+#[test]
+fn erased_hooks_forward_the_plan_and_the_native_error() {
+    use zencodec::encode::DynEncoderConfig;
+    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+    let context = ColorContext::from_icc(DISPLAY_P3_V4);
+    let (mut planned, mut refused) = (0, 0);
+    for config in configurations() {
+        for (descriptor, color) in [(PixelDescriptor::RGB8_SRGB, None), (p3, Some(&context))] {
+            let declaration = declaration(17, 65, descriptor, color, OutputAccess::Forward);
+            let typed = config.clone().job().plan_encode(&declaration);
+            let erased_job = DynEncoderConfig::dyn_job(&config);
+            match (typed, erased_job.plan_encode(&declaration)) {
+                (Ok(typed), Ok(erased)) => {
+                    assert_eq!(typed, erased, "{config:?}");
+                    let started = erased_job
+                        .into_encoder()
+                        .unwrap()
+                        .begin_declared(&declaration)
+                        .unwrap();
+                    typed.validate_started(&started).unwrap();
+                    planned += 1;
+                }
+                (Err(typed), Err(erased)) => {
+                    let typed = typed
+                        .downcast_ref::<zencodec::At<zencodec::CodecError>>()
+                        .expect("typed planning boxes the native error");
+                    let erased = erased
+                        .downcast_ref::<zencodec::At<zencodec::CodecError>>()
+                        .expect("erased planning keeps the native error");
+                    assert_eq!(typed.error().category(), erased.error().category());
+                    refused += 1;
+                }
+                (typed, erased) => panic!("typed {typed:?} / erased {erased:?}; {config:?}"),
+            }
+        }
+    }
+    assert!(
+        planned > 0 && refused > 0,
+        "{planned} planned, {refused} refused"
+    );
+}
+
 /// Without a declared context, `begin_output` is `begin_declared(None)`.
 #[test]
 fn begin_output_matches_the_plan_without_a_context() {
@@ -121,9 +223,8 @@ fn begin_output_matches_the_plan_without_a_context() {
         for height in [1, 16, 33] {
             for access in [OutputAccess::Forward, OutputAccess::SeekBack] {
                 let job = config.clone().job();
-                let planned = job
-                    .plan_rows(17, height, PixelDescriptor::RGB8_SRGB, None, access)
-                    .unwrap();
+                let planned =
+                    plan_rows(&job, 17, height, PixelDescriptor::RGB8_SRGB, None, access).unwrap();
                 let actual = job
                     .encoder()
                     .unwrap()
@@ -161,7 +262,8 @@ fn planning_is_repeatable_and_does_not_change_strided_encode_bytes() {
             .unwrap();
         let job = config.clone().job();
         let plan = || {
-            job.plan_rows(
+            plan_rows(
+                &job,
                 17,
                 33,
                 PixelDescriptor::RGB8_SRGB,
@@ -192,14 +294,11 @@ fn declared_colour_reaches_the_header_and_streams_on_the_planned_schedule() {
     // XYB (last) refuses a Display P3 declaration.
     for config in &configs[..configs.len() - 1] {
         let job = config.clone().job();
-        let planned = job
-            .plan_rows(17, 65, p3, Some(&context), OutputAccess::Forward)
-            .unwrap();
+        let planned = plan_rows(&job, 17, 65, p3, Some(&context), OutputAccess::Forward).unwrap();
         let one_shot = job.clone().encoder().unwrap().encode(pixels()).unwrap();
         let mut rows = job.encoder().unwrap();
-        let timing = rows
-            .begin_declared(17, 65, p3, Some(&context), OutputAccess::Forward)
-            .unwrap();
+        let timing =
+            begin_declared(&mut rows, 17, 65, p3, Some(&context), OutputAccess::Forward).unwrap();
         assert_eq!(timing, planned);
         let mut streamed = Vec::new();
         if timing == OutputTiming::AT_FINISH {
@@ -230,6 +329,80 @@ fn declared_colour_reaches_the_header_and_streams_on_the_planned_schedule() {
     }
 }
 
+/// zencodec-io's planned row adapter (`row_encode::encode_job`, ideal-api
+/// `1f77b8a3`) drives the real job: it plans and admits before constructing
+/// the encoder, begins with the source's colour context and writes exactly
+/// the one-shot file. A declaration the job refuses fails during preparation
+/// with the job's own error and writes nothing.
+#[test]
+fn zencodec_io_planned_row_adapter_writes_the_one_shot_file() {
+    use zencodec::operation::{Decision, PolicyResolver, Question};
+    use zencodec::storage::StorageBudget;
+    use zencodec_io::row_encode::{self, Options, Raster, Stage};
+
+    struct FirstSchedule;
+    impl PolicyResolver for FirstSchedule {
+        type Error = std::convert::Infallible;
+        fn resolve(
+            &mut self,
+            question: Question<'_>,
+        ) -> Result<Decision, zencodec::At<Self::Error>> {
+            let Question::OutputSchedule { choices, .. } = question else {
+                panic!("unexpected policy question")
+            };
+            Ok(Decision::Choose(choices.first().unwrap().id()))
+        }
+    }
+    let (data, stride) = strided_rgb(97, 65);
+    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+    let context = Arc::new(ColorContext::from_icc(DISPLAY_P3_V4));
+    let pixels = || {
+        PixelSlice::new(&data, 97, 65, stride, p3)
+            .unwrap()
+            .with_color_context(context.clone())
+    };
+    let (mut written_files, mut refused) = (0, 0);
+    for config in configurations() {
+        let one_shot = config.clone().job().encoder().unwrap().encode(pixels());
+        let storage = StorageBudget::new(64 << 20, 64);
+        let mut written = Vec::new();
+        let result = row_encode::encode_job(
+            config.clone().job(),
+            Raster::new(pixels()),
+            &mut written,
+            FirstSchedule,
+            Options::new(storage.clone(), u64::MAX),
+            &zencodec::NoPulse,
+        );
+        match (one_shot, result) {
+            (Ok(one_shot), Ok(done)) => {
+                assert_eq!(written, one_shot.data(), "{config:?}");
+                assert_eq!(done.emitted, written.len() as u64);
+                let mut oracle = jpeg_decoder::Decoder::new(Cursor::new(&written));
+                oracle.decode().expect("independent decode");
+                assert_eq!(oracle.icc_profile().as_deref(), Some(DISPLAY_P3_V4));
+                written_files += 1;
+            }
+            (Err(_), Err(failure)) => {
+                assert_eq!(failure.error().stage, Stage::Prepare, "{config:?}");
+                assert!(written.is_empty(), "{config:?}");
+                std::error::Error::source(failure.error())
+                    .and_then(|e| e.downcast_ref::<zencodec::At<zencodec::CodecError>>())
+                    .expect("the job's own error survives the adapter");
+                refused += 1;
+            }
+            (one_shot, result) => {
+                panic!("one-shot {one_shot:?} / adapter {result:?}; {config:?}")
+            }
+        }
+        assert_eq!(storage.reserved_bytes(), 0, "{config:?}");
+    }
+    assert!(
+        written_files > 0 && refused > 0,
+        "{written_files} written, {refused} refused"
+    );
+}
+
 /// Rows after a legacy `begin` must mean what its header says.
 #[test]
 fn rows_contradicting_the_header_refuse_before_encoding() {
@@ -258,7 +431,8 @@ fn rows_contradicting_the_header_refuse_before_encoding() {
 fn invalid_input_limits_canvas_and_metadata_refuse_during_planning() {
     let config = JpegEncoderConfig::new();
     let plan = |job: zenjpeg::JpegEncodeJob, width, height| {
-        job.plan_rows(
+        plan_rows(
+            &job,
             width,
             height,
             PixelDescriptor::RGB8_SRGB,
@@ -339,7 +513,8 @@ fn row_encodes_refuse_a_pre_blur_they_cannot_apply() {
     );
 
     let job = config(0.4).job();
-    let plan = job.plan_rows(
+    let plan = plan_rows(
+        &job,
         width,
         height,
         PixelDescriptor::RGB8_SRGB,
@@ -389,16 +564,23 @@ fn cancelled_planning_refuses_with_its_reason() {
         .with_pulse(zencodec::how_far::SharedPulse::new(
             zencodec::how_far::StopOnly::new(Expired),
         ));
-    let error = job
-        .plan_rows(
-            32,
-            32,
-            PixelDescriptor::RGB8_SRGB,
-            None,
-            OutputAccess::Forward,
-        )
-        .unwrap_err();
+    let error = plan_rows(
+        &job,
+        32,
+        32,
+        PixelDescriptor::RGB8_SRGB,
+        None,
+        OutputAccess::Forward,
+    )
+    .unwrap_err();
     assert!(format!("{error:?}").contains("TimedOut"), "{error:?}");
+    let native = error
+        .downcast_ref::<zencodec::At<zencodec::CodecError>>()
+        .expect("the job's own error, boxed");
+    assert_eq!(
+        native.error().category(),
+        zencodec::ErrorCategory::Stopped(zencodec::enough::StopReason::TimedOut)
+    );
 }
 
 /// An MPF index (gain map, depth map) records the primary image's length, so
@@ -431,16 +613,15 @@ fn mpf_secondary_images_plan_at_finish_and_generic_gain_maps_refuse() {
         config
     };
     let plan = |config: JpegEncoderConfig| {
-        config
-            .job()
-            .plan_rows(
-                17,
-                65,
-                PixelDescriptor::RGB8_SRGB,
-                None,
-                OutputAccess::SeekBack,
-            )
-            .unwrap()
+        plan_rows(
+            &config.job(),
+            17,
+            65,
+            PixelDescriptor::RGB8_SRGB,
+            None,
+            OutputAccess::SeekBack,
+        )
+        .unwrap()
     };
     assert!(
         plan(streaming()).streams(),

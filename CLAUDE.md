@@ -1779,8 +1779,9 @@ stored sRGB-encoded, so their carrier is (primaries, sRGB TRC) and an unidentifi
 profile refuses. Metadata still labels pixels without an explicit colour context, even
 a non-default descriptor (`emit_integration` and zenpng's
 `explicit_icc_is_not_overridden_by_descriptor_derived_cicp` pin that contract), so only
-an explicit `ColorContext` can expose a stale metadata carrier. `JpegEncodeJob::plan_rows` / `JpegEncoder::begin_declared` share one
-preparation with `begin`; `tests/row_planning.rs` compares them over 3,332 cells.
+an explicit `ColorContext` can expose a stale metadata carrier. zencodec's
+`EncodeJob::plan_encode` / `Encoder::begin_declared` share one preparation with
+`begin`; `tests/row_planning.rs` compares them over 3,332 cells.
 
 Also fixed there: a configured `pre_blur` was applied only by packed RGB8 pushes
 (one-shot and accumulated encodes); `begin` + `push_rows` and `encode_from` skipped it

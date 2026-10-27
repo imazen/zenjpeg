@@ -7,7 +7,7 @@
 //! process peak includes all of them.
 use std::hint::black_box;
 
-use zencodec::encode::{EncodeJob as _, EncoderConfig as _};
+use zencodec::encode::{EncodeDeclaration, EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::output_patch::OutputAccess;
 use zenjpeg::JpegEncoderConfig;
 use zenpixels::{ColorContext, ColorPrimaries, PixelDescriptor};
@@ -15,7 +15,9 @@ use zenpixels::{ColorContext, ColorPrimaries, PixelDescriptor};
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 2048;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+// zencodec's boxed planning error is `Send + Sync`; `?` cannot widen it into a
+// plain `Box<dyn Error>`, so main returns the same envelope.
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
     let [_, stage, count, config, colour] = args.as_slice() else {
         return Err("usage: encode_planning_probe prepare|plan|begin 1|4 \
@@ -48,6 +50,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "p3-descriptor" => (p3, None),
         _ => return Err("expected srgb, p3-icc or p3-descriptor".into()),
     };
+    let declaration =
+        EncodeDeclaration::new(WIDTH, HEIGHT, descriptor).with_access(OutputAccess::Forward);
+    let declaration = match &context {
+        Some(context) => declaration.with_color(context),
+        None => declaration,
+    };
     let jobs: Vec<_> = (0..count).map(|_| config.clone().job()).collect();
     match stage.as_str() {
         "prepare" => {
@@ -55,13 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         "plan" => {
             for job in &jobs {
-                black_box(job.plan_rows(
-                    WIDTH,
-                    HEIGHT,
-                    descriptor,
-                    context.as_ref(),
-                    OutputAccess::Forward,
-                )?);
+                black_box(job.plan_encode(&declaration)?);
             }
             black_box(&jobs);
         }
@@ -69,13 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut encoders = Vec::with_capacity(count);
             for job in jobs {
                 let mut encoder = job.encoder()?;
-                black_box(encoder.begin_declared(
-                    WIDTH,
-                    HEIGHT,
-                    descriptor,
-                    context.as_ref(),
-                    OutputAccess::Forward,
-                )?);
+                black_box(encoder.begin_declared(&declaration)?);
                 encoders.push(encoder);
             }
             black_box(&encoders);

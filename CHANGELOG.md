@@ -14,6 +14,13 @@ All notable changes to zenjpeg are documented here. Earlier history
   profiled encode, streaming equivalence, strict Clippy and fuzz target builds
   pass with one shared-trait copy. No JPEG density implementation is implied.
 
+- Move the zencodec graph to the 0.2 family revision (ideal-api `f5a7fd46`,
+  Pulse operation controls). crates.io ultrahdr-core 0.6.0 requires zencodec
+  ^0.1, so the `ultrahdr` feature patches ultrahdr-core to the imazen/ultrahdr
+  review commit `6aa34974`, which pins the same revision; the tests' zenpng
+  0.1.x stays on crates.io zencodec 0.1 in its own graph, so its compatibility
+  patch is dropped. Review pins only: not for main until zencodec 0.2 ships.
+
 ### QUEUED BREAKING CHANGES
 
 - The zencodec adapter refuses encodes it previously relabelled: job colour
@@ -27,13 +34,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
-- Experimental effective-job planning for the zencodec adapter:
-  `JpegEncodeJob::plan_rows` reports the output timing that
-  `JpegEncoder::begin_declared` reports for the same retained job, descriptor,
-  colour context and destination access. Both run one preparation (validation,
-  limits, colour binding, native builder geometry); `begin_declared` checks the
-  native encoder against the plan before exposing a byte, and planning starts no
-  pixel or coefficient storage. Names may change to match zencodec's common hook.
+- Effective-job planning through zencodec's shared hooks (ideal-api `f5a7fd46`):
+  `EncodeJob::plan_encode` returns the `EncodePlan` that `Encoder::begin_declared`
+  returns for the same retained job and `EncodeDeclaration` (descriptor, colour
+  context, destination access). Both run one preparation (validation, limits,
+  colour binding, native builder geometry); startup checks the native encoder
+  against the plan before exposing a byte, and planning starts no pixel or
+  coefficient storage. Plans are one row pass with carriers unreported. This
+  replaces the experimental inherent `JpegEncodeJob::plan_rows` and
+  `JpegEncoder::begin_declared(width, height, …)`, which never shipped.
 
 - Checked encode jobs qualify verbatim color emission without silently accepting
   unqualified policy fields. Refusal leaves the previous job policy intact;

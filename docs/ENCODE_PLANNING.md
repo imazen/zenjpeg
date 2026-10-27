@@ -1,29 +1,34 @@
 # Effective-job planning and colour binding (zencodec adapter)
 
-Experimental. The common zencodec planning hook is not settled, so these method
-names may change to match it.
+zencodec's shared hooks (ideal-api `f5a7fd46`, review API): `EncodeJob::plan_encode`
+and `Encoder::begin_declared`.
 
 ```rust
-use zencodec::encode::{EncodeJob, EncoderConfig};
-use zencodec::output_patch::OutputAccess;
+use zencodec::encode::{EncodeDeclaration, EncodeJob, Encoder, EncoderConfig};
 use zenjpeg::JpegEncoderConfig;
 
 let job = JpegEncoderConfig::new().job();
 // The colour the rows will carry, declared before any header byte exists.
-let context = pixels.color_context().map(|c| &**c);
-let timing = job.plan_rows(width, height, pixels.descriptor(), context, OutputAccess::Forward)?;
-// ... admit the plan; retain this exact job ...
+let mut declaration = EncodeDeclaration::new(width, height, pixels.descriptor());
+if let Some(context) = pixels.color_context() {
+    declaration = declaration.with_color(context);
+}
+let plan = job.plan_encode(&declaration)?;
+// ... admit the plan; retain this exact job and declaration ...
 let mut encoder = job.encoder()?;
-let started = encoder.begin_declared(width, height, pixels.descriptor(), context, OutputAccess::Forward)?;
-assert_eq!(started, timing); // begin_declared errors before exposing bytes if they differ
+let started = encoder.begin_declared(&declaration)?;
+plan.validate_started(&started)?; // before any row is pushed or byte sent
 ```
 
-`plan_rows` and `begin_declared` run one preparation: validation, limits, colour
+`plan_encode` and `begin_declared` run one preparation: validation, limits, colour
 binding and the native builder's geometry and streaming eligibility. Planning
 starts no pixel or coefficient storage. It can allocate configuration and
 metadata, for example a synthesized ICC profile. `begin` and `begin_output` are
-`begin_declared` without a context. JPEG never patches earlier bytes, so seek-back
-access changes nothing.
+`begin_declared` without a colour context. JPEG never patches earlier bytes, so
+seek-back access changes nothing. The plan is always one ordered row pass that
+emits in that pass (`InputRequirement::Rows`, `OutputPhase::FinalPass`); only the
+timing varies. Colour carriers are not reported yet (`carriers: None`, which means
+unknown, not absent). Planning errors are the job's own `At<CodecError>`, boxed.
 
 The plan reports byte availability only. It is not a memory bound, privacy
 evidence or permission to apply backpressure. Input is always one pass of rows.
@@ -59,6 +64,9 @@ MPF, cancellation) hold these rules.
 (heaptrack event replay, cross-checked against `heaptrack_print`): 2048×2048, all
 jobs and encoders retained at once, dev profile (opt-level 2). Results:
 [`benchmarks/encode_planning_alloc_2026-10-27.json`](../benchmarks/encode_planning_alloc_2026-10-27.json).
+These were measured with the inherent experimental `plan_rows` / `begin_declared`
+(the JSON records the probe revision). The probe now calls the shared hooks, which
+run the same preparation; the numbers were not re-measured after that port.
 
 | Configuration | Colour | Jobs | Prepared | Planned | Begun |
 |---|---|---:|---:|---:|---:|

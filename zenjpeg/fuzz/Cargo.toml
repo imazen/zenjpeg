@@ -11,7 +11,7 @@ cargo-fuzz = true
 [dependencies]
 rgb = "0.8.53"
 imgref = "1.12.3"
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "f5a7fd46231048a7290f11df5b32e010a3e529a8" }
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 enough = "0.4.3"
@@ -30,7 +30,10 @@ members = ["."]
 
 # This standalone workspace repeats the shared codec interface override.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "f5a7fd46231048a7290f11df5b32e010a3e529a8" }
+# zenjpeg's default features include `ultrahdr`; crates.io ultrahdr-core 0.6.0
+# requires zencodec ^0.1, so use the review revision on the same family pin.
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "6aa34974fdbb80f2b9a59fa9c8f8110ce47af0a8" }
 
 [[bin]]
 name = "fuzz_decode"
