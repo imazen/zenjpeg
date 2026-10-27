@@ -227,8 +227,9 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "f5a7fd46
 # The Pulse contract is zencodec 0.2. The tests' zenpng 0.1.x (direct and via
 # zensim-regress) stays on crates.io zencodec 0.1 in its own graph; it is used
 # only through its native PNG API, never through zencodec traits.
-# crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1, which would give the
-# `ultrahdr` feature a second zencodec (two GainMapParams). This review
-# revision of imazen/ultrahdr (branch review/zencodec-0.2-family) pins the
-# same zencodec 0.2 family revision.
+# zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and
+# crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1: every feature set would
+# resolve a second zencodec, and with `ultrahdr` the two GainMapParams collide
+# (E0308). This review revision of imazen/ultrahdr (branch
+# review/zencodec-0.2-family) pins the same zencodec 0.2 family revision.
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "6aa34974fdbb80f2b9a59fa9c8f8110ce47af0a8" }
