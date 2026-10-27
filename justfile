@@ -697,7 +697,7 @@ native-fuzz-seeds:
 # LLVM branch instrumentation requires nightly; use a dedicated target directory.
 native-branch-coverage:
     timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening
-    just native-branch-oracles native-branch-allocation
+    just native-branch-oracles native-branch-allocation native-branch-compat
 
 native-branch-oracles:
     timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_precision -- --ignored

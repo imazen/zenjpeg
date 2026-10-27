@@ -861,3 +861,44 @@ fn uncommon_ycbcr_refuses_strip_planes() {
             .is_err()
     );
 }
+
+#[test]
+fn crop_skipping_preserves_every_timeout_and_pixels() {
+    use zenjpeg::decoder::{CropRegion, ErrorKind};
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    let (w, h) = (32usize, 80usize);
+    let pixels: Vec<u8> = (0..w * h * 3)
+        .map(|i| (i.wrapping_mul(73) ^ (i >> 7)) as u8)
+        .collect();
+    let data = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .encode_bytes(&pixels, w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    let config = Decoder::new()
+        .num_threads(1)
+        .crop(CropRegion::pixels(0, 64, 32, 16));
+    let run = |pulse: &TestPulse| -> zenjpeg::decoder::Result<Vec<u8>> {
+        let mut reader = config.scanline_reader_with_pulse(&data, pulse)?;
+        let mut pixels = vec![0; 32 * 16 * 3];
+        assert_eq!(
+            reader.read_rows_rgb8(ImgRefMut::new(&mut pixels, 32 * 3, 16))?,
+            16
+        );
+        Ok(pixels)
+    };
+    let baseline = TestPulse::new(u64::MAX);
+    let actual = run(&baseline).unwrap();
+    let full = Decoder::new()
+        .num_threads(1)
+        .decode(&data, enough::Unstoppable)
+        .unwrap();
+    assert_eq!(actual, full.pixels_u8().unwrap()[64 * w * 3..]);
+    assert_eq!(baseline.rows.load(Ordering::Relaxed), 16);
+    for cancel_at in 0..baseline.checks.load(Ordering::Relaxed) {
+        let error = run(&TestPulse::new(cancel_at)).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            ErrorKind::Cancelled(enough::StopReason::TimedOut)
+        ));
+    }
+}

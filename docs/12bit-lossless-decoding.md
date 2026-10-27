@@ -286,3 +286,18 @@ preserved exploratory corpus, with a ten-second input timeout, 1 GiB fuzzer
 RSS limit and 16 KiB maximum input length. The reference fixture set contains
 47 JPEGs totaling 41,316 bytes. This bounded run is evidence from the exercised
 inputs, not a claim that fuzzing proves correctness.
+
+### Complete changed-code coverage (2026-10-27)
+
+Measured from stack base `e82a4b4052776387b0d0b1d476fe0f261d0c737b`:
+**564/564 changed production branch outcomes** and **1,898/1,898 changed
+executable lines**. The line gate also includes executable unit-test lines in
+changed source files; the branch gate excludes test assertions. No production
+error paths are excluded. This covers the changes in both stacked PRs, not every
+pre-existing decoder line or every possible input.
+
+The profiles were rebuilt from scratch, using committed tests, the two pinned
+reference matrices, an isolated allocation-failure subprocess and existing
+buffered/callback/crop regressions. Two final row-conversion/crop assertions were
+then instrumented without changing production code. The evolving fuzz corpus was
+not needed for either gate. `just native-branch-coverage` includes these routes.

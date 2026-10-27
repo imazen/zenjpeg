@@ -3349,7 +3349,9 @@ mod tests {
         let gray = RowSrc::Gray8(&[17, 29]);
         assert_eq!(gray.len(), 2);
         assert_eq!(gray.rgb16(1, 8, PlaneMatrix::Identity), [29; 3]);
-        assert_eq!(RowSrc::Rgb8(&[1, 2, 3, 4, 5, 6]).len(), 2);
+        let rgb = RowSrc::Rgb8(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(rgb.len(), 2);
+        assert_eq!(rgb.rgb16(1, 8, PlaneMatrix::Identity), [4, 5, 6]);
     }
 
     #[test]
