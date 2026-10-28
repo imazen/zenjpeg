@@ -169,7 +169,7 @@ ultrahdr-core = { workspace = true }
 # our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
 # `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
-zensim-regress = { git = "https://github.com/imazen/zensim", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
+zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
 zensim = { workspace = true, features = ["classification"] }
 
 [features]

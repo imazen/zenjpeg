@@ -87,7 +87,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # Dev-only quality regression and measurement tooling; not a library dependency.
-zensim = { git = "https://github.com/imazen/zensim", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
+zensim = { git = "https://github.com/imazen/zensimx", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
