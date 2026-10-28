@@ -84,6 +84,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- An encode whose policy forbids the ICC profile (`embed_icc: false`) while
+  the profile was the image's only colour carrier refused with an ICC error
+  categorized as `Request(CmsRequired)`; it is now a policy refusal
+  (`ErrorCategory::Policy(Encode)`), as is the refusal for profile-tagged
+  bytes whose profile the policy forbids.
+- With no ICC written (policy or plan), only descriptions identified as
+  non-sRGB refused: an unidentified colour context profile, or an
+  unidentified job profile over Display P3 pixels, was stripped and read back
+  as sRGB. Every description that is not the sRGB default now refuses. The
+  deprecated best-effort `with_policy` keeps its earlier behaviour for job
+  metadata on pixels without a colour context: a profile zenpixels cannot
+  identify is still dropped unless the job code points or the pixels' own
+  interpretation would go with it. Checked policies and colour context
+  profiles never drop it. `tests/encode_carrier_policy.rs`.
+
 - A field-only orientation (`Metadata::orientation` with no EXIF blob: a
   caller-set field, or one from a format whose orientation is a container
   property) was dropped: EXIF was written only from `metadata.exif`. The

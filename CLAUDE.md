@@ -1813,3 +1813,32 @@ Also fixed there: a configured `pre_blur` was applied only by packed RGB8 pushes
 and wrote different bytes for the same pixels. Row encodes now refuse it in preparation
 (`row_encodes_refuse_a_pre_blur_they_cannot_apply`). The native `pre_blur` doc still
 claims RGBA8 support; the code blurs only `Rgb8Srgb`.
+
+## Known Bugs: ICC carrier refusals under `embed_icc: false` (native-preflight stack, 2026-10-28)
+
+On main (`74ce6cee`) an encode writing no ICC (`embed_icc: false`, or a plan that drops
+it) refused only descriptions identified as non-sRGB, as `Request(CmsRequired)`: an
+unidentified colour context profile, or an unidentified job profile over Display P3
+pixels, was stripped and read back as sRGB. Now (`build_request_from`,
+`tests/encode_carrier_policy.rs`):
+
+- Every description that is not the sRGB default refuses, as `Policy(Encode)` when the
+  policy forbids ICC.
+- Exception for the deprecated best-effort `with_policy` (zencodec's dyn `set_policy`,
+  `CodecSet`'s legacy conveniences and legacy transcode reach it): job metadata on pixels
+  without a colour context drops a profile zenpixels cannot identify, as before, unless
+  the job code points or the pixels' own interpretation are not the sRGB default. The
+  established unit test `encoding_with_policy_strips_metadata` exercises this, unchanged.
+- A colour context profile, even repeated as job metadata, and a checked policy
+  (`try_set_policy`, prepared `EncodeRequest`s) never drop a profile that way.
+- Setter order (private `legacy_policy`): `with_policy` marks the policy legacy; an
+  admitted `try_set_policy` replaces policy and mark; `try_set_policy(none())` and a
+  refused checked policy change nothing, so legacy then checked `none()` stays legacy.
+- Refusals happen in preparation: one-shot encodes return no output, and a refused
+  `begin_declared` leaves `pending_output` empty (`plan_encode` refuses too). By source
+  reading, without a control: with no `begin` and no canvas size, pushed rows accumulate
+  and the refusal comes at `finish`, still before any output.
+
+Not adopted (root, 2026-10-28): dropping job bytes by a structural check. lcms 2.17
+refuses to open the tests' malformed fixtures
+(`benchmarks/icc_fixture_lcms_probe_2026-10-28.txt`), but one reader is not a validator.
