@@ -36,6 +36,15 @@ All notable changes to zenjpeg are documented here. Earlier history
   compatibility patch is dropped. Review pins only: not for main until
   zencodec 0.2 ships.
 
+- The zencodec 0.2 family enters through version edges (`zencodec`
+  `>=0.2.0, <0.3.0`, `zencodec-io`, `zencodec-coroutine`, `zenmeta`); direct
+  git pins made a consumer that repins core carry two families, and a 0.1
+  floor let a graph holding crates.io zencodec 0.1.26 resolve to it. The workspace and fuzz roots
+  patch every family crate (and `zencodec-testkit`) to ideal-api `a15c28fd`,
+  and ultrahdr-core to imazen/ultrahdr `7e9d296c`, whose manifests use the same
+  version edges. zencodec-io, zencodec-coroutine and zenmeta are not on
+  crates.io, so releases stay gated on publishing them.
+
 ### QUEUED BREAKING CHANGES
 
 - An encode whose policy forbids EXIF now refuses a non-identity orientation

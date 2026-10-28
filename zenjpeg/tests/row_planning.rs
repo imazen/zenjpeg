@@ -336,7 +336,7 @@ fn declared_colour_reaches_the_header_and_streams_on_the_planned_schedule() {
 /// with the job's own error and writes nothing.
 #[test]
 fn zencodec_io_planned_row_adapter_writes_the_one_shot_file() {
-    use zencodec::operation::{Decision, PolicyResolver, Question};
+    use zencodec::operation::{BoundPolicy, Decision, PolicyResolver, PolicySet, Question};
     use zencodec::storage::StorageBudget;
     use zencodec_io::row_encode::{self, Options, Raster, Stage};
 
@@ -370,7 +370,9 @@ fn zencodec_io_planned_row_adapter_writes_the_one_shot_file() {
             config.clone().job(),
             Raster::new(pixels()),
             &mut written,
-            FirstSchedule,
+            // A callback struct goes inside a binding (zencodec a15c28fd);
+            // the default requirements are what Options supplied before.
+            BoundPolicy::new(PolicySet::new(), FirstSchedule),
             Options::new(storage.clone(), u64::MAX),
             &zencodec::NoPulse,
         );
