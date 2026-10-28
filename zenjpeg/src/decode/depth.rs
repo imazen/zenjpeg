@@ -821,6 +821,7 @@ mod tests {
     // === DDF parsing ===
 
     #[test]
+    #[cfg(feature = "metadata")]
     fn parse_ddf_container_directory() {
         use crate::container::types::{ItemSemantic, parse_container_items};
 
@@ -858,6 +859,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metadata")]
     fn parse_ddf_extracts_depth() {
         // Build a fake DDF file: primary JPEG + depth JPEG + confidence PNG
         let primary_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9]; // 8 bytes
@@ -913,6 +915,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metadata")]
     fn parse_ddf_honors_primary_padding() {
         // Dynamic Depth 1.0: Padding belongs to the primary, before the
         // first appended resource. Test opaque bytes, not re-encoded images.

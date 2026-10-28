@@ -200,18 +200,32 @@ pub struct MpfEntry {
 ///
 /// Parsed from `rdf:Seq` inside `Container:Directory`, extracting
 /// `Item:Semantic`, `Item:Mime`, `Item:Length`, and `Item:Padding`.
+///
+/// Without the `metadata` feature there is no XML parser in the build and
+/// this returns an empty list for any input.
 #[must_use]
 pub fn parse_container_items(xmp: &str) -> Vec<ContainerItem> {
+    parse_container_items_impl(xmp)
+}
+
+#[cfg(feature = "metadata")]
+fn parse_container_items_impl(xmp: &str) -> Vec<ContainerItem> {
     zenmeta::xmp::container::parse_container_items(xmp)
         .into_iter()
         .map(from_shared_item)
         .collect()
 }
 
+#[cfg(not(feature = "metadata"))]
+fn parse_container_items_impl(_xmp: &str) -> Vec<ContainerItem> {
+    Vec::new()
+}
+
 /// Generate a `Container:Directory` XML fragment for a list of items.
 ///
 /// The result is an `rdf:Seq` block suitable for embedding inside an
 /// `rdf:Description` that declares the Container and Item namespaces.
+#[cfg(feature = "metadata")]
 #[must_use]
 pub fn generate_container_directory(items: &[ContainerItem]) -> String {
     zenmeta::xmp::container::generate_container_directory(
@@ -219,6 +233,7 @@ pub fn generate_container_directory(items: &[ContainerItem]) -> String {
     )
 }
 
+#[cfg(feature = "metadata")]
 pub(super) fn to_shared_item(item: &ContainerItem) -> zenmeta::xmp::container::ContainerItem {
     let mut shared = zenmeta::xmp::container::ContainerItem::primary(item.mime.clone());
     shared.semantic = zenmeta::xmp::container::ItemSemantic::from_xmp(item.semantic.as_xmp_str());
@@ -227,6 +242,7 @@ pub(super) fn to_shared_item(item: &ContainerItem) -> zenmeta::xmp::container::C
     shared
 }
 
+#[cfg(feature = "metadata")]
 pub(super) fn from_shared_item(item: zenmeta::xmp::container::ContainerItem) -> ContainerItem {
     ContainerItem {
         semantic: ItemSemantic::from_xmp(item.semantic.as_xmp_str()),
@@ -243,6 +259,7 @@ pub(super) fn from_shared_item(item: zenmeta::xmp::container::ContainerItem) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "metadata")]
     use alloc::vec;
 
     #[test]
@@ -311,6 +328,7 @@ mod tests {
         assert_eq!(MpImageType::default(), MpImageType::Undefined);
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn parse_container_items_ultrahdr_shape() {
         let xmp = r#"
@@ -338,6 +356,7 @@ mod tests {
         assert_eq!(items[1].length, Some(5000));
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn parse_container_items_android_ddf_shape() {
         let xmp = r#"
@@ -360,6 +379,7 @@ mod tests {
         assert_eq!(items[2].semantic, ItemSemantic::ConfidenceMap);
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn parse_container_items_with_padding() {
         let xmp = r#"
@@ -382,6 +402,7 @@ mod tests {
         assert!(parse_container_items("").is_empty());
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn parse_container_items_missing_attrs_skips_item() {
         // rdf:li with no Item:Semantic should be skipped rather than
@@ -397,6 +418,7 @@ mod tests {
         assert!(parse_container_items(xmp).is_empty());
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn generate_container_directory_roundtrip_two_items() {
         let items = vec![
@@ -411,6 +433,7 @@ mod tests {
         assert_eq!(parsed[1].length, Some(5000));
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn generate_container_directory_roundtrip_preserves_padding() {
         let items = vec![
@@ -427,6 +450,7 @@ mod tests {
         assert_eq!(parsed[1].padding, Some(32));
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn generate_container_directory_includes_all_fields() {
         let items = vec![
@@ -459,6 +483,7 @@ mod tests {
 
     use proptest::prelude::*;
 
+    #[cfg(feature = "metadata")]
     fn arb_item_semantic() -> impl Strategy<Value = ItemSemantic> {
         prop_oneof![
             Just(ItemSemantic::Primary),
@@ -472,6 +497,7 @@ mod tests {
         ]
     }
 
+    #[cfg(feature = "metadata")]
     fn arb_container_item() -> impl Strategy<Value = ContainerItem> {
         (
             arb_item_semantic(),
@@ -500,6 +526,7 @@ mod tests {
         /// no forced defaults); `None` length/padding is absent in the XML
         /// and parses back as `None`.
         #[test]
+        #[cfg(feature = "metadata")]
         fn container_directory_roundtrip(
             items in proptest::collection::vec(arb_container_item(), 1..5),
         ) {

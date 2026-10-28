@@ -193,7 +193,9 @@ fn layout_defaults_to_rejecting_pixel_loss() {
 #[cfg(feature = "layout")]
 #[test]
 fn optimize_for_decode_skips_auto_orient_a_gain_map_cannot_follow() {
-    use zenjpeg::container::{find_jpeg_boundaries, generate_primary_xmp};
+    use zenjpeg::container::find_jpeg_boundaries;
+    #[cfg(feature = "metadata")]
+    use zenjpeg::container::generate_primary_xmp;
     // Gain map: 16x8 4:2:0 (16x16 MCUs), so a 90-degree turn trims it.
     let gm_px: Vec<u8> = (0..16 * 8 * 3).map(|i| (i * 11 % 251) as u8).collect();
     let mut enc = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter)

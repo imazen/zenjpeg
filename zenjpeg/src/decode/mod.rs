@@ -102,11 +102,13 @@ pub use ultrahdr_reader::{GainMapMemory, UltraHdrMode, UltraHdrReader, UltraHdrR
 // Re-export extras types for public API
 #[allow(unused_imports)]
 pub use extras::{
-    AdobeColorTransform, AdobeInfo, Confidence, DecodedExtras, DensityUnits, DqtTable,
-    EncoderFamily, IccPreserve, JfifInfo, JpegProbe, MpfDirectory, MpfEntry, MpfImageType,
-    MpfImageTypeExt, PreserveConfig, PreservedMpfImage, PreservedSegment, QualityEstimate,
-    QualityScale, SegmentType, StandardProfile,
+    AdobeColorTransform, AdobeInfo, DecodedExtras, DensityUnits, IccPreserve, JfifInfo,
+    MpfDirectory, MpfEntry, MpfImageType, MpfImageTypeExt, PreserveConfig, PreservedMpfImage,
+    PreservedSegment, SegmentType, StandardProfile,
 };
+#[cfg(feature = "metadata")]
+#[allow(unused_imports)]
+pub use extras::{Confidence, DqtTable, EncoderFamily, JpegProbe, QualityEstimate, QualityScale};
 
 // Segment classification and the MPF index parser, for the structural
 // inventory walker (codec/inventory.rs).
@@ -3352,9 +3354,12 @@ fn finalize_extras(
     forced_exif: bool,
 ) -> Option<DecodedExtras> {
     let mut extras = extras.unwrap_or_else(DecodedExtras::new);
+    #[cfg(not(feature = "metadata"))]
+    let _ = data;
 
     // Inject probe result (quality estimation, encoder ID, DQT tables).
     // This is a header-only scan (<1us) — no entropy decoding.
+    #[cfg(feature = "metadata")]
     if let Ok(probe) = crate::detect::probe(data) {
         extras.probe = Some(probe);
     }
@@ -3372,6 +3377,7 @@ mod tests {
     use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use enough::Unstoppable;
 
+    #[cfg(feature = "metadata")]
     fn gain_map_fixture(map_side: u32) -> (Vec<u8>, Vec<u8>) {
         use crate::encode::EncoderSegments;
         let encode = |side: u32, segments: EncoderSegments| {
@@ -3395,6 +3401,7 @@ mod tests {
         (primary, map)
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn gain_map_preservation_does_not_require_hdr_rendering() {
         let (jpeg, map) = gain_map_fixture(8);
@@ -3436,6 +3443,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn gain_map_decode_inherits_pixel_limit() {
         let (jpeg, _) = gain_map_fixture(32);
@@ -3893,7 +3901,7 @@ mod limits_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metadata"))]
 mod quality_estimation_tests {
     use super::*;
     use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
@@ -3918,6 +3926,7 @@ mod quality_estimation_tests {
         enc.finish().expect("finish")
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_quality_estimate_available() {
         let jpeg = encode_test_image(75.0, 64, 64);
@@ -3934,6 +3943,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_encoder_detected_as_jpegli() {
         let jpeg = encode_test_image(80.0, 64, 64);
@@ -3952,6 +3962,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_dqt_tables_present() {
         let jpeg = encode_test_image(85.0, 64, 64);
@@ -3967,6 +3978,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_luminance_qt_present() {
         let jpeg = encode_test_image(90.0, 64, 64);
@@ -3988,6 +4000,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_probe_full_access() {
         let jpeg = encode_test_image(75.0, 64, 64);
@@ -4001,6 +4014,7 @@ mod quality_estimation_tests {
         assert!(probe.scan_count >= 1);
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_quality_range_sweep() {
         // Encode at various qualities and verify estimates are in reasonable range
@@ -4021,6 +4035,7 @@ mod quality_estimation_tests {
         }
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_higher_quality_means_smaller_qt_values() {
         // Higher quality should produce smaller quantization table values
@@ -4046,6 +4061,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_chrominance_qt_present_for_color() {
         let jpeg = encode_test_image(80.0, 32, 32);
@@ -4060,6 +4076,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_grayscale_has_luminance_qt() {
         // Encode a grayscale image
@@ -4090,6 +4107,7 @@ mod quality_estimation_tests {
         assert_eq!(probe.num_components, 1, "grayscale should have 1 component");
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_quality_estimate_confidence() {
         // Build a synthetic JPEG with known IJG Q75 tables and verify exact match
@@ -4099,6 +4117,7 @@ mod quality_estimation_tests {
         assert_eq!(probe.quality.value, 75.0);
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_ijg_quality_roundtrip() {
         // Build synthetic IJG JPEGs at various qualities and verify roundtrip
@@ -4116,6 +4135,7 @@ mod quality_estimation_tests {
 
     /// Build a minimal synthetic JPEG with IJG tables at a given quality.
     /// Produces a valid header but minimal entropy data (not decodable to pixels).
+    #[cfg(feature = "metadata")]
     fn build_ijg_synthetic_jpeg(quality: u8) -> Vec<u8> {
         use crate::detect::generate_ijg_table;
         use crate::foundation::consts::{MARKER_DQT, MARKER_SOF0, MARKER_SOI, MARKER_SOS};
@@ -4207,6 +4227,7 @@ mod quality_estimation_tests {
         data
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_photoshop_detection() {
         // Build a synthetic JPEG with APP13 (Photoshop 3.0) + APP14 (Adobe) markers
@@ -4354,6 +4375,7 @@ mod quality_estimation_tests {
         data
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_quality_q1_edge_case() {
         // Q1 = maximum compression, highest quantization values
@@ -4367,6 +4389,7 @@ mod quality_estimation_tests {
         );
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_quality_q100_edge_case() {
         // Q100 = near-lossless, lowest quantization values
@@ -4380,6 +4403,7 @@ mod quality_estimation_tests {
         assert!(all_ones, "Q100 QT should have very small values");
     }
 
+    #[cfg(feature = "metadata")]
     #[test]
     fn test_extras_probe_matches_standalone_probe() {
         // Verify that the probe result stored in extras matches

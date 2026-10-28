@@ -220,6 +220,7 @@ pub mod heuristics;
 ///
 /// Identifies which encoder produced a JPEG, estimates its quality level,
 /// and extracts structural metadata from header-only parsing (~500 bytes).
+#[cfg(feature = "metadata")]
 pub mod detect;
 
 /// JPEG decoder - public API.

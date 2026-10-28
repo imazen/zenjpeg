@@ -5,6 +5,17 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- `metadata` cargo feature (default-on) gates the XMP container stack:
+  `container::xmp`, GContainer `Container:Directory` items, gain-map and
+  Dynamic-Depth detection, and the `detect` encoder-identification probe.
+  `default-features = false` drops roxmltree/zenmeta-xmp from the binary
+  (−186 KB code, −25 KB data, −78 KB gzip-9 on wasm32-wasip1+simd128).
+  Pixel decode/encode, ICC extraction, MPF and EXIF orientation are
+  unaffected; `DecodedExtras::probe()` and friends are feature-gated, and
+  `container::types::parse_container_items` returns empty without the
+  parser. `ultrahdr`, `layout`, `recompress`, `inventory`,
+  `controlled-decode` and `metadata-rewrite` pull `metadata`.
+
 - Preserve non-square JFIF pixel aspect in shared header and decoded metadata.
   Unknown units remain distinct from physical DPI; square default aspect needs
   no override. Native serializer/decoder tests cover both axis orders and bounds.

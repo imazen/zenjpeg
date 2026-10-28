@@ -38,10 +38,11 @@ use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
 use zenjpeg::container::{
-    GainMapPresence, MAX_XMP_LENGTH, MpfEntry, Wants, create_mpf_header, find_jpeg_boundaries,
-    is_ultrahdr, iter, parse_mpf, parse_mpf_segment, parse_xmp, parse_xmp_full, primary_bounds,
-    probe,
+    GainMapPresence, MpfEntry, Wants, create_mpf_header, find_jpeg_boundaries, is_ultrahdr, iter,
+    parse_mpf, parse_mpf_segment, primary_bounds, probe,
 };
+#[cfg(feature = "metadata")]
+use zenjpeg::container::{MAX_XMP_LENGTH, parse_xmp, parse_xmp_full};
 use zenjpeg::decoder::{
     ChromaUpsampling, Decoder, ErrorKind, OutputTarget, PixelFormat, Strictness,
 };
@@ -581,6 +582,7 @@ fn run_container_probe(data: &[u8]) {
 
 /// `fuzz_container_xmp` — text-only, so non-UTF-8 seeds skip it (as the
 /// target does).
+#[cfg(feature = "metadata")]
 fn run_container_xmp(data: &[u8]) {
     let data = if data.len() > MAX_XMP_LENGTH + 1024 {
         &data[..MAX_XMP_LENGTH + 1024]
@@ -801,6 +803,7 @@ fn regression_seeds_do_not_panic() {
         run_container_marker(&data);
         run_container_mpf(&data);
         run_container_probe(&data);
+        #[cfg(feature = "metadata")]
         run_container_xmp(&data);
         lossless_checks::check(&data);
         #[cfg(feature = "metadata-rewrite")]

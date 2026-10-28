@@ -15,7 +15,10 @@ use crate::foundation::consts::{
 };
 use crate::huffman::encode::{HuffmanEncodeTable, build_code_lengths, lengths_to_bits_values};
 use enough::Stop;
-use zenmeta::xmp::container::{Directory, ItemSemantic};
+#[cfg(feature = "metadata")]
+use zenmeta::xmp::container::Directory;
+
+use crate::container::types::ItemSemantic;
 
 /// Build a [`HuffmanEncodeTable`] from a 256-entry frequency array.
 ///
@@ -364,29 +367,40 @@ fn plan_carry<'a>(
     // where a rewrite is needed (`write_preserved_segments`). When
     // transforming, it is also refused while bytes follow the primary: the
     // directory could describe an image there that must not stay untransformed.
-    let parsed = xmp.map(Directory::parse);
-    if transforming
-        && primary.end < jpeg_data.len()
-        && let Some(Err(e)) = &parsed
+    #[cfg(feature = "metadata")]
     {
-        return Err(Error(
-            Error::invalid_jpeg_data(
-                "invalid XMP directory; lossless transforms cannot tell what the bytes after \
-                 the primary are",
-            )
-            .0
-            .at_string(|| alloc::format!("{e}")),
+        let parsed = xmp.map(Directory::parse);
+        if transforming
+            && primary.end < jpeg_data.len()
+            && let Some(Err(e)) = &parsed
+        {
+            return Err(Error(
+                Error::invalid_jpeg_data(
+                    "invalid XMP directory; lossless transforms cannot tell what the bytes after \
+                     the primary are",
+                )
+                .0
+                .at_string(|| alloc::format!("{e}")),
+            ));
+        }
+    }
+    // Without the XML parser a directory cannot be classified at all; the
+    // bytes after the primary could hold items it names, so refuse.
+    #[cfg(not(feature = "metadata"))]
+    if transforming && primary.end < jpeg_data.len() && xmp.is_some() {
+        return Err(Error::unsupported_feature(
+            "the `metadata` feature is needed to classify XMP container items; refusing a \
+             transform whose bytes after the primary could be named by the directory",
         ));
     }
-    let directory = parsed.and_then(|d| d.ok());
-    let items: Vec<&zenmeta::xmp::container::ContainerItem> = directory
-        .as_ref()
-        .map(|d| {
-            d.items()
-                .filter(|i| i.semantic != ItemSemantic::Primary)
-                .collect()
-        })
-        .unwrap_or_default();
+    // `parse_container_items` degrades to an empty list without `metadata`;
+    // the refusal above keeps that case from reaching here ambiguously.
+    let items: Vec<crate::container::types::ContainerItem> = xmp
+        .map(crate::container::types::parse_container_items)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| i.semantic != ItemSemantic::Primary)
+        .collect();
 
     let mut sources: Vec<SourceSecondary<'a>> = Vec::new();
     let mut mpf_entries = 0;
@@ -463,8 +477,7 @@ fn plan_carry<'a>(
     }
 
     let directory_gain_map = items.iter().find(|i| i.semantic == ItemSemantic::GainMap);
-    let signals_gain_map = directory_gain_map.is_some()
-        || xmp.is_some_and(|x| crate::container::xmp::parse_xmp(x).is_ok());
+    let signals_gain_map = directory_gain_map.is_some() || xmp.is_some_and(xmp_signals_gain_map);
     if signals_gain_map
         && !sources
             .iter()
@@ -548,6 +561,35 @@ fn standard_xmp(extras: &DecodedExtras) -> Option<&str> {
         .and_then(|x| core::str::from_utf8(x).ok())
 }
 
+/// Does `xmp` signal a gain map (hdrgm properties or a GContainer `GainMap`
+/// item)? The `metadata` build asks the real parser; without it a substring
+/// probe is the best available signal.
+#[cfg(feature = "metadata")]
+fn xmp_signals_gain_map(xmp: &str) -> bool {
+    crate::container::xmp::parse_xmp(xmp).is_ok()
+}
+
+#[cfg(not(feature = "metadata"))]
+fn xmp_signals_gain_map(xmp: &str) -> bool {
+    xmp.contains("hdrgm:") || xmp.contains("GainMap")
+}
+
+/// Rewrite a GContainer `Item:Length` set in `xmp` for the carried images.
+/// Without `metadata` no rewrite is possible; a packet with no directory has
+/// nothing to rewrite and passes through verbatim, anything else is refused
+/// by the caller (the lengths it names could be stale, never guessed).
+#[cfg(feature = "metadata")]
+fn rewrite_xmp_item_lengths(xmp: &str, carried: &[(&str, usize)]) -> Option<String> {
+    Directory::parse(xmp)
+        .and_then(|d| d.rewrite_item_lengths(carried))
+        .ok()
+}
+
+#[cfg(not(feature = "metadata"))]
+fn rewrite_xmp_item_lengths(xmp: &str, _carried: &[(&str, usize)]) -> Option<String> {
+    (!xmp.contains("Container:Directory")).then(|| xmp.to_owned())
+}
+
 /// `e`, raised while carrying `img`, with the secondary named. The kind is
 /// kept, so a cancellation stays `Cancelled` and an edge rejection stays
 /// `InvalidConfig`; kinds that carry a message get the secondary's index and
@@ -575,16 +617,8 @@ fn refuse_nested(jpeg_data: &[u8], extras: Option<&DecodedExtras>) -> Result<()>
         .is_some_and(|d| d.images.len() > 1);
     let directory = extras
         .and_then(standard_xmp)
-        .map(Directory::parse)
-        .transpose()
-        .map_err(|e| {
-            Error(
-                Error::invalid_jpeg_data("invalid XMP directory")
-                    .0
-                    .at_string(|| alloc::format!("{e}")),
-            )
-        })?
-        .is_some_and(|d| d.items().any(|i| i.semantic != ItemSemantic::Primary));
+        .map(crate::container::types::parse_container_items)
+        .is_some_and(|items| items.iter().any(|i| i.semantic != ItemSemantic::Primary));
     let trailing = crate::container::marker::find_jpeg_boundaries(jpeg_data).len() > 1;
     if mpf || directory || trailing {
         return Err(Error::unsupported_feature(
@@ -660,11 +694,7 @@ fn write_carried_segment(
                 .data
                 .strip_prefix(XMP_NAMESPACE)
                 .and_then(|x| core::str::from_utf8(x).ok())
-                .and_then(|x| {
-                    Directory::parse(x)
-                        .and_then(|d| d.rewrite_item_lengths(&carried))
-                        .ok()
-                })
+                .and_then(|x| rewrite_xmp_item_lengths(x, &carried))
                 // Must still fit one APP1 segment (the digits may grow).
                 .filter(|x| XMP_NAMESPACE.len() + x.len() + 2 <= usize::from(u16::MAX));
             match rewritten {

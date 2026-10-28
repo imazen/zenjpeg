@@ -262,6 +262,7 @@ mod visual_encoding;
 mod wasm_decode;
 #[path = "bundled/wasm_simd.rs"]
 mod wasm_simd;
+#[cfg(feature = "metadata")]
 #[path = "bundled/windows_encoder_detection.rs"]
 mod windows_encoder_detection;
 #[path = "bundled/xyb_cpp_comparison.rs"]

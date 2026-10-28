@@ -27,6 +27,7 @@ mod progressive;
 mod scan;
 
 use super::color_model::{ColorMarkers, ColorModel, FrameShape, PathPlan};
+#[cfg(feature = "metadata")]
 use super::extras::MpfImageTypeExt;
 use super::extras::{DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image};
 use super::{DecodeWarning, JpegInfo, Strictness};
@@ -574,6 +575,20 @@ impl<'a> JpegParser<'a> {
     ///
     /// Returns byte range `(start, end)` into `full_data` instead of copying,
     /// enabling zero-copy access to the gain map JPEG.
+    ///
+    /// Without the `metadata` feature there is no XMP/ISO 21496 detection in
+    /// the build, so this always reports no gain map.
+    #[cfg(not(feature = "metadata"))]
+    pub(super) fn extract_gainmap_early(
+        &mut self,
+        _full_data: &[u8],
+    ) -> Result<(Option<(usize, usize)>, Option<zencodec::GainMapParams>)> {
+        Ok((None, None))
+    }
+
+    /// Returns byte range `(start, end)` into `full_data` instead of copying,
+    /// enabling zero-copy access to the gain map JPEG.
+    #[cfg(feature = "metadata")]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
@@ -778,6 +793,7 @@ impl<'a> JpegParser<'a> {
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
+#[cfg(feature = "metadata")]
 fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
     let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
     let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
@@ -1490,6 +1506,7 @@ impl<'a> JpegParser<'a> {
 /// but we can still find the gain map JPEG by looking for JPEG boundaries.
 ///
 /// Returns the second JPEG's byte range `(start, end)` if found, or None if not found.
+#[cfg(feature = "metadata")]
 fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
     const SOI: [u8; 2] = [0xFF, 0xD8]; // Start of Image
 
