@@ -5,7 +5,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Preserve non-square JFIF pixel aspect in shared header and decoded metadata.
+  Unknown units remain distinct from physical DPI; square default aspect needs
+  no override. Native serializer/decoder tests cover both axis orders and bounds.
+
+- Align the controlled route, metadata services, testkit and fuzz graph on the
+  checked resolution contract at zencodec `008b93c3`. Native controlled decode,
+  profiled encode, streaming equivalence, strict Clippy and fuzz target builds
+  pass with one shared-trait copy. No JPEG density implementation is implied.
+
 ### Added
+
+- Checked encode jobs qualify verbatim color emission without silently accepting
+  unqualified policy fields. Refusal leaves the previous job policy intact;
+  typed and erased baseline/progressive row paths retain ICC interpretation.
 
 - Add borrowed `&dyn how_far::Pulse` decoding and scanline methods, preserving cancellation reasons through native, buffered and parallel wave paths. Minimal reference fixtures and a shared native-component fuzz/regression harness cover stride, malformed input and precision (`935f6fbe`).
 - Native component decoding for up to ten channels, per-component quantization
@@ -16,11 +29,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Native raw-component and typed CMYK16 row readers, lossless CMYK and two-component decoding, and additional integral 12-bit sampling layouts (`0def834c`).
 - Twelve-bit coefficient-preserving sequential/progressive transcoding and spatial transforms using the existing lossless encoder (`e2c872a3`).
 
+
+- Default-off `controlled-decode`: required interpretation suspension through native jobs, erased jobs and stored requests, admitted input/row staging, structured refusal reasons and terminal cleanup. See `docs/CONTROLLED_DECODING.md` for qualification limits.
+
 ### Fixed
+
+- Qualify RGB/RGBA/BGRA byte input under a retained RGB ICC profile in the shared JPEG encoder. Profile-tagged one-shot and strided row paths produce identical bytes to the established packing path; conflicting profiles, discarded ICC, premultiplied alpha and unqualified XYB/HDR modes refuse (issue 241).
 
 - Retain the established configuration-specific output-lag bound for gray input after correcting its coding geometry. Images within that bound still expose no bytes before finish; streaming and one-shot bytes remain identical.
 
 - Gray input under a color configuration now uses one-block MCU geometry for coefficient order, Huffman counts and restart intervals. Independent decoder readback and exact native equivalence cover edge and aligned dimensions in baseline and progressive output.
+
+- Float RGB scanline batches compact RGBA storage before publishing RGB; linear float outputs keep linear labels, and gray float rows use the linear read. The separate one-shot/strip float IDCT gap remains tracked in issue 239.
+- One-shot RGBX/BGRX decoding preserves the selected filler-channel descriptor.
+- Checked decode policy application supports qualified metadata/progressive fields and refuses unqualified strictness/partial-success policies without mutating the job.
 
 - `probe_full_metadata` walks recognized metadata through the primary image EOI, including inter-scan/post-scan ICC, EXIF and XMP. It rejects incomplete primary input and retains decode-policy filtering; trailers and nested images are outside its scope.
 
@@ -46,6 +68,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Add a checked fixed-batch Coz worker and explicit DC-only fixture matrix with independent readback tooling (`33c8365f`, `4cc1c6de`). No production optimization is included.
 
 ### Dependency integration
+
+- Align the controlled route, testkit, metadata and standalone fuzz workspace on zencodec `14726d91`, with the prepared conversion implementation from zenpixels `f8596aae`. Profiled native encode, controlled decode, streaming equivalence and all fuzz target builds pass together.
 
 - Align codec, metadata and testkit with independent metadata-channel capability probes (`d327434b`), retaining a single shared interface source.
 
@@ -2668,3 +2692,16 @@ All notable changes to zenjpeg are documented here. Earlier history
   analysis in `docs/quality_estimation_research.md`).
 - `jpeg_inspect`: `--detect` flag prints encoder family + estimated
   quality.
+
+### Controlled decode auxiliary discovery (2026-10-25)
+
+- Full probes now establish absence of known embedded JPEG gain-map content for
+  a plain single image, while retaining unresolved gain-map/MPF signals and
+  multi-image scope. Discovery scans beyond the first SOS. Header-only probes
+  retain Unknown; disabling HDR reconstruction does not erase auxiliary facts.
+
+### Controlled decode fuzz graph (2026-10-25)
+
+- Align the standalone fuzz workspace's direct/patch zencodec revisions with
+  the codec's controlled-decode dependency. Two shared-trait copies previously
+  prevented the inventory target from compiling; no fuzz target is disabled.

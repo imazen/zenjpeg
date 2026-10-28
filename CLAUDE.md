@@ -1693,7 +1693,7 @@ The isolated Linux allocator-interposition test checks the returned context.
 - Minimal libjpeg-turbo fixtures exposed that 8-bit two-component frames fell
   through to the RGB reader's 1/3/4-component admission check. Route them through
   the same native component reader as higher component counts. Regression:
-  `tests/native_hardening.rs::oracle_seeds_and_all_truncated_prefixes`.
+  `tests/native_hardening.rs::native_fixture_raster_hashes`.
 
 ## Native decoder hardening (2026-10-26)
 
@@ -1705,3 +1705,61 @@ work. Parallel RGB and planar wave decoding now poll at each MCU; collected
 fused decoding uses the same caller token. Gates: `native_hardening`,
 `just native-branch-coverage`, and `fuzz_native_components`. Branch completeness
 must be measured against the common base of the native-precision PR stack.
+
+## Known Bugs: float scanline reconstruction (2026-10-25)
+
+A 97x65 baseline RGB qualification fixture differs at the first float sample
+between `JpegStreamingDecoder` and one-shot `Decode::decode`: strip i16
+reconstruction versus the floating-point IDCT. Issue 239 tracks a shared bounded
+float reconstruction path. Controlled decoding refuses float output before
+pixel effects. RGB float packing, linear row descriptors and gray linear reads
+are repaired on the controlled-decode PR; they do not close the precision gap.
+
+## Known Bugs: grayscale restart geometry fixed on controlled-decode (2026-10-25)
+
+Encoding Gray8 through the default YCbCr configuration retained 4:2:0 MCU
+geometry even though SOF describes one component at 1x1 sampling. A 97x65 baseline
+fixture's DRI was 70 and `jpeg-decoder` rejected the missing expected RST0;
+ordinary native decode recovered while scanline decode refused. Normalize gray
+input/output geometry before coefficient layout and restart resolution. The
+controlled-decode test uses an independent reader before native row parity.
+
+## Known Bugs: full-probe auxiliary scope (fixed on controlled-decode, 2026-10-25)
+
+Full probes formerly left plain JPEG gain-map presence Unknown and did not carry
+container MPF/multi-image facts into ImageInfo. The controlled transcode adapter
+correctly refused that incomplete scope. Full probes now use the existing
+container probe across scans and image boundaries; unresolved auxiliary signals
+remain explicit. `controlled_decode` covers plain, late-signal and concatenated
+image cases for baseline and progressive sources.
+
+## Known Bugs: profile-tagged encode and fuzz graph (2026-10-25)
+
+The shared JPEG adapter previously rejected nonlinear U8 descriptors produced
+by ICC-aware conversion. The controlled-decode PR qualifies matching retained
+RGB ICC input in YCbCr mode; `just profiled-encode-check` verifies exact bytes,
+strided batches and independent readback. Issue 241 tracks the qualification.
+The standalone fuzz workspace also pinned a different zencodec revision from
+the codec; commit 8a8c1088 aligns both registry/direct edges and
+`just controlled-fuzz-check` verifies the complete target graph.
+
+## Fixed: legacy progressive entropy helpers (2026-10-27)
+
+Whole-library coverage work reproduced two defects in `entropy/encoder.rs`'s
+progressive helper methods (currently no production call sites found): first AC
+scan encoding emits magnitude-minus-one instead of complemented magnitude for
+negative coefficients (`-3` emits `0x6f`, Annex K requires `0x4f` for a single
+category-two coefficient); missing DC symbols hit the Huffman debug assertion
+before the helper can return its documented error. Regressions:
+`progressive_negative_ac_uses_ones_complement_magnitude` and
+`progressive_dc_emits_exact_annex_k_codes_and_refinement_bits`. Both pass after
+complementing the negative magnitude bits and checking symbol presence before
+calling the asserting Huffman accessor.
+
+The same coverage pass reproduced an EOB-run fallback defect in the legacy
+helper: a run of two blocks with the standard AC table panics on missing symbol
+0x10 before falling back to individual EOB codes. The exact-code regression is
+`progressive_eob_runs_use_exact_codes_or_individual_eobs`. Fixed by checking
+table presence before the asserting accessor; missing EOB symbols return an
+error, standard tables emit individual EOB codes, and run-capable tables retain
+compact coding. All exact-code regressions pass.

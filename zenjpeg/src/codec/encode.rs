@@ -558,6 +558,23 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::encode::EncodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        use zencodec::{ColorEmitPolicy, encode::EncodePolicy};
+        if policy == EncodePolicy::none() {
+            return Ok(());
+        }
+        // Qualify supplied color carriers; other emission requirements must
+        // not silently fall through to the legacy best-effort setter.
+        if policy != EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim) {
+            return Err(zencodec::UnsupportedOperation::EncodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
+    }
+
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.image_size = Some((width, height));
         self
@@ -662,6 +679,112 @@ impl JpegEncoder {
         channel_count: Option<u8>,
     ) -> Result<crate::encode::request::EncodeRequest<'_>, Error> {
         self.build_request_from(&self.effective_config, channel_count)
+    }
+
+    /// Nonlinear byte encoders consume stored sample values without a transfer
+    /// conversion. Qualify profile-tagged U8 input only in YCbCr mode and only
+    /// when the matching ICC will actually be retained. XYB has a separate
+    /// interpretation transform and is deliberately not admitted here.
+    fn pixel_layout(&self, desc: PixelDescriptor) -> Result<PixelLayout, Error> {
+        use zenpixels::{
+            AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, SignalRange, TransferFunction,
+        };
+        if let Ok(layout) = descriptor_to_layout(desc) {
+            return Ok(layout);
+        }
+        if desc.channel_type() != ChannelType::U8
+            || desc.signal_range != SignalRange::Full
+            || desc.alpha() == Some(AlphaMode::Premultiplied)
+            || !matches!(
+                desc.transfer(),
+                TransferFunction::Unknown | TransferFunction::Gamma22
+            )
+            || !matches!(
+                self.effective_config.color_mode,
+                crate::encode::encoder_types::ColorMode::YCbCr { .. }
+            )
+        {
+            return Err(zencodec::UnsupportedOperation::PixelFormat.into());
+        }
+        let Some(zencodec::Metadata {
+            icc_profile: Some(icc),
+            cicp,
+            ..
+        }) = &self.metadata
+        else {
+            return Err(Error::icc_error(
+                "profile-tagged bytes require retained ICC metadata".into(),
+            ));
+        };
+        if zenpixels::icc::profile_color_space(icc) != Some(zenpixels::ColorModel::Rgb) {
+            return Err(Error::icc_error(
+                "RGB samples require an RGB ICC carrier".into(),
+            ));
+        }
+        let resolved = zenpixels::ColorProfileSource::Icc(icc).resolve();
+        let compatible = match resolved {
+            Some((primaries, transfer)) => {
+                (desc.primaries == ColorPrimaries::Unknown || desc.primaries == primaries)
+                    && (desc.transfer() == TransferFunction::Unknown || desc.transfer() == transfer)
+            }
+            None => {
+                desc.primaries == ColorPrimaries::Unknown
+                    && desc.transfer() == TransferFunction::Unknown
+            }
+        };
+        if !compatible {
+            return Err(Error::icc_error(
+                "descriptor contradicts the retained ICC interpretation".into(),
+            ));
+        }
+        let policy = self.policy.unwrap_or_default();
+        let mut source = zencodec::SourceColor::default().with_icc_profile(icc.clone());
+        source.cicp = *cicp;
+        if !policy.resolve_icc(true)
+            || !matches!(
+                zencodec::resolve_color_emit(
+                    &source,
+                    &JPEG_ENCODE_CAPS,
+                    policy.resolve_color(zencodec::ColorEmitPolicy::Balanced)
+                )
+                .icc,
+                zencodec::IccDisposition::KeepSource
+            )
+        {
+            return Err(Error::icc_error(
+                "profile-tagged bytes require keeping their ICC carrier".into(),
+            ));
+        }
+        match desc.layout() {
+            ChannelLayout::Rgb => Ok(PixelLayout::Rgb8Srgb),
+            ChannelLayout::Rgba if desc.alpha() == Some(AlphaMode::Undefined) => {
+                Ok(PixelLayout::Rgbx8Srgb)
+            }
+            ChannelLayout::Rgba => Ok(PixelLayout::Rgba8Srgb),
+            ChannelLayout::Bgra if desc.alpha() == Some(AlphaMode::Undefined) => {
+                Ok(PixelLayout::Bgrx8Srgb)
+            }
+            ChannelLayout::Bgra => Ok(PixelLayout::Bgra8Srgb),
+            // Gray profile and RGB/gray carrier compatibility need separate qualification.
+            _ => Err(zencodec::UnsupportedOperation::PixelFormat.into()),
+        }
+    }
+
+    fn check_profile_context(&self, pixels: &PixelSlice<'_>) -> Result<(), Error> {
+        if matches!(
+            pixels.descriptor().transfer(),
+            zenpixels::TransferFunction::Unknown | zenpixels::TransferFunction::Gamma22
+        ) && pixels.descriptor().channel_type() == zenpixels::ChannelType::U8
+            && let Some(context) = pixels.color_context()
+            && (context.cicp.is_some()
+                || context.icc.as_ref()
+                    != self.metadata.as_ref().and_then(|m| m.icc_profile.as_ref()))
+        {
+            return Err(Error::icc_error(
+                "current pixel context differs from the retained ICC metadata".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Build an EncodeRequest from a specific config + metadata, applying policy.
@@ -842,7 +965,7 @@ impl JpegEncoder {
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<(), Error> {
-        let layout = descriptor_to_layout(descriptor)?;
+        let layout = self.pixel_layout(descriptor)?;
         self.check_limits(width, height, layout)?;
         let req = self.build_request(Some(layout.channels() as u8))?;
         let enc = req.encode_from_bytes(width, height, layout)?;
@@ -903,7 +1026,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Self::Error> {
         self.check_one_shot()?;
-        let layout = descriptor_to_layout(pixels.descriptor())?;
+        self.check_profile_context(&pixels)?;
+        let layout = self.pixel_layout(pixels.descriptor())?;
         let width = pixels.width();
         let height = pixels.rows();
         let data = pixels.contiguous_bytes();
@@ -963,7 +1087,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         // Build and check everything before storing any of it: a failed
         // `begin` leaves the encoder as it was.
-        let layout = descriptor_to_layout(descriptor)?;
+        let layout = self.pixel_layout(descriptor)?;
         self.check_limits(width, height, layout)?;
         let req = self.build_request(Some(layout.channels() as u8))?;
         let mut enc = req.encode_from_bytes(width, height, layout)?;
@@ -1016,8 +1140,9 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Self::Error> {
+        self.check_profile_context(&rows)?;
         let desc = rows.descriptor();
-        let layout = descriptor_to_layout(desc)?;
+        let layout = self.pixel_layout(desc)?;
 
         // Dimensions known (`begin` or `with_canvas_size`): push straight
         // into the native encoder, which encodes MCU rows as they fill.
@@ -1124,7 +1249,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // what it produces. For now, use the descriptor from the config's
         // supported list — JPEG always wants RGB8 or RGBA8.
         let desc = PixelDescriptor::RGB8_SRGB;
-        let layout = descriptor_to_layout(desc)?;
+        let layout = self.pixel_layout(desc)?;
         self.check_limits(img_w, img_h, layout)?;
 
         // The configuration as given: rows are encoded as each strip

@@ -356,10 +356,10 @@ impl<'a> EntropyEncoder<'a> {
                 .ok_or_else(|| Error::internal("DC table not set"))?;
 
             let dc_cat = category(dc_diff);
-            let (code, len) = dc_table.encode(dc_cat);
-            if len == 0 {
+            if dc_table.lengths[dc_cat as usize] == 0 {
                 return Err(Error::internal("DC symbol not in Huffman table"));
             }
+            let (code, len) = dc_table.encode(dc_cat);
             self.writer.write_bits(code, len);
 
             if dc_cat > 0 {
@@ -444,16 +444,16 @@ impl<'a> EntropyEncoder<'a> {
             let nbits = 16 - abs_shifted.leading_zeros();
             let symbol = ((r as u16) << 4) | nbits as u16;
 
-            let (code, len) = ac_table.encode(symbol as u8);
-            if len == 0 {
+            if ac_table.lengths[symbol as usize] == 0 {
                 return Err(Error::internal("AC symbol not in Huffman table"));
             }
+            let (code, len) = ac_table.encode(symbol as u8);
             self.writer.write_bits(code, len);
 
             // Additional bits (magnitude and sign)
             // For progressive encoding, we encode the shifted value
             let bits = if coef < 0 {
-                (abs_shifted - 1) as u32
+                u32::from(!abs_shifted) & ((1u32 << nbits) - 1)
             } else {
                 abs_shifted as u32
             };
@@ -495,17 +495,18 @@ impl<'a> EntropyEncoder<'a> {
         };
         let symbol = (nbits << 4) as u8;
 
-        let (code, len) = ac_table.encode(symbol);
-
-        // Check if this symbol exists in the table (length 0 means not present)
-        if len == 0 && symbol != 0x00 {
-            // Symbol not in table (e.g., standard tables don't have EOB run symbols)
-            // Fall back to emitting individual EOBs
+        // Inspect presence before the accessor's debug assertion. Standard
+        // tables omit multi-block EOB symbols, so emit individual EOBs instead.
+        if ac_table.lengths[symbol as usize] == 0 {
+            if ac_table.lengths[0] == 0 {
+                return Err(Error::internal("AC table has no EOB symbol"));
+            }
             let (eob_code, eob_len) = ac_table.encode(0x00);
             for _ in 0..eob_run {
                 self.writer.write_bits(eob_code, eob_len);
             }
         } else {
+            let (code, len) = ac_table.encode(symbol);
             self.writer.write_bits(code, len);
 
             if nbits > 0 {
@@ -1009,7 +1010,7 @@ mod tests {
     fn test_entropy_encoder_finish() {
         let encoder = EntropyEncoder::new();
         let bytes = encoder.finish();
-        assert!(bytes.is_empty() || !bytes.is_empty()); // Just ensure it doesn't panic
+        assert!(bytes.is_empty());
     }
 
     #[test]
@@ -1017,7 +1018,7 @@ mod tests {
         let mut encoder = EntropyEncoder::new();
         encoder.write_bits(0b1010, 4);
         let bytes = encoder.finish();
-        assert!(!bytes.is_empty());
+        assert_eq!(bytes, [0xaf]); // Four payload bits, then JPEG one-bit padding.
     }
 
     #[test]
@@ -1119,5 +1120,82 @@ mod tests {
                 simd_output.len()
             );
         }
+    }
+    #[test]
+    fn progressive_dc_emits_exact_annex_k_codes_and_refinement_bits() {
+        for (dc, expected) in [(4, 0x71), (-4, 0x69)] {
+            let mut encoder = encoder_with_tables();
+            encoder.encode_dc_progressive(dc, 0, 0, 1, 0).unwrap();
+            encoder.encode_dc_progressive(dc, 0, 0, 1, 0).unwrap();
+            assert_eq!(encoder.finish(), [expected]);
+        }
+        let mut encoder = EntropyEncoder::new();
+        encoder.encode_dc_progressive(3, 0, 0, 0, 1).unwrap();
+        encoder.encode_dc_progressive(2, 0, 0, 0, 1).unwrap();
+        assert_eq!(encoder.finish(), [0xbf]);
+        assert!(
+            EntropyEncoder::new()
+                .encode_dc_progressive(4, 0, 0, 0, 0)
+                .is_err()
+        );
+        assert!(
+            encoder_with_tables()
+                .encode_dc_progressive(i16::MAX, 0, 0, 0, 0)
+                .is_err()
+        );
+    }
+    #[test]
+    fn progressive_negative_ac_uses_ones_complement_magnitude() {
+        let mut coeffs = [0i16; 64];
+        coeffs[1] = -3;
+        let mut encoder = encoder_with_tables();
+        let mut eob_run = 0;
+        encoder
+            .encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut eob_run)
+            .unwrap();
+        // Annex K luminance symbol 0x02 is 01; -3 has category-two bits 00.
+        // Padding the resulting 0100 with ones gives 0x4f.
+        assert_eq!(encoder.finish(), [0x4f]);
+        assert_eq!(eob_run, 0);
+    }
+    #[test]
+    fn progressive_eob_runs_use_exact_codes_or_individual_eobs() {
+        for (run, bytes) in [
+            (0, vec![]),
+            (1, vec![0xaf]),
+            (2, vec![0xaa]),
+            (3, vec![0xaa, 0xaf]),
+        ] {
+            let mut encoder = encoder_with_tables();
+            encoder.flush_eob_run(0, run).unwrap();
+            assert_eq!(encoder.finish(), bytes);
+        }
+        let mut bits = [0; 16];
+        bits[..3].copy_from_slice(&[1, 1, 1]);
+        let table = HuffmanEncodeTable::from_bits_values(&bits, &[0, 0x10, 0x20]).unwrap();
+        for (run, byte) in [(3, 0xbf), (4, 0xc7)] {
+            let mut encoder = EntropyEncoder::new();
+            encoder.set_ac_table(0, &table);
+            encoder.flush_eob_run(0, run).unwrap();
+            assert_eq!(encoder.finish(), [byte]);
+        }
+        assert!(EntropyEncoder::new().flush_eob_run(0, 1).is_err());
+        bits.fill(0);
+        bits[0] = 1;
+        let no_eob = HuffmanEncodeTable::from_bits_values(&bits, &[1]).unwrap();
+        let mut encoder = EntropyEncoder::new();
+        encoder.set_ac_table(0, &no_eob);
+        assert!(encoder.flush_eob_run(0, 1).is_err());
+    }
+
+    #[test]
+    fn progressive_ac_missing_symbol_returns_error() {
+        let mut coeffs = [0; 64];
+        coeffs[1] = 2047;
+        assert!(
+            encoder_with_tables()
+                .encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut 0)
+                .is_err()
+        );
     }
 }

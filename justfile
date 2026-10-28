@@ -583,6 +583,25 @@ metadata-header-check:
     cargo test -p zenjpeg --features zencodec,extended-metadata --test metadata_limits
     cargo clippy -p zenjpeg --features zencodec,extended-metadata --lib --test metadata_limits -- -D warnings
 
+# Qualified controlled JPEG route; the caller chooses the feature explicitly.
+controlled-check:
+    cargo test -p zenjpeg --test controlled_decode --test streaming_encode --test grayscale_geometry --test shared_contracts --features controlled-decode --locked
+    cargo clippy -p zenjpeg --lib --test controlled_decode --test streaming_encode --test grayscale_geometry --features controlled-decode --locked -- -D warnings
+
+controlled-sync export:
+    test ! -e "{{export}}/.git"
+    test ! -e "{{export}}/.jj"
+    mkdir -p "{{export}}/zenjpeg/src/codec/decode"
+    cp Cargo.toml justfile "{{export}}/"
+    cp zenjpeg/Cargo.toml "{{export}}/zenjpeg/"
+    cp zenjpeg/src/codec/encode.rs zenjpeg/src/codec/decode.rs zenjpeg/src/codec/info.rs zenjpeg/src/codec/streaming.rs "{{export}}/zenjpeg/src/codec/"
+    cp zenjpeg/src/codec/decode/controlled.rs "{{export}}/zenjpeg/src/codec/decode/"
+    cp zenjpeg/src/encode/byte_encoders.rs zenjpeg/src/encode/streaming.rs "{{export}}/zenjpeg/src/encode/"
+    cp zenjpeg/tests/controlled_decode.rs zenjpeg/tests/grayscale_geometry.rs zenjpeg/tests/profiled_encode.rs "{{export}}/zenjpeg/tests/"
+
+controlled-lock:
+    cargo update -p zencodec
+
 # Gray input must keep header, entropy order and restart geometry in agreement.
 gray-geometry-check:
     cargo test -p zenjpeg --test grayscale_geometry --test streaming_encode --features zencodec --locked
@@ -733,3 +752,66 @@ native-branch-compat:
     timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- wave_reader_crop_and_formats
     cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
     cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+controlled-unit-check:
+    cargo test -p zenjpeg --lib --features controlled-decode --locked
+
+# Keep the standalone fuzz workspace on the same shared types as this codec.
+controlled-fuzz-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets --locked
+
+# Packed byte semantics under a retained ICC, without descriptor relabeling.
+profiled-encode-check:
+    cargo test -p zenjpeg --features controlled-decode --test profiled_encode --test streaming_encode --test controlled_decode --locked
+    cargo clippy -p zenjpeg --features controlled-decode --lib --test profiled_encode --test streaming_encode --test controlled_decode --locked -- -D warnings
+
+# Align all standalone graphs before qualifying the reviewed shared contract.
+controlled-integration-check:
+    cargo update -p zencodec
+    cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
+    just profiled-encode-check
+    just controlled-fuzz-check
+
+# Checked color handoff, native controlled route and coordinated public signatures.
+checked-color-check:
+    just profiled-encode-check
+    just controlled-fuzz-check
+    just api-doc
+
+# Focused changed-code coverage before controlled-route refactoring.
+controlled-branch-coverage:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features controlled-decode,inventory,parallel --lib --test controlled_decode --test profiled_encode --test streaming_encode --test shared_contracts --test native_hardening -- --skip malformed_native_headers_are_bounded --skip native_fixture_truncated_prefixes
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+# Whole production feature matrix; raw reports retain every measured outcome.
+# Set CARGO_TARGET_DIR and ZENJPEG_BRANCH_REPORT to durable absolute paths.
+library-branch-coverage:
+    timeout --kill-after=15s 30m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,recompress-expert,layout --lib --tests
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    python3 scripts/check-native-branches.py HEAD "$ZENJPEG_BRANCH_REPORT" --whole-library
+
+# Compile every feature, including research instrumentation and oracle test gates.
+library-all-features-check:
+    timeout --kill-after=15s 20m cargo check --locked -p zenjpeg --all-features --all-targets
+
+# Includes research/diagnostic features. PATH must provide the pinned test oracles.
+library-research-branch-coverage:
+    timeout --kill-after=15s 30m cargo +nightly llvm-cov --branch --no-report --no-fail-fast -p zenjpeg --all-features --lib --tests
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    python3 scripts/check-native-branches.py HEAD "$ZENJPEG_BRANCH_REPORT" --whole-library
+
+# Behavioral tests for research diagnostics and size-dependent raster output.
+library-research-focused-check:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --lib
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --test bundled -- compare_sizes::compare_420_sizes --exact
+
+# Temporary exclusions only: use a disposable jj workspace, never the main checkout.
+wasm-size-experiment workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}'
+
+wasm-size-experiment-simd workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}' --simd
+
+wasm-size-raster-check output:
+    python3 scripts/wasm-size-raster-check.py '{{output}}'

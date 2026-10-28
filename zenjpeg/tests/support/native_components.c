@@ -1,7 +1,7 @@
 /* Test-only libjpeg-turbo oracle for component layouts not exposed by cjpeg's
  * PNM input. Binary samples use big-endian u16 so results are host-independent.
  * Usage: encode precision channels lossless predictor point sampling progressive
- *        decode raw|cmyk
+ *        decode raw|rgb|gray|cmyk
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,7 +82,9 @@ int main(int argc, char **argv) {
     struct jpeg_decompress_struct c;
     c.err=jpeg_std_error(&err); jpeg_create_decompress(&c);
     jpeg_stdio_src(&c,stdin); jpeg_read_header(&c,TRUE);
-    c.out_color_space=strcmp(argv[2],"cmyk")==0 ? JCS_CMYK : c.jpeg_color_space;
+    c.out_color_space=strcmp(argv[2],"cmyk")==0 ? JCS_CMYK :
+                      strcmp(argv[2],"rgb")==0 ? JCS_RGB :
+                      strcmp(argv[2],"gray")==0 ? JCS_GRAYSCALE : c.jpeg_color_space;
     jpeg_start_decompress(&c);
     unsigned count=c.output_width*c.output_components;
     unsigned char *row8=malloc(count); short *row12=malloc(count*2); unsigned short *row16=malloc(count*2);

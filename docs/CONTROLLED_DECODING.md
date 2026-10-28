@@ -1,0 +1,160 @@
+# Controlled decoding
+
+The default-off `controlled-decode` feature implements zencodec's mandatory
+interpretation suspension. The codec gathers facts and yields; application
+policy runs in `zencodec_io::PolicyDecoder`, before native pixel work starts.
+This uses the reviewed zencodec API from [PR 168](https://github.com/imazen/zencodec/pull/168).
+
+```rust,ignore
+use zencodec::{CodecSet, operation::{DecodeRequest, PolicySet}, storage::StorageBudget};
+use zencodec_io::{CollectSink, PolicyDecoder, drive_from_slice};
+use zenjpeg::JpegDecoderConfig;
+
+let codecs = CodecSet::new().with_decoder(JpegDecoderConfig::new());
+let session = DecodeRequest::new().start_controlled(
+    &codecs, StorageBudget::new(64 * 1024 * 1024, 4),
+)?;
+let mut session = PolicyDecoder::new(session, PolicySet::new());
+let mut pixels = CollectSink::new();
+drive_from_slice(&mut session, input, &mut pixels, None, 4096)?;
+```
+
+The same implementation is available from
+`DecodeJob::dyn_controlled_decoder(preferred, storage)` and
+`DynDecodeJob::into_controlled_decoder(preferred, storage)`. It does not fall back
+to ordinary incremental decoding when a controlled route is unavailable.
+
+## Qualified scope
+
+The current route reads the complete encoded source into admitted storage,
+reports a provisional header, inventories recognized primary-image metadata
+through EOI, then requires final interpretation adoption. Only after adoption
+may it construct the native scanline decoder, including progressive coefficient
+work, and deliver rows. It is not incremental entropy decoding.
+
+Qualification tests compare every byte with ordinary native decode for baseline
+and progressive RGB8, RGBA8, BGRA8, RGBX8, BGRX8 and grayscale output, header ICC,
+slice windows and range reads. Late EXIF orientation is resolved before adoption.
+Late, incomplete or forbidden ICC extraction cannot silently become assumed
+sRGB. The route exposes typed unavailability reasons and no adopt offer.
+
+Float output currently refuses before pixel effects: strip reconstruction differs
+from the one-shot float IDCT ([issue 239](https://github.com/imazen/zenjpeg/issues/239)).
+CMYK/XYB, explicit crop/transform, implicit CMS, nondefault native output targets
+and gain-map rendering also need separate qualification. Source inventory is
+limited to the primary image's recognized carriers; it is not a privacy or nested
+content completeness certificate.
+
+## Storage and failure scope
+
+The shared budget covers retained encoded input, the coroutine input arena and
+range index, and coroutine row staging. Native coefficients, native row buffers,
+transform workspaces, metadata caches and the destination sink are outside it.
+Four admitted objects suffice for this route, but no byte allowance here claims
+to bound total operation RAM. Progressive/native fallback configurations may
+retain coefficients or pixels internally. This route is not evidence for
+network backpressure eligibility.
+
+Input, dimension and output-size limits are checked before affected pixel work.
+Policy refusal, native failure, cancellation and callback unwind release admitted
+storage even when a caller retains the failed session's decision report.
+
+`try_set_policy` accepts qualified extraction/progressive permissions and rejects
+explicit strictness or partial-image-success policies before mutation. Legacy
+`with_policy` remains available with its existing behavior.
+
+Run `just controlled-check` for native route/erasure/registry parity, legacy
+float packing, admission, failure cleanup and the existing shared contracts.
+
+## Profile-preserving transcodes
+
+The shared encoder accepts profile-tagged nonlinear U8 RGB/RGBA/BGRA samples
+when the job retains their RGB ICC profile and uses YCbCr coding. The descriptor
+and any current pixel context must agree with that carrier. These bytes go
+through the established byte packing path without a transfer conversion or an
+external descriptor relabel. The qualified extra transfers are Unknown (opaque
+ICC) and Gamma22; existing sRGB behavior remains available. XYB, HDR, narrow
+range, premultiplied input and gray profiles need separate qualification.
+
+`just profiled-encode-check` compares direct and strided batches of 1, 7, 16, 31
+and 65 rows for RGB/RGBA/BGRA, baseline/progressive and fixed/optimized Huffman
+coding. Encoded bytes match the existing packing path with the same samples and
+ICC; jpeg-decoder independently reads the result. Missing, conflicting or denied
+ICC, incompatible channels and unqualified modes refuse. This does not qualify
+a whole-operation memory bound or authorize implicit alpha removal in an
+application transcode.
+
+## Checked encode color handoff
+
+The checked encode setter accepts the all-default no-op and a verbatim color
+policy. Other explicit fields refuse without changing the job. Tests retain
+Adobe RGB and Display P3 ICC authority through typed and erased jobs, compare
+complete row-encoded bytes with direct output for baseline/progressive JPEG,
+and independently decode the resulting entropy stream. Unsupported embed/strict
+fields cannot clear an already accepted policy.
+
+`just checked-color-check` passed on 2026-10-25: native profile/controlled/stream
+checks, strict library/test Clippy, all fuzz targets and API snapshots. Wrapper:
+rc=0, 20 s, peak RSS 0.63 GiB, minimum available 46031 MiB, peak load 2.63.
+This is test-process usage, not a codec workspace guarantee. API generation
+also reports existing ambiguous rustdoc links; it is not a warning-free docs gate.
+
+Shared sink-capacity integration (2026-10-25): zencodec `939d5628` splits
+coroutine delivery to fit admitted sink strips without changing the held native
+batch. Native controlled, streaming/profiled encode, fuzz compilation and API
+snapshot checks pass (`just controlled-integration-check api-doc`). run-heavy:
+rc=0, 57 s, peak RSS 0.71 GiB, minimum available 20209 MiB, peak load 13.95.
+This describes validation, not native codec workspace.
+
+### Shared contract alignment (2026-10-25)
+
+The reviewed route and every direct shared-contract dependency now use zencodec
+`008b93c3`, including standalone fuzz builds. Native profiled encode, controlled
+decode and streaming equivalence tests passed with strict Clippy. This dependency
+update does not itself implement required JPEG resolution. The test export used
+zenanalyze `05de3cbc` for the optional research path manifest, outside workspace
+patches. `ZENJPEG_SKIP_CPP=1` explicitly selected the Rust-only run; these tests
+do not claim C++ encoder parity.
+
+```text
+just controlled-integration-check
+run-heavy: done rc=0 50s | peak-RSS 0.78GiB | min-avail 15084MiB | peak-load 1.96
+```
+
+Non-square JFIF aspect is now reported through `ImageInfo::resolution` with
+`ResolutionUnit::Unknown` by both full probing and decoded extras. Previously
+the adapter discarded every unit-zero density. Equal axes retain the ordinary
+square-pixel interpretation without adding a physical-size claim. Native tests
+exercise both axis orders and 16-bit field limits; downstream exact PNG carriage
+can therefore preserve the ratio instead of treating it as absent.
+
+The focused native regression and unchanged controlled/profiled/streaming gates
+passed (`just profiled-encode-check`, explicit `ZENJPEG_SKIP_CPP=1`):
+
+```text
+run-heavy: done rc=0 5s | peak-RSS 0.52GiB | min-avail 15853MiB | peak-load 0.53
+```
+
+### Coverage and raster regression gates (2026-10-27)
+
+After rebasing onto the native precision/component support, the focused gate
+covers 132/132 changed production branch outcomes and 369/369 changed executable
+source lines relative to `0d1ac7f7`. These are changed-code measurements, not
+whole-decoder coverage. No production error paths are excluded.
+
+Run `ZENJPEG_BRANCH_REPORT=<absolute-path>.json just controlled-branch-coverage`,
+then `python3 scripts/check-native-branches.py origin/main <absolute-path>.json
+--require-complete` and `python3 scripts/check-component-coverage.py origin/main
+<absolute-path>.lcov`. The focused run omits the two long malformed-input/prefix
+sweeps; CI retains those tests and enables `controlled-decode` in broad coverage.
+
+All 47 native fixtures assert libjpeg-turbo reference raster hashes through
+borrowed and owned strided readers, including unchanged padding. The two 8-bit
+grayscale fixtures also assert those reference hashes through controlled output.
+Linear grayscale streaming compares every sample with the native row reader.
+Admission tests independently exercise configuration guards, unsupported frame
+interpretations, incomplete ICC, storage refusal and ICC/descriptor conflicts.
+
+The covered cleanup shares container-probe interpretation in one private helper
+and destructures retained ICC metadata once, removing duplicate lookups and an
+`unwrap`. It changes no public signatures or admission policy.

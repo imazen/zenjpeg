@@ -97,7 +97,7 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     self.row_buf.resize(float_bytes, 0);
                     let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width, batch_rows);
-                    self.reader.read_rows_gray_f32(f_out)?
+                    self.reader.read_rows_gray_linear_f32(f_out)?
                 }
                 (ChannelType::F32, ChannelLayout::Rgb | ChannelLayout::Rgba) => {
                     // read_rows_rgba_f32 always writes 4 channels
@@ -107,7 +107,16 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     self.row_buf.resize(float_bytes, 0);
                     let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width * channels, batch_rows);
-                    self.reader.read_rows_rgba_f32(f_out)?
+                    let count = self.reader.read_rows_rgba_f32(f_out)?;
+                    if ch_layout == ChannelLayout::Rgb {
+                        // Compact RGBA to RGB in the same allocation, across all
+                        // returned rows. Publishing it as RGB without compaction
+                        // would expose alpha as the next pixel's red component.
+                        for pixel in 0..width * count {
+                            float_slice.copy_within(pixel * 4..pixel * 4 + 3, pixel * 3);
+                        }
+                    }
+                    count
                 }
                 _ => {
                     // A caller-requested pixel format/descriptor this codec

@@ -101,7 +101,7 @@ jobs:
         run: python3 scripts/check-analysis-dependencies.py
 
       - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
       - name: Shared contracts without inventory
         run: cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
 
@@ -123,7 +123,7 @@ jobs:
         run: cargo test -p zenjpeg --release --no-default-features --lib --tests
 
       - name: Test (__expert + all user features)
-        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,boundary-rd,__expert" --lib --tests
       # `recompress` is opt-in, so no other step runs its tests; a stale
       # fixture went unnoticed until a workspace-wide run (the 16-bit DQT
       # source stopped needing 16-bit tables after 544a1c48).
@@ -180,7 +180,7 @@ jobs:
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
       - name: Metadata and inventory (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata,metadata-rewrite --test inventory_feature --test extended_metadata --test fuzz_regression --test metadata_rewrite
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata,metadata-rewrite,controlled-decode --test controlled_decode --test grayscale_geometry --test inventory_feature --test extended_metadata --test fuzz_regression --test metadata_rewrite
 
   wasm32:
     name: Build (wasm32-wasip1)
@@ -272,7 +272,10 @@ jobs:
             # LOUDLY if djpeg still isn't installed — a silent miss surfaces
             # later as baffling "program not found" test failures.
             for i in 1 2 3; do
-              choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums && break
+              if choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums \
+                  && test -x "/c/libjpeg-turbo64/bin/djpeg.exe"; then
+                break
+              fi
               echo "choco attempt $i failed; retrying in 20s" && sleep 20
             done
             test -x "/c/libjpeg-turbo64/bin/djpeg.exe" || { echo "::error::libjpeg-turbo install failed (djpeg missing)"; exit 1; }
@@ -343,10 +346,10 @@ jobs:
           cmake --build build --target cjpegli djpegli --config Release --parallel
 
       - name: Build (includes C++ jpegli compilation)
-        run: cargo build -p zenjpeg --release --tests --features "parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
+        run: cargo build -p zenjpeg --release --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
 
       - name: Test (all features + C++ FFI parity)
-        run: cargo test -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
+        run: cargo test -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
 
       - name: Upload failing JPEGs
         if: failure()
@@ -396,7 +399,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,__oracle-tests" -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" -- -D warnings
 
       - name: Clippy (default features)
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
@@ -415,13 +418,13 @@ jobs:
       # enable (__ffi-tests, recompress-expert, ...) are skipped
       # by their `required-features`.
       - name: Check examples (all user features)
-        run: cargo check -p zenjpeg --examples --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,__test-utils"
+        run: cargo check -p zenjpeg --examples --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,__test-utils"
 
       - name: Check examples (default features)
         run: cargo check -p zenjpeg --examples
 
       - name: Clippy (__expert + boundary-rd)
-        run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,boundary-rd,__expert" -- -D warnings
 
       # `recompress` is opt-in (`default = []`), so no other job compiles the
       # module; lint it on its own (#143). Deliberately WITHOUT

@@ -131,7 +131,7 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { version = ">=0.1.26, <0.3.0", git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zencodec = { version = ">=0.1.26, <0.3.0", git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }
 zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
 garb = { version = "0.2.6", default-features = false }
@@ -220,7 +220,7 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 
 [patch.crates-io]
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }

@@ -47,5 +47,11 @@ for i, case in enumerate(cases):
     manifest.append(dict(name=name, reference='stock-3.2.0' if n <= 4 else 'component-bounds-repaired-3.2.0',
                          args=args, jpeg_sha256=hashlib.sha256(jpeg).hexdigest(),
                          samples_sha256=hashlib.sha256(raw).hexdigest()))
+    if n in (1, 3, 4):
+        output_format = 'gray' if n == 1 and lossless else 'cmyk' if n == 4 else 'rgb'
+        converted = subprocess.check_output([oracle, 'decode', output_format], input=jpeg, timeout=30)
+        assert len(converted) == w * h * ({'gray': 1, 'rgb': 3, 'cmyk': 4}[output_format]) * 2
+        manifest[-1]['converted_format'] = output_format
+        manifest[-1]['converted_samples_sha256'] = hashlib.sha256(converted).hexdigest()
 Path('zenjpeg/tests/support/native_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 print(f'{len(cases)} fixtures, {sum(p.stat().st_size for p in out.glob("*.jpg"))} JPEG bytes')

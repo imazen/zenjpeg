@@ -789,3 +789,7 @@ See [LICENSE-COMMERCIAL](https://github.com/imazen/zenjpeg/blob/main/LICENSE-COM
 [imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
 [imageflow-node]: https://github.com/imazen/imageflow-node
 [imageflow-go]: https://github.com/imazen/imageflow-go
+
+The optional `controlled-decode` feature suspends before interpretation-dependent
+pixel work. See [controlled decoding](docs/CONTROLLED_DECODING.md) for the API,
+qualified configurations and storage scope.

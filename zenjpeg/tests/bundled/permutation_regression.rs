@@ -28,7 +28,7 @@ fn decode_zen(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     Ok((w, h, pixels))
 }
 
-fn decode_mozjpeg_rgb(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+pub(super) fn decode_mozjpeg_rgb(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     use mozjpeg_sys::*;
     use std::mem;
 

@@ -46,6 +46,39 @@ pub(super) fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     img_info
 }
 
+/// Populate known JPEG auxiliary scope after full primary framing validation.
+/// The existing container probe detects all top-level JPEG boundaries, MPF and
+/// supported gain-map signals. SCAN_COUNT keeps discovery beyond the first SOS.
+/// Recognized auxiliary content stays Unknown until its parameters are parsed;
+/// it is never relabeled Absent just because pixel reconstruction was disabled.
+pub(super) fn populate_complete_container_scope(data: &[u8], info: &mut ImageInfo) {
+    use crate::container::{Wants, probe};
+    let probe = probe(
+        data,
+        Wants::ULTRAHDR_DETECT | Wants::IMAGE_RANGES | Wants::SCAN_COUNT,
+    );
+    populate_probe_scope(&probe, info);
+}
+
+fn populate_probe_scope(probe: &crate::container::ContainerProbe, info: &mut ImageInfo) {
+    use crate::container::GainMapPresence;
+    let multiple = probe.image_ranges().len() > 1;
+    let gain_map = probe.gainmap_presence() != GainMapPresence::None;
+    let auxiliary = multiple || probe.mpf().is_some();
+    info.supplements.gain_map |= gain_map;
+    info.supplements.auxiliary |= auxiliary;
+    if multiple {
+        info.sequence = zencodec::ImageSequence::Multi {
+            image_count: (probe.image_ranges().len() < 8)
+                .then_some(probe.image_ranges().len() as u32),
+            random_access: true,
+        };
+    }
+    if !probe.truncated() && !gain_map && !auxiliary && probe.image_ranges().len() == 1 {
+        info.gain_map = zencodec::GainMapPresence::Absent;
+    }
+}
+
 /// Build a [`SourceColor`] from a JPEG header for descriptor derivation.
 pub(super) fn source_color_from_header(
     info: &crate::decode::JpegInfo,
@@ -84,9 +117,9 @@ pub(super) fn decode_descriptor(
         &sc,
         corrected_cicp.as_ref(),
     );
-    if header.is_xyb {
-        // The selected float scanline path returns linear-light RGB; u8
-        // returns sRGB codes. Keep that output transfer after XYB inversion.
+    if header.is_xyb || base.channel_type() == zenpixels::ChannelType::F32 {
+        // Float rows return linear-light samples; source transfer describes the
+        // encoded samples, not these returned pixels.
         decoded.with_transfer(base.transfer())
     } else {
         decoded
@@ -139,7 +172,9 @@ pub(super) fn populate_info_from_jpeg_extras(
 
 /// Convert JFIF density info to a zencodec [`Resolution`](zencodec::Resolution).
 ///
-/// Returns `None` for aspect-ratio-only density (unit = 0) or zero densities.
+/// Retain non-square unknown-unit aspect separately from physical density.
+/// Square unknown-unit pixels need no override of JPEG's ordinary square-pixel
+/// interpretation. Zero density fields remain unavailable.
 pub(super) fn jfif_to_resolution(
     jfif: &crate::encode::extras::JfifInfo,
 ) -> Option<zencodec::Resolution> {
@@ -153,7 +188,8 @@ pub(super) fn jfif_to_resolution(
     let unit = match jfif.density_units {
         DensityUnits::PixelsPerInch => ResolutionUnit::Inch,
         DensityUnits::PixelsPerCm => ResolutionUnit::Centimeter,
-        DensityUnits::None => return None, // aspect ratio only, not real DPI
+        DensityUnits::None if jfif.x_density == jfif.y_density => return None,
+        DensityUnits::None => ResolutionUnit::Unknown,
     };
 
     Some(zencodec::Resolution {
@@ -161,4 +197,27 @@ pub(super) fn jfif_to_resolution(
         y: jfif.y_density as f64,
         unit,
     })
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[test]
+    fn incomplete_and_empty_containers_do_not_prove_gain_map_absence() {
+        let truncated = crate::container::ContainerProbe {
+            truncated: true,
+            ..Default::default()
+        };
+        let mut info = ImageInfo::new(1, 1, ImageFormat::Jpeg);
+        populate_probe_scope(&truncated, &mut info);
+        assert_eq!(info.gain_map, zencodec::GainMapPresence::Unknown);
+        for data in [&[][..], &[0xff, 0xd8][..]] {
+            let mut info = ImageInfo::new(1, 1, ImageFormat::Jpeg);
+            populate_complete_container_scope(data, &mut info);
+            assert_eq!(info.gain_map, zencodec::GainMapPresence::Unknown);
+            assert!(!info.supplements.auxiliary);
+            assert!(!info.supplements.gain_map);
+        }
+    }
 }

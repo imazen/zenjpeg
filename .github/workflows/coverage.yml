@@ -87,8 +87,8 @@ jobs:
       - name: Generate coverage (lib + integration tests)
         run: |
           cargo llvm-cov clean --workspace
-          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils"
-          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,inventory,__test-utils" -- --skip ignored
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils"
+          timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils" -- --skip ignored
           timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test native_precision -- --ignored
           ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent -- --ignored ten_component_oracle_matrix
           timeout --kill-after=15s 20m cargo llvm-cov --branch --no-report -p zenjpeg --features inventory --test multicomponent
@@ -106,6 +106,9 @@ jobs:
           BRANCH_BASE=$(git merge-base HEAD origin/main)
           python3 scripts/check-native-branches.py "$BRANCH_BASE" native-branches.json --require-complete
 
+      - name: Report whole-library compiled production branches
+        run: python3 scripts/check-native-branches.py HEAD native-branches.json --whole-library > whole-library-branches.txt
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -122,7 +125,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: coverage-html/
+          path: |
+            coverage-html/
+            native-branches.json
+            whole-library-branches.txt
+            lcov.info
           retention-days: 30
 
   codec-coverage:

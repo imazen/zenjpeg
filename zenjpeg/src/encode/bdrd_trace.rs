@@ -101,3 +101,59 @@ pub(crate) fn push_block(entry: BdrdBlockEntry) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(bx: u16, by: u16) -> BdrdBlockEntry {
+        BdrdBlockEntry {
+            bx,
+            by,
+            triggered: false,
+            retries_run: 0,
+            db_default: 0.0,
+            db_final: 0.0,
+            ac_energy: 1.0,
+            aq_final: 1.0,
+            coeff_delta_l1: 0,
+        }
+    }
+
+    #[test]
+    fn trace_lifecycle_preserves_order_and_is_thread_local() {
+        assert!(take_trace().is_none());
+        push_block(block(9, 9));
+        assert!(take_trace().is_none());
+        install_trace();
+        let empty = take_trace().unwrap();
+        assert_eq!((empty.blocks_w(), empty.blocks_h()), (0, 0));
+        install_trace();
+        push_block(block(3, 1));
+        std::thread::spawn(|| {
+            assert!(take_trace().is_none());
+            install_trace();
+            push_block(block(8, 6));
+            let trace = take_trace().unwrap();
+            assert_eq!((trace.blocks_w(), trace.blocks_h()), (9, 7));
+        })
+        .join()
+        .unwrap();
+        push_block(block(1, 4));
+        let trace = take_trace().unwrap();
+        assert_eq!((trace.blocks_w(), trace.blocks_h()), (4, 5));
+        assert_eq!(
+            trace
+                .blocks
+                .iter()
+                .map(|b| (b.bx, b.by))
+                .collect::<Vec<_>>(),
+            [(3, 1), (1, 4)]
+        );
+        assert!(take_trace().is_none());
+        install_trace();
+        push_block(block(2, 2));
+        install_trace();
+        assert!(take_trace().unwrap().blocks.is_empty());
+    }
+}
