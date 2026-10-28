@@ -203,7 +203,7 @@ impl ComponentRows {
                             &mut dequant,
                             64,
                         );
-                        if self.precision == 12 {
+                        if crate::decode::precision::is_12_bit(self.precision) {
                             crate::decode::idct_int::idct_libjpeg_precision::<12>(
                                 &dequant,
                                 &mut pixels,

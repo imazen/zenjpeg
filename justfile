@@ -815,3 +815,22 @@ wasm-size-experiment-simd workspace output:
 
 wasm-size-raster-check output:
     python3 scripts/wasm-size-raster-check.py '{{output}}'
+
+# Both admitted feature sets preserve exact pixels and reject excluded formats.
+extended-jpeg-check:
+    timeout --kill-after=10s 5m cargo test -p zenjpeg --no-default-features --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo test -p zenjpeg --lib --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo test -p zenjpeg --test native_hardening native_fixture_raster_hashes -- --exact
+    timeout --kill-after=10s 5m cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+    timeout --kill-after=10s 5m cargo clippy -p zenjpeg --lib -- -D warnings
+
+extended-jpeg-branch-coverage:
+    timeout --kill-after=10s 8m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --lib --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --no-default-features --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --test native_precision --test native_hardening
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+# Measure the shipped capability, retaining all source implementations.
+wasm-capability-size workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}' --capability --simd
+    python3 scripts/wasm-size-raster-check.py '{{output}}' --capability

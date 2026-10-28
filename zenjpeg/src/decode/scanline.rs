@@ -276,7 +276,7 @@ impl<'a> ScanlineReader<'a> {
         )?;
 
         strip.precision = precision;
-        if precision == 12 {
+        if crate::decode::precision::is_12_bit(precision) {
             strip.idct_method = super::IdctMethod::Libjpeg;
             if width <= 4 && matches!(strip.subsampling, Subsampling::S422 | Subsampling::S420) {
                 strip.chroma_upsampling = super::ChromaUpsampling::NearestNeighbor;
@@ -429,7 +429,7 @@ impl<'a> ScanlineReader<'a> {
             quant_indices[i] = c.quant_table_idx as usize;
         }
 
-        if num_components == 1 && precision == 12 {
+        if num_components == 1 && crate::decode::precision::is_12_bit(precision) {
             h_samp = [1; 3];
             v_samp = [1; 3];
         }
@@ -450,7 +450,7 @@ impl<'a> ScanlineReader<'a> {
         )?;
 
         strip.precision = precision;
-        if precision == 12 {
+        if crate::decode::precision::is_12_bit(precision) {
             strip.idct_method = super::IdctMethod::Libjpeg;
             if width <= 4 && matches!(strip.subsampling, Subsampling::S422 | Subsampling::S420) {
                 strip.chroma_upsampling = super::ChromaUpsampling::NearestNeighbor;
@@ -1709,7 +1709,7 @@ impl<'a> ScanlineReader<'a> {
                             coeff_count,
                         );
                         let mut temp_pixels = [0i16; 64];
-                        if self.precision == 12 {
+                        if crate::decode::precision::is_12_bit(self.precision) {
                             super::idct_int::idct_libjpeg_precision::<12>(
                                 &dequant_buf,
                                 &mut temp_pixels,

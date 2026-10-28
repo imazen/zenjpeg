@@ -1,0 +1,283 @@
+{
+  "source": "133801afa784c81b83910e33cd867bb7a46710ec",
+  "target": "wasm32-wasip1",
+  "profile": "opt=s, thin LTO, CGU=1, stripped",
+  "simd128": true,
+  "capability": true,
+  "results": [
+    {
+      "variant": "full",
+      "repeat": 1,
+      "bytes": 763556,
+      "gzip_bytes": 281689,
+      "sha256": "d4d79f3082a066603e48daaf8fc984ef569102c4f5b9f4dbfbc1818b3f11aef2",
+      "sections": {
+        "header": 8,
+        "types": 467,
+        "imports": 186,
+        "functions": 933,
+        "tables": 9,
+        "memory": 5,
+        "globals": 16,
+        "exports": 36,
+        "elements": 331,
+        "code": 672455,
+        "data": 89110
+      }
+    },
+    {
+      "variant": "full",
+      "repeat": 2,
+      "bytes": 763556,
+      "gzip_bytes": 281689,
+      "sha256": "d4d79f3082a066603e48daaf8fc984ef569102c4f5b9f4dbfbc1818b3f11aef2",
+      "sections": {
+        "header": 8,
+        "types": 467,
+        "imports": 186,
+        "functions": 933,
+        "tables": 9,
+        "memory": 5,
+        "globals": 16,
+        "exports": 36,
+        "elements": 331,
+        "code": 672455,
+        "data": 89110
+      }
+    },
+    {
+      "variant": "no-both",
+      "repeat": 1,
+      "bytes": 728372,
+      "gzip_bytes": 268234,
+      "sha256": "6f0c1770196e5e86b51428c634f03b0e9ead247674de20d6eaadf984b1ab5b34",
+      "sections": {
+        "header": 8,
+        "types": 467,
+        "imports": 186,
+        "functions": 912,
+        "tables": 9,
+        "memory": 5,
+        "globals": 16,
+        "exports": 36,
+        "elements": 325,
+        "code": 640802,
+        "data": 85606
+      }
+    },
+    {
+      "variant": "no-both",
+      "repeat": 2,
+      "bytes": 728372,
+      "gzip_bytes": 268234,
+      "sha256": "6f0c1770196e5e86b51428c634f03b0e9ead247674de20d6eaadf984b1ab5b34",
+      "sections": {
+        "header": 8,
+        "types": 467,
+        "imports": 186,
+        "functions": 912,
+        "tables": 9,
+        "memory": 5,
+        "globals": 16,
+        "exports": 36,
+        "elements": 325,
+        "code": 640802,
+        "data": 85606
+      }
+    }
+  ],
+  "raster_checks": [
+    {
+      "fixture": "00-p8-c1-sof30-mode0-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "f1d4705f7808cc2a30bb486eb35391c25f7a59996e64cb24f5621ca8a73430a9"
+    },
+    {
+      "fixture": "00-p8-c1-sof30-mode0-s1.jpg",
+      "variant": "no-both",
+      "refused": false,
+      "raster_sha256": "f1d4705f7808cc2a30bb486eb35391c25f7a59996e64cb24f5621ca8a73430a9"
+    },
+    {
+      "fixture": "01-p12-c1-sof30-mode0-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "cc0bf2542432734ecd9c2636efc7a8ef469f687bdb64c51538be6477db58bb5e"
+    },
+    {
+      "fixture": "01-p12-c1-sof30-mode0-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "02-p12-c1-sof30-mode1-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "cc0bf2542432734ecd9c2636efc7a8ef469f687bdb64c51538be6477db58bb5e"
+    },
+    {
+      "fixture": "02-p12-c1-sof30-mode1-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "03-p12-c1-sof30-mode2-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "cc0bf2542432734ecd9c2636efc7a8ef469f687bdb64c51538be6477db58bb5e"
+    },
+    {
+      "fixture": "03-p12-c1-sof30-mode2-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "04-p12-c1-sof30-mode3-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "cc0bf2542432734ecd9c2636efc7a8ef469f687bdb64c51538be6477db58bb5e"
+    },
+    {
+      "fixture": "04-p12-c1-sof30-mode3-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "10-p8-c3-sof30-mode0-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "bd8392cabb66e33dfb3e4e2f9e0d3cb831728331c5f5136459f2636fb1c832af"
+    },
+    {
+      "fixture": "10-p8-c3-sof30-mode0-s1.jpg",
+      "variant": "no-both",
+      "refused": false,
+      "raster_sha256": "bd8392cabb66e33dfb3e4e2f9e0d3cb831728331c5f5136459f2636fb1c832af"
+    },
+    {
+      "fixture": "11-p12-c3-sof30-mode0-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "debaf351e02b87145070f1fc1b050dccefbd613bd6b401bed7cff935a7fa2fc9"
+    },
+    {
+      "fixture": "11-p12-c3-sof30-mode0-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "12-p12-c3-sof30-mode1-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "debaf351e02b87145070f1fc1b050dccefbd613bd6b401bed7cff935a7fa2fc9"
+    },
+    {
+      "fixture": "12-p12-c3-sof30-mode1-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "13-p12-c3-sof30-mode2-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "debaf351e02b87145070f1fc1b050dccefbd613bd6b401bed7cff935a7fa2fc9"
+    },
+    {
+      "fixture": "13-p12-c3-sof30-mode2-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "14-p12-c3-sof30-mode3-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "debaf351e02b87145070f1fc1b050dccefbd613bd6b401bed7cff935a7fa2fc9"
+    },
+    {
+      "fixture": "14-p12-c3-sof30-mode3-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "32-p12-c3-sof31-mode0-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "c9e429092a7399865c4862462d7b9a080c05922101777a427b80a05635aeaf23"
+    },
+    {
+      "fixture": "32-p12-c3-sof31-mode0-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "42-p12-c1-sof30-mode0-s1.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "b22be9bb5bee6492d2799e4550659a3ecfb8ba90cb80aed08c370f4086556744"
+    },
+    {
+      "fixture": "42-p12-c1-sof30-mode0-s1.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "45-p12-c3-sof30-mode0-s3.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "7bac9a02c90d92faa2a988d2ffeec6dd61a50ec9466940770967a07b93006025"
+    },
+    {
+      "fixture": "45-p12-c3-sof30-mode0-s3.jpg",
+      "variant": "no-both",
+      "refused": true,
+      "raster_sha256": null
+    },
+    {
+      "fixture": "xyb_p0_sub420_d12_noise7x7.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "87d159f5b9e3a8b35519585ed91b29e756d13fe87cae8c315d31607e4f75587d"
+    },
+    {
+      "fixture": "xyb_p0_sub420_d12_noise7x7.jpg",
+      "variant": "no-both",
+      "refused": false,
+      "raster_sha256": "87d159f5b9e3a8b35519585ed91b29e756d13fe87cae8c315d31607e4f75587d"
+    },
+    {
+      "fixture": "xyb_p0_sub422_d12_noise7x7.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "783bbddce62b5016de6213d46f8a3424b4a24a10c3aef56cc3f5252a27eaeb7c"
+    },
+    {
+      "fixture": "xyb_p0_sub422_d12_noise7x7.jpg",
+      "variant": "no-both",
+      "refused": false,
+      "raster_sha256": "783bbddce62b5016de6213d46f8a3424b4a24a10c3aef56cc3f5252a27eaeb7c"
+    },
+    {
+      "fixture": "xyb_p0_sub444_d12_noise7x7.jpg",
+      "variant": "full",
+      "refused": false,
+      "raster_sha256": "7e98cbb9292d6a6060d5c37df1b6a43fbbb89c797edab0c1fe7e3ea94c3e605b"
+    },
+    {
+      "fixture": "xyb_p0_sub444_d12_noise7x7.jpg",
+      "variant": "no-both",
+      "refused": false,
+      "raster_sha256": "7e98cbb9292d6a6060d5c37df1b6a43fbbb89c797edab0c1fe7e3ea94c3e605b"
+    }
+  ]
+}

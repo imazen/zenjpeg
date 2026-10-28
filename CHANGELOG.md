@@ -54,6 +54,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### QUEUED BREAKING CHANGES
 
+- `default-features = false` now excludes arithmetic, 12-bit DCT and predictive
+  lossless decoding (`133801af`). Enable `extended-jpeg` to retain them. Normal defaults
+  include the capability; ordinary 8-bit Huffman and XYB decoding remain available.
+
 - `ScanlineReader` and `UltraHdrReader` no longer automatically implement `UnwindSafe` / `RefUnwindSafe` because readers can borrow unrestricted Pulse callbacks. Send/Sync and existing Stop signatures are retained (`935f6fbe`).
 
 - Add `sample_precision` to `DecodedCoefficients` and `TransformedCoefficients`; struct constructors must supply 8 or 12 (`e2c872a3`).

@@ -82,3 +82,44 @@ Measured wrapper summaries (validation process, not decoder memory claims):
 This experiment does not complete whole-library branch coverage. The previously
 recorded production baseline remains 7692/9844 outcomes; research execution and
 additional tests do not establish a new complete coverage percentage.
+
+## Implemented capability (2026-10-27)
+
+Commit `133801af` adds default-enabled `extended-jpeg`, grouping arithmetic,
+12-bit DCT and predictive lossless decoding. `default-features = false` now
+selects core decoding; explicitly enable `extended-jpeg` to retain these formats.
+XYB remains available in both configurations. Arithmetic scan and predictive
+reader implementations have module gates; shared precision dispatch uses one
+compile-time capability predicate. Shared metadata traversal stays ungated.
+
+The real feature was measured twice with the same SIMD128 WASI probe/profile:
+
+| Build | Raw bytes | Gzip bytes | Code section | Data section | Other |
+|---|---:|---:|---:|---:|---:|
+| Full | 763556 | 281689 | 672455 | 89110 | 1991 |
+| Core | 728372 | 268234 | 640802 | 85606 | 1964 |
+| Saving | 35184 | 13455 | 31653 | 3504 | 27 |
+
+Each repeated pair has identical SHA256. Section sizes include section framing;
+code includes runtime/dependency functions and data includes their embedded data.
+These are not per-subsystem attribution measurements. Sixteen fixtures provide
+21 retained raster comparisons and 11 explicit capability refusals; all three
+XYB rasters remain identical. The native test harness separately checks all 47
+libjpeg-turbo fixture contracts, including precise native samples and strides.
+
+[Actual capability measurements and hashes](../benchmarks/wasm_decoder_capability_2026-10-27.json).
+Reproduce using `just wasm-capability-size WORKSPACE NEW_OUTPUT` through
+`run-heavy`; the workspace must contain the implemented capability. Scalar
+measurements above remain prototype results, not measurements of this commit.
+
+Validation wrapper: `run-heavy: done rc=0 39s | peak-RSS 0.53GiB |
+min-avail 23665MiB | peak-load 0.94`. This is build-process memory, not decoder
+memory usage.
+
+Coverage validation of this capability change currently measures **44/52 changed
+branch outcomes**. The eight missing outcomes are the 12-bit chroma strip/peek
+arms in `decode/pipeline.rs` and `decode/scanline.rs`; their reachability and
+coverage still need investigation. The full native hardening and non-oracle
+precision tests passed under instrumentation (233 seconds, wrapper peak RSS
+0.25 GiB). Seven explicitly opt-in oracle tests were not selected in that run.
+This is not complete branch coverage, and the PR remains draft.

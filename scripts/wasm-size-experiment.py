@@ -11,6 +11,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('workspace', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('--simd', action='store_true')
+p.add_argument('--capability', action='store_true', help='Measure the real extended-jpeg feature without source exclusions')
 a = p.parse_args()
 w, out = a.workspace.resolve(), a.output.resolve()
 if w == Path(__file__).resolve().parent.parent or not (w / '.jj/repo').is_file():
@@ -73,10 +74,43 @@ def stub(source, name):
                 return source[:brace] + '{ Err(Error::unsupported_feature("size experiment exclusion")) }' + source[end:]
     raise RuntimeError(name)
 
+def section_sizes(data):
+    """Count complete section encodings, including their id and length bytes."""
+    assert data[:8] == b'\0asm\1\0\0\0'
+    names = {0: 'custom', 1: 'types', 2: 'imports', 3: 'functions',
+             4: 'tables', 5: 'memory', 6: 'globals', 7: 'exports',
+             8: 'start', 9: 'elements', 10: 'code', 11: 'data', 12: 'data_count'}
+    sizes = {'header': 8}
+    pos = 8
+    while pos < len(data):
+        start = pos
+        kind = data[pos]
+        pos += 1
+        length = shift = 0
+        while True:
+            byte = data[pos]
+            pos += 1
+            length |= (byte & 127) << shift
+            if byte < 128:
+                break
+            shift += 7
+        pos += length
+        assert pos <= len(data)
+        name = names[kind]
+        sizes[name] = sizes.get(name, 0) + pos - start
+    assert sum(sizes.values()) == len(data)
+    return sizes
+
 rows = []
 try:
-    for variant in ['full', 'no-arithmetic', 'no-extended', 'no-both']:
-        for f, s in original.items():
+    for variant in (['full', 'no-both'] if a.capability else ['full', 'no-arithmetic', 'no-extended', 'no-both']):
+        if a.capability:
+            probe_manifest = probe / 'Cargo.toml'
+            text = probe_manifest.read_text().replace(', features = ["extended-jpeg"]', '')
+            if variant == 'full':
+                text = text.replace('default-features = false', 'default-features = false, features = ["extended-jpeg"]')
+            probe_manifest.write_text(text)
+        for f, s in ([] if a.capability else original.items()):
             if variant in ('no-arithmetic', 'no-both') and f.name == 'arithmetic_scan.rs':
                 for name in ['decode_arithmetic_scan', 'decode_arithmetic_progressive_scan']:
                     s = stub(s, name)
@@ -95,9 +129,9 @@ try:
             data = (out / 'target/wasm32-wasip1/release/wasm-size-probe.wasm').read_bytes()
             artifact = out / f'{variant}-{repeat}.wasm'
             artifact.write_bytes(data)
-            row = dict(variant=variant, repeat=repeat, bytes=len(data), gzip_bytes=len(gzip.compress(data, mtime=0)), sha256=hashlib.sha256(data).hexdigest())
+            row = dict(variant=variant, repeat=repeat, bytes=len(data), gzip_bytes=len(gzip.compress(data, mtime=0)), sha256=hashlib.sha256(data).hexdigest(), sections=section_sizes(data))
             rows.append(row)
-            (out / 'measurements.json').write_text(json.dumps(dict(source=source_id, target='wasm32-wasip1', profile='opt=s, thin LTO, CGU=1, stripped', simd128=a.simd, results=rows), indent=2)+'\n')
+            (out / 'measurements.json').write_text(json.dumps(dict(source=source_id, target='wasm32-wasip1', profile='opt=s, thin LTO, CGU=1, stripped', simd128=a.simd, capability=a.capability, results=rows), indent=2)+'\n')
             print(json.dumps(row), flush=True)
 finally:
     for f, s in original.items(): f.write_text(s)

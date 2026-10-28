@@ -176,7 +176,10 @@ zensim = { workspace = true, features = ["classification"] }
 # Qualified whole-source controlled decoding with admitted byte/row storage.
 controlled-decode = ["zencodec", "dep:zencodec-coroutine"]
 metadata-rewrite = ["zenmeta/rewrite"]
-default = []
+# Full decoding by default. Disable defaults for ordinary 8-bit Huffman JPEG
+# (including XYB); enable extended-jpeg for arithmetic, 12-bit DCT and SOF3.
+default = ["extended-jpeg"]
+extended-jpeg = []
 # Optional structural inspection and validated metadata reassembly. The entire
 # implementation is excluded when disabled, not just hidden from public docs.
 extended-metadata = []

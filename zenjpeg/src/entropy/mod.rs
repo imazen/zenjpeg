@@ -24,6 +24,7 @@ pub mod decoder;
 pub mod encoder;
 
 // Re-export main types
+#[allow(unused_imports)] // Public test-utils re-export; decoding is optional.
 pub use arithmetic::ArithmeticDecoder;
 pub use decoder::{EntropyDecoder, EntropyDecoderState};
 pub use encoder::EntropyEncoder;
