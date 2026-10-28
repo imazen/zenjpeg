@@ -990,17 +990,20 @@ impl JpegEncoder {
         let policy = self.policy.unwrap_or_default();
         let mut source = zencodec::SourceColor::default().with_icc_profile(icc.clone());
         source.cicp = *cicp;
-        if !policy.resolve_icc(true)
-            || !matches!(
-                zencodec::resolve_color_emit(
-                    &source,
-                    &JPEG_ENCODE_CAPS,
-                    policy.resolve_color(zencodec::ColorEmitPolicy::Balanced)
-                )
-                .icc,
-                zencodec::IccDisposition::KeepSource
+        if !policy.resolve_icc(true) {
+            return Err(Error::encode_policy_rejected(
+                "the policy forbids the ICC profile these profile-tagged bytes need",
+            ));
+        }
+        if !matches!(
+            zencodec::resolve_color_emit(
+                &source,
+                &JPEG_ENCODE_CAPS,
+                policy.resolve_color(zencodec::ColorEmitPolicy::Balanced)
             )
-        {
+            .icc,
+            zencodec::IccDisposition::KeepSource
+        ) {
             return Err(Error::icc_error(
                 "profile-tagged bytes require keeping their ICC carrier".into(),
             ));
@@ -1331,6 +1334,12 @@ impl JpegEncoder {
         // the image. An unidentified profile can still be stripped by an
         // explicit policy, as before.
         if !wrote_icc && is_identified_non_default((icc.map(|i| &i[..]), cicp), gray) {
+            if !policy.resolve_icc(true) {
+                return Err(Error::encode_policy_rejected(
+                    "the policy forbids the ICC profile, JPEG's only carrier for this \
+                     image's colour",
+                ));
+            }
             return Err(Error::icc_error(
                 "the policy leaves no carrier for this image's colour: JPEG can only \
                  describe it with an embedded ICC profile"
