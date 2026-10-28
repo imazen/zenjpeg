@@ -845,3 +845,52 @@ fn lossless_bounds_the_work_secondaries_declare() {
         }
     }
 }
+
+/// Without `metadata` the XMP directory cannot be classified, so a transform
+/// whose bytes after the primary the XMP could name refuses before writing
+/// anything, rather than dropping or guessing what those bytes are (the
+/// `metadata` feature's contract). The carry tests above need the XML parser
+/// to classify the same files.
+#[test]
+#[cfg(not(feature = "metadata"))]
+fn without_metadata_a_transform_refuses_xmp_containers_it_cannot_classify() {
+    let gm = gray_jpeg(16, 8, 6);
+    let cases = [
+        (
+            "gain map without an index",
+            primary_with(EncoderSegments::new().set_xmp(HDRGM_XMP), &gm),
+        ),
+        (
+            "gain map the index does not list",
+            with_mpf(
+                &primary_with(EncoderSegments::new().set_xmp(HDRGM_XMP), &[]),
+                0,
+                |_| vec![],
+                &gm,
+            ),
+        ),
+        (
+            "unreadable gain map",
+            primary_with(
+                EncoderSegments::new().set_xmp(HDRGM_XMP),
+                &gm[..gm.len() - 2],
+            ),
+        ),
+        (
+            "JPEG inside a video",
+            primary_with(
+                EncoderSegments::new().set_xmp(HDRGM_XMP),
+                &mp4(&gray_jpeg(64, 8, 5)),
+            ),
+        ),
+    ];
+    for (name, jpeg) in &cases {
+        for config in [rotate90(), rotate180()] {
+            let err = transform(jpeg, &config, Unstoppable).expect_err(name);
+            assert!(
+                matches!(err.kind(), ErrorKind::UnsupportedFeature { .. }),
+                "{name}: {err:?}"
+            );
+        }
+    }
+}
