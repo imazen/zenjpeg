@@ -225,12 +225,12 @@ fn embedded_mpf_entries_are_readable_except_in_strict_mode() {
 // The lossless pipeline on crafted and partly signalled containers.
 // ---------------------------------------------------------------------------
 
+use zenjpeg::container::parse_mpf;
 #[cfg(feature = "metadata")]
 use zenjpeg::container::{
-    ContainerItem, ItemSemantic, generate_primary_xmp, generate_primary_xmp_with_items,
-    parse_xmp_full,
+    ContainerItem, ItemSemantic, MpImageType, find_jpeg_boundaries, generate_primary_xmp,
+    generate_primary_xmp_with_items, parse_xmp_full,
 };
-use zenjpeg::container::{MpImageType, find_jpeg_boundaries, parse_mpf};
 use zenjpeg::decoder::ErrorKind;
 use zenjpeg::encode::EncoderSegments;
 use zenjpeg::lossless::{
