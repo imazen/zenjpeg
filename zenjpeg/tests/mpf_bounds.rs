@@ -344,6 +344,7 @@ fn lossless_does_not_recurse_into_deep_nesting() {
 /// writes some files this way): carried, rotated with the primary, and
 /// given an MPF index. It used to be dropped while the XMP stayed.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_carries_a_gain_map_without_an_mpf_index() {
     let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0" hdrgm:GainMapMax="2.0"/></rdf:RDF></x:xmpmeta>"#;
     let px: Vec<u8> = (0..32 * 32 * 3).map(|i| (i * 7 % 251) as u8).collect();
@@ -566,6 +567,7 @@ fn xmp_of(jpeg: &[u8]) -> String {
         .expect("xmp")
 }
 
+#[cfg(feature = "metadata")]
 fn dims(jpeg: &[u8]) -> (u32, u32) {
     let d = DecodeConfig::new().read_info(jpeg).unwrap().dimensions;
     (d.width, d.height)
@@ -655,6 +657,7 @@ fn lossless_carries_a_microvideo_trailer() {
 /// transformed with the primary, and listed in the rebuilt index. It was
 /// dropped while the XMP still signalled it.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_carries_a_gain_map_the_index_does_not_list() {
     let gm = gray_jpeg(16, 8, 6);
     let jpeg = with_mpf(
@@ -687,6 +690,7 @@ fn lossless_carries_a_gain_map_the_index_does_not_list() {
 /// A gain map without its EOI cannot be transformed: refused, not dropped
 /// (it was dropped). Without a transform it is carried as it is.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_refuses_a_gain_map_it_cannot_read() {
     let gm = gray_jpeg(16, 8, 7);
     let cut = &gm[..gm.len() - 2];
@@ -704,6 +708,7 @@ fn lossless_refuses_a_gain_map_it_cannot_read() {
 /// video is not taken as the gain map (it was, and the rest of the video
 /// was dropped). The video is carried whole and no index is added.
 #[test]
+#[cfg(feature = "metadata")]
 fn lossless_does_not_take_a_jpeg_inside_a_video_as_the_gain_map() {
     let video = mp4(&gray_jpeg(64, 8, 5));
     let jpeg = primary_with(EncoderSegments::new().set_xmp(HDRGM_XMP), &video);
