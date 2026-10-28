@@ -537,6 +537,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
             metadata: None,
             limits: ResourceLimits::none(),
             policy: None,
+            legacy_policy: false,
             image_size: None,
         }
     }
@@ -555,6 +556,9 @@ pub struct JpegEncodeJob {
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
+    /// `policy` came from the deprecated best-effort `with_policy`
+    /// (`build_request_from` keeps its earlier carrier behaviour).
+    legacy_policy: bool,
     /// Image dimensions, set via `with_canvas_size`. When known, enables true
     /// streaming in `push_rows` → `finish` (no full-image accumulation).
     image_size: Option<(u32, u32)>,
@@ -582,6 +586,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
 
     fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
         self.policy = Some(policy);
+        self.legacy_policy = true;
         self
     }
 
@@ -599,6 +604,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             return Err(zencodec::UnsupportedOperation::EncodePolicy);
         }
         self.policy = Some(policy);
+        self.legacy_policy = false;
         Ok(())
     }
 
@@ -657,6 +663,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             metadata: self.metadata,
             limits: self.limits,
             policy: self.policy,
+            legacy_policy: self.legacy_policy,
             accumulator: None,
             streaming_enc: None,
             image_size: self.image_size,
@@ -688,6 +695,8 @@ pub struct JpegEncoder {
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
+    /// `policy` came from the deprecated best-effort `with_policy`.
+    legacy_policy: bool,
     /// Accumulated rows for push_rows path (fallback when dimensions unknown).
     accumulator: Option<RowAccumulator>,
     /// Native row encoder — used when dimensions are known, from `begin`
@@ -754,8 +763,13 @@ impl StoredColor {
 /// Which description the colour carrier is written from.
 #[derive(Clone, Debug, PartialEq)]
 enum ColorBinding {
-    /// The job metadata, which the pixels agree with or do not contradict.
+    /// The job metadata, which an explicit colour context agrees with, or
+    /// which profile-tagged bytes need.
     Metadata,
+    /// The job metadata, labelling pixels without a colour context. Holds the
+    /// stored samples' own interpretation, which the deprecated best-effort
+    /// setter must not lose with a profile it drops.
+    JobMetadata(StoredColor),
     /// The stored samples' own interpretation.
     Stored(StoredColor),
 }
@@ -821,17 +835,6 @@ fn same_meaning(
     match (identify(a), identify(b)) {
         (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
         _ => false,
-    }
-}
-
-/// Whether a description is identified as something other than the sRGB
-/// default: non-default code points, or a profile zenpixels identifies.
-fn is_identified_non_default((icc, cicp): (Option<&[u8]>, Option<Cicp>), gray: bool) -> bool {
-    match icc.map(|icc| ColorProfileSource::Icc(icc).resolve()) {
-        Some(Some((primaries, transfer))) => {
-            transfer != TransferFunction::Srgb || !gray && primaries != ColorPrimaries::Bt709
-        }
-        Some(None) | None => cicp.is_some_and(|c| !is_default_meaning((None, Some(c)), gray)),
     }
 }
 
@@ -1176,7 +1179,7 @@ impl JpegEncoder {
                         .into(),
                 ));
             }
-            return Ok(ColorBinding::Metadata);
+            return Ok(ColorBinding::JobMetadata(stored));
         }
         if same_meaning(metadata, stored.parts(), gray) {
             Ok(ColorBinding::Metadata)
@@ -1211,7 +1214,7 @@ impl JpegEncoder {
             let stored = self.stored_color(descriptor, Some(context), layout)?;
             let header = match &self.bound {
                 Some(ColorBinding::Stored(header)) => header.parts(),
-                Some(ColorBinding::Metadata) => self
+                Some(ColorBinding::Metadata | ColorBinding::JobMetadata(_)) => self
                     .metadata
                     .as_ref()
                     .map_or((None, None), |m| (m.icc_profile.as_deref(), m.cicp)),
@@ -1256,7 +1259,7 @@ impl JpegEncoder {
         let policy = self.policy.unwrap_or_default();
         let gray = layout.is_grayscale();
         let (icc, cicp) = match binding {
-            ColorBinding::Metadata => self
+            ColorBinding::Metadata | ColorBinding::JobMetadata(_) => self
                 .metadata
                 .as_ref()
                 .map_or((None, None), |m| (m.icc_profile.as_ref(), m.cicp)),
@@ -1330,10 +1333,24 @@ impl JpegEncoder {
             }
         }
         // JPEG's only colour carrier is the ICC profile. A plan or policy that
-        // writes none for a description identified as non-sRGB would relabel
-        // the image. An unidentified profile can still be stripped by an
-        // explicit policy, as before.
-        if !wrote_icc && is_identified_non_default((icc.map(|i| &i[..]), cicp), gray) {
+        // writes none for a description other than the sRGB default would
+        // relabel the image: an identified non-sRGB description, and also an
+        // unidentified profile, which nothing shows to mean sRGB. The
+        // deprecated best-effort setter keeps its earlier behaviour for job
+        // metadata on pixels without a colour context: a profile zenpixels
+        // cannot identify is dropped, unless the job's code points or the
+        // pixels' own interpretation go with it. A colour context and a
+        // checked policy never drop a profile that way.
+        let described = match binding {
+            ColorBinding::JobMetadata(stored)
+                if self.legacy_policy
+                    && icc.is_some_and(|icc| ColorProfileSource::Icc(icc).resolve().is_none()) =>
+            {
+                cicp.map_or(stored.parts(), |cicp| (None, Some(cicp)))
+            }
+            _ => (icc.map(|i| &i[..]), cicp),
+        };
+        if !wrote_icc && !is_default_meaning(described, gray) {
             if !policy.resolve_icc(true) {
                 return Err(Error::encode_policy_rejected(
                     "the policy forbids the ICC profile, JPEG's only carrier for this \
