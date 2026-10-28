@@ -72,6 +72,10 @@ tooling (GitHub, PRs, CI) keeps working.
 2. **No new public types/functions** without approval
 3. **No changes to existing function signatures**
 4. **Doc links use full paths** - `[`encoder::EncoderConfig`]` not `[`EncoderConfig`]`
+5. **Regenerate the public-API snapshot in the same commit** (`just api-doc`, pinned
+   nightly): `apidoc/` is excluded from the workspace, so `cargo test`/`clippy` never
+   see a stale `docs/public-api/`; CI's "Public API surface" job does (CI 40624376352
+   and main 40630953425, 2026-10-28: `Error::encode_policy_rejected` shipped without it).
 
 ## Pixel Data API Rules (CRITICAL - NON-NEGOTIABLE)
 

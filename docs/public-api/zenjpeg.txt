@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1716 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-metadata,inventory,layout,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3553 lines (915 hidden + 7085 excluded-feature)
+# files: zenjpeg.txt 1722 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3553 lines (915 hidden + 7085 excluded-feature)
 
 ## summary
 #
@@ -15,9 +15,9 @@
 #   pub consts/statics                         94
 #   pub macros                                  2
 #   free functions                             65
-#   inherent methods                          505
-#   struct fields                             394
-#   enum variants                             404
+#   inherent methods                          507
+#   struct fields                             396
+#   enum variants                             406
 #   re-exports                                  2
 #   trait roster entries (type × trait)       508
 #   auto-trait-complete types                 107
@@ -28,15 +28,15 @@
 #   blur                              1
 #   container                       295
 #   deblock                          16
-#   decoder                         575
+#   decoder                         577
 #   detect                           56
-#   encoder                         530
+#   encoder                         534
 #   heuristics                       24
 #   lossless                         43
 #   profile                           7
 #   target_quality                   18
 
-## items (1577 lines)
+## items (1583 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -386,6 +386,8 @@ pub decoder::ErrorKind::AllocationFailed::bytes: usize
 pub decoder::ErrorKind::AllocationFailed::context: &'static str
 pub decoder::ErrorKind::Cancelled(enough::reason::StopReason)
 pub decoder::ErrorKind::DecodeError(alloc::string::String)
+pub decoder::ErrorKind::EncodePolicyRejected
+pub decoder::ErrorKind::EncodePolicyRejected::reason: &'static str
 pub decoder::ErrorKind::IccError(alloc::string::String)
 pub decoder::ErrorKind::ImageTooLarge
 pub decoder::ErrorKind::ImageTooLarge::limit: u64
@@ -781,6 +783,7 @@ pub fn encoder::Error::allocation_failed(usize, &'static str) -> Self
 pub fn encoder::Error::at(self) -> Self
 pub fn encoder::Error::cancelled() -> Self
 pub fn encoder::Error::decode_error(alloc::string::String) -> Self
+pub fn encoder::Error::encode_policy_rejected(&'static str) -> Self
 pub fn encoder::Error::icc_error(alloc::string::String) -> Self
 pub fn encoder::Error::image_too_large(u64, u64) -> Self
 pub fn encoder::Error::incomplete_image(u32, u32) -> Self
@@ -1047,6 +1050,8 @@ pub encoder::ErrorKind::AllocationFailed::bytes: usize
 pub encoder::ErrorKind::AllocationFailed::context: &'static str
 pub encoder::ErrorKind::Cancelled(enough::reason::StopReason)
 pub encoder::ErrorKind::DecodeError(alloc::string::String)
+pub encoder::ErrorKind::EncodePolicyRejected
+pub encoder::ErrorKind::EncodePolicyRejected::reason: &'static str
 pub encoder::ErrorKind::IccError(alloc::string::String)
 pub encoder::ErrorKind::ImageTooLarge
 pub encoder::ErrorKind::ImageTooLarge::limit: u64
@@ -1370,6 +1375,7 @@ pub fn encoder::Error::allocation_failed(usize, &'static str) -> Self
 pub fn encoder::Error::at(self) -> Self
 pub fn encoder::Error::cancelled() -> Self
 pub fn encoder::Error::decode_error(alloc::string::String) -> Self
+pub fn encoder::Error::encode_policy_rejected(&'static str) -> Self
 pub fn encoder::Error::icc_error(alloc::string::String) -> Self
 pub fn encoder::Error::image_too_large(u64, u64) -> Self
 pub fn encoder::Error::incomplete_image(u32, u32) -> Self
