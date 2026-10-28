@@ -331,6 +331,74 @@ impl StreamingEncoderBuilder {
         self
     }
 
+    // Shared by planning and startup. No native pixel/coefficients allocation.
+    pub(crate) fn validate_input(&mut self) -> Result<()> {
+        use crate::error::Error;
+        // Header, coefficient order, frequency counting and restart units must
+        // all agree for a single-component frame, including direct builders.
+        if self.gray_output || self.pixel_format.is_grayscale() {
+            self.subsampling = Subsampling::S444;
+        }
+
+        if self.width == 0 || self.height == 0 {
+            return Err(Error::invalid_dimensions(
+                self.width,
+                self.height,
+                "dimensions must be non-zero",
+            ));
+        }
+
+        if self.use_rgb {
+            if self.use_xyb {
+                return Err(Error::invalid_config(
+                    "RGB passthrough mode and XYB mode are mutually exclusive".into(),
+                ));
+            }
+            if self.subsampling != Subsampling::S444 {
+                return Err(Error::invalid_config(
+                    "RGB passthrough mode requires 4:4:4 (no chroma subsampling)".into(),
+                ));
+            }
+            match self.pixel_format {
+                crate::types::PixelFormat::Rgb
+                | crate::types::PixelFormat::Rgba
+                | crate::types::PixelFormat::Bgr
+                | crate::types::PixelFormat::Bgra
+                | crate::types::PixelFormat::Bgrx => {}
+                _ => {
+                    return Err(Error::unsupported_feature(
+                        "RGB passthrough mode requires an 8-bit RGB-family pixel format",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn streams_output(&self) -> bool {
+        !matches!(self.huffman, HuffmanStrategy::Optimize)
+            && self.mode != JpegMode::Progressive
+            && !self.use_xyb
+            && !self.use_rgb
+    }
+
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn planned_output_lag(mut self) -> Result<Option<u32>> {
+        self.validate_input()?;
+        if !self.streams_output() {
+            return Ok(None);
+        }
+        let layout = LayoutParams::new_xyb(
+            self.width as usize,
+            self.height as usize,
+            self.subsampling,
+            self.use_xyb,
+            self.xyb_subsampling,
+        );
+        Ok(Some((2 * layout.strip_height - 1) as u32))
+    }
+
     /// Starts a streaming encoder for row-by-row input.
     pub(crate) fn start(self) -> Result<StreamingEncoder> {
         StreamingEncoder::from_builder(self)

@@ -352,7 +352,7 @@ fn admitted_storage_is_released_on_native_error_refusal_and_unwind() {
             (0, 0)
         );
         assert!(matches!(
-            session.step(Input::empty(), &mut sink, &zencodec::enough::Unstoppable),
+            session.step(Input::empty(), &mut sink, &zencodec::NoPulse),
             Err(StepError::Finished)
         ));
     }
@@ -507,7 +507,7 @@ fn limits_and_job_cancellation_precede_pixel_effects() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    use zencodec::{ResourceLimits, StopToken};
+    use zencodec::ResourceLimits;
     struct Cancel(Arc<AtomicBool>);
     impl zencodec::enough::Stop for Cancel {
         fn check(&self) -> Result<(), zencodec::enough::StopReason> {
@@ -542,7 +542,9 @@ fn limits_and_job_cancellation_precede_pixel_effects() {
     let storage = budget();
     let native = JpegDecoderConfig::new()
         .job()
-        .with_stop(StopToken::new(Cancel(cancelled.clone())))
+        .with_pulse(zencodec::how_far::SharedPulse::new(
+            zencodec::how_far::StopOnly::new(Cancel(cancelled.clone())),
+        ))
         .dyn_controlled_decoder(&[], storage.clone())
         .unwrap();
     let mut session = PolicyDecoder::new(

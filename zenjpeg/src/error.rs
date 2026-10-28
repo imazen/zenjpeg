@@ -312,6 +312,12 @@ pub enum ErrorKind {
     /// `ErrorCategory::Policy(PolicyKind::Decode)`.
     #[error("rejected by policy: {reason}")]
     PolicyRejected { reason: &'static str },
+    /// The request was valid, but a configured
+    /// [`EncodePolicy`](zencodec::encode::EncodePolicy) forbids what encoding
+    /// it faithfully needs: e.g. EXIF, JPEG's only carrier for a non-identity
+    /// orientation. Maps to `ErrorCategory::Policy(PolicyKind::Encode)`.
+    #[error("rejected by encode policy: {reason}")]
+    EncodePolicyRejected { reason: &'static str },
     /// The operation was invoked in an invalid state or out of sequence by
     /// the caller — e.g. `push_rows` changing width/format mid-stream, or
     /// `finish()` called without any prior `push_rows()`. An API-protocol
@@ -692,6 +698,14 @@ impl Error {
     #[track_caller]
     pub fn policy_rejected(reason: &'static str) -> Self {
         Self::new(ErrorKind::PolicyRejected { reason })
+    }
+
+    /// Create an encode-policy rejection: a configured
+    /// [`EncodePolicy`](zencodec::encode::EncodePolicy) forbids what the
+    /// encode faithfully needs (see [`ErrorKind::EncodePolicyRejected`]).
+    #[track_caller]
+    pub fn encode_policy_rejected(reason: &'static str) -> Self {
+        Self::new(ErrorKind::EncodePolicyRejected { reason })
     }
 
     /// Create an invalid-state error: the caller invoked an operation out of
@@ -1081,6 +1095,7 @@ impl zencodec::CategorizedError for ErrorKind {
             // added later, give it its own variant/payload rather than
             // guessing here.
             Self::PolicyRejected { .. } => C::Policy(Pol::Decode),
+            Self::EncodePolicyRejected { .. } => C::Policy(Pol::Encode),
             // Caller-side API-protocol violation, not bad image data.
             Self::InvalidState { .. } => C::Request(Req::Invalid(Inv::State)),
             // Decode-side descriptor negotiation failure — same operation axis
@@ -1437,6 +1452,10 @@ mod tests {
             (
                 Error::policy_rejected("progressive JPEG rejected by decode policy"),
                 C::Policy(Pol::Decode),
+            ),
+            (
+                Error::encode_policy_rejected("EXIF forbidden for an oriented image"),
+                C::Policy(Pol::Encode),
             ),
             (
                 Error::invalid_state("finish() called without any push_rows()"),

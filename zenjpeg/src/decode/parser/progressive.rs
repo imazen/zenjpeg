@@ -411,8 +411,8 @@ impl<'a> JpegParser<'a> {
         configure_decoder_strictness(&mut decoder, self.strictness);
         install_progressive_huffman_tables(
             &mut decoder,
-            &self.dc_tables,
-            &self.ac_tables,
+            &self.dc_tables[..],
+            &self.ac_tables[..],
             scan_components,
         );
 

@@ -1,6 +1,6 @@
 #![cfg(feature = "metadata-rewrite")]
 // Reused unchanged expectations from zencodecs at aa21cba0.
-use zencodec::metadata_rewrite::{Action, Error, Request as ScrubRequest};
+use zencodec::metadata_rewrite::{Action, Error, RewriteRequest as ScrubRequest};
 trait PlanRequest<'a> {
     fn plan(&self) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error>;
 }
@@ -294,7 +294,7 @@ mod gain_map_scrub {
                 &self,
                 _: &[u8],
                 _: usize,
-                _: &dyn enough::Stop,
+                _: &dyn zencodec::Pulse,
             ) -> Result<Option<Vec<u8>>, Error> {
                 self.calls.set(self.calls.get() + 1);
                 Ok(Some(b"description".to_vec()))
@@ -304,7 +304,7 @@ mod gain_map_scrub {
                 _: &[u8],
                 required: &[u8],
                 _: usize,
-                _: &dyn enough::Stop,
+                _: &dyn zencodec::Pulse,
             ) -> Result<Vec<u8>, Error> {
                 Ok(if self.corrupt {
                     b"<invalid/>".to_vec()

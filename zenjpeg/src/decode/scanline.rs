@@ -38,8 +38,7 @@ use crate::color::ycbcr_to_rgb_f32;
 use crate::deblock::BoundaryStrength;
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_COMPONENTS, MAX_HUFFMAN_TABLES};
-use crate::huffman::HuffmanDecodeTable;
+use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_COMPONENTS};
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
 
@@ -100,8 +99,9 @@ pub struct ScanlineReader<'a> {
     quant_indices: [usize; 3], // Which quant table each component uses
 
     // Huffman tables (copied)
-    dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    // Only the streaming entropy route reads tables; the others hold none.
+    dc_tables: Option<super::parser::HuffmanTables>,
+    ac_tables: Option<super::parser::HuffmanTables>,
     table_mapping: [(usize, usize); 3], // (dc_table, ac_table) for each component
 
     // Entropy decoder state
@@ -342,8 +342,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_row_decoded: false,
             quant_tables,
             quant_indices,
-            dc_tables,
-            ac_tables,
+            dc_tables: Some(dc_tables),
+            ac_tables: Some(ac_tables),
             table_mapping,
             scan_data_start,
             decoder_state: None,
@@ -507,8 +507,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_row_decoded: false,
             quant_tables,
             quant_indices,
-            dc_tables: core::array::from_fn(|_| None),
-            ac_tables: core::array::from_fn(|_| None),
+            dc_tables: None,
+            ac_tables: None,
             table_mapping: [(0, 0); 3],
             scan_data_start: 0,
             decoder_state: None,
@@ -612,8 +612,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_row_decoded: false,
             quant_tables: [None, None, None, None],
             quant_indices: [0, 0, 0],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
+            dc_tables: None,
+            ac_tables: None,
             table_mapping: [(0, 0), (0, 0), (0, 0)],
             scan_data_start: 0,
             decoder_state: None,
@@ -917,8 +917,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_row_decoded: false,
             quant_tables: [None, None, None, None],
             quant_indices: [0, 0, 0],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
+            dc_tables: None,
+            ac_tables: None,
             table_mapping: [(0, 0), (0, 0), (0, 0)],
             scan_data_start: 0,
             decoder_state: None,
@@ -1202,10 +1202,10 @@ impl<'a> ScanlineReader<'a> {
         // Set up Huffman tables
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }
@@ -1343,10 +1343,10 @@ impl<'a> ScanlineReader<'a> {
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
 
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }
@@ -1857,10 +1857,10 @@ impl<'a> ScanlineReader<'a> {
 
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }

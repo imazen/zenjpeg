@@ -112,7 +112,7 @@ impl JpegParser<'_> {
                         start: self.position,
                         end: span.offset + span.length,
                         components,
-                        tables: self.dc_tables.clone(),
+                        tables: (*self.dc_tables).clone(),
                         state: None,
                         previous: try_alloc_vec(width * count, "lossless previous row")?,
                         predictor,

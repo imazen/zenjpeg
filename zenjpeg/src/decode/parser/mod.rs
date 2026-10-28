@@ -120,6 +120,23 @@ pub(super) fn component_block_grid(
     }
 }
 
+/// Huffman decode tables by DHT slot, boxed. Each table carries a 2 KiB
+/// fast-lookup array, and the parser, its scan handoff and the component-row
+/// reader are moved by value through every reader construction step; inline,
+/// two sets made each move about 18 KiB, and unoptimized builds give every
+/// move its own stack slot (2.1 MB of frames overflowed 2 MiB test threads).
+pub(in crate::decode) type HuffmanTables = Box<[Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES]>;
+
+/// An empty [`HuffmanTables`] set, allocated fallibly.
+pub(in crate::decode) fn empty_huffman_tables() -> Result<HuffmanTables> {
+    let mut tables = try_with_capacity(MAX_HUFFMAN_TABLES, "Huffman decode tables")?;
+    tables.resize_with(MAX_HUFFMAN_TABLES, || None);
+    tables
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|_| Error::internal("Huffman decode table count"))
+}
+
 /// Parsed JPEG scan data needed to construct a scanline reader.
 ///
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
@@ -134,8 +151,8 @@ pub(super) struct ParsedScanData<'a> {
     pub v_samp: [u8; 3],
     pub quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_QUANT_TABLES],
     pub quant_indices: [usize; 3],
-    pub dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    pub ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    pub dc_tables: HuffmanTables,
+    pub ac_tables: HuffmanTables,
     pub table_mapping: [(usize, usize); 3],
     pub scan_data_start: usize,
     pub restart_interval: u16,
@@ -207,8 +224,8 @@ pub(super) struct JpegParser<'a> {
     pub(super) quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_QUANT_TABLES],
     // Latch at the first scan for each component: DQT slots can be redefined.
     pub(super) component_quant: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_COMPONENTS],
-    pub(super) dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    pub(super) ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    pub(super) dc_tables: HuffmanTables,
+    pub(super) ac_tables: HuffmanTables,
 
     // Restart
     pub(super) restart_interval: u16,
@@ -436,8 +453,8 @@ impl<'a> JpegParser<'a> {
             components: std::array::from_fn(|_| Component::default()),
             quant_tables: [None, None, None, None],
             component_quant: [None; MAX_COMPONENTS],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
+            dc_tables: empty_huffman_tables()?,
+            ac_tables: empty_huffman_tables()?,
             restart_interval: 0,
             coeffs: Vec::new(),
             coeff_counts: Vec::new(),

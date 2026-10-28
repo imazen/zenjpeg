@@ -702,6 +702,27 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
+  unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
+  `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:
+  inline `[Option<HuffmanDecodeTable>; 4]` pairs (2 KiB fast-lookup each) in
+  the parser, scan handoff, scanline reader and component-row reader, copied
+  per by-value move. Boxed (`parser::HuffmanTables`); 574-581 KiB after.
+  Gate: `just stack-demand-check` (opt-level 0, 1 MiB threads; CI on Linux).
+  zenjpeg's own dev profile is opt-level 2, so its suites never saw this.
+
+- Fixed 2026-10-28: `BytesEncoder::push` and the planar pushes collapsed every
+  stop reason into `Error::cancelled()` (`should_stop()` instead of `check()`),
+  so a timed-out pulse surfaced as `Stopped(Cancelled)`. Regression:
+  `tests/encode_stop_reasons.rs` (every poll, one-shot/row/packed/strided/planar).
+
+- Open (found 2026-10-27 at zencodec `f5a7fd46`; the deprecation dates from `f73a7e0e`): nine test calls to the
+  deprecated `DecodeJob::with_policy` warn whenever `inventory` is enabled: `tests/bundled/ultrahdr_roundtrip.rs:1314,1404`
+  (`zencodec` + `inventory`) and `tests/bundled/inventory_review.rs:421,429,431,459,460,882,1225`. No strict-Clippy CI
+  set enables `inventory`, so CI stays green. `try_with_policy` is not a drop-in: `JpegDecodeJob::try_set_policy`
+  (`src/codec/decode.rs:306`) refuses `strict` and `allow_truncated: Some(true)`, which several of these tests set,
+  so each call needs a decision about what it should check.
+
 - Resolved during native-precision decoding: routing through a second metadata-preserving header parse duplicated extended XMP packets. Native routing now probes marker spans without extracting metadata; existing extended-XMP round-trip assertions cover the regression.
 
 - Resolved 2026-10-18 (PR237 review): single-scan preservation filtered out inert
@@ -1763,3 +1784,28 @@ helper: a run of two blocks with the standard AC table panics on missing symbol
 table presence before the asserting accessor; missing EOB symbols return an
 error, standard tables emit individual EOB codes, and run-capable tables retain
 compact coding. All exact-code regressions pass.
+
+## Known Bugs: zencodec colour carrier and 16-bit transfer (fixed on native-preflight, 2026-10-27)
+
+Reproduced on aeba4cf6 by `tests/source_color_binding.rs` (jpeg-decoder reads the
+samples and the ICC): the adapter chose its ICC from job `Metadata` only, so a checked
+`EncodeRequest` (no metadata) wrote Display P3 pixels untagged, whether the P3 came
+from the context ICC, context CICP or descriptor primaries (issue 154). Also: a stale
+metadata ICC survived an explicit sRGB context, Verbatim and `embed_icc(false)`
+dropped the only description, XYB accepted P3 pixels, linear P3 input got no carrier,
+and `RGB16_SRGB` (advertised) was encoded as linear light ((200,40,40) decoded as
+(229,111,111)). The colour contract now: the carrier describes the stored samples;
+context ICC > context CICP > non-default descriptor primaries; linear layouts are
+stored sRGB-encoded, so their carrier is (primaries, sRGB TRC) and an unidentified
+profile refuses. Metadata still labels pixels without an explicit colour context, even
+a non-default descriptor (`emit_integration` and zenpng's
+`explicit_icc_is_not_overridden_by_descriptor_derived_cicp` pin that contract), so only
+an explicit `ColorContext` can expose a stale metadata carrier. zencodec's
+`EncodeJob::plan_encode` / `Encoder::begin_declared` share one preparation with
+`begin`; `tests/row_planning.rs` compares them over 3,332 cells.
+
+Also fixed there: a configured `pre_blur` was applied only by packed RGB8 pushes
+(one-shot and accumulated encodes); `begin` + `push_rows` and `encode_from` skipped it
+and wrote different bytes for the same pixels. Row encodes now refuse it in preparation
+(`row_encodes_refuse_a_pre_blur_they_cannot_apply`). The native `pre_blur` doc still
+claims RGBA8 support; the code blurs only `Rgb8Srgb`.

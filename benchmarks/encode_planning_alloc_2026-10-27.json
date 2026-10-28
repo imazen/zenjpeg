@@ -1,0 +1,375 @@
+{
+  "source_revision": "8883edcfea4b31e2dd5eb20771eab37ebff2a5ba",
+  "binary_sha256": "bde75a7f4e63ee93803dd309c4c632bb89de380fc9e79e5bbe05b3b5eb373bd7",
+  "profile": "cargo dev profile (opt-level 2); heaptrack; no pixel reads or output consumption",
+  "dimensions": [
+    2048,
+    2048
+  ],
+  "scope": "direct zenjpeg jobs retained together; whole-process heap peak, not RSS, not a native-only total, not a bound for other sizes",
+  "started": "2026-10-27T14:48:51.379022+00:00",
+  "cells": [
+    {
+      "configuration": "fixed",
+      "colour": "srgb",
+      "stage": "prepare",
+      "jobs": 1,
+      "peak_heap_bytes": 75464,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "482c6f6354e4b9862276177c27165e618ea5567fed026129163849b1c6dddba6"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "srgb",
+      "stage": "prepare",
+      "jobs": 4,
+      "peak_heap_bytes": 76456,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "db8a308dbeff9452cdf0907a7439e2d223e6e4c31373f35676811e4c08c54ed6"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "srgb",
+      "stage": "plan",
+      "jobs": 1,
+      "peak_heap_bytes": 75464,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "5dac751693b70e1ff2675ad0bab7583317eb7874cf54c02c83f400c0e2604454"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "srgb",
+      "stage": "plan",
+      "jobs": 4,
+      "peak_heap_bytes": 76453,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "165f45bdfbc9d0b87feb3ddf83950ac8ceda41425fe9fc011204438d7b036a2d"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "srgb",
+      "stage": "begin",
+      "jobs": 1,
+      "peak_heap_bytes": 1836476,
+      "allocation_calls": 149,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "53264429069ef7269bcaf0b49d721dae7408d08d4addcff73ef66f7f0e2c75f7"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "srgb",
+      "stage": "begin",
+      "jobs": 4,
+      "peak_heap_bytes": 7119326,
+      "allocation_calls": 539,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "2d643df0560c3fd65e999eb196608dbb777d72f55aed8354d1a0973b5511235d"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-icc",
+      "stage": "prepare",
+      "jobs": 1,
+      "peak_heap_bytes": 75490,
+      "allocation_calls": 19,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "cd8380cfc76142e685669c0b97be5d9da074ef78a57fe515539d32af26e75a93"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-icc",
+      "stage": "prepare",
+      "jobs": 4,
+      "peak_heap_bytes": 76954,
+      "allocation_calls": 19,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "3b8421708084e69446340c1abd0cac1336ff2ae9033037fd42c95f8b8be50ba7"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-icc",
+      "stage": "plan",
+      "jobs": 1,
+      "peak_heap_bytes": 75967,
+      "allocation_calls": 20,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "367cdb731db4878ca1e728a1e568f707eb0b32ae0a7017ca1119cd2416513fc6"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-icc",
+      "stage": "plan",
+      "jobs": 4,
+      "peak_heap_bytes": 77431,
+      "allocation_calls": 23,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "cdd420494107d475ac089eb99338b8b5e79f0df386fa1417835ecd0f4768380d"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-icc",
+      "stage": "begin",
+      "jobs": 1,
+      "peak_heap_bytes": 1838496,
+      "allocation_calls": 157,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "0317bf0d76e4eca11f51fb5fd091e50564dcefe5cb23826cfa3bdbf862f9abaa"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-icc",
+      "stage": "begin",
+      "jobs": 4,
+      "peak_heap_bytes": 7122840,
+      "allocation_calls": 568,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "8c8bf82238c74be7d2c8d076bc6e122849afbc6e40aeaf9baf4fd685103646af"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-descriptor",
+      "stage": "prepare",
+      "jobs": 1,
+      "peak_heap_bytes": 75464,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "4339d8637a83168aa89201548ffa75976964ededa02895fabf9312256735ac28"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-descriptor",
+      "stage": "prepare",
+      "jobs": 4,
+      "peak_heap_bytes": 76465,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "af7324cb0e5d49294f60c1aed8dd43c03c01d739013ef5d71098c7e97a3f1370"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-descriptor",
+      "stage": "plan",
+      "jobs": 1,
+      "peak_heap_bytes": 81094,
+      "allocation_calls": 21,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "352c7dae518adb18f4fd105b377474f134a0c821445dbec5b0be8e7e8f31c139"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-descriptor",
+      "stage": "plan",
+      "jobs": 4,
+      "peak_heap_bytes": 82558,
+      "allocation_calls": 24,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "f19d0cc75f77bea3d35406443a4caaea7d86452c3cfec03383afe0a45bdf5cab"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-descriptor",
+      "stage": "begin",
+      "jobs": 1,
+      "peak_heap_bytes": 1843623,
+      "allocation_calls": 158,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "c4096aa1cd59e75de192624535e220829005e4574823f97b9b09594825b34b9a"
+    },
+    {
+      "configuration": "fixed",
+      "colour": "p3-descriptor",
+      "stage": "begin",
+      "jobs": 4,
+      "peak_heap_bytes": 7127847,
+      "allocation_calls": 569,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "a97c5b0296c34c3bc1ea0b44e8501e15f7d01229df8d98ca55459c9d5d15c8ff"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "srgb",
+      "stage": "prepare",
+      "jobs": 1,
+      "peak_heap_bytes": 75464,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "e089bdec2ee47a2d727313e218d14dc09e0f1022649b93a0829c1b7be35669b0"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "srgb",
+      "stage": "prepare",
+      "jobs": 4,
+      "peak_heap_bytes": 76462,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "222b6d8d907c7b79d9963d100e679ce04e64f1b307953168184e3a2058019be0"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "srgb",
+      "stage": "plan",
+      "jobs": 1,
+      "peak_heap_bytes": 75464,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "b334196752a74315a4a472f84c0c901adb99450b2e244cbf00c45913c37f04c0"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "srgb",
+      "stage": "plan",
+      "jobs": 4,
+      "peak_heap_bytes": 76459,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "075cffa0f1ce0503ca698276edcecbe39dfab6c1e6ed7bcbe2efd757a481aa39"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "srgb",
+      "stage": "begin",
+      "jobs": 1,
+      "peak_heap_bytes": 14573740,
+      "allocation_calls": 53,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "e84c99a99c9c34a5d7c247b73d72d9173fc257e5ba051176e76c38b63e0d4410"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "srgb",
+      "stage": "begin",
+      "jobs": 4,
+      "peak_heap_bytes": 58071436,
+      "allocation_calls": 155,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "d51678f433b866de3e6915f0d22db4080701f6dc8fa6695b58b2ada17d656d1c"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-icc",
+      "stage": "prepare",
+      "jobs": 1,
+      "peak_heap_bytes": 75496,
+      "allocation_calls": 19,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "9af1cfa677ad04ea7b3a5c1e5f2c468a0647cb53ce7bf53211a1d9fb07bc7181"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-icc",
+      "stage": "prepare",
+      "jobs": 4,
+      "peak_heap_bytes": 76960,
+      "allocation_calls": 19,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "e5c7faf052c895e43dcb50712b0afddd4c4bb30e5a5adcff6b1db4faf56ce8fa"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-icc",
+      "stage": "plan",
+      "jobs": 1,
+      "peak_heap_bytes": 75973,
+      "allocation_calls": 20,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "562169827c219e15ac660cacfcdd0c2d9bf1cd9b70ddc099afd27a926ccab830"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-icc",
+      "stage": "plan",
+      "jobs": 4,
+      "peak_heap_bytes": 77437,
+      "allocation_calls": 23,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "2531bf453b3cabbc35f742b0c188991cb68ce9893f2ee49db1b2e65b5ccfabb5"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-icc",
+      "stage": "begin",
+      "jobs": 1,
+      "peak_heap_bytes": 14574718,
+      "allocation_calls": 56,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "16d0b3342c5895785d570e4f4f8b21a7d081ef8d97761b8c17e8087528a62906"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-icc",
+      "stage": "begin",
+      "jobs": 4,
+      "peak_heap_bytes": 58073854,
+      "allocation_calls": 164,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "ec1b64c652e4976d6e42f83de3dc3a06125d4b2b5729dc7ced15a771b2ac6896"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-descriptor",
+      "stage": "prepare",
+      "jobs": 1,
+      "peak_heap_bytes": 75464,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "b6dd9e4141a3348e3ce55bb6298e719b2fc1bdd494ddc2b9ec727227c7e99761"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-descriptor",
+      "stage": "prepare",
+      "jobs": 4,
+      "peak_heap_bytes": 76471,
+      "allocation_calls": 18,
+      "live_bytes_at_exit": 548,
+      "raw_sha256": "e5585d2702bc58a5325f4cb2cee45807663f2daded2956c55d9ca3d4f6d8797c"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-descriptor",
+      "stage": "plan",
+      "jobs": 1,
+      "peak_heap_bytes": 81100,
+      "allocation_calls": 21,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "1c31940701fae18f8362bb5e579e8fa6fcac606ffbc3ed90523affc59cd25d73"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-descriptor",
+      "stage": "plan",
+      "jobs": 4,
+      "peak_heap_bytes": 82564,
+      "allocation_calls": 24,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "f19f4749637dbfd21242a05d4010fb871a79c2559330df60e13afa6aec67a0a0"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-descriptor",
+      "stage": "begin",
+      "jobs": 1,
+      "peak_heap_bytes": 14579845,
+      "allocation_calls": 57,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "f7f8a12d468f4f74fcc0215312ca4aa2c7442660da49fb31b0c3428c04465078"
+    },
+    {
+      "configuration": "progressive",
+      "colour": "p3-descriptor",
+      "stage": "begin",
+      "jobs": 4,
+      "peak_heap_bytes": 58078861,
+      "allocation_calls": 165,
+      "live_bytes_at_exit": 6204,
+      "raw_sha256": "8eb503937c0657d3ea1d612b0ce4a9493fef56d274589ef206a4b46127f9a731"
+    }
+  ],
+  "updated": "2026-10-27T14:48:58.194812+00:00",
+  "completed": "2026-10-27T14:48:58.195083+00:00"
+}

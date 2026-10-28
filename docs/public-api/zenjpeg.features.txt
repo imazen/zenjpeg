@@ -17,7 +17,7 @@
 #   struct fields                             158
 #   enum variants                             146
 #   re-exports                                 25
-#   trait roster entries (type × trait)       306
+#   trait roster entries (type × trait)       307
 #   auto-trait-complete types                  69
 #   auto-trait exceptions                       7
 #
@@ -357,7 +357,7 @@ pub layout::LayoutResult::height: u32
 pub layout::LayoutResult::lossless: bool
 pub layout::LayoutResult::width: u32
 pub mod metadata
-pub fn metadata::rewrite<'a>(&zencodec::metadata_rewrite::Request<'a>) -> core::result::Result<zencodec::metadata_rewrite::Plan<'a>, zencodec::metadata_rewrite::Error>
+pub fn metadata::rewrite<'a>(&zencodec::metadata_rewrite::RewriteRequest<'a>) -> core::result::Result<zencodec::metadata_rewrite::Plan<'a>, zencodec::metadata_rewrite::Error>
 pub mod recompress
 pub mod recompress::expert
 pub enum recompress::expert::ActivityTier
@@ -630,7 +630,7 @@ CmykHandling: Clone, Copy, Debug, Default, Eq, PartialEq
 JpegDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
 JpegDecoder<'_>: zencodec::traits::decoder::Decode
 JpegDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
-JpegEncodeJob: zencodec::traits::encoding::EncodeJob
+JpegEncodeJob: Clone, zencodec::traits::encoding::EncodeJob
 JpegEncoder: zencodec::traits::encoder::Encoder
 JpegEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
 JpegStreamingDecoder<'_>: zencodec::traits::decoder::StreamingDecode

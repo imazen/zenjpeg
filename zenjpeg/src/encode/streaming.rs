@@ -248,46 +248,9 @@ impl StreamingEncoder {
 
     /// Creates a streaming encoder from builder configuration.
     pub(crate) fn from_builder(mut builder: StreamingEncoderBuilder) -> Result<Self> {
-        // Header, coefficient order, frequency counting and restart units must
-        // all agree for a single-component frame, including direct builders.
-        if builder.gray_output || builder.pixel_format.is_grayscale() {
-            builder.subsampling = Subsampling::S444;
-        }
+        builder.validate_input()?;
         let width = builder.width as usize;
         let height = builder.height as usize;
-
-        if width == 0 || height == 0 {
-            return Err(Error::invalid_dimensions(
-                builder.width,
-                builder.height,
-                "dimensions must be non-zero",
-            ));
-        }
-
-        if builder.use_rgb {
-            if builder.use_xyb {
-                return Err(Error::invalid_config(
-                    "RGB passthrough mode and XYB mode are mutually exclusive".into(),
-                ));
-            }
-            if builder.subsampling != Subsampling::S444 {
-                return Err(Error::invalid_config(
-                    "RGB passthrough mode requires 4:4:4 (no chroma subsampling)".into(),
-                ));
-            }
-            match builder.pixel_format {
-                crate::types::PixelFormat::Rgb
-                | crate::types::PixelFormat::Rgba
-                | crate::types::PixelFormat::Bgr
-                | crate::types::PixelFormat::Bgra
-                | crate::types::PixelFormat::Bgrx => {}
-                _ => {
-                    return Err(Error::unsupported_feature(
-                        "RGB passthrough mode requires an 8-bit RGB-family pixel format",
-                    ));
-                }
-            }
-        }
 
         // Generate quantization tables and zero-bias params. Shared with
         // `EncoderConfig::resolve_plan` (encode::plan::resolve_quant_tables)
@@ -316,10 +279,7 @@ impl StreamingEncoder {
 
         // Determine if we can use streaming-through encoding early,
         // so StripProcessor can allocate minimal block storage.
-        let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
-            && builder.mode != JpegMode::Progressive
-            && !builder.use_xyb
-            && !builder.use_rgb;
+        let enable_streaming = builder.streams_output();
 
         // Create strip processor with quant tables provided at construction.
         // In streaming-through mode, only allocate one strip of block storage.

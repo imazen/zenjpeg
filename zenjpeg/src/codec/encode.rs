@@ -1,11 +1,15 @@
 //! zencodec encode-side impls: `JpegEncoderConfig` / `JpegEncodeJob` / `JpegEncoder`.
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use whereat::At;
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, Metadata, ResourceLimits, UnsupportedOperation};
-use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{
+    Cicp, ColorContext, ColorModel, ColorPrimaries, ColorProfileSource, PixelDescriptor,
+    PixelSlice, PixelSliceMut, TransferFunction,
+};
 
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
@@ -286,7 +290,11 @@ impl Default for JpegEncoderConfig {
     }
 }
 
-/// Supported encode pixel formats (native, zero-conversion paths).
+/// Supported encode pixel formats.
+///
+/// The native 16-bit layouts hold linear light, like the f32 ones.
+/// sRGB-encoded 16-bit samples are decoded to linear f32 on the way in
+/// ([`srgb16_layout`]); the linear 16-bit descriptors need no conversion.
 static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
@@ -300,7 +308,25 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBF32_LINEAR,
     PixelDescriptor::RGBAF32_LINEAR,
     PixelDescriptor::GRAYF32_LINEAR,
+    linear16(zenpixels::ChannelLayout::Rgb, None),
+    linear16(
+        zenpixels::ChannelLayout::Rgba,
+        Some(zenpixels::AlphaMode::Straight),
+    ),
+    linear16(zenpixels::ChannelLayout::Gray, None),
 ];
+
+const fn linear16(
+    layout: zenpixels::ChannelLayout,
+    alpha: Option<zenpixels::AlphaMode>,
+) -> PixelDescriptor {
+    PixelDescriptor::new(
+        zenpixels::ChannelType::U16,
+        layout,
+        alpha,
+        TransferFunction::Linear,
+    )
+}
 
 /// Map generic quality (libjpeg-turbo scale) to jpegli native quality.
 ///
@@ -507,7 +533,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     fn job(self) -> Self::Job {
         JpegEncodeJob {
             config: self,
-            stop: None,
+            pulse: None,
             metadata: None,
             limits: ResourceLimits::none(),
             policy: None,
@@ -522,9 +548,10 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
 ///
 /// Created by [`JpegEncoderConfig::job()`]. Borrows temporary data (stop token,
 /// metadata) and is consumed by creating a [`JpegEncoder`].
+#[derive(Clone)]
 pub struct JpegEncodeJob {
     config: JpegEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    pulse: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -538,8 +565,8 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     type Enc = JpegEncoder;
     type AnimationFrameEnc = ();
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: zencodec::SharedPulse) -> Self {
+        self.pulse = Some(pulse);
         self
     }
 
@@ -580,6 +607,30 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
+    /// The plan [`Encoder::begin_declared`](zencodec::encode::Encoder::begin_declared)
+    /// returns for this job and declaration: one ordered row pass, with the
+    /// output timing of the native row encoder.
+    ///
+    /// Runs the same validation, limits, colour binding and native builder
+    /// geometry as `begin_declared`, without starting native pixel or
+    /// coefficient storage. Configuration and metadata preparation may
+    /// allocate (a synthesized ICC profile, for example); this is not a memory
+    /// bound. `declaration.color` is the current interpretation of the rows
+    /// that will follow; retain this exact job, because the plan describes it
+    /// and nothing else. JPEG never patches earlier bytes, so the declared
+    /// access does not change the layout. Colour carriers are not reported
+    /// yet (`carriers: None`, unknown). Errors are the job's own
+    /// `At<CodecError>`, boxed.
+    fn plan_encode(
+        &self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, zencodec::encode::BoxedError> {
+        let start = zencodec::encode::EncodeJob::encoder(self.clone())
+            .and_then(|encoder| encoder.prepare_rows(declaration).map_err(Into::into))
+            .map_err(|e| Box::new(e) as zencodec::encode::BoxedError)?;
+        Ok(zencodec::encode::EncodePlan::rows(start.timing))
+    }
+
     fn encoder(self) -> Result<JpegEncoder, Self::Error> {
         #[allow(unused_mut)]
         let mut cfg = self.config.effective_config();
@@ -602,7 +653,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
 
         Ok(JpegEncoder {
             effective_config: cfg,
-            stop: self.stop,
+            pulse: self.pulse,
             metadata: self.metadata,
             limits: self.limits,
             policy: self.policy,
@@ -612,6 +663,9 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             row_descriptor: None,
             sent: 0,
             begun: false,
+            bound: None,
+            checked_context: None,
+            srgb16_rows: Vec::new(),
         })
     }
 
@@ -628,7 +682,9 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
 /// and the `encode_srgba8()` convenience method.
 pub struct JpegEncoder {
     effective_config: EncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// Cancellation and progress control. The native encoder polls it as a
+    /// `Stop`; nothing reports progress through it yet.
+    pulse: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -648,6 +704,13 @@ pub struct JpegEncoder {
     begun: bool,
     /// Image dimensions from `begin` or `with_canvas_size`.
     image_size: Option<(u32, u32)>,
+    /// The colour description the header was (or will be) written from,
+    /// fixed when the row encode starts.
+    bound: Option<ColorBinding>,
+    /// The last row colour context found consistent with `bound`.
+    checked_context: Option<Arc<ColorContext>>,
+    /// Reused linear f32 rows for 16-bit sRGB input (`decode_srgb16`).
+    srgb16_rows: Vec<u8>,
 }
 
 /// Internal buffer for accumulating pushed rows.
@@ -659,26 +722,210 @@ struct RowAccumulator {
     descriptor: PixelDescriptor,
 }
 
+/// What a row encode decides before native startup.
+struct RowStart {
+    layout: PixelLayout,
+    binding: ColorBinding,
+    timing: zencodec::encode::OutputTiming,
+}
+
+/// What the stored samples mean, as a reader of the written file must
+/// interpret them.
+#[derive(Clone, Debug, PartialEq)]
+enum StoredColor {
+    /// The pixels assert nothing beyond the format default (sRGB).
+    Default,
+    /// This profile describes the stored samples.
+    Icc(Arc<[u8]>),
+    /// These code points describe the stored samples.
+    Cicp(Cicp),
+}
+
+impl StoredColor {
+    fn parts(&self) -> (Option<&[u8]>, Option<Cicp>) {
+        match self {
+            Self::Default => (None, None),
+            Self::Icc(icc) => (Some(icc), None),
+            Self::Cicp(cicp) => (None, Some(*cicp)),
+        }
+    }
+}
+
+/// Which description the colour carrier is written from.
+#[derive(Clone, Debug, PartialEq)]
+enum ColorBinding {
+    /// The job metadata, which the pixels agree with or do not contradict.
+    Metadata,
+    /// The stored samples' own interpretation.
+    Stored(StoredColor),
+}
+
+/// Linear-light layouts, which the encoder stores sRGB-encoded.
+fn stores_linear_as_srgb(layout: PixelLayout) -> bool {
+    layout.is_16bit() || (layout.is_float() && !layout.is_ycbcr())
+}
+
+/// Whether the encoder's sRGB encoding changes what the input samples mean:
+/// linear input does, 16-bit sRGB input (decoded to linear first) does not.
+fn transfer_changes(layout: PixelLayout, descriptor: PixelDescriptor) -> bool {
+    stores_linear_as_srgb(layout) && descriptor.transfer() != TransferFunction::Srgb
+}
+
+/// U8 bytes whose interpretation only a retained ICC gives (`pixel_layout`).
+fn is_profile_tagged(descriptor: PixelDescriptor) -> bool {
+    descriptor_to_layout(descriptor).is_err() && srgb16_layout(descriptor).is_none()
+}
+
+/// `primaries` with the sRGB transfer: what sRGB-encoded storage of linear
+/// samples in those primaries means.
+fn srgb_encoded(primaries: ColorPrimaries, gray: bool) -> Result<StoredColor, Error> {
+    if gray {
+        return Ok(StoredColor::Cicp(Cicp::new(2, 13, 0, true)));
+    }
+    primaries
+        .to_cicp()
+        .map(|code| StoredColor::Cicp(Cicp::new(code, 13, 0, true)))
+        .ok_or_else(|| {
+            Error::icc_error(
+                "these primaries have no code point to synthesize a profile from; attach \
+                 their ICC profile to the pixels"
+                    .into(),
+            )
+        })
+}
+
+/// The primaries and transfer a description identifies. `None` for an
+/// unidentified profile or code points zenpixels cannot name; an empty
+/// description is the sRGB default.
+fn identify(
+    (icc, cicp): (Option<&[u8]>, Option<Cicp>),
+) -> Option<(ColorPrimaries, TransferFunction)> {
+    match (icc, cicp) {
+        (Some(icc), _) => ColorProfileSource::Icc(icc).resolve(),
+        (None, Some(cicp)) => ColorProfileSource::Cicp(cicp).resolve(),
+        (None, None) => Some((ColorPrimaries::Bt709, TransferFunction::Srgb)),
+    }
+}
+
+/// Whether two descriptions mean the same: identical profile bytes or code
+/// points, or the same identified primaries and transfer (only the transfer
+/// for grayscale samples).
+fn same_meaning(
+    a: (Option<&[u8]>, Option<Cicp>),
+    b: (Option<&[u8]>, Option<Cicp>),
+    gray: bool,
+) -> bool {
+    if a.0.is_some() && a.0 == b.0 || a.0.is_none() && b.0.is_none() && a.1 == b.1 {
+        return true;
+    }
+    match (identify(a), identify(b)) {
+        (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
+        _ => false,
+    }
+}
+
+/// Whether a description is identified as something other than the sRGB
+/// default: non-default code points, or a profile zenpixels identifies.
+fn is_identified_non_default((icc, cicp): (Option<&[u8]>, Option<Cicp>), gray: bool) -> bool {
+    match icc.map(|icc| ColorProfileSource::Icc(icc).resolve()) {
+        Some(Some((primaries, transfer))) => {
+            transfer != TransferFunction::Srgb || !gray && primaries != ColorPrimaries::Bt709
+        }
+        Some(None) | None => cicp.is_some_and(|c| !is_default_meaning((None, Some(c)), gray)),
+    }
+}
+
+/// Whether a description is the sRGB default an untagged JPEG already means.
+fn is_default_meaning((icc, cicp): (Option<&[u8]>, Option<Cicp>), gray: bool) -> bool {
+    match (icc, cicp) {
+        (None, None) => true,
+        (None, Some(c)) => {
+            matches!(c.transfer_characteristics, 2 | 13)
+                && (gray || matches!(c.color_primaries, 1 | 2))
+        }
+        (Some(icc), _) => {
+            zenpixels::icc::is_common_srgb(icc)
+                || matches!(
+                    ColorProfileSource::Icc(icc).resolve(),
+                    Some((primaries, TransferFunction::Srgb))
+                        if gray || primaries == ColorPrimaries::Bt709
+                )
+        }
+    }
+}
+
 impl JpegEncoder {
     /// Get a reference to the stop token, defaulting to Unstoppable.
     fn stop_ref(&self) -> &dyn enough::Stop {
-        match self.stop {
+        match self.pulse {
             Some(ref s) => s,
             None => &enough::Unstoppable,
         }
     }
 
-    /// Build an EncodeRequest from current config + metadata, applying policy.
-    ///
-    /// `channel_count` is the channel count of the pixels being encoded
-    /// (1 = gray, 3 = RGB, 4 = RGBA); it lets the color-emit resolver
-    /// suppress ICC synthesis for grayscale, where an RGB profile would
-    /// recolor the image. Pass `None` when the count is not yet known.
-    fn build_request(
+    /// Everything `begin_declared` decides before native startup: layout,
+    /// colour carrier and output timing. `plan_encode` reports it, and
+    /// startup begins the native encoder from the same value.
+    fn prepare_rows(
         &self,
-        channel_count: Option<u8>,
-    ) -> Result<crate::encode::request::EncodeRequest<'_>, Error> {
-        self.build_request_from(&self.effective_config, channel_count)
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<RowStart, Error> {
+        // JPEG output is append-only: seek-back access permits nothing more.
+        let (width, height, descriptor, context) = (
+            declaration.width,
+            declaration.height,
+            declaration.descriptor,
+            declaration.color,
+        );
+        self.stop_ref().check()?;
+        if self.image_size.is_some_and(|s| s != (width, height)) {
+            return Err(Error::invalid_state(
+                "begin: size differs from with_canvas_size",
+            ));
+        }
+        let layout = self.pixel_layout(descriptor)?;
+        self.check_row_filters(layout)?;
+        self.check_limits(width, height, layout)?;
+        let binding = self.bind_color(descriptor, context, layout)?;
+        let lag = self
+            .build_request(layout, &binding)?
+            .plan_byte_output(width, height, layout)?;
+        Ok(RowStart {
+            layout,
+            timing: self.timing(lag, height),
+            binding,
+        })
+    }
+
+    /// Row output timing for a native lag (`None`: everything at `finish`).
+    ///
+    /// Keeps the configuration's established conservative lag bound even
+    /// when gray input uses smaller, single-component coding units. The bound
+    /// describes availability, not coefficient/restart geometry. Holding every
+    /// row would be no stream at all: the header alone is not worth a chunked
+    /// response.
+    fn timing(&self, lag: Option<u32>, height: u32) -> zencodec::encode::OutputTiming {
+        use zencodec::encode::OutputTiming;
+        let configured_lag = match self.effective_config.color_mode {
+            crate::encode::encoder_types::ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::Quarter,
+            } => 31,
+            _ => 15,
+        };
+        match lag.map(|lag| lag.max(configured_lag)) {
+            Some(lag) if lag < height => OutputTiming::streaming(lag),
+            _ => OutputTiming::AT_FINISH,
+        }
+    }
+
+    /// Build an EncodeRequest from the current config, the bound colour
+    /// carrier and the job's metadata, applying policy.
+    fn build_request<'b>(
+        &'b self,
+        layout: PixelLayout,
+        binding: &'b ColorBinding,
+    ) -> Result<crate::encode::request::EncodeRequest<'b>, Error> {
+        self.build_request_from(&self.effective_config, layout, binding)
     }
 
     /// Nonlinear byte encoders consume stored sample values without a transfer
@@ -690,6 +937,9 @@ impl JpegEncoder {
             AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, SignalRange, TransferFunction,
         };
         if let Ok(layout) = descriptor_to_layout(desc) {
+            return Ok(layout);
+        }
+        if let Some(layout) = srgb16_layout(desc) {
             return Ok(layout);
         }
         if desc.channel_type() != ChannelType::U8
@@ -770,12 +1020,16 @@ impl JpegEncoder {
         }
     }
 
-    fn check_profile_context(&self, pixels: &PixelSlice<'_>) -> Result<(), Error> {
+    fn check_declared_context(
+        &self,
+        descriptor: PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+    ) -> Result<(), Error> {
         if matches!(
-            pixels.descriptor().transfer(),
+            descriptor.transfer(),
             zenpixels::TransferFunction::Unknown | zenpixels::TransferFunction::Gamma22
-        ) && pixels.descriptor().channel_type() == zenpixels::ChannelType::U8
-            && let Some(context) = pixels.color_context()
+        ) && descriptor.channel_type() == zenpixels::ChannelType::U8
+            && let Some(context) = context
             && (context.cicp.is_some()
                 || context.icc.as_ref()
                     != self.metadata.as_ref().and_then(|m| m.icc_profile.as_ref()))
@@ -784,6 +1038,193 @@ impl JpegEncoder {
                 "current pixel context differs from the retained ICC metadata".into(),
             ));
         }
+        Ok(())
+    }
+
+    /// What the stored samples mean, from the pixels being encoded: their
+    /// colour context, then the primaries their descriptor asserts.
+    ///
+    /// Linear layouts are stored sRGB-encoded, so their interpretation is the
+    /// same primaries with the sRGB transfer: a profile or code points that
+    /// described the linear samples no longer apply, and an unidentified
+    /// profile cannot be carried across that transform.
+    fn stored_color(
+        &self,
+        descriptor: PixelDescriptor,
+        context: Option<&ColorContext>,
+        layout: PixelLayout,
+    ) -> Result<StoredColor, Error> {
+        let gray = layout.is_grayscale();
+        let linear = transfer_changes(layout, descriptor);
+        // BT.709 is what every untagged buffer is labelled with, so only other
+        // primaries are an assertion. Grayscale has no primaries.
+        let asserted = match descriptor.primaries {
+            _ if gray => None,
+            ColorPrimaries::Unknown | ColorPrimaries::Bt709 => None,
+            primaries => Some(primaries),
+        };
+        let refuse = |reason: &str| Err(Error::icc_error(reason.into()));
+        if let Some(icc) = context.and_then(|c| c.icc.as_ref()) {
+            let channels = if gray {
+                ColorModel::Gray
+            } else {
+                ColorModel::Rgb
+            };
+            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+                return refuse("the pixels' ICC profile does not describe their channels");
+            }
+            let identified = ColorProfileSource::Icc(icc).resolve();
+            if let Some(cicp) = context.and_then(|c| c.cicp)
+                && (identified.is_none() || identified != ColorProfileSource::Cicp(cicp).resolve())
+            {
+                return refuse("the pixels' ICC profile and code points disagree");
+            }
+            if asserted.is_some() && identified.map(|(p, _)| p) != asserted {
+                return refuse("the descriptor's primaries contradict the pixels' ICC profile");
+            }
+            if !linear {
+                return Ok(StoredColor::Icc(Arc::clone(icc)));
+            }
+            return match identified {
+                Some((primaries, TransferFunction::Linear)) => srgb_encoded(primaries, gray),
+                Some(_) => refuse("the pixels' ICC profile does not describe linear samples"),
+                None => refuse(
+                    "an unidentified ICC profile cannot describe the sRGB-encoded samples \
+                     stored for linear input",
+                ),
+            };
+        }
+        if let Some(cicp) = context.and_then(|c| c.cicp) {
+            if cicp.matrix_coefficients != 0 || !cicp.full_range {
+                return refuse("YCbCr or narrow-range code points do not describe RGB samples");
+            }
+            if asserted.is_some() && ColorPrimaries::from_cicp(cicp.color_primaries) != asserted {
+                return refuse("the descriptor's primaries contradict the pixels' code points");
+            }
+            if !linear {
+                return Ok(StoredColor::Cicp(cicp));
+            }
+            if cicp.transfer_characteristics != 8 {
+                return refuse("the pixels' code points do not describe linear samples");
+            }
+            return Ok(StoredColor::Cicp(Cicp::new(
+                cicp.color_primaries,
+                13,
+                0,
+                true,
+            )));
+        }
+        match asserted {
+            None => Ok(StoredColor::Default),
+            Some(primaries) => srgb_encoded(primaries, gray),
+        }
+    }
+
+    /// Decide which description the colour carrier is written from.
+    ///
+    /// Job metadata labels pixels without an explicit colour context, even when
+    /// their descriptor names other primaries (the established contract, also
+    /// zenpng's `explicit_icc_is_not_overridden_by_descriptor_derived_cicp`).
+    /// It must agree with an explicit context: a profile kept after a
+    /// conversion is a stale carrier. Without colour metadata the stored
+    /// samples' own interpretation is written, so a checked request, which
+    /// carries no metadata, keeps the pixels' colour.
+    fn bind_color(
+        &self,
+        descriptor: PixelDescriptor,
+        context: Option<&ColorContext>,
+        layout: PixelLayout,
+    ) -> Result<ColorBinding, Error> {
+        if is_profile_tagged(descriptor) {
+            // Profile-tagged bytes: `pixel_layout` admitted them only with a
+            // matching retained ICC, and the context must be that profile.
+            self.check_declared_context(descriptor, context)?;
+            return Ok(ColorBinding::Metadata);
+        }
+        let gray = layout.is_grayscale();
+        let stored = self.stored_color(descriptor, context, layout)?;
+        let metadata = self
+            .metadata
+            .as_ref()
+            .filter(|m| m.icc_profile.is_some() || m.cicp.is_some())
+            .map(|m| (m.icc_profile.as_deref(), m.cicp));
+        if matches!(
+            self.effective_config.color_mode,
+            crate::encode::encoder_types::ColorMode::Xyb { .. }
+        ) && (!is_default_meaning(stored.parts(), gray)
+            || metadata.is_some_and(|m| !is_default_meaning(m, gray)))
+        {
+            // XYB converts from sRGB primaries and writes its own profile.
+            return Err(Error::icc_error(
+                "XYB encoding assumes sRGB primaries; convert these pixels first".into(),
+            ));
+        }
+        let Some(metadata) = metadata else {
+            return Ok(ColorBinding::Stored(stored));
+        };
+        let explicit = context.is_some_and(|c| c.icc.is_some() || c.cicp.is_some());
+        if !explicit {
+            if transfer_changes(layout, descriptor)
+                && matches!(identify(metadata), Some((_, TransferFunction::Linear)))
+            {
+                return Err(Error::icc_error(
+                    "the colour metadata describes linear samples, which this encoder \
+                     stores sRGB-encoded"
+                        .into(),
+                ));
+            }
+            return Ok(ColorBinding::Metadata);
+        }
+        if same_meaning(metadata, stored.parts(), gray) {
+            Ok(ColorBinding::Metadata)
+        } else {
+            Err(Error::icc_error(
+                "the colour metadata contradicts the pixels' current colour".into(),
+            ))
+        }
+    }
+
+    /// Rows after the header must mean what the header says. Rows without a
+    /// colour context assert nothing.
+    fn check_rows_color(
+        &mut self,
+        rows: &PixelSlice<'_>,
+        layout: PixelLayout,
+    ) -> Result<(), Error> {
+        let Some(context) = rows.color_context() else {
+            return Ok(());
+        };
+        if self
+            .checked_context
+            .as_ref()
+            .is_some_and(|checked| Arc::ptr_eq(checked, context))
+        {
+            return Ok(());
+        }
+        let descriptor = rows.descriptor();
+        if is_profile_tagged(descriptor) {
+            self.check_declared_context(descriptor, Some(context))?;
+        } else {
+            let stored = self.stored_color(descriptor, Some(context), layout)?;
+            let header = match &self.bound {
+                Some(ColorBinding::Stored(header)) => header.parts(),
+                Some(ColorBinding::Metadata) => self
+                    .metadata
+                    .as_ref()
+                    .map_or((None, None), |m| (m.icc_profile.as_deref(), m.cicp)),
+                None => return Err(Error::internal("row colour checked before binding")),
+            };
+            if stored != StoredColor::Default
+                && !same_meaning(header, stored.parts(), layout.is_grayscale())
+            {
+                return Err(Error::icc_error(
+                    "the rows' colour context differs from the colour declared before \
+                     the header; declare it with begin_declared"
+                        .into(),
+                ));
+            }
+        }
+        self.checked_context = Some(Arc::clone(context));
         Ok(())
     }
 
@@ -805,76 +1246,115 @@ impl JpegEncoder {
     fn build_request_from<'b>(
         &'b self,
         config: &'b EncoderConfig,
-        channel_count: Option<u8>,
+        layout: PixelLayout,
+        binding: &'b ColorBinding,
     ) -> Result<crate::encode::request::EncodeRequest<'b>, Error> {
         let mut req = config.request();
-        if let Some(ref meta) = self.metadata {
-            let policy = self.policy.unwrap_or_default();
-            if policy.resolve_icc(true) {
-                let color_policy = policy.resolve_color(zencodec::ColorEmitPolicy::Balanced);
-                let mut src = zencodec::SourceColor::default();
-                if let Some(n) = channel_count {
-                    src = src.with_channel_count(n);
+        let policy = self.policy.unwrap_or_default();
+        let gray = layout.is_grayscale();
+        let (icc, cicp) = match binding {
+            ColorBinding::Metadata => self
+                .metadata
+                .as_ref()
+                .map_or((None, None), |m| (m.icc_profile.as_ref(), m.cicp)),
+            ColorBinding::Stored(StoredColor::Default) => (None, None),
+            ColorBinding::Stored(StoredColor::Icc(icc)) => (Some(icc), None),
+            ColorBinding::Stored(StoredColor::Cicp(cicp)) => (None, Some(*cicp)),
+        };
+        let mut wrote_icc = false;
+        if policy.resolve_icc(true) && (icc.is_some() || cicp.is_some()) {
+            let color_policy = policy.resolve_color(zencodec::ColorEmitPolicy::Balanced);
+            // The channel count lets the resolver suppress ICC synthesis for
+            // grayscale, where an RGB profile would recolor the image.
+            let mut src =
+                zencodec::SourceColor::default().with_channel_count(layout.channels() as u8);
+            if let Some(c) = cicp {
+                src = src.with_cicp(c);
+            }
+            if let Some(icc) = icc {
+                src = src.with_icc_profile(Arc::clone(icc));
+            }
+            let plan = zencodec::resolve_color_emit(&src, &JPEG_ENCODE_CAPS, color_policy);
+            match plan.icc {
+                zencodec::IccDisposition::KeepSource => {
+                    if let Some(icc) = icc {
+                        req = req.icc_profile(icc);
+                        wrote_icc = true;
+                    }
                 }
-                if let Some(c) = meta.cicp {
-                    src = src.with_cicp(c);
-                }
-                if let Some(ref icc) = meta.icc_profile {
-                    src = src.with_icc_profile(icc.clone());
-                }
-                let plan = zencodec::resolve_color_emit(&src, &JPEG_ENCODE_CAPS, color_policy);
-                match plan.icc {
-                    zencodec::IccDisposition::KeepSource => {
-                        if let Some(ref icc) = meta.icc_profile {
-                            req = req.icc_profile(icc);
+                zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+                    use zenpixels_convert::icc_profiles::{
+                        SynthesizedIcc, synthesize_icc_for_cicp,
+                    };
+                    // `Profile` → embed; `NotNeeded` (sRGB default) →
+                    // nothing. Every other outcome is an ERROR, not a
+                    // silent skip: JPEG has NO CICP carrier, so an
+                    // embedded APP2 ICC is the ONLY way this color
+                    // survives — emitting without it would misrepresent
+                    // the image as sRGB. The `zencodec` feature carries
+                    // zenpixels-convert's icc-db blob (full ITU-T H.273
+                    // grid incl PQ/HLG, no moxcms), so the only
+                    // unsynthesizable CICPs are outside the assigned
+                    // H.273 grid (reserved / unassigned code points).
+                    match synthesize_icc_for_cicp(cicp) {
+                        SynthesizedIcc::Profile(bytes) => {
+                            req = req.icc_profile_owned(bytes.into_owned());
+                            wrote_icc = true;
+                        }
+                        SynthesizedIcc::NotNeeded => {}
+                        outcome => {
+                            return Err(Error::icc_error(alloc::format!(
+                                "this image's color (CICP primaries {} / transfer {}) \
+                                 needs a synthesized ICC profile that cannot be \
+                                 produced ({outcome:?}) — the CICP is outside the \
+                                 assigned H.273 grid; supply an ICC profile in the \
+                                 metadata or drop the CICP",
+                                cicp.color_primaries,
+                                cicp.transfer_characteristics
+                            )));
                         }
                     }
-                    zencodec::IccDisposition::SynthesizeFrom(cicp) => {
-                        use zenpixels_convert::icc_profiles::{
-                            SynthesizedIcc, synthesize_icc_for_cicp,
-                        };
-                        // `Profile` → embed; `NotNeeded` (sRGB default) →
-                        // nothing. Every other outcome is an ERROR, not a
-                        // silent skip: JPEG has NO CICP carrier, so an
-                        // embedded APP2 ICC is the ONLY way this color
-                        // survives — emitting without it would misrepresent
-                        // the image as sRGB. The `zencodec` feature carries
-                        // zenpixels-convert's icc-db blob (full ITU-T H.273
-                        // grid incl PQ/HLG, no moxcms), so the only
-                        // unsynthesizable CICPs are outside the assigned
-                        // H.273 grid (reserved / unassigned code points).
-                        match synthesize_icc_for_cicp(cicp) {
-                            SynthesizedIcc::Profile(bytes) => {
-                                req = req.icc_profile_owned(bytes.into_owned());
-                            }
-                            SynthesizedIcc::NotNeeded => {}
-                            outcome => {
-                                return Err(Error::icc_error(alloc::format!(
-                                    "this image's color (CICP primaries {} / transfer {}) \
-                                     needs a synthesized ICC profile that cannot be \
-                                     produced ({outcome:?}) — the CICP is outside the \
-                                     assigned H.273 grid; supply an ICC profile in the \
-                                     metadata or drop the CICP",
-                                    cicp.color_primaries,
-                                    cicp.transfer_characteristics
-                                )));
-                            }
-                        }
-                    }
-                    zencodec::IccDisposition::Drop => {}
-                    // `IccDisposition` is #[non_exhaustive]; conservatively
-                    // keep the source ICC rather than silently dropping it.
-                    _ => {
-                        if let Some(ref icc) = meta.icc_profile {
-                            req = req.icc_profile(icc);
-                        }
+                }
+                zencodec::IccDisposition::Drop => {}
+                // `IccDisposition` is #[non_exhaustive]; conservatively
+                // keep the source ICC rather than silently dropping it.
+                _ => {
+                    if let Some(icc) = icc {
+                        req = req.icc_profile(icc);
+                        wrote_icc = true;
                     }
                 }
             }
-            if policy.resolve_exif(true)
-                && let Some(ref exif) = meta.exif
-            {
-                req = req.exif(Exif::raw(exif.to_vec()));
+        }
+        // JPEG's only colour carrier is the ICC profile. A plan or policy that
+        // writes none for a description identified as non-sRGB would relabel
+        // the image. An unidentified profile can still be stripped by an
+        // explicit policy, as before.
+        if !wrote_icc && is_identified_non_default((icc.map(|i| &i[..]), cicp), gray) {
+            return Err(Error::icc_error(
+                "the policy leaves no carrier for this image's colour: JPEG can only \
+                 describe it with an embedded ICC profile"
+                    .into(),
+            ));
+        }
+        if let Some(ref meta) = self.metadata {
+            let oriented = meta.orientation != zencodec::Orientation::Identity;
+            if policy.resolve_exif(true) {
+                if let Some(ref exif) = meta.exif {
+                    req = req.exif(Exif::raw(exif.to_vec()));
+                } else if oriented {
+                    // JPEG carries orientation only in EXIF. A field-only
+                    // orientation (a caller-set field, or one from a format
+                    // whose orientation is a container property) gets a
+                    // minimal EXIF holding just the tag.
+                    let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
+                    exif.set_orientation(meta.orientation);
+                    req = req.exif(Exif::raw(zenmeta::exif::serialize(&exif)));
+                }
+            } else if oriented {
+                return Err(Error::encode_policy_rejected(
+                    "the policy forbids EXIF, JPEG's only carrier for this image's orientation",
+                ));
             }
             if policy.resolve_xmp(true)
                 && let Some(ref xmp) = meta.xmp
@@ -894,8 +1374,8 @@ impl JpegEncoder {
             // have no carrier in JPEG or UltraHDR and are dropped.
             let _ = (&meta.content_light_level, &meta.mastering_display);
         }
-        if let Some(ref stop) = self.stop {
-            req = req.stop(stop);
+        if let Some(ref pulse) = self.pulse {
+            req = req.stop(pulse);
         }
         Ok(req)
     }
@@ -949,28 +1429,80 @@ impl JpegEncoder {
         width: u32,
         height: u32,
         layout: PixelLayout,
+        binding: &ColorBinding,
     ) -> Result<EncodeOutput, Error> {
         self.check_limits(width, height, layout)?;
-        let req = self.build_request(Some(layout.channels() as u8))?;
+        let req = self.build_request(layout, binding)?;
         let output = req.encode_bytes(data, width, height, layout)?;
         self.check_output_size(&output)?;
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
     }
 
+    /// One-shot encode of 16-bit sRGB-encoded pixels. Each strip is decoded
+    /// to linear f32 ([`decode_srgb16`]) and pushed before the next, so the
+    /// converted copy holds one strip, not the image. The bytes equal those of
+    /// a single push of the whole converted image (no pre-blur applies to the
+    /// f32 layouts).
+    fn encode_srgb16(
+        &self,
+        pixels: &PixelSlice<'_>,
+        layout: PixelLayout,
+        binding: &ColorBinding,
+    ) -> Result<EncodeOutput, Error> {
+        let (width, height) = (pixels.width(), pixels.rows());
+        self.check_limits(width, height, layout)?;
+        let mut enc = self
+            .build_request(layout, binding)?
+            .encode_from_bytes(width, height, layout)?;
+        let stop = self.stop_ref();
+        let row_bytes = width as usize * layout.bytes_per_pixel();
+        let strip = zencodec::encode::Encoder::preferred_strip_height(self);
+        let mut linear = Vec::new();
+        let mut y = 0;
+        while y < height {
+            let rows = strip.min(height - y);
+            decode_srgb16(&pixels.sub_rows(y, rows), &mut linear)?;
+            enc.push(&linear, rows as usize, row_bytes, stop)?;
+            y += rows;
+        }
+        let output = enc.finish()?;
+        self.check_output_size(&output)?;
+        Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
+    }
+
     /// Create the native row encoder for a `width` x `height` image in
-    /// `descriptor`, with the configuration as given.
+    /// `descriptor`, with the configuration as given. The first rows' colour
+    /// context is the declaration when `begin` was not called.
     fn start_rows(
         &mut self,
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
+        context: Option<&ColorContext>,
     ) -> Result<(), Error> {
         let layout = self.pixel_layout(descriptor)?;
+        self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
-        let req = self.build_request(Some(layout.channels() as u8))?;
-        let enc = req.encode_from_bytes(width, height, layout)?;
+        let binding = self.bind_color(descriptor, context, layout)?;
+        let enc = self
+            .build_request(layout, &binding)?
+            .encode_from_bytes(width, height, layout)?;
         self.streaming_enc = Some(enc);
         self.row_descriptor = Some(descriptor);
+        self.bound = Some(binding);
+        Ok(())
+    }
+
+    /// Pre-blur filters the whole image before encoding, and only a packed
+    /// RGB8 push applies it (one-shot and accumulated encodes). Row encodes
+    /// cannot, so they refuse rather than write a file that differs from the
+    /// one-shot encode of the same pixels.
+    fn check_row_filters(&self, layout: PixelLayout) -> Result<(), Error> {
+        if self.effective_config.pre_blur > 0.0 && layout == PixelLayout::Rgb8Srgb {
+            return Err(Error::unsupported_feature(
+                "pre-blur filters the whole image; encode it one-shot",
+            ));
+        }
         Ok(())
     }
 
@@ -1002,7 +1534,11 @@ impl JpegEncoder {
     fn encode_accumulated(&self, acc: RowAccumulator) -> Result<EncodeOutput, Error> {
         self.check_limits(acc.width, acc.total_rows, acc.layout)?;
 
-        let req = self.build_request(Some(acc.layout.channels() as u8))?;
+        let binding = self
+            .bound
+            .as_ref()
+            .ok_or_else(|| Error::internal("accumulated rows without a colour binding"))?;
+        let req = self.build_request(acc.layout, binding)?;
         let stop = self.stop_ref();
         let mut enc = req.encode_from_bytes(acc.width, acc.total_rows, acc.layout)?;
         // Stream through native encoder — it processes MCU rows as they arrive
@@ -1010,6 +1546,52 @@ impl JpegEncoder {
         let output = enc.finish()?;
         self.check_output_size(&output)?;
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
+    }
+}
+
+impl JpegEncoder {
+    /// Start the row encoder for a declaration: what `begin`, `begin_output`
+    /// and `begin_declared` share. The native encoder's own lag is checked
+    /// against the prepared plan before any byte is exposed.
+    fn start_declared(
+        &mut self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
+        let (width, height, descriptor) = (
+            declaration.width,
+            declaration.height,
+            declaration.descriptor,
+        );
+        if self.begun {
+            return Err(Error::invalid_state("begin called twice").into());
+        }
+        if self.streaming_enc.is_some() || self.accumulator.is_some() {
+            return Err(Error::invalid_state("begin after push_rows").into());
+        }
+        // Build and check everything before storing any of it: a failed
+        // `begin` leaves the encoder as it was.
+        let start = self.prepare_rows(declaration)?;
+        let mut enc = self
+            .build_request(start.layout, &start.binding)?
+            .encode_from_bytes(width, height, start.layout)?;
+        let native = self.timing(
+            enc.can_stream_output().then(|| enc.output_lag_rows()),
+            height,
+        );
+        if native != start.timing {
+            return Err(Error::internal("the native row encoder disagrees with its plan").into());
+        }
+        if start.timing.streams() {
+            enc.start_output()?;
+            self.check_total_output(enc.pending_output().len())?;
+        }
+        self.image_size = Some((width, height));
+        self.streaming_enc = Some(enc);
+        self.row_descriptor = Some(descriptor);
+        self.bound = Some(start.binding);
+        self.checked_context = None;
+        self.begun = true;
+        Ok(start.timing)
     }
 }
 
@@ -1026,12 +1608,16 @@ impl zencodec::encode::Encoder for JpegEncoder {
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Self::Error> {
         self.check_one_shot()?;
-        self.check_profile_context(&pixels)?;
-        let layout = self.pixel_layout(pixels.descriptor())?;
-        let width = pixels.width();
-        let height = pixels.rows();
-        let data = pixels.contiguous_bytes();
-        self.encode_bytes_inner(&data, width, height, layout)
+        let descriptor = pixels.descriptor();
+        let layout = self.pixel_layout(descriptor)?;
+        let binding = self.bind_color(descriptor, pixels.color_context().map(|c| &**c), layout)?;
+        if srgb16_layout(descriptor).is_some() {
+            return self
+                .encode_srgb16(&pixels, layout, &binding)
+                .map_err(Into::into);
+        }
+        let contiguous = pixels.contiguous_bytes();
+        self.encode_bytes_inner(&contiguous, pixels.width(), pixels.rows(), layout, &binding)
             .map_err(Into::into)
     }
 
@@ -1051,7 +1637,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let layout = PixelLayout::Rgba8Srgb;
         self.check_limits(width, height, layout)?;
-        let req = self.build_request(Some(layout.channels() as u8))?;
+        let binding = self.bind_color(PixelDescriptor::RGBA8_SRGB, None, layout)?;
+        let req = self.build_request(layout, &binding)?;
         let stop = self.stop_ref();
         let stride_bytes = stride_pixels as usize * 4;
         let mut enc = req.encode_from_bytes(width, height, layout)?;
@@ -1064,57 +1651,58 @@ impl zencodec::encode::Encoder for JpegEncoder {
     /// Declare the image and start the row encoder with the configuration
     /// as given. Output streams when that configuration allows it:
     /// sequential, fixed or custom Huffman tables (`optimize_huffman(false)`),
-    /// not XYB or RGB mode, no target-quality loop, no MPF gain-map index.
+    /// not XYB or RGB mode, no MPF gain-map index.
     /// The header, with its metadata segments, is pending at once; each MCU
     /// row follows as it is encoded, at most `2 x strip height - 1` rows
     /// behind (16-row strips for 4:2:0, so 31 rows). Other configurations
     /// report `AT_FINISH`.
+    ///
+    /// The header's colour carrier is decided here, before any row: rows
+    /// pushed later must not carry a colour context that means something
+    /// else. Use [`begin_declared`](Self::begin_declared) to declare that context.
     fn begin(
         &mut self,
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
-        use zencodec::encode::OutputTiming;
-        if self.begun {
-            return Err(Error::invalid_state("begin called twice").into());
-        }
-        if self.streaming_enc.is_some() || self.accumulator.is_some() {
-            return Err(Error::invalid_state("begin after push_rows").into());
-        }
-        if self.image_size.is_some_and(|s| s != (width, height)) {
-            return Err(Error::invalid_state("begin: size differs from with_canvas_size").into());
-        }
-        // Build and check everything before storing any of it: a failed
-        // `begin` leaves the encoder as it was.
-        let layout = self.pixel_layout(descriptor)?;
-        self.check_limits(width, height, layout)?;
-        let req = self.build_request(Some(layout.channels() as u8))?;
-        let mut enc = req.encode_from_bytes(width, height, layout)?;
-        // Keep the configuration's established conservative lag bound even
-        // when gray input uses smaller, single-component coding units. The
-        // bound describes availability, not coefficient/restart geometry.
-        let configured_lag = match self.effective_config.color_mode {
-            crate::encode::encoder_types::ColorMode::YCbCr {
-                subsampling: ChromaSubsampling::Quarter,
-            } => 31,
-            _ => 15,
-        };
-        let lag = enc.output_lag_rows().max(configured_lag);
-        // Holding every row would be no stream at all: the header alone is
-        // not worth a chunked response.
-        let timing = if enc.can_stream_output() && lag < height {
-            enc.start_output()?;
-            self.check_total_output(enc.pending_output().len())?;
-            OutputTiming::streaming(lag)
-        } else {
-            OutputTiming::AT_FINISH
-        };
-        self.image_size = Some((width, height));
-        self.streaming_enc = Some(enc);
-        self.row_descriptor = Some(descriptor);
-        self.begun = true;
-        Ok(timing)
+        self.start_declared(&zencodec::encode::EncodeDeclaration::new(
+            width, height, descriptor,
+        ))
+    }
+
+    /// Declare the image and the current colour context of the rows that
+    /// will follow, then start the row encoder.
+    ///
+    /// The same as [`begin_output`](Self::begin_output), with the rows'
+    /// colour declared before the header is written. The header carries that
+    /// colour: the context's ICC profile verbatim, or a profile synthesized
+    /// for its code points or for the primaries the descriptor asserts. Rows
+    /// pushed later must mean the same thing. Returns the plan
+    /// [`EncodeJob::plan_encode`](zencodec::encode::EncodeJob::plan_encode)
+    /// reports for the same job and declaration.
+    fn begin_declared(
+        &mut self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, Self::Error> {
+        Ok(zencodec::encode::EncodePlan::rows(
+            self.start_declared(declaration)?,
+        ))
+    }
+
+    /// JPEG never patches earlier bytes: forward and seek-back destinations
+    /// get the same layout and the same timing as [`begin`](Self::begin).
+    fn begin_output(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+        access: zencodec::output_patch::OutputAccess,
+    ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
+        self.start_declared(
+            &zencodec::encode::EncodeDeclaration::new(width, height, descriptor)
+                .with_access(access),
+        )
     }
 
     fn pending_output(&self) -> &[u8] {
@@ -1140,7 +1728,6 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Self::Error> {
-        self.check_profile_context(&rows)?;
         let desc = rows.descriptor();
         let layout = self.pixel_layout(desc)?;
 
@@ -1148,43 +1735,66 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // into the native encoder, which encodes MCU rows as they fill.
         if let Some((img_w, img_h)) = self.image_size {
             if self.streaming_enc.is_none() {
-                self.start_rows(img_w, img_h, desc)?;
+                self.start_rows(img_w, img_h, desc, rows.color_context().map(|c| &**c))?;
             }
+            self.check_rows_color(&rows, layout)?;
             if self.row_descriptor != Some(desc) {
                 return Err(Error::invalid_state(
                     "push_rows: pixel format differs from the one declared",
                 )
                 .into());
             }
-            let stop: &dyn enough::Stop = match self.stop {
+            let stop: &dyn enough::Stop = match self.pulse {
                 Some(ref s) => s,
                 None => &enough::Unstoppable,
             };
             let enc = self.streaming_enc.as_mut().expect("started above");
-            // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
-            enc.push(
-                rows.as_strided_bytes(),
-                rows.rows() as usize,
-                rows.stride(),
-                stop,
-            )?;
+            if srgb16_layout(desc).is_some() {
+                decode_srgb16(&rows, &mut self.srgb16_rows)?;
+                enc.push(
+                    &self.srgb16_rows,
+                    rows.rows() as usize,
+                    rows.width() as usize * layout.bytes_per_pixel(),
+                    stop,
+                )?;
+            } else {
+                // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
+                enc.push(
+                    rows.as_strided_bytes(),
+                    rows.rows() as usize,
+                    rows.stride(),
+                    stop,
+                )?;
+            }
             let pending = enc.pending_output().len();
             self.check_total_output(pending)?;
             return Ok(());
         }
 
         // Fallback: accumulate rows (dimensions unknown).
+        if self.accumulator.is_some() {
+            self.check_rows_color(&rows, layout)?;
+        }
         let width = rows.width();
-        let data = rows.contiguous_bytes();
+        let contiguous;
+        let data: &[u8] = if srgb16_layout(desc).is_some() {
+            decode_srgb16(&rows, &mut self.srgb16_rows)?;
+            &self.srgb16_rows
+        } else {
+            contiguous = rows.contiguous_bytes();
+            &contiguous
+        };
         match &mut self.accumulator {
             None => {
+                self.bound =
+                    Some(self.bind_color(desc, rows.color_context().map(|c| &**c), layout)?);
                 let bpp = desc.bytes_per_pixel();
                 let row_bytes = width as usize * bpp;
                 let estimated_total = row_bytes * rows.rows() as usize * 4;
                 let mut buf = Vec::new();
                 buf.try_reserve(estimated_total)
                     .map_err(|_| Error::allocation_failed(estimated_total, "push_rows buffer"))?;
-                buf.extend_from_slice(&data);
+                buf.extend_from_slice(data);
                 self.accumulator = Some(RowAccumulator {
                     data: buf,
                     width,
@@ -1200,7 +1810,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                     )
                     .into());
                 }
-                acc.data.extend_from_slice(&data);
+                acc.data.extend_from_slice(data);
                 acc.total_rows += rows.rows();
             }
         }
@@ -1250,12 +1860,14 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // supported list — JPEG always wants RGB8 or RGBA8.
         let desc = PixelDescriptor::RGB8_SRGB;
         let layout = self.pixel_layout(desc)?;
+        self.check_row_filters(layout)?;
         self.check_limits(img_w, img_h, layout)?;
+        let binding = self.bind_color(desc, None, layout)?;
 
         // The configuration as given: rows are encoded as each strip
         // arrives; optimized tables or progressive scans keep their blocks
         // until the end.
-        let req = self.build_request(Some(layout.channels() as u8))?;
+        let req = self.build_request(layout, &binding)?;
         let mut enc = req.encode_from_bytes(img_w, img_h, layout)?;
         let stop = self.stop_ref();
 
@@ -1328,20 +1940,22 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
         (ChannelType::U8, ChannelLayout::Gray, TransferFunction::Srgb) => {
             Ok(PixelLayout::Gray8Srgb)
         }
+        // The native 16-bit layouts are linear light; sRGB-encoded 16-bit
+        // samples are decoded to linear f32 first (`srgb16_layout`).
         (
             ChannelType::U16,
             ChannelLayout::Rgb,
-            TransferFunction::Srgb | TransferFunction::Unknown,
+            TransferFunction::Linear | TransferFunction::Unknown,
         ) => Ok(PixelLayout::Rgb16Linear),
         (
             ChannelType::U16,
             ChannelLayout::Rgba,
-            TransferFunction::Srgb | TransferFunction::Unknown,
+            TransferFunction::Linear | TransferFunction::Unknown,
         ) => Ok(PixelLayout::Rgba16Linear),
         (
             ChannelType::U16,
             ChannelLayout::Gray,
-            TransferFunction::Srgb | TransferFunction::Unknown,
+            TransferFunction::Linear | TransferFunction::Unknown,
         ) => Ok(PixelLayout::Gray16Linear),
         (ChannelType::F32, ChannelLayout::Rgb, TransferFunction::Linear) => {
             Ok(PixelLayout::RgbF32Linear)
@@ -1358,6 +1972,64 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
         // Pattern-B follow-up finding #1 investigation).
         _ => Err(zencodec::UnsupportedOperation::PixelFormat.into()),
     }
+}
+
+/// The native layout 16-bit sRGB-encoded input is encoded through. No native
+/// layout holds it as stored, so its rows are decoded to linear f32 on the
+/// way in ([`decode_srgb16`]); the encoder's sRGB encoding then restores
+/// them at f32 precision.
+fn srgb16_layout(desc: PixelDescriptor) -> Option<PixelLayout> {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    if desc.channel_type() != ChannelType::U16 || desc.transfer() != TransferFunction::Srgb {
+        return None;
+    }
+    match desc.layout() {
+        ChannelLayout::Rgb => Some(PixelLayout::RgbF32Linear),
+        ChannelLayout::Rgba => Some(PixelLayout::RgbaF32Linear),
+        ChannelLayout::Gray => Some(PixelLayout::GrayF32Linear),
+        _ => None,
+    }
+}
+
+/// Decode 16-bit sRGB-encoded rows to the linear f32 rows of
+/// [`srgb16_layout`], packed, into `out`. Alpha is scaled, not decoded.
+fn decode_srgb16(rows: &PixelSlice<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
+    use linear_srgb::default::{srgb_u16_to_linear_rgba_slice, srgb_u16_to_linear_slice};
+    let desc = rows.descriptor();
+    let samples = rows.width() as usize * desc.layout().channels();
+    let rgba = desc.layout() == zenpixels::ChannelLayout::Rgba;
+    let len = samples
+        .checked_mul(4 * rows.rows() as usize)
+        .ok_or_else(|| Error::allocation_failed(usize::MAX, "16-bit sRGB rows"))?;
+    out.clear();
+    out.try_reserve(len)
+        .map_err(|_| Error::allocation_failed(len, "16-bit sRGB rows"))?;
+    let mut encoded: Vec<u16> = Vec::new();
+    let mut linear: Vec<f32> = Vec::new();
+    encoded
+        .try_reserve(samples)
+        .and_then(|()| linear.try_reserve(samples))
+        .map_err(|_| Error::allocation_failed(samples * 6, "16-bit sRGB row"))?;
+    linear.resize(samples, 0.0);
+    for y in 0..rows.rows() {
+        encoded.clear();
+        encoded.extend(
+            rows.row(y)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| u16::from_ne_bytes(*b)),
+        );
+        if rgba {
+            srgb_u16_to_linear_rgba_slice(&encoded, &mut linear);
+        } else {
+            srgb_u16_to_linear_slice(&encoded, &mut linear);
+        }
+        for value in &linear {
+            out.extend_from_slice(&value.to_ne_bytes());
+        }
+    }
+    Ok(())
 }
 
 // ============================================================================

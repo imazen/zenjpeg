@@ -150,6 +150,17 @@ impl<'a> EncodeRequest<'a> {
 
     // === Build Streaming Encoders ===
 
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn plan_byte_output(
+        self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Result<Option<u32>> {
+        let (config, _icc, exif, _xmp) = self.extract_metadata();
+        BytesEncoder::plan_output(&config, width, height, layout, exif.as_ref())
+    }
+
     /// Create a streaming encoder from raw byte input with explicit pixel layout.
     ///
     /// Metadata from the request is passed to the encoder.

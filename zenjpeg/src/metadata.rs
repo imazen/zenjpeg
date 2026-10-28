@@ -2,14 +2,16 @@
 // Container planner migrated from zencodecs at aa21cba0.
 use alloc::{borrow::Cow, vec::Vec};
 use core::ops::Range;
-use zencodec::metadata_rewrite::{Action, Error, Request};
+use zencodec::metadata_rewrite::{Action, Error, RewriteRequest};
 use zenmeta::rewrite::{Context as ScrubRequest, PlanBuilder as Plan};
 
 /// Plan a metadata rewrite without re-encoding image samples.
 ///
 /// Requires `metadata-rewrite`. Indexed images are supported only for a primary
 /// JPEG plus one gain map; ambiguous ISO/XMP parameters are rejected.
-pub fn rewrite<'a>(request: &Request<'a>) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error> {
+pub fn rewrite<'a>(
+    request: &RewriteRequest<'a>,
+) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error> {
     let context = ScrubRequest::new(request)?;
     if !request.input().starts_with(b"\xff\xd8") {
         return Err(Error::Malformed("JPEG signature"));
@@ -526,7 +528,7 @@ fn edited_gain_xmp(
         &descriptive,
         required.as_bytes(),
         req.max_metadata(),
-        req.stop(),
+        req.pulse(),
     )?;
     req.packet(merged.len())?;
     let merged = core::str::from_utf8(&merged).map_err(|_| Error::Service("merged XMP UTF-8"))?;

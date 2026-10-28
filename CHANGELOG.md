@@ -14,7 +14,46 @@ All notable changes to zenjpeg are documented here. Earlier history
   profiled encode, streaming equivalence, strict Clippy and fuzz target builds
   pass with one shared-trait copy. No JPEG density implementation is implied.
 
+- Move the zencodec graph to the 0.2 family revision (ideal-api `79676215`,
+  after `f5a7fd46`: Pulse operation controls and the coroutine retained-batch
+  fix). zenjpeg depends on ultrahdr-core unconditionally
+  and crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1, so the workspace
+  and fuzz manifests patch ultrahdr-core to the imazen/ultrahdr review commit
+  `cc57c57a`, which pins the same revision (without it every feature set
+  carries a second zencodec, and `ultrahdr` fails with E0308). The tests'
+  zenpng 0.1.x stays on crates.io zencodec 0.1 in its own graph, so its
+  compatibility patch is dropped. Review pins only: not for main until
+  zencodec 0.2 ships.
+
+### QUEUED BREAKING CHANGES
+
+- An encode whose policy forbids EXIF now refuses a non-identity orientation
+  (`ErrorKind::EncodePolicyRejected`, category `Policy(Encode)`) instead of
+  dropping JPEG's only orientation carrier.
+- The zencodec adapter refuses encodes it previously relabelled: job colour
+  metadata contradicting the pixels' explicit colour context, metadata that
+  describes linear samples for linear input, XYB with non-sRGB pixels, linear
+  input whose profile cannot be identified, and policies that leave no ICC for
+  colour identified as non-sRGB (an unidentified metadata ICC can still be
+  stripped).
+- Row encodes (planning, `begin`, canvas-sized `push_rows`, `encode_from`)
+  refuse a configured pre-blur on RGB8 input instead of skipping it.
+
 ### Added
+
+- `ErrorKind::EncodePolicyRejected` / `Error::encode_policy_rejected`: encode-side
+  policy refusals categorize as `Policy(Encode)`; `PolicyRejected` stays
+  decode-side.
+
+- Effective-job planning through zencodec's shared hooks (ideal-api `f5a7fd46`):
+  `EncodeJob::plan_encode` returns the `EncodePlan` that `Encoder::begin_declared`
+  returns for the same retained job and `EncodeDeclaration` (descriptor, colour
+  context, destination access). Both run one preparation (validation, limits,
+  colour binding, native builder geometry); startup checks the native encoder
+  against the plan before exposing a byte, and planning starts no pixel or
+  coefficient storage. Plans are one row pass with carriers unreported. This
+  replaces the experimental inherent `JpegEncodeJob::plan_rows` and
+  `JpegEncoder::begin_declared(width, height, …)`, which never shipped.
 
 - Checked encode jobs qualify verbatim color emission without silently accepting
   unqualified policy fields. Refusal leaves the previous job policy intact;
@@ -33,6 +72,47 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Default-off `controlled-decode`: required interpretation suspension through native jobs, erased jobs and stored requests, admitted input/row staging, structured refusal reasons and terminal cleanup. See `docs/CONTROLLED_DECODING.md` for qualification limits.
 
 ### Fixed
+
+- A field-only orientation (`Metadata::orientation` with no EXIF blob: a
+  caller-set field, or one from a format whose orientation is a container
+  property) was dropped: EXIF was written only from `metadata.exif`. The
+  adapter now writes a minimal EXIF holding the tag. `tests/orientation_carriage.rs`
+  reads it back with jpeg-decoder and kamadak-exif.
+
+- Reader construction overflowed 2 MiB threads in consumers' unoptimized
+  builds (test harness, tokio and rayon threads): two inline Huffman table
+  sets (about 18 KiB) were moved by value through every `Result` from the
+  controlled decoder down to the scanline reader, about 2.1 MB of frames. The
+  parser, its scan handoff and the component-row reader hold boxed sets,
+  allocated fallibly; the scanline reader holds them only on the streaming
+  route. At opt-level 0, `tests/stack_demand.rs` (one-shot, streaming and
+  controlled decodes of baseline, progressive and gray files) needed
+  2,158-2,164 KiB before and 574-581 KiB after; `just stack-demand-check` and
+  CI run it on 1 MiB threads.
+
+- `BytesEncoder::push` and `YCbCrPlanarEncoder::push`/`push_subsampled`
+  reported every stop as `Cancelled`, so a deadline surfaced as a cancellation
+  through the zencodec adapter (found by the zenpipe lane's `pulse_retention`).
+  Their stop checks now keep the stop's own reason. `tests/encode_stop_reasons.rs`
+  stops one-shot, row, packed, strided and planar encodes at every poll.
+
+- The zencodec adapter wrote its ICC carrier from job metadata only (issue 154):
+  a checked `EncodeRequest`, which carries no metadata, wrote Display P3 pixels
+  untagged. The carrier now describes the stored samples: the pixels' context
+  ICC verbatim, or a profile synthesized for their code points or descriptor
+  primaries. Linear input is stored sRGB-encoded, so its carrier follows that
+  transform. `tests/source_color_binding.rs` reproduced 7 of 8 cases with
+  jpeg-decoder before the fix.
+- sRGB-encoded 16-bit input (`RGB16_SRGB` and its RGBA/gray forms) was encoded
+  as linear light: stored (200, 40, 40) decoded as (229, 111, 111). Its rows are
+  now decoded to linear f32 on the way in and encode at their stored values;
+  16-bit linear descriptors are advertised as well. One-shot encodes convert one
+  16-row strip at a time, row encodes each pushed batch; both write identical
+  bytes (`sixteen_bit_one_shot_bytes_equal_row_encodes`).
+- A configured pre-blur (`EncoderConfig::pre_blur`) filtered one-shot and
+  accumulated RGB8 encodes but was skipped by row encodes, which wrote a
+  different file for the same pixels. Row encodes now refuse it before any
+  output (`row_encodes_refuse_a_pre_blur_they_cannot_apply`).
 
 - Qualify RGB/RGBA/BGRA byte input under a retained RGB ICC profile in the shared JPEG encoder. Profile-tagged one-shot and strided row paths produce identical bytes to the established packing path; conflicting profiles, discarded ICC, premultiplied alpha and unqualified XYB/HDR modes refuse (issue 241).
 
