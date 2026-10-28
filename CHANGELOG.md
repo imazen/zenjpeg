@@ -14,11 +14,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   profiled encode, streaming equivalence, strict Clippy and fuzz target builds
   pass with one shared-trait copy. No JPEG density implementation is implied.
 
-- Move the zencodec graph to the 0.2 family revision (ideal-api `f5a7fd46`,
-  Pulse operation controls). zenjpeg depends on ultrahdr-core unconditionally
+- Move the zencodec graph to the 0.2 family revision (ideal-api `79676215`,
+  after `f5a7fd46`: Pulse operation controls and the coroutine retained-batch
+  fix). zenjpeg depends on ultrahdr-core unconditionally
   and crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1, so the workspace
   and fuzz manifests patch ultrahdr-core to the imazen/ultrahdr review commit
-  `6aa34974`, which pins the same revision (without it every feature set
+  `cc57c57a`, which pins the same revision (without it every feature set
   carries a second zencodec, and `ultrahdr` fails with E0308). The tests'
   zenpng 0.1.x stays on crates.io zencodec 0.1 in its own graph, so its
   compatibility patch is dropped. Review pins only: not for main until
