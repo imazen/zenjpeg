@@ -1,0 +1,13 @@
+# ICC fixture lcms probe, 2026-10-28 (one reader, one version; not a validator)
+# command: python3 -I scripts/icc_fixture_lcms_probe.py p3.icc <scratch>
+# p3.icc: zenpixels f8596aae zenpixels-convert/src/profiles/DisplayP3Compat-v4.icc (sha256 231752984cd4a527...42b5)
+# reader: [LittleCMS 2.17], liblcms2-utils 2.17-1ubuntu0.2; host r7900x
+# lcms: transicc -i<bytes> -o*sRGB -n -t1 on Display P3 (200, 40, 40)
+an unidentified profile             480 B  lcms: 218.1841 -7.0991 27.2399
+the established unit test's bytes    21 B  lcms: [transicc]: Read error. Got 0 bytes, block should be of 128 bytes
+a truncated header                  100 B  lcms: [transicc]: Read error. Got 0 bytes, block should be of 128 bytes
+a header without its tag count      131 B  lcms: [transicc]: Read error. Got 0 bytes, block should be of 4 bytes
+no acsp signature                   480 B  lcms: [transicc]: not an ICC profile, invalid signature
+a tag table past the end            480 B  lcms: [transicc]: Read error. Got 0 bytes, block should be of 4 bytes
+the largest tag count               480 B  lcms: [transicc]: Too many tags (-1)
+Display P3 itself                   480 B  lcms: 218.1841 -7.0991 27.2399
