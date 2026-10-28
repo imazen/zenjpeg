@@ -1338,10 +1338,23 @@ impl JpegEncoder {
             ));
         }
         if let Some(ref meta) = self.metadata {
-            if policy.resolve_exif(true)
-                && let Some(ref exif) = meta.exif
-            {
-                req = req.exif(Exif::raw(exif.to_vec()));
+            let oriented = meta.orientation != zencodec::Orientation::Identity;
+            if policy.resolve_exif(true) {
+                if let Some(ref exif) = meta.exif {
+                    req = req.exif(Exif::raw(exif.to_vec()));
+                } else if oriented {
+                    // JPEG carries orientation only in EXIF. A field-only
+                    // orientation (a caller-set field, or one from a format
+                    // whose orientation is a container property) gets a
+                    // minimal EXIF holding just the tag.
+                    let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
+                    exif.set_orientation(meta.orientation);
+                    req = req.exif(Exif::raw(zenmeta::exif::serialize(&exif)));
+                }
+            } else if oriented {
+                return Err(Error::encode_policy_rejected(
+                    "the policy forbids EXIF, JPEG's only carrier for this image's orientation",
+                ));
             }
             if policy.resolve_xmp(true)
                 && let Some(ref xmp) = meta.xmp

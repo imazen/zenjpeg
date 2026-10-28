@@ -26,6 +26,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### QUEUED BREAKING CHANGES
 
+- An encode whose policy forbids EXIF now refuses a non-identity orientation
+  (`ErrorKind::EncodePolicyRejected`, category `Policy(Encode)`) instead of
+  dropping JPEG's only orientation carrier.
 - The zencodec adapter refuses encodes it previously relabelled: job colour
   metadata contradicting the pixels' explicit colour context, metadata that
   describes linear samples for linear input, XYB with non-sRGB pixels, linear
@@ -36,6 +39,10 @@ All notable changes to zenjpeg are documented here. Earlier history
   refuse a configured pre-blur on RGB8 input instead of skipping it.
 
 ### Added
+
+- `ErrorKind::EncodePolicyRejected` / `Error::encode_policy_rejected`: encode-side
+  policy refusals categorize as `Policy(Encode)`; `PolicyRejected` stays
+  decode-side.
 
 - Effective-job planning through zencodec's shared hooks (ideal-api `f5a7fd46`):
   `EncodeJob::plan_encode` returns the `EncodePlan` that `Encoder::begin_declared`
@@ -64,6 +71,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Default-off `controlled-decode`: required interpretation suspension through native jobs, erased jobs and stored requests, admitted input/row staging, structured refusal reasons and terminal cleanup. See `docs/CONTROLLED_DECODING.md` for qualification limits.
 
 ### Fixed
+
+- A field-only orientation (`Metadata::orientation` with no EXIF blob: a
+  caller-set field, or one from a format whose orientation is a container
+  property) was dropped: EXIF was written only from `metadata.exif`. The
+  adapter now writes a minimal EXIF holding the tag. `tests/orientation_carriage.rs`
+  reads it back with jpeg-decoder and kamadak-exif.
 
 - Reader construction overflowed 2 MiB threads in consumers' unoptimized
   builds (test harness, tokio and rayon threads): two inline Huffman table
