@@ -93,6 +93,9 @@ mod symbol_stream;
 
 // v2 types moved to encode root (v2/mod.rs re-exports these for compatibility)
 pub mod byte_encoders;
+#[cfg(feature = "__diagnostics")]
+#[doc(hidden)]
+pub mod diagnostics;
 pub mod encoder_config;
 pub mod encoder_types;
 pub mod exif;

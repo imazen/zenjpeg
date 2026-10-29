@@ -226,6 +226,12 @@ impl StreamingEncoder {
         self.processor.set_aq_controller(ctrl);
     }
 
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn capture_diagnostics(&mut self) -> Result<super::diagnostics::DiagnosticsHandle> {
+        self.processor
+            .capture_diagnostics(self.config.writes_gray())
+    }
+
     /// Creates a new streaming encoder builder with the given dimensions.
     ///
     /// Use the builder methods to configure quality, subsampling, etc.

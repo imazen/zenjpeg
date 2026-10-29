@@ -850,3 +850,24 @@ completion-details-check:
     cargo test -p zenjpeg --locked --features controlled-decode --test controlled_decode --test mpf_bounds
     cargo clippy -p zenjpeg --locked --features controlled-decode --lib --test controlled_decode --test mpf_bounds -- -D warnings
     cargo check -p zenjpeg --locked --no-default-features --features controlled-decode
+
+# Unstable encoder diagnostics and viewer.
+diagnostics-test:
+    cargo test --locked -p zenjpeg --features __diagnostics,boundary-rd,parallel --test diagnostics_capture
+
+diagnostics-wasm:
+    cd zenjpeg-diagnostics-viewer/wasm && wasm-pack build --release --target web --out-dir ../web/wasm-pkg
+
+diagnostics-viewer-build:
+    cd zenjpeg-diagnostics-viewer/web && npm ci && npm run typecheck && npm run build
+
+diagnostics-e2e:
+    cd zenjpeg-diagnostics-viewer/web && npm run test:e2e
+
+diagnostics-check:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --no-default-features --features __diagnostics --lib -- -D warnings
+    just diagnostics-test
+
+diagnostics-i686:
+    cross test --locked -p zenjpeg --target i686-unknown-linux-gnu --features __diagnostics,boundary-rd,parallel --test diagnostics_capture

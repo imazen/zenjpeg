@@ -2612,6 +2612,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
+ "spin",
  "tempfile",
  "test-case",
  "thiserror",
