@@ -1,0 +1,48 @@
+{
+  "_comment": "PNG sources from codec-corpus. Provenance may include prior lossy compression; the viewer scales these images in the browser.",
+  "defaultBase": "https://pub-7c5c57fd3e0842f0b147946928891d40.r2.dev",
+  "images": [
+    {
+      "id": "png-4k-square",
+      "label": "Photo (PNG, 4219\u00d74548 scaled 8\u00d7 in browser)",
+      "sha256": "0ca1248e164f04ae6fd9e24f45d232f89533c8dfba3eeadc64778a2e5f4519f3",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-5k-square",
+      "label": "Photo (PNG, 4951\u00d75014 scaled 8\u00d7 in browser)",
+      "sha256": "25a3473eddc8dcc8a20ce6a9880bb6cfee0f80e04a826cca07cae253afcf8f27",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-4k-landscape",
+      "label": "Photo (PNG, 4000\u00d72700 scaled 8\u00d7 in browser)",
+      "sha256": "403685d7adabe161b02529db9eb16c055f1820c9536014560abfe0e556b0e983",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-2k-landscape",
+      "label": "Photo (PNG, 2038\u00d72244 scaled 8\u00d7 in browser)",
+      "sha256": "0e6234204dd0d0fbc9b673a0250457d728ee27b4485cb7facb719d391da99bd4",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-2k-square",
+      "label": "Photo (PNG, 2652\u00d72582 scaled 8\u00d7 in browser)",
+      "sha256": "33c8ca08a529e40d6fe46842a2f6a2705911f275a94e4816cf47079ff6c52b50",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-1700",
+      "label": "Photo (PNG, 1700\u00d71133 scaled 8\u00d7 in browser)",
+      "sha256": "37c09d8426302e30f373c1b499d5a8e852cd3242538b4e53ca0c727bfcda2066",
+      "ext": "png",
+      "wasJpeg": true
+    }
+  ]
+}

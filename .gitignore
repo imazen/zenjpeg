@@ -84,3 +84,11 @@ fuzz-*.log
 benchmarks/zq_pareto_*.tsv
 
 .jj/
+
+# Diagnostics viewer build and optional image cache
+/zenjpeg-diagnostics-viewer/web/wasm-pkg/
+/zenjpeg-diagnostics-viewer/web/dist/
+/zenjpeg-diagnostics-viewer/web/public/images/
+/zenjpeg-diagnostics-viewer/web/playwright-report/
+/zenjpeg-diagnostics-viewer/web/test-results/
+/zenjpeg-diagnostics-viewer/wasm/target/
