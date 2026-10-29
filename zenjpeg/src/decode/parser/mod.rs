@@ -1166,24 +1166,43 @@ impl<'a> JpegParser<'a> {
             _ => return Ok(()),
         };
 
+        Self::complete_preserved_metadata(
+            self.data,
+            extras,
+            config,
+            self.position,
+            self.mpf_header_pos,
+            self.strictness.is_strict(),
+            &enough::Unstoppable,
+        )
+    }
+
+    /// Shared MPF preservation for pixel decode and metadata-only inspection.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn complete_preserved_metadata(
+        data: &[u8],
+        extras: &mut DecodedExtras,
+        config: &PreserveConfig,
+        primary_eoi_pos: usize,
+        mpf_base: usize,
+        strict: bool,
+        stop: &dyn enough::Stop,
+    ) -> Result<()> {
+        if !config.preserves_any_mpf() {
+            return Ok(());
+        }
         // Get the MPF directory from preserved segments
         let mpf_dir = match extras.mpf() {
             Some(dir) => dir.clone(), // Clone to avoid borrow issues
             None => return Ok(()),
         };
 
-        // The current position should be right after the primary EOI
-        let primary_eoi_pos = self.position;
-
-        // MPF offsets for secondary images are relative to the TIFF header within MPF
-        // (after "MPF\0" signature). We need to add the base position to get absolute offsets.
-        let mpf_base = self.mpf_header_pos;
-
         // Default decoding retains readable embedded JPEGs. Strict mode rejects
         // entries inside the primary; lossless rewriting checks relocation
         // separately. Disjoint ranges prevent repeated-copy amplification.
         let mut taken = Vec::new();
         for (idx, entry) in mpf_dir.images.iter().enumerate() {
+            stop.check()?;
             // Skip primary image (index 0 or BaselinePrimary type)
             if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
                 continue;
@@ -1209,17 +1228,17 @@ impl<'a> JpegParser<'a> {
                 entry.offset as usize
             };
 
-            if self.strictness.is_strict() && offset < primary_eoi_pos {
+            if strict && offset < primary_eoi_pos {
                 return Err(Error::invalid_jpeg_data(
                     "MPF secondary image overlaps the primary JPEG in strict mode",
                 ));
             }
             let end = offset.saturating_add(entry.size as usize);
             let range = offset..end;
-            if !crate::container::mpf::secondary_range_readable(self.data, &range, &taken) {
+            if !crate::container::mpf::secondary_range_readable(data, &range, &taken) {
                 continue;
             }
-            let bytes = &self.data[range.clone()];
+            let bytes = &data[range.clone()];
             let mut image_data = Vec::new();
             image_data
                 .try_reserve_exact(bytes.len())

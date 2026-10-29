@@ -129,7 +129,16 @@ pub(super) fn start(
                 InterpretationState::Provisional,
             ))
             .await?;
-            let mut full = job.probe_full(data)?;
+            let (full_header, extras) = job.limit_adjusted_inner().read_full_details_preserving(
+                data,
+                &metadata_preserve(job.policy.as_ref()),
+                job.stop
+                    .as_ref()
+                    .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s),
+                true,
+            )?;
+            let mut full = to_image_info(&full_header);
+            super::super::info::populate_complete_container_scope(data, &mut full);
             let mut output = job.output_info(data)?;
             output.native_format = decode_descriptor(&formats, &header, None);
             let output_bytes = u64::from(output.width)
@@ -179,6 +188,18 @@ pub(super) fn start(
             if will_auto_orient(job.orientation) {
                 full.orientation = zencodec::Orientation::Identity;
             }
+            #[cfg(feature = "metadata")]
+            let source_encoding = crate::detect::probe(data).ok();
+            #[cfg(feature = "metadata")]
+            if let Some(probe) = &source_encoding {
+                full = full.with_source_encoding_details(probe.clone());
+            }
+            let mut details = zencodec::decode::DecodeDetails::new(full.clone());
+            details.extensions.insert(extras);
+            #[cfg(feature = "metadata")]
+            {
+                details.source_encoding = source_encoding.map(|probe| Box::new(probe) as _);
+            }
             ctx.set_info(full);
             ctx.set_output_descriptor(output.native_format);
             let mut facts = InterpretationFacts::new(
@@ -198,6 +219,7 @@ pub(super) fn start(
             while let Some((y, rows)) = native.next_batch()? {
                 ctx.write_rows(BatchMeta::final_rows(y), &rows).await?;
             }
+            ctx.set_details(details);
             Ok::<_, ControlledError>(output)
         },
     )?;

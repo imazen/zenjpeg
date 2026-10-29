@@ -971,3 +971,110 @@ fn ranked_native_output_does_not_promote_a_later_float_preference() {
         }
     }
 }
+
+#[test]
+fn completion_retains_native_metadata_and_ancillary_owners() {
+    use zenjpeg::decoder::DecodedExtras;
+    for (progressive, late) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut bytes = base(progressive);
+        let payload = b"completion comment";
+        let mut comment = vec![0xff, 0xfe];
+        comment.extend(u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+        comment.extend(payload);
+        let pos = if late { bytes.len() - 2 } else { 2 };
+        bytes.splice(pos..pos, comment);
+        let config = JpegDecoderConfig::new();
+        let direct = config
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(&bytes), &[PixelDescriptor::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let native = config
+            .job()
+            .dyn_controlled_decoder(&[PixelDescriptor::RGB8_SRGB], budget())
+            .unwrap();
+        let mut resolver =
+            |_q: Question<'_>| -> Result<Decision, At<Infallible>> { Ok(Decision::UsePreset) };
+        let mut session = PolicyDecoder::new(native, &mut resolver);
+        assert!(session.take_details().is_none());
+        let mut sink = Sink::default();
+        drive_from_slice(&mut session, &bytes, &mut sink, None, 7).unwrap();
+        let details = session.take_details().expect("native completion owner");
+        assert!(session.take_details().is_none());
+        assert_eq!(details.info.width, WIDTH);
+        assert_eq!(details.info.height, HEIGHT);
+        let actual = details
+            .extensions
+            .get::<DecodedExtras>()
+            .expect("native extras");
+        let expected = direct.extras::<DecodedExtras>().unwrap();
+        let segments = |extra: &DecodedExtras| {
+            extra
+                .segments()
+                .iter()
+                .map(|s| (s.marker, s.segment_type, s.data.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(segments(actual), segments(expected));
+        assert!(actual.segments().iter().any(|s| s.data == payload));
+        assert_eq!(
+            actual.secondary_images().len(),
+            expected.secondary_images().len()
+        );
+        assert_eq!(
+            details.source_encoding.is_some(),
+            direct.source_encoding_details().is_some()
+        );
+        let raster = sink.output.as_pixel_slice().unwrap();
+        for y in 0..HEIGHT {
+            assert_eq!(raster.row(y), direct.pixels().row(y));
+        }
+    }
+}
+
+#[test]
+fn completion_retains_embedded_mpf_image_bytes() {
+    use zenjpeg::decoder::DecodedExtras;
+    use zenjpeg::decoder::MpfImageType;
+    use zenjpeg::encode::EncoderSegments;
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig as NativeEncoder, PixelLayout};
+    let secondary = base(false);
+    let segments = EncoderSegments::new().add_mpf_image(secondary.clone(), MpfImageType::Undefined);
+    let mut encoder = NativeEncoder::ycbcr(87, ChromaSubsampling::None)
+        .with_segments(segments)
+        .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    encoder
+        .push_packed(
+            &vec![73; WIDTH as usize * HEIGHT as usize * 3],
+            enough::Unstoppable,
+        )
+        .unwrap();
+    let bytes = encoder.finish().unwrap();
+    let config = JpegDecoderConfig::new();
+    let direct = config
+        .clone()
+        .job()
+        .decoder(Cow::Borrowed(&bytes), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let native = config.job().dyn_controlled_decoder(&[], budget()).unwrap();
+    let mut resolver =
+        |_q: Question<'_>| -> Result<Decision, At<Infallible>> { Ok(Decision::UsePreset) };
+    let mut session = PolicyDecoder::new(native, &mut resolver);
+    let mut sink = Sink::default();
+    drive_from_slice(&mut session, &bytes, &mut sink, None, 7).unwrap();
+    let details = session.take_details().unwrap();
+    let actual = details.extensions.get::<DecodedExtras>().unwrap();
+    let expected = direct.extras::<DecodedExtras>().unwrap();
+    assert_eq!(expected.secondary_images().len(), 1);
+    assert_eq!(actual.secondary_images().len(), 1);
+    assert_eq!(actual.secondary_images()[0].data, secondary);
+    assert_eq!(
+        actual.secondary_images()[0].data,
+        expected.secondary_images()[0].data
+    );
+}

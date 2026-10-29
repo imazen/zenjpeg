@@ -810,32 +810,51 @@ impl DecodeConfig {
         preserve: &PreserveConfig,
         stop: &dyn enough::Stop,
     ) -> Result<JpegInfo> {
+        self.read_full_details_preserving(data, preserve, stop, false)
+            .map(|(info, _)| info)
+    }
+
+    /// Retain the metadata scan owner for controlled completion. No pixel or
+    /// coefficient decode occurs here. `retain_all` keeps configured ancillary
+    /// segments and embedded images as well as the fields exposed by JpegInfo.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn read_full_details_preserving(
+        &self,
+        data: &[u8],
+        preserve: &PreserveConfig,
+        stop: &dyn enough::Stop,
+        retain_all: bool,
+    ) -> Result<(JpegInfo, DecodedExtras)> {
         use crate::container::{MarkerIter, MarkerKind};
         use extras::{detect_segment_type, should_preserve_segment};
         stop.check()?;
         let mut info = self.read_info_preserving(data, preserve)?;
         let mut extras = DecodedExtras::new();
         let mut retained = 0u64;
-        let mut complete = false;
+        let mut primary_eoi = None;
+        let mut mpf_base = 0;
         for span in MarkerIter::for_decoder_metadata(data) {
             stop.check()?;
             if span.kind == MarkerKind::Eoi {
-                complete = true;
+                primary_eoi = Some(span.offset + span.length);
                 break;
             }
-            let MarkerKind::App(index) = span.kind else {
-                continue;
+            let marker = match span.kind {
+                MarkerKind::App(index) => 0xe0 + index,
+                MarkerKind::Com if retain_all => 0xfe,
+                _ => continue,
             };
-            let marker = 0xe0 + index;
             let kind = detect_segment_type(marker, span.payload);
-            if !matches!(
-                kind,
-                SegmentType::Jfif
-                    | SegmentType::Exif
-                    | SegmentType::Xmp
-                    | SegmentType::XmpExtended
-                    | SegmentType::Icc
-            ) || !should_preserve_segment(preserve, kind)
+            if (!retain_all
+                && !matches!(
+                    kind,
+                    SegmentType::Jfif
+                        | SegmentType::Exif
+                        | SegmentType::Xmp
+                        | SegmentType::XmpExtended
+                        | SegmentType::Icc
+                ))
+                || !should_preserve_segment(preserve, kind)
             {
                 continue;
             }
@@ -861,12 +880,26 @@ impl DecodeConfig {
                     self.max_memory,
                 ));
             }
+            if kind == SegmentType::Mpf && mpf_base == 0 {
+                // Payload starts after marker and length; TIFF follows MPF\0.
+                mpf_base = span.offset + span.length - span.payload.len() + 4;
+            }
             extras.try_add_segment(marker, span.payload, kind)?;
         }
-        if !complete {
-            return Err(Error::truncated_data(
-                "full primary-image metadata inspection",
-            ));
+        let primary_eoi = primary_eoi
+            .ok_or_else(|| Error::truncated_data("full primary-image metadata inspection"))?;
+        if retain_all {
+            parser::JpegParser::complete_preserved_metadata(
+                data,
+                &mut extras,
+                preserve,
+                primary_eoi,
+                mpf_base,
+                self.strictness.is_strict(),
+                stop,
+            )?;
+            extras = finalize_extras(Some(extras), data, false)
+                .expect("finalize_extras always supplies an owner");
         }
         stop.check()?;
         info.icc_profile = extras.icc_profile().map(|bytes| bytes.to_vec());
@@ -874,7 +907,7 @@ impl DecodeConfig {
         info.exif = extras.exif().map(|bytes| bytes.to_vec());
         info.xmp = extras.xmp().map(|text| text.to_string());
         info.jfif = extras.jfif();
-        Ok(info)
+        Ok((info, extras))
     }
 
     /// Estimates peak memory usage for decoding an image of given dimensions.
