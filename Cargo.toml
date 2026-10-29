@@ -230,6 +230,8 @@ manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
 [patch.crates-io]
+# PNG strip compression requires this tested source; dependency patches do not propagate.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
 
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
