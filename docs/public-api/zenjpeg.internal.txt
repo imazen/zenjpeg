@@ -1,5 +1,5 @@
 # zenjpeg public API — doc(hidden) items and excluded-feature surface
-# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__expert,__ffi-tests,__oracle-exiftool,__oracle-tests,__profile,__test-utils,__wasm-simd,_dev
+# excluded features: __alloc-instrument,__bdrd-trace,__corpus-tests,__debug-tokens,__diagnostics,__expert,__ffi-tests,__oracle-exiftool,__oracle-tests,__profile,__test-utils,__wasm-simd,_dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,17 +9,17 @@
 
 ## summary
 #
-#   pub modules                                83
-#   pub types (struct/enum/trait/alias)       293
+#   pub modules                                85
+#   pub types (struct/enum/trait/alias)       305
 #   pub consts/statics                        314
 #   free functions                            366
-#   inherent methods                         1189
-#   struct fields                             749
-#   enum variants                             494
+#   inherent methods                         1200
+#   struct fields                             791
+#   enum variants                             498
 #   re-exports                                 18
-#   trait roster entries (type × trait)       646
-#   auto-trait-complete types                 127
-#   auto-trait exceptions                       7
+#   trait roster entries (type × trait)       652
+#   auto-trait-complete types                 130
+#   auto-trait exceptions                       8
 #
 # per-module pub lines:
 #   (root)                           71
@@ -29,8 +29,8 @@
 #   decode                          455
 #   decoder                          55
 #   detect                           40
-#   encode                         1413
-#   encoder                         134
+#   encode                         1454
+#   encoder                         164
 #   entropy                         100
 #   foundation                      352
 #   heuristics                        3
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3330 lines)
+## items (3393 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -395,7 +395,7 @@ pub enum detect::content::ContentType
 pub enum detect::content::DeblockAction
 pub enum encode::Exif [also: encode::exif]
 pub enum encode::trellis::TrellisSpeedMode [also: encode::trellis::compat]
-pub enum encode::tuning::ScalingParams
+pub enum encode::tuning::ScalingParams [also: encode::diagnostics, encoder::diagnostics]
 pub enum encoder::QualityGrid [also: encode::sweep]
 pub enum foundation::aligned_alloc::AllocError
 pub enum huffman::types::HuffmanAlgorithm
@@ -668,6 +668,8 @@ pub fn encode::bdrd_trace::BoundaryRdTrace::fmt(&self, &mut core::fmt::Formatter
 pub fn encode::bdrd_trace::BoundaryRdTrace::new() -> Self
 pub fn encode::bdrd_trace::install_trace()
 pub fn encode::bdrd_trace::take_trace() -> core::option::Option<encode::bdrd_trace::BoundaryRdTrace>
+pub fn encode::byte_encoders::BytesEncoder::capture_diagnostics(&mut self) -> encoder::Result<super::diagnostics::DiagnosticsHandle>
+pub fn encode::byte_encoders::BytesEncoder::capture_diagnostics(&mut self) -> encoder::Result<encode::diagnostics::DiagnosticsHandle>
 pub fn encode::byte_encoders::BytesEncoder::encode_stats(&self) -> &foundation::alloc::EncodeStats
 pub fn encode::byte_encoders::BytesEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encode::byte_encoders::BytesEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
@@ -680,6 +682,8 @@ pub fn encode::byte_encoders::BytesEncoder::push_packed(&mut self, &[u8], impl e
 pub fn encode::byte_encoders::BytesEncoder::rows_pushed(&self) -> u32
 pub fn encode::byte_encoders::BytesEncoder::rows_remaining(&self) -> u32
 pub fn encode::byte_encoders::BytesEncoder::width(&self) -> u32
+pub fn encode::byte_encoders::RgbEncoder<P>::capture_diagnostics(&mut self) -> encoder::Result<super::diagnostics::DiagnosticsHandle>
+pub fn encode::byte_encoders::RgbEncoder<P>::capture_diagnostics(&mut self) -> encoder::Result<encode::diagnostics::DiagnosticsHandle>
 pub fn encode::byte_encoders::RgbEncoder<P>::encode_stats(&self) -> &foundation::alloc::EncodeStats
 pub fn encode::byte_encoders::RgbEncoder<P>::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encode::byte_encoders::RgbEncoder<P>::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
@@ -718,6 +722,13 @@ pub fn encode::dct::forward_dct_8x8_u8(&[u8; 64]) -> [f32; 64]
 pub fn encode::dct::forward_dct_blocks(&[[f32; 64]]) -> alloc::vec::Vec<[f32; 64]>
 pub fn encode::deringing::preprocess_deringing_block(&mut foundation::simd_types::Block8x8f, u16)
 pub fn encode::deringing::preprocess_deringing_f32(&mut [f32; 64], u16)
+pub fn encode::diagnostics::BlockDiagnostics::clone(&self) -> encode::diagnostics::BlockDiagnostics
+pub fn encode::diagnostics::BlockDiagnostics::default() -> Self
+pub fn encode::diagnostics::BlockDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encode::diagnostics::ComponentDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encode::diagnostics::DiagnosticsHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encode::diagnostics::DiagnosticsHandle::try_take(self) -> core::result::Result<encode::diagnostics::EncodeDiagnostics, Self>
+pub fn encode::diagnostics::EncodeDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_config::BoundaryRd::clone(&self) -> encode::encoder_config::BoundaryRd
 pub fn encode::encoder_config::BoundaryRd::default() -> encode::encoder_config::BoundaryRd
 pub fn encode::encoder_config::BoundaryRd::eq(&self, &encode::encoder_config::BoundaryRd) -> bool
@@ -1939,6 +1950,7 @@ pub mod encode::chroma
 pub mod encode::config
 pub mod encode::dct
 pub mod encode::deringing
+pub mod encode::diagnostics
 pub mod encode::encoder_config
 pub mod encode::encoder_types
 pub mod encode::exif
@@ -1968,6 +1980,7 @@ pub mod encode::trellis::rate
 pub mod encode::tuning
 pub mod encode::tuning::dct
 pub mod encode::v2
+pub mod encoder::diagnostics
 pub mod encoder::tables
 pub mod encoder::tables::glassa
 pub mod encoder::tables::presets
@@ -2050,6 +2063,10 @@ pub struct encode::YCbCrPlanes<'a> [also: encode::encoder_types, encode::v2]
 pub struct encode::bdrd_trace::BdrdBlockEntry
 pub struct encode::bdrd_trace::BoundaryRdTrace
 pub struct encode::config::ComputedConfig
+pub struct encode::diagnostics::BlockDiagnostics [also: encoder::diagnostics]
+pub struct encode::diagnostics::ComponentDiagnostics [also: encoder::diagnostics]
+pub struct encode::diagnostics::DiagnosticsHandle(_) [also: encoder::diagnostics]
+pub struct encode::diagnostics::EncodeDiagnostics [also: encoder::diagnostics]
 pub struct encode::parallel::ParallelEntropyConfig
 pub struct encode::scan_script::ScanInfo
 pub struct encode::strip::QuantContext
@@ -2059,7 +2076,7 @@ pub struct encode::trellis::AqCoupling [also: encode::trellis::compat]
 pub struct encode::trellis::RateTable [also: encode::trellis::rate]
 pub struct encode::trellis::TrellisConfig [also: encode::trellis::compat]
 pub struct encode::trellis::hybrid::StandardRateTables
-pub struct encode::tuning::EncodingTables
+pub struct encode::tuning::EncodingTables [also: encode::diagnostics, encoder::diagnostics]
 pub struct encode::tuning::PerComponent<T>
 pub struct encoder::DroppedAxis [also: encode::sweep]
 pub struct encoder::SweepAxes [also: encode::sweep]
@@ -2685,6 +2702,29 @@ pub encode::config::ComputedConfig::use_rgb: bool
 pub encode::config::ComputedConfig::use_xyb: bool
 pub encode::config::ComputedConfig::width: u32
 pub encode::config::ComputedConfig::xyb_subsampling: encode::encoder_types::XybSubsampling
+pub encode::diagnostics::BlockDiagnostics::aq_strength: f32
+pub encode::diagnostics::BlockDiagnostics::coef_levels: [i16; 64]
+pub encode::diagnostics::BlockDiagnostics::coef_pre_quant: [f32; 64]
+pub encode::diagnostics::ComponentDiagnostics::block_grid: (u32, u32)
+pub encode::diagnostics::ComponentDiagnostics::blocks: alloc::vec::Vec<encode::diagnostics::BlockDiagnostics>
+pub encode::diagnostics::ComponentDiagnostics::component_id: u8
+pub encode::diagnostics::ComponentDiagnostics::quant_table_base: [u16; 64]
+pub encode::diagnostics::ComponentDiagnostics::zero_bias: [f32; 64]
+pub encode::diagnostics::ComponentDiagnostics::zero_bias_mul: [f32; 64]
+pub encode::diagnostics::EncodeDiagnostics::color_path: &'static str
+pub encode::diagnostics::EncodeDiagnostics::components: alloc::vec::Vec<encode::diagnostics::ComponentDiagnostics>
+pub encode::diagnostics::EncodeDiagnostics::height: u32
+pub encode::diagnostics::EncodeDiagnostics::sampling_factors: alloc::vec::Vec<(u8, u8)>
+pub encode::diagnostics::EncodeDiagnostics::width: u32
+pub encode::diagnostics::EncodingTables::quant: encode::tuning::PerComponent<[f32; 64]>
+pub encode::diagnostics::EncodingTables::scaling: encode::tuning::ScalingParams
+pub encode::diagnostics::EncodingTables::zero_bias_mul: encode::tuning::PerComponent<[f32; 64]>
+pub encode::diagnostics::EncodingTables::zero_bias_offset_ac: [f32; 3]
+pub encode::diagnostics::EncodingTables::zero_bias_offset_dc: [f32; 3]
+pub encode::diagnostics::ScalingParams::Exact
+pub encode::diagnostics::ScalingParams::Scaled
+pub encode::diagnostics::ScalingParams::Scaled::frequency_exponents: alloc::boxed::Box<[f32; 64]>
+pub encode::diagnostics::ScalingParams::Scaled::global_scale: f32
 pub encode::encoder_config::BoundaryRd::Off
 pub encode::encoder_config::BoundaryRd::On(encode::encoder_config::BoundaryRdConfig)
 pub encode::encoder_config::NeighborScope::LeftAndAbove
@@ -3142,6 +3182,29 @@ pub encoder::SweepPlan::over_budget: bool
 pub encoder::SweepPlan::q_coarsenings: u32
 pub encoder::TrellisConfig::aq_coupling: encode::trellis::compat::AqCoupling
 pub encoder::TrellisConfig::speed_mode: encode::trellis::compat::TrellisSpeedMode
+pub encoder::diagnostics::BlockDiagnostics::aq_strength: f32
+pub encoder::diagnostics::BlockDiagnostics::coef_levels: [i16; 64]
+pub encoder::diagnostics::BlockDiagnostics::coef_pre_quant: [f32; 64]
+pub encoder::diagnostics::ComponentDiagnostics::block_grid: (u32, u32)
+pub encoder::diagnostics::ComponentDiagnostics::blocks: alloc::vec::Vec<encode::diagnostics::BlockDiagnostics>
+pub encoder::diagnostics::ComponentDiagnostics::component_id: u8
+pub encoder::diagnostics::ComponentDiagnostics::quant_table_base: [u16; 64]
+pub encoder::diagnostics::ComponentDiagnostics::zero_bias: [f32; 64]
+pub encoder::diagnostics::ComponentDiagnostics::zero_bias_mul: [f32; 64]
+pub encoder::diagnostics::EncodeDiagnostics::color_path: &'static str
+pub encoder::diagnostics::EncodeDiagnostics::components: alloc::vec::Vec<encode::diagnostics::ComponentDiagnostics>
+pub encoder::diagnostics::EncodeDiagnostics::height: u32
+pub encoder::diagnostics::EncodeDiagnostics::sampling_factors: alloc::vec::Vec<(u8, u8)>
+pub encoder::diagnostics::EncodeDiagnostics::width: u32
+pub encoder::diagnostics::EncodingTables::quant: encode::tuning::PerComponent<[f32; 64]>
+pub encoder::diagnostics::EncodingTables::scaling: encode::tuning::ScalingParams
+pub encoder::diagnostics::EncodingTables::zero_bias_mul: encode::tuning::PerComponent<[f32; 64]>
+pub encoder::diagnostics::EncodingTables::zero_bias_offset_ac: [f32; 3]
+pub encoder::diagnostics::EncodingTables::zero_bias_offset_dc: [f32; 3]
+pub encoder::diagnostics::ScalingParams::Exact
+pub encoder::diagnostics::ScalingParams::Scaled
+pub encoder::diagnostics::ScalingParams::Scaled::frequency_exponents: alloc::boxed::Box<[f32; 64]>
+pub encoder::diagnostics::ScalingParams::Scaled::global_scale: f32
 pub encoder::tables::presets::QuantTablePreset::Ahumada
 pub encoder::tables::presets::QuantTablePreset::Flat
 pub encoder::tables::presets::QuantTablePreset::JpegAnnexK
@@ -3377,7 +3440,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (215 types)
+## trait impls (219 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3443,6 +3506,10 @@ encode::HuffmanSymbolFrequencies: Clone, Debug
 encode::bdrd_trace::BdrdBlockEntry: Clone, Copy, Debug, TrivialClone
 encode::bdrd_trace::BoundaryRdTrace: Debug, Default
 encode::config::ComputedConfig: Clone, Debug, Default
+encode::diagnostics::BlockDiagnostics: Clone, Debug, Default
+encode::diagnostics::ComponentDiagnostics: Debug
+encode::diagnostics::DiagnosticsHandle: Debug
+encode::diagnostics::EncodeDiagnostics: Debug
 encode::encoder_config::BoundaryRd: Clone, Copy, Debug, Default, PartialEq, TrivialClone
 encode::encoder_config::BoundaryRdConfig: Clone, Copy, Debug, Default, PartialEq, TrivialClone
 encode::encoder_config::EncoderConfig: Clone, Debug
@@ -3597,10 +3664,11 @@ ultrahdr::UltraHdrMode: TrivialClone
 
 ## auto traits
 
-127 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+130 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 encode::byte_encoders::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encode::byte_encoders::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encode::byte_encoders::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe
+encode::diagnostics::DiagnosticsHandle: !RefUnwindSafe !UnwindSafe
 encode::request::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 encode::strip::StripProcessor: !RefUnwindSafe !Sync !UnwindSafe
 encode::tuning::PerComponent<T>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
