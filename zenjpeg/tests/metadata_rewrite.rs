@@ -114,6 +114,116 @@ mod jpeg {
         ));
     }
     #[test]
+    fn optional_service_control_preserves_absence_reporting_sharing_bytes_and_limits() {
+        use std::{
+            cell::{Cell, RefCell},
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering},
+            },
+        };
+        use zencodec::{
+            Pulse, SharedPulse,
+            how_far::{Child, Execution, PhaseSpec, PlanError, Report},
+            metadata_rewrite::Services,
+        };
+        struct Meter(Arc<AtomicUsize>);
+        impl enough::Stop for Meter {
+            fn check(&self) -> Result<(), enough::StopReason> {
+                Ok(())
+            }
+        }
+        impl Report for Meter {
+            fn advance(&self, n: u64) {
+                self.0.fetch_add(n as usize, Ordering::SeqCst);
+            }
+        }
+        impl Pulse for Meter {
+            fn split(
+                &self,
+                execution: Execution,
+                parts: &[PhaseSpec<'_>],
+            ) -> Result<Vec<Child<'_>>, PlanError> {
+                zencodec::NoPulse.split(execution, parts)
+            }
+        }
+        struct Editor<'a> {
+            expected: Option<&'a dyn Pulse>,
+            calls: Cell<usize>,
+            retained: RefCell<Option<SharedPulse>>,
+        }
+        impl Services for Editor<'_> {
+            fn rewrite_xmp(
+                &self,
+                xml: &[u8],
+                _: usize,
+                pulse: Option<&dyn Pulse>,
+            ) -> Result<Option<Vec<u8>>, Error> {
+                match (self.expected, pulse) {
+                    (None, None) => {}
+                    (Some(expected), Some(actual)) => {
+                        assert!(core::ptr::eq(expected, actual));
+                        actual.advance(1);
+                        *self.retained.borrow_mut() = Some(actual.share().unwrap());
+                    }
+                    _ => panic!("metadata service changed control presence"),
+                }
+                self.calls.set(self.calls.get() + 1);
+                Ok(Some(xml.to_vec()))
+            }
+        }
+        let xml = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>";
+        let input = image(&app(
+            0xe1,
+            &[b"http://ns.adobe.com/xap/1.0/\0".as_slice(), xml].concat(),
+        ));
+        let units = Arc::new(AtomicUsize::new(0));
+        let pulse = SharedPulse::new(Meter(units.clone()));
+        for control in [None, Some(&pulse as &dyn Pulse)] {
+            let service = Editor {
+                expected: control,
+                calls: Cell::new(0),
+                retained: RefCell::new(None),
+            };
+            let request = ScrubRequest::new(&input)
+                .with_services(&service)
+                .with_xmp_editing(true)
+                .with_pulse(control);
+            assert_eq!(request.plan().unwrap().to_vec().unwrap(), input);
+            assert_eq!(service.calls.get(), 1);
+            if let Some(shared) = service.retained.borrow_mut().take() {
+                shared.advance(1);
+            }
+            assert!(matches!(
+                request.clone().with_metadata_limit(0).plan(),
+                Err(Error::Limit(zencodec::LimitKind::MetadataSize))
+            ));
+            assert_eq!(service.calls.get(), 1);
+        }
+        assert_eq!(units.load(Ordering::SeqCst), 2);
+        struct Expired;
+        impl enough::Stop for Expired {
+            fn check(&self) -> Result<(), enough::StopReason> {
+                Err(enough::StopReason::TimedOut)
+            }
+        }
+        let stopped = zencodec::how_far::StopOnly::new(Expired);
+        let service = Editor {
+            expected: Some(&stopped),
+            calls: Cell::new(0),
+            retained: RefCell::new(None),
+        };
+        assert!(matches!(
+            ScrubRequest::new(&input)
+                .with_services(&service)
+                .with_xmp_editing(true)
+                .with_pulse(Some(&stopped))
+                .plan(),
+            Err(Error::Stopped(enough::StopReason::TimedOut))
+        ));
+        assert_eq!(service.calls.get(), 0);
+    }
+    #[test]
     fn does_not_silently_drop_gain_maps_or_indexed_images() {
         let input = image(&app(0xe2, b"MPF\0not-a-valid-index"));
         assert!(ScrubRequest::new(&input).plan().is_err());
@@ -288,14 +398,18 @@ mod gain_map_scrub {
         struct Editor {
             calls: Cell<usize>,
             corrupt: bool,
+            expected_none: Option<bool>,
         }
         impl Services for Editor {
             fn rewrite_xmp(
                 &self,
                 _: &[u8],
                 _: usize,
-                _: &dyn zencodec::Pulse,
+                pulse: Option<&dyn zencodec::Pulse>,
             ) -> Result<Option<Vec<u8>>, Error> {
+                if let Some(expected) = self.expected_none {
+                    assert_eq!(pulse.is_none(), expected);
+                }
                 self.calls.set(self.calls.get() + 1);
                 Ok(Some(b"description".to_vec()))
             }
@@ -304,8 +418,11 @@ mod gain_map_scrub {
                 _: &[u8],
                 required: &[u8],
                 _: usize,
-                _: &dyn zencodec::Pulse,
+                pulse: Option<&dyn zencodec::Pulse>,
             ) -> Result<Vec<u8>, Error> {
+                if let Some(expected) = self.expected_none {
+                    assert_eq!(pulse.is_none(), expected);
+                }
                 Ok(if self.corrupt {
                     b"<invalid/>".to_vec()
                 } else {
@@ -317,6 +434,7 @@ mod gain_map_scrub {
         let service = Editor {
             calls: Cell::new(0),
             corrupt: false,
+            expected_none: None,
         };
         ScrubRequest::new(&input)
             .with_services(&service)
@@ -332,9 +450,27 @@ mod gain_map_scrub {
             .unwrap();
         assert_eq!(service.calls.get(), 2);
         assert_eq!(scans(&input), scans(&output));
+        for pulse in [None, Some(&zencodec::NoPulse as &dyn zencodec::Pulse)] {
+            let service = Editor {
+                calls: Cell::new(0),
+                corrupt: false,
+                expected_none: Some(pulse.is_none()),
+            };
+            let controlled = ScrubRequest::new(&input)
+                .with_services(&service)
+                .with_xmp_editing(true)
+                .with_pulse(pulse)
+                .plan()
+                .unwrap()
+                .to_vec()
+                .unwrap();
+            assert_eq!(controlled, output);
+            assert_eq!(service.calls.get(), 2);
+        }
         let corrupt = Editor {
             calls: Cell::new(0),
             corrupt: true,
+            expected_none: None,
         };
         assert!(
             ScrubRequest::new(&input)

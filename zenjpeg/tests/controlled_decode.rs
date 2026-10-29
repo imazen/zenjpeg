@@ -352,7 +352,7 @@ fn admitted_storage_is_released_on_native_error_refusal_and_unwind() {
             (0, 0)
         );
         assert!(matches!(
-            session.step(Input::empty(), &mut sink, &zencodec::NoPulse),
+            session.step(Input::empty(), &mut sink, Some(&zencodec::NoPulse)),
             Err(StepError::Finished)
         ));
     }
@@ -562,6 +562,67 @@ fn limits_and_job_cancellation_precede_pixel_effects() {
     assert!(drive_from_slice(&mut session, &bytes, &mut sink, None, 7).is_err());
     assert_eq!(sink.effects, 0);
     assert_eq!(storage.reserved_bytes(), 0);
+}
+
+#[test]
+fn absent_or_noop_per_call_control_keeps_owned_timeout_and_terminal_release() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct Deadline(Arc<AtomicBool>);
+    impl zencodec::enough::Stop for Deadline {
+        fn check(&self) -> Result<(), zencodec::enough::StopReason> {
+            if self.0.load(Ordering::SeqCst) {
+                Err(zencodec::enough::StopReason::TimedOut)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    for progressive in [false, true] {
+        let bytes = base(progressive);
+        for pulse in [None, Some(&zencodec::NoPulse as &dyn zencodec::Pulse)] {
+            let expired = Arc::new(AtomicBool::new(false));
+            let storage = budget();
+            let native = JpegDecoderConfig::new()
+                .job()
+                .with_pulse(zencodec::SharedPulse::new(
+                    zencodec::how_far::StopOnly::new(Deadline(expired.clone())),
+                ))
+                .dyn_controlled_decoder(&[], storage.clone())
+                .unwrap();
+            let mut session = PolicyDecoder::new(
+                native,
+                |question: Question<'_>| -> Result<Decision, At<Infallible>> {
+                    if let Question::Boundary { facts, .. } = question
+                        && facts.state == InterpretationState::Final
+                    {
+                        expired.store(true, Ordering::SeqCst);
+                    }
+                    Ok(Decision::UsePreset)
+                },
+            );
+            let mut sink = Sink::default();
+            let error = drive_from_slice(&mut session, &bytes, &mut sink, pulse, 7).unwrap_err();
+            let cause = zencodec::find_cause::<zencodec::CodecError>(&error).unwrap();
+            assert_eq!(
+                cause.category(),
+                zencodec::ErrorCategory::Stopped(zencodec::enough::StopReason::TimedOut)
+            );
+            assert_eq!(sink.effects, 0);
+            assert_eq!(
+                (storage.reserved_bytes(), storage.reserved_objects()),
+                (0, 0)
+            );
+            expired.store(false, Ordering::SeqCst);
+            assert!(matches!(
+                session.step(Input::empty(), &mut sink, None),
+                Err(StepError::Finished)
+            ));
+            assert_eq!(sink.effects, 0);
+        }
+    }
 }
 
 #[test]

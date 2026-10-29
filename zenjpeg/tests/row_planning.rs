@@ -374,7 +374,7 @@ fn zencodec_io_planned_row_adapter_writes_the_one_shot_file() {
             // the default requirements are what Options supplied before.
             BoundPolicy::new(PolicySet::new(), FirstSchedule),
             Options::new(storage.clone(), u64::MAX),
-            &zencodec::NoPulse,
+            Some(&zencodec::NoPulse),
         );
         match (one_shot, result) {
             (Ok(one_shot), Ok(done)) => {
