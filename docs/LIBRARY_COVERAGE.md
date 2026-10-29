@@ -77,3 +77,17 @@ libjpeg-turbo oracle and passes for the retained cases plus noise and flat-chrom
 bands. The ExifTool test passes with its pinned distribution's lib directory on
 PERL5LIB. Added diagnostic behavior tests and the all-feature library suite pass.
 These focused reruns do not constitute a fresh full-library coverage measurement.
+
+## Coverage runner timeout (2026-10-29)
+
+Coverage run 40852840350 on native completion revision 7c5a9501 hit the
+20-minute aggregate integration-command timeout during colorspace_paths.
+The bundled suite had completed 1,186 tests without failure in 559.73 seconds;
+run 40843404474 completed the same bundled suite in 261.75 seconds. These CI
+wall-clock observations are not a controlled performance comparison.
+
+The aggregate integration command now has a 40-minute timeout and its coverage
+job a 70-minute cap. Test selection, features, assertions, coverage thresholds,
+individual oracle commands and profile settings are unchanged. YAML and every
+static shell block parse successfully. The full extended CI run still must pass;
+this timeout adjustment is not test qualification.
