@@ -50,8 +50,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Native `Decoder::decode_with_pulse` and `Decoder::scanline_reader_with_pulse`
   accept `Option<&dyn how_far::Pulse>`; `None` adds no per-call control.
   Metadata rewrite services receive the original optional request control.
-  Source migration only: matching zencodec pins, API snapshots and runtime
-  qualification remain pending (`926a9a7b`).
+  Matching root graph, native controlled decode, metadata rewrite and row
+  planning controls pass (`265a0447`); fuzz graph and API snapshots remain
+  pending. Qualification scope: `docs/OPTIONAL_PULSE.md` (`926a9a7b`).
 - An encode whose policy forbids EXIF now refuses a non-identity orientation
   (`ErrorKind::EncodePolicyRejected`, category `Policy(Encode)`) instead of
   dropping JPEG's only orientation carrier.

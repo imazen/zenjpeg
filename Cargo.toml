@@ -132,9 +132,8 @@ thiserror = { version = "2.0", default-features = false }
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
 # A version edge: each root resolves the zencodec 0.2 family through its own
-# [patch.crates-io] (dependency patch tables do not propagate). The 0.2 floor
-# keeps a graph that also holds crates.io zencodec 0.1.x (this one does, for the
-# tests' zenpng 0.1.4) from resolving this edge to it.
+# patch table (dependency patches do not propagate). The 0.2 floor prevents
+# resolving this edge to the incompatible published 0.1 contract.
 zencodec = { version = ">=0.2.0, <0.3.0" }
 zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
@@ -237,7 +236,7 @@ zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc432
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-# The zencodec 0.2 family, all from one core revision (ideal-api a15c28fd).
+# The zencodec 0.2 family, all from one optional-control revision.
 # zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
 # patches resolve them for local builds; releases stay gated on publishing them.
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
@@ -245,9 +244,8 @@ zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e9
 zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
 zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
-# The Pulse contract is zencodec 0.2. The tests' zenpng 0.1.x (direct and via
-# zensim-regress) stays on crates.io zencodec 0.1 in its own graph; it is used
-# only through its native PNG API, never through zencodec traits.
+# Native PNG tests and metric dev-dependencies share the same core family.
+# Their formerly separate 0.1 core fails with the paired pixel representation.
 # zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and
 # crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1: every feature set would
 # resolve a second zencodec, and with `ultrahdr` the two GainMapParams collide

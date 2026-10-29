@@ -113,9 +113,8 @@ zune-jpeg.workspace = true
 zune-core = "0.5.1"
 codec-corpus = "1.1.0"
 tempfile = "3"
-# zencodec conformance harness. Its `zencodec ^0.1.26` requirement resolves
-# from crates.io, unifying with the workspace `zencodec` dep — no
-# `[patch.crates-io]` needed. Provides `check_decode_truncation_series`
+# The root patch table keeps the conformance harness on the same shared
+# contract as the codec. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 zencodec-testkit = ">=0.1.0, <0.3.0"
 zencodec-io = { version = "0.1.0", features = ["std"] }
