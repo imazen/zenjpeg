@@ -5,6 +5,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+
+- Honor the advertised RGBAF32 decode preference for RGB JPEGs. The adapter
+  retains each decoded RGB sample bit and appends opaque alpha, rather than
+  returning RGBF32. The expansion allocation is fallible; no memory-bound or
+  early descriptor-admission guarantee is added.
+
 - `metadata` cargo feature (default-on) gates the XMP container stack:
   `container::xmp`, GContainer `Container:Directory` items, gain-map and
   Dynamic-Depth detection, and the `detect` encoder-identification probe.

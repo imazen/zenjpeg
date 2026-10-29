@@ -1435,7 +1435,38 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     }
                     _ => {
                         let pixel_count = (w as usize) * (h as usize);
-                        if pixels_f32.len() == pixel_count * 3 {
+                        let selected = select_decode_descriptor(preferred, header.num_components);
+                        if selected == PixelDescriptor::RGBAF32_LINEAR
+                            && pixels_f32.len() == pixel_count * 3
+                        {
+                            // JPEG has no alpha. Honor the negotiated float layout
+                            // with opaque alpha without changing the decoded RGB bits.
+                            let desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+                                zenpixels::PixelFormat::RgbaF32,
+                                &info.source_color,
+                                corrected_cicp.as_ref(),
+                            )
+                            .with_transfer(zenpixels::TransferFunction::Linear);
+                            let mut rgba = Vec::new();
+                            rgba.try_reserve_exact(pixel_count).map_err(|_| {
+                                Error::allocation_failed(
+                                    pixel_count
+                                        .saturating_mul(core::mem::size_of::<rgb::Rgba<f32>>()),
+                                    "expanding decoded RGB to RGBA float",
+                                )
+                            })?;
+                            rgba.extend(
+                                pixels_f32
+                                    .as_chunks::<3>()
+                                    .0
+                                    .iter()
+                                    .map(|c| rgb::Rgba::new(c[0], c[1], c[2], 1.0)),
+                            );
+                            PixelBuffer::from_pixels(rgba, w, h)
+                                .map_err(|_| Error::internal("pixel count mismatch"))?
+                                .with_descriptor(desc)
+                                .into()
+                        } else if pixels_f32.len() == pixel_count * 3 {
                             let desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
                                 zenpixels::PixelFormat::RgbF32,
                                 &info.source_color,

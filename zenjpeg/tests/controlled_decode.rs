@@ -877,3 +877,62 @@ fn linear_grayscale_streaming_rows_match_native_samples() {
         assert_eq!(count, HEIGHT);
     }
 }
+
+#[test]
+fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
+    for progressive in [false, true] {
+        let bytes = base(progressive);
+        let config = JpegDecoderConfig::new();
+        assert!(
+            <JpegDecoderConfig as DecoderConfig>::supported_descriptors()
+                .contains(&PixelDescriptor::RGBAF32_LINEAR)
+        );
+        let rgb = config
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(&bytes), &[PixelDescriptor::RGBF32_LINEAR])
+            .unwrap()
+            .decode()
+            .unwrap();
+        for preferred in [
+            vec![PixelDescriptor::RGBAF32_LINEAR],
+            vec![
+                PixelDescriptor::RGBAF32_LINEAR,
+                PixelDescriptor::RGBF32_LINEAR,
+            ],
+        ] {
+            let rgba = config
+                .clone()
+                .job()
+                .decoder(Cow::Borrowed(&bytes), &preferred)
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(rgba.pixels().descriptor(), PixelDescriptor::RGBAF32_LINEAR);
+            assert_eq!((rgba.width(), rgba.height()), (rgb.width(), rgb.height()));
+            assert_eq!(rgba.metadata(), rgb.metadata());
+            for y in 0..rgba.height() {
+                for (actual, expected) in rgba
+                    .pixels()
+                    .row(y)
+                    .as_chunks::<16>()
+                    .0
+                    .iter()
+                    .zip(rgb.pixels().row(y).as_chunks::<12>().0.iter())
+                {
+                    assert_eq!(&actual[..12], expected);
+                    assert_eq!(&actual[12..], &1.0f32.to_ne_bytes());
+                }
+            }
+        }
+        let codecs = CodecSet::new().with_decoder(config);
+        let checked = DecodeRequest::new()
+            .with_output(PixelDescriptor::RGBAF32_LINEAR)
+            .decode(&codecs, &bytes)
+            .unwrap();
+        assert_eq!(
+            checked.pixels().descriptor(),
+            PixelDescriptor::RGBAF32_LINEAR
+        );
+    }
+}

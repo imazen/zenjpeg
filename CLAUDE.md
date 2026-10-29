@@ -1842,3 +1842,12 @@ pixels, was stripped and read back as sRGB. Now (`build_request_from`,
 Not adopted (root, 2026-10-28): dropping job bytes by a structural check. lcms 2.17
 refuses to open the tests' malformed fixtures
 (`benchmarks/icc_fixture_lcms_probe_2026-10-28.txt`), but one reader is not a validator.
+
+## RGBA float output negotiation (2026-10-29)
+
+The one-shot adapter advertised RGBAF32 but selected its output layout only
+from the native three-channel sample count, returning RGBF32. Required shared
+requests correctly refused that mismatch after decoding. The correction honors
+the negotiated RGBA layout with opaque alpha and unchanged RGB bits. Regression:
+`advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha`.
+One-shot pre-allocation descriptor admission remains a separate contract.

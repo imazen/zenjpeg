@@ -839,3 +839,8 @@ extended-jpeg-branch-coverage:
 wasm-capability-size workspace output:
     python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}' --capability --simd
     python3 scripts/wasm-size-raster-check.py '{{output}}' --capability
+
+# Advertised RGBA float output and retained decode contracts.
+rgba-float-check:
+    cargo test -p zenjpeg --features controlled-decode --test controlled_decode --locked
+    cargo clippy -p zenjpeg --features controlled-decode --lib --test controlled_decode --locked -- -D warnings
