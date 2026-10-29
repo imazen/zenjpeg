@@ -609,7 +609,7 @@ pub fn decoder::DecodeConfig::decode_into(&self, &[u8], decoder::PixelFormat, &m
 pub fn decoder::DecodeConfig::decode_rows<F>(&self, &[u8], decoder::PixelFormat, F, impl enough::Stop) -> encoder::Result<decoder::ScanlineInfo> where F: core::ops::function::FnMut(decoder::RowSlice<'_>) -> encoder::Result<()>
 pub fn decoder::DecodeConfig::decode_rows_f32<F>(&self, &[u8], decoder::PixelFormat, F, impl enough::Stop) -> encoder::Result<decoder::ScanlineInfo> where F: core::ops::function::FnMut(decoder::RowSliceF32<'_>) -> encoder::Result<()>
 pub fn decoder::DecodeConfig::decode_to_ycbcr_f32(&self, &[u8], impl enough::Stop) -> encoder::Result<decoder::DecodedYCbCr>
-pub fn decoder::DecodeConfig::decode_with_pulse(&self, &[u8], &dyn how_far::pulse::Pulse) -> encoder::Result<decoder::DecodeResult>
+pub fn decoder::DecodeConfig::decode_with_pulse(&self, &[u8], core::option::Option<&dyn how_far::pulse::Pulse>) -> encoder::Result<decoder::DecodeResult>
 pub fn decoder::DecodeConfig::dequant_bias(self, bool) -> Self
 pub fn decoder::DecodeConfig::estimate_memory_usage(&self, u32, u32) -> usize
 pub fn decoder::DecodeConfig::gain_map(self, decoder::GainMapHandling) -> Self
@@ -634,7 +634,7 @@ pub fn decoder::DecodeConfig::read_info(&self, &[u8]) -> encoder::Result<decoder
 pub fn decoder::DecodeConfig::request<'a>(&'a self, &'a [u8]) -> decoder::DecodeRequest<'a>
 pub fn decoder::DecodeConfig::scanline_reader<'a>(&self, &'a [u8]) -> encoder::Result<decoder::ScanlineReader<'a>>
 pub fn decoder::DecodeConfig::scanline_reader_cow<'a>(&self, alloc::borrow::Cow<'a, [u8]>) -> encoder::Result<decoder::ScanlineReader<'a>>
-pub fn decoder::DecodeConfig::scanline_reader_with_pulse<'a>(&self, &'a [u8], &'a dyn how_far::pulse::Pulse) -> encoder::Result<decoder::ScanlineReader<'a>>
+pub fn decoder::DecodeConfig::scanline_reader_with_pulse<'a>(&self, &'a [u8], core::option::Option<&'a dyn how_far::pulse::Pulse>) -> encoder::Result<decoder::ScanlineReader<'a>>
 pub fn decoder::DecodeConfig::strict(self) -> Self
 pub fn decoder::DecodeConfig::strictness(self, decoder::Strictness) -> Self
 pub fn decoder::DecodeConfig::transform(self, lossless::LosslessTransform) -> Self

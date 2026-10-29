@@ -228,9 +228,11 @@ or 100% coverage of every pre-existing decoder line.
 
 ## Cancellation and hardening
 
-`scanline_reader_with_pulse(data, &dyn how_far::Pulse)` borrows cancellation and
-progress for the reader's lifetime. `decode_with_pulse` supplies the same contract
-for collected output. Existing entry points remain available. Header walks,
+`scanline_reader_with_pulse(data, Option<&dyn how_far::Pulse>)` borrows optional
+cancellation and progress for the reader's lifetime. `decode_with_pulse` takes
+the same optional control for collected output. `None` adds no per-call control;
+`Some(pulse)` retains the supplied reporting and cancellation. Existing entry
+points remain available. Header walks,
 entropy decoding, native reconstruction, crop skipping and parallel wave work
 poll the caller's cancellation token and preserve its `StopReason`, including
 `TimedOut`. Reader progress advances by completed output rows; collected buffered

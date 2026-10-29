@@ -972,14 +972,19 @@ impl DecodeConfig {
     /// Read rows with cooperative cancellation and completed-output-row reports.
     /// The borrowed pulse remains live for the reader's lifetime. Construction
     /// checks it during coefficient decoding; reads check it before doing work.
+    /// `None` adds no per-call control, matching [`Self::scanline_reader`].
     /// The reader never finishes the caller's pulse.
     pub fn scanline_reader_with_pulse<'a>(
         &self,
         data: &'a [u8],
-        pulse: &'a dyn how_far::Pulse,
+        pulse: Option<&'a dyn how_far::Pulse>,
     ) -> Result<ScanlineReader<'a>> {
-        let mut reader = self.scanline_reader_stopped(data, pulse)?;
-        reader.progress = Some(pulse);
+        let stop: &'a dyn Stop = match pulse {
+            Some(pulse) => pulse,
+            None => &Unstoppable,
+        };
+        let mut reader = self.scanline_reader_stopped(data, stop)?;
+        reader.progress = pulse.map(|pulse| pulse as &dyn how_far::Report);
         Ok(reader)
     }
 
@@ -2101,12 +2106,17 @@ impl DecodeConfig {
     /// Decode with cancellation and progress in completed output rows.
     /// Native-precision decoding reports rows as they complete; buffered paths
     /// report their completed rows after decoding. Never finishes the caller's pulse.
+    /// `None` adds no per-call control, matching [`Self::decode`] with `Unstoppable`.
     pub fn decode_with_pulse(
         &self,
         data: &[u8],
-        pulse: &dyn how_far::Pulse,
+        pulse: Option<&dyn how_far::Pulse>,
     ) -> Result<DecodeResult> {
-        self.decode_reporting(data, pulse, Some(pulse))
+        let stop: &dyn Stop = match pulse {
+            Some(pulse) => pulse,
+            None => &Unstoppable,
+        };
+        self.decode_reporting(data, stop, pulse.map(|pulse| pulse as &dyn how_far::Report))
     }
 
     /// Non-generic body of [`decode`](Self::decode).

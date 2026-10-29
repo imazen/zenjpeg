@@ -47,6 +47,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### QUEUED BREAKING CHANGES
 
+- Native `Decoder::decode_with_pulse` and `Decoder::scanline_reader_with_pulse`
+  accept `Option<&dyn how_far::Pulse>`; `None` adds no per-call control.
+  Metadata rewrite services receive the original optional request control.
+  Matching root graph, native controlled decode, metadata rewrite and row
+  planning controls pass (`265a0447`). API snapshots are generated and checked;
+  the standalone fuzz graph is paired and all fuzz bins compile.
+  Qualification scope: `docs/OPTIONAL_PULSE.md` (`926a9a7b`).
 - An encode whose policy forbids EXIF now refuses a non-identity orientation
   (`ErrorKind::EncodePolicyRejected`, category `Policy(Encode)`) instead of
   dropping JPEG's only orientation carrier.
@@ -79,7 +86,12 @@ All notable changes to zenjpeg are documented here. Earlier history
   unqualified policy fields. Refusal leaves the previous job policy intact;
   typed and erased baseline/progressive row paths retain ICC interpretation.
 
-- Add borrowed `&dyn how_far::Pulse` decoding and scanline methods, preserving cancellation reasons through native, buffered and parallel wave paths. Minimal reference fixtures and a shared native-component fuzz/regression harness cover stride, malformed input and precision (`935f6fbe`).
+- Add optional borrowed `Option<&dyn how_far::Pulse>` decoding and scanline
+  methods, preserving cancellation reasons through native, buffered and parallel
+  wave paths. Minimal reference fixtures and a shared native-component
+  fuzz/regression harness cover stride, malformed input and precision (initial
+  required-control implementation: `935f6fbe`; optional source migration:
+  `926a9a7b`).
 - Native component decoding for up to ten channels, per-component quantization
   table retention across scans, and all sixteen arithmetic conditioning slots.
 

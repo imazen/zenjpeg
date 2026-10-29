@@ -524,6 +524,8 @@ fn edited_gain_xmp(
     let Some(descriptive) = req.xmp(source.unwrap().as_bytes())? else {
         return Ok(xmp::create_xmp_app1_marker(required));
     };
+    // Preserve absence as well as the full supplied control through the shared
+    // service boundary; only local checkpoints resolve a no-op control.
     let merged = req.services()?.merge_xmp(
         &descriptive,
         required.as_bytes(),

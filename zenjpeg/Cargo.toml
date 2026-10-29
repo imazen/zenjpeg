@@ -113,9 +113,8 @@ zune-jpeg.workspace = true
 zune-core = "0.5.1"
 codec-corpus = "1.1.0"
 tempfile = "3"
-# zencodec conformance harness. Its `zencodec ^0.1.26` requirement resolves
-# from crates.io, unifying with the workspace `zencodec` dep — no
-# `[patch.crates-io]` needed. Provides `check_decode_truncation_series`
+# The root patch table keeps the conformance harness on the same shared
+# contract as the codec. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 zencodec-testkit = ">=0.1.0, <0.3.0"
 zencodec-io = { version = "0.1.0", features = ["std"] }
@@ -169,7 +168,7 @@ ultrahdr-core = { workspace = true }
 # our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
 # `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
-zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
+zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "8557758809156baba7364bd8cfe32889a61da4e8" }
 zensim = { workspace = true, features = ["classification"] }
 
 [features]

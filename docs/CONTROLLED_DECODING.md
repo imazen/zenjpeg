@@ -19,6 +19,22 @@ let mut pixels = CollectSink::new();
 drive_from_slice(&mut session, input, &mut pixels, None, 4096)?;
 ```
 
+The driver's borrowed Pulse is optional. `None` adds no per-call control and
+preserves the job's retained `SharedPulse`, required policy and storage limits.
+Use `Some(pulse)` for an additional full borrowed control. Forward the original
+option through adapters; normalize only at local checkpoints or private helpers.
+Metadata rewrite services likewise receive the original optional request control,
+including gain-map XMP merging. Native `decode_with_pulse` and
+`scanline_reader_with_pulse` also accept optional borrowed controls.
+
+This source migration targets zencodec `a7c2a6ca`. The matching core-family pins,
+API snapshot, compile checks and native qualification must be updated together
+before landing; earlier qualification below covers the previous signatures.
+The added source controls cover absent native-control pixel/stride parity,
+retained job timeout with absent or no-op per-call control, and metadata-service
+control identity, sharing, limits and byte preservation. They have not been run
+against the matching core graph.
+
 The same implementation is available from
 `DecodeJob::dyn_controlled_decoder(preferred, storage)` and
 `DynDecodeJob::into_controlled_decoder(preferred, storage)`. It does not fall back

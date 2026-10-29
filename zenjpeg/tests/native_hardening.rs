@@ -67,7 +67,7 @@ impl how_far::Pulse for TestPulse {
 fn read_with_pulse(data: &[u8], pulse: &dyn how_far::Pulse) -> zenjpeg::decoder::Result<()> {
     let mut reader = Decoder::new()
         .output_target(OutputTarget::Native16)
-        .scanline_reader_with_pulse(data, pulse)?;
+        .scanline_reader_with_pulse(data, Some(pulse))?;
     fn read<const N: usize>(
         reader: &mut zenjpeg::decoder::ScanlineReader<'_>,
     ) -> zenjpeg::decoder::Result<()> {
@@ -109,7 +109,7 @@ fn every_native_checkpoint_preserves_timeout_and_reports_completed_rows() {
             } // No implicit color conversion.
             let run = |pulse: &TestPulse| {
                 if collected {
-                    config.decode_with_pulse(&data, pulse).map(|_| ())
+                    config.decode_with_pulse(&data, Some(pulse)).map(|_| ())
                 } else {
                     read_with_pulse(&data, pulse)
                 }
@@ -219,12 +219,14 @@ fn native_output_formats_and_precision_options() {
                 .output_target(OutputTarget::Native16)
                 .transform(zenjpeg::lossless::LosslessTransform::Transpose)
                 .crop(CropRegion::pixels(1, 1, 3, 3));
-            let result = config.decode_with_pulse(&data, &pulse).unwrap();
+            let result = config.decode_with_pulse(&data, Some(&pulse)).unwrap();
             assert_eq!(
                 pulse.rows.load(Ordering::Relaxed),
                 u64::from(result.height())
             );
-            let mut transformed = config.scanline_reader_with_pulse(&data, &pulse).unwrap();
+            let mut transformed = config
+                .scanline_reader_with_pulse(&data, Some(&pulse))
+                .unwrap();
             let mut row = vec![rgb::RGB::new(0, 0, 0); 3 * 4];
             assert_eq!(
                 transformed
@@ -253,7 +255,7 @@ fn native_row_formats_report_and_check_buffers() {
         }
         for method in 0..10 {
             let pulse = TestPulse::new(u64::MAX);
-            let mut reader = cfg.scanline_reader_with_pulse(&data, &pulse).unwrap();
+            let mut reader = cfg.scanline_reader_with_pulse(&data, Some(&pulse)).unwrap();
             let mut bytes = vec![0; w * (h + 1) * 4];
             let mut floats = vec![0.0; bytes.len()];
             let rows = match method {
@@ -495,7 +497,7 @@ fn native_color_markers_and_planar_guards() {
             .output_format(PixelFormat::Gray)
             .transform(zenjpeg::lossless::LosslessTransform::Transpose)
             .crop(CropRegion::pixels(1, 1, 3, 3))
-            .decode_with_pulse(&rgb, &pulse)
+            .decode_with_pulse(&rgb, Some(&pulse))
             .unwrap();
         assert_eq!(result.dimensions(), (3, 3));
         assert_eq!(pulse.rows.load(Ordering::Relaxed), 3);
@@ -507,7 +509,7 @@ fn planar_pulse_counts_partial_mcu_rows() {
     let data = seed("00-p8-c1-sof30-mode0-s1");
     let pulse = TestPulse::new(u64::MAX);
     let mut reader = Decoder::new()
-        .scanline_reader_with_pulse(&data, &pulse)
+        .scanline_reader_with_pulse(&data, Some(&pulse))
         .unwrap();
     let mut y = [0i16; 9 * 16];
     let mut cb = [];
@@ -522,7 +524,7 @@ fn planar_pulse_counts_partial_mcu_rows() {
     let stopped = TestPulse::new(0);
     assert!(
         Decoder::new()
-            .scanline_reader_with_pulse(&data, &stopped)
+            .scanline_reader_with_pulse(&data, Some(&stopped))
             .is_err()
     );
 }
@@ -546,12 +548,14 @@ fn eight_bit_buffered_pulse_and_owned_transform() {
         .encode_bytes(&pixels, 9, 9, PixelLayout::Gray8Srgb)
         .unwrap();
     let pulse = TestPulse::new(u64::MAX);
-    let result = Decoder::new().decode_with_pulse(&data, &pulse).unwrap();
+    let result = Decoder::new()
+        .decode_with_pulse(&data, Some(&pulse))
+        .unwrap();
     assert_eq!(result.dimensions(), (9, 9));
     assert_eq!(pulse.rows.load(Ordering::Relaxed), 9);
     let pulse = TestPulse::new(u64::MAX);
     let mut reader = Decoder::new()
-        .scanline_reader_with_pulse(&data, &pulse)
+        .scanline_reader_with_pulse(&data, Some(&pulse))
         .unwrap();
     let mut row = [0u8; 81 * 3];
     assert_eq!(
@@ -586,6 +590,56 @@ fn eight_bit_buffered_pulse_and_owned_transform() {
     );
 }
 
+#[test]
+fn absent_native_pulse_matches_ordinary_decode_and_strided_rows() {
+    use zenjpeg::decoder::PixelFormat;
+    use zenjpeg::encoder::{EncoderConfig, PixelLayout};
+    let pixels: Vec<u8> = (0..81).map(|i| (i * 73) as u8).collect();
+    let buffered = EncoderConfig::grayscale(88)
+        .progressive(true)
+        .encode_bytes(&pixels, 9, 9, PixelLayout::Gray8Srgb)
+        .unwrap();
+    for data in [buffered, seed("01-p12-c1-sof30-mode0-s1")] {
+        let config = Decoder::new()
+            .output_target(OutputTarget::Native16)
+            .output_format(PixelFormat::Gray);
+        let expected = config.decode(&data, enough::Unstoppable).unwrap();
+        let absent = config.decode_with_pulse(&data, None).unwrap();
+        assert_eq!(absent.dimensions(), expected.dimensions());
+        assert_eq!(absent.pixels_u16(), expected.pixels_u16());
+        let (width, height) = expected.dimensions();
+        let width = width as usize;
+        let height = height as usize;
+        let expected = expected.pixels_u16().unwrap();
+        for pulse in [None, Some(&how_far::NoPulse as &dyn how_far::Pulse)] {
+            let mut reader = config.scanline_reader_with_pulse(&data, pulse).unwrap();
+            let stride = width + 2;
+            let mut rows = vec![0xa5a5u16; stride * height];
+            let mut y = 0;
+            while y < height {
+                let count = reader
+                    .read_rows_gray16(ImgRefMut::new_stride(
+                        &mut rows[y * stride..],
+                        width,
+                        height - y,
+                        stride,
+                    ))
+                    .unwrap();
+                assert!(count > 0);
+                y += count;
+            }
+            assert!(reader.is_finished());
+            for y in 0..height {
+                assert_eq!(
+                    &rows[y * stride..y * stride + width],
+                    &expected[y * width..(y + 1) * width]
+                );
+                assert_eq!(&rows[y * stride + width..(y + 1) * stride], &[0xa5a5; 2]);
+            }
+        }
+    }
+}
+
 #[cfg(feature = "parallel")]
 #[test]
 fn wave_pulse_reports_pixel_and_planar_rows() {
@@ -603,7 +657,9 @@ fn wave_pulse_reports_pixel_and_planar_rows() {
         .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::NearestNeighbor)
         .num_threads(2);
     let pulse = TestPulse::new(u64::MAX);
-    let mut reader = config.scanline_reader_with_pulse(&data, &pulse).unwrap();
+    let mut reader = config
+        .scanline_reader_with_pulse(&data, Some(&pulse))
+        .unwrap();
     // Readers without progress observers use the same parallel row paths.
     let mut ordinary = config.scanline_reader(&data).unwrap();
     let mut ordinary_rgb = vec![0u8; w * 3];
@@ -637,7 +693,9 @@ fn wave_pulse_reports_pixel_and_planar_rows() {
     let construction_checks = pulse.checks.load(Ordering::Relaxed);
     for planar in [false, true] {
         let stopped = TestPulse::new(construction_checks + 2);
-        let mut cancelled = config.scanline_reader_with_pulse(&data, &stopped).unwrap();
+        let mut cancelled = config
+            .scanline_reader_with_pulse(&data, Some(&stopped))
+            .unwrap();
         let error = if planar {
             let mut y = vec![0i16; w * 16];
             let mut cb = vec![0i16; w / 2 * 8];
@@ -674,7 +732,9 @@ fn wave_pulse_reports_pixel_and_planar_rows() {
     }
     assert_eq!(pulse.rows.load(Ordering::Relaxed), h as u64);
     let pulse = TestPulse::new(u64::MAX);
-    let mut reader = config.scanline_reader_with_pulse(&data, &pulse).unwrap();
+    let mut reader = config
+        .scanline_reader_with_pulse(&data, Some(&pulse))
+        .unwrap();
     let mut y = vec![0i16; w * 16];
     let mut cb = vec![0i16; w / 2 * 8];
     let mut cr = cb.clone();
@@ -749,7 +809,7 @@ fn collected_parallel_pulse_preserves_worker_timeouts() {
             .unwrap();
         let config = Decoder::new().chroma_upsampling(upsampling).num_threads(2);
         let baseline = TestPulse::new(u64::MAX);
-        let expected = config.decode_with_pulse(&data, &baseline).unwrap();
+        let expected = config.decode_with_pulse(&data, Some(&baseline)).unwrap();
         let sequential = config
             .clone()
             .num_threads(1)
@@ -760,7 +820,7 @@ fn collected_parallel_pulse_preserves_worker_timeouts() {
         // Each budget is well inside a frame's MCU work, after marker parsing.
         for cancel_at in [32, 128, 512] {
             let pulse = TestPulse::new(cancel_at);
-            let error = config.decode_with_pulse(&data, &pulse).unwrap_err();
+            let error = config.decode_with_pulse(&data, Some(&pulse)).unwrap_err();
             assert!(matches!(
                 error.kind(),
                 ErrorKind::Cancelled(enough::StopReason::TimedOut)
@@ -830,7 +890,7 @@ fn crop_skipping_preserves_every_timeout_and_pixels() {
         .num_threads(1)
         .crop(CropRegion::pixels(0, 64, 32, 16));
     let run = |pulse: &TestPulse| -> zenjpeg::decoder::Result<Vec<u8>> {
-        let mut reader = config.scanline_reader_with_pulse(&data, pulse)?;
+        let mut reader = config.scanline_reader_with_pulse(&data, Some(pulse))?;
         let mut pixels = vec![0; 32 * 16 * 3];
         assert_eq!(
             reader.read_rows_rgb8(ImgRefMut::new(&mut pixels, 32 * 3, 16))?,
