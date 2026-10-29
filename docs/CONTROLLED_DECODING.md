@@ -174,3 +174,32 @@ interpretations, incomplete ICC, storage refusal and ICC/descriptor conflicts.
 The covered cleanup shares container-probe interpretation in one private helper
 and destructures retained ICC metadata once, removing duplicate lookups and an
 `unwrap`. It changes no public signatures or admission policy.
+
+## Owned completion details
+
+After a successful drive, `IncrementalDecode::take_details()` returns the final
+`DecodeDetails` once. It contains `ImageInfo`, source encoding details and native
+`zenjpeg::decoder::DecodedExtras`. Before completion, after refusal, or after a
+failed drive it returns `None`.
+
+The controlled route retains its full-file metadata scan owner rather than
+re-decoding pixels to recover extras. Configured APP/COM segments, including late
+comments, survive; MPF secondary images use the same range validation and copying
+path as ordinary decode. This does not assert whole-container privacy or metadata
+completeness. The route still retains the entire encoded input; progressive
+native decoding may allocate full-frame storage. Metadata and embedded-image
+allocations remain outside the shared storage budget.
+
+The pinned shared API is zencodec PR177 (`ec07e8d5`, merged). The paired pixels
+pin is `f23ac753` (0.3.1). The lock changes only these families plus the registry
+zenpixels 0.2.16 edge still required internally by zenresize 0.3.1; shared codec
+interfaces use the paired 0.3.1 types.
+
+`just completion-details-check` runs the existing controlled suite and MPF bounds
+suite plus completion controls. Baseline/progressive and early/late comment
+fixtures compare all rows and retained segment bytes to ordinary native decode;
+an MPF fixture checks exact secondary JPEG bytes. The 2026-10-29 run passed
+20 controlled and 18 MPF tests, strict library/test Clippy and the
+no-default-features controlled build. Wrapper receipt: rc0, 12s, peak RSS
+0.57 GiB. This is build/test process RSS, not a codec workspace bound.
+Initial test-only import/API errors are retained in the qualification logs.

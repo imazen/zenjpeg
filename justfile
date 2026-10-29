@@ -844,3 +844,9 @@ wasm-capability-size workspace output:
 rgba-float-check:
     cargo test -p zenjpeg --features controlled-decode --test controlled_decode --locked
     cargo clippy -p zenjpeg --features controlled-decode --lib --test controlled_decode --locked -- -D warnings
+
+# Owned completion metadata and native embedded-image preservation.
+completion-details-check:
+    cargo test -p zenjpeg --locked --features controlled-decode --test controlled_decode --test mpf_bounds
+    cargo clippy -p zenjpeg --locked --features controlled-decode --lib --test controlled_decode --test mpf_bounds -- -D warnings
+    cargo check -p zenjpeg --locked --no-default-features --features controlled-decode

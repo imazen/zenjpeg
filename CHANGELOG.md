@@ -7,6 +7,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Controlled decoding now returns final owned details through `take_details`,
+  preserving configured metadata, native extras and embedded MPF image bytes
+  without a second pixel decode. Details remain unavailable before success.
+
 - Respect ranked decode precision preferences: an RGB8/RGBA8 choice before a
   float alternative keeps U8 output; float-first preferences remain linear F32.
 
