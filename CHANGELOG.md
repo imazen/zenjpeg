@@ -7,6 +7,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Respect ranked decode precision preferences: an RGB8/RGBA8 choice before a
+  float alternative keeps U8 output; float-first preferences remain linear F32.
+
 - Honor the advertised RGBAF32 decode preference for RGB JPEGs. The adapter
   retains each decoded RGB sample bit and appends opaque alpha, rather than
   returning RGBF32. The expansion allocation is fallible; no memory-bound or

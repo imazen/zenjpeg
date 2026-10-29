@@ -25,3 +25,17 @@ Run-heavy receipt: rc0, 8s, peak RSS 0.59GiB. Logs under
 jpeg-rgba-native2.log (ambiguous test trait call), jpeg-rgba-native3.log
 (constant chunks lint), jpeg-rgba-fix2.log (paired matrix pass followed by
 unsupported dependency-package test invocation). Setup failures are retained.
+
+## Ranked precision selection
+
+A subsequent shared-consumer regression on e49c76f0 reproduced RGBF32 output
+for `[RGB8_SRGB, RGBF32_LINEAR]`: the one-shot adapter enabled float output
+when any preference was float. Precision now follows the existing first-supported
+layout selector after the header supplies component count. This retains one
+header parse and does not change the HDR reconstruction branch.
+
+The regression checks RGB/RGBA, U8-first/F32-first and baseline/progressive
+inputs against singleton-preference native decoding, including exact row bytes
+and metadata. `just rgba-float-check` passes all 18 controlled-decode tests and
+strict library/test Clippy. Receipt: rc0, 20s, peak RSS 0.68 GiB. C++ FFI parity
+was not run; this change concerns shared adapter preference negotiation.

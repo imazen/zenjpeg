@@ -1851,3 +1851,10 @@ requests correctly refused that mismatch after decoding. The correction honors
 the negotiated RGBA layout with opaque alpha and unchanged RGB bits. Regression:
 `advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha`.
 One-shot pre-allocation descriptor admission remains a separate contract.
+
+## Ranked output negotiation regression (2026-10-29, fixed)
+
+The shared one-shot adapter formerly enabled F32 when any ranked preference was
+float, overriding an earlier supported U8 format. Precision now uses the same
+first-supported selector as layout, after parsing source component count.
+The controlled-decode target retains mixed precision ordering regressions.

@@ -1333,10 +1333,6 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             let data = self.data;
             let preferred = &self.preferred;
 
-            let wants_f32 = preferred
-                .iter()
-                .any(|d| d.channel_type() == ChannelType::F32);
-
             let limits = self.limits;
             let mut cfg = build_decode_config(
                 &self.config.inner,
@@ -1346,14 +1342,19 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 self.policy.as_ref(),
             );
 
-            if wants_f32 {
-                cfg = cfg.output_target(OutputTarget::LinearF32);
-            }
-
             // Single header parse for all pre-decode checks: dimension limits,
             // progressive policy, CMYK detection, and output format hinting.
             // Previously three separate read_info() calls.
             let header = read_job_info(&cfg, &data, self.policy.as_ref())?;
+
+            // Choose precision from the first supported preference, just like
+            // layout selection. A later float alternative must not override U8.
+            let wants_f32 = select_decode_descriptor(preferred, header.num_components)
+                .channel_type()
+                == ChannelType::F32;
+            if wants_f32 {
+                cfg = cfg.output_target(OutputTarget::LinearF32);
+            }
 
             // Dimension limits. `check_dimensions` yields a `LimitExceeded`
             // (foreign — no envelope bridge), so map through the native `Error`.

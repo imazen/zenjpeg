@@ -936,3 +936,38 @@ fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
         );
     }
 }
+
+#[test]
+fn ranked_native_output_does_not_promote_a_later_float_preference() {
+    for progressive in [false, true] {
+        let bytes = base(progressive);
+        for preferred in [
+            [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR],
+            [PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR],
+            [PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB],
+            [PixelDescriptor::RGBAF32_LINEAR, PixelDescriptor::RGBA8_SRGB],
+        ] {
+            let config = JpegDecoderConfig::new();
+            let expected = config
+                .clone()
+                .job()
+                .decoder(Cow::Borrowed(&bytes), &preferred[..1])
+                .unwrap()
+                .decode()
+                .unwrap();
+            let actual = DecodeRequest::new()
+                .preferring_output(preferred.to_vec())
+                .decode(&CodecSet::new().with_decoder(config), &bytes)
+                .unwrap();
+            assert_eq!(
+                actual.pixels().descriptor(),
+                expected.pixels().descriptor(),
+                "progressive={progressive}, preferred={preferred:?}"
+            );
+            assert_eq!(actual.metadata(), expected.metadata());
+            for row in 0..actual.height() {
+                assert_eq!(actual.pixels().row(row), expected.pixels().row(row));
+            }
+        }
+    }
+}
