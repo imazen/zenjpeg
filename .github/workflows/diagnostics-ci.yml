@@ -2,7 +2,7 @@ name: Encoder diagnostics
 
 on:
   push:
-    branches: [main, diagnostics]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
