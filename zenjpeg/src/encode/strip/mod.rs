@@ -634,6 +634,11 @@ pub struct StripProcessor {
     /// arrive in irregular shapes (e.g. zero-length flush at EOI).
     aq_controller: Option<Box<dyn crate::encode::aq_controller::AqController>>,
     aq_controller_imcu_idx: usize,
+
+    #[cfg(feature = "__diagnostics")]
+    diagnostics: Option<alloc::sync::Arc<spin::Mutex<super::diagnostics::EncodeDiagnostics>>>,
+    #[cfg(feature = "__diagnostics")]
+    diagnostics_cursor: [usize; 3],
 }
 
 impl StripProcessor {
@@ -934,7 +939,196 @@ impl StripProcessor {
             // No AQ controller installed by default (#113 PR-A scaffold).
             aq_controller: None,
             aq_controller_imcu_idx: 0,
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: None,
+            #[cfg(feature = "__diagnostics")]
+            diagnostics_cursor: [0; 3],
         })
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn capture_diagnostics(
+        &mut self,
+        gray: bool,
+    ) -> Result<super::diagnostics::DiagnosticsHandle> {
+        use super::diagnostics::{
+            BlockDiagnostics, ComponentDiagnostics, DiagnosticsHandle, EncodeDiagnostics,
+        };
+        use crate::foundation::alloc::{try_alloc_filled, try_with_capacity};
+        use alloc::sync::Arc;
+        if self.diagnostics.is_some() {
+            return Err(crate::error::Error::invalid_state(
+                "diagnostics already enabled",
+            ));
+        }
+        let layout = &self.layout;
+        let flatten = |rows: &[[f32; 8]; 8]| {
+            let mut result = [0.0; 64];
+            for (i, row) in rows.iter().enumerate() {
+                result[i * 8..(i + 1) * 8].copy_from_slice(row);
+            }
+            result
+        };
+        let count = if gray { 1 } else { 3 };
+        let mut components = try_with_capacity(count, "diagnostics components")?;
+        let mut sampling_factors = try_with_capacity(count, "diagnostics sampling factors")?;
+        let dimensions = [
+            (layout.y_blocks_w, layout.y_blocks_h),
+            (layout.c_blocks_w, layout.c_blocks_h),
+            if layout.use_xyb {
+                (layout.b_blocks_w, layout.b_blocks_h)
+            } else {
+                (layout.c_blocks_w, layout.c_blocks_h)
+            },
+        ];
+        let quant = [
+            &self.quant.y_quant,
+            &self.quant.cb_quant,
+            &self.quant.cr_quant,
+        ];
+        let bias = [
+            &self.quant.y_zero_bias_simd,
+            &self.quant.cb_zero_bias_simd,
+            &self.quant.cr_zero_bias_simd,
+        ];
+        let h = if layout.use_xyb
+            && matches!(
+                layout.xyb_subsampling,
+                super::encoder_types::XybSubsampling::BQuarter
+            ) {
+            2
+        } else {
+            layout.h_samp as u8
+        };
+        let v = layout.v_samp as u8;
+        for i in 0..count {
+            let (w, h_blocks) = dimensions[i];
+            let block_count = w.checked_mul(h_blocks).ok_or_else(|| {
+                crate::error::Error::invalid_state("diagnostics dimensions overflow")
+            })?;
+            components.push(ComponentDiagnostics {
+                component_id: (i + 1) as u8,
+                block_grid: (w as u32, h_blocks as u32),
+                quant_table_base: quant[i].values,
+                zero_bias: flatten(&bias[i].offset_rows),
+                zero_bias_mul: flatten(&bias[i].mul_rows),
+                blocks: try_alloc_filled(
+                    block_count,
+                    BlockDiagnostics::default(),
+                    "diagnostics blocks",
+                )?,
+            });
+            sampling_factors.push(if gray {
+                (1, 1)
+            } else if i == 0 || (layout.use_xyb && i == 1) {
+                (h, v)
+            } else {
+                (1, 1)
+            });
+        }
+        if (self.use_rgb || layout.use_xyb) && !gray {
+            components[0].component_id = b'R';
+            components[1].component_id = b'G';
+            components[2].component_id = b'B';
+        }
+        let data = Arc::new(spin::Mutex::new(EncodeDiagnostics {
+            width: layout.width as u32,
+            height: layout.height as u32,
+            color_path: if gray {
+                "Grayscale"
+            } else if layout.use_xyb {
+                "XYB"
+            } else if self.use_rgb {
+                "RGB"
+            } else {
+                "YCbCr"
+            },
+            sampling_factors,
+            components,
+        }));
+        self.diagnostics = Some(data.clone());
+        Ok(DiagnosticsHandle(data))
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    fn capture_quantized_imcu(&mut self, buffer: usize, starts: [usize; 3], aq_start: usize) {
+        let Some(data) = &self.diagnostics else {
+            return;
+        };
+        let mut data = data.lock();
+        let pending = [
+            &self.pending.y[buffer],
+            &self.pending.cb[buffer],
+            &self.pending.cr[buffer],
+        ];
+        let levels = [&self.y_blocks, &self.cb_blocks, &self.cr_blocks];
+        let widths = [
+            self.layout.y_blocks_w,
+            self.layout.c_blocks_w,
+            if self.layout.use_xyb {
+                self.layout.b_blocks_w
+            } else {
+                self.layout.c_blocks_w
+            },
+        ];
+        let heights = [
+            self.layout.y_blocks_h,
+            self.layout.c_blocks_h,
+            if self.layout.use_xyb {
+                self.layout.b_blocks_h
+            } else {
+                self.layout.c_blocks_h
+            },
+        ];
+        for (c, component) in data.components.iter_mut().enumerate() {
+            for (i, (dct, level)) in pending[c]
+                .iter()
+                .zip(levels[c][starts[c]..].iter())
+                .enumerate()
+            {
+                let strength = if c == 0 {
+                    self.all_aq_strengths
+                        .get(aq_start + i)
+                        .copied()
+                        .unwrap_or(0.08)
+                } else {
+                    // Mirror quantize_chroma_blocks, including its per-strip fallback.
+                    let w = widths[c].max(1);
+                    let chroma_y = starts[c] / w + i / w;
+                    let y_x = (i % w) * self.layout.y_blocks_w / w;
+                    let y_y = chroma_y * self.layout.y_blocks_h / heights[c].max(1);
+                    let idx = y_y * self.layout.y_blocks_w
+                        + y_x.min(self.layout.y_blocks_w.saturating_sub(1));
+                    self.all_aq_strengths.get(idx).copied().unwrap_or(0.08)
+                };
+                if let Some(slot) = component.blocks.get_mut(self.diagnostics_cursor[c] + i) {
+                    slot.coef_pre_quant = dct.to_array();
+                    slot.coef_levels = *level;
+                    slot.aq_strength = strength;
+                }
+            }
+            self.diagnostics_cursor[c] += pending[c].len();
+        }
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    fn capture_final_levels(&self) {
+        let Some(data) = &self.diagnostics else {
+            return;
+        };
+        let mut data = data.lock();
+        let levels = [&self.y_blocks, &self.cb_blocks, &self.cr_blocks];
+        for (c, component) in data.components.iter_mut().enumerate() {
+            let offset = self.diagnostics_cursor[c].saturating_sub(levels[c].len());
+            for (block, level) in component
+                .blocks
+                .iter_mut()
+                .skip(offset)
+                .zip(levels[c].iter())
+            {
+                block.coef_levels = *level;
+            }
+        }
     }
 
     /// Returns allocation statistics for this processor.
@@ -1620,6 +1814,14 @@ impl StripProcessor {
     /// fast SIMD quantization.
     fn quantize_prev_pending_imcu(&mut self, aq_strengths: &[f32]) {
         let buffer_idx = self.pending.prev_idx();
+        #[cfg(feature = "__diagnostics")]
+        let starts = [
+            self.y_blocks.len(),
+            self.cb_blocks.len(),
+            self.cr_blocks.len(),
+        ];
+        #[cfg(feature = "__diagnostics")]
+        let aq_start = self.all_aq_strengths.len();
 
         // Check if we have trellis context for R-D optimization
         let use_trellis = self.trellis_ctx.is_some();
@@ -1751,6 +1953,8 @@ impl StripProcessor {
                 y_blocks_h,
             );
         }
+        #[cfg(feature = "__diagnostics")]
+        self.capture_quantized_imcu(buffer_idx, starts, aq_start);
     }
 
     /// Non-trellis Y-plane quantize with boundary-continuity refinement
@@ -2131,6 +2335,9 @@ impl StripProcessor {
         if !self.y_dc_raw.is_empty() {
             self.apply_dc_trellis();
         }
+
+        #[cfg(feature = "__diagnostics")]
+        self.capture_final_levels();
 
         Ok(StripProcessorOutput {
             y_blocks: self.y_blocks,

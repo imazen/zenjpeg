@@ -148,6 +148,11 @@ pub use crate::error::{Error, Result};
 // variants later stays non-breaking.
 pub use crate::error::ErrorKind;
 
+// Unstable viewer instrumentation and the custom tables it edits.
+#[cfg(feature = "__diagnostics")]
+#[doc(hidden)]
+pub use crate::encode::diagnostics;
+
 // === Main encoder types (from encode root modules) ===
 pub use crate::encode::Stop;
 pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};

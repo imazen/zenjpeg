@@ -89,6 +89,8 @@ zentone = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
+spin = { version = "0.12.3", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
+
 [dev-dependencies]
 # The unit tests' `for_each_token_permutation` needs `testable_dispatch` to
 # disable tokens the build guarantees at compile time (SSE2 on x86-64, NEON on
@@ -236,6 +238,8 @@ __test-utils = []
 # `zenwebp`'s `__expert` feature. No new public knobs are exposed —
 # `InternalParams` only re-bundles existing builder methods.
 __expert = []
+# Unstable, opt-in per-block data for the diagnostics viewer.
+__diagnostics = ["dep:spin"]
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
 

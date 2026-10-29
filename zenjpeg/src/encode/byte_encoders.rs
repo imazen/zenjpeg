@@ -422,6 +422,18 @@ impl BytesEncoder {
         self.inner.set_aq_controller(ctrl);
     }
 
+    /// Start an unstable per-block capture before pushing any rows.
+    /// The returned handle owns the data after this encoder is finished.
+    #[cfg(feature = "__diagnostics")]
+    pub fn capture_diagnostics(&mut self) -> Result<super::diagnostics::DiagnosticsHandle> {
+        if self.rows_pushed() != 0 {
+            return Err(Error::invalid_state(
+                "diagnostics must be enabled before the first row",
+            ));
+        }
+        self.inner.capture_diagnostics()
+    }
+
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
@@ -1024,6 +1036,12 @@ impl<P: Pixel> RgbEncoder<P> {
     #[must_use]
     pub fn encode_stats(&self) -> &crate::foundation::alloc::EncodeStats {
         self.inner.encode_stats()
+    }
+
+    /// Start an unstable per-block capture before pushing any rows.
+    #[cfg(feature = "__diagnostics")]
+    pub fn capture_diagnostics(&mut self) -> Result<super::diagnostics::DiagnosticsHandle> {
+        self.inner.capture_diagnostics()
     }
 
     // === Finish ===
