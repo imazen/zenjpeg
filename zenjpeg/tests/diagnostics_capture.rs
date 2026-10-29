@@ -57,6 +57,18 @@ fn check(config: EncoderConfig, width: usize, height: usize, pixels: &[u8]) {
         .decode_coefficients(&bytes, Unstoppable)
         .unwrap();
     assert_eq!(diagnostics.components.len(), decoded.components.len());
+    let max_h = decoded
+        .components
+        .iter()
+        .map(|c| c.h_samp as usize)
+        .max()
+        .unwrap();
+    let max_v = decoded
+        .components
+        .iter()
+        .map(|c| c.v_samp as usize)
+        .max()
+        .unwrap();
     for (index, (component, reference)) in diagnostics
         .components
         .iter()
@@ -69,6 +81,13 @@ fn check(config: EncoderConfig, width: usize, height: usize, pixels: &[u8]) {
             (reference.h_samp, reference.v_samp)
         );
         let (w, h) = component.block_grid;
+        assert_eq!(
+            (w as usize, h as usize),
+            (
+                (width * reference.h_samp as usize).div_ceil(max_h * 8),
+                (height * reference.v_samp as usize).div_ceil(max_v * 8)
+            )
+        );
         assert_eq!(component.blocks.len(), (w * h) as usize);
         for y in 0..h as usize {
             for x in 0..w as usize {
@@ -184,4 +203,65 @@ fn typed_rgb_encoder_exposes_the_same_capture() {
         diag.components[0].blocks[0].coef_levels.as_slice(),
         decoded.components[0].block(0)
     );
+}
+
+#[test]
+fn captures_the_original_mode_matrix() {
+    let (w, h) = (32, 32);
+    let pixels = image(w, h, false);
+    let cases = [
+        (EncoderConfig::ycbcr(85.0, ChromaSubsampling::None), true),
+        (EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter), true),
+        (
+            EncoderConfig::ycbcr(85.0, ChromaSubsampling::HalfHorizontal),
+            true,
+        ),
+        (
+            EncoderConfig::ycbcr(85.0, ChromaSubsampling::None).aq_enabled(false),
+            false,
+        ),
+        (
+            EncoderConfig::ycbcr(85.0, ChromaSubsampling::None).trellis(TrellisConfig::new()),
+            true,
+        ),
+        (
+            EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).auto_optimize(true),
+            true,
+        ),
+        (EncoderConfig::xyb(85.0, XybSubsampling::Full), true),
+        (EncoderConfig::xyb(85.0, XybSubsampling::BQuarter), true),
+    ];
+    for (config, aq_enabled) in cases {
+        let mut encoder = config
+            .encode_from_bytes(w as u32, h as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        let capture = encoder.capture_diagnostics().unwrap();
+        encoder.push_packed(&pixels, Unstoppable).unwrap();
+        let bytes = encoder.finish().unwrap();
+        assert!(!bytes.is_empty());
+        let capture = capture.try_take().unwrap();
+        assert_eq!((capture.width, capture.height), (w as u32, h as u32));
+        assert_eq!(capture.components.len(), 3);
+        for component in &capture.components {
+            let expected = component.block_grid.0 as usize * component.block_grid.1 as usize;
+            assert_eq!(component.blocks.len(), expected);
+            let populated = component
+                .blocks
+                .iter()
+                .filter(|b| b.coef_pre_quant.iter().any(|c| *c != 0.0))
+                .count();
+            assert!(
+                populated * 10 >= expected * 9,
+                "component {} has {populated}/{expected} populated blocks",
+                component.component_id
+            );
+            if aq_enabled {
+                assert!(
+                    component.blocks.iter().any(|b| b.aq_strength > 0.0),
+                    "component {} has no positive AQ strength",
+                    component.component_id
+                );
+            }
+        }
+    }
 }

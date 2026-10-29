@@ -868,3 +868,6 @@ diagnostics-check:
     cargo fmt -p zenjpeg -- --check
     cargo clippy --locked -p zenjpeg --no-default-features --features __diagnostics --lib -- -D warnings
     just diagnostics-test
+
+diagnostics-i686:
+    cross test --locked -p zenjpeg --target i686-unknown-linux-gnu --features __diagnostics,boundary-rd,parallel --test diagnostics_capture
