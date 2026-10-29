@@ -78,7 +78,7 @@ moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)
 png = "0.18"
-zenpng = { version = ">=0.1.1, <0.3.0", default-features = false }
+zenpng = { version = ">=0.2.0, <0.4.0", default-features = false }
 zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
 # excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
@@ -87,7 +87,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # Dev-only quality regression and measurement tooling; not a library dependency.
-zensim = { git = "https://github.com/imazen/zensimx", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
+zensim = { git = "https://github.com/imazen/zensimx", rev = "8557758809156baba7364bd8cfe32889a61da4e8" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
@@ -230,17 +230,19 @@ manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
 [patch.crates-io]
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
+
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
 # The zencodec 0.2 family, all from one core revision (ideal-api a15c28fd).
 # zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
 # patches resolve them for local builds; releases stay gated on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
 # The Pulse contract is zencodec 0.2. The tests' zenpng 0.1.x (direct and via
 # zensim-regress) stays on crates.io zencodec 0.1 in its own graph; it is used
 # only through its native PNG API, never through zencodec traits.
