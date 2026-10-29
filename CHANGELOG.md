@@ -52,7 +52,7 @@ All notable changes to zenjpeg are documented here. Earlier history
   Metadata rewrite services receive the original optional request control.
   Matching root graph, native controlled decode, metadata rewrite and row
   planning controls pass (`265a0447`). API snapshots are generated and checked;
-  the standalone fuzz lock still needs its targeted paired-pixel update.
+  the standalone fuzz graph is paired and all fuzz bins compile.
   Qualification scope: `docs/OPTIONAL_PULSE.md` (`926a9a7b`).
 - An encode whose policy forbids EXIF now refuses a non-identity orientation
   (`ErrorKind::EncodePolicyRejected`, category `Policy(Encode)`) instead of

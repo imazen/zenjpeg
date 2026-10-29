@@ -221,9 +221,9 @@ dependencies = [
 
 [[package]]
 name = "lz4_flex"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "magetypes"
@@ -423,7 +423,7 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
+source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
 dependencies = [
  "almost-enough",
  "enough",
@@ -479,7 +479,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
+source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
 dependencies = [
  "roxmltree",
  "zencodec",
@@ -488,9 +488,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
+version = "0.2.17"
+source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -500,9 +499,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf516a64a98f08fa2aa19e86f1389e49894f750441044d65369687cf88a1b8dd"
+version = "0.2.17"
+source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -547,9 +545,9 @@ dependencies = [
 [[patch.unused]]
 name = "zencodec-coroutine"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
+source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
 
 [[patch.unused]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
+source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"

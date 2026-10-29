@@ -51,3 +51,18 @@ lock update is required; no tests were skipped or signatures weakened. The
 follow-up wrapper recorded `rc1 62s; peak-RSS 0.62GiB; min-avail 14490MiB;
 peak-load 0.99`, retaining this resolution failure separately from the passing
 API generation/check steps.
+
+
+The targeted follow-up on `e0bb92b4` updates only the paired pixel packages,
+then audits the resolved fuzz lock. Core/pixels/converter and Ultra HDR's
+core edge align. The only additional package change is lz4_flex 0.13.1 to
+0.14.0, required by converter 0.2.17; its complete before/after entries match
+the previously reviewed native-root transition. The initial audit refusal is
+retained separately from this explicit review.
+
+`cargo check --locked --bins` then passes for the standalone fuzz workspace.
+Its inventory fuzzer still warns about the existing deprecated `with_policy`
+call; the policy or assertions were not silently changed. The final wrapper
+reports `rc0 7s; peak-RSS 0.58GiB; min-avail 14766MiB; peak-load 0.50`.
+The resolved fuzz lock is committed. No fuzz campaign or new performance claim
+is implied by compiling its targets.
