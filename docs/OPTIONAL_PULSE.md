@@ -37,3 +37,17 @@ All root lock changes were explicitly reviewed, including the required rustix
 update. The root resolves one shared core, pixel, converter and Pulse package.
 The fuzz workspace needs its own paired pixel patches because dependency patch
 tables do not propagate; that source update remains unqualified.
+
+## Generated API follow-up
+
+On `31b789f3`, `just api-doc` and `just api-doc-check` pass. The generated
+surface changes exactly the two native helper arguments to `Option`; the
+snapshot is committed. Existing ambiguous rustdoc links in `error.rs` still
+warn and are not represented as a warning-free documentation build.
+
+The standalone fuzz workspace failed dependency resolution before compiling:
+its old lock retains pixels 0.2.16 while core requires 0.2.17. A targeted pixel
+lock update is required; no tests were skipped or signatures weakened. The
+follow-up wrapper recorded `rc1 62s; peak-RSS 0.62GiB; min-avail 14490MiB;
+peak-load 0.99`, retaining this resolution failure separately from the passing
+API generation/check steps.
