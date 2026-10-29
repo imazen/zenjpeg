@@ -82,14 +82,13 @@ fuzz-*.log
 # Reproduce via examples/zq_pareto_calibrate.rs; summary committed at
 # benchmarks/zq_pareto_<DATE>.summary.md.
 benchmarks/zq_pareto_*.tsv
-CLAUDE.local.md
-zenjpeg-diagnostics-viewer/web/node_modules/
-zenjpeg-diagnostics-viewer/web/dist/
-zenjpeg-diagnostics-viewer/web/test-results/
-zenjpeg-diagnostics-viewer/web/playwright-report/
-zenjpeg-diagnostics-viewer/web/wasm-pkg/
 
-# Diagnostics-viewer image picker corpus — fetched at build time from R2
-# via web/scripts/fetch-images.ts. Manifest is regenerated; both files
-# and manifest.json stay out of git.
-zenjpeg-diagnostics-viewer/web/public/images/
+.jj/
+
+# Diagnostics viewer build and optional image cache
+/zenjpeg-diagnostics-viewer/web/wasm-pkg/
+/zenjpeg-diagnostics-viewer/web/dist/
+/zenjpeg-diagnostics-viewer/web/public/images/
+/zenjpeg-diagnostics-viewer/web/playwright-report/
+/zenjpeg-diagnostics-viewer/web/test-results/
+/zenjpeg-diagnostics-viewer/wasm/target/

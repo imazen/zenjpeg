@@ -45,7 +45,7 @@
     <!-- Image source bar -->
     <section class="px-6 py-2 border-b border-line bg-panel flex flex-wrap gap-4 items-center text-sm">
       <label class="flex items-center gap-2 text-muted">
-        <span class="text-xs uppercase tracking-wider">Image</span>
+        <span class="text-xs uppercase tracking-wider">Image (alpha ignored)</span>
         <select id="image-pick" data-testid="image-pick" class="min-w-[280px]">
           <option value="__synthetic__" selected>Synthetic 64×64</option>
         </select>
@@ -210,7 +210,7 @@
     >
       <div class="bg-panel border border-line rounded p-3">
         <h2 class="text-sm m-0 mb-2 text-accent font-semibold">
-          AQ multiplier per Y/X block
+          AQ strength per Y/X block
         </h2>
         <div class="flex gap-3 items-start">
           <canvas
@@ -233,7 +233,7 @@
           </dl>
         </div>
         <p class="m-0 mt-2 text-xs text-muted">
-          Smaller AQ multiplier → finer quantization (more bits spent).
+          AQ strength changes the zero-bias threshold.
           Map is computed on the AQ source channel (Y for YCbCr, Y-XYB
           for XYB) and applied to the lead component (Y or X).
         </p>
@@ -466,7 +466,7 @@
           <label class="flex items-center gap-2 text-xs text-text">
             <input type="radio" name="mode" value="baseline" checked data-testid="mode-baseline" />
             Adaptive Quantization
-            <span class="text-muted text-[10px]">(per-block AQ multiplier; no trellis RD)</span>
+            <span class="text-muted text-[10px]">(per-block AQ strength; no trellis RD)</span>
           </label>
           <label class="flex items-center gap-2 text-xs text-text">
             <input type="radio" name="mode" value="trellis" data-testid="mode-trellis" />
@@ -629,13 +629,6 @@
             class="w-24"
           />
         </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Quality-adaptive λ</span>
-          <span class="flex items-center gap-2">
-            <input type="checkbox" id="hybrid-q-adapt" checked data-testid="hybrid-q-adapt-checkbox" />
-            <span class="text-text">Enable</span>
-          </span>
-        </label>
       </article>
 
       <article
@@ -647,9 +640,9 @@
       >
         <div class="flex flex-col gap-1">
           <p class="text-xs text-muted m-0">
-            Per-component <strong>f32</strong> quant tables (encoder
-            uses these as final values when custom tables are present
-            — <code>ScalingParams::Exact</code>). The 8-band sliders
+            Per-component quantization tables. Edited values are rounded to
+            integer JPEG table entries without additional quality scaling
+            (<code>ScalingParams::Exact</code>). The 8-band sliders
             (h_eq, v_eq) drive a separable multiplier; curve presets
             jump to common shapes; click any cell to edit the float
             directly. Values are sent as
@@ -731,10 +724,9 @@
             Zero-bias (dead-zone) parameters
           </summary>
           <p class="text-xs text-muted mt-2 mb-2">
-            Coefficient with abs value below
-            <code>zero_bias_mul[k] · quant[k]</code> snaps to zero.
-            Higher mul = more aggressive zeroing. DC/AC offsets shift
-            the dead-zone center.
+            A scaled coefficient is zeroed below
+            <code>offset[k] + zero_bias_mul[k] · AQ_strength</code>.
+            DC and AC offsets adjust that threshold.
           </p>
           <div class="grid grid-cols-3 gap-3">
             <div class="flex flex-col gap-2">
@@ -933,22 +925,21 @@
                   class="block w-[200px] h-[200px] bg-black rounded"
                 ></canvas>
                 <p class="m-0 mt-1 text-xs text-muted">
-                  Mean |coef_pre_quant| / effective_quant per coefficient
+                  Mean 8 × |coef_pre_quant| / rounded quant per coefficient
                   position (natural order; DC top-left).
                 </p>
               </div>
               <div>
                 <h3 class="text-xs m-0 mb-1 text-text font-semibold">
-                  Byte budget
+                  Estimated zero coefficients
                 </h3>
                 <p class="m-0 text-sm font-mono">
                   <span data-testid="comp-0-zero-rate">--</span>%
-                  <span class="text-muted">of coefs zero out</span>
+                  <span class="text-muted">of coefficients are estimated as zero</span>
                 </p>
                 <p class="m-0 mt-2 text-xs text-muted">
-                  Re-applying the user-adjusted table to this
-                  component's pre-quant coefficients. Updates live as
-                  you drag.
+                  Estimate using the adjusted table, captured AQ strength and zero bias.
+                  Trellis and later DC refinement can change the final levels.
                 </p>
               </div>
             </div>

@@ -34,6 +34,7 @@ pub use crate::encode::extras::{
 };
 
 // Re-export detect types for quality estimation through extras
+#[cfg(feature = "metadata")]
 pub use crate::detect::{
     Confidence, DqtTable, EncoderFamily, JpegProbe, QualityEstimate, QualityScale,
 };
@@ -362,6 +363,7 @@ pub struct DecodedExtras {
     /// Secondary images extracted from MPF
     pub(crate) secondary_images: Vec<PreservedMpfImage>,
     /// Probe result from header analysis (encoder ID, quality estimate, DQT tables).
+    #[cfg(feature = "metadata")]
     pub(crate) probe: Option<JpegProbe>,
 
     // Lazy parse cache
@@ -375,7 +377,16 @@ impl core::fmt::Debug for DecodedExtras {
         f.debug_struct("DecodedExtras")
             .field("segments", &self.segments.len())
             .field("secondary_images", &self.secondary_images.len())
-            .field("has_probe", &self.probe.is_some())
+            .field("has_probe", &{
+                #[cfg(feature = "metadata")]
+                {
+                    self.probe.is_some()
+                }
+                #[cfg(not(feature = "metadata"))]
+                {
+                    false
+                }
+            })
             .finish()
     }
 }
@@ -385,6 +396,7 @@ impl Clone for DecodedExtras {
         Self {
             segments: self.segments.clone(),
             secondary_images: self.secondary_images.clone(),
+            #[cfg(feature = "metadata")]
             probe: self.probe.clone(),
             xmp_cache: OnceLock::new(),
             icc_cache: OnceLock::new(),
@@ -399,6 +411,7 @@ impl DecodedExtras {
         Self {
             segments: Vec::new(),
             secondary_images: Vec::new(),
+            #[cfg(feature = "metadata")]
             probe: None,
             xmp_cache: OnceLock::new(),
             icc_cache: OnceLock::new(),
@@ -515,6 +528,7 @@ impl DecodedExtras {
     ///     println!("Quality: {:.0} ({:?})", probe.quality.value, probe.quality.scale);
     /// }
     /// ```
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn probe(&self) -> Option<&JpegProbe> {
         self.probe.as_ref()
@@ -524,12 +538,14 @@ impl DecodedExtras {
     ///
     /// Returns the quality estimate with a value on the appropriate scale
     /// for the detected encoder (IJG 1-100, mozjpeg 1-100, or butteraugli distance).
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn quality_estimate(&self) -> Option<&QualityEstimate> {
         self.probe.as_ref().map(|p| &p.quality)
     }
 
     /// Detected encoder family (libjpeg-turbo, mozjpeg, jpegli, Photoshop, etc.).
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn encoder(&self) -> Option<EncoderFamily> {
         self.probe.as_ref().map(|p| p.encoder)
@@ -539,6 +555,7 @@ impl DecodedExtras {
     ///
     /// This is DQT table 0, which is typically the luminance (Y) table.
     /// Values are in the range 1-255 for baseline JPEG, 1-65535 for extended.
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn luminance_qt(&self) -> Option<&[u16; 64]> {
         self.probe
@@ -553,6 +570,7 @@ impl DecodedExtras {
     ///
     /// This is DQT table 1, which is typically the chrominance (Cb/Cr) table.
     /// Returns `None` for grayscale images (only one DQT table).
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn chrominance_qt(&self) -> Option<&[u16; 64]> {
         self.probe
@@ -567,6 +585,7 @@ impl DecodedExtras {
     ///
     /// Typically 1 table for grayscale, 2 for standard color, 3 for jpegli.
     /// Tables are in natural (row-major) order with their original table indices.
+    #[cfg(feature = "metadata")]
     #[must_use]
     pub fn dqt_tables(&self) -> Option<&[DqtTable]> {
         self.probe.as_ref().map(|p| p.dqt_tables.as_slice())
@@ -787,48 +806,28 @@ impl DecodedExtras {
 
     /// Reassemble ICC profile from chunks.
     fn reassemble_icc(&self) -> Option<Vec<u8>> {
-        let icc_segments: Vec<_> = self.segments_by_type(SegmentType::Icc).collect();
-        if icc_segments.is_empty() {
-            return None;
-        }
-
-        // Parse chunk numbers and sort
-        // Format: "ICC_PROFILE\0" + chunk_num (1 byte) + total_chunks (1 byte) + data
         const ICC_SIG: &[u8] = b"ICC_PROFILE\0";
-        let mut chunks: Vec<(u8, &[u8])> = Vec::new();
-
-        for seg in icc_segments {
-            if seg.data.len() < ICC_SIG.len() + 2 {
-                continue;
-            }
-            if !seg.data.starts_with(ICC_SIG) {
-                continue;
-            }
-            let chunk_num = seg.data[ICC_SIG.len()];
-            let data = &seg.data[ICC_SIG.len() + 2..];
-            chunks.push((chunk_num, data));
-        }
-
-        if chunks.is_empty() {
+        let chunks = || self.segments_by_type(SegmentType::Icc);
+        // Reject an incomplete carrier; do not assemble the other chunks into
+        // a profile that silently omits bytes.
+        if chunks().any(|seg| !seg.data.starts_with(ICC_SIG) || seg.data.len() < ICC_SIG.len() + 2)
+        {
             return None;
         }
-
-        // Sort by chunk number and concatenate
-        chunks.sort_by_key(|(num, _)| *num);
-        let total_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
-
-        // Enforce maximum ICC profile size to prevent memory exhaustion
-        if total_size > crate::foundation::alloc::MAX_ICC_PROFILE_SIZE {
-            return None;
+        let profile = crate::container::chunks::icc_profile_for_decode(
+            chunks().map(|seg| (seg.data[12], seg.data[13], &seg.data[14..])),
+            crate::foundation::alloc::MAX_ICC_PROFILE_SIZE,
+        )
+        .ok()??;
+        match profile {
+            alloc::borrow::Cow::Owned(profile) => Some(profile),
+            alloc::borrow::Cow::Borrowed(bytes) => {
+                let mut profile = Vec::new();
+                profile.try_reserve_exact(bytes.len()).ok()?;
+                profile.extend_from_slice(bytes);
+                Some(profile)
+            }
         }
-
-        let profile: Vec<u8> = chunks
-            .into_iter()
-            .flat_map(|(_, data)| data)
-            .copied()
-            .collect();
-
-        Some(profile)
     }
 
     /// Parse MPF directory from APP2 segment.
@@ -844,6 +843,29 @@ impl DecodedExtras {
             data,
             segment_type,
         });
+    }
+
+    /// Preserve a full-probe segment without infallible vector growth.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn try_add_segment(
+        &mut self,
+        marker: u8,
+        data: &[u8],
+        segment_type: SegmentType,
+    ) -> crate::error::Result<()> {
+        let mut owned = Vec::new();
+        owned.try_reserve_exact(data.len()).map_err(|_| {
+            crate::error::Error::allocation_failed(data.len(), "full-probe metadata payload")
+        })?;
+        self.segments.try_reserve(1).map_err(|_| {
+            crate::error::Error::allocation_failed(
+                core::mem::size_of::<PreservedSegment>(),
+                "full-probe metadata segment",
+            )
+        })?;
+        owned.extend_from_slice(data);
+        self.add_segment(marker, owned, segment_type);
+        Ok(())
     }
 
     /// Add a secondary image (internal use during parsing).
@@ -912,6 +934,11 @@ fn parse_adobe(data: &[u8]) -> Option<AdobeInfo> {
     let version = u16::from_be_bytes([data[offset], data[offset + 1]]);
     let color_transform_byte = data[offset + 6];
 
+    // Note: `AdobeColorTransform` is a public exhaustive `#[repr(u8)]` enum,
+    // so both transform 0 and unrecognised values 3..=255 map to `Unknown`
+    // here. The decoder's colour-model decision (`ColorModel::decide`) inspects
+    // the raw APP14 transform byte directly and treats any non-zero value as
+    // YCbCr (3 components) or YCCK (4 components).
     let color_transform = match color_transform_byte {
         0 => AdobeColorTransform::Unknown,
         1 => AdobeColorTransform::YCbCr,
@@ -960,9 +987,9 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
 
     // Skip to IFD offset (at offset + 4)
     let ifd_offset = read_u32(offset + 4) as usize;
-    let ifd_pos = offset + ifd_offset;
+    let ifd_pos = offset.checked_add(ifd_offset)?;
 
-    if data.len() < ifd_pos + 2 {
+    if data.len() < ifd_pos.checked_add(2)? {
         return None;
     }
 
@@ -980,8 +1007,8 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
 
     // First try standard 12-byte entry spacing
     for i in 0..num_entries {
-        let entry_pos = ifd_pos + 2 + i * 12;
-        if data.len() < entry_pos + 12 {
+        let entry_pos = ifd_pos.checked_add(2)?.checked_add(i.checked_mul(12)?)?;
+        if data.len() < entry_pos.checked_add(12)? {
             break;
         }
 
@@ -989,7 +1016,7 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
         if tag == 0xB002 {
             // MP Entry - type should be UNDEFINED (7), count is total bytes
             mp_entry_count = read_u32(entry_pos + 4);
-            mp_entry_offset = Some(read_u32(entry_pos + 8) as usize + offset);
+            mp_entry_offset = (read_u32(entry_pos + 8) as usize).checked_add(offset);
             break;
         }
     }
@@ -1006,7 +1033,9 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
         // Scan from after the entry count through the expected IFD area
         // Limit search to a reasonable range (256 bytes covers most MPF structures)
         let scan_start = ifd_pos + 2;
-        let scan_end = (scan_start + 256).min(data.len().saturating_sub(12));
+        let scan_end = scan_start
+            .saturating_add(256)
+            .min(data.len().saturating_sub(12));
 
         for pos in scan_start..scan_end {
             if data.len() >= pos + 12 && data[pos..pos + 2] == tag_bytes {
@@ -1015,7 +1044,7 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
                 if type_val == 7 {
                     // Type 7 = UNDEFINED, expected for MP Entry
                     mp_entry_count = read_u32(pos + 4);
-                    mp_entry_offset = Some(read_u32(pos + 8) as usize + offset);
+                    mp_entry_offset = (read_u32(pos + 8) as usize).checked_add(offset);
                     break;
                 }
             }
@@ -1023,13 +1052,17 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
     }
 
     let mp_entry_offset = mp_entry_offset?;
+    if mp_entry_offset > data.len() {
+        return None;
+    }
 
     // Each MP entry is 16 bytes. Cap against actual data size to prevent
     // OOM on crafted inputs with inflated mp_entry_count.
     let num_images = (mp_entry_count / 16) as usize;
     let max_from_data = data.len().saturating_sub(mp_entry_offset) / 16;
     let num_images = num_images.min(max_from_data).min(256);
-    let mut images = Vec::with_capacity(num_images);
+    let mut images = Vec::new();
+    images.try_reserve_exact(num_images).ok()?;
 
     for i in 0..num_images {
         let entry_pos = mp_entry_offset + i * 16;

@@ -120,7 +120,7 @@ fn test_decode_cpp_flower_420() {
         assert_eq!(height, 1512);
         assert_eq!(pixels.len(), 2268 * 1512 * 3);
     } else {
-        eprintln!("Skipping: testdata not available");
+        panic!("missing test prerequisite: testdata not available - set JPEGLI_TESTDATA");
     }
 }
 
@@ -134,7 +134,7 @@ fn test_decode_cpp_flower_444() {
         assert_eq!(height, 1512);
         assert_eq!(pixels.len(), 2268 * 1512 * 3);
     } else {
-        eprintln!("Skipping: testdata not available");
+        panic!("missing test prerequisite: testdata not available - set JPEGLI_TESTDATA");
     }
 }
 
@@ -147,7 +147,7 @@ fn test_decode_cpp_flower_progressive() {
         assert_eq!(width, 2268);
         assert_eq!(height, 1512);
     } else {
-        eprintln!("Skipping: testdata not available");
+        panic!("missing test prerequisite: testdata not available - set JPEGLI_TESTDATA");
     }
 }
 
@@ -160,18 +160,18 @@ fn test_decode_cpp_flower_progressive() {
 fn test_quality_vs_cpp_decoded() {
     // Load original PNG
     let png_result = load_png("jxl/flower/flower.png");
-    if png_result.is_none() {
-        eprintln!("Skipping: PNG testdata not available");
-        return;
-    }
+    assert!(
+        png_result.is_some(),
+        "missing test prerequisite: PNG testdata - set JPEGLI_TESTDATA"
+    );
     let (width, height, original) = png_result.unwrap();
 
     // Decode C++ encoded JPEG
     let cpp_decoded = decode_test_jpeg("jxl/flower/flower.png.im_q85_444.jpg");
-    if cpp_decoded.is_none() {
-        eprintln!("Skipping: JPEG testdata not available");
-        return;
-    }
+    assert!(
+        cpp_decoded.is_some(),
+        "missing test prerequisite: JPEG testdata - set JPEGLI_TESTDATA"
+    );
     let (_, _, cpp_pixels) = cpp_decoded.unwrap();
 
     // Encode with Rust and decode

@@ -6,7 +6,7 @@
 //! with and without lossless transforms (rotations/flips).
 //!
 //! Run with:
-//!   cargo test --release --features decoder -p zenjpeg --test crop_corpus -- --nocapture --ignored
+//!   cargo test --release -p zenjpeg --test crop_corpus -- --nocapture --ignored
 
 use enough::Unstoppable;
 use std::fs;

@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use zenjpeg::encode::diagnostics as diag_src;
+use zenjpeg::encoder::diagnostics as diag_src;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 
 /// Per-block diagnostic record, JS-friendly.
@@ -31,10 +31,8 @@ pub struct BlockDiagnostics {
     pub coef_pre_quant: Vec<f32>,
     /// Quantized levels in JPEG zigzag order. Length 64.
     pub coef_levels: Vec<i16>,
-    /// Per-block AQ multiplier (1.0 = neutral, <1.0 = finer, >1.0 = coarser).
-    pub aq_multiplier: f32,
-    /// Entropy bits attributed to this block (0 if not yet captured).
-    pub entropy_bits: u32,
+    /// AQ strength supplied to the block quantizer.
+    pub aq_strength: f32,
 }
 
 /// Per-component diagnostic record.
@@ -49,6 +47,7 @@ pub struct ComponentDiagnostics {
     pub quant_table_base: Vec<u16>,
     /// Zero-bias offset table (natural row-major). Length 64.
     pub zero_bias: Vec<f32>,
+    pub zero_bias_mul: Vec<f32>,
     /// Per-block records, raster order
     /// (index `r * cols + c` for `(r, c)` in the block grid).
     pub blocks: Vec<BlockDiagnostics>,
@@ -67,14 +66,10 @@ pub struct Diagnostics {
 
 fn to_js_diagnostics(src: diag_src::EncodeDiagnostics) -> Diagnostics {
     Diagnostics {
-        width: src.image.width,
-        height: src.image.height,
-        color_path: match src.image.color_path {
-            diag_src::ColorPathTag::YCbCr => "YCbCr".into(),
-            diag_src::ColorPathTag::Xyb => "XYB".into(),
-            diag_src::ColorPathTag::Grayscale => "Grayscale".into(),
-        },
-        sampling_factors: src.image.sampling_factors,
+        width: src.width,
+        height: src.height,
+        color_path: src.color_path.into(),
+        sampling_factors: src.sampling_factors,
         components: src
             .components
             .into_iter()
@@ -83,14 +78,14 @@ fn to_js_diagnostics(src: diag_src::EncodeDiagnostics) -> Diagnostics {
                 block_grid: c.block_grid,
                 quant_table_base: c.quant_table_base.to_vec(),
                 zero_bias: c.zero_bias.to_vec(),
+                zero_bias_mul: c.zero_bias_mul.to_vec(),
                 blocks: c
                     .blocks
                     .into_iter()
                     .map(|b| BlockDiagnostics {
                         coef_pre_quant: b.coef_pre_quant.to_vec(),
                         coef_levels: b.coef_levels.to_vec(),
-                        aq_multiplier: b.aq_multiplier,
-                        entropy_bits: b.entropy_bits,
+                        aq_strength: b.aq_strength,
                     })
                     .collect(),
             })
@@ -203,8 +198,6 @@ pub struct EncodeOptions {
     #[serde(default)]
     pub hybrid_aq_threshold: f32,
     /// Quality-adaptive lambda dampening. Default true.
-    #[serde(default = "default_true")]
-    pub hybrid_quality_adaptive: bool,
 
     // ── Custom quantization tables (overrides everything) ───────────
     /// When set, replaces the source-derived quant tables with the
@@ -269,7 +262,6 @@ impl Default for EncodeOptions {
             hybrid_dc_enabled: false,
             hybrid_aq_exponent: 1.0,
             hybrid_aq_threshold: 0.0,
-            hybrid_quality_adaptive: true,
             custom_quant_tables: None,
         }
     }
@@ -346,7 +338,10 @@ pub fn encode_with_diagnostics(
             .map_err(|e| JsValue::from_str(&format!("invalid options: {e}")))?
     };
 
-    let expected = (width as usize) * (height as usize) * 3;
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
     if pixels.len() != expected {
         return Err(JsValue::from_str(&format!(
             "pixels length mismatch: expected {expected} ({width}*{height}*3), \
@@ -363,9 +358,7 @@ pub fn encode_with_diagnostics(
                 "quarter" | "s420" | "4:2:0" => ChromaSubsampling::Quarter,
                 "halfVertical" | "s440" | "4:4:0" => ChromaSubsampling::HalfVertical,
                 other => {
-                    return Err(JsValue::from_str(&format!(
-                        "unknown subsampling: {other}"
-                    )));
+                    return Err(JsValue::from_str(&format!("unknown subsampling: {other}")));
                 }
             };
             EncoderConfig::ycbcr(opts.quality, sub)
@@ -383,16 +376,14 @@ pub fn encode_with_diagnostics(
             EncoderConfig::xyb(opts.quality, xyb_sub)
         }
         other => {
-            return Err(JsValue::from_str(&format!(
-                "unknown color path: {other}"
-            )));
+            return Err(JsValue::from_str(&format!("unknown color path: {other}")));
         }
     };
 
-    use zenjpeg::encode::encoder_types::ProgressiveScanMode;
-    use zenjpeg::encode::trellis::{HybridConfig, TrellisConfig, TrellisSpeedMode};
-    use zenjpeg::encode::tuning::{EncodingTables, ScalingParams};
+    use zenjpeg::encoder::ProgressiveScanMode;
     use zenjpeg::encoder::QuantTableConfig;
+    use zenjpeg::encoder::diagnostics::{EncodingTables, ScalingParams};
+    use zenjpeg::encoder::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 
     // Always-applied dials. Knobs that don't apply to the chosen
     // (color path × subsampling × mode) combination get silently
@@ -409,16 +400,17 @@ pub fn encode_with_diagnostics(
         .scan_mode(scan_mode)
         .sharp_yuv(opts.sharp_yuv)
         .pre_blur(opts.pre_blur)
-        .chroma_distance_scale(opts.chroma_distance_scale)
-        .restart_mcu_rows(opts.restart_mcu_rows)
-        .with_diagnostics(true);
+        .quant_table_config(QuantTableConfig::jpegli_chroma_scale(
+            opts.chroma_distance_scale,
+        ))
+        .restart_mcu_rows(opts.restart_mcu_rows);
 
     // Custom quant tables override `quant_table_config` entirely.
     // PerComponent uses generic c0/c1/c2 fields (Y/Cb/Cr in YCbCr mode).
     //
     // CRITICAL: when the caller passes a custom table, we set
-    // `scaling: ScalingParams::Exact` so the f32 values are used
-    // directly as final quant values. With the default
+    // `scaling: ScalingParams::Exact` so the f32 values are rounded
+    // to JPEG table entries without additional quality scaling. With the default
     // `ScalingParams::Scaled`, the table would be re-multiplied by
     // distance_to_scale × global_scale at encode time — a "Q-scale =
     // 0.5" edit on the JS side would compound, exploding to
@@ -469,16 +461,20 @@ pub fn encode_with_diagnostics(
     // Mode picker: hybrid > trellis > baseline.
     match opts.mode.as_str() {
         "hybrid" => {
-            let mut h = HybridConfig::default();
-            h.enabled = true;
-            h.aq_lambda_scale = opts.hybrid_aq_lambda_scale;
-            h.base_lambda_scale1 = opts.hybrid_base_lambda_scale1;
-            h.base_lambda_scale2 = opts.hybrid_base_lambda_scale2;
-            h.dc_enabled = opts.hybrid_dc_enabled;
-            h.aq_exponent = opts.hybrid_aq_exponent;
-            h.aq_threshold = opts.hybrid_aq_threshold;
-            h.quality_adaptive = opts.hybrid_quality_adaptive;
-            config = config.hybrid_config(h);
+            let h = TrellisConfig {
+                enabled: true,
+                dc_enabled: opts.hybrid_dc_enabled,
+                lambda_log_scale1: opts.hybrid_base_lambda_scale1,
+                lambda_log_scale2: opts.hybrid_base_lambda_scale2,
+                aq_coupling: AqCoupling {
+                    scale: opts.hybrid_aq_lambda_scale,
+                    exponent: opts.hybrid_aq_exponent,
+                    threshold: opts.hybrid_aq_threshold,
+                    ..AqCoupling::OFF
+                },
+                ..TrellisConfig::default()
+            };
+            config = config.trellis(h);
         }
         "trellis" => {
             let speed = match opts.trellis_speed_mode.as_str() {
@@ -502,16 +498,18 @@ pub fn encode_with_diagnostics(
     let mut encoder = request
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .map_err(|e| JsValue::from_str(&format!("encoder build: {e}")))?;
+    let capture = encoder
+        .capture_diagnostics()
+        .map_err(|e| JsValue::from_str(&format!("diagnostics: {e}")))?;
     encoder
         .push_packed(pixels, enough::Unstoppable)
         .map_err(|e| JsValue::from_str(&format!("push pixels: {e}")))?;
-    let (bytes, diag) = encoder
-        .finish_with_diagnostics()
+    let bytes = encoder
+        .finish()
         .map_err(|e| JsValue::from_str(&format!("finish: {e}")))?;
-
-    let diag = diag.ok_or_else(|| {
-        JsValue::from_str("with_diagnostics(true) was set but encoder returned None")
-    })?;
+    let diag = capture
+        .try_take()
+        .map_err(|_| JsValue::from_str("encoder did not release diagnostics"))?;
 
     let js_bytes = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
     js_bytes.copy_from(&bytes);
@@ -540,7 +538,10 @@ pub fn compute_ssimulacra2_rgb(
     width: u32,
     height: u32,
 ) -> Result<f64, JsValue> {
-    let expected = (width as usize) * (height as usize) * 3;
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
     if source.len() != expected {
         return Err(JsValue::from_str(&format!(
             "source pixels length mismatch: expected {expected} ({width}*{height}*3), got {}",
@@ -573,7 +574,10 @@ pub fn compute_zensim_rgb(
     width: u32,
     height: u32,
 ) -> Result<f64, JsValue> {
-    let expected = (width as usize) * (height as usize) * 3;
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
     if source.len() != expected || distorted.len() != expected {
         return Err(JsValue::from_str(&format!(
             "rgb length mismatch: expected {expected} (={width}*{height}*3), \
@@ -650,16 +654,15 @@ mod tests {
         let w = 32u32;
         let h = 32u32;
         let pixels = synthetic(w, h);
-        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .aq_enabled(true)
-            .with_diagnostics(true);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).aq_enabled(true);
         let mut enc = config
             .request()
             .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
             .expect("encoder");
+        let capture = enc.capture_diagnostics().expect("capture");
         enc.push_packed(&pixels, enough::Unstoppable).expect("push");
-        let (_bytes, diag) = enc.finish_with_diagnostics().expect("finish");
-        let diag = diag.expect("diag");
+        let _bytes = enc.finish().expect("finish");
+        let diag = capture.try_take().expect("diag");
         let js = to_js_diagnostics(diag);
         assert_eq!(js.width, w);
         assert_eq!(js.height, h);

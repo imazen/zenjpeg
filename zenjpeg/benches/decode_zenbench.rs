@@ -3,9 +3,14 @@
 //! Uses zenbench for interleaved measurement with paired statistics.
 //! Tests all major decode paths on CID22 corpus images.
 //!
+//! Every group carries at least one stable reference lane (mozjpeg C, and
+//! zune-jpeg where a second anchor helps). zenbench interleaves lanes within
+//! a run, so the zen/reference throughput *ratio* is robust to ambient load —
+//! that ratio, not raw MiB/s, is what an A/B across two builds compares.
+//!
 //! Run:
 //! ```bash
-//! cargo bench -p zenjpeg --bench decode_zenbench --features "trellis decoder"
+//! cargo bench -p zenjpeg --bench decode_zenbench
 //! ```
 
 use enough::Unstoppable;
@@ -28,7 +33,7 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let src = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
-            for c in src.chunks_exact(4) {
+            for c in src.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&c[..3]);
             }
             rgb
@@ -277,6 +282,25 @@ fn bench_decode(suite: &mut Suite) {
     suite.group("deblock_baseline_4:2:0_Q20", |g| {
         g.throughput(Throughput::Bytes(total_lowq_bytes as u64));
 
+        // Reference lanes: stable C / Rust decoders so zen/moz and zen/zune
+        // ratios stay load-robust (deblock modes are zenjpeg-only, but the
+        // references anchor the ratio against ambient noise).
+        g.bench("libjpeg-turbo/mozjpeg (C ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q20);
+                }
+            })
+        });
+
+        g.bench("zune-jpeg (ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_zune(&img.baseline_q20);
+                }
+            })
+        });
+
         g.bench("zenjpeg Off (no deblock)", |b| {
             let dec = Decoder::new();
             b.iter(|| {
@@ -319,6 +343,16 @@ fn bench_decode(suite: &mut Suite) {
     suite.group("scanline_baseline_4:2:0_Q85", |g| {
         g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
 
+        // Reference lane: full C decode of the same images anchors the
+        // scanline-path ratios against ambient load.
+        g.bench("libjpeg-turbo/mozjpeg (C ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q85);
+                }
+            })
+        });
+
         g.bench("zenjpeg scanline Off", |b| {
             b.iter(|| {
                 for img in get_images() {
@@ -351,6 +385,23 @@ fn bench_decode(suite: &mut Suite) {
 
     suite.group("dequant_bias_baseline_Q85", |g| {
         g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
+
+        // Reference lanes anchor the bias-on/off ratios against ambient load.
+        g.bench("libjpeg-turbo/mozjpeg (C ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q85);
+                }
+            })
+        });
+
+        g.bench("zune-jpeg (ref)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_zune(&img.baseline_q85);
+                }
+            })
+        });
 
         g.bench("zenjpeg default (no bias)", |b| {
             let dec = Decoder::new();
@@ -820,11 +871,90 @@ fn bench_decode_into(suite: &mut Suite) {
     });
 }
 
+/// RGB-as-RGB vs YCbCr, 4:4:4, 2048x2048 (the shared corpus pixels):
+///
+/// - `ycbcr`: a YCbCr encode.
+/// - `ycbcr-as-rgb`: the same file signalled RGB ([`relabel_rgb`]). Identical
+///   entropy data, so against `ycbcr` this isolates the conversion: zenjpeg's
+///   identity row kernel vs its YCbCr matrix kernel.
+/// - `rgb`: an RGB-mode encode of the same pixels. A different file: R, G and
+///   B carry more coefficient data than Y, Cb and Cr, so its entropy decode
+///   costs more, in the C decoder as well.
+///
+/// The reference lane is the C decoder this file uses everywhere
+/// ([`decode_libjpeg_turbo`]: mozjpeg's libjpeg-turbo-derived decoder with
+/// NASM SIMD, through `mozjpeg_sys`), labelled as the other groups label it. Baseline takes the
+/// streaming path (the fused path with `--features parallel`, MCU-row DRI);
+/// progressive takes the fast integer path.
+fn bench_rgb_vs_ycbcr(suite: &mut Suite) {
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    let (w, h) = (2048u32, 2048u32);
+    let pixels = load_or_generate_pixels(w, h);
+    for (label, progressive) in [("baseline", false), ("progressive", true)] {
+        let encode = |config: EncoderConfig| -> Vec<u8> {
+            config
+                .progressive(progressive)
+                .restart_mcu_rows(if progressive { 0 } else { 4 })
+                .encode_bytes(&pixels, w, h, PixelLayout::Rgb8Srgb)
+                .expect("encode")
+        };
+        let ycbcr = encode(EncoderConfig::ycbcr(85, ChromaSubsampling::None));
+        let ycbcr_as_rgb = relabel_rgb(&ycbcr);
+        assert_eq!(
+            Decoder::new().read_info(&ycbcr_as_rgb).unwrap().color_space,
+            zenjpeg::decode::ColorSpace::Rgb,
+            "relabelled file must decode as RGB"
+        );
+        let rgb = encode(EncoderConfig::rgb(85));
+        let files: &'static [(&'static str, Vec<u8>)] = vec![
+            ("ycbcr", ycbcr),
+            ("ycbcr-as-rgb", ycbcr_as_rgb),
+            ("rgb", rgb),
+        ]
+        .leak();
+        suite.group(format!("rgb_vs_ycbcr_444_{label}"), |g| {
+            for (model, jpeg) in files.iter() {
+                g.bench(
+                    format!("libjpeg-turbo/mozjpeg (C, NASM SIMD)/{model}"),
+                    move |b| b.iter(|| decode_libjpeg_turbo(jpeg)),
+                );
+                g.bench(format!("zenjpeg/{model}"), move |b| {
+                    let dec = Decoder::new();
+                    b.iter(|| dec.decode(jpeg, Unstoppable).unwrap())
+                });
+            }
+        });
+    }
+}
+
+/// `jpeg` signalled RGB: an Adobe APP14 with transform 0 right after SOI, and
+/// no JFIF APP0 or other APP14, so libjpeg-turbo, jpegli and zenjpeg all read
+/// the stored planes as R, G, B. Everything from the first SOS on is
+/// untouched. Expects an encoder's well-formed marker segments before SOS.
+fn relabel_rgb(jpeg: &[u8]) -> Vec<u8> {
+    const APP14_T0: [u8; 16] = [
+        0xFF, 0xEE, 0x00, 0x0E, b'A', b'd', b'o', b'b', b'e', 0x00, 0x64, 0, 0, 0, 0, 0,
+    ];
+    let mut out = jpeg[..2].to_vec();
+    out.extend_from_slice(&APP14_T0);
+    let mut p = 2;
+    while jpeg[p + 1] != 0xDA {
+        let len = 2 + u16::from_be_bytes([jpeg[p + 2], jpeg[p + 3]]) as usize;
+        if !matches!(jpeg[p + 1], 0xE0 | 0xEE) {
+            out.extend_from_slice(&jpeg[p..p + len]);
+        }
+        p += len;
+    }
+    out.extend_from_slice(&jpeg[p..]);
+    out
+}
+
 fn bench_all(suite: &mut Suite) {
     bench_decode(suite);
     bench_decode_into(suite);
     bench_decode_sink(suite);
     bench_decode_matrix(suite);
+    bench_rgb_vs_ycbcr(suite);
 }
 
 zenbench::main!(bench_all);

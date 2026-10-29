@@ -1,0 +1,108 @@
+# zenyuv public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenyuv.txt 73 lines (supported surface) | zenyuv.features.txt 0 added (features: std) | zenyuv.internal.txt 17 lines (6 hidden + 11 excluded-feature)
+
+## summary
+#
+#   pub modules                                 3
+#   pub types (struct/enum/trait/alias)         8
+#   pub consts/statics                          2
+#   free functions                              7
+#   inherent methods                           30
+#   struct fields                              11
+#   enum variants                              10
+#   trait roster entries (type × trait)        21
+#   auto-trait-complete types                   6
+#
+# per-module pub lines:
+#   (root)                           27
+#   context                          30
+#   sharp                            14
+
+## items (68 lines)
+
+pub mod zenyuv
+pub mod context
+pub fn context::YuvContext::encode_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize)
+pub fn context::YuvContext::encode_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize)
+pub fn context::YuvContext::encode_420_y_only_u8(&mut self, &[u8], &mut [u8], usize, usize)
+pub fn context::YuvContext::encode_444_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize)
+pub fn context::YuvContext::encode_sharp_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, &sharp::SharpYuvConfig)
+pub fn context::YuvContext::encode_sharp_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, &sharp::SharpYuvConfig)
+pub fn context::YuvContext::new(Range, Matrix) -> Self
+pub fn context::YuvContext::try_encode_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_420_y_only_u8(&mut self, &[u8], &mut [u8], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_444_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_sharp_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, &sharp::SharpYuvConfig) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_sharp_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, &sharp::SharpYuvConfig) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::with_max_pixels(self, u64) -> Self
+pub mod sharp
+pub sharp::SharpYuvConfig::convergence_threshold: f32
+pub sharp::SharpYuvConfig::max_iterations: u32
+pub sharp::SharpYuvConfig::refine_y: bool
+pub struct sharp::SharpYuvWorkspace
+pub fn sharp::SharpYuvWorkspace::chroma_width(&self) -> usize
+pub fn sharp::SharpYuvWorkspace::new(usize) -> Self
+pub fn sharp::refine_chroma_420_u8(&[u8], &[u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig)
+pub fn sharp::refine_chroma_420_u8_with_workspace(&[u8], &[u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
+pub fn sharp::refine_y_420_u8(&[u8], &mut [u8], &[u8], &[u8], usize, usize, Range, Matrix) -> u64
+pub fn sharp::rgb_f32_to_yuv420_sharp(imgref::ImgRef<'_, [f32; 3]>, imgref::ImgRefMut<'_, f32>, imgref::ImgRefMut<'_, f32>, imgref::ImgRefMut<'_, f32>, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
+pub fn sharp::rgb_to_yuv420_sharp(&[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig)
+pub fn sharp::rgb_to_yuv420_sharp_f32(&[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
+pub fn sharp::rgb_to_yuv420_sharp_with_workspace(&[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, Range, Matrix, &sharp::SharpYuvConfig, &mut sharp::SharpYuvWorkspace)
+#[non_exhaustive] pub enum Matrix
+pub Matrix::Bt2020
+pub Matrix::Bt601
+pub Matrix::Bt709
+pub Matrix::WebpEncoder
+pub enum Range
+pub Range::Full
+pub Range::Limited
+#[non_exhaustive] pub enum YuvError
+pub YuvError::BufferTooSmall
+pub YuvError::BufferTooSmall::buffer: &'static str
+pub YuvError::BufferTooSmall::len: usize
+pub YuvError::BufferTooSmall::needed: usize
+pub YuvError::OutOfMemory
+pub YuvError::Overflow
+pub YuvError::TooManyPixels
+pub YuvError::TooManyPixels::max: u64
+pub YuvError::TooManyPixels::pixels: u64
+pub struct SharpYuvConfig [also: sharp]
+pub SharpYuvConfig::convergence_threshold: f32
+pub SharpYuvConfig::max_iterations: u32
+pub SharpYuvConfig::refine_y: bool
+pub struct YuvContext [also: context]
+pub fn context::YuvContext::encode_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize)
+pub fn context::YuvContext::encode_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize)
+pub fn context::YuvContext::encode_420_y_only_u8(&mut self, &[u8], &mut [u8], usize, usize)
+pub fn context::YuvContext::encode_444_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize)
+pub fn context::YuvContext::encode_sharp_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, &sharp::SharpYuvConfig)
+pub fn context::YuvContext::encode_sharp_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, &sharp::SharpYuvConfig)
+pub fn context::YuvContext::new(Range, Matrix) -> Self
+pub fn context::YuvContext::try_encode_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_420_y_only_u8(&mut self, &[u8], &mut [u8], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_444_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_sharp_420_f32(&mut self, &[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, &sharp::SharpYuvConfig) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::try_encode_sharp_420_u8(&mut self, &[u8], &mut [u8], &mut [u8], &mut [u8], usize, usize, &sharp::SharpYuvConfig) -> core::result::Result<(), YuvError>
+pub fn context::YuvContext::with_max_pixels(self, u64) -> Self
+pub const DEFAULT_MAX_PIXELS: u64 [also: context]
+
+## trait impls (4 types)
+
+Matrix: Clone, Copy, Debug, Eq, PartialEq
+Range: Clone, Copy, Debug, Eq, PartialEq
+YuvError: Clone, Debug, Display, Eq, Error, PartialEq
+sharp::SharpYuvConfig: Clone, Copy, Debug, Default, PartialEq
+
+## auto traits
+
+6 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

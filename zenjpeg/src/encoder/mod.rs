@@ -143,6 +143,15 @@ pub type EncodeError = crate::error::Error;
 pub type EncodeResult<T> = core::result::Result<T, EncodeError>;
 // Keep legacy aliases for backward compatibility
 pub use crate::error::{Error, Result};
+// `ErrorKind` is the inner kind returned by [`Error::kind()`] — re-exported so
+// callers can name and `match` the variants. `#[non_exhaustive]`, so adding
+// variants later stays non-breaking.
+pub use crate::error::ErrorKind;
+
+// Unstable viewer instrumentation and the custom tables it edits.
+#[cfg(feature = "__diagnostics")]
+#[doc(hidden)]
+pub use crate::encode::diagnostics;
 
 // === Main encoder types (from encode root modules) ===
 pub use crate::encode::Stop;
@@ -161,6 +170,15 @@ pub use crate::encode::encoder_types::{
     should_activate_tiny_file_mode, should_activate_tiny_file_mode_for_subsampling,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
+// === Expert tuning surface ===
+// One trellis engine: `TrellisConfig` with `AqCoupling` (scale 0.0 = classic
+// fixed-lambda mozjpeg trellis; non-zero = AQ-coupled per-block lambda).
+// `ExpertConfig` is the complete flat parameter vector (incl. raw quant
+// tables) for external optimizers. See `encode::expert` module docs for the
+// three expert altitudes (builder methods / InternalParams / ExpertConfig).
+pub use crate::encode::expert::ExpertConfig;
+pub use crate::encode::plan::{EncodePlan, SofMarker};
+pub use crate::encode::trellis::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 // === Cross-codec uniformity bundle (`__expert`-gated) ===
 // Mirrors `zenwebp::InternalParams` so external pipelines (calibration
 // sweeps, picker training, learned auto-tuners) can drive every zen
@@ -168,6 +186,10 @@ pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 #[cfg(feature = "__expert")]
 pub use crate::encode::internal_params::{ColorPath, InternalParams};
 pub use crate::encode::request::EncodeRequest;
+#[cfg(feature = "__expert")]
+pub use crate::encode::sweep::{
+    DroppedAxis, QualityGrid, SweepAxes, SweepBuilder, SweepCell, SweepPlan,
+};
 pub use crate::foundation::alloc::EncodeStats;
 pub use crate::types::Limits;
 

@@ -2,6 +2,13 @@
 //!
 //! Provides `EntropyEncoder` for baseline and progressive JPEG encoding.
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use crate::encode::build_nonzero_mask;
 use crate::error::{Error, Result};
 use crate::foundation::bitstream::BitWriter;
@@ -24,7 +31,7 @@ fn encode_block_simd_impl(
 ) -> (bool, i16) {
     // Encode DC coefficient
     let dc = coeffs[0];
-    let dc_diff = dc - prev_dc;
+    let dc_diff = dc.wrapping_sub(prev_dc);
 
     let dc_cat = category(dc_diff);
     let (code, len) = dc_table.encode(dc_cat);
@@ -210,7 +217,7 @@ impl<'a> EntropyEncoder<'a> {
 
         // Encode DC coefficient
         let dc = coeffs[0];
-        let dc_diff = dc - self.prev_dc[component];
+        let dc_diff = dc.wrapping_sub(self.prev_dc[component]);
         self.prev_dc[component] = dc;
 
         let dc_cat = category(dc_diff);
@@ -341,7 +348,7 @@ impl<'a> EntropyEncoder<'a> {
         } else {
             // DC first scan: encode shifted DC difference
             let shifted_dc = dc >> al;
-            let dc_diff = shifted_dc - self.prev_dc[component];
+            let dc_diff = shifted_dc.wrapping_sub(self.prev_dc[component]);
             self.prev_dc[component] = shifted_dc;
 
             let dc_table = self.dc_tables[table_idx]
@@ -349,10 +356,10 @@ impl<'a> EntropyEncoder<'a> {
                 .ok_or_else(|| Error::internal("DC table not set"))?;
 
             let dc_cat = category(dc_diff);
-            let (code, len) = dc_table.encode(dc_cat);
-            if len == 0 {
+            if dc_table.lengths[dc_cat as usize] == 0 {
                 return Err(Error::internal("DC symbol not in Huffman table"));
             }
+            let (code, len) = dc_table.encode(dc_cat);
             self.writer.write_bits(code, len);
 
             if dc_cat > 0 {
@@ -437,16 +444,16 @@ impl<'a> EntropyEncoder<'a> {
             let nbits = 16 - abs_shifted.leading_zeros();
             let symbol = ((r as u16) << 4) | nbits as u16;
 
-            let (code, len) = ac_table.encode(symbol as u8);
-            if len == 0 {
+            if ac_table.lengths[symbol as usize] == 0 {
                 return Err(Error::internal("AC symbol not in Huffman table"));
             }
+            let (code, len) = ac_table.encode(symbol as u8);
             self.writer.write_bits(code, len);
 
             // Additional bits (magnitude and sign)
             // For progressive encoding, we encode the shifted value
             let bits = if coef < 0 {
-                (abs_shifted - 1) as u32
+                u32::from(!abs_shifted) & ((1u32 << nbits) - 1)
             } else {
                 abs_shifted as u32
             };
@@ -488,17 +495,18 @@ impl<'a> EntropyEncoder<'a> {
         };
         let symbol = (nbits << 4) as u8;
 
-        let (code, len) = ac_table.encode(symbol);
-
-        // Check if this symbol exists in the table (length 0 means not present)
-        if len == 0 && symbol != 0x00 {
-            // Symbol not in table (e.g., standard tables don't have EOB run symbols)
-            // Fall back to emitting individual EOBs
+        // Inspect presence before the accessor's debug assertion. Standard
+        // tables omit multi-block EOB symbols, so emit individual EOBs instead.
+        if ac_table.lengths[symbol as usize] == 0 {
+            if ac_table.lengths[0] == 0 {
+                return Err(Error::internal("AC table has no EOB symbol"));
+            }
             let (eob_code, eob_len) = ac_table.encode(0x00);
             for _ in 0..eob_run {
                 self.writer.write_bits(eob_code, eob_len);
             }
         } else {
+            let (code, len) = ac_table.encode(symbol);
             self.writer.write_bits(code, len);
 
             if nbits > 0 {
@@ -689,15 +697,19 @@ impl<'a> EntropyEncoder<'a> {
                 .as_ref()
                 .ok_or_else(|| Error::internal("DC table not set for token replay"))?;
 
-            // Write the Huffman code for the symbol
-            let (code, len) = dc_table.encode(token.symbol);
-
-            // Handle symbol not in table (shouldn't happen if tokenization is correct)
-            if len == 0 && token.symbol != 0 {
+            // Handle symbol not in table (shouldn't happen if tokenization is
+            // correct). No exemption for symbol 0: if the token stream contains
+            // it, it gets emitted, and a zero-length code would write ZERO bits
+            // and silently desync the stream (sweep issue #197). Checked before
+            // encode() so this returns an error instead of tripping encode()'s
+            // debug_assert.
+            if dc_table.lengths[token.symbol as usize] == 0 {
                 return Err(Error::internal(
                     "DC symbol not in Huffman table during replay - histogram may be incomplete",
                 ));
             }
+            // Write the Huffman code for the symbol
+            let (code, len) = dc_table.encode(token.symbol);
             self.writer.write_bits(code, len);
 
             // Write extra bits if any
@@ -733,34 +745,43 @@ impl<'a> EntropyEncoder<'a> {
                 next_rst += 1;
             }
 
-            // Write the Huffman code for the symbol
-            let (code, len) = ac_table.encode(token.symbol);
+            // Symbol-coverage checks BEFORE encode(), so guarded fallbacks
+            // run (and errors return) instead of tripping encode()'s
+            // debug_assert (sweep issue #197).
+            let missing = ac_table.lengths[token.symbol as usize] == 0;
 
             // Check if this is an EOB run symbol (upper nibble indicates run size)
             let is_eob_run = (token.symbol & 0x0F) == 0 && token.symbol != 0xF0;
 
-            if len == 0 && !is_eob_run && token.symbol != 0x00 {
+            if missing && !is_eob_run && token.symbol != 0x00 {
                 return Err(Error::internal(
                     "AC symbol not in Huffman table during replay",
                 ));
             }
 
             // For missing EOB run symbols, fall back to individual EOBs
-            if len == 0 && is_eob_run {
+            if missing && is_eob_run {
                 // Compute actual run: base (1 << log2) + offset (extra_bits)
                 let base = 1u16 << (token.symbol >> 4);
                 let run = base + token.extra_bits;
+                if ac_table.lengths[0x00] == 0 {
+                    // Writing a zero-length code `run` times would emit NOTHING
+                    // and return Ok — silent corruption (sweep issue #197).
+                    return Err(Error::internal(
+                        "EOB symbol not in Huffman table during replay fallback",
+                    ));
+                }
                 let (eob_code, eob_len) = ac_table.encode(0x00);
                 for _ in 0..run {
                     self.writer.write_bits(eob_code, eob_len);
                 }
             } else {
-                self.writer.write_bits(code, len);
-
-                // Write extra bits if any
+                let (code, len) = ac_table.encode(token.symbol);
                 if token.num_extra > 0 {
                     self.writer
-                        .write_bits(token.extra_bits as u32, token.num_extra);
+                        .write_code_and_extra(code, len, token.extra_bits, token.num_extra);
+                } else {
+                    self.writer.write_bits(code, len);
                 }
             }
         }
@@ -803,44 +824,49 @@ impl<'a> EntropyEncoder<'a> {
             //   int symbol = t.symbol & 253;
             let masked_symbol = ref_token.symbol & 253;
 
-            // Write the Huffman code for the masked symbol
-            let (code, len) = ac_table.encode(masked_symbol);
-
             // Check if this is an EOB symbol (low nibble = 0, not ZRL)
             let is_eob = (masked_symbol & 0x0F) == 0 && masked_symbol != 0xF0;
 
-            if len == 0 && masked_symbol != 0x00 {
+            // Coverage checked BEFORE encode(), so the fallback runs (and
+            // errors return) instead of tripping encode()'s debug_assert
+            // (sweep issue #197).
+            let missing = ac_table.lengths[masked_symbol as usize] == 0;
+            // No 0x00 exemption: a missing plain-EOB routes through the
+            // is_eob arm below and errors there (writing it as zero bits
+            // would silently desync the stream).
+            if missing {
                 // Symbol not in table - for EOB runs, fall back to individual EOBs
                 if is_eob {
                     let run_bits = ref_token.symbol >> 4;
+                    if ac_table.lengths[0x00] == 0 {
+                        // A zero-length code would write NOTHING and return Ok —
+                        // silent corruption (sweep issue #197).
+                        return Err(Error::internal(
+                            "EOB symbol not in Huffman table during refinement replay",
+                        ));
+                    }
+                    let (eob_code, eob_len) = ac_table.encode(0x00);
                     if run_bits > 0 {
-                        // Get the actual run value from eobruns array
-                        let run = scan_info.eobruns.get(eobrun_idx).copied().unwrap_or(1);
+                        // Get the actual run value from eobruns array; an
+                        // underrun means tokenization and replay disagree.
+                        let Some(&run) = scan_info.eobruns.get(eobrun_idx) else {
+                            return Err(Error::internal(
+                                "eobruns underrun during refinement replay",
+                            ));
+                        };
                         eobrun_idx += 1;
-
-                        let (eob_code, eob_len) = ac_table.encode(0x00);
                         for _ in 0..run {
                             self.writer.write_bits(eob_code, eob_len);
                         }
                     } else {
-                        let (eob_code, eob_len) = ac_table.encode(0x00);
                         self.writer.write_bits(eob_code, eob_len);
                     }
                 } else {
                     return Err(Error::internal("AC refinement symbol not in Huffman table"));
                 }
             } else {
-                self.writer.write_bits(code, len);
-
-                // For EOB runs > 1, write the extra bits
-                if is_eob && (ref_token.symbol >> 4) > 0 {
-                    let run_bits = ref_token.symbol >> 4;
-                    if let Some(&run) = scan_info.eobruns.get(eobrun_idx) {
-                        let extra = run & ((1 << run_bits) - 1);
-                        self.writer.write_bits(extra as u32, run_bits);
-                        eobrun_idx += 1;
-                    }
-                }
+                // Write the Huffman code for the masked symbol
+                let (code, len) = ac_table.encode(masked_symbol);
 
                 // Write sign bit FIRST for newly-nonzero coefficients
                 // Per JPEG spec and libjpeg-turbo: Huffman code, then sign, then refinement bits
@@ -852,7 +878,24 @@ impl<'a> EntropyEncoder<'a> {
                     // - 0x?3 = positive (bit 1 = 1)
                     // This matches C++: bits = (t.symbol >> 1) & 1;
                     let sign = ((ref_token.symbol >> 1) & 1) as u32;
-                    self.writer.write_bits(sign, 1);
+                    self.writer.write_bits((code << 1) | sign, len + 1);
+                } else {
+                    self.writer.write_bits(code, len);
+                }
+
+                // For EOB runs > 1, write the extra bits. The just-written
+                // symbol PROMISED run_bits extra bits — silently skipping them
+                // on an eobruns underrun desyncs the stream (sweep issue #197).
+                if is_eob && (ref_token.symbol >> 4) > 0 {
+                    let run_bits = ref_token.symbol >> 4;
+                    let Some(&run) = scan_info.eobruns.get(eobrun_idx) else {
+                        return Err(Error::internal(
+                            "eobruns underrun while writing EOB-run extra bits",
+                        ));
+                    };
+                    let extra = run & ((1 << run_bits) - 1);
+                    self.writer.write_bits(extra as u32, run_bits);
+                    eobrun_idx += 1;
                 }
 
                 // Write refinement bits AFTER sign bit
@@ -860,8 +903,17 @@ impl<'a> EntropyEncoder<'a> {
                 // Get slice upfront to eliminate per-bit bounds checks
                 let num_refbits = ref_token.refbits as usize;
                 let refbits_end = (refbit_idx + num_refbits).min(scan_info.refbits.len());
-                for &bit in &scan_info.refbits[refbit_idx..refbits_end] {
-                    self.writer.write_bits(bit as u32, 1);
+                let mut pos = refbit_idx;
+                while pos < refbits_end {
+                    // write_bits accepts at most 24 bits per call; pack the
+                    // refbits slice into MSB-first chunks to batch the writes.
+                    let take = (refbits_end - pos).min(24);
+                    let mut packed = 0u32;
+                    for &bit in &scan_info.refbits[pos..pos + take] {
+                        packed = (packed << 1) | (bit as u32);
+                    }
+                    self.writer.write_bits(packed, take as u8);
+                    pos += take;
                 }
                 refbit_idx = refbits_end;
             }
@@ -958,7 +1010,7 @@ mod tests {
     fn test_entropy_encoder_finish() {
         let encoder = EntropyEncoder::new();
         let bytes = encoder.finish();
-        assert!(bytes.is_empty() || !bytes.is_empty()); // Just ensure it doesn't panic
+        assert!(bytes.is_empty());
     }
 
     #[test]
@@ -966,7 +1018,7 @@ mod tests {
         let mut encoder = EntropyEncoder::new();
         encoder.write_bits(0b1010, 4);
         let bytes = encoder.finish();
-        assert!(!bytes.is_empty());
+        assert_eq!(bytes, [0xaf]); // Four payload bits, then JPEG one-bit padding.
     }
 
     #[test]
@@ -1068,5 +1120,82 @@ mod tests {
                 simd_output.len()
             );
         }
+    }
+    #[test]
+    fn progressive_dc_emits_exact_annex_k_codes_and_refinement_bits() {
+        for (dc, expected) in [(4, 0x71), (-4, 0x69)] {
+            let mut encoder = encoder_with_tables();
+            encoder.encode_dc_progressive(dc, 0, 0, 1, 0).unwrap();
+            encoder.encode_dc_progressive(dc, 0, 0, 1, 0).unwrap();
+            assert_eq!(encoder.finish(), [expected]);
+        }
+        let mut encoder = EntropyEncoder::new();
+        encoder.encode_dc_progressive(3, 0, 0, 0, 1).unwrap();
+        encoder.encode_dc_progressive(2, 0, 0, 0, 1).unwrap();
+        assert_eq!(encoder.finish(), [0xbf]);
+        assert!(
+            EntropyEncoder::new()
+                .encode_dc_progressive(4, 0, 0, 0, 0)
+                .is_err()
+        );
+        assert!(
+            encoder_with_tables()
+                .encode_dc_progressive(i16::MAX, 0, 0, 0, 0)
+                .is_err()
+        );
+    }
+    #[test]
+    fn progressive_negative_ac_uses_ones_complement_magnitude() {
+        let mut coeffs = [0i16; 64];
+        coeffs[1] = -3;
+        let mut encoder = encoder_with_tables();
+        let mut eob_run = 0;
+        encoder
+            .encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut eob_run)
+            .unwrap();
+        // Annex K luminance symbol 0x02 is 01; -3 has category-two bits 00.
+        // Padding the resulting 0100 with ones gives 0x4f.
+        assert_eq!(encoder.finish(), [0x4f]);
+        assert_eq!(eob_run, 0);
+    }
+    #[test]
+    fn progressive_eob_runs_use_exact_codes_or_individual_eobs() {
+        for (run, bytes) in [
+            (0, vec![]),
+            (1, vec![0xaf]),
+            (2, vec![0xaa]),
+            (3, vec![0xaa, 0xaf]),
+        ] {
+            let mut encoder = encoder_with_tables();
+            encoder.flush_eob_run(0, run).unwrap();
+            assert_eq!(encoder.finish(), bytes);
+        }
+        let mut bits = [0; 16];
+        bits[..3].copy_from_slice(&[1, 1, 1]);
+        let table = HuffmanEncodeTable::from_bits_values(&bits, &[0, 0x10, 0x20]).unwrap();
+        for (run, byte) in [(3, 0xbf), (4, 0xc7)] {
+            let mut encoder = EntropyEncoder::new();
+            encoder.set_ac_table(0, &table);
+            encoder.flush_eob_run(0, run).unwrap();
+            assert_eq!(encoder.finish(), [byte]);
+        }
+        assert!(EntropyEncoder::new().flush_eob_run(0, 1).is_err());
+        bits.fill(0);
+        bits[0] = 1;
+        let no_eob = HuffmanEncodeTable::from_bits_values(&bits, &[1]).unwrap();
+        let mut encoder = EntropyEncoder::new();
+        encoder.set_ac_table(0, &no_eob);
+        assert!(encoder.flush_eob_run(0, 1).is_err());
+    }
+
+    #[test]
+    fn progressive_ac_missing_symbol_returns_error() {
+        let mut coeffs = [0; 64];
+        coeffs[1] = 2047;
+        assert!(
+            encoder_with_tables()
+                .encode_ac_progressive_first(&coeffs, 0, 1, 1, 0, &mut 0)
+                .is_err()
+        );
     }
 }

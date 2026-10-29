@@ -5,8 +5,9 @@ pub const ANCHOR_QUALITIES: [u8; ANCHOR_COUNT] = [
     5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100
 ];
 
-/// LUMA quantization tables at each anchor quality.
-pub const ANCHOR_LUMA: [[u16; 64]; ANCHOR_COUNT] = [
+/// LUMA quantization tables at each anchor quality — RAW v4 SA output.
+/// The public `ANCHOR_LUMA` is this passed through `monotonize` (#12).
+pub(crate) const RAW_ANCHOR_LUMA: [[u16; 64]; ANCHOR_COUNT] = [
     [
          15,  21,  35,  44,  69,  87,  79, 101,
          23,  43,   9,  52,  92,  94,  86,  97,
@@ -209,8 +210,9 @@ pub const ANCHOR_LUMA: [[u16; 64]; ANCHOR_COUNT] = [
     ],  // q100
 ];
 
-/// CB quantization tables at each anchor quality.
-pub const ANCHOR_CB: [[u16; 64]; ANCHOR_COUNT] = [
+/// CB quantization tables at each anchor quality — RAW v4 SA output.
+/// The public `ANCHOR_CB` is this passed through `monotonize` (#12).
+pub(crate) const RAW_ANCHOR_CB: [[u16; 64]; ANCHOR_COUNT] = [
     [
          66,  35,  44,  82,  95,  91,  91,  86,
          34,  43,  68,  83,  89,  90,  73,  96,
@@ -413,8 +415,9 @@ pub const ANCHOR_CB: [[u16; 64]; ANCHOR_COUNT] = [
     ],  // q100
 ];
 
-/// CR quantization tables at each anchor quality.
-pub const ANCHOR_CR: [[u16; 64]; ANCHOR_COUNT] = [
+/// CR quantization tables at each anchor quality — RAW v4 SA output.
+/// The public `ANCHOR_CR` is this passed through `monotonize` (#12).
+pub(crate) const RAW_ANCHOR_CR: [[u16; 64]; ANCHOR_COUNT] = [
     [
          22,   8,  34,  84,  78,  79, 103,  74,
          43,  27,  51,  83,  81,  89,  76,  86,

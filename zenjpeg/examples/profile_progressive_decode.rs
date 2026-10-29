@@ -4,18 +4,12 @@
 //! Run under callgrind to get per-function instruction counts:
 //!
 //! ```sh
-//! cargo build --release --features decoder --example profile_progressive_decode
+//! cargo build --release --example profile_progressive_decode
 //! valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind-prog-decode.out \
 //!     target/release/examples/profile_progressive_decode 2048
 //! kcachegrind /tmp/callgrind-prog-decode.out
 //! ```
 
-#[cfg(not(feature = "decoder"))]
-fn main() {
-    eprintln!("ERROR: Run with --features decoder");
-}
-
-#[cfg(feature = "decoder")]
 fn main() {
     use enough::Unstoppable;
     use zenjpeg::decode::Decoder;

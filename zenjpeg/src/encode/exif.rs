@@ -19,6 +19,18 @@
 //!     .exif(Exif::raw(my_exif_bytes));
 //! ```
 
+/// The JPEG APP1 header that precedes EXIF's TIFF structure in a JPEG file.
+const APP1_EXIF_HEADER: &[u8] = b"Exif\0\0";
+
+/// `bytes` without a leading JPEG APP1 `Exif\0\0` header. The TIFF structure
+/// itself starts with its byte-order mark (`II` or `MM`), so stripping the
+/// header can never remove TIFF data. The encoder writes the header once, so a
+/// blob that still carries it (as a JPEG decoder's APP1 payload does) must not
+/// get a second one.
+pub(crate) fn strip_app1_exif_header(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(APP1_EXIF_HEADER).unwrap_or(bytes)
+}
+
 /// EXIF orientation values (rotation/flip).
 ///
 /// These correspond to the EXIF Orientation tag (0x0112) values 1-8.
@@ -54,7 +66,8 @@ pub enum Orientation {
 /// accidentally mix raw bytes with field-based building.
 #[derive(Debug, Clone)]
 pub enum Exif {
-    /// Raw EXIF TIFF bytes (without the `Exif\0\0` APP1 prefix).
+    /// Raw EXIF TIFF bytes. A leading JPEG APP1 `Exif\0\0` header is
+    /// accepted and not written twice (see [`Exif::raw`]).
     Raw(Vec<u8>),
     /// Built from common fields.
     Fields(ExifFields),
@@ -63,8 +76,12 @@ pub enum Exif {
 impl Exif {
     /// Create EXIF from raw TIFF bytes.
     ///
-    /// The bytes should be raw TIFF data without the `Exif\0\0` APP1 prefix
-    /// (the encoder adds that automatically).
+    /// The bytes are the TIFF structure, starting with its byte-order mark
+    /// (`II` or `MM`); the encoder adds the JPEG APP1 `Exif\0\0` header. Bytes
+    /// that already start with that header (the APP1 payload a JPEG decoder
+    /// returns, such as
+    /// [`DecodedExtras::exif`](crate::decode::DecodedExtras::exif)) are
+    /// accepted too: the header is written once, never twice.
     #[must_use]
     pub fn raw(bytes: impl Into<Vec<u8>>) -> Self {
         Exif::Raw(bytes.into())
@@ -79,13 +96,14 @@ impl Exif {
         ExifFields::default()
     }
 
-    /// Convert to raw TIFF bytes for embedding.
+    /// Convert to raw TIFF bytes for embedding, without the JPEG APP1
+    /// `Exif\0\0` header (a `Raw` blob that carries it has it removed).
     ///
     /// Returns `None` if no fields are set (for the `Fields` variant).
     #[must_use]
     pub fn to_bytes(&self) -> Option<Vec<u8>> {
         match self {
-            Exif::Raw(bytes) => Some(bytes.clone()),
+            Exif::Raw(bytes) => Some(strip_app1_exif_header(bytes).to_vec()),
             Exif::Fields(fields) => fields.to_bytes(),
         }
     }
@@ -130,126 +148,47 @@ impl ExifFields {
     /// Convert to raw TIFF bytes.
     ///
     /// Returns `None` if no fields are set.
+    ///
+    /// Serialization is delegated to [`zencodec::exif::Exif`] — the
+    /// canonical authoring path (little-endian, type-2 ASCII strings,
+    /// NUL-terminated count-inclusive, inline-if-≤4-bytes, out-of-line
+    /// values padded to even offsets per TIFF 6.0 word alignment).
     #[must_use]
     pub fn to_bytes(&self) -> Option<Vec<u8>> {
         if self.orientation.is_none() && self.copyright.is_none() {
             return None;
         }
-        Some(build_exif_tiff(self.orientation, self.copyright.as_deref()))
+        let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
+        if let Some(orient) = self.orientation {
+            // zenjpeg's repr-u16 enum uses the EXIF values 1-8 directly, so
+            // the mapping is total; Identity is an unreachable fallback.
+            exif.set_orientation(
+                zencodec::Orientation::from_exif(orient as u8)
+                    .unwrap_or(zencodec::Orientation::Identity),
+            );
+        }
+        if let Some(ref copyright) = self.copyright {
+            exif.set_copyright(copyright);
+        }
+        Some(zenmeta::exif::serialize(&exif))
     }
-}
-
-/// Build minimal EXIF TIFF data with orientation and optional copyright.
-///
-/// Returns raw TIFF data (without the `Exif\0\0` APP1 prefix - that's added
-/// by the encoder automatically).
-fn build_exif_tiff(orientation: Option<Orientation>, copyright: Option<&str>) -> Vec<u8> {
-    // Count how many IFD entries we need
-    let mut entry_count: u16 = 0;
-    if orientation.is_some() {
-        entry_count += 1;
-    }
-    if copyright.is_some() {
-        entry_count += 1;
-    }
-
-    if entry_count == 0 {
-        return Vec::new();
-    }
-
-    // Calculate sizes
-    // TIFF header: 8 bytes
-    // IFD: 2 (count) + 12*entries + 4 (next IFD offset)
-    let ifd_size = 2 + 12 * entry_count as usize + 4;
-    let header_and_ifd = 8 + ifd_size;
-
-    // Copyright string goes after IFD if it doesn't fit inline (>4 bytes)
-    let copyright_bytes = copyright.map(|s| {
-        let mut bytes = s.as_bytes().to_vec();
-        bytes.push(0); // Null terminator
-        bytes
-    });
-    let copyright_len = copyright_bytes.as_ref().map(|b| b.len()).unwrap_or(0);
-    let copyright_inline = copyright_len <= 4;
-
-    let total_size = if copyright_inline {
-        header_and_ifd
-    } else {
-        header_and_ifd + copyright_len
-    };
-
-    let mut exif = Vec::with_capacity(total_size);
-
-    // === TIFF Header (8 bytes) ===
-    // Byte order: little-endian (Intel)
-    exif.extend_from_slice(b"II");
-    // TIFF magic number (42)
-    exif.extend_from_slice(&42u16.to_le_bytes());
-    // Offset to first IFD (immediately after header)
-    exif.extend_from_slice(&8u32.to_le_bytes());
-
-    // === IFD0 ===
-    // Number of entries
-    exif.extend_from_slice(&entry_count.to_le_bytes());
-
-    // Track offset for non-inline values (after IFD)
-    let value_offset = header_and_ifd as u32;
-
-    // Entry 1: Orientation (tag 0x0112)
-    if let Some(orient) = orientation {
-        write_ifd_entry(
-            &mut exif,
-            0x0112,        // Tag: Orientation
-            3,             // Type: SHORT
-            1,             // Count: 1
-            orient as u32, // Value (inline for SHORT)
-        );
-    }
-
-    // Entry 2: Copyright (tag 0x8298)
-    if let Some(ref bytes) = copyright_bytes {
-        let count = bytes.len() as u32;
-        let value_or_offset = if copyright_inline {
-            // Inline: pad to 4 bytes
-            let mut val = [0u8; 4];
-            val[..bytes.len()].copy_from_slice(bytes);
-            u32::from_le_bytes(val)
-        } else {
-            // Offset to value
-            value_offset
-        };
-
-        write_ifd_entry(
-            &mut exif,
-            0x8298, // Tag: Copyright
-            2,      // Type: ASCII
-            count,
-            value_or_offset,
-        );
-    }
-
-    // Next IFD offset (0 = no more IFDs)
-    exif.extend_from_slice(&0u32.to_le_bytes());
-
-    // === Values that didn't fit inline ===
-    if !copyright_inline && let Some(bytes) = copyright_bytes {
-        exif.extend_from_slice(&bytes);
-    }
-
-    exif
-}
-
-/// Write a single IFD entry (12 bytes).
-fn write_ifd_entry(buf: &mut Vec<u8>, tag: u16, type_: u16, count: u32, value: u32) {
-    buf.extend_from_slice(&tag.to_le_bytes());
-    buf.extend_from_slice(&type_.to_le_bytes());
-    buf.extend_from_slice(&count.to_le_bytes());
-    buf.extend_from_slice(&value.to_le_bytes());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_bytes_lose_a_leading_app1_header() {
+        let tiff = b"MM\0*\0\0\0\x08\0\0\0\0\0\0".to_vec();
+        let prefixed = [b"Exif\0\0".as_slice(), &tiff].concat();
+        assert_eq!(Exif::raw(tiff.clone()).to_bytes(), Some(tiff.clone()));
+        assert_eq!(Exif::raw(prefixed.clone()).to_bytes(), Some(tiff.clone()));
+        assert_eq!(Exif::Raw(prefixed).to_bytes(), Some(tiff));
+        // Only the exact header: a near miss is left alone.
+        let other = b"Exif\0\xFFII*\0".to_vec();
+        assert_eq!(Exif::raw(other.clone()).to_bytes(), Some(other));
+    }
 
     #[test]
     fn test_orientation_only() {
@@ -333,6 +272,21 @@ mod tests {
         let exif = Exif::raw(raw.clone());
         let bytes = exif.to_bytes().expect("should produce bytes");
         assert_eq!(bytes, raw);
+    }
+
+    /// The delegated serializer's output must parse back (zencodec parser)
+    /// with both fields intact — guards the zenjpeg↔zencodec orientation
+    /// value mapping and string encoding across the delegation seam.
+    #[test]
+    fn test_zencodec_parse_roundtrip() {
+        let bytes = Exif::build()
+            .orientation(Orientation::Transverse) // EXIF value 7
+            .copyright("© 2026 Example") // odd-length UTF-8, exercises padding
+            .to_bytes()
+            .expect("should produce bytes");
+        let parsed = zencodec::exif::Exif::parse(&bytes).expect("zencodec must parse our output");
+        assert_eq!(parsed.orientation().map(|o| o.to_exif()), Some(7));
+        assert_eq!(parsed.copyright().as_deref(), Some("© 2026 Example"));
     }
 
     #[test]

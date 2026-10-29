@@ -2,10 +2,11 @@
 //!
 //! This module handles decoding of arithmetic-coded JPEG scans (SOF9/SOF10).
 
-use crate::decode::config::{DecodeWarning, Strictness};
+use crate::decode::config::DecodeWarning;
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_filled};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks_pref, try_alloc_filled_pref};
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use enough::Stop;
 
 use super::JpegParser;
@@ -48,16 +49,31 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs.push(try_alloc_dct_blocks(
+                // coeffs + coeff_counts + nonzero_bitmaps are all sized purely
+                // from the (untrusted) SOF dimensions — ~137 bytes per block.
+                // Charge the budget before allocating.
+                self.charge_memory(
+                    num_blocks.saturating_mul(DCT_BLOCK_SIZE * 2 + 1 + 8),
+                    "DCT coefficient storage",
+                )?;
+                // Full-frame coefficient storage sized from the (untrusted) SOF
+                // dimensions → default fallible.
+                self.coeffs.push(try_alloc_dct_blocks_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                self.coeff_counts.push(try_alloc_filled(
+                self.coeff_counts.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     64u8,
                     "allocating coefficient counts",
                 )?);
-                self.nonzero_bitmaps.push(try_alloc_filled(
+                self.nonzero_bitmaps.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     0u64,
                     "allocating nonzero bitmaps",
@@ -71,17 +87,76 @@ impl<'a> JpegParser<'a> {
 
         // Configure decoder with conditioning parameters and restart interval
         decoder.set_restart_interval(self.restart_interval);
-        for tbl in 0..4 {
+        for tbl in 0..crate::entropy::arithmetic::NUM_ARITH_TBLS {
             let (l, u) = self.arith_dc_cond[tbl];
             decoder.set_dc_conditioning(tbl, l, u);
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
         }
 
         // Match libjpeg-turbo: overflow conditions are warnings, not errors
-        decoder.set_lenient(self.strictness != Strictness::Strict);
+        decoder.set_lenient(self.strictness.recovers_data_errors());
 
         // Reset decoder for this scan
         decoder.reset_for_scan();
+
+        // Non-interleaved scan (ISO/IEC 10918-1 A.2.2): `Ns == 1` means the MCU
+        // is one data unit and the scan holds `ceil(x_i/8) * ceil(y_i/8)` of
+        // them in raster order over the component's own grid. Same rule the
+        // arithmetic *progressive* DC path below already follows; the sequential
+        // path was walking the interleaved grid unconditionally.
+        if let &[(comp_idx, dc_table, ac_table)] = scan_components {
+            let grid = super::component_block_grid(
+                &self.components,
+                comp_idx,
+                self.width,
+                self.height,
+                mcu_cols,
+                max_h_samp,
+                max_v_samp,
+            );
+            let total_units = grid.comp_blocks_h * grid.comp_blocks_v;
+            let mut unit_count = 0usize;
+
+            for block_y in 0..grid.comp_blocks_v {
+                stop.check()?;
+                for block_x in 0..grid.comp_blocks_h {
+                    let block_idx = block_y * grid.padded_blocks_h + block_x;
+                    match decoder.decode_block(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        0,
+                        dc_table as usize,
+                        ac_table as usize,
+                    )? {
+                        ScanRead::Value(()) => {
+                            let block = &self.coeffs[comp_idx][block_idx];
+                            let mut count = 0u8;
+                            for (i, &coef) in block.iter().enumerate() {
+                                if coef != 0 {
+                                    count = (i + 1) as u8;
+                                }
+                            }
+                            self.coeff_counts[comp_idx][block_idx] = count.max(1);
+                        }
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                            self.coeffs[comp_idx][block_idx] = [0i16; 64];
+                            self.coeff_counts[comp_idx][block_idx] = 1;
+                        }
+                    }
+
+                    // DRI counts MCUs, and here one MCU is one data unit.
+                    unit_count += 1;
+                    if unit_count < total_units {
+                        decoder.check_restart_mcu()?;
+                    }
+                }
+            }
+
+            if decoder.had_overflow() {
+                self.warn(DecodeWarning::ArithmeticBadCode)?;
+            }
+            self.position += decoder.position();
+            return Ok(());
+        }
 
         let total_mcus = mcu_rows * mcu_cols;
 
@@ -89,13 +164,11 @@ impl<'a> JpegParser<'a> {
         let mut mcu_count = 0usize;
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 // For each component in the scan
-                for (comp_idx, dc_table, ac_table) in scan_components {
+                for (slot, (comp_idx, dc_table, ac_table)) in scan_components.iter().enumerate() {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                     let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                     let comp_blocks_h = mcu_cols * h_samp;
@@ -110,7 +183,7 @@ impl<'a> JpegParser<'a> {
                             // Decode block
                             match decoder.decode_block(
                                 &mut self.coeffs[*comp_idx][block_idx],
-                                *comp_idx,
+                                slot,
                                 *dc_table as usize,
                                 *ac_table as usize,
                             )? {
@@ -192,16 +265,31 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs.push(try_alloc_dct_blocks(
+                // coeffs + coeff_counts + nonzero_bitmaps are all sized purely
+                // from the (untrusted) SOF dimensions — ~137 bytes per block.
+                // Charge the budget before allocating.
+                self.charge_memory(
+                    num_blocks.saturating_mul(DCT_BLOCK_SIZE * 2 + 1 + 8),
+                    "DCT coefficient storage",
+                )?;
+                // Full-frame coefficient storage sized from the (untrusted) SOF
+                // dimensions → default fallible.
+                self.coeffs.push(try_alloc_dct_blocks_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                self.coeff_counts.push(try_alloc_filled(
+                self.coeff_counts.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     64u8,
                     "allocating coefficient counts",
                 )?);
-                self.nonzero_bitmaps.push(try_alloc_filled(
+                self.nonzero_bitmaps.push(try_alloc_filled_pref(
+                    self.alloc_pref,
+                    true,
                     num_blocks,
                     0u64,
                     "allocating nonzero bitmaps",
@@ -215,14 +303,14 @@ impl<'a> JpegParser<'a> {
 
         // Configure decoder
         decoder.set_restart_interval(self.restart_interval);
-        for tbl in 0..4 {
+        for tbl in 0..crate::entropy::arithmetic::NUM_ARITH_TBLS {
             let (l, u) = self.arith_dc_cond[tbl];
             decoder.set_dc_conditioning(tbl, l, u);
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
         }
 
         // Match libjpeg-turbo: overflow conditions are warnings, not errors
-        decoder.set_lenient(self.strictness != Strictness::Strict);
+        decoder.set_lenient(self.strictness.recovers_data_errors());
 
         // Reset for scan (clears stats appropriate for this scan type)
         decoder.reset_for_scan();
@@ -372,12 +460,10 @@ impl<'a> JpegParser<'a> {
 
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
-                for (comp_idx, dc_tbl, _ac_tbl) in scan_components {
+                for (slot, (comp_idx, dc_tbl, _ac_tbl)) in scan_components.iter().enumerate() {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                     let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                     let comp_blocks_h = mcu_cols * h_samp;
@@ -388,7 +474,7 @@ impl<'a> JpegParser<'a> {
                             let block_y = mcu_y * v_samp + v;
                             let block_idx = block_y * comp_blocks_h + block_x;
 
-                            match decoder.decode_dc_first(*comp_idx, *dc_tbl as usize, al)? {
+                            match decoder.decode_dc_first(slot, *dc_tbl as usize, al)? {
                                 ScanRead::Value(dc) => {
                                     self.coeffs[*comp_idx][block_idx][0] = dc;
                                 }
@@ -425,9 +511,7 @@ impl<'a> JpegParser<'a> {
 
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for mcu_x in 0..mcu_cols {
                 for (comp_idx, _dc_tbl, _ac_tbl) in scan_components {
@@ -476,14 +560,12 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
 
         for block_y in 0..comp_blocks_v {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
 
-                match decoder.decode_dc_first(comp_idx, dc_tbl, al)? {
+                match decoder.decode_dc_first(0, dc_tbl, al)? {
                     ScanRead::Value(dc) => {
                         self.coeffs[comp_idx][block_idx][0] = dc;
                     }
@@ -521,9 +603,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
 
         for block_y in 0..comp_blocks_v {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -570,9 +650,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -623,9 +701,7 @@ impl<'a> JpegParser<'a> {
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * padded_blocks_h + block_x;

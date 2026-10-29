@@ -13,6 +13,7 @@ readme = "README.md"
 include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
+imgref = { workspace = true }
 archmage = { workspace = true }
 magetypes = { workspace = true }
 safe_unaligned_simd = { workspace = true }
@@ -27,6 +28,8 @@ zenbench = { workspace = true }
 [features]
 default = ["std"]
 std = []
+# Dev-only: exposes internal decode kernels for per-tier benchmarking. Not API.
+_dev = ["archmage/testable_dispatch"]
 
 [lints]
 workspace = true
@@ -34,3 +37,8 @@ workspace = true
 [[bench]]
 name = "rgb_to_yuv_bench"
 harness = false
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+required-features = ["_dev"]

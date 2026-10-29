@@ -381,6 +381,7 @@ fn make_test_coefficients() -> DecodedCoefficients {
     coeffs[3 * 64] = 40; // block 3 = (bx=1, by=1)
 
     DecodedCoefficients {
+        sample_precision: 8,
         width: 16,
         height: 16,
         components: vec![ComponentCoefficients {
@@ -393,6 +394,7 @@ fn make_test_coefficients() -> DecodedCoefficients {
             quant_table_idx: 0,
         }],
         quant_tables: vec![Some([1u16; 64])],
+        huffman_tables: None,
     }
 }
 
@@ -514,6 +516,7 @@ fn test_transform_nonsquare_transpose() {
     }
 
     let coeffs = DecodedCoefficients {
+        sample_precision: 8,
         width: 24,
         height: 16,
         components: vec![ComponentCoefficients {
@@ -526,6 +529,7 @@ fn test_transform_nonsquare_transpose() {
             quant_table_idx: 0,
         }],
         quant_tables: vec![Some([1u16; 64])],
+        huffman_tables: None,
     };
 
     let config = TransformConfig {
@@ -882,6 +886,78 @@ mod pipeline_tests {
                 xform,
                 decoded.err()
             );
+        }
+    }
+
+    /// Create a noisy JPEG whose AC coefficient distribution exercises many of the
+    /// 256 possible Huffman symbols, ensuring the Huffman tables have a Kraft sum
+    /// strictly less than 2^16 (the pseudo-symbol fix for issue #183).
+    fn create_noisy_jpeg(width: u32, height: u32, quality: u8) -> Vec<u8> {
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+        // Use a deterministic pseudo-random pattern with many distinct pixel values
+        // so that DCT produces a wide spread of AC coefficients.
+        let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+        let mut state: u32 = 0x12345678;
+        for _ in 0..height {
+            for _ in 0..width {
+                // LCG PRNG
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixels.push((state >> 24) as u8);
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixels.push((state >> 24) as u8);
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixels.push((state >> 24) as u8);
+            }
+        }
+
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    /// Regression test for issue #183: lossless transforms produced invalid Huffman
+    /// tables when the symbol frequency set filled all 256 slots (Kraft sum == 2^16).
+    /// The fix appends pseudo-symbol 256 (freq=1) so the sum is strictly < 2^16.
+    #[test]
+    fn test_huffman_tables_valid_on_noisy_image() {
+        let decoder = DecodeConfig::new();
+
+        // Use several image sizes and quality levels to maximize the chance of
+        // triggering all 256 AC symbols in the frequency count.
+        for &(w, h, q) in &[
+            (128u32, 128u32, 75u8),
+            (256u32, 256u32, 50u8),
+            (64u32, 64u32, 30u8),
+        ] {
+            let jpeg = create_noisy_jpeg(w, h, q);
+
+            for xform in [
+                LosslessTransform::None,
+                LosslessTransform::FlipHorizontal,
+                LosslessTransform::Rotate90,
+            ] {
+                let result = transform(
+                    &jpeg,
+                    &TransformConfig {
+                        transform: xform,
+                        edge_handling: EdgeHandling::TrimPartialBlocks,
+                    },
+                    Unstoppable,
+                )
+                .unwrap();
+
+                let decoded = decoder.decode(&result, Unstoppable);
+                assert!(
+                    decoded.is_ok(),
+                    "noisy image {w}x{h} q={q} transform {:?}: expected valid JPEG but got: {:?}",
+                    xform,
+                    decoded.err()
+                );
+            }
         }
     }
 }
@@ -2843,16 +2919,14 @@ fn test_15x17_border_pixels_lossless() {
 
     let jpeg = encode_test_image(w, h, &pixels, None);
 
-    // Decode reference with i16 IDCT (used for non-dimension-swapping transforms)
+    // Reference: the default decode. Decode-time transforms are pixel-domain
+    // permutations of the upright decode (issue #149), so every transform
+    // must match a pixel-space transform of this single reference exactly.
+    // (Before #149 the DCT-domain path forced the f32 IDCT for dimension-
+    // swapping transforms, which required a separate f32 reference here.)
     let config_none = DecodeConfig::new();
-    let (ref_w, ref_h, ref_pixels_i16) = decode_test(&jpeg, &config_none);
+    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
     assert_eq!((ref_w, ref_h), (w, h));
-
-    // Decode reference with f32 IDCT (used for dimension-swapping transforms,
-    // since they force f32 IDCT for symmetric rounding)
-    let mut config_f32 = DecodeConfig::new();
-    config_f32.force_f32_idct = true;
-    let (_, _, ref_pixels_f32) = decode_test(&jpeg, &config_f32);
 
     // Collect all border pixel positions for the original image
     let border_positions: Vec<(usize, usize)> = {
@@ -2871,18 +2945,13 @@ fn test_15x17_border_pixels_lossless() {
     for &transform in &LosslessTransform::ALL {
         let label = format!("{transform:?}");
 
-        // DCT-domain transform (uses f32 IDCT for dimension-swapping, i16 otherwise)
+        // Decode-time transform
         let config = DecodeConfig::new().transform(transform);
         let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
 
-        // Pixel-space transform of the matching reference
-        let ref_pixels = if transform.swaps_dimensions() {
-            &ref_pixels_f32
-        } else {
-            &ref_pixels_i16
-        };
+        // Pixel-space transform of the reference
         let (px_w, px_h, px_pixels) =
-            pixel_transform(ref_pixels, ref_w as usize, ref_h as usize, transform);
+            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
 
         assert_eq!(
             (dct_w, dct_h),
@@ -3016,13 +3085,14 @@ fn test_15x17_all_pixels_lossless() {
 
     let jpeg = encode_test_image(w, h, &pixels, None);
 
-    // Two references: i16 IDCT (default) and f32 IDCT (for dimension-swapping)
+    // Reference: the default decode. Decode-time transforms are pixel-domain
+    // permutations of the upright decode (issue #149), so every transform
+    // must match a pixel-space transform of this single reference exactly.
+    // (Before #149 the DCT-domain path forced the f32 IDCT for dimension-
+    // swapping transforms, which required a separate f32 reference here.)
     let config_none = DecodeConfig::new();
-    let (ref_w, ref_h, ref_pixels_i16) = decode_test(&jpeg, &config_none);
+    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
     assert_eq!((ref_w, ref_h), (w, h));
-    let mut config_f32 = DecodeConfig::new();
-    config_f32.force_f32_idct = true;
-    let (_, _, ref_pixels_f32) = decode_test(&jpeg, &config_f32);
 
     for &transform in &LosslessTransform::ALL {
         if transform == LosslessTransform::None {
@@ -3030,18 +3100,13 @@ fn test_15x17_all_pixels_lossless() {
         }
         let label = format!("{transform:?}");
 
-        // DCT-domain transform
+        // Decode-time transform
         let config = DecodeConfig::new().transform(transform);
         let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
 
-        // Pixel-space transform of matching reference
-        let ref_pixels = if transform.swaps_dimensions() {
-            &ref_pixels_f32
-        } else {
-            &ref_pixels_i16
-        };
+        // Pixel-space transform of the reference
         let (px_w, px_h, px_pixels) =
-            pixel_transform(ref_pixels, ref_w as usize, ref_h as usize, transform);
+            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
 
         assert_eq!(
             (dct_w as usize, dct_h as usize),
@@ -3528,5 +3593,623 @@ mod restructure_tests {
             diffs, 0,
             "4:2:0 MCU row restart should preserve coefficients (max_diff={max_diff})"
         );
+    }
+}
+
+/// Trim-semantics oracle built from synthetic coefficient grids (issue #195).
+///
+/// Constructs coefficient sets whose PADDING blocks (beyond each component's
+/// true ceil(dim/8) grid) are filled with SENTINEL garbage, plus per-transform
+/// "twin" sets at the trimmed dimensions sharing the kept region's blocks
+/// (blocks are content-addressed by position). For every transform requiring a
+/// trim, `TrimPartialBlocks` on the non-aligned stream must produce exactly
+/// what the transform produces on the pre-trimmed twin — proving the trim
+/// keeps precisely the right region — and no sentinel may ever appear inside
+/// the output's true grid (the pre-fix code relocated padding blocks into the
+/// visible region).
+mod trim_sentinel_tests {
+    use crate::decode::{ComponentCoefficients, DecodeConfig, DecodedCoefficients};
+    use crate::lossless::coeff_transform::TransformedCoefficients;
+    use crate::lossless::pipeline::encode_from_coefficients;
+    use crate::lossless::{
+        EdgeHandling, LosslessTransform, TransformConfig, transform_coefficients,
+    };
+    use enough::Unstoppable;
+
+    const SENTINEL: i16 = 999;
+
+    /// Deterministic small coefficient value for block (bx, by), coeff `k`.
+    fn coeff_val(comp: usize, bx: usize, by: usize, k: usize) -> i16 {
+        let base = (comp * 5 + bx * 3 + by * 7 + k) as i16;
+        (base % 17) - 8
+    }
+
+    /// Build one component grid; blocks outside the true `real_bw`×`real_bh`
+    /// grid (i.e. MCU padding blocks) are filled with the sentinel.
+    fn build_component(
+        id: u8,
+        bw: usize,
+        bh: usize,
+        real_bw: usize,
+        real_bh: usize,
+        h_samp: u8,
+        v_samp: u8,
+    ) -> ComponentCoefficients {
+        let mut coeffs = vec![0i16; bw * bh * 64];
+        for by in 0..bh {
+            for bx in 0..bw {
+                let start = (by * bw + bx) * 64;
+                if bx < real_bw && by < real_bh {
+                    coeffs[start] = coeff_val(id as usize, bx, by, 0);
+                    for k in 1..6 {
+                        coeffs[start + k] = coeff_val(id as usize, bx, by, k);
+                    }
+                } else {
+                    for k in 0..64 {
+                        coeffs[start + k] = SENTINEL;
+                    }
+                }
+            }
+        }
+        ComponentCoefficients {
+            id,
+            coeffs,
+            blocks_wide: bw,
+            blocks_high: bh,
+            h_samp,
+            v_samp,
+            quant_table_idx: if id == 1 { 0 } else { 1 },
+        }
+    }
+
+    fn quant_tables() -> Vec<Option<[u16; 64]>> {
+        vec![Some([16u16; 64]), Some([17u16; 64])]
+    }
+
+    /// 4:2:0 coefficient set for the given pixel dims; sentinel fills the MCU
+    /// padding blocks beyond each component's true grid.
+    fn synth_420(w: u32, h: u32) -> DecodedCoefficients {
+        let mcus_w = (w as usize).div_ceil(16);
+        let mcus_h = (h as usize).div_ceil(16);
+        let luma_bw = (w as usize).div_ceil(8);
+        let luma_bh = (h as usize).div_ceil(8);
+        let chroma_bw = (w as usize).div_ceil(2).div_ceil(8);
+        let chroma_bh = (h as usize).div_ceil(2).div_ceil(8);
+        DecodedCoefficients {
+            sample_precision: 8,
+            width: w,
+            height: h,
+            components: vec![
+                build_component(1, mcus_w * 2, mcus_h * 2, luma_bw, luma_bh, 2, 2),
+                build_component(2, mcus_w, mcus_h, chroma_bw, chroma_bh, 1, 1),
+                build_component(3, mcus_w, mcus_h, chroma_bw, chroma_bh, 1, 1),
+            ],
+            quant_tables: quant_tables(),
+            huffman_tables: None,
+        }
+    }
+
+    /// No sentinel may appear inside any component's true (visible) grid.
+    fn assert_no_sentinel_in_true_region(out: &TransformedCoefficients, ctx: &str) {
+        let max_h = out.components.iter().map(|c| c.h_samp).max().unwrap() as u32;
+        let max_v = out.components.iter().map(|c| c.v_samp).max().unwrap() as u32;
+        for c in &out.components {
+            let comp_w = (out.width * u32::from(c.h_samp)).div_ceil(max_h);
+            let comp_h = (out.height * u32::from(c.v_samp)).div_ceil(max_v);
+            let true_bw = comp_w.div_ceil(8) as usize;
+            let true_bh = comp_h.div_ceil(8) as usize;
+            for by in 0..true_bh {
+                for bx in 0..true_bw {
+                    let start = (by * c.blocks_wide + bx) * 64;
+                    assert!(
+                        !c.coeffs[start..start + 64].contains(&SENTINEL),
+                        "{ctx}: sentinel padding content leaked into visible \
+                         block ({bx},{by}) of component id {}",
+                        c.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// Which source dimensions each transform requires to be MCU-aligned.
+    fn must_align(t: LosslessTransform) -> (bool, bool) {
+        match t {
+            LosslessTransform::None | LosslessTransform::Transpose => (false, false),
+            LosslessTransform::FlipHorizontal | LosslessTransform::Rotate270 => (true, false),
+            LosslessTransform::FlipVertical | LosslessTransform::Rotate90 => (false, true),
+            LosslessTransform::Rotate180 | LosslessTransform::Transverse => (true, true),
+        }
+    }
+
+    #[test]
+    fn trim_equals_pretrimmed_twin_and_never_leaks_padding() {
+        // 72x56: both axes partial vs the 16x16 MCU (true region 72x56,
+        // aligned region 64x48). Every padding block carries the sentinel.
+        let padded = synth_420(72, 56);
+
+        for t in [
+            LosslessTransform::FlipHorizontal,
+            LosslessTransform::FlipVertical,
+            LosslessTransform::Rotate90,
+            LosslessTransform::Rotate180,
+            LosslessTransform::Rotate270,
+            LosslessTransform::Transverse,
+        ] {
+            let (wa, ha) = must_align(t);
+            let kept_w = if wa { 64 } else { 72 };
+            let kept_h = if ha { 48 } else { 56 };
+            // The twin is pre-trimmed: aligned in exactly the dimensions the
+            // transform requires, sharing kept-region blocks by position.
+            let twin = synth_420(kept_w, kept_h);
+
+            let trimmed = transform_coefficients(
+                &padded,
+                &TransformConfig {
+                    transform: t,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
+                },
+            )
+            .unwrap();
+            let reference = transform_coefficients(
+                &twin,
+                &TransformConfig {
+                    transform: t,
+                    edge_handling: EdgeHandling::RejectPartialBlocks,
+                },
+            )
+            .unwrap();
+
+            assert_eq!(
+                (trimmed.width, trimmed.height),
+                (reference.width, reference.height),
+                "{t:?}: trimmed dims"
+            );
+            for (ct, cr) in trimmed.components.iter().zip(&reference.components) {
+                assert_eq!(
+                    (ct.blocks_wide, ct.blocks_high),
+                    (cr.blocks_wide, cr.blocks_high),
+                    "{t:?}: grid dims (component id {})",
+                    ct.id
+                );
+                assert_eq!(
+                    ct.coeffs, cr.coeffs,
+                    "{t:?}: component id {} coefficients differ from the \
+                     pre-trimmed twin (wrong kept region)",
+                    ct.id
+                );
+            }
+            assert_no_sentinel_in_true_region(&trimmed, &alloc::format!("{t:?}"));
+
+            // The full pipeline (emit + decode) must roundtrip the trimmed
+            // result exactly over the true grid.
+            let bytes = encode_from_coefficients(
+                &trimmed,
+                None,
+                &crate::lossless::pipeline::Carry::none(),
+                0,
+                &Unstoppable,
+            )
+            .unwrap();
+            let decoded = DecodeConfig::new()
+                .decode_coefficients(&bytes, Unstoppable)
+                .unwrap();
+            assert_eq!(
+                (decoded.width, decoded.height),
+                (trimmed.width, trimmed.height),
+                "{t:?}: emitted dims"
+            );
+        }
+    }
+
+    /// Transpose keeps partial trailing edges without trimming — the output's
+    /// true grid must be exactly the transposed true grid, sentinel-free.
+    #[test]
+    fn transpose_preserves_partial_edges_without_trim() {
+        let padded = synth_420(72, 56); // luma true grid 9x7, padded 10x8
+        let out = transform_coefficients(
+            &padded,
+            &TransformConfig {
+                transform: LosslessTransform::Transpose,
+                edge_handling: EdgeHandling::RejectPartialBlocks,
+            },
+        )
+        .unwrap();
+        assert_eq!((out.width, out.height), (56, 72));
+        // Output luma true grid is 7x9; dst (bx, by) came from src (by, bx).
+        let luma = &out.components[0];
+        for by in 0..9usize {
+            for bx in 0..7usize {
+                let dc = luma.coeffs[(by * luma.blocks_wide + bx) * 64];
+                let expected = coeff_val(1, by, bx, 0);
+                assert_eq!(dc, expected, "transposed luma block ({bx},{by}) DC");
+            }
+        }
+        assert_no_sentinel_in_true_region(&out, "Transpose");
+    }
+}
+
+// ── Quantization tables under dimension-swapping transforms (issue #205) ─────
+
+/// Walk the marker segments of a JPEG up to SOS, calling `f(marker, offset_of_ff, payload)`
+/// for each. `payload` excludes the 2 length bytes.
+fn for_each_segment(jpeg: &[u8], mut f: impl FnMut(u8, usize, &[u8])) {
+    assert_eq!(&jpeg[..2], &[0xFF, 0xD8], "missing SOI");
+    let mut i = 2;
+    while i + 4 <= jpeg.len() {
+        assert_eq!(jpeg[i], 0xFF, "expected marker at {i}");
+        let marker = jpeg[i + 1];
+        let len = u16::from_be_bytes([jpeg[i + 2], jpeg[i + 3]]) as usize;
+        f(marker, i, &jpeg[i + 4..i + 2 + len]);
+        if marker == 0xDA {
+            break;
+        }
+        i += 2 + len;
+    }
+}
+
+/// Rewrite every 8-bit DQT table in `jpeg` in place so that, in natural order,
+/// `Q[r][c] = f(table_id, r, c)`. Tables are stored in zigzag order in the file.
+fn patch_quant_tables(jpeg: &mut [u8], f: impl Fn(u8, usize, usize) -> u8) {
+    let mut edits: Vec<(usize, u8)> = Vec::new();
+    for_each_segment(jpeg, |marker, off, payload| {
+        if marker != 0xDB {
+            return;
+        }
+        let mut p = 0;
+        while p < payload.len() {
+            let pq_tq = payload[p];
+            assert_eq!(pq_tq >> 4, 0, "8-bit DQT expected");
+            let tq = pq_tq & 0x0F;
+            for k in 0..64 {
+                let n = JPEG_NATURAL_ORDER[k] as usize;
+                edits.push((off + 4 + p + 1 + k, f(tq, n / 8, n % 8)));
+            }
+            p += 65;
+        }
+    });
+    for (pos, v) in edits {
+        jpeg[pos] = v;
+    }
+}
+
+/// Read every DQT table (natural order) as `(table_id, table)`.
+fn read_quant_tables(jpeg: &[u8]) -> Vec<(u8, [u16; 64])> {
+    let mut out = Vec::new();
+    for_each_segment(jpeg, |marker, _off, payload| {
+        if marker != 0xDB {
+            return;
+        }
+        let mut p = 0;
+        while p < payload.len() {
+            let pq = payload[p] >> 4;
+            let tq = payload[p] & 0x0F;
+            let mut t = [0u16; 64];
+            for k in 0..64 {
+                let n = JPEG_NATURAL_ORDER[k] as usize;
+                t[n] = if pq == 0 {
+                    payload[p + 1 + k] as u16
+                } else {
+                    u16::from_be_bytes([payload[p + 1 + 2 * k], payload[p + 2 + 2 * k]])
+                };
+            }
+            out.push((tq, t));
+            p += 1 + if pq == 0 { 64 } else { 128 };
+        }
+    });
+    out
+}
+
+fn max_abs_diff(a: &[u8], b: &[u8]) -> u8 {
+    assert_eq!(a.len(), b.len());
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (*x as i16 - *y as i16).unsigned_abs() as u8)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Regression for issue #205: a dimension-swapping transform (Transpose,
+/// Rotate90, Rotate270, Transverse) transposes each 8x8 coefficient block, so
+/// the output's quantization tables must be transposed too. Camera JPEGs almost
+/// always carry asymmetric tables; with the source tables copied through, every
+/// coefficient is dequantized by `Q[c][r]` instead of `Q[r][c]`.
+///
+/// The fixture is a zenjpeg encode whose DQT bytes are then rewritten to a
+/// deliberately asymmetric table (`Q[r][c] = 1 + r + 2c`, so `Q[r][c] != Q[c][r]`
+/// off the diagonal). Both the reference decode and the transform read the
+/// same patched file, so the comparison is self-consistent.
+fn check_transposing_transforms_transpose_quant_tables(
+    subsampling: crate::encoder::ChromaSubsampling,
+) {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{EncoderConfig, PixelLayout};
+    use crate::lossless::transform;
+    use enough::Unstoppable;
+
+    let (w, h) = (48u32, 32u32);
+    // Low-amplitude texture around mid-grey so the amplified (patched-table)
+    // reconstruction stays inside 0..=255 and clamping cannot hide a mismatch.
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 3) as usize;
+            pixels[i] = (128 + ((x * 3 + y) % 9) as i32 - 4) as u8;
+            pixels[i + 1] = (128 + ((x + y * 5) % 7) as i32 - 3) as u8;
+            pixels[i + 2] = (128 + ((x * y) % 5) as i32 - 2) as u8;
+        }
+    }
+    let mut enc = EncoderConfig::ycbcr(97, subsampling)
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let mut jpeg = enc.finish().unwrap();
+    let q = |r: usize, c: usize| (1 + r + 2 * c) as u8;
+    patch_quant_tables(&mut jpeg, |_tq, r, c| q(r, c));
+    let source_tables = read_quant_tables(&jpeg);
+    assert!(!source_tables.is_empty());
+
+    let (rw, rh, reference) = decode_test(&jpeg, &DecodeConfig::new());
+    assert_eq!((rw, rh), (w, h));
+
+    for t in LosslessTransform::ALL {
+        if t == LosslessTransform::None {
+            continue;
+        }
+        let out = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: t,
+                edge_handling: EdgeHandling::RejectPartialBlocks,
+            },
+            Unstoppable,
+        )
+        .unwrap();
+
+        // Structural: the emitted DQT is transposed exactly when the blocks are.
+        let out_tables = read_quant_tables(&out);
+        assert_eq!(out_tables.len(), source_tables.len(), "{t:?}: table count");
+        for (tq, table) in &out_tables {
+            for r in 0..8 {
+                for c in 0..8 {
+                    let expected = if t.swaps_dimensions() {
+                        q(c, r)
+                    } else {
+                        q(r, c)
+                    };
+                    assert_eq!(
+                        table[r * 8 + c],
+                        expected as u16,
+                        "{t:?} {subsampling:?}: DQT table {tq} entry ({r},{c}) not {}",
+                        if t.swaps_dimensions() {
+                            "transposed"
+                        } else {
+                            "preserved"
+                        }
+                    );
+                }
+            }
+        }
+
+        // Pixels: the transform must match a pixel-domain transform of the
+        // reference decode to within IDCT rounding.
+        let (ow, oh, got) = decode_test(&out, &DecodeConfig::new());
+        let (ew, eh, expected) = pixel_transform(&reference, rw as usize, rh as usize, t);
+        assert_eq!((ow as usize, oh as usize), (ew, eh), "{t:?}: dimensions");
+        let diff = max_abs_diff(&got, &expected);
+        assert!(
+            diff <= 2,
+            "{t:?} {subsampling:?}: max pixel diff {diff} vs pixel-domain transform of the source \
+             (quant tables not transposed with the coefficients?)"
+        );
+    }
+}
+
+#[test]
+fn transposing_transforms_transpose_asymmetric_quant_tables_444_205() {
+    check_transposing_transforms_transpose_quant_tables(crate::encoder::ChromaSubsampling::None);
+}
+
+#[test]
+fn transposing_transforms_transpose_asymmetric_quant_tables_420_205() {
+    check_transposing_transforms_transpose_quant_tables(crate::encoder::ChromaSubsampling::Quarter);
+}
+
+/// Same defect through `apply_exif_orientation`, which is how camera photos
+/// reach the transposing transforms in practice (EXIF orientation 5..=8).
+#[test]
+fn apply_exif_orientation_transposes_asymmetric_quant_tables_205() {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::Orientation;
+    use crate::lossless::apply_exif_orientation;
+    use enough::Unstoppable;
+
+    let (w, h) = (32u32, 48u32);
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 3) as usize;
+            pixels[i] = (128 + ((x * 3 + y) % 9) as i32 - 4) as u8;
+            pixels[i + 1] = (128 + ((x + y * 5) % 7) as i32 - 3) as u8;
+            pixels[i + 2] = (128 + ((x * y) % 5) as i32 - 2) as u8;
+        }
+    }
+    // EXIF 6 = Rotate90 (clockwise) to display upright.
+    let mut jpeg = encode_test_image(w, h, &pixels, Some(Orientation::Rotate90));
+    let q = |r: usize, c: usize| (1 + r + 2 * c) as u8;
+    patch_quant_tables(&mut jpeg, |_tq, r, c| q(r, c));
+
+    // Reference: the raw (un-oriented) decode; the default decode would
+    // already apply the EXIF rotation.
+    let raw = DecodeConfig::new().orientation(crate::decode::OrientationHint::Preserve);
+    let (rw, rh, reference) = decode_test(&jpeg, &raw);
+    assert_eq!((rw, rh), (w, h));
+    let out = apply_exif_orientation(&jpeg, Unstoppable).unwrap();
+    for (_tq, table) in read_quant_tables(&out) {
+        for r in 0..8 {
+            for c in 0..8 {
+                assert_eq!(
+                    table[r * 8 + c],
+                    q(c, r) as u16,
+                    "DQT ({r},{c}) not transposed"
+                );
+            }
+        }
+    }
+    let (ow, oh, got) = decode_test(&out, &DecodeConfig::new());
+    let (ew, eh, expected) = pixel_transform(
+        &reference,
+        rw as usize,
+        rh as usize,
+        LosslessTransform::Rotate90,
+    );
+    assert_eq!((ow as usize, oh as usize), (ew, eh));
+    let diff = max_abs_diff(&got, &expected);
+    assert!(diff <= 2, "apply_exif_orientation: max pixel diff {diff}");
+}
+
+/// Build explicit DC-only fixtures through the existing coefficient emitters.
+/// Constant RGB alone does not guarantee AC-free partial-MCU chroma blocks.
+/// Every case still checks all encoded AC coefficients, dimensions and DCs.
+#[test]
+fn dc_only_fixture_matrix() {
+    use crate::decode::Decoder;
+    use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use crate::lossless::coeff_transform::TransformedCoefficients;
+    use crate::lossless::pipeline::{Carry, encode_from_coefficients};
+    use crate::lossless::restructure::encode_progressive_from_coefficients;
+    use enough::Unstoppable;
+    use std::io::Write;
+
+    let directory = std::env::var_os("ZENJPEG_DC_FIXTURE_DIR").map(std::path::PathBuf::from);
+    let mut manifest = directory.as_ref().map(|root| {
+        std::fs::create_dir(root).expect("fixture output directory must be new");
+        let revision = std::env::var("ZENJPEG_DC_BUILD_COMMIT").expect("fixture build identity");
+        assert!(revision.len() == 40 && revision.bytes().all(|b| b.is_ascii_hexdigit()));
+        let mut f = std::fs::File::create(root.join("MANIFEST.tsv")).unwrap();
+        writeln!(
+            f,
+            "# build_commit={revision}; explicit DC-only test fixtures, not quality data"
+        )
+        .unwrap();
+        writeln!(f, "file\twidth\theight\tq\tsubsampling\tprogressive\tbytes").unwrap();
+        f
+    });
+    for (width, height) in [(8, 8), (17, 33), (64, 64)] {
+        let pixels = [97, 143, 201].repeat(width as usize * height as usize);
+        for quality in (0..=100).step_by(5) {
+            for (name, sampling) in [
+                ("444", ChromaSubsampling::None),
+                ("422", ChromaSubsampling::HalfHorizontal),
+                ("420", ChromaSubsampling::Quarter),
+                ("440", ChromaSubsampling::HalfVertical),
+            ] {
+                let config = EncoderConfig::ycbcr(quality as f32, sampling);
+                let mut encoder = config
+                    .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                    .unwrap();
+                encoder.push_packed(&pixels, Unstoppable).unwrap();
+                let original = encoder.finish().unwrap();
+                let mut decoded = Decoder::new()
+                    .decode_coefficients(&original, Unstoppable)
+                    .unwrap();
+                for component in &mut decoded.components {
+                    let (blocks, tail) = component.coeffs.as_chunks_mut::<64>();
+                    assert!(tail.is_empty());
+                    for block in blocks {
+                        block[1..].fill(0);
+                    }
+                }
+                let transformed = TransformedCoefficients {
+                    sample_precision: decoded.sample_precision,
+                    width,
+                    height,
+                    components: decoded.components,
+                    quant_tables: decoded.quant_tables,
+                };
+                let geometry = crate::lossless::geometry::McuGeom::from_components(
+                    width,
+                    height,
+                    &transformed.components,
+                )
+                .unwrap();
+                for progressive in [false, true] {
+                    let bytes = if progressive {
+                        encode_progressive_from_coefficients(
+                            &transformed,
+                            None,
+                            &Carry::none(),
+                            0,
+                            &Unstoppable,
+                        )
+                    } else {
+                        encode_from_coefficients(
+                            &transformed,
+                            None,
+                            &Carry::none(),
+                            0,
+                            &Unstoppable,
+                        )
+                    }
+                    .unwrap();
+                    let result = Decoder::new()
+                        .decode_coefficients(&bytes, Unstoppable)
+                        .unwrap();
+                    assert_eq!((result.width, result.height), (width, height));
+                    assert_eq!(result.components.len(), transformed.components.len());
+                    for ((component, expected), grid) in result
+                        .components
+                        .iter()
+                        .zip(&transformed.components)
+                        .zip(&geometry.comps)
+                    {
+                        assert_eq!(
+                            (component.id, component.h_samp, component.v_samp),
+                            (expected.id, expected.h_samp, expected.v_samp)
+                        );
+                        assert_eq!(
+                            result.quant_tables[component.quant_table_idx as usize],
+                            transformed.quant_tables[expected.quant_table_idx as usize]
+                        );
+                        for by in 0..grid.true_bh {
+                            for bx in 0..grid.true_bw {
+                                assert_eq!(
+                                    component.block_at(bx, by)[0],
+                                    expected.block_at(bx, by)[0]
+                                );
+                            }
+                        }
+                        let (blocks, tail) = component.coeffs.as_chunks::<64>();
+                        assert!(tail.is_empty());
+                        assert!(!blocks.is_empty());
+                        for block in blocks {
+                            assert!(
+                                block[1..].iter().all(|&v| v == 0),
+                                "AC in {width}x{height} q{quality} {name} prog={progressive}"
+                            );
+                        }
+                    }
+                    if let Some(root) = &directory {
+                        let filename = std::format!(
+                            "dc-{width}x{height}-q{quality}-{name}-{}.jpg",
+                            if progressive { "prog" } else { "base" }
+                        );
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(root.join(&filename))
+                            .unwrap()
+                            .write_all(&bytes)
+                            .unwrap();
+                        writeln!(
+                            manifest.as_mut().unwrap(),
+                            "{filename}\t{width}\t{height}\t{quality}\t{name}\t{progressive}\t{}",
+                            bytes.len()
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+        }
     }
 }

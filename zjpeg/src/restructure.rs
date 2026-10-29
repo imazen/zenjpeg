@@ -25,11 +25,19 @@ pub fn run(args: RestructureArgs) -> Result<()> {
 
     let config = build_config(&args)?;
 
+    let mut failed = 0usize;
     for path in &files {
         match restructure_one(path, &config, &output_config, is_single) {
             Ok(()) => {}
-            Err(e) => eprintln!("error: {}: {e:#}", path.display()),
+            Err(e) => {
+                eprintln!("error: {}: {e:#}", path.display());
+                failed += 1;
+            }
         }
+    }
+    // A failed file is a failed run: scripts check the exit status.
+    if failed > 0 {
+        anyhow::bail!("{failed} of {} file(s) failed", files.len());
     }
 
     Ok(())

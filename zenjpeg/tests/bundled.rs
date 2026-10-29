@@ -1,4 +1,6 @@
-//! Umbrella binary bundling 117 integration tests into one compile unit.
+//! Umbrella binary bundling the `bundled/` integration tests into one
+//! compile unit (one `#[path]` mod per file — count them, don't trust a
+//! hardcoded number here; a stale "118" survived long past 124 files).
 //!
 //! Each bundled file keeps its own `#![cfg(...)]` inner attrs; when a
 //! feature is off, the module body becomes empty. Files carry their own
@@ -42,6 +44,8 @@ mod arithmetic_first_decode;
 mod arithmetic_minimal;
 #[path = "bundled/arithmetic_tolerance.rs"]
 mod arithmetic_tolerance;
+#[path = "bundled/auto_orient_pixel_parity.rs"]
+mod auto_orient_pixel_parity;
 #[path = "bundled/bt601_reference.rs"]
 mod bt601_reference;
 #[path = "bundled/chroma_benchmark.rs"]
@@ -54,6 +58,8 @@ mod cmyk_transform;
 mod codec_corpus_conformance;
 #[path = "bundled/codec_coverage.rs"]
 mod codec_coverage;
+#[path = "bundled/coeff_unification.rs"]
+mod coeff_unification;
 #[path = "bundled/compare_420_cpp.rs"]
 mod compare_420_cpp;
 #[path = "bundled/compare_sizes.rs"]
@@ -104,6 +110,8 @@ mod decode_callback;
 mod decode_external;
 #[path = "bundled/decode_perf_locked.rs"]
 mod decode_perf_locked;
+#[path = "bundled/decode_truncation_series.rs"]
+mod decode_truncation_series;
 #[path = "bundled/decode_xyb_failures.rs"]
 mod decode_xyb_failures;
 #[path = "bundled/decoder_consistency.rs"]
@@ -132,6 +140,8 @@ mod dump_decoder_diffs;
 mod edge_tile_ssim2_comparison;
 #[path = "bundled/effort_benchmark.rs"]
 mod effort_benchmark;
+#[path = "bundled/emit_integration.rs"]
+mod emit_integration;
 #[path = "bundled/encode_api.rs"]
 mod encode_api;
 #[path = "bundled/encode_request_guide.rs"]
@@ -144,6 +154,8 @@ mod error_handling;
 mod fast_math_cpp_comparison;
 #[path = "bundled/fused_parallel_decode.rs"]
 mod fused_parallel_decode;
+#[path = "bundled/gain_map_render.rs"]
+mod gain_map_render;
 #[path = "bundled/grayscale_decode_test.rs"]
 mod grayscale_decode_test;
 #[path = "bundled/high_bit_depth_roundtrip.rs"]
@@ -212,6 +224,8 @@ mod quality_regression;
 mod quant_16bit_comparison;
 #[path = "bundled/quant_config_effects.rs"]
 mod quant_config_effects;
+#[path = "bundled/rgb_mode.rs"]
+mod rgb_mode;
 #[path = "bundled/roundtrip_corpus.rs"]
 mod roundtrip_corpus;
 #[path = "bundled/roundtrip_quality.rs"]
@@ -222,6 +236,10 @@ mod rst_resync;
 mod s440_progressive_bug;
 #[path = "bundled/scan_optimize_integration.rs"]
 mod scan_optimize_integration;
+#[path = "bundled/sharp_yuv_input_formats.rs"]
+mod sharp_yuv_input_formats;
+#[path = "bundled/streaming_scanline_upsample_parity.rs"]
+mod streaming_scanline_upsample_parity;
 #[path = "bundled/strip_edge_cpp_comparison.rs"]
 mod strip_edge_cpp_comparison;
 #[path = "bundled/subsampling_tests.rs"]
@@ -244,8 +262,13 @@ mod visual_encoding;
 mod wasm_decode;
 #[path = "bundled/wasm_simd.rs"]
 mod wasm_simd;
+#[cfg(feature = "metadata")]
+#[path = "bundled/windows_encoder_detection.rs"]
+mod windows_encoder_detection;
 #[path = "bundled/xyb_cpp_comparison.rs"]
 mod xyb_cpp_comparison;
+#[path = "bundled/xyb_edge_padding.rs"]
+mod xyb_edge_padding;
 #[path = "bundled/xyb_encoding_basic.rs"]
 mod xyb_encoding_basic;
 #[path = "bundled/xyb_linear_cpp_parity.rs"]
@@ -258,3 +281,10 @@ mod ycbcr_locked;
 mod zero_quant_clamp;
 #[path = "bundled/zune_crash_repro.rs"]
 mod zune_crash_repro;
+
+#[cfg(feature = "inventory")]
+#[path = "bundled/inventory_corpus.rs"]
+mod inventory_corpus;
+#[cfg(feature = "inventory")]
+#[path = "bundled/inventory_review.rs"]
+mod inventory_review;

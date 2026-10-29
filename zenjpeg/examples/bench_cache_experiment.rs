@@ -13,17 +13,17 @@
 //!
 //! Expected runtime: ~2 minutes
 
-#[cfg(not(all(feature = "parallel", feature = "decoder")))]
+#[cfg(not(feature = "parallel"))]
 fn main() {
     eprintln!("ERROR: Run with --features parallel,decoder");
 }
 
-#[cfg(all(feature = "parallel", feature = "decoder"))]
+#[cfg(feature = "parallel")]
 fn main() {
     bench::run();
 }
 
-#[cfg(all(feature = "parallel", feature = "decoder"))]
+#[cfg(feature = "parallel")]
 mod bench {
     use enough::Unstoppable;
     use std::path::Path;

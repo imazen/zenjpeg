@@ -369,20 +369,26 @@ impl ComputedConfig {
         cr_quant: &QuantTable,
         output: &mut Vec<u8>,
     ) -> Result<()> {
-        let is_color = !self.pixel_format.is_grayscale();
+        let is_color = !self.writes_gray();
         let num_components = if is_color { 3 } else { 1 };
 
-        if self.scan_strategy == ScanStrategy::Search && !self.use_xyb {
+        if self.scan_strategy == ScanStrategy::Search && !self.use_xyb && !self.use_rgb {
             // Generate multiple candidate scan scripts and trial-encode each.
             // The frequency estimator can't accurately compare scripts with
             // different numbers of scans (Huffman clustering effects), so we
             // use actual encoding for the final selection.
-            let candidates = super::scan_optimize::generate_candidate_scripts(
+            let mut candidates = super::scan_optimize::generate_candidate_scripts(
                 y_blocks,
                 cb_blocks,
                 cr_blocks,
                 num_components as u8,
             )?;
+            // The canonical mozjpeg script is a known-good shape the
+            // generated candidates don't cover; trialing it makes Search
+            // a byte-superset of `ScanStrategy::Mozjpeg` (sweep_validate
+            // 2026-06-10 caught it beating the search winner by 0.09 %
+            // on a CID22 photo at q70).
+            candidates.push(self.get_mozjpeg_scan_script(is_color));
 
             let mut best_output = Vec::new();
             for (i, candidate) in candidates.iter().enumerate() {
@@ -532,6 +538,14 @@ impl ComputedConfig {
             self.write_icc_profile(output, &XYB_ICC_PROFILE)?;
             self.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
             self.write_frame_header_xyb_progressive(output)?;
+        } else if self.use_rgb {
+            // RGB passthrough (issue #185): Adobe APP14 transform=0, one
+            // shared quant table, component IDs 'R','G','B'. No ICC — the
+            // samples are untransformed channel data.
+            self.write_header(output)?;
+            self.write_app14_adobe(output, 0)?;
+            self.write_quant_tables_rgb(output, y_quant)?;
+            self.write_frame_header_rgb(output, false)?; // Progressive → SOF2
         } else {
             // YCbCr mode: use standard headers
             self.write_header(output)?;
@@ -613,7 +627,6 @@ impl ComputedConfig {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_restart_marker_overhead_progressive() {
         use crate::encode::encoder_config::EncoderConfig;
         use crate::encode::encoder_types::ChromaSubsampling;
@@ -657,7 +670,6 @@ mod tests {
             sizes.push((rows, label, file_size));
 
             // Verify the output decodes successfully
-            #[allow(deprecated)]
             let decoded = crate::decode::Decoder::new()
                 .decode(&jpeg, enough::Unstoppable)
                 .unwrap_or_else(|_| panic!("decode failed for restart_mcu_rows={}", rows));

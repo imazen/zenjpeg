@@ -120,6 +120,110 @@ pub fn rgb_to_yuv420_sharp_f32(
     );
 }
 
+/// Convert gamma-encoded RGB f32 to Y/Cb/Cr f32 without eight-bit rounding.
+///
+/// Input is `[R, G, B]` in the 0..255 signal range, with the transfer function
+/// already applied (e.g. sRGB for JPEG). Linear-light callers must apply their
+/// output transfer function first. Samples must be finite and in range. The
+/// matrix operates on the supplied RGB primaries; no ICC conversion is done.
+///
+/// All planes carry explicit strides in pixels. Y has the input dimensions;
+/// Cb/Cr are ceil(width/2) by ceil(height/2). This entry point accepts a strip
+/// and reuses the same row workspace and Newton kernel as the byte-input API.
+/// It allocates nothing. Odd right/bottom edges replicate their last pixel.
+/// Strips must start on even image rows and have even heights except the final
+/// strip, so each 2x2 chroma block is processed together.
+///
+/// # Panics
+/// Panics for zero dimensions, mismatched output dimensions, or an undersized
+/// workspace. `Matrix::WebpEncoder` requires `Range::Limited`, as in the byte API.
+/// As in `rgb_to_yuv420_sharp_f32`, this entry point refines chroma only;
+/// `SharpYuvConfig::refine_y` does not add a separate luma-refinement pass.
+pub fn rgb_f32_to_yuv420_sharp(
+    rgb: imgref::ImgRef<'_, [f32; 3]>,
+    mut y: imgref::ImgRefMut<'_, f32>,
+    mut cb: imgref::ImgRefMut<'_, f32>,
+    mut cr: imgref::ImgRefMut<'_, f32>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (width, height) = (rgb.width(), rgb.height());
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert!(width > 0 && height > 0);
+    assert_eq!((y.width(), y.height()), (width, height));
+    assert_eq!((cb.width(), cb.height()), (cw, ch));
+    assert_eq!((cr.width(), cr.height()), (cw, ch));
+    assert!(ws.chroma_width() >= cw);
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+    let (rs, ys, cbs, crs) = (rgb.stride(), y.stride(), cb.stride(), cr.stride());
+    let y = y.buf_mut();
+    let cb = cb.buf_mut();
+    let cr = cr.buf_mut();
+    let rgb = rgb.buf();
+    for row in 0..height {
+        for x in 0..width {
+            let [r, g, b] = rgb[row * rs + x];
+            y[row * ys + x] = fwd.yr_f * r + fwd.yg_f * g + fwd.yb_f * b + fwd.y_bias_f;
+        }
+    }
+    for cy in 0..ch {
+        let top = cy * 2;
+        let bottom = (top + 1).min(height - 1);
+        for cx in 0..cw {
+            let left = cx * 2;
+            let right = (left + 1).min(width - 1);
+            let positions = [(top, left), (top, right), (bottom, left), (bottom, right)];
+            for ((row, x), (luma, red, green, blue)) in positions.into_iter().zip([
+                (&mut ws.y0s, &mut ws.or0, &mut ws.og0, &mut ws.ob0),
+                (&mut ws.y1s, &mut ws.or1, &mut ws.og1, &mut ws.ob1),
+                (&mut ws.y2s, &mut ws.or2, &mut ws.og2, &mut ws.ob2),
+                (&mut ws.y3s, &mut ws.or3, &mut ws.og3, &mut ws.ob3),
+            ]) {
+                let [r, g, b] = rgb[row * rs + x];
+                luma[cx] = y[row * ys + x];
+                red[cx] = r;
+                green[cx] = g;
+                blue[cx] = b;
+            }
+            // Keep the existing initial estimate and SIMD refinement kernel.
+            let r = (ws.or0[cx] + ws.or1[cx] + ws.or2[cx] + ws.or3[cx]) * 0.25;
+            let g = (ws.og0[cx] + ws.og1[cx] + ws.og2[cx] + ws.og3[cx]) * 0.25;
+            let b = (ws.ob0[cx] + ws.ob1[cx] + ws.ob2[cx] + ws.ob3[cx]) * 0.25;
+            ws.cb_f[cx] = fwd.cb_r_f * r + fwd.cb_g_f * g + fwd.cb_b_f * b + fwd.uv_bias_f;
+            ws.cr_f[cx] = fwd.cr_r_f * r + fwd.cr_g_f * g + fwd.cr_b_f * b + fwd.uv_bias_f;
+        }
+        sharp_iterate_all_blocks(
+            &ws.y0s[..cw],
+            &ws.y1s[..cw],
+            &ws.y2s[..cw],
+            &ws.y3s[..cw],
+            &ws.or0[..cw],
+            &ws.og0[..cw],
+            &ws.ob0[..cw],
+            &ws.or1[..cw],
+            &ws.og1[..cw],
+            &ws.ob1[..cw],
+            &ws.or2[..cw],
+            &ws.og2[..cw],
+            &ws.ob2[..cw],
+            &ws.or3[..cw],
+            &ws.og3[..cw],
+            &ws.ob3[..cw],
+            &mut ws.cb_f[..cw],
+            &mut ws.cr_f[..cw],
+            &inv,
+            &fwd,
+            config.max_iterations,
+            config.convergence_threshold,
+        );
+        cb[cy * cbs..cy * cbs + cw].copy_from_slice(&ws.cb_f[..cw]);
+        cr[cy * crs..cy * crs + cw].copy_from_slice(&ws.cr_f[..cw]);
+    }
+}
+
 /// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
 ///
 /// Y is computed at full resolution via the fast SIMD path. Cb/Cr are computed
@@ -396,6 +500,37 @@ impl SharpYuvWorkspace {
     /// Returns the chroma width this workspace is sized for.
     pub fn chroma_width(&self) -> usize {
         self.y0s.len()
+    }
+
+    /// Allocate workspace for chroma width `cw`, or `None` if an allocation
+    /// fails.
+    pub(crate) fn try_new(cw: usize) -> Option<Self> {
+        let z = || {
+            let mut v = alloc::vec::Vec::new();
+            v.try_reserve_exact(cw).ok()?;
+            v.resize(cw, 0.0f32);
+            Some(v)
+        };
+        Some(Self {
+            y0s: z()?,
+            y1s: z()?,
+            y2s: z()?,
+            y3s: z()?,
+            or0: z()?,
+            og0: z()?,
+            ob0: z()?,
+            or1: z()?,
+            og1: z()?,
+            ob1: z()?,
+            or2: z()?,
+            og2: z()?,
+            ob2: z()?,
+            or3: z()?,
+            og3: z()?,
+            ob3: z()?,
+            cb_f: z()?,
+            cr_f: z()?,
+        })
     }
 
     /// Allocate workspace for chroma width `cw`.
@@ -1043,45 +1178,45 @@ fn sharp_iterate_simd(
     let n = cb_f.len();
     let chunks = n / 8;
 
-    let uv_center_v = f32x8::splat(token, inv.uv_offset.abs());
-    let y_coeff_v = f32x8::splat(token, inv.y_coeff);
-    let y_off_v = f32x8::splat(token, inv.y_offset);
-    let cr_to_r_v = f32x8::splat(token, inv.cr_to_r);
-    let cr_to_g_v = f32x8::splat(token, inv.cr_to_g);
-    let cb_to_g_v = f32x8::splat(token, inv.cb_to_g);
-    let cb_to_b_v = f32x8::splat(token, inv.cb_to_b);
-    let zero_v = f32x8::splat(token, 0.0);
-    let max_v = f32x8::splat(token, 255.0);
+    let uv_center_v = f32x8::splat_t(token, inv.uv_offset.abs());
+    let y_coeff_v = f32x8::splat_t(token, inv.y_coeff);
+    let y_off_v = f32x8::splat_t(token, inv.y_offset);
+    let cr_to_r_v = f32x8::splat_t(token, inv.cr_to_r);
+    let cr_to_g_v = f32x8::splat_t(token, inv.cr_to_g);
+    let cb_to_g_v = f32x8::splat_t(token, inv.cb_to_g);
+    let cb_to_b_v = f32x8::splat_t(token, inv.cb_to_b);
+    let zero_v = f32x8::splat_t(token, 0.0);
+    let max_v = f32x8::splat_t(token, 255.0);
 
     let cb_denom = 4.0 * (inv.cb_to_g * inv.cb_to_g + inv.cb_to_b * inv.cb_to_b);
     let cr_denom = 4.0 * (inv.cr_to_r * inv.cr_to_r + inv.cr_to_g * inv.cr_to_g);
-    let cb_inv_denom_v = f32x8::splat(token, 1.0 / cb_denom);
-    let cr_inv_denom_v = f32x8::splat(token, 1.0 / cr_denom);
+    let cb_inv_denom_v = f32x8::splat_t(token, 1.0 / cb_denom);
+    let cr_inv_denom_v = f32x8::splat_t(token, 1.0 / cr_denom);
 
     for _ in 0..max_iterations {
         // SIMD: 8 blocks at a time.
         for c in 0..chunks {
             let base = c * 8;
-            let cb_v = f32x8::from_slice(token, &cb_f[base..]);
-            let cr_v = f32x8::from_slice(token, &cr_f[base..]);
+            let cb_v = f32x8::from_slice_t(token, &cb_f[base..]);
+            let cr_v = f32x8::from_slice_t(token, &cr_f[base..]);
             let cb_c = cb_v - uv_center_v;
             let cr_c = cr_v - uv_center_v;
-            let mut cb_num = f32x8::splat(token, 0.0);
-            let mut cr_num = f32x8::splat(token, 0.0);
+            let mut cb_num = f32x8::splat_t(token, 0.0);
+            let mut cr_num = f32x8::splat_t(token, 0.0);
 
             // 4 pixel positions, unrolled. Each loads 8 values from the SoA arrays.
             macro_rules! pixel {
                 ($y:expr, $or:expr, $og:expr, $ob:expr) => {{
-                    let yv = f32x8::from_slice(token, &$y[base..]);
+                    let yv = f32x8::from_slice_t(token, &$y[base..]);
                     let y_adj = y_coeff_v * (yv + y_off_v);
                     let rec_r = (y_adj + cr_to_r_v * cr_c).max(zero_v).min(max_v);
                     let rec_g = (y_adj + cr_to_g_v * cr_c + cb_to_g_v * cb_c)
                         .max(zero_v)
                         .min(max_v);
                     let rec_b = (y_adj + cb_to_b_v * cb_c).max(zero_v).min(max_v);
-                    let or_v = f32x8::from_slice(token, &$or[base..]);
-                    let og_v = f32x8::from_slice(token, &$og[base..]);
-                    let ob_v = f32x8::from_slice(token, &$ob[base..]);
+                    let or_v = f32x8::from_slice_t(token, &$or[base..]);
+                    let og_v = f32x8::from_slice_t(token, &$og[base..]);
+                    let ob_v = f32x8::from_slice_t(token, &$ob[base..]);
                     let er = or_v - rec_r;
                     let eg = og_v - rec_g;
                     let eb = ob_v - rec_b;

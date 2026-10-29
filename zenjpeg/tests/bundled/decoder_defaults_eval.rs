@@ -1,4 +1,3 @@
-#![cfg(feature = "trellis")]
 //! Evaluate all decoder configurations: quality (zensim vs original) AND speed.
 //!
 //! Tests every combination of IDCT method × chroma upsampling × dequant_bias
@@ -21,7 +20,7 @@
 //! Run:
 //! ```bash
 //! cargo test --release -p zenjpeg --test decoder_defaults_eval \
-//!     --features "trellis decoder" -- --nocapture --ignored
+//!      -- --nocapture --ignored
 //! ```
 
 use enough::Unstoppable;
@@ -265,7 +264,7 @@ fn decoder_defaults_quality_and_speed() {
     }
     println!();
 
-    let zensim = Zensim::new(ZensimProfile::latest());
+    let zensim = Zensim::new(ZensimProfile::codec_target());
 
     // Decode timing iterations per image
     let timing_iters = 10u32;

@@ -1,9 +1,48 @@
 # zenjpeg Tuning History
 
+> **Historical record.** Entries are dated snapshots and are NOT updated
+> retroactively; feature flags mentioned in older entries (e.g.
+> `archmage-simd`) may since have been removed (SIMD is now always
+> compiled). The repo-root `CLAUDE.md` carries the current numbers.
+
 Detailed benchmark data, profiling results, SIMD analysis, and investigation notes
 preserved from CLAUDE.md for future reference. This document records the specific
 numbers and analysis behind performance decisions -- consult it when revisiting
 optimization work or understanding why a particular approach was chosen.
+
+## Decoder peak memory: coefficient path vs RGB buffered path (2026-07-15)
+
+Measured with `zenjpeg/examples/mem_probe_decode` — peak RSS (`VmHWM` from
+`/proc/self/status`), one decode per process, 4096×4096 progressive,
+`scanline_reader()` consuming rows into a 16-row batch (so the figure reflects
+what the *decoder* retains, not the caller's output). 3 runs per cell, spread
+≤0.02 B/px. Output checksums identical across every arm — same pixels, only
+the allocation strategy differs.
+
+| progressive 4096² | RGB buffered | coeff path (as landed, 992a3952) | coeff path + take-not-copy |
+|---|---|---|---|
+| 4:4:4 | 9.50 B/px (156 MB) | **12.50 B/px (205 MB), +31.6%** | **8.48 B/px (139 MB), −10.7%** |
+| 4:2:0 | 6.32 B/px (103 MB) | 6.29 B/px (−0.5%) | **5.26 B/px (86 MB), −16.8%** |
+
+**Why the +31.6% regression existed.** `extract_coefficients` flattened the
+parser's `Vec<[i16; 64]>` into `ComponentCoefficients.coeffs: Vec<i16>` by
+*borrowing* (`.iter().flat_map(...).copied().collect()`). Safe Rust has no
+zero-copy reinterpret between those two layouts, so the flatten must allocate —
+and borrowing held every component's source live alongside every component's
+destination, i.e. 2× coefficient memory at peak (4:4:4 coefficients are
+~6 B/px, hence 12). The RGB buffered path peaked at coefficients + RGB
+(6 + 3 = 9.5 measured).
+
+**Fix**: take each component (`core::mem::take`) and drop its source as soon as
+it is flattened, so the peak holds all destinations + one source rather than all
+destinations + all sources. Exact-capacity `try_with_capacity` prevents the
+flatten from double-growing. Peak is now *below* the buffered path it replaced
+on both subsamplings, so the #187 unification is a memory win, not a tradeoff.
+
+Note `coeffs: Vec<i16>` is public API (`recompress::expert::*` consumes it), so
+changing `ComponentCoefficients` to hold `Vec<[i16; 64]>` — which would make the
+extract a pure move and drop the peak to ~6 B/px for 4:4:4 — was not on the
+table here. That remains the ceiling if the type is ever revisited.
 
 ## Encoder Profiling Results (4K image, 2026-01-21)
 
@@ -805,3 +844,856 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
 - **1-pixel partial MCU edge** - `fast_yuv.rs`, `streaming.rs`: Added edge replication for width = 1 (mod 8)
 
 - **HF modulation index wrap** - `quant/aq/simd.rs`: Added bounds check for rightmost partial blocks
+
+## Compile-Time Profile (2026-06-28, rustc 1.96.0 stable, commit 7afedf4c)
+
+Measured cold, lib-only, default features: `run-heavy --jobs 8 -- cargo build
+--release --timings -p zenjpeg`. Frontend/codegen split read from the `sections`
+field of the `cargo-timings` HTML; monomorphization from `cargo llvm-lines
+--release -p zenjpeg --lib`.
+
+**zenjpeg is genuinely fast to compile in absolute terms** — 15.9 s cold for the
+whole dep graph (60 units), peak RSS 0.92 GiB. The interesting part is the *shape*.
+
+**Per-unit (top), with frontend/codegen split:**
+
+| unit | total | frontend | codegen | codegen% |
+|------|-------|----------|---------|----------|
+| **zenjpeg** | 8.21 s | 3.89 | 4.32 | **52%** |
+| zenpixels-convert | 3.60 | 1.06 | 2.54 | 70% |
+| zerocopy | 2.70 | 2.61 | 0.09 | 3% |
+| magetypes | 2.66 | 2.58 | 0.08 | 3% |
+| zenanalyze | 2.53 | 0.61 | 1.92 | 75% |
+| linear-srgb | 2.38 | 0.50 | 1.88 | 78% |
+| wide | 1.84 | 1.45 | 0.39 | 21% |
+| syn | 1.38 | 1.18 | 0.20 | 14% |
+
+Across all 60 units: frontend 19.9 s + codegen 16.5 s of CPU-time (codegen 45%).
+zenjpeg itself is **codegen-bound (52%)** — atypical for a Rust library (a
+pure-logic crate is usually ~95% frontend). The SIMD-monomorphization +
+array-generic shape is what pushes work into LLVM. Note the proc-macro/trait-def
+deps (zerocopy, magetypes, syn) are ~100% *frontend* — their codegen cost is paid
+later, inside zenjpeg, when the generics are instantiated.
+
+**Monomorphization (`llvm-lines`): 504,370 IR lines / 5,586 fn copies.**
+
+| category | IR lines | share |
+|----------|----------|-------|
+| all `zenjpeg::*` | 332,232 | 66% |
+| stdlib generic monomorph (core/alloc) | 148,581 | 29% |
+| └ SIMD kernels (`__arcane_*_avx2`, `_simd`) | 50,840 | 10% |
+| └ const match-tables (`huffman::builtin_tables::*`) | 25,498 | 5% |
+| └ Display/Debug `::fmt` impls | 16,712 | 3% |
+
+Highest-*copies* offenders are stdlib generics driven by `[T; N]` array code
+(8×8 block buffers) and Vec/iterators across many element types:
+`core::array::try_from_fn_erased` 71 copies / 9,203 lines, `try_from_fn` 71,
+`Vec::drop` 64, `map_fold` closure 52, `Vec::push_mut` 47. zenjpeg's *own* big-IR
+functions are mostly single-copy (SIMD kernels + Huffman tables) — large but not
+multiplied.
+
+**SIMD-macro exposure (lib):** 55 `#[magetypes]` (all `(v3, neon, wasm128,
+scalar)` = 4 tiers each; on x86_64 only v3+scalar reach codegen, neon/wasm are
+cfg-stripped), 49 `#[arcane]`, 28 `#[rite]`, 71 `incant!`. This is the
+zenjpeg-specific codegen multiplier; each AVX2 kernel is ~2.0–2.7 k IR lines.
+
+**Levers (measured + per `~/work/claudehints/topics/rust-defaults.md`):**
+- `[profile.release] incremental = true` — biggest dev-iteration win for warm
+  rebuilds of zenjpeg (stable since 1.94). Only helps crates you edit.
+- lld is already the default linker (x86_64 Linux, since 1.90) — linking is ~free.
+- Cranelift (nightly) would **not** help — it falls back to LLVM for SIMD intrinsics.
+- Parallel frontend (`-Z threads`, still nightly in 2026) would attack the 3.89 s
+  (of 19.9 s graph-wide) frontend half; not on by default.
+- Non-default features (`parallel`, `boundary-rd`, `ultrahdr`, `target-zq`) are
+  already off in the measured build — enabling them forks more codegen paths.
+
+### Downstream-consumer build cost (what a dependent crate pays)
+
+A consumer compiles zenjpeg + its **transitive normal deps** once (dev-deps —
+criterion/proptest/zune-jpeg/mozjpeg — are NOT paid downstream). `default = []`,
+but the **non-optional** dep list is the floor and it is heavy.
+
+Measured cold, `cargo build --release --no-default-features -p zenjpeg` (= the
+default consumer graph), rustc 1.96.0, commit f2e0b4f3:
+**60 compile units, 14.8 s wall (-j8), 33.6 s CPU-time (17.9 frontend + 15.7
+codegen).** 43 unique crates. On a 2-vCPU CI runner expect ~25–33 s wall (less
+parallelism; the proc-macro base serializes the early graph).
+
+Heaviest units: zenjpeg 7.8, zenpixels-convert 3.56, magetypes 2.44, zenanalyze
+2.44, zerocopy 2.34, linear-srgb 2.31, wide 1.69, garb 1.47, zencodec 1.30,
+syn 1.21, zenyuv 1.15.
+
+**Two non-optional subtrees dominate removable cost (~33% of CPU-time) for
+features a plain encode/decode consumer doesn't use:**
+- `zenanalyze` (git) → `zenpixels-convert`: **~6.0 s** (2.44 + 3.56). Pulled
+  unconditionally for `EncoderConfig::adaptive` content analysis. Gating it
+  behind an `adaptive` feature removes ~18% of the build **and** un-blocks
+  publishing (see below).
+- `ultrahdr-core` → `half` → `zerocopy`/`zerocopy-derive` + `wide` → `safe_arch`:
+  **~5.4 s** (zerocopy 2.34 + wide 1.69 + zerocopy-derive 0.64 + safe_arch 0.40
+  + half 0.30). `ultrahdr-core` 0.5 (pinned rev 3ac20f99) is non-optional for
+  container/MPF types and pulled `half` unconditionally; `half`'s f16 drags in
+  `zerocopy` (the single heaviest leaf dep at 2.34 s).
+
+  **Fixed upstream (2026-06-28): ultrahdr-core 0.6 (imazen/ultrahdr `708d68a`)
+  gates f16/`half` behind an opt-in `f16` feature and drops the `wide` dep.**
+  Since zenjpeg already takes ultrahdr-core with `default-features = false`,
+  bumping the pin removes all five crates from the default graph — verified by
+  resolution: **43 → 37 crates, ~5.4 s CPU (~16%) gone**, zerocopy being the win.
+  **Confirmed by a clean build (rc=0):** ultrahdr-core 0.6 requires the
+  unpublished `zenpixels-convert 0.2.15` → `zenpixels 0.2.16`. Bumping only the
+  ultrahdr-core rev diamonds against the stale pinned `zenanalyze 13d40c3` (still
+  on `zenpixels 0.2.14`) — `RowConverter::new` gets two incompatible
+  `PixelDescriptor` types (E0308, zenanalyze `row_stream.rs:112`). The fix is the
+  documented local-dev pattern: `[patch]` the **whole zen pixel stack** to local
+  sibling folders (zenpixels + zenpixels-convert + zencodec + zenanalyze +
+  ultrahdr-core), which unifies everything on local `zenpixels 0.2.16`. With that,
+  the default graph builds cleanly with all five crates gone (43 → 37). The
+  ~5.4 s figure is the removed subtree measured in the consistent crates.io
+  baseline; a *full-build total* from the local-patched tree is not comparable
+  (local pixel-stack source is heavier than the published crates and the run had
+  higher load). **Landing for downstream** still needs a coordinated *published*
+  bump of the pixel stack (absolute-path patches can't be committed — CI breaks);
+  or do lever #1 (gate `zenanalyze`) first, which removes the diamond's source.
+
+**Publish gate (CRITICAL for downstream): newer zenjpeg is unpublishable.**
+crates.io has **0.8.4** (21 non-optional deps, no zenanalyze/zenpixels-convert —
+leaner but frozen). Local is **0.8.7**. `cargo publish` of 0.8.x fails because
+`zenanalyze = { git, rev }` (non-optional, **no version**) — crates.io forbids
+git deps. `zensim` (git, no version) blocks the `target-zq`/`recompress-iqa`
+features too. So `cargo add zenjpeg` consumers are stuck on 0.8.4; only git/path
+consumers (imazen ecosystem) get 0.8.7 — and pay a git fetch of imazen/zenanalyze
++ imazen/ultrahdr at first build on top of the 60-unit compile.
+
+**Downstream levers, ranked:** (1) make `zenanalyze` optional → −6 s **and**
+restores publishability; (2) make `ultrahdr-core`/`half` optional → −5 s, drops
+`zerocopy`; (3) publish `zenanalyze`/`zensim` with versions so 0.8.5+ can ship;
+(4) the proc-macro base (`syn` 1.21 + `proc-macro2`/`quote` + 8 derive macros) is
+a ~3–4 s mostly-unavoidable serial floor — but `zerocopy-derive` is only there via
+lever #2's `half` path.
+
+### Why `garb` is codegen-bound (~1.5 s in-graph for a swizzle crate)
+
+Looks surprising — `garb` is "just" RGB↔BGRA byte swizzles — but it's **not** generic
+bloat. Isolated measurements (garb 0.2.8, rustc 1.96):
+
+| garb feature set | total | frontend | codegen | note |
+|---|---|---|---|---|
+| `default,std` (inherent) | 0.76 s | 0.19 | 0.57 (75%) | the floor |
+| `experimental,rgb,imgref` | 1.17 s | 0.54 | 0.63 | +0.41 s, mostly frontend |
+| in zenjpeg graph | ~1.5 s | — | — | + rgb monomorph + load |
+
+`llvm-lines`: **only 11,808 IR lines / 314 fn copies — tiny.** 255 of 277 functions
+are single-copy (count==1), so monomorphization is NOT the cause. The cost is
+**function count, not IR size:** garb has **164 `#[arcane]`** (`#[target_feature]`)
+functions — 112 in `bytes/avx2.rs` — and a `#[target_feature]` boundary is a hard
+optimization unit LLVM can't inline across, so each AVX2 kernel is optimized in
+isolation. The top 11 IR offenders are all single-copy AVX2 swizzle kernels:
+`rgb_to_abgr_row_v3`, `rgb_to_argb/bgra/rgba_row_v3`, `argb_to_bgr/rgb_row_v3`,
+`bgra_to_rgb_row_v3`, `gray_alpha_to_4bpp_*_v3`… i.e. a **combinatorial expansion of
+every (src-format → dst-format) pair × the v3/AVX2 tier**. avx2 kernels = 5,049 IR
+(43% of garb's total). (neon's 45 + wasm's 72 `#[arcane]` are `cfg(target_arch)`-
+stripped on x86_64, so they cost frontend parse only, not codegen.)
+
+This is the same "LLVM-bound on monomorph/fn count, not IR bytes" signature as
+zenjpeg's own SIMD kernels — inherent to the write-one-kernel-per-tier archmage
+pattern. **The "unexpected" extra ~0.4 s in zenjpeg's graph is feature
+unification:** `zenanalyze` + `zenpixels-convert` force garb's `experimental` (+
+`rgb` + `imgref`) on (paste!-generated APIs + extra generic surface). garb itself
+has no lever short of fewer format-pairs; the only downstream win is dropping
+`experimental` if a consumer doesn't need it — and lever #1 (gate `zenanalyze`)
+removes garb from the default graph entirely along with its forced features.
+
+#### garb format-gate inventory (2026-06-28): bgr/argb/abgr are dead weight
+
+garb's kernels are concrete `pub fn`s, so they codegen into garb's rlib whether
+or not anyone calls them — only a `#[cfg(feature)]` gate *in garb* removes them.
+So: which formats does zenjpeg's whole graph actually use? Inventoried every
+`garb::` call across all three direct consumers (garb 0.2.8, zenpixels-convert
+0.2.14, zenanalyze 13d40c3, zenjpeg `src/`):
+
+| garb format | fns (all tiers) | used in zenjpeg graph? | by whom |
+|---|---|---|---|
+| rgb / rgba | — | **yes** (heavy) | all three |
+| bgra | — | **yes** (`rgb_to_bgra`, `bgra_to_rgb`, `rgba_to_bgra`) | zenjpeg + zpc + zenanalyze |
+| gray / gray_alpha | 128 | **yes** (8 fns) | zenpixels-convert |
+| **bgr** (3-byte) | 66 | **NO — zero calls** | — |
+| **argb** | 77 | **NO — zero calls** | — |
+| **abgr** | 41 | **NO — zero calls** | — |
+
+`bgr`+`argb`+`abgr` = **165 of garb's 812 fns (~20%)** with **zero callers** in
+the entire zenjpeg dependency graph. On x86_64 that's ~18 AVX2 kernels
+(`swap_bgr`/`copy_swap_bgr`/`argb_to_bgr` + `rgb_to_argb`/`rgb_to_abgr`/
+`argb_to_rgb`, each ×impl/row/strided) + their scalar twins + dispatch wrappers
+= ~10–15 % of garb's codegen (~0.06–0.10 s). Small absolute, but pure dead code,
+and the cleanest part of garb to gate — and it'd help *every* garb consumer.
+
+**Recommendation:** add `bgr` / `argb` / `abgr` cargo features to garb (one
+`extended-formats` umbrella is fine), default-ON for back-compat, and have
+zen consumers take garb with `default-features = false` + only the formats they
+use (mirrors how garb already gates `rgb` / `imgref`). **Grayscale is NOT
+gateable here** — `gray`/`gray_alpha` (128 fns) is load-bearing: zenpixels-convert
+calls 8 gray conversions (`gray_to_rgb/rgba`, `gray_alpha_to_*`, `*_to_gray_bt709`)
+and grayscale-JPEG decode needs the gray→rgb expansion. garb *could* expose a
+`gray` feature for other consumers, but in this graph it stays on.
+
+Full zenpixels-convert → garb surface (the requested inventory): conversions
+`rgba_to_rgb`, `rgb_to_bgra`, `bgra_to_rgb`, `rgb_to_rgba`, `rgba_to_bgra`(+`_inplace_strided`);
+gray `gray_to_rgb/rgba`, `gray_to_gray_alpha`, `gray_alpha_to_gray/rgb/rgba`,
+`rgb_to_gray_bt709`, `rgba_to_gray_bt709`; depth `convert_{u8,u16,f32}_to_{u16,f32,u8}`;
+alpha `premultiply_alpha_rgba_u8_copy`, `(un)premultiply_alpha_f32_copy`;
+deinterleave `rgb24_chunk8_to_planes_tokenless_v3`. **No bgr/argb/abgr.**
+
+#### What garb's `experimental` feature actually gates, and who uses it (2026-06-28)
+
+`experimental` (force-enabled by zenanalyze + zenpixels-convert) is a **coarse
+umbrella** over 6 sub-areas. Two are load-bearing, four are dead weight:
+
+| experimental sub-area | size | used by |
+|---|---|---|
+| `deinterleave` module (RGB24→planar) | 1674 lines, 15 SIMD | **zenanalyze** (`rgb24_chunk8_to_planes_scalar` ×3, `…_tokenless_v3`) + **zpc** (`…_tokenless_v3`) |
+| `experimental_api` block (mod.rs 799–1571) | 773 lines | **zpc only** — depth `convert_{u8,u16,f32}_to_{…}` (6) + alpha `premultiply_alpha_*`/`unpremultiply_*` (3) |
+| `packed` (RGB565 / RGBA4444) | 642 lines | **nobody** |
+| `packed_1010102` (10-bit RGB) | 776 lines | **nobody** |
+| `experimental_imgref` (imgref.rs block) | gated block | **nobody** |
+| `experimental_typed` (typed_rgb.rs block) | gated block | **nobody** |
+
+So `experimental` is **not** optional bloat that could be dropped — it gates the
+`deinterleave` module (RGB→planar, exactly what JPEG encode needs) and the
+depth-convert + alpha-premultiply API zpc relies on. But because the flag is
+coarse, turning it on to get `deinterleave` *also* drags in **~1,400 lines of
+unused packed-format code** (`packed.rs` 642 + `packed_1010102.rs` 776) plus the
+experimental imgref/typed blocks, and runs `paste!` expansion for the unused
+typed/imgref paths.
+
+**Refined garb recommendation:** the win isn't "drop experimental" (it's needed),
+it's **split it** — separate `deinterleave`, `depth-convert`/`alpha`,
+`packed`, `packed-1010102`, `imgref-experimental`, `typed-experimental` features.
+Then zenjpeg's graph enables only `deinterleave` + `depth-convert`/`alpha` and
+skips ~1,400 lines of packed-format code that nothing in the graph calls. This is
+a bigger and cleaner cut than the bgr/argb/abgr gate above, since the unused
+packed modules are entire files, not scattered kernels.
+
+**Why `deinterleave.rs` is 1,674 lines (and what's actually used):** the headline
+overstates compile cost — **504 lines (30%) are `#[cfg(test)]`** (line 1170+, not
+compiled downstream) + ~280 comment/doc. The ~1,170 production lines are **46
+functions = a full RGB↔planar matrix**: dtype {rgb24-u8, rgb48-u16, rgb-f32,
+rgba-f32} × direction {forward to_planes (26), reverse planes→rgb (12)} × chunk
+{4, 8, 16} × tier {scalar, v3, v3_autovec, tokenless_v3}. zenjpeg's whole graph
+calls **only `rgb24_chunk8_to_planes_{scalar,tokenless_v3}` — 2 of 46** — so all
+rgb48/u16, all f32 (rgb & rgba), all reverse-direction, and the chunk4/chunk16
+variants are unused. The module is big because it's comprehensive (every dtype ×
+direction × granularity); the graph touches only the u8-RGB24-chunk8-forward
+corner. A `deinterleave` split could go finer still (per-dtype), but the module is
+mostly scalar f32 loops (only 15 SIMD attrs total), so the codegen cost of the
+unused remainder is modest — the test/doc share is the bigger reason "1,674" looks
+alarming.
+
+#### garb ablation study: measured build+link deltas (2026-06-30)
+
+Set up an isolated ablation worktree (`~/work/zen/garb-ablation`, a plain-git copy
+of published garb 0.2.8, NOT the real imazen/garb repo — no other-repo rule
+violated) + a separate consumer probe crate (`~/work/zen/garb-ablation-consumer`,
+depends on it via `path`, zero other deps) to get real numbers instead of
+theorizing further. Methodology: `cargo build --release --timings`, min-of-3,
+warm dependency cache (only garb's own unit re-measured per step) — same harness
+as the compile-time profile above. One methodology bug caught and fixed along
+the way: an in-crate `examples/` target silently pulled garb's own dev-deps
+(criterion, zenbench) because the vendored `Cargo.toml` (`autoexamples = false`)
+initially made the example invisible to cargo, and a naive full-`cargo clean`
+before/after each variant repaid the entire proc-macro dependency chain every
+time, swamping the signal — moved to a warm-cache delta against a separate probe
+crate instead.
+
+**Cumulative ablation (garb's own compile unit, graph's actual feature set: `std,experimental,rgb,imgref`):**
+
+| step | change | time | Δ |
+|---|---|---|---|
+| A0 | `default,std` only (no experimental) | 0.74 s | — |
+| A0′ | **+ graph config** (what zenjpeg's build actually resolves) | **1.18 s** | baseline |
+| M1 | − `packed` + `packed_1010102` mods (unused, whole files) | 1.08 s | −0.10 s |
+| M2 | − `experimental_imgref` + `experimental_typed` blocks (unused) | 1.02 s | −0.06 s |
+| M3 | deinterleave → rgb24-chunk8-forward only (drop rgb48/f32/reverse/chunk4/16) | 0.97 s | −0.05 s |
+| **M1+M2+M3 total** | | **0.97 s** | **−0.21 s (−18%)** |
+
+All three cuts landed almost entirely in **frontend** (0.55→0.37 s), barely
+touching codegen (0.63→0.60 s) — confirms the earlier claim that ablating unused
+*surface area* mainly saves parse/typecheck, not LLVM work.
+
+**M4 attempted and abandoned: bgr/argb/abgr removal is NOT a clean ablation.**
+Unlike M1–M3, these kernels are woven through garb's dispatch layers — tier impl
+(avx2/scalar/neon/wasm) → row/strided wrappers → public `rgb_to_argb`-style
+functions → re-exports referenced from `imgref.rs`/`typed_rgb.rs`. Removing the
+concrete functions cascaded through 3 more rounds of dangling-reference errors
+across files before being reverted as out of scope for a worktree-copy ablation.
+**This is itself the finding for garb's maintainer:** the format-pair kernels
+need a real `#[cfg(feature)]` gate authored *in garb* (as recommended above), not
+a mechanical deletion — the dispatch web has no clean seam today.
+
+**Codegen floor characterization (opt-level/cgu sweep on the M1+M2+M3 tree):**
+
+| config | time | frontend | codegen |
+|---|---|---|---|
+| opt=3, cgu=16 (release default) | 0.97 s | 0.37 s | 0.60 s |
+| opt=2 | 0.88 s | 0.39 s | 0.49 s |
+| opt=1 | 0.71 s | 0.35 s | 0.36 s |
+| **opt=0** | **0.40 s** | 0.35 s | **0.05 s** |
+| opt=3, cgu=1 | 1.97 s | 0.40 s | 1.57 s (single CGU serializes) |
+| opt=3, cgu=256 | 1.02 s | 0.40 s | 0.62 s (no better than 16) |
+
+**The remaining codegen (0.60 s at opt=3) is dominated by optimization work on
+the AVX2 kernels, not IR volume** — consistent with the earlier finding that
+garb's cost is *function count* (164 non-inlinable `#[target_feature]` fns), not
+monomorphization. `cgu=16` (cargo's release default) is already near-optimal;
+`cgu=1` is dramatically worse (single-threaded LLVM), `cgu=256` gives nothing
+back. Dropping to opt=1 recovers a further ~0.26 s but changes the actual AVX2
+codegen quality shipped in the rlib — **not a free lever for a SIMD-perf library.**
+
+**Link cost: negligible, confirmed by direct measurement.** Isolated consumer
+probe (garb + tiny `main.rs`, zero other deps), warm-cache delta: BIN
+(garb-recompile + link) = 1.04 s vs LIB-only (garb's own unit, same source) =
+0.95 s → **link + trivial-binary compile ≈ 0.09 s.** Link is not the bottleneck
+anywhere in this picture. A fully-cold build (deps + garb + bin + link from
+`cargo clean`) = 3.55 s, but that mostly pays the **shared proc-macro/SIMD-macro
+chain** (archmage-macros, syn, magetypes, etc.) once — that cost is amortized
+across every crate in a project using archmage, not garb-specific.
+
+**Bottom line vs the "third of a second" target:** cleanly-ablatable dead code
+(M1–M3, mechanical and safe) buys **1.18 → 0.97 s (−18%)**. Reaching ~0.33 s
+from there requires one of: (a) a real bgr/argb/abgr feature gate authored in
+garb (blocked on the dispatch-web refactor identified by the abandoned M4), (b)
+dropping optimization level for garb specifically (opt=1 → 0.71 s, opt=0 →
+0.40 s — a real runtime-perf tradeoff, not free), or (c) restructuring the
+100+ target-feature-gated AVX2 kernels to fewer, more generic dispatch points
+(an architectural change, not a config knob). None of these are available as a
+zenjpeg-side fix — they're all `imazen/garb` engineering work.
+
+---
+
+# Migrated from CLAUDE.md (2026-07-13)
+
+The following sections were moved here verbatim to keep CLAUDE.md operational.
+
+### Dequantization Bias (2026-02-06)
+
+`Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases
+(Price & Rabbani 2000). Computes per-coefficient biases from DCT statistics
+and applies them during f32 dequantization. Bypasses fast i16 IDCT path.
+Default: off.
+
+**Frymire quality sweep** (1118x1105 photograph, baseline 4:2:0, commit 86e3bef):
+
+| Q | bytes | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp | maxdif |
+|---|-------|---------|----------|---------|-----------|----------|----------|--------|
+| 10 | 116K | 5.25 | 1.88 | 1.99 | 5.25 | -3.37 | -0.11 | 1 |
+| 20 | 171K | 21.35 | 18.54 | 18.61 | 21.35 | -2.82 | -0.07 | 1 |
+| 30 | 219K | 30.59 | 28.57 | 28.59 | 30.59 | -2.03 | -0.03 | 1 |
+| 40 | 243K | 34.21 | 32.37 | 32.44 | 34.21 | -1.84 | -0.07 | 1 |
+| 50 | 271K | 37.28 | 35.95 | 36.01 | 37.28 | -1.32 | -0.06 | 1 |
+| 60 | 309K | 41.07 | 40.07 | 40.10 | 41.07 | -0.99 | -0.03 | 1 |
+| 70 | 362K | 45.00 | 44.24 | 44.31 | 45.00 | -0.76 | -0.07 | 1 |
+| 80 | 438K | 48.72 | 48.25 | 48.32 | 48.72 | -0.47 | -0.07 | 1 |
+| 85 | 494K | 50.45 | 50.18 | 50.21 | 50.45 | -0.27 | -0.03 | 1 |
+| 90 | 583K | 51.94 | 51.81 | 51.83 | 51.94 | -0.14 | -0.02 | 1 |
+| 95 | 742K | 53.28 | 53.25 | 53.27 | 53.28 | -0.03 | -0.02 | 1 |
+| 97 | 848K | 53.71 | 53.68 | 53.73 | 53.71 | -0.03 | -0.05 | 1 |
+| 99 | 1034K | 54.00 | 54.03 | 54.07 | 54.00 | +0.03 | -0.05 | 1 |
+
+**CID22 mean** (10 images, 512px, baseline 4:2:0):
+
+| Q | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp |
+|---|---------|----------|---------|-----------|----------|----------|
+| 50 | 65.23 | 65.03 | 65.07 | 65.23 | -0.21 | -0.05 |
+| 75 | 75.05 | 75.19 | 75.24 | 75.05 | +0.14 | -0.06 |
+| 85 | 79.85 | 80.17 | 80.22 | 79.85 | +0.33 | -0.04 |
+| 95 | 86.65 | 87.05 | 87.11 | 86.65 | +0.39 | -0.06 |
+
+- `bias-zen`: SSIM2 pt gain over default (positive = better)
+- `bias-cpp`: SSIM2 pt gap vs C++ jpegli (negative = C++ better)
+- `maxdif`: max pixel diff between zen+bias and cjpegli
+
+**Pairwise SSIMULACRA2** (between decoders, Q85, 6 CID22 images):
+
+| | zenjpeg | zen+bias | cjpegli | zune-jpeg |
+|---|---------|----------|---------|-----------|
+| zenjpeg | - | 91.39 | 91.42 | 100.00 |
+| zen+bias | | - | 94.31 | 91.23 |
+| cjpegli | | | - | 91.26 |
+
+**Key findings:**
+- zenjpeg default == zune-jpeg (identical output, both integer IDCT)
+- zen+bias↔cjpegli similarity: 94.31 vs default↔cjpegli 91.42 (3 pts closer)
+- Max pixel diff between zen+bias and cjpegli: always 1 (IDCT rounding only)
+- **Image-dependent quality tradeoff**: on CID22 (small, diverse), bias helps
+  +0.14 to +0.39 at Q75+. On frymire (large photograph), default integer IDCT
+  wins by 0.03-3.37 pts across all qualities. Bias only breaks even at Q99.
+- C++ jpegli shows the same pattern: also behind integer IDCT on frymire.
+  The f32 IDCT + bias path and integer IDCT path have different rounding
+  characteristics; which wins depends on image content.
+- bias-cpp gap is consistently tiny (0.02-0.11 pts), confirming zen+bias
+  closely matches C++ jpegli decoder behavior regardless of image.
+
+Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison -- --nocapture --ignored`
+
+
+## Failed Explorations
+
+### Parallel AQ (2026-01-17)
+
+**Attempted:** Parallelize `per_block_modulations_row` using rayon.
+
+**Why it failed:**
+- Per-block AQ computation takes ~0.2 microseconds
+- Far too small for rayon thread pool overhead to be worthwhile
+- 4K benchmark with threshold=256: **5x slower** than sequential
+- Even 8K (33M pixels, 518K blocks) wouldn't benefit
+
+**Analysis:**
+- AQ takes 26% of 8K encode time, but only ~15% is parallelizable
+- `pre_erosion_row` (6%) has row-to-row accumulation dependency
+- `fuzzy_erosion` (5%) needs 3x3 neighborhood lookahead
+- Max theoretical speedup with 4 threads: ~10% overall
+- After rayon overhead: ~6% realistic gain - not worth complexity
+
+**Conclusion:** The SIMD-optimized sequential path is already efficient. Thread-level parallelism would need coarser granularity (e.g., multiple iMCU rows buffered) to overcome overhead, which conflicts with the streaming architecture.
+
+### Fuzzy Erosion SIMD (2026-01-21)
+
+**Attempted:** SIMD-optimize `compute_fuzzy_erosion_row_into` with archmage.
+
+**Approaches tried:**
+1. **Archmage with helper functions**: Created `mage_compute_fuzzy_erosion_row` with separate
+   `weighted_4_smallest`, `gather_3x3_clamped`, `gather_3x3_interior` helpers.
+   Result: **3x slower** (67ms vs 53ms) - `#[arcane]` prevents inlining, causing YMM register
+   spills at every function call boundary.
+
+2. **Massive inlined function**: ~350 lines with all 4 corners fully unrolled, no helper calls.
+   Result: **Still slower** (68ms vs 53ms) - instruction cache pressure from code bloat.
+
+**Root cause analysis:**
+- The algorithm requires finding 4 smallest from 9 values with index tracking
+- Scalar partial sort: `find min → replace with MAX → repeat 4×`
+- This creates unpredictable branch patterns that SIMD doesn't help
+- Code bloat from unrolling hurts icache more than SIMD helps
+
+**What would actually help:**
+- True SIMD sorting network (e.g., bitonic sort for 16 elements)
+- Would need to process multiple blocks in parallel, not just vectorize one block
+- Complexity not justified for ~5% of encode time
+
+**Files:** `zenjpeg/src/quant/aq/simd.rs:1377` (massive version, unused),
+`zenjpeg/src/quant/aq/streaming.rs:631` (original scalar, in use)
+
+### AVX-512 Dual-Block DCT (2026-01-21)
+
+**Attempted:** Process two 8x8 blocks simultaneously using AVX-512 (512-bit = 16 floats = 2 blocks).
+
+**Implementation:** Pack two blocks into ZMM registers [A_row_i, B_row_i], do DCT butterflies
+with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
+
+**Benchmark results:**
+- AVX2 single-block: 41.19M blocks/sec
+- AVX-512 dual-block: 17.58M blocks/sec (2.3x **slower**)
+
+**Why it failed:**
+1. **8x8 blocks fit AVX2 perfectly** - 8 floats = 256 bits, no wasted register space
+2. **Transpose cannot be done natively in AVX-512** - `_mm512_unpacklo_ps` operates on 128-bit
+   lanes, mixing data between blocks A and B
+3. **Extract/insert workaround is expensive** - each transpose requires:
+   - 8 `_mm512_extractf32x8_ps` to split ZMM→YMM
+   - 48 AVX2 operations (two 8x8 transposes)
+   - 16 `_mm512_insertf32x8` to recombine YMM→ZMM
+4. **Two transposes per DCT** = 64 extra extract/insert operations
+5. **AVX-512 frequency throttling** on some CPUs adds further penalty
+
+**Conclusion:** AVX-512 benefits require naturally 16-wide workloads. 8x8 DCT is inherently
+8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
+
+**Files:** `zenjpeg/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
+
+### Linear Iteration for AC Refinement (2026-02-14)
+
+**Attempted:** Replace bitmap-accelerated inner scan loop in `decode_ac_refine` with linear
+iteration (k from ss to se), matching zune-jpeg's approach. Goal was to eliminate the
+`num_zeros_to_skip < zero_gap` branch that caused 1.08M mispredicts (25.5% of ALL mispredicts).
+
+**Results:** WORSE. Instructions 449M → 469M (+4.4%), mispredicts 4.24M → 7.75M (+83%).
+
+**Why it failed:** Linear iteration visits EVERY position from k to se (~49 positions per block
+for band [15,63]), while bitmap visits only nonzero positions (~5-10). Even though individual
+branches are more predictable (`coeffs[k] != 0` is 90% false for sparse blocks), the total
+branch count is much higher: 49 × ~2.5 branches = ~123 per block vs bitmap's 10 × ~7 = ~70.
+The unconditional refinement bit reads in the nonzero case happen the same number of times,
+but the zero-position checking adds massive overhead for sparse progressive blocks.
+
+**Conclusion:** Bitmap is fundamentally better for sparse coefficient data. The O(nonzero)
+iteration count dominates the per-iteration branch cost.
+
+### Unchecked Bit Reads for AC Refinement (2026-02-14)
+
+**Attempted:** Add `read_bit_unchecked()` (no refill check) with `ensure_n_bits()` pre-fill
+before bitmap loops. Save ~2 instructions per bit read by eliminating the `bits_in_buffer == 0`
+check in the hot loop.
+
+**Results:** Breaks restart marker handling. 5 test failures including "expected 0xFF for restart
+marker" and "invalid Huffman code".
+
+**Why it failed:** Near restart markers, `refill()` returns fewer bits than requested and sets
+`marker_found`. The checked `read_bit_refine()` calls `refill()` when buffer empties, which
+re-adds zero padding. Unchecked reads consume past the marker boundary. Even with
+`saturating_sub` to prevent u8 underflow, the consumed bits corrupt the position for
+subsequent Huffman decodes. Safe handling requires tracking available bits vs needed bits per
+loop iteration, which adds complexity matching the cost of the original check.
+
+**Conclusion:** The 2-instruction saving per bit read isn't worth the marker boundary complexity.
+
+### Pre-refill AC First Scan (2026-02-15)
+
+**Attempted:** Apply the same `ensure_bits()` + `peek_top(9)` pre-refill pattern (from AC
+refine commit 43b24d6) to `decode_ac_first_scan`.
+
+**Results:** Callgrind showed +11% regression (34.8M → 38.6M instructions). AC refine scan
+(unchanged code) also regressed +6.4% (162.7M → 173.1M) due to code layout changes from
+recompilation. Function is only 2.43% of total — even a 20% improvement saves <0.5%.
+
+**Conclusion:** Not worth pursuing. The function is too small a fraction of total decode
+time. Code layout effects from the change outweigh the algorithmic improvement.
+
+### Conditional read_bit_fast in AC Refinement (2026-02-15)
+
+**Attempted:** Add `read_bit_fast()` (no refill check) to bitstream.rs. Use `fast_bits`
+boolean in AC refine to choose between `read_bit_fast()` and `read_bit_refine()` per
+refinement bit read, based on whether `ensure_bits()` succeeded.
+
+**Results:** All tests passed but callgrind showed 162.7M → 218.7M (+56M, +34%).
+
+**Why it failed:** The per-read `if fast_bits { read_bit_fast() } else { read_bit_refine() }`
+branch costs ~2 instructions — exactly the same as the refill check it replaces. Net effect
+is zero benefit with added code complexity. The branch predictor handles the refill check
+(`bits_in_buffer == 0` is rarely true) just as well as the `fast_bits` check.
+
+**Conclusion:** Cannot eliminate per-bit overhead through branching. Would need fundamentally
+different approach (e.g., reading multiple refinement bits in one operation).
+
+### Branchy Coefficient Update in AC Refinement (2026-02-15)
+
+**Attempted:** Replace branchless `c.wrapping_add((bit as i16) * not_set * sign * bit_val)`
+with branchy `if bit != 0 && (c & bit_val) == 0 { if c > 0 { +bit_val } else { -bit_val } }`.
+
+**Results:** Callgrind AC refine dropped from 225.2M to 184.5M (-18.1%). But wall-clock
+was 5-21% WORSE across all sizes.
+
+**Why it failed:** The `bit != 0` and `c > 0` branches are poorly predicted — coefficient
+signs and refinement bits are effectively random. Each misprediction costs ~15 cycles but
+counts as only 1 instruction in callgrind. The branchless version has more instructions but
+is fully predictable (no branches = no mispredictions). Branch misprediction overhead
+dominates instruction-count savings.
+
+**Conclusion:** Callgrind instruction count can be misleading when branch prediction matters.
+Branchless is correct for this hot path despite higher instruction count.
+
+### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
+
+**Problem:** Original decoder returned `([i16; 64], u8)` by value, copying 128 bytes per block.
+Smart zeroing alone didn't help because copy dominated memory bandwidth.
+
+**Solution:** Zero-copy `decode_block_into` API where caller provides reusable buffer:
+```rust
+fn decode_block_into(
+    &mut self,
+    coeffs: &mut [i16; 64],      // Caller-provided buffer
+    prev_coeff_count: u8,        // Zeroing hint from previous block
+    component: usize,
+    dc_table_idx: usize,
+    ac_table_idx: usize,
+) -> ScanResult<u8>              // Returns new coeff count
+```
+
+**Key insight:** Reusable buffers accumulate state from ALL previous blocks, not just the
+immediately previous one. If block N-2 wrote to position X, block N-1 didn't, and block N
+doesn't either, position X still has stale data. Fix: track MAXIMUM coefficient count since
+last restart marker, not just previous block's count.
+
+**Implementation:**
+- `entropy/decoder.rs`: Added `decode_block_into` with smart zeroing
+- `decode/parser.rs`: Added `prev_coeff_counts: [u8; 4]` per-component tracking
+- `decode/scanline.rs`: Added `coeffs_buf` reusable buffer and max-tracking
+
+**Results (2026-01-22):**
+- 512x512: ~5% improvement
+- 2048x2048: 6.5% improvement (17.9ms vs 19.2ms)
+
+Memory bandwidth reduction per block:
+- Before: 128 bytes zeroing + 128 bytes copy = 256 bytes
+- After: ~20 bytes targeted zeroing + 0 bytes copy = ~20 bytes
+
+
+### Fixed / Resolved Bugs (historical reference)
+
+- **XYB linear-input encoder path saturated to white (FIXED 2026-04-23, commit 9e2348fe)** -
+  `EncoderConfig::xyb` + `PixelLayout::RgbF32Linear` or `PixelLayout::Rgb16Linear`
+  produced JPEGs that decoded to solid white. The scalar linear-input branch in
+  `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which returns
+  UN-scaled XYB for a 0-255-range input) and then multiplied by 255.0 again,
+  while the parallel sRGB-input SIMD branch correctly applied
+  `scale_xyb(x,y,b) = ((x+offset)*scale)` before the ×255.0 JPEG-range step.
+  Fix: linear branch now calls `linear_rgb_to_xyb(r,g,b)` on 0..1 RGB, then
+  `scale_xyb()`, then ×255.0 — same pipeline as the sRGB path. Sibling
+  `Rgb8Srgb` path unchanged; locked hashes unaffected.
+  - Tests: `xyb_linear_matches_srgb_solid_red` et al. in `xyb_roundtrip.rs`.
+
+- **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
+  `try_fused_parallel_decode()` didn't check `decode_mode`, so it took the fused parallel
+  path (decodes directly to u8 pixels, no coefficient storage) even when
+  `DecodeMode::Coefficient` was set. This caused "no decoded data" InternalError for
+  `OutputTarget::SrgbF32`, `dequant_bias(true)`, lossless transforms, and Knusperli deblock
+  — any path needing coefficient access. Only triggered with `--features parallel` on images
+  with DRI (restart markers). Fix: return `Ok(false)` from `try_fused_parallel_decode` when
+  `decode_mode == Coefficient`. (`fused_parallel.rs:92`)
+
+- **Progressive decoder truncation near restart markers (FIXED 2026-03-09, commit 08ef601)** -
+  Fused `decode_ac_first_scan` and `decode_ac_refine_scan` lacked a bit-by-bit Huffman
+  fallback when `peek_bits_refill(16)` failed near restart marker boundaries. When a Huffman
+  code > 9 bits occurred in the last 2-3 blocks before a restart marker (0xFF 0xDn), the
+  16-bit peek failed because the marker interrupted bitstream refill. The function incorrectly
+  treated this as scan truncation, zeroing all remaining AC coefficients. The standard
+  `decode_huffman_symbol_lenient` had this fallback but the fused functions did not.
+  Triggered at Q91-Q93 (where AC table had codes > 9 bits) with DRI=216 on 576x576 images.
+  Fix: added bit-by-bit Huffman decode fallback matching the standard function.
+  - Found during investigation of Known Bug #1 (catastrophic auto_optimize quality).
+  - Test: `cargo test --release -p zenjpeg --test quality_regression -- diagnostic_coefficient_comparison --nocapture --ignored`
+
+- **Parallel feature skipping deringing (FIXED 2026-03-09)** - `parallel_dct_plane` in
+  `encode/parallel.rs` did `extract_block → forward_dct` without applying deringing, while
+  the sequential path in `strip/mod.rs:1027-1029` applied `preprocess_deringing_block` before
+  DCT. This caused `locked_values` test failures with `--features parallel` — not
+  non-determinism, but a deterministic quality regression (deringing silently skipped).
+  Fix: pass `deringing: Option<u16>` (dc_quant when enabled) through `parallel_dct_y_blocks`
+  into both parallel and sequential DCT plane functions. Deringing is block-local (no
+  cross-block dependencies), so it parallelizes trivially.
+
+- **zune-jpeg progressive decode issue (STALE, was Bug #5)** - Originally reported that
+  zune-jpeg decoded zenjpeg progressive output as grayscale. Investigation (2026-03-09)
+  found 70+ progressive encoding tests pass with zune-jpeg. The AC refinement trailing
+  ZRL fix (commit d355648) likely resolved the underlying scan structure issue. The only
+  remaining trace is a skip in `chroma_upsample_regression.rs:1038`. Note: zune-jpeg 0.5.12
+  still has a separate bug silently skipping AC refinement with DRI (max_diff=224).
+
+- **Grayscale scanline reader panic (FIXED 2026-02-06, commit be24fac)** - Streaming scanline
+  reader methods panicked on grayscale images. Fixed by handling 1-component images.
+
+- **XYB 4:2:0 encoder producing undecodable JPEGs (FIXED 2026-03-04, commit b0cafce)** -
+  Frequency counter clamped DC categories to 11 (`.min(11)`) but encoder wrote unclamped
+  categories. XYB produces DC differences > ±2047 at low quality (categories 12+). Huffman
+  table lacked codes for those categories, writing (code=0, len=0) → corrupted bitstream.
+  Fix: remove `.min(11)` from `collect_block_frequencies_simd`. Previously-encoded files
+  in `testdata/decode_failures/` remain permanently corrupted — tests converted to verify
+  graceful rejection (assert decode error, not success).
+  - Test: `cargo test --release -p zenjpeg --test xyb_roundtrip`
+  - Test: `cargo test --release -p zenjpeg --test decode_xyb_failures`
+
+- **CMYK scanline transform panic (FIXED 2026-03-04, commit bde9f48)** -
+  `scanline_reader_with_transform()` had no CMYK check. Non-dimension-swapping transforms
+  (e.g., FlipHorizontal) fell through to `from_coefficients()` → `StripProcessor` with
+  `[u8; 3]` arrays → index-out-of-bounds at `h_samp[3]`. Fix: route CMYK to buffered
+  decode fallback, matching `scanline_reader()`.
+  - Test: `cargo test --release -p zenjpeg --test cmyk_transform`
+
+- **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
+  `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
+  writes "jxl " for ALL ICC profiles (including standard sRGB), not just XYB ones. This caused
+  every cjpegli JPEG with an ICC profile to be misidentified as XYB, bypassing the fast i16
+  decode path and falling through to the f32 XYB→RGB conversion — producing completely wrong
+  colors (max_diff=252). Fix: replace "jxl " CMM check with exact-match against the known
+  720-byte XYB ICC profile, falling back to "XYB" text search in the profile description.
+  Also affected baseline streaming and fused parallel paths (would have returned "no decoded
+  data" error for cjpegli images).
+
+- **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
+  Bilinear chroma upsampler used edge replication at MCU row bottom boundaries (max ~43
+  pixel error for streaming, ~57 for coefficient/transform path). Fix: mirror the existing
+  top-boundary fixup for the bottom edge. Coefficient path peeks ahead by IDCT'ing the first
+  chroma block row of the next MCU. Streaming path pre-decodes the next MCU row and serves
+  corrected chroma through deferred buffers. Boundary max diff now ≤4 (IDCT rounding only).
+
+- **Scanline h2v2 boundary fixup buffer overflow (FIXED 2026-02-09, commit 8f1295f)** -
+  `fixup_h2v2_row0()` used hardcoded `[i16; 4096]` stack buffers, panicking on any 4:2:0
+  image wider than 8192px (chroma width > 4096). Fix: borrow disjoint struct fields directly
+  instead of copying to temp buffers. Closes #1.
+- **Progressive MCU-padded storage (FIXED 2026-02-09, commit 29d6d81)** - Progressive decoder
+  allocated coefficients with component-based counts (ceil(scaled_w/8)) but output path reads
+  with MCU-padded stride (mcu_cols * h_samp). For 4:2:0 with non-MCU-aligned width, caused
+  1-block-per-row shift accumulating to max_diff=255. Affected ~20/543 web corpus files.
+- **Progressive interleaved DC scan padding (FIXED 2026-02-09, commit 759a4a7)** - Skipping
+  entropy data for out-of-bounds MCU padding blocks desynchronized Huffman decoder. Caused
+  "invalid Huffman code" parse errors on 80/543 progressive 4:2:0 files.
+- See `docs/TUNING_HISTORY.md` for older fixed bugs.
+
+## Gamma-aware input formats (2026-09-15)
+
+### Reproduction
+
+Base: `8f703a6eeaad080045aa4c1b3713a25df2e15529` (current main on 2026-09-15).
+
+`convert_strip_gamma_aware` passed only bytes per pixel to its chroma helpers.
+Both the zenyuv adapter (4:2:0) and scalar readers (4:2:2 / 4:4:0) interpreted
+those bytes as RGB8. Native-endian linear f32/u16 were read as byte values;
+BGR/BGRA were read in reverse channel order.
+
+```sh
+cargo test --release -p zenjpeg --test bundled sharp_yuv_input_formats --locked
+```
+
+The test-only parent commit reproduces five failures and one pass. On the
+one-pixel 4:2:0 case, maximum decoded-channel differences against equivalent
+RGB8 are 63 for f32, 162 for u16, and 176 for BGR. The same issue reproduces
+with 4:2:2 tested first. RGB8 decoding is an independent `jpeg-decoder` oracle.
+
+### Change
+
+- Pass the actual pixel format and row stride at the internal strip boundary.
+- Read native-endian u16/f32 as linear sRGB and use the existing transfer
+  function, preserving fractional samples. Honor BGR order and ignore alpha.
+- Keep the current zenyuv 4:2:0 algorithm. Add a typed, strided
+  `sharp::rgb_f32_to_yuv420_sharp` entry point with no RGB8/Y8 intermediate.
+  It uses the existing workspace and SIMD Newton kernel and allocates nothing.
+- The encoder supplies at most two temporary RGB f32 rows to that entry point;
+  scratch allocation is fallible. No full-image buffer is added.
+- Keep existing byte entry-point signatures and their optimized byte path.
+  4:2:2/4:4:0 share format-aware readers with their existing scalar math.
+
+Input float layouts retain their SDR linear [0, 1] contract. The new zenyuv
+API takes gamma-encoded RGB in [0, 255] with sRGB transfer already applied by
+the JPEG caller. Y/Cb/Cr planes carry their own strides and explicit matrix/range.
+Independent strips must keep the 2x2 chroma grid aligned.
+
+### Validation
+
+On macOS arm64, Rust 1.93.0:
+
+- 1,111 library tests pass on both base and patch.
+- All 999 active bundled integration tests pass on the patch (122 existing
+  ignored tests remain ignored). This includes six new regression tests;
+  they also pass with `parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert`.
+- zenyuv: 22 existing tests, two new float tests and one doctest pass; three
+  existing ignored tests remain ignored.
+- The JPEG matrix covers RGB/RGBA f32/u16, RGB/RGBA/BGR/BGRA8, both gamma
+  methods, 4:4:4/4:2:2/4:2:0/4:4:0, one-pixel edges, odd dimensions, padding
+  and seven-row pushes. A fractional-input test detects eight-bit rounding.
+- zenyuv's new tests check analytic fractional-colour output, untouched padding,
+  odd edges, and whole-image/two-row-strip identity across supported matrix/range
+  pairs and both iteration counts.
+
+The full `--lib --tests --no-fail-fast` invocation completes all 36 test binaries:
+2,213 tests pass, 124 remain ignored, and one existing test fails in
+`encoder_regression::test_quality_floor`: `baseline_444_opt Q50` scores 44.6
+against a 47.0 floor. The identical failure reproduces on the test-only parent,
+without the source fix. The full suite is therefore not completely passing.
+
+Existing validation failures were not suppressed or changed:
+
+- `cargo fmt -p zenjpeg -- --check`: formatting in the base commit's
+  `zenjpeg/src/codec/tests.rs`. Changed Rust files pass rustfmt checks.
+- Clippy with `-D warnings`: duplicate aarch64 `cfg` on
+  `zenyuv/src/neon_encode.rs:6`, also reproduced on the test-only parent.
+- Consumer builds report the pre-existing unused
+  `upsample_h2v2_libjpeg_row_scalar` function.
+
+The first corpus run could not write the default cache under the local sandbox.
+Rerunning with `CODEC_CORPUS_CACHE` pointing to a writable temporary directory
+and network access resolved those fixture errors. No manifests or test thresholds
+were changed to obtain these results. Ignored C++ parity suites were not run.
+
+### Byte compatibility and timing
+
+All 32 RGB8/RGBA8 comparisons against the unmodified base produce byte-identical
+JPEGs. The matrix covers 4:4:4/4:2:2/4:2:0/4:4:0, both gamma methods, and
+qualities 85 and 99 with auto-optimization and progressive scan search.
+The input is a generated 1440x960 image of coloured patches and fine texture.
+
+Each case uses one warmup and three timed encodes per revision, with the median
+reported. Before/after execution order alternates between cases. Consumer
+harnesses use identical source and matching dependency versions. Positive
+changes below mean the patch took longer.
+
+| Sampling | Median time change across eight cases | Case range |
+|---|---:|---:|
+| 4:4:4 | +0.65% | -2.22% to +3.01% |
+| 4:2:2 | +0.38% | -0.58% to +2.17% |
+| 4:2:0 | -0.26% | -2.31% to +1.42% |
+| 4:4:0 | +1.38% | -1.45% to +2.43% |
+
+These small local timing differences do not establish a speedup or a substantial
+regression. Float-input performance was not measured; the corrupt baseline is
+not an equivalent-output reference for that path.
+
+## Inlining a per-row helper changed the entropy loop's codegen (2026-10-10)
+
+Moving the streaming baseline output to the shared `RowKernel` (colour-model
+work, `decode/parser/baseline_streaming.rs`) shrank `run_fancy_h2v2_loop` (6,222
+→ 5,614 instructions, 119 → 69 calls) yet raised decode-only Ir on a 2048²
+4:2:0 baseline file from 242.79M to 247.70M (+2.0%, callgrind,
+`valgrind_decode jpegli <file>`, lilith-wsl Zen 4). No decode work was added.
+
+**Localizing it.** Build both revisions with
+`CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`, run callgrind with
+`--dump-instr=yes`, and diff `callgrind_annotate --auto=yes` per source line:
+the whole delta sat in `entropy/decoder.rs` lines inlined into the loop
+(+5.2M), whose source had not changed. `objdump -dl` per-line instruction
+counts showed the fast AC path's `let value = ...` and
+`last_nonzero = (i + 1) as u8` (decoder.rs:841, :849) each one instruction
+longer: register allocation of the inlined entropy decoder had changed because
+the caller's tail changed.
+
+**Fix.** `output_mcu_row` (once per MCU row) went from `#[inline(always)]` to
+`#[inline(never)]`: 239.75M Ir, -1.25% vs the pre-change code. The baseline
+4:2:2 file (`run_simple_loop`, which also calls it) measured 331.75M vs
+331.78M (-0.01%). Making `decode_mcu_row` out of line instead did nothing
+(247.25M). (A first pass measured "4:2:2 / 4:4:4" on encoder-default files,
+which are progressive and never reach these loops: check the SOF before
+attributing a number to a path.)
+
+**Lesson.** In a function that inlines the entropy decoder, any change to the
+surrounding code can move the per-coefficient loop's register allocation.
+Callgrind baseline (SOF0) 4:2:0 and 4:2:2 files after touching anything
+inlined into `run_fancy_h2v2_loop` / `run_simple_loop`, and keep per-row work
+out of line.
+
+**Same day, again (review revision r2).** r2 changed only setup code in
+`decode_baseline_streaming` (geometry from `FrameShape`, `uses_box`, an
+`unreachable!` arm), none of it in a loop, and the baseline 4:4:4 file went
+from 297.41M to 303.09M decode-only Ir while 4:2:0 and 4:2:2 did not move: the
+4:4:4 loop (`decode_baseline_streaming_rgb`, one call site) was inlined into
+that function, so its entropy loop's register allocation followed the setup
+code. `#[inline(never)]` on `run_simple_loop` / `run_fancy_h2v2_loop` changed
+nothing (they were already out of line); on `decode_baseline_streaming_rgb`
+it gave 289.71M (main: 305.64M), every other streaming row within 7K Ir. The
+lesson extends: a hot loop that lives in a function whose other code changes
+for unrelated reasons should be its own out-of-line function.
+
+## Release packaging triage (2026-10-25)
+
+Reviewed main `a2a128ab` for the next zenjpeg release (manifest: 0.9.0;
+crates.io latest: 0.8.4, checked via its crate API).
+
+- `cargo package -p zenjpeg --locked --no-verify` fails before creating a
+  package: `zenmeta` has no version requirement. Manifest inspection also
+  finds versionless normal dependencies `zenyuv`, `zensim` and the optional
+  `zenpredict`; each needs a registry version for publication.
+- Registry observations: `zenmeta` returns HTTP 404; `zenanalyze` is 0.1.0
+  while the workspace requires 0.2.0. The lockfile uses zenpredict 0.2.0 and
+  zensim 0.3.0, while their latest registry versions are 0.1.0 and 0.2.7.
+  Optional dependencies also need publishable manifests. Recheck these
+  observations with `https://crates.io/api/v1/crates/<crate>`.
+- The lockfile uses git zencodec 0.1.27 and zenpixels/zenpixels-convert
+  0.2.17; the registry has 0.1.26 and 0.2.16 respectively. Their requirement
+  ranges admit the registry releases, but workspace patches are not inherited
+  by downstream consumers: verify the registry graph before release.
+- Current-main [CI](https://github.com/imazen/zenjpeg/actions/runs/39344604207)
+  passed, including Windows ARM, macOS ARM and i686. That workflow strips
+  workspace dependencies and removes Cargo.lock; it does not establish that
+  the published package resolves.
+- Remaining release gates: registry-only package verification, semver checks
+  against published 0.8.4, required all-target/doc tests on the final candidate,
+  release changelog reconciliation, README review and explicit owner approval.
+  This triage did not rerun the full test suite or semver checks.

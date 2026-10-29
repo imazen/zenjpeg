@@ -728,7 +728,7 @@ fn srgb_to_linear(srgb: u8) -> f32 {
 fn srgb_u8_to_linear_f32(srgb_data: &[u8], width: usize, rows: usize) -> Vec<f32> {
     let pixel_count = width * rows;
     let mut linear = Vec::with_capacity(pixel_count * 3);
-    for pixel in srgb_data[..pixel_count * 3].chunks_exact(3) {
+    for pixel in srgb_data[..pixel_count * 3].as_chunks::<3>().0 {
         linear.push(srgb_to_linear(pixel[0]));
         linear.push(srgb_to_linear(pixel[1]));
         linear.push(srgb_to_linear(pixel[2]));
@@ -750,7 +750,7 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
 
     let data = if channels == 1 {
         // Extract just the R (or first) channel
-        pixels.chunks_exact(3).map(|p| p[0]).collect()
+        pixels.as_chunks::<3>().0.iter().map(|p| p[0]).collect()
     } else {
         pixels
     };
@@ -767,7 +767,9 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
 #[cfg(feature = "ultrahdr")]
 fn is_grayscale_content(pixels: &[u8]) -> bool {
     pixels
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .take(100) // Sample first 100 pixels
         .all(|p| p[0] == p[1] && p[1] == p[2])
 }

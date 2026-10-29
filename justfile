@@ -1,22 +1,67 @@
 # zenjpeg development commands
 
-# Run all fuzz targets for 60 seconds each
+# Run all 13 fuzz targets for 60 seconds each (needs nightly + cargo-fuzz).
+# Keep this list in sync with zenjpeg/fuzz/Cargo.toml's [[bin]] entries —
+# `cargo fuzz run` on a name with no [[bin]] fails, and the five container /
+# push-decode targets were missing here until 2026-08-29.
 fuzz SECONDS="60":
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_read_info -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_truncation -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode_limits -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_decode_paths -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_push_decode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_encode -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
     cd zenjpeg && cargo +nightly fuzz run fuzz_differential -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_marker -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_mpf -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_xmp -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+    cd zenjpeg && cargo +nightly fuzz run fuzz_container_probe -- -max_total_time={{SECONDS}} -dict=fuzz/jpeg.dict
+
+# Compile every fuzz target on stable — the same gate .github/workflows/fuzz.yml
+# runs. `zenjpeg/fuzz` is its own workspace, so nothing at the repo root ever
+# compiles it; this is what stops the targets bit-rotting between hand-run
+# fuzzing sessions.
+fuzz-check:
+    cd zenjpeg/fuzz && cargo check --all-targets
+
+# Replay the committed crash seeds in zenjpeg/fuzz/regression/ on stable.
+# Neither nightly nor cargo-fuzz required.
+fuzz-regression:
+    cargo test -p zenjpeg --test fuzz_regression -- --nocapture
+
+# Colour-model oracles: libjpeg-turbo (Pillow), IJG djpeg and jpegli djpegli
+# decode the colour-model fixtures; each must match its documented rule and
+# zenjpeg's pixels (tests/colorspace_oracles.rs), including on the fused and
+# threaded paths (`parallel`). Every tool is required.
+colorspace-oracles DJPEGLI="internal/jpegli-cpp/build/tools/djpegli":
+    ZENJPEG_DJPEGLI="$(realpath {{DJPEGLI}})" cargo test --release -p zenjpeg --features __oracle-tests,parallel --test colorspace_oracles -- --nocapture
+
+# Path reach for tests/colorspace_paths.rs (scripts/colorspace_mutation_reach.py):
+# copies the working copy's tracked files to $MUTANT_ROOT/<UTC stamp>/tree (kept,
+# so every log's line numbers stay checkable), corrupts one conversion site at a
+# time and writes logs, per-site diffs and results to .../out.
+# `just colorspace-mutation-reach list` lists the sites; `START END` runs a range.
+colorspace-mutation-reach *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="${MUTANT_ROOT:-$HOME/tmp/zenjpeg-mutation}/$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$root/tree/internal" "$root/out"
+    if [ -d .jj ]; then jj file list; else git ls-files; fi \
+        | grep -vx 'internal/jpegli-cpp' | rsync -a --files-from=- ./ "$root/tree/"
+    ln -s "$(realpath internal/jpegli-cpp)" "$root/tree/internal/jpegli-cpp"
+    if [ -d .jj ]; then jj log -r @ --no-graph -T 'commit_id ++ "\n"'; else git rev-parse HEAD; fi > "$root/out/SOURCE"
+    echo "tree: $root/tree  results: $root/out"
+    python3 scripts/colorspace_mutation_reach.py "$root/tree" "$root/out" {{ARGS}}
 
 # Run all lib tests
 test:
     cargo test -p zenjpeg --lib
 
-# Pre-commit: fmt + clippy + test
+# Pre-commit: fmt + clippy + test + the two fuzz gates CI runs
 ci:
-    cargo fmt -p zenjpeg -- --check && cargo clippy -p zenjpeg -- -D warnings && just test
+    cargo fmt -p zenjpeg -- --check && cargo clippy -p zenjpeg -- -D warnings && just test && just fuzz-check && just fuzz-regression
 
 # Default test image for profiling
 TEST_IMAGE := env_var_or_default("TEST_IMAGE", "~/work/codec-eval/codec-corpus/CID22/CID22-512/validation/1025469.png")
@@ -152,16 +197,13 @@ wasm-magetypes:
 # Check all locally-resolvable feature permutations
 feature-check:
     cargo test -p zenjpeg --release --no-default-features --features std
-    cargo test -p zenjpeg --release --features decoder
-    cargo test -p zenjpeg --release --features "decoder,parallel"
-    cargo test -p zenjpeg --release --features "decoder,sharp-yuv"
-    cargo test -p zenjpeg --release --features "decoder,trellis"
-    cargo test -p zenjpeg --release --features "decoder,mozjpeg-tables"
-    cargo test -p zenjpeg --release --features "decoder,optimized-tables"
-    cargo test -p zenjpeg --release --features "decoder,parallel,trellis"
+    cargo test -p zenjpeg --release
+    cargo test -p zenjpeg --release --features parallel
     cargo check -p zenjpeg --no-default-features --features "std,zencodec"
     cargo check -p zenjpeg --no-default-features --features "std,ultrahdr"
     cargo check -p zenjpeg --no-default-features --features "std,layout"
+    cargo check -p zenjpeg --no-default-features --features "std,boundary-rd"
+    cargo check -p zenjpeg --no-default-features --features "std,recompress"
 
 # Cross-compile and test via QEMU user-mode emulation.
 # Strips jpegli-internals-sys (C++ FFI) from the workspace since it can't cross-compile,
@@ -213,43 +255,616 @@ test-cross:
     just test-i686
     just test-aarch64
 
-# ─────────────────────────────────────────────────────────────────────
-# zenjpeg-diagnostics-viewer (UNSTABLE __diagnostics surface + viewer)
-# ─────────────────────────────────────────────────────────────────────
+# Reader construction must fit 1 MiB threads at the opt-level consumers'
+# debug and test builds use (tests/stack_demand.rs).
+stack-demand-check:
+    cargo test -p zenjpeg --profile unoptimized --features zencodec,controlled-decode --test stack_demand
 
-# Default chain: rust unit + integration tests, wasm build, e2e suite.
-diagnostics-all: diagnostics-test diagnostics-wasm diagnostics-e2e
+# Pinned rustdoc-JSON nightly for the API snapshots (keep in sync with the
+# public-api job in .github/workflows/ci.yml). An unpinned tracking nightly
+# churns cross-crate path rendering (e.g. the 2026-07 core::io re-homing
+# turned `std::io::Write` into `core::io::write::Write`), breaking the CI
+# gate with zero repo changes. Bump deliberately, regenerating in the same
+# commit.
+apidoc_toolchain := "nightly-2026-07-13"
 
-# Rust unit + integration tests for the __diagnostics feature.
+# Format + regenerate the public-API surface snapshots (docs/public-api/).
+# The snapshot runner lives in the workspace-excluded apidoc/ package, so it
+# is never built or run by plain `cargo test` or any CI job.
+fmt:
+    cargo fmt --all
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
+
+# Regenerate the public-API surface snapshots only
+api-doc:
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
+
+# Verify the committed snapshots are current
+api-doc-check:
+    ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
+
+# Native ARM runtime-dispatch comparison; preserve full benchmark output.
+arm-tiers-macos group="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$HOME/tmp"
+    group_args=()
+    if [[ -n '{{group}}' ]]; then group_args+=("--group={{group}}"); fi
+    # macOS cannot enforce a P-core process boundary; this is exploratory.
+    # Local path patches can require a lock refresh before this bench builds.
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zenjpeg --features _dev --bench tier_isolation -- "${group_args[@]}" --cpu-policy=unrestricted --format=llm > "$HOME/tmp/zenjpeg-arm-tiers.log" 2>&1
+
+# JPEG framing and validated reassembly; existing fixtures and decoder paths.
+metadata-check:
+    cargo test -p zenjpeg --features extended-metadata --lib container::
+    cargo test -p zenjpeg --features extended-metadata --test extended_metadata --test fuzz_regression
+    cargo clippy -p zenjpeg --features extended-metadata --lib --test extended_metadata --test fuzz_regression -- -D warnings
+
+metadata-oracle:
+    cargo test -p zenjpeg --features __oracle-exiftool --test extended_metadata_exiftool -- --nocapture
+
+metadata-inventory-unit:
+    cargo test -p zenjpeg --features inventory --lib codec::inventory
+
+metadata-inventory-check:
+    cargo test -p zenjpeg --features zencodec --test inventory_feature
+    cargo test -p zenjpeg --features inventory --test inventory_feature
+    cargo test -p zenjpeg --features inventory --test bundled inventory_
+    cargo clippy -p zenjpeg --features inventory,extended-metadata --lib --test inventory_feature --test bundled -- -D warnings
+
+metadata-fuzz-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_inventory --bin fuzz_container_metadata
+
+metadata-inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zenjpeg --features inventory --test inventory_oracle -- --nocapture
+
+# Reused PR210 filtering tests, independent of extended inspection and inventory.
+metadata-filter-check:
+    cargo test -p zenjpeg --no-default-features --lib container::metadata::filter::
+    cargo test -p zenjpeg --features inventory --test inventory_feature
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+
+# Force a patch comparison: the local version has already been bumped to 0.9.
+metadata-api-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenjpeg==0.8.4 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc -p zenjpeg --lib --features inventory,extended-metadata,zencodec,ultrahdr -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/0.8.4" --lib --features zencodec,ultrahdr -- -Zunstable-options --output-format json
+    cargo semver-checks check-release -p zenjpeg --current-rustdoc target/doc/zenjpeg.json --baseline-rustdoc target/published-api/0.8.4/doc/zenjpeg.json --release-type patch
+
+metadata-integration-oracles:
+    just metadata-oracle
+    just metadata-inventory-oracle
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
+    just api-doc
+
+metadata-hdr-check:
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib container::
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib codec::inventory
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --doc
+    cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
+    just api-doc
+
+metadata-hdr-feature-matrix:
+    cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+    cargo clippy -p zenjpeg --lib --tests --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils" -- -D warnings
+
+metadata-ci-lib:
+    cargo test -p zenjpeg --lib --features "parallel,moxcms,ultrahdr,zencodec,__test-utils"
+    cargo test -p zenjpeg --lib --features "inventory,extended-metadata,ultrahdr,zencodec,__test-utils"
+
+# Populate corpus dependencies once before parallel metadata tests.
+metadata-prefetch:
+    cargo run -p zenjpeg --example metadata_corpus_prefetch
+
+metadata-prefetch-check:
+    just metadata-prefetch
+    cargo test -p zenjpeg --features inventory,extended-metadata --test extended_metadata --test inventory_feature --test fuzz_regression
+
+# Reconcile EXIF framing from the pending metadata source stack.
+metadata-exif-check:
+    cargo test -p zenjpeg --features zencodec --lib exif
+    cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
+    cargo clippy -p zenjpeg --features zencodec --lib -- -D warnings
+
+metadata-iso-check:
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib ultrahdr::decode
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled ultrahdr_roundtrip
+    cargo test -p zenjpeg --features inventory,extended-metadata,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,extended-metadata,ultrahdr --lib -- -D warnings
+
+metadata-rewrite-check:
+    cargo test -p zenjpeg --no-default-features --features metadata-rewrite --test metadata_rewrite
+    cargo clippy -p zenjpeg --no-default-features --features metadata-rewrite --lib --test metadata_rewrite -- -D warnings
+
+metadata-rewrite-gainmap-check:
+    cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --no-default-features --features metadata-rewrite --test metadata_rewrite --target i686-unknown-linux-gnu
+
+metadata-rewrite-oracle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output="$HOME/tmp/zenmeta-jpeg-rewrite-oracle"
+    JPEG_METADATA_OUTPUT="$output" cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite scrubs_both_components -- --nocapture
+    for suffix in "" "-map"; do
+        djpeg -outfile "$output/before$suffix.ppm" "$output/before$suffix.jpg"
+        djpeg -outfile "$output/after$suffix.ppm" "$output/after$suffix.jpg"
+        cmp "$output/before$suffix.ppm" "$output/after$suffix.ppm"
+    done
+    exiftool -a -validate -warning -error "$output/after.jpg"
+
+metadata-limits-check:
+    cargo test -p zenjpeg --test metadata_limits
+    cargo test -p zenjpeg --features zencodec --test bundled metadata_integration
+    cargo clippy -p zenjpeg --lib --features metadata-rewrite -- -D warnings
+
+metadata-policy-check:
+    cargo test -p zenjpeg --features ultrahdr --test bundled ultrahdr_roundtrip
+    cargo clippy -p zenjpeg --features ultrahdr --lib -- -D warnings
+
+metadata-dependency-check:
+    cargo check -p zenjpeg --features ultrahdr --lib
+
+metadata-gamut-check:
+    cargo test -p zenjpeg --features ultrahdr --test bundled convenience_hdr_readers_retain_display_p3_primaries
+
+metadata-lossless-check:
+    cargo test -p zenjpeg --features ultrahdr --test lossless_mpf --test mpf_bounds --test lossless_coefficient_range --test lossless_edges
+    cargo test -p zenjpeg --features ultrahdr --lib lossless::
+    cargo clippy -p zenjpeg --features ultrahdr --lib --test lossless_mpf --test mpf_bounds -- -D warnings
+
+metadata-lossless-oracle:
+    ZENJPEG_ORACLE_TOOLS=1 cargo test -p zenjpeg --features ultrahdr --test lossless_oracle -- --test-threads=1
+
+metadata-lossless-feature-check:
+    cargo check -p zenjpeg --no-default-features
+    cargo test -p zenjpeg --no-default-features --lib gain_map_preservation
+    cargo test -p zenjpeg --no-default-features --lib gain_map_decode_inherits
+    cargo test -p zenjpeg --features metadata-rewrite,ultrahdr --test metadata_rewrite
+
+metadata-lossless-fuzz-check:
+    cargo test -p zenjpeg --features metadata-rewrite,extended-metadata,inventory --test fuzz_regression
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_lossless --bin fuzz_metadata_rewrite
+
+metadata-lossless-api-check:
+    cargo fmt -p zenjpeg --check
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+    just api-doc
+
+metadata-lossless-portability-check:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test lossless_mpf --test mpf_bounds --test lossless_coefficient_range --test lossless_edges
+    actionlint .github/workflows/ci.yml
+
+metadata-icc-parity-check:
+    cargo test -p zenjpeg --features extended-metadata --test metadata_limits
+    cargo test -p zenjpeg --features extended-metadata --test extended_metadata icc_
+    cargo clippy -p zenjpeg --features extended-metadata --lib --test metadata_limits -- -D warnings
+    cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+
+metadata-lossless-regression-check:
+    just metadata-ci-lib
+    cargo test -p zenjpeg --features layout,ultrahdr --test bundled layout_pipeline
+    cargo test -p zenjpeg --features layout,ultrahdr --test lossless_edges
+
+metadata-recompress-admission-check:
+    cargo test -p zenjpeg --features recompress,__test-utils --test recompress_metadata --test recompress_api
+    cargo clippy -p zenjpeg --features recompress,__test-utils --lib --test recompress_metadata -- -D warnings
+
+# Approved gain-map alignment and explicit edge rejection contracts.
+metadata-layout-contract-check:
+    cargo test -p zenjpeg --features layout,ultrahdr --test bundled layout_pipeline
+    cargo test -p zenjpeg --features layout,ultrahdr --test lossless_edges
+
+metadata-progressive-corpus-check:
+    cargo run -p zenjpeg --example metadata_corpus_prefetch
+    cargo test -p zenjpeg --test bundled codec_corpus_conformance::test_image_rs_progressive -- --exact
+
+# Default compatibility, strict rejection, bounded extraction, and rewrite refusal.
+metadata-mpf-compat-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --test mpf_bounds --test lossless_mpf
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test mpf_bounds --test bundled -- -D warnings
+
+metadata-final-regression-check:
+    just metadata-mpf-compat-check
+    cargo test -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --test bundled
+    just metadata-lossless-oracle
+    just metadata-lossless-portability-check
+    just metadata-lossless-feature-check
+    just metadata-icc-parity-check
+    cargo fmt -p zenjpeg --check
+    just api-doc
+
+metadata-depth-bounds-check:
+    cargo test -p zenjpeg --lib decode::depth::tests
+    cargo test -p zenjpeg --test mpf_bounds
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjpeg --target i686-unknown-linux-gnu --test mpf_bounds native_mpf_offsets_do_not_wrap
+    cargo clippy -p zenjpeg --lib --test mpf_bounds -- -D warnings
+
+metadata-admission-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib codec::inventory
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib ultrahdr::decode
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib --test bundled -- -D warnings
+
+metadata-orientation-check:
+    just metadata-admission-check
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_corpus
+    cargo test -p zenjpeg --lib container::marker
+
+metadata-extraction-policy-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib metadata_policy_agrees
+    just metadata-admission-check
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+
+metadata-hdr-dispatch-check:
+    cargo test -p zenjpeg --features inventory,ultrahdr --lib ultrahdr::decode::
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled codec_hdr_
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled inventory_review
+    cargo test -p zenjpeg --features inventory,ultrahdr --test bundled orientation_descriptor
+    cargo clippy -p zenjpeg --features inventory,ultrahdr --lib -- -D warnings
+
+# Continue the final gate after the combined library/bundled suite.
+metadata-final-oracle-check:
+    just metadata-lossless-oracle
+    just metadata-lossless-portability-check
+    just metadata-lossless-feature-check
+    just metadata-icc-parity-check
+    cargo fmt -p zenjpeg --check
+    just api-doc
+
+metadata-legacy-icc-check:
+    cargo test -p zenjpeg --features inventory --lib container::chunks::
+    cargo test -p zenjpeg --features extended-metadata,metadata-rewrite,inventory --test metadata_limits
+    just metadata-icc-parity-check
+    cargo clippy -p zenjpeg --features extended-metadata,inventory --lib -- -D warnings
+
+# Typed rewrite migration plus the gain-map carrier and EXIF compatibility paths.
+shared-contract-check:
+    cargo test -p zenjpeg --features zencodec,inventory,metadata-rewrite --test shared_contracts
+    cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+    cargo clippy -p zenjpeg --features zencodec,inventory,metadata-rewrite --test shared_contracts -- -D warnings
+    just metadata-rewrite-check metadata-rewrite-gainmap-check
+    cargo clippy -p zenjpeg --features metadata-rewrite,ultrahdr,zencodec --lib -- -D warnings
+
+# Include native EXIF helper tests and the independent fuzz dependency graph.
+shared-contract-ci-check:
+    cargo test -p zenjpeg --lib encode::exif::tests
+    cargo clippy -p zenjpeg --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,__test-utils -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bins
+
+# Refresh the shared codec/metadata interface in both standalone lockfiles.
+sync-interface-locks:
+    cargo update -p zencodec
+    cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
+
+# Check the consumer-facing feature set after an interface revision change.
+check-interface-pin:
+    cargo clippy --locked -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,inventory,metadata-rewrite -- -D warnings
+
+# Native settings must also survive the adapter with generic parallel defaults.
+test-native-configuration:
+    cargo test --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,__test-utils --test streaming_encode
+
+check-native-configuration:
+    cargo clippy --locked -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec --lib -- -D warnings
+    cargo fmt -p zenjpeg --check
+
+# Development-only causal profile and checked external-process worker.
+coz-build:
+    cargo build --release --locked -p coz-loop
+
+coz-check:
+    cargo fmt -p coz-loop -- --check
+    cargo clippy --locked -p coz-loop --all-targets -- -D warnings
+
+coz-worker +args:
+    ./target/release/coz-loop {{args}}
+
+# Optional output is caller-selected; the test always executes the full matrix.
+coz-fixtures:
+    test -n "$ZENJPEG_DC_FIXTURE_DIR"
+    ZENJPEG_DC_BUILD_COMMIT="$(jj log -r "latest(ancestors(@) ~ empty())" --no-graph -T commit_id)" cargo test --locked -p zenjpeg --lib lossless::tests::dc_only_fixture_matrix -- --exact
+
+# Independent readback; requires ImageMagick and never skips missing tools.
+coz-fixtures-oracle:
+    test -n "$ZENJPEG_DC_FIXTURE_DIR"
+    python3 internal/coz-loop/check-fixtures.py "$ZENJPEG_DC_FIXTURE_DIR"
+
+# Check compatibility after admitting the current archmage/magetypes beta.
+beta-cohort-check:
+    cargo fmt --check
+    cargo clippy --locked --workspace --lib -- -D warnings
+    cargo test --locked --workspace --lib --no-fail-fast
+
+# Constructor spellings changed in examples and benches as well as the library.
+beta-example-check:
+    cargo check --locked --workspace --all-targets
+
+# Header, native decode and inspection must agree on ICC chunk completeness.
+metadata-header-check:
+    cargo test -p zenjpeg --features zencodec,extended-metadata --test metadata_limits
+    cargo clippy -p zenjpeg --features zencodec,extended-metadata --lib --test metadata_limits -- -D warnings
+
+# Qualified controlled JPEG route; the caller chooses the feature explicitly.
+controlled-check:
+    cargo test -p zenjpeg --test controlled_decode --test streaming_encode --test grayscale_geometry --test shared_contracts --features controlled-decode --locked
+    cargo clippy -p zenjpeg --lib --test controlled_decode --test streaming_encode --test grayscale_geometry --features controlled-decode --locked -- -D warnings
+
+controlled-sync export:
+    test ! -e "{{export}}/.git"
+    test ! -e "{{export}}/.jj"
+    mkdir -p "{{export}}/zenjpeg/src/codec/decode"
+    cp Cargo.toml justfile "{{export}}/"
+    cp zenjpeg/Cargo.toml "{{export}}/zenjpeg/"
+    cp zenjpeg/src/codec/encode.rs zenjpeg/src/codec/decode.rs zenjpeg/src/codec/info.rs zenjpeg/src/codec/streaming.rs "{{export}}/zenjpeg/src/codec/"
+    cp zenjpeg/src/codec/decode/controlled.rs "{{export}}/zenjpeg/src/codec/decode/"
+    cp zenjpeg/src/encode/byte_encoders.rs zenjpeg/src/encode/streaming.rs "{{export}}/zenjpeg/src/encode/"
+    cp zenjpeg/tests/controlled_decode.rs zenjpeg/tests/grayscale_geometry.rs zenjpeg/tests/profiled_encode.rs "{{export}}/zenjpeg/tests/"
+
+controlled-lock:
+    cargo update -p zencodec
+
+# Gray input must keep header, entropy order and restart geometry in agreement.
+gray-geometry-check:
+    cargo test -p zenjpeg --test grayscale_geometry --test streaming_encode --features zencodec --locked
+    cargo clippy -p zenjpeg --lib --test grayscale_geometry --test streaming_encode --features zencodec --locked -- -D warnings
+
+# Validate the temporary release dependency cut and remaining codec paths.
+analysis-cut-check:
+    python3 scripts/check-analysis-dependencies.py
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy -p zenjpeg --all-features --lib -- -D warnings
+
+analysis-cut-tests:
+    cargo test -p zenjpeg --lib --tests --examples
+    cargo check -p zenjpeg --benches
+    cargo test -p zenjpeg --doc
+    cargo test -p zenjpeg --features recompress-expert,parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite --lib --tests
+    just fuzz-check
+
+# Shared 8/12-bit integer reconstruction and existing dispatch regressions.
+precision-kernel-check:
+    cargo test --locked -p zenjpeg --lib decode::idct_int::tests
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Predictive JPEG differences share Huffman framing, but not DCT DC prediction.
+lossless-entropy-check:
+    cargo test --locked -p zenjpeg --lib entropy::decoder::tests
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Native sample decode: mandatory oracle binaries are supplied by the caller.
+native-precision-oracle:
+    just native-components-oracle-build
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --test native_precision -- --ignored --test-threads=1
+
+native-precision-check:
+    cargo test --locked -p zenjpeg --test native_precision
+    cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
+    cargo test --locked -p zenjpeg --lib
+
+native-decoder-regressions:
+    cargo test --locked -p zenjpeg --lib --tests -- --test-threads=1
+
+native-feature-regressions:
+    cargo test --locked -p zenjpeg --features "parallel,moxcms,ultrahdr,zencodec,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings
+
+native-integration-check:
+    cargo test --locked -p zenjpeg --features "parallel,zencodec,inventory" --test native_precision
+    just fuzz-check
+    cargo clippy --locked -p zenjpeg --all-features --lib --test native_precision -- -D warnings
+    cargo test --locked -p zenjpeg --doc
+
+native-portability-check:
+    cargo check --locked -p zenjpeg --lib --target wasm32-unknown-unknown
+    cargo check --locked -p zenjpeg --lib --target i686-unknown-linux-gnu
+    cargo clippy --locked -p zenjpeg --lib --tests -- -D warnings
+
+# Compile the component-independent native row reader.
+native-components-check:
+    cargo check --locked -p zenjpeg --lib
+
+native-components-oracle-build:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cmake --build "$ZENJPEG_TURBO_BIN" --target jpegtran-static --parallel 2
+    cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"${ZENJPEG_TURBO_SOURCE:-$ZENJPEG_TURBO_BIN/..}/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"
+
+# Component counts, scan slots and per-component table selection.
+multicomponent-check:
+    cargo test --locked -p zenjpeg --test multicomponent
+
+multicomponent-oracle-build:
+    python3 scripts/build-component-oracle.py
+
+multicomponent-oracle:
+    cargo test --locked -p zenjpeg --test multicomponent -- --ignored ten_component_oracle_matrix
+
+multicomponent-regressions:
+    cargo test --locked -p zenjpeg --lib --test multicomponent --test native_precision --features inventory
+    cargo clippy --locked -p zenjpeg --all-features --lib --test multicomponent -- -D warnings
+
+# Reports include native-precision code from the parent PR as well as this stack.
+multicomponent-coverage:
+    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent
+    cargo llvm-cov --no-report --locked -p zenjpeg --features inventory,parallel --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo llvm-cov --no-report --locked -p zenjpeg --features inventory,parallel --test multicomponent -- --ignored ten_component_oracle_matrix
+    python3 scripts/component-allocation-check.py --coverage
+    cargo llvm-cov report --lcov --output-path "$ZENJPEG_COVERAGE_REPORT"
+
+multicomponent-coverage-gate base report:
+    python3 scripts/check-component-coverage.py {{base}} {{report}}
+
+multicomponent-allocation-check:
+    python3 scripts/component-allocation-check.py
+
+# Native component reader invariants, shared with the fuzz target.
+native-hardening-check:
+    timeout --kill-after=15s 10m cargo test --locked -p zenjpeg --features inventory --test multicomponent --test native_hardening
+    timeout --kill-after=15s 10m cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --bin fuzz_native_components
+
+native-fuzz-build:
+    cd zenjpeg && timeout --kill-after=15s 15m cargo +nightly fuzz build fuzz_native_components
+
+native-fuzz corpus artifacts seconds="300":
+    cd zenjpeg && timeout --kill-after=15s $(({{seconds}} + 120))s cargo +nightly fuzz run fuzz_native_components {{corpus}} -- -artifact_prefix={{artifacts}}/ -max_total_time={{seconds}} -timeout=10 -rss_limit_mb=1024 -max_len=16384 -dict=fuzz/jpeg.dict -print_final_stats=1
+
+native-fuzz-seeds:
+    cc -Wall -Wextra -Werror -I"$ZENJPEG_TURBO_BIN" -I"$ZENJPEG_TURBO_SOURCE/src" zenjpeg/tests/support/native_components.c "$ZENJPEG_TURBO_BIN/libjpeg.a" -lm -o "$ZENJPEG_TURBO_BIN/native-components-oracle"
+    just multicomponent-oracle-build
+    python3 scripts/native-fuzz-seeds.py
+
+# LLVM branch instrumentation requires nightly; use a dedicated target directory.
+native-branch-coverage:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening
+    just native-branch-oracles native-branch-allocation native-branch-compat
+
+native-branch-oracles:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_precision -- --ignored
+    ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test multicomponent -- --ignored ten_component_oracle_matrix
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+native-branch-gate base report:
+    python3 scripts/check-native-branches.py {{base}} {{report}} --require-complete
+
+native-branch-fuzz-corpus:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test native_hardening -- --ignored native_fuzz_corpus_replay
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+native-pulse-check:
+    timeout --kill-after=15s 10m cargo test -p zenjpeg --features inventory,parallel --test native_hardening
+
+# Fast branch iteration; the complete recipe above remains the validation gate.
+native-branch-targeted:
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --lib --test native_precision --test multicomponent --test native_hardening -- --skip malformed_native_headers_are_bounded
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+# The injector runs only in its isolated test subprocess; use matching LLVM tools.
+native-branch-allocation:
+    RUSTUP_TOOLCHAIN=nightly timeout --kill-after=15s 10m python3 scripts/component-allocation-check.py --coverage
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+# Existing buffered, row-callback and crop routes affected by retained cancellation.
+native-branch-compat:
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test decode_cancellation
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- buffered_fallbacks_ignore_caller_format_and_target
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- wave_reader_f32_and_plane_reads
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features inventory,parallel --test colorspace_paths -- wave_reader_crop_and_formats
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+controlled-unit-check:
+    cargo test -p zenjpeg --lib --features controlled-decode --locked
+
+# Keep the standalone fuzz workspace on the same shared types as this codec.
+controlled-fuzz-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets --locked
+
+# Packed byte semantics under a retained ICC, without descriptor relabeling.
+profiled-encode-check:
+    cargo test -p zenjpeg --features controlled-decode --test profiled_encode --test streaming_encode --test controlled_decode --locked
+    cargo clippy -p zenjpeg --features controlled-decode --lib --test profiled_encode --test streaming_encode --test controlled_decode --locked -- -D warnings
+
+# Align all standalone graphs before qualifying the reviewed shared contract.
+controlled-integration-check:
+    cargo update -p zencodec
+    cargo update --manifest-path zenjpeg/fuzz/Cargo.toml -p zencodec
+    just profiled-encode-check
+    just controlled-fuzz-check
+
+# Checked color handoff, native controlled route and coordinated public signatures.
+checked-color-check:
+    just profiled-encode-check
+    just controlled-fuzz-check
+    just api-doc
+
+# Focused changed-code coverage before controlled-route refactoring.
+controlled-branch-coverage:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features controlled-decode,inventory,parallel --lib --test controlled_decode --test profiled_encode --test streaming_encode --test shared_contracts --test native_hardening -- --skip malformed_native_headers_are_bounded --skip native_fixture_truncated_prefixes
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    cargo +nightly llvm-cov report --lcov --output-path "${ZENJPEG_BRANCH_REPORT%.json}.lcov"
+
+# Whole production feature matrix; raw reports retain every measured outcome.
+# Set CARGO_TARGET_DIR and ZENJPEG_BRANCH_REPORT to durable absolute paths.
+library-branch-coverage:
+    timeout --kill-after=15s 30m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,recompress-expert,layout --lib --tests
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    python3 scripts/check-native-branches.py HEAD "$ZENJPEG_BRANCH_REPORT" --whole-library
+
+# Compile every feature, including research instrumentation and oracle test gates.
+library-all-features-check:
+    timeout --kill-after=15s 20m cargo check --locked -p zenjpeg --all-features --all-targets
+
+# Includes research/diagnostic features. PATH must provide the pinned test oracles.
+library-research-branch-coverage:
+    timeout --kill-after=15s 30m cargo +nightly llvm-cov --branch --no-report --no-fail-fast -p zenjpeg --all-features --lib --tests
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+    python3 scripts/check-native-branches.py HEAD "$ZENJPEG_BRANCH_REPORT" --whole-library
+
+# Behavioral tests for research diagnostics and size-dependent raster output.
+library-research-focused-check:
+    timeout --kill-after=15s 15m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --lib
+    timeout --kill-after=15s 10m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --all-features --test bundled -- compare_sizes::compare_420_sizes --exact
+
+# Temporary exclusions only: use a disposable jj workspace, never the main checkout.
+wasm-size-experiment workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}'
+
+wasm-size-experiment-simd workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}' --simd
+
+wasm-size-raster-check output:
+    python3 scripts/wasm-size-raster-check.py '{{output}}'
+
+# Both admitted feature sets preserve exact pixels and reject excluded formats.
+extended-jpeg-check:
+    timeout --kill-after=10s 5m cargo test -p zenjpeg --no-default-features --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo test -p zenjpeg --lib --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo test -p zenjpeg --test native_hardening native_fixture_raster_hashes -- --exact
+    timeout --kill-after=10s 5m cargo clippy -p zenjpeg --no-default-features --lib -- -D warnings
+    timeout --kill-after=10s 5m cargo clippy -p zenjpeg --lib -- -D warnings
+
+extended-jpeg-branch-coverage:
+    timeout --kill-after=10s 8m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --lib --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --no-default-features --test extended_jpeg_feature
+    timeout --kill-after=10s 5m cargo +nightly llvm-cov --branch --no-report -p zenjpeg --test native_precision --test native_hardening
+    cargo +nightly llvm-cov report --json --output-path "$ZENJPEG_BRANCH_REPORT"
+
+# Measure the shipped capability, retaining all source implementations.
+wasm-capability-size workspace output:
+    python3 scripts/wasm-size-experiment.py '{{workspace}}' '{{output}}' --capability --simd
+    python3 scripts/wasm-size-raster-check.py '{{output}}' --capability
+
+# Advertised RGBA float output and retained decode contracts.
+rgba-float-check:
+    cargo test -p zenjpeg --features controlled-decode --test controlled_decode --locked
+    cargo clippy -p zenjpeg --features controlled-decode --lib --test controlled_decode --locked -- -D warnings
+
+# Owned completion metadata and native embedded-image preservation.
+completion-details-check:
+    cargo test -p zenjpeg --locked --features controlled-decode --test controlled_decode --test mpf_bounds
+    cargo clippy -p zenjpeg --locked --features controlled-decode --lib --test controlled_decode --test mpf_bounds -- -D warnings
+    cargo check -p zenjpeg --locked --no-default-features --features controlled-decode
+
+# Unstable encoder diagnostics and viewer.
 diagnostics-test:
-    cargo test -p zenjpeg --features __diagnostics,trellis --test diagnostics_smoke
-    cargo test -p zenjpeg --features __diagnostics --lib encode::diagnostics
-    cargo test -p zenjpeg-diagnostics-wasm
+    cargo test --locked -p zenjpeg --features __diagnostics,boundary-rd,parallel --test diagnostics_capture
 
-# Build the wasm bindings via wasm-pack for the web demo.
 diagnostics-wasm:
-    cd zenjpeg-diagnostics-viewer/wasm && wasm-pack build --target web --out-dir ../web/wasm-pkg --release
+    cd zenjpeg-diagnostics-viewer/wasm && wasm-pack build --release --target web --out-dir ../web/wasm-pkg
 
-# Build the demo viewer once.
-diagnostics-viewer-build: diagnostics-wasm
-    cd zenjpeg-diagnostics-viewer/web && npm install && npx vite build
+diagnostics-viewer-build:
+    cd zenjpeg-diagnostics-viewer/web && npm ci && npm run typecheck && npm run build
 
-# Serve the demo viewer locally (vite preview, port 3173).
-diagnostics-viewer: diagnostics-viewer-build
-    cd zenjpeg-diagnostics-viewer/web && npx vite preview --port 3173 --strictPort
+diagnostics-e2e:
+    cd zenjpeg-diagnostics-viewer/web && npm run test:e2e
 
-# Run the Playwright E2E suite (headless chromium).
-diagnostics-e2e: diagnostics-viewer-build
-    cd zenjpeg-diagnostics-viewer/web && npx playwright install chromium
-    cd zenjpeg-diagnostics-viewer/web && npx playwright test
-
-# Typecheck the web app without running it.
-diagnostics-typecheck:
-    cd zenjpeg-diagnostics-viewer/web && npm install && npx tsc --noEmit
-
-# Build everything (rust + wasm + viewer) without running tests.
-diagnostics-build:
-    cargo build -p zenjpeg --features __diagnostics,trellis
-    cargo build -p zenjpeg-diagnostics-wasm
-    cd zenjpeg-diagnostics-viewer/wasm && wasm-pack build --target web --out-dir ../web/wasm-pkg --release
-    cd zenjpeg-diagnostics-viewer/web && npm install && npx vite build
+diagnostics-check:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --no-default-features --features __diagnostics --lib -- -D warnings
+    just diagnostics-test

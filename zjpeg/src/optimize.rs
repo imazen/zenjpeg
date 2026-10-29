@@ -86,10 +86,16 @@ pub fn run(args: OptimizeArgs) -> Result<()> {
     }
 
     // Print errors to stderr
+    let mut failed = 0usize;
     for r in &summary.results {
         if let Some(ref err) = r.error {
             eprintln!("error: {}: {err}", r.path.display());
+            failed += 1;
         }
+    }
+    // A failed file is a failed run: scripts check the exit status.
+    if failed > 0 {
+        anyhow::bail!("{failed} of {} file(s) failed", summary.results.len());
     }
 
     Ok(())
@@ -148,9 +154,9 @@ fn optimize_inner(
     }
     // ICC profile: preserve by default. Only convert when --apply-icc is specified.
     decoder.correct_color = args.apply_icc.map(|t| convert_icc_target(t));
-    if args.auto_orient {
-        decoder = decoder.auto_orient(true);
-    }
+    // `DecodeConfig` auto-orients by default; without `--auto-orient` the
+    // pixels must stay as stored (the EXIF tag is kept).
+    decoder = decoder.auto_orient(args.auto_orient);
 
     let mut result = decoder
         .decode(&data, enough::Unstoppable)
@@ -161,8 +167,27 @@ fn optimize_inner(
 
     // Step 4: Extract metadata and build encoder config with segments
     let extras = result.take_extras();
+    // With the orientation applied to the pixels, the tag must say 1 or
+    // viewers rotate again. This deprecated command cannot rotate a gain
+    // map with the primary; `process` can.
+    let mut reset_exif = None;
+    if let Some(e) = extras.as_ref()
+        && args.auto_orient
+        && let Some(exif) = e.exif()
+        && crate::orient::exif_orientation(exif).is_some_and(|o| o != 1)
+    {
+        if !e.secondary_images().is_empty() && !(args.strip_all || args.strip_gainmaps) {
+            anyhow::bail!(
+                "--auto-orient would leave the gain map unrotated; use `zjpeg process` \
+                 (which rotates it) or add --strip-gainmaps"
+            );
+        }
+        let mut exif = exif.to_vec();
+        crate::orient::set_exif_orientation(&mut exif, 1);
+        reset_exif = Some(exif);
+    }
 
-    let config = build_encoder_config(args, quality, subsampling, &extras);
+    let config = build_encoder_config(args, quality, subsampling, &extras, reset_exif);
 
     // Step 5: Encode (with optional deblocking)
     let output_jpeg = if decode_to_f32 {
@@ -191,6 +216,21 @@ fn optimize_inner(
             .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
     };
 
+    let mask = crate::strip::StripMask {
+        exif: args.strip_all || args.strip_exif,
+        icc: args.strip_all || args.strip_icc || args.apply_icc.is_some(),
+        xmp: args.strip_all || args.strip_xmp,
+        gain_maps: args.strip_all || args.strip_gainmaps,
+    };
+    let output_jpeg = if mask.is_empty() {
+        output_jpeg
+    } else {
+        let (stripped, notes) = crate::strip::strip(&output_jpeg, mask)?;
+        for note in notes {
+            eprintln!("{}: {note}", path.display());
+        }
+        stripped
+    };
     let output_size = output_jpeg.len() as u64;
     let input_size = data.len() as u64;
 
@@ -308,6 +348,7 @@ fn build_encoder_config(
     quality: Quality,
     subsampling: ChromaSubsampling,
     extras: &Option<zenjpeg::decoder::DecodedExtras>,
+    reset_exif: Option<Vec<u8>>,
 ) -> EncoderConfig {
     let mut config = if args.xyb {
         EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
@@ -345,27 +386,14 @@ fn build_encoder_config(
     if let Some(extras) = extras {
         if args.strip_all {
             // Strip everything — no segments, no individual metadata
-        } else if args.strip_gainmaps {
-            // Can't use segments API (it always includes gain maps).
-            // Fall back to individual metadata methods on the config.
-            if !args.strip_icc
-                && !strip_icc_for_apply
-                && let Some(icc) = extras.icc_profile()
-            {
-                config = config.add_segment(0xE2, build_icc_segment(icc));
-            }
-            if !args.strip_exif
-                && let Some(exif) = extras.exif()
-            {
-                config = config.add_segment(0xE1, build_exif_segment(exif));
-            }
-            if !args.strip_xmp
-                && let Some(xmp) = extras.xmp()
-            {
-                config = config.add_segment(0xE1, build_xmp_segment(xmp));
-            }
-        } else if args.strip_exif || args.strip_icc || args.strip_xmp || strip_icc_for_apply {
-            // Selective stripping — use filtered segments API (preserves gain maps)
+        } else if args.strip_exif
+            || args.strip_icc
+            || args.strip_xmp
+            || args.strip_gainmaps
+            || strip_icc_for_apply
+        {
+            // Selective stripping — filtered segments; the output pass removes
+            // gain maps (`crate::strip`).
             let strip_exif = args.strip_exif;
             let strip_icc = args.strip_icc || strip_icc_for_apply;
             let strip_xmp = args.strip_xmp;
@@ -384,43 +412,21 @@ fn build_encoder_config(
                 }
                 true
             });
-            config = config.with_segments(segments);
+            config = config.with_segments(match reset_exif {
+                Some(exif) if !strip_exif => segments.set_exif(exif),
+                _ => segments,
+            });
         } else {
             // Default: preserve everything including gain maps
-            config = config.with_segments(extras.to_encoder_segments());
+            let segments = extras.to_encoder_segments();
+            config = config.with_segments(match reset_exif {
+                Some(exif) => segments.set_exif(exif),
+                None => segments,
+            });
         }
     }
 
     config
-}
-
-/// Build an APP2 ICC profile segment (with "ICC_PROFILE\0" header).
-fn build_icc_segment(icc: &[u8]) -> Vec<u8> {
-    let header = b"ICC_PROFILE\0";
-    let mut seg = Vec::with_capacity(header.len() + 2 + icc.len());
-    seg.extend_from_slice(header);
-    seg.push(1); // chunk number
-    seg.push(1); // total chunks
-    seg.extend_from_slice(icc);
-    seg
-}
-
-/// Build an APP1 EXIF segment (with "Exif\0\0" header).
-fn build_exif_segment(exif: &[u8]) -> Vec<u8> {
-    let header = b"Exif\0\0";
-    let mut seg = Vec::with_capacity(header.len() + exif.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(exif);
-    seg
-}
-
-/// Build an APP1 XMP segment (with XMP namespace header).
-fn build_xmp_segment(xmp: &str) -> Vec<u8> {
-    let header = b"http://ns.adobe.com/xap/1.0/\0";
-    let mut seg = Vec::with_capacity(header.len() + xmp.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(xmp.as_bytes());
-    seg
 }
 
 fn apply_deblock(

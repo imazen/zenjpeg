@@ -1394,3 +1394,31 @@ fn srgb_to_linear(srgb: u8) -> f32 {
         ((s + 0.055) / 1.055).powf(2.4)
     }
 }
+
+/// #152: single-channel gain maps decode via the native Gray path —
+/// byte-identical to an explicit Gray decode of the extracted map JPEG.
+/// (The previous RGB-then-take-R path rounded ±1 on scattered pixels and
+/// channel-sniffed by sampling 100 pixels.)
+#[test]
+fn test_decode_gainmap_matches_native_gray_decode() {
+    let jpeg = encode_test_ultrahdr(64, 48, 90.0, 90.0);
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    let extras = decoded.extras().unwrap();
+    let gm = extras
+        .decode_gainmap()
+        .expect("gain map present")
+        .expect("gain map decodes");
+    assert_eq!(gm.channels, 1, "single-channel metadata => 1-channel map");
+
+    let gray = Decoder::new()
+        .output_format(zenjpeg::decoder::PixelFormat::Gray)
+        .auto_orient(false)
+        .decode(extras.gainmap().expect("raw gain-map jpeg"), Unstoppable)
+        .expect("explicit Gray decode");
+    assert_eq!((gm.width, gm.height), (gray.width(), gray.height()));
+    assert_eq!(
+        gm.data.as_slice(),
+        gray.pixels_u8().expect("gray pixels"),
+        "decode_gainmap must be the exact luma plane (native Gray decode)"
+    );
+}

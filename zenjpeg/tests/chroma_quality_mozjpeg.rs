@@ -59,10 +59,21 @@ fn chroma_quality_none_is_bit_identical_to_unset_on_mozjpeg() {
         ] {
             // Both configs use the mozjpeg-Robidoux table path; the
             // only difference is whether `chroma_quality` was touched.
-            let base =
-                EncoderConfig::ycbcr(q, sub).quant_table_config(QuantTableConfig::MozjpegRobidoux);
-            let explicit_none = base.clone().chroma_quality(None);
-            let same_as_luma = base.clone().chroma_quality(Some(q));
+            let base = EncoderConfig::ycbcr(q, sub).quant_table_config(
+                QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None,
+                },
+            );
+            let explicit_none =
+                base.clone()
+                    .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                        chroma_quality: None,
+                    });
+            let same_as_luma = base
+                .clone()
+                .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: Some(q),
+                });
 
             let a = encode(&base, &rgb, w, h);
             let b = encode(&explicit_none, &rgb, w, h);
@@ -90,12 +101,42 @@ fn chroma_quality_monotone_file_size_on_mozjpeg_420() {
     let rgb = sharp_chroma_rgb(w, h);
     let luma_q = 85u8;
 
-    let base = EncoderConfig::ycbcr(luma_q, ChromaSubsampling::Quarter)
-        .quant_table_config(QuantTableConfig::MozjpegRobidoux);
+    let base = EncoderConfig::ycbcr(luma_q, ChromaSubsampling::Quarter).quant_table_config(
+        QuantTableConfig::MozjpegRobidoux {
+            chroma_quality: None,
+        },
+    );
 
-    let high = encode(&base.clone().chroma_quality(Some(90)), &rgb, w, h);
-    let same = encode(&base.clone().chroma_quality(Some(85)), &rgb, w, h);
-    let low = encode(&base.clone().chroma_quality(Some(50)), &rgb, w, h);
+    let high = encode(
+        &base
+            .clone()
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: Some(90),
+            }),
+        &rgb,
+        w,
+        h,
+    );
+    let same = encode(
+        &base
+            .clone()
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: Some(85),
+            }),
+        &rgb,
+        w,
+        h,
+    );
+    let low = encode(
+        &base
+            .clone()
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: Some(50),
+            }),
+        &rgb,
+        w,
+        h,
+    );
 
     // Monotone: lower chroma_quality → smaller file at fixed luma_q.
     assert!(
@@ -120,33 +161,23 @@ fn chroma_quality_monotone_file_size_on_mozjpeg_420() {
 }
 
 #[test]
-fn chroma_quality_is_noop_on_jpegli_path() {
-    // The jpegli perceptual path uses chroma_distance_scale, not
-    // chroma_quality. Setting chroma_quality here must silently
-    // pass through — output byte-identical to leaving it unset.
-    let (w, h) = (128, 128);
-    let rgb = sharp_chroma_rgb(w, h);
-
-    let jpegli_base = EncoderConfig::ycbcr(75u8, ChromaSubsampling::Quarter);
-    // Default quant_table_config is QuantTableConfig::Jpegli (3-table).
-    let jpegli_with_cq = jpegli_base.clone().chroma_quality(Some(60));
-
-    let a = encode(&jpegli_base, &rgb, w, h);
-    let b = encode(&jpegli_with_cq, &rgb, w, h);
-    assert_eq!(
-        a, b,
-        "jpegli-path encoder must ignore chroma_quality — use chroma_distance_scale instead"
-    );
+fn chroma_quality_is_structurally_scoped_to_mozjpeg() {
+    // The old runtime guarantee ("jpegli path ignores chroma_quality")
+    // is now a type-level one: the knob only exists on the
+    // MozjpegRobidoux variant, so a jpegli config cannot carry it.
+    let jpegli = EncoderConfig::ycbcr(75u8, ChromaSubsampling::Quarter);
+    assert_eq!(jpegli.get_quant_table_config().chroma_quality(), None);
+    assert_eq!(QuantTableConfig::default().chroma_quality(), None);
 }
 
 #[test]
-fn chroma_quality_clamped_to_1_100() {
-    let cfg = EncoderConfig::ycbcr(75u8, ChromaSubsampling::Quarter).chroma_quality(Some(150));
-    assert_eq!(cfg.get_chroma_quality(), Some(100));
-
-    let cfg = EncoderConfig::ycbcr(75u8, ChromaSubsampling::Quarter).chroma_quality(Some(0));
-    assert_eq!(cfg.get_chroma_quality(), Some(1));
-
-    let cfg = EncoderConfig::ycbcr(75u8, ChromaSubsampling::Quarter).chroma_quality(None);
-    assert_eq!(cfg.get_chroma_quality(), None);
+fn chroma_quality_clamped_at_resolution() {
+    // Clamping happens when tables resolve: 150 behaves as 100, 0 as 1.
+    let plan = |cq: Option<u8>| {
+        EncoderConfig::ycbcr(75u8, ChromaSubsampling::Quarter)
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux { chroma_quality: cq })
+            .resolve_plan(64, 64)
+    };
+    assert_eq!(plan(Some(150)).quant_max, plan(Some(100)).quant_max);
+    assert_eq!(plan(Some(0)).quant_max, plan(Some(1)).quant_max);
 }

@@ -30,44 +30,32 @@
 //! ```
 
 // Internal implementation modules (pub for internal crate re-exports)
-// `adaptive.rs` was already on disk before this commit (vacuumed up
-// by an unrelated commit on main); wiring it in here makes the file
-// actually reachable.
-mod adaptive;
 pub(crate) mod aq_controller;
 mod blocks;
 
 #[doc(hidden)]
 pub mod chroma;
 #[doc(hidden)]
+pub mod config;
+#[doc(hidden)]
 pub mod dct;
 pub(crate) mod layout;
+/// Public under `__test-utils` so `benches/tier_isolation.rs` can measure the
+/// fused linear/HDR kernels per-tier. Not public API.
+#[cfg(feature = "__test-utils")]
+pub mod linear_lut;
+#[cfg(not(feature = "__test-utils"))]
+pub(crate) mod linear_lut;
 mod progressive;
 pub(crate) mod scan_optimize;
 #[doc(hidden)]
 pub mod scan_script;
 mod serialize;
-/// Target perceptual-quality (`zq`) types and helpers (issue #113).
-///
-/// See [`Quality::Zq`] and [`Quality::ZqExplicit`] for the entry points.
-pub mod zq;
-
-#[doc(hidden)]
-pub mod config;
-pub(crate) mod linear_lut;
 
 // Archmage-based SIMD (token-based safe intrinsics)
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub mod mage_simd;
-
-#[cfg(target_arch = "aarch64")]
-#[doc(hidden)]
-pub mod arm_simd;
-
-#[cfg(target_arch = "wasm32")]
-#[doc(hidden)]
-pub mod wasm_simd;
 
 /// Overshoot deringing for reducing ringing artifacts on white backgrounds.
 ///
@@ -105,6 +93,9 @@ mod symbol_stream;
 
 // v2 types moved to encode root (v2/mod.rs re-exports these for compatibility)
 pub mod byte_encoders;
+#[cfg(feature = "__diagnostics")]
+#[doc(hidden)]
+pub mod diagnostics;
 pub mod encoder_config;
 pub mod encoder_types;
 pub mod exif;
@@ -118,17 +109,6 @@ pub mod request;
 /// [`encoder_config::EncoderConfig::with_internal_params`].
 #[cfg(feature = "__expert")]
 pub mod internal_params;
-
-/// Per-block encode diagnostics (`__diagnostics`-gated, UNSTABLE).
-///
-/// Captures pre-quant DCT coefficients, post-quant levels, per-block
-/// AQ multipliers, and entropy bit attribution alongside image-level
-/// state (resolved config, AQ field, scan script). Driven by
-/// visualizer / calibration tooling. See module docs for ordering
-/// conventions and memory cost.
-#[cfg(feature = "__diagnostics")]
-#[doc(hidden)]
-pub mod diagnostics;
 
 /// Default quantization and zero-bias tables for customization.
 ///
@@ -148,16 +128,20 @@ pub mod tuning;
 /// Consolidates all trellis/hybrid code into one deletable unit:
 /// - AC/DC trellis DP algorithms
 /// - [`TrellisConfig`](trellis::TrellisConfig) mozjpeg-compatible API
-/// - [`HybridConfig`](trellis::HybridConfig) AQ-coupled trellis
-#[cfg(feature = "trellis")]
+/// - [`AqCoupling`](trellis::AqCoupling) AQ-coupled per-block lambda
 pub mod trellis;
+
+/// Encode-plan resolution and introspection ([`EncodePlan`](plan::EncodePlan)).
+pub mod plan;
+
+/// Budgeted sweep-plan construction over the knob space (`__expert`).
+pub mod sweep;
 
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
 /// Flattens all quality/size-affecting parameters into a single struct with
-/// no overlapping fields. See [`ExpertConfig`](search::ExpertConfig).
-#[cfg(feature = "trellis")]
-pub mod search;
+/// no overlapping fields. See [`ExpertConfig`](expert::ExpertConfig).
+pub mod expert;
 
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
@@ -165,8 +149,6 @@ pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
 // (Now from encoder_types, encoder_config, byte_encoders - v2 re-exports for compatibility)
-#[allow(unused_imports)] // Public API re-export
-pub use adaptive::{AdaptiveOptions, RestartMarkers};
 #[allow(unused_imports)] // Public API re-export
 pub use blocks::HuffmanSymbolFrequencies;
 pub(crate) use blocks::build_nonzero_mask;
@@ -177,9 +159,6 @@ pub use encoder_config::EncoderConfig;
 #[cfg(feature = "boundary-rd")]
 #[allow(unused_imports)] // Public API re-exports (opt-in behind boundary-rd feature)
 pub use encoder_config::{BoundaryRd, BoundaryRdConfig, NeighborScope, RetryPolicy, SeamPenalty};
-#[cfg(feature = "trellis")]
-#[allow(unused_imports)] // Public API re-export
-pub use encoder_types::ExpertConfig;
 #[cfg(feature = "parallel")]
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_types::ParallelEncoding;
@@ -192,13 +171,19 @@ pub use encoder_types::{
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
 pub use exif::{Exif, ExifFields, Orientation};
+#[allow(unused_imports)] // Public API re-export
+pub use expert::ExpertConfig;
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "__expert")]
 #[allow(unused_imports)] // Public API re-exports gated behind __expert
 pub use internal_params::{ColorPath, InternalParams};
 #[allow(unused_imports)] // Public API re-export
+pub use plan::{EncodePlan, SofMarker};
+#[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
+#[cfg(feature = "recompress")]
+pub(crate) use streaming::ENTROPY_TRIAL_MAX_BYTES;
 #[allow(unused_imports)] // Public API re-exports
 pub use tables::presets::{MozjpegTables, QuantTablePreset};
 

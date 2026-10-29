@@ -33,16 +33,16 @@ use super::encoder_types::{
     ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, TinyFileMode,
     XybSubsampling,
 };
-#[cfg(feature = "trellis")]
-use super::trellis::HybridConfig;
+use super::trellis::TrellisConfig;
 
 /// Color-path selection for [`InternalParams::color_path`].
 ///
-/// Mirrors [`EncoderConfig`]'s three constructors (`ycbcr` / `xyb` /
-/// `grayscale`) as a single tagged enum so picker integrations can
-/// emit one uniform field for codec color routing. `#[non_exhaustive]`
-/// because additional color paths (e.g., a future high-bit-depth route)
-/// may land here without bumping the major version.
+/// Mirrors [`EncoderConfig`]'s constructors (`ycbcr` / `xyb` /
+/// `grayscale` / `rgb`) as a single tagged enum so picker integrations
+/// can emit one uniform field for codec color routing.
+/// `#[non_exhaustive]` because additional color paths (e.g., a future
+/// high-bit-depth route) may land here without bumping the major
+/// version.
 ///
 /// [`EncoderConfig`]: super::encoder_config::EncoderConfig
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +61,9 @@ pub enum ColorPath {
     },
     /// Single-channel grayscale.
     Grayscale,
+    /// RGB passthrough — channels stored without color transformation
+    /// (issue #185). Always 4:4:4.
+    Rgb,
 }
 
 /// Bundle of advanced encoder tuning knobs. Expert-only.
@@ -162,26 +165,24 @@ pub struct InternalParams {
     #[cfg(feature = "boundary-rd")]
     pub boundary_rd: Option<BoundaryRdConfig>,
 
-    /// Hybrid AQ + trellis configuration. Requires the `trellis` cargo
-    /// feature; without it this field has no effect.
-    #[cfg(feature = "trellis")]
-    pub hybrid: Option<HybridConfig>,
+    /// Trellis quantization configuration. Set
+    /// [`TrellisConfig::aq_coupling`] for AQ-coupled (hybrid) lambda.
+    pub trellis: Option<TrellisConfig>,
 
-    /// Chroma distance scale (jpegli butteraugli path). Default `1.0`,
-    /// clamped to `[0.1, 5.0]` by the builder.
+    /// Chroma distance scale (jpegli table families only; clamped to
+    /// `[0.1, 5.0]`). Applied onto [`Self::quant_table_config`]'s variant —
+    /// no effect when the active family is mozjpeg/custom/Glassa.
     pub chroma_distance_scale: Option<f32>,
 
-    /// Independent chroma quality (mozjpeg-compat path).
-    /// `Some(Some(q))` sets `q`; `Some(None)` clears the override
+    /// Independent chroma quality ([`QuantTableConfig::MozjpegRobidoux`]
+    /// only). `Some(Some(q))` sets `q`; `Some(None)` clears the override
     /// (revert to using luma quality for chroma); `None` leaves the
-    /// existing value alone.
+    /// existing value alone. No effect on other table families.
     pub chroma_quality: Option<Option<u8>>,
 
-    /// Enable [`EncoderConfig::auto_optimize`]. Requires the `trellis`
-    /// cargo feature.
+    /// Enable [`EncoderConfig::auto_optimize`].
     ///
     /// [`EncoderConfig::auto_optimize`]: super::encoder_config::EncoderConfig::auto_optimize
-    #[cfg(feature = "trellis")]
     pub auto_optimize: Option<bool>,
 
     /// Toggle overshoot deringing.
@@ -233,8 +234,8 @@ impl EncoderConfig {
     /// 5. `scan_strategy` / `optimize_scans` then `progressive`
     /// 6. `optimize_huffman` then `huffman`
     /// 7. `allow_16bit_quant_tables`
-    /// 8. `auto_optimize` (trellis feature)
-    /// 9. `hybrid` (trellis feature)
+    /// 8. `auto_optimize`
+    /// 9. `trellis`
     /// 10. `boundary_rd` (boundary-rd feature)
     /// 11. `chroma_distance_scale`, `chroma_quality`
     /// 12. `deringing`, `aq_enabled`, `pre_blur`, `tiny_file_mode`,
@@ -259,6 +260,7 @@ impl EncoderConfig {
                     })
                 }
                 ColorPath::Grayscale => self.color_mode(super::encoder_types::ColorMode::Grayscale),
+                ColorPath::Rgb => self.color_mode(super::encoder_types::ColorMode::Rgb),
             };
         }
         if let Some(qs) = params.quant_source {
@@ -285,23 +287,44 @@ impl EncoderConfig {
         if let Some(b) = params.allow_16bit_quant_tables {
             self = self.allow_16bit_quant_tables(b);
         }
-        #[cfg(feature = "trellis")]
         if let Some(b) = params.auto_optimize {
             self = self.auto_optimize(b);
         }
-        #[cfg(feature = "trellis")]
-        if let Some(h) = params.hybrid {
-            self = self.hybrid_config(h);
+        if let Some(t) = params.trellis {
+            self = self.trellis(t);
         }
         #[cfg(feature = "boundary-rd")]
         if let Some(brd) = params.boundary_rd {
             self = self.boundary_rd(BoundaryRd::On(brd));
         }
         if let Some(scale) = params.chroma_distance_scale {
-            self = self.chroma_distance_scale(scale);
+            // The knob lives on the jpegli table families; for other
+            // families the axis has no meaning (set `quant_table_config`
+            // first — it is applied before this field).
+            // The scalar cross-codec axis applies uniformly to both
+            // chroma-like channels; per-channel control goes through the
+            // quant_table_config axis directly.
+            let s = scale.clamp(0.1, 5.0);
+            self.quant_table_config = match self.quant_table_config {
+                QuantTableConfig::Jpegli { .. } => QuantTableConfig::Jpegli {
+                    chroma_distance_scales: [s, s],
+                },
+                QuantTableConfig::JpegliSharedChroma { .. } => {
+                    QuantTableConfig::JpegliSharedChroma {
+                        chroma_distance_scales: [s, s],
+                    }
+                }
+                other => other,
+            };
         }
         if let Some(cq) = params.chroma_quality {
-            self = self.chroma_quality(cq);
+            // Lives on the MozjpegRobidoux family only.
+            self.quant_table_config = match self.quant_table_config {
+                QuantTableConfig::MozjpegRobidoux { .. } => QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: cq.map(|q| q.clamp(1, 100)),
+                },
+                other => other,
+            };
         }
         if let Some(b) = params.deringing {
             self = self.deringing(b);
@@ -430,26 +453,58 @@ mod tests {
     }
 
     #[test]
-    fn chroma_distance_scale_applies() {
+    fn chroma_distance_scale_applies_on_jpegli_family() {
         let cfg = baseline().with_internal_params(InternalParams {
             chroma_distance_scale: Some(2.0),
             ..Default::default()
         });
-        assert!((cfg.get_chroma_distance_scale() - 2.0).abs() < 1e-6);
+        assert_eq!(
+            cfg.get_quant_table_config().chroma_distance_scales(),
+            Some([2.0, 2.0])
+        );
     }
 
     #[test]
-    fn chroma_quality_some_some_applies() {
+    fn chroma_distance_scale_inert_on_mozjpeg_family() {
+        let cfg = baseline().with_internal_params(InternalParams {
+            quant_table_config: Some(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }),
+            chroma_distance_scale: Some(2.0),
+            ..Default::default()
+        });
+        // The axis has no meaning for this family; the bundle's
+        // quant_table_config wins.
+        assert_eq!(cfg.get_quant_table_config().chroma_distance_scales(), None);
+    }
+
+    #[test]
+    fn chroma_quality_applies_on_mozjpeg_family() {
+        let cfg = baseline().with_internal_params(InternalParams {
+            quant_table_config: Some(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }),
+            chroma_quality: Some(Some(70)),
+            ..Default::default()
+        });
+        assert_eq!(cfg.get_quant_table_config().chroma_quality(), Some(70));
+    }
+
+    #[test]
+    fn chroma_quality_inert_on_jpegli_family() {
         let cfg = baseline().with_internal_params(InternalParams {
             chroma_quality: Some(Some(70)),
             ..Default::default()
         });
-        assert_eq!(cfg.get_chroma_quality(), Some(70));
+        assert_eq!(cfg.get_quant_table_config().chroma_quality(), None);
     }
 
     #[test]
     fn chroma_quality_some_none_clears_override() {
         let with_value = baseline().with_internal_params(InternalParams {
+            quant_table_config: Some(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            }),
             chroma_quality: Some(Some(70)),
             ..Default::default()
         });
@@ -457,7 +512,7 @@ mod tests {
             chroma_quality: Some(None),
             ..Default::default()
         });
-        assert_eq!(cleared.get_chroma_quality(), None);
+        assert_eq!(cleared.get_quant_table_config().chroma_quality(), None);
     }
 
     #[test]
@@ -484,12 +539,14 @@ mod tests {
     #[test]
     fn quant_table_config_applies() {
         let cfg = baseline().with_internal_params(InternalParams {
-            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma),
+            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scales: [1.0, 1.0],
+            }),
             ..Default::default()
         });
         assert!(matches!(
             cfg.get_quant_table_config(),
-            QuantTableConfig::JpegliSharedChroma
+            QuantTableConfig::JpegliSharedChroma { .. }
         ));
     }
 
@@ -511,8 +568,6 @@ mod tests {
         });
         assert!(matches!(cfg.get_tiny_file_mode(), TinyFileMode::Off));
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn auto_optimize_applies() {
         // auto_optimize(true) only takes effect within the q≥50 band
@@ -522,21 +577,15 @@ mod tests {
             auto_optimize: Some(true),
             ..Default::default()
         });
-        assert!(cfg.hybrid_config.enabled);
+        assert!(cfg.trellis.is_some());
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
-    fn hybrid_field_applies() {
-        let hybrid = HybridConfig {
-            enabled: true,
-            ..HybridConfig::default()
-        };
+    fn trellis_field_applies() {
         let cfg = baseline().with_internal_params(InternalParams {
-            hybrid: Some(hybrid),
+            trellis: Some(TrellisConfig::default()),
             ..Default::default()
         });
-        assert!(cfg.hybrid_config.enabled);
+        assert!(cfg.trellis.is_some());
     }
 
     /// Per-field permutation: every non-default field should produce
@@ -552,7 +601,9 @@ mod tests {
             progressive: Some(ProgressiveScanMode::Baseline),
             scan_strategy: None,
             optimize_scans: None,
-            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma),
+            quant_table_config: Some(QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scales: [1.0, 1.0],
+            }),
             quant_source: None,
             optimization: None,
             optimize_huffman: Some(true),
@@ -569,11 +620,7 @@ mod tests {
             downsampling_method: Some(DownsamplingMethod::GammaAware),
             ..Default::default()
         };
-        // Trellis-only fields don't compile when the feature is off.
-        #[cfg(feature = "trellis")]
-        {
-            params.auto_optimize = Some(false);
-        }
+        params.auto_optimize = Some(false);
         // suppress unused-mut when all conditional cfgs are off.
         let _ = &mut params;
 
@@ -588,8 +635,13 @@ mod tests {
         ));
         assert!(!cfg.is_progressive());
         assert!(cfg.is_allow_16bit_quant_tables());
-        assert!((cfg.get_chroma_distance_scale() - 1.5).abs() < 1e-6);
-        assert_eq!(cfg.get_chroma_quality(), Some(60));
+        // chroma_distance_scale lands on the SharedChroma family set above;
+        // chroma_quality is inert there (mozjpeg-only knob).
+        assert_eq!(
+            cfg.get_quant_table_config().chroma_distance_scales(),
+            Some([1.5, 1.5])
+        );
+        assert_eq!(cfg.get_quant_table_config().chroma_quality(), None);
         assert!(!cfg.deringing);
         assert!(!cfg.is_aq_enabled());
         assert!((cfg.pre_blur - 0.3).abs() < 1e-6);

@@ -4,7 +4,7 @@
 //! it with zune-jpeg, for direct instruction count comparison.
 //!
 //! ```sh
-//! cargo build --release --features decoder --example profile_zune_decode
+//! cargo build --release --example profile_zune_decode
 //! valgrind --tool=callgrind --callgrind-out-file=/tmp/callgrind-zune-2048.out \
 //!     target/release/examples/profile_zune_decode 2048
 //! ```

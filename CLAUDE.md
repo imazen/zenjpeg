@@ -1,32 +1,51 @@
 # zenjpeg Project Guide
 
-Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
+Pure Rust port of jpegli (Bruse, Versari, Szabadka and Alakuijala) from the JPEG XL project.
+
+## Canonical training data + indexes (added 2026-05-20)
+
+**The canonical index for all ML data lives at `~/work/zen/DATA_PROVENANCE.md`.**
+
+Quick paths:
+- Trainer input: `s3://zentrain/canonical/2026-06-27/` (per `~/work/zen/DATA_PROVENANCE.md`; 2026-05-21 superseded)
+- Master inventory: `~/work/zen/_ml-inventory-2026-05-20/00-MASTER-SYNTHESIS.md`
+- Per-codec picker audit: `~/work/zen/_ml-inventory-2026-05-20/05-per-codec-pickers.md`
+
+## ML/adaptive selector status (2026-05-20)
+
+zenjpeg's adaptive selector lives in `~/work/coefficient/` (NOT in this repo):
+
+- Substrate: `/home/lilith/oracle-d2-store/oracle-d2/` (75k JPEG encodings, 108k metrics, 90 source images)
+- Trainer: `coefficient/scripts/fit_oracle_tree.py` (sklearn decision tree)
+- Rules output: `selector_tree_rules.json` (~70 decisions per (bucket, q_bin, metric))
+- Wired into `EncoderConfig::adaptive(image, quality)` in this repo
+
+The `benchmarks/zenjpeg_picker_v0.3_2026-05-04.bin` (7.5 KB, ZNPR format) is a training artifact only — no encoder integration. `dev/picker_v0_3_holdout_ab.rs` is the eval harness for it. Both kept for reproducibility; do not delete.
+
+**Future picker work pattern:** if a Rust-side picker is needed, follow zenavif (`~/work/zen/zenavif/src/auto_tune.rs` + `EncoderConfig::auto_tune()` public API). See `~/work/zen/_ml-inventory-2026-05-20/05-per-codec-pickers.md` for the cross-codec design discussion.
 
 ## BANNED: worktrees in this repo (CRITICAL)
 
 **Do NOT create `git worktree` directories in this repo.** Claude Code
 sessions have repeatedly desynced worktrees from `origin/main` across
 force-pushes and history rewrites, stranding WIP and stale `main` refs
-across multiple sibling directories. If you need to work on a different
-branch, either:
+across multiple sibling directories.
 
-1. Commit your current work and `git checkout <branch>` in the existing
-   working tree, or
-2. Use `jj` (jujutsu) which auto-snapshots on every command and has
-   first-class support for multiple concurrent changes on one working
-   copy — no worktrees needed. See the "jj alternative" note below.
+**Superseded 2026-07-19: the global jj-on-main workflow (see
+`~/.claude/CLAUDE.md`) is mandatory — no `git checkout` on tracked
+branches; sibling `jj workspace add` only when physically necessary.**
 
-**If you find yourself typing `git worktree add` — stop.** Commit,
-checkout, and work in place. The one exception is when a human
+**If you find yourself typing `git worktree add` — stop.** Work in
+place on main via jj. The one exception is when a human
 explicitly names a worktree path for a specific reason.
 
 **Cleanup of existing worktrees requires rescue first:** copy every
-modified and untracked file to `/tmp/_rescued-worktrees/<timestamp>-<name>/`
+modified and untracked file to `~/tmp/_rescued-worktrees/<timestamp>-<name>/`
 preserving relative paths BEFORE running `git worktree remove` — even
 if `git worktree remove` is supposed to refuse dirty trees. Belt and
 suspenders.
 
-### jj alternative (preferred going forward)
+### Why jj (incident context — jj is now mandatory, see above)
 
 `jj` (https://jj-vcs.github.io/jj/) is a git-compatible VCS that
 eliminates most of the footguns Claude has hit in this session:
@@ -42,8 +61,8 @@ eliminates most of the footguns Claude has hit in this session:
   unintended file (the `internal/jpegli-cpp` symlink typechange)
   don't exist.
 
-Setup: `cargo install jujutsu`, then `jj git init --colocate` in this
-repo. All existing git tooling (GitHub, PRs, CI) keeps working.
+This repo is already colocated (`.jj/` present). All existing git
+tooling (GitHub, PRs, CI) keeps working.
 
 ## API Stability Rules (CRITICAL)
 
@@ -53,6 +72,10 @@ repo. All existing git tooling (GitHub, PRs, CI) keeps working.
 2. **No new public types/functions** without approval
 3. **No changes to existing function signatures**
 4. **Doc links use full paths** - `[`encoder::EncoderConfig`]` not `[`EncoderConfig`]`
+5. **Regenerate the public-API snapshot in the same commit** (`just api-doc`, pinned
+   nightly): `apidoc/` is excluded from the workspace, so `cargo test`/`clippy` never
+   see a stale `docs/public-api/`; CI's "Public API surface" job does (CI 40624376352
+   and main 40630953425, 2026-10-28: `Error::encode_policy_rejected` shipped without it).
 
 ## Pixel Data API Rules (CRITICAL - NON-NEGOTIABLE)
 
@@ -542,63 +565,17 @@ per-wave parallelism, but uses streaming API (rows on demand) with bounded memor
 ### Dequantization Bias (2026-02-06)
 
 `Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases
-(Price & Rabbani 2000). Computes per-coefficient biases from DCT statistics
-and applies them during f32 dequantization. Bypasses fast i16 IDCT path.
-Default: off.
+(Price & Rabbani 2000) during f32 dequantization (bypasses the fast i16 IDCT
+path). Default: off. Key findings (full sweep tables migrated to
+`docs/TUNING_HISTORY.md`, 2026-07-13):
 
-**Frymire quality sweep** (1118x1105 photograph, baseline 4:2:0, commit 86e3bef):
+- Image-dependent tradeoff: helps +0.14..+0.39 SSIM2 on CID22 at Q75+,
+  but the default integer IDCT wins on frymire at all qualities below Q99.
+- zen+bias tracks C++ jpegli's decoder closely everywhere (gap 0.02-0.11
+  SSIM2 pts; max pixel diff vs cjpegli always 1).
+- Pairwise similarity at Q85: zen+bias<->cjpegli 94.31 vs default<->cjpegli 91.42.
 
-| Q | bytes | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp | maxdif |
-|---|-------|---------|----------|---------|-----------|----------|----------|--------|
-| 10 | 116K | 5.25 | 1.88 | 1.99 | 5.25 | -3.37 | -0.11 | 1 |
-| 20 | 171K | 21.35 | 18.54 | 18.61 | 21.35 | -2.82 | -0.07 | 1 |
-| 30 | 219K | 30.59 | 28.57 | 28.59 | 30.59 | -2.03 | -0.03 | 1 |
-| 40 | 243K | 34.21 | 32.37 | 32.44 | 34.21 | -1.84 | -0.07 | 1 |
-| 50 | 271K | 37.28 | 35.95 | 36.01 | 37.28 | -1.32 | -0.06 | 1 |
-| 60 | 309K | 41.07 | 40.07 | 40.10 | 41.07 | -0.99 | -0.03 | 1 |
-| 70 | 362K | 45.00 | 44.24 | 44.31 | 45.00 | -0.76 | -0.07 | 1 |
-| 80 | 438K | 48.72 | 48.25 | 48.32 | 48.72 | -0.47 | -0.07 | 1 |
-| 85 | 494K | 50.45 | 50.18 | 50.21 | 50.45 | -0.27 | -0.03 | 1 |
-| 90 | 583K | 51.94 | 51.81 | 51.83 | 51.94 | -0.14 | -0.02 | 1 |
-| 95 | 742K | 53.28 | 53.25 | 53.27 | 53.28 | -0.03 | -0.02 | 1 |
-| 97 | 848K | 53.71 | 53.68 | 53.73 | 53.71 | -0.03 | -0.05 | 1 |
-| 99 | 1034K | 54.00 | 54.03 | 54.07 | 54.00 | +0.03 | -0.05 | 1 |
-
-**CID22 mean** (10 images, 512px, baseline 4:2:0):
-
-| Q | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp |
-|---|---------|----------|---------|-----------|----------|----------|
-| 50 | 65.23 | 65.03 | 65.07 | 65.23 | -0.21 | -0.05 |
-| 75 | 75.05 | 75.19 | 75.24 | 75.05 | +0.14 | -0.06 |
-| 85 | 79.85 | 80.17 | 80.22 | 79.85 | +0.33 | -0.04 |
-| 95 | 86.65 | 87.05 | 87.11 | 86.65 | +0.39 | -0.06 |
-
-- `bias-zen`: SSIM2 pt gain over default (positive = better)
-- `bias-cpp`: SSIM2 pt gap vs C++ jpegli (negative = C++ better)
-- `maxdif`: max pixel diff between zen+bias and cjpegli
-
-**Pairwise SSIMULACRA2** (between decoders, Q85, 6 CID22 images):
-
-| | zenjpeg | zen+bias | cjpegli | zune-jpeg |
-|---|---------|----------|---------|-----------|
-| zenjpeg | - | 91.39 | 91.42 | 100.00 |
-| zen+bias | | - | 94.31 | 91.23 |
-| cjpegli | | | - | 91.26 |
-
-**Key findings:**
-- zenjpeg default == zune-jpeg (identical output, both integer IDCT)
-- zen+bias↔cjpegli similarity: 94.31 vs default↔cjpegli 91.42 (3 pts closer)
-- Max pixel diff between zen+bias and cjpegli: always 1 (IDCT rounding only)
-- **Image-dependent quality tradeoff**: on CID22 (small, diverse), bias helps
-  +0.14 to +0.39 at Q75+. On frymire (large photograph), default integer IDCT
-  wins by 0.03-3.37 pts across all qualities. Bias only breaks even at Q99.
-- C++ jpegli shows the same pattern: also behind integer IDCT on frymire.
-  The f32 IDCT + bias path and integer IDCT path have different rounding
-  characteristics; which wins depends on image content.
-- bias-cpp gap is consistently tiny (0.02-0.11 pts), confirming zen+bias
-  closely matches C++ jpegli decoder behavior regardless of image.
-
-Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored`
+Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison -- --nocapture --ignored`
 
 ### Remaining Bottlenecks
 
@@ -621,6 +598,7 @@ Four levels controlling error tolerance during decode:
 |----------|--------|----------|---------|------------|
 | Non-JFIF markers | Error | Warn | Warn | Warn |
 | Truncated data | Error | Pad zeros | Pad zeros | Pad zeros |
+| AC run past block | Error | Warn (EOB) | Warn (EOB) | Warn (EOB) |
 | Bad restart count | Error | Error | Warn | Resync fwd |
 | RST sequence wrong | Error | Error | Error | Accept any |
 | Zero quant value | Error | Clamp to 1 | Clamp to 1 | Clamp to 1 |
@@ -642,198 +620,22 @@ Remaining 17-file gap vs libjpeg-turbo: all 613-byte fuzz-mutated files needing
 scan-level longjmp recovery (diminishing returns). Non-conformant acceptance
 matches libjpeg-turbo exactly (14/20).
 
-Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison --features decoder -- compare_strictness --nocapture --ignored`
+Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison -- compare_strictness --nocapture --ignored`
 
 ## Failed Explorations
 
-### Parallel AQ (2026-01-17)
+Measured dead ends — DO NOT RE-ATTEMPT without reading the full write-ups,
+migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
-**Attempted:** Parallelize `per_block_modulations_row` using rayon.
-
-**Why it failed:**
-- Per-block AQ computation takes ~0.2 microseconds
-- Far too small for rayon thread pool overhead to be worthwhile
-- 4K benchmark with threshold=256: **5x slower** than sequential
-- Even 8K (33M pixels, 518K blocks) wouldn't benefit
-
-**Analysis:**
-- AQ takes 26% of 8K encode time, but only ~15% is parallelizable
-- `pre_erosion_row` (6%) has row-to-row accumulation dependency
-- `fuzzy_erosion` (5%) needs 3x3 neighborhood lookahead
-- Max theoretical speedup with 4 threads: ~10% overall
-- After rayon overhead: ~6% realistic gain - not worth complexity
-
-**Conclusion:** The SIMD-optimized sequential path is already efficient. Thread-level parallelism would need coarser granularity (e.g., multiple iMCU rows buffered) to overcome overhead, which conflicts with the streaming architecture.
-
-### Fuzzy Erosion SIMD (2026-01-21)
-
-**Attempted:** SIMD-optimize `compute_fuzzy_erosion_row_into` with archmage.
-
-**Approaches tried:**
-1. **Archmage with helper functions**: Created `mage_compute_fuzzy_erosion_row` with separate
-   `weighted_4_smallest`, `gather_3x3_clamped`, `gather_3x3_interior` helpers.
-   Result: **3x slower** (67ms vs 53ms) - `#[arcane]` prevents inlining, causing YMM register
-   spills at every function call boundary.
-
-2. **Massive inlined function**: ~350 lines with all 4 corners fully unrolled, no helper calls.
-   Result: **Still slower** (68ms vs 53ms) - instruction cache pressure from code bloat.
-
-**Root cause analysis:**
-- The algorithm requires finding 4 smallest from 9 values with index tracking
-- Scalar partial sort: `find min → replace with MAX → repeat 4×`
-- This creates unpredictable branch patterns that SIMD doesn't help
-- Code bloat from unrolling hurts icache more than SIMD helps
-
-**What would actually help:**
-- True SIMD sorting network (e.g., bitonic sort for 16 elements)
-- Would need to process multiple blocks in parallel, not just vectorize one block
-- Complexity not justified for ~5% of encode time
-
-**Files:** `zenjpeg/src/quant/aq/simd.rs:1377` (massive version, unused),
-`zenjpeg/src/quant/aq/streaming.rs:631` (original scalar, in use)
-
-### AVX-512 Dual-Block DCT (2026-01-21)
-
-**Attempted:** Process two 8x8 blocks simultaneously using AVX-512 (512-bit = 16 floats = 2 blocks).
-
-**Implementation:** Pack two blocks into ZMM registers [A_row_i, B_row_i], do DCT butterflies
-with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
-
-**Benchmark results:**
-- AVX2 single-block: 41.19M blocks/sec
-- AVX-512 dual-block: 17.58M blocks/sec (2.3x **slower**)
-
-**Why it failed:**
-1. **8x8 blocks fit AVX2 perfectly** - 8 floats = 256 bits, no wasted register space
-2. **Transpose cannot be done natively in AVX-512** - `_mm512_unpacklo_ps` operates on 128-bit
-   lanes, mixing data between blocks A and B
-3. **Extract/insert workaround is expensive** - each transpose requires:
-   - 8 `_mm512_extractf32x8_ps` to split ZMM→YMM
-   - 48 AVX2 operations (two 8x8 transposes)
-   - 16 `_mm512_insertf32x8` to recombine YMM→ZMM
-4. **Two transposes per DCT** = 64 extra extract/insert operations
-5. **AVX-512 frequency throttling** on some CPUs adds further penalty
-
-**Conclusion:** AVX-512 benefits require naturally 16-wide workloads. 8x8 DCT is inherently
-8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
-
-**Files:** `zenjpeg/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
-
-### Linear Iteration for AC Refinement (2026-02-14)
-
-**Attempted:** Replace bitmap-accelerated inner scan loop in `decode_ac_refine` with linear
-iteration (k from ss to se), matching zune-jpeg's approach. Goal was to eliminate the
-`num_zeros_to_skip < zero_gap` branch that caused 1.08M mispredicts (25.5% of ALL mispredicts).
-
-**Results:** WORSE. Instructions 449M → 469M (+4.4%), mispredicts 4.24M → 7.75M (+83%).
-
-**Why it failed:** Linear iteration visits EVERY position from k to se (~49 positions per block
-for band [15,63]), while bitmap visits only nonzero positions (~5-10). Even though individual
-branches are more predictable (`coeffs[k] != 0` is 90% false for sparse blocks), the total
-branch count is much higher: 49 × ~2.5 branches = ~123 per block vs bitmap's 10 × ~7 = ~70.
-The unconditional refinement bit reads in the nonzero case happen the same number of times,
-but the zero-position checking adds massive overhead for sparse progressive blocks.
-
-**Conclusion:** Bitmap is fundamentally better for sparse coefficient data. The O(nonzero)
-iteration count dominates the per-iteration branch cost.
-
-### Unchecked Bit Reads for AC Refinement (2026-02-14)
-
-**Attempted:** Add `read_bit_unchecked()` (no refill check) with `ensure_n_bits()` pre-fill
-before bitmap loops. Save ~2 instructions per bit read by eliminating the `bits_in_buffer == 0`
-check in the hot loop.
-
-**Results:** Breaks restart marker handling. 5 test failures including "expected 0xFF for restart
-marker" and "invalid Huffman code".
-
-**Why it failed:** Near restart markers, `refill()` returns fewer bits than requested and sets
-`marker_found`. The checked `read_bit_refine()` calls `refill()` when buffer empties, which
-re-adds zero padding. Unchecked reads consume past the marker boundary. Even with
-`saturating_sub` to prevent u8 underflow, the consumed bits corrupt the position for
-subsequent Huffman decodes. Safe handling requires tracking available bits vs needed bits per
-loop iteration, which adds complexity matching the cost of the original check.
-
-**Conclusion:** The 2-instruction saving per bit read isn't worth the marker boundary complexity.
-
-### Pre-refill AC First Scan (2026-02-15)
-
-**Attempted:** Apply the same `ensure_bits()` + `peek_top(9)` pre-refill pattern (from AC
-refine commit 43b24d6) to `decode_ac_first_scan`.
-
-**Results:** Callgrind showed +11% regression (34.8M → 38.6M instructions). AC refine scan
-(unchanged code) also regressed +6.4% (162.7M → 173.1M) due to code layout changes from
-recompilation. Function is only 2.43% of total — even a 20% improvement saves <0.5%.
-
-**Conclusion:** Not worth pursuing. The function is too small a fraction of total decode
-time. Code layout effects from the change outweigh the algorithmic improvement.
-
-### Conditional read_bit_fast in AC Refinement (2026-02-15)
-
-**Attempted:** Add `read_bit_fast()` (no refill check) to bitstream.rs. Use `fast_bits`
-boolean in AC refine to choose between `read_bit_fast()` and `read_bit_refine()` per
-refinement bit read, based on whether `ensure_bits()` succeeded.
-
-**Results:** All tests passed but callgrind showed 162.7M → 218.7M (+56M, +34%).
-
-**Why it failed:** The per-read `if fast_bits { read_bit_fast() } else { read_bit_refine() }`
-branch costs ~2 instructions — exactly the same as the refill check it replaces. Net effect
-is zero benefit with added code complexity. The branch predictor handles the refill check
-(`bits_in_buffer == 0` is rarely true) just as well as the `fast_bits` check.
-
-**Conclusion:** Cannot eliminate per-bit overhead through branching. Would need fundamentally
-different approach (e.g., reading multiple refinement bits in one operation).
-
-### Branchy Coefficient Update in AC Refinement (2026-02-15)
-
-**Attempted:** Replace branchless `c.wrapping_add((bit as i16) * not_set * sign * bit_val)`
-with branchy `if bit != 0 && (c & bit_val) == 0 { if c > 0 { +bit_val } else { -bit_val } }`.
-
-**Results:** Callgrind AC refine dropped from 225.2M to 184.5M (-18.1%). But wall-clock
-was 5-21% WORSE across all sizes.
-
-**Why it failed:** The `bit != 0` and `c > 0` branches are poorly predicted — coefficient
-signs and refinement bits are effectively random. Each misprediction costs ~15 cycles but
-counts as only 1 instruction in callgrind. The branchless version has more instructions but
-is fully predictable (no branches = no mispredictions). Branch misprediction overhead
-dominates instruction-count savings.
-
-**Conclusion:** Callgrind instruction count can be misleading when branch prediction matters.
-Branchless is correct for this hot path despite higher instruction count.
-
-### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
-
-**Problem:** Original decoder returned `([i16; 64], u8)` by value, copying 128 bytes per block.
-Smart zeroing alone didn't help because copy dominated memory bandwidth.
-
-**Solution:** Zero-copy `decode_block_into` API where caller provides reusable buffer:
-```rust
-fn decode_block_into(
-    &mut self,
-    coeffs: &mut [i16; 64],      // Caller-provided buffer
-    prev_coeff_count: u8,        // Zeroing hint from previous block
-    component: usize,
-    dc_table_idx: usize,
-    ac_table_idx: usize,
-) -> ScanResult<u8>              // Returns new coeff count
-```
-
-**Key insight:** Reusable buffers accumulate state from ALL previous blocks, not just the
-immediately previous one. If block N-2 wrote to position X, block N-1 didn't, and block N
-doesn't either, position X still has stale data. Fix: track MAXIMUM coefficient count since
-last restart marker, not just previous block's count.
-
-**Implementation:**
-- `entropy/decoder.rs`: Added `decode_block_into` with smart zeroing
-- `decode/parser.rs`: Added `prev_coeff_counts: [u8; 4]` per-component tracking
-- `decode/scanline.rs`: Added `coeffs_buf` reusable buffer and max-tracking
-
-**Results (2026-01-22):**
-- 512x512: ~5% improvement
-- 2048x2048: 6.5% improvement (17.9ms vs 19.2ms)
-
-Memory bandwidth reduction per block:
-- Before: 128 bytes zeroing + 128 bytes copy = 256 bytes
-- After: ~20 bytes targeted zeroing + 0 bytes copy = ~20 bytes
+- **Parallel AQ (2026-01-17):** rayon per-block AQ = 5x SLOWER at 4K; max realistic gain ~6% — not worth it.
+- **Fuzzy erosion SIMD (2026-01-21):** archmage helpers 3x slower (register spills); fully-inlined variant still slower (icache bloat).
+- **AVX-512 dual-block DCT (2026-01-21):** 2.3x SLOWER — 8x8 DCT is inherently 8-wide; transpose can't cross 128-bit lanes cheaply. AVX2 is optimal.
+- **Linear iteration for AC refinement (2026-02-14):** +4.4% instructions, +83% mispredicts vs the nonzero-bitmap loop.
+- **Unchecked bit reads in AC refinement (2026-02-14):** breaks restart-marker boundary handling; safe handling costs as much as the check.
+- **Pre-refill AC first scan (2026-02-15):** +11% callgrind regression; the function is only 2.43% of decode.
+- **Conditional read_bit_fast in AC refinement (2026-02-15):** the per-read mode branch costs exactly what the refill check costs — zero net.
+- **Branchy coefficient update in AC refinement (2026-02-15):** -18% instructions but 5-21% WORSE wall-clock — coefficient signs are unpredictable; branchless wins. (Callgrind counts mislead when prediction dominates.)
+- **Decoder zero-copy architecture (2026-01-22): IMPLEMENTED** — `decode_block_into` with caller buffer + max-coeff-count-since-restart zeroing; 5-6.5% wall-clock win. Key insight: reusable buffers accumulate stale state from ALL prior blocks, so track the maximum coefficient count since the last restart, not just the previous block's.
 
 ## Investigation Notes
 
@@ -904,159 +706,247 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-~~1. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)**~~ —
-   **FIXED (2026-03-09, commit 08ef601).** Root cause was progressive decoder truncation near
-   restart markers (see Fixed Bugs below), NOT encoder trellis lambda weights. The trellis
-   analysis was a red herring. All quality levels Q70-Q99 now pass on bulb/baby/girl/city/flowers
-   with `auto_optimize(true)` + 4:2:0, minimum score 75.9 (previously catastrophic 20-43).
-   4:4:4 auto_optimize also passes, minimum 79.4.
+- Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
+  unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
+  `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:
+  inline `[Option<HuffmanDecodeTable>; 4]` pairs (2 KiB fast-lookup each) in
+  the parser, scan handoff, scanline reader and component-row reader, copied
+  per by-value move. Boxed (`parser::HuffmanTables`); 574-581 KiB after.
+  Gate: `just stack-demand-check` (opt-level 0, 1 MiB threads; CI on Linux).
+  zenjpeg's own dev profile is opt-level 2, so its suites never saw this.
 
-2. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
-   are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
-   was independently SA-optimized, finding different local optima. Results: ~10-20 SSIM2
-   points worse than JpegliProg at matched BPP, non-monotonic BPP vs quality.
-   - Root cause: Independent per-anchor SA without monotonicity constraints
-   - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
+- Fixed 2026-10-28: `BytesEncoder::push` and the planar pushes collapsed every
+  stop reason into `Error::cancelled()` (`should_stop()` instead of `check()`),
+  so a timed-out pulse surfaced as `Stopped(Cancelled)`. Regression:
+  `tests/encode_stop_reasons.rs` (every poll, one-shot/row/packed/strided/planar).
 
-~~3. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)**~~ — **FIXED (2026-03-09).**
-   Stale hashes after commit e0b5c86 forced `allow_16bit_quant_tables=true` for XYB.
-   At Q50, 2 of 3 quant tables exceed 255, requiring 16-bit DQT entries (+128 bytes).
-   Scan data is identical — only DQT marker overhead changed. Hashes updated.
+- Open (found 2026-10-27 at zencodec `f5a7fd46`; the deprecation dates from `f73a7e0e`): nine test calls to the
+  deprecated `DecodeJob::with_policy` warn whenever `inventory` is enabled: `tests/bundled/ultrahdr_roundtrip.rs:1314,1404`
+  (`zencodec` + `inventory`) and `tests/bundled/inventory_review.rs:421,429,431,459,460,882,1225`. No strict-Clippy CI
+  set enables `inventory`, so CI stays green. `try_with_policy` is not a drop-in: `JpegDecodeJob::try_set_policy`
+  (`src/codec/decode.rs:306`) refuses `strict` and `allow_truncated: Some(true)`, which several of these tests set,
+  so each call needs a decision about what it should check.
 
-~~4. **frymire_hash_locked XYB Q50 pre-existing failure (2026-03-26)**~~ — **FIXED (2026-03-27).**
-   All XYB hashes updated. The stale hashes were from before archmage XYB cbrt_midp() changes.
+- Resolved during native-precision decoding: routing through a second metadata-preserving header parse duplicated extended XMP packets. Native routing now probes marker spans without extracting metadata; existing extended-XMP round-trip assertions cover the regression.
 
-~~5. **Trellis dead parameters (2026-02-02, documented 2026-03-08)**~~ — **FIXED (2026-03-30,
-   commit d2a1af25).** Both `trellis_use_lambda_weight_tbl` and `trellis_num_loops` deleted
-   from ExpertConfig, TrellisConfig, and HybridConfig.
+- Resolved 2026-10-18 (PR237 review): single-scan preservation filtered out inert
+  post-scan JFIF/Adobe/ICC segments (refuses unsupported single-scan preservation
+  and lets recompress Preserve select progressive output); 4-component frames
+  with any non-zero APP14 transform now decode as YCCK (matching jpegli and
+  libjpeg-turbo); fused and wave parallel paths return `Error::missing_quant_table`
+  instead of substituting `[1; 64]`; DC-only blocks in strip and fused paths route
+  through the configured tiered IDCT so extreme `|DC * q[0]|` values never wrap in
+  `i16`; `upsample_h2v2_libjpeg_row` uses `bias_left` at column 0 under
+  `H2v2Bias::Alternating` (`IdctMethod::Jpegli`) to match the padded column-sum
+  kernels; `decode()` and `decode_into()` support `PixelFormat::Gray` on
+  3-component frames; scanline `DeblockMode::Boundary4Tap` filters all MCU rows on
+  streaming and coefficient routes; sequential `emit_preserved` preserves source
+  component IDs in SOF/SOS; scanline crop and buffer-width argument checks return
+  `UnsupportedFeature` and `InvalidBufferSize`.
 
-6. **Progressive Q10 encoder ~2.8% larger than C++ jpegli (2026-03-31, issue #23)** -
-   At Q10 progressive, Rust produces ~3KB more entropy-coded scan data than C++.
-   Same scan count, same DHT sizes. Rust Q10 SSIM2 is +4.12 pts better than C++,
-   suggesting Rust preserves more AC coefficients at extreme quantization. Need to
-   investigate whether this is a quality mapping difference or DCT rounding.
-   - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
-   - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
+- Fixed in the streaming consumer review: the trait adapter reapplied a generic effort preset after `inner_mut` supplied an explicit native configuration, changing scan and entropy settings. The native configuration now takes precedence; the zenpipe consumer regression compares its file with the native encoder byte for byte.
 
-~~7. **XYB encoder's linear-input paths (`Rgb16Linear`, `RgbF32Linear`)
-   produce pixel-broken JPEGs (2026-04-23)**~~ — **FIXED (2026-04-23,
-   commits 28658af6 + 9e2348fe).** The linear-input branch in
-   `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which
-   returns UN-scaled XYB on a 0-255 input range) and then multiplied by
-   255.0 again, producing Y values around ~1600 that saturated every
-   MCU to white. Fix: call `linear_rgb_to_xyb(r, g, b)` on the 0..1
-   linear RGB, then `scale_xyb(x, y, b)` to get scaled XYB matching the
-   sRGB-input SIMD branch, then the final ×255.0 JPEG-range step. No
-   changes to the Rgb8Srgb path (locked hashes unaffected).
-   - Tests: `xyb_linear_matches_srgb_solid_red`,
-     `xyb_full_linear_f32_pixel_correctness`,
-     `xyb_bquarter_linear_f32_pixel_correctness`,
-     `xyb_full_linear_u16_pixel_correctness` in
-     `zenjpeg/tests/bundled/xyb_roundtrip.rs`.
-   - The in-source comment at `linear_pixel_formats.rs:330` claimed
-     "chroma block indexing" — that was a red herring. The bug was
-     missing-scale-then-double-scale in the scalar f32/u16 branch.
+- Resolved 2026-10-13: sharing strict ICC chunk validation dropped a complete real-world single profile numbered 0 of 1. Native decoding accepts only the complete-header/matching-size/single-chunk case; strict parsing and rewriting reject it. Original malformed-chunk assertions remain. `just metadata-legacy-icc-check` covers corpus pixels, profile bytes, inventory agreement, duplicate chunks and size caps.
+
+- Resolved 2026-10-13: zencodec HDR dispatch tested a literal `hdrgm:` prefix and silently returned SDR for ISO-only/aliased XMP files; reconstruction also mislabeled wide-gamut bases as sRGB. Native metadata resolution and base-color handling now drive the adapter. The corpus Display P3 profile needed a shared zenpixels identification entry (`8f7ee871`). `just metadata-hdr-dispatch-check` covers native pixel parity and the existing corpus inventory/orientation regressions.
+
+- Resolved 2026-10-12: zencodec metadata denial was overwritten by preserve-all and bypassed by header probing. Adapter policy now reaches probe, decode, streaming info, native extras and inventory; XMP gain-map fallback follows it too. `just metadata-extraction-policy-check` covers all eight flag combinations.
+
+- Resolved 2026-10-12: orientation selected a different EXIF packet from metadata and could enter comment payloads after fill bytes. Native orientation and inventory now share selection; post-scan packets and streaming metadata agree. `just metadata-orientation-check` covers pixel and metadata parity.
+
+- Resolved 2026-10-12: Dynamic Depth ignored primary padding and returned shifted bytes; native MPF parsing retained unchecked 32-bit offsets despite the extended inspector's checked arithmetic. `just metadata-depth-bounds-check` covers exact depth/confidence bytes, oversized padding and i686 IFD/fallback offsets.
+
+- Resolved in metadata review (2026-10-12): blanket MPF bounds checks skipped an embedded gain map and promoted an unrelated trailing image. Default decoding again accepts the embedded image; strict mode rejects its placement. Inventory shares the extraction admission predicate, and lossless rewriting separately refuses relocation it cannot preserve. The synthetic fixture's original default assertions remain; `just metadata-mpf-compat-check` checks the separation.
+
+
+- i686 CI could not fetch the progressive image-rs JPEG corpus inside cross. The prefetch example now requests the exact nested key in addition to its parent; codec-corpus 1.1.0 stores those independently.
+
+- Recompression single-image strategies dropped MPF secondaries while retaining
+  XMP pointers. `recompress/metadata.rs` now refuses this unsupported input
+  before lossy work, including expert strategy/emit entry points; the recovered
+  lossless path preserves the images. Gate: `just metadata-recompress-admission-check`.
+
+- Metadata integration recovered MPF/lossless defects: stale secondary offsets,
+  dropped or mismatched secondary transforms, repeated/overlapping extraction,
+  and hand-parsed GContainer field spans. The recovered tests pass with shared
+  namespace validation and MPF reconstruction; the owner approved the edge
+  default and proportional-fixture corrections. `just metadata-lossless-check metadata-lossless-oracle`
+  exercises both our reader and independent tools.
+
+
+- Fixed metadata integration regression: Ultra HDR convenience decode and streaming reconstruction labeled Display P3 base pixels BT.709. Shared ICC resolution now supplies the color descriptor/gamut; the bundled P3 regression reproduces the old behavior and passes after the fix.
+
+- Metadata carrier boundary regression (2026-10-12): encoding an oversized prepared comment panics; request-level prepared EXIF is omitted. Reproduced by `tests/metadata_limits.rs` before the validation/forwarding fix. The same fix rejects oversized raw EXIF instead of truncating it.
+
+- Metadata CI run `38253462548`: Windows ARM and i686 failed on unavailable
+  datasets. Serial host prefetch and an explicit cross cache mount are added;
+  local metadata tests pass, remote verification is pending.
+
+- Fixed during metadata integration: the Ultra HDR inventory scratch walk omitted
+  cancellation state and reduced traversal failures to a decode boolean. It now
+  propagates the original typed failure; `gain_map_preflight_preserves_each_cancellation_reason`
+  exercises every observed poll. The combined inventory/ultrahdr feature build
+  must stay in CI.
+
+### Fixed in metadata integration: inventory did not poll cancellation
+
+The proposed PR 221 inventory path did not read the decode job's stop token.
+The shared-contract integration polls it while walking markers and counting
+entropy MCUs, preserving the first reported stop reason in a typed error.
+`cancellation_during_the_walk_preserves_the_first_reason` pins that behavior.
+
+Live bugs only. Fixed ones are one-liners under "Fixed / Resolved Bugs" below,
+with full write-ups in `docs/TUNING_HISTORY.md` — do not let struck-through
+entries accumulate here.
+
+1. **Two `target-zq`-gated research examples don't compile against current APIs (found
+   2026-07-23, pre-existing).** Neither is part of the normal build/test matrix — both
+   require the `target-zq` feature, and per this doc's own Feature Flags section "no CI
+   job enables `target-zq`" — but `--all-features` exposes them, and one (below) was
+   additionally hidden behind a dead cfg condition until today.
+   - **`examples/zq_calibrate.rs`**: references `AnalysisFeature::TextLikelihood` and
+     `AnalysisFeature::ScreenContentLikelihood`, neither of which exist on the `zenanalyze`
+     git dependency's current `AnalysisFeature` enum (`error[E0599]`). Needs the current
+     variant names from `zenanalyze` (unpublished sibling, `~/work/zen/zenanalyze`).
+   - **`examples/picker_v0_3_holdout_ab.rs`**: `#![cfg(all(feature = "target-zq", feature =
+     "trellis"))]` referenced the removed `trellis` feature (see "Flags that no longer
+     exist" above), so the file was UNCONDITIONALLY compiled out — the `cfg` could never be
+     true, meaning nobody has actually built this file since `trellis` was dropped. Fixed
+     the gate to plain `#![cfg(feature = "target-zq")]` (now consistent with the
+     `[[example]]`'s own `required-features`), which reveals it's *also* stale: unresolved
+     `zenjpeg::encode::trellis::HybridConfig` import, and `EncoderConfig` has no
+     `chroma_distance_scale`/`hybrid_config` methods anymore (there's a `chroma_distance_scales`
+     — plural — getter in `encode/encoder_types.rs`, but the setter-side API this file
+     expects doesn't match current `EncoderConfig`). Needs a real pass against the current
+     encoder builder API, not attempted here — out of scope for the day's actual task
+     (removing the `image` dev-dependency to unblock a moxcms upgrade).
+
+2. **Fractional sampling ratios are accepted and decoded to an arbitrary geometry
+   (found 2026-10-10, pre-existing).** `parse_frame_header` accepts any factors 1..=4
+   with no integrality check, e.g. a 3x1 luma over 2x1 chroma. jpegli rejects this at SOF
+   ("Non-integral subsampling ratios", `decode_marker.cc`) and libjpeg-turbo at
+   `jinit_upsampler` ("Fractional sampling not implemented yet"). Since 2026-10-10 no
+   fast path can take such a frame (`FrameShape` classifies it `Other`), so every
+   entry point agrees and nothing panics (`tests/colorspace_paths.rs`
+   `crafted_sampling_shapes_never_panic_and_agree`), but the per-component path
+   floor-divides the ratio (`upsample_planes_f32`: `max_h_samp / h_samp`), so the
+   chroma is not resampled to the frame geometry. Proposal: reject non-integral ratios
+   at SOF in Strict and Balanced, as both references do. Repro: `jpeg_writer` frame
+   with sampling `[(3,1),(2,1),(2,1)]`.
+
+3. **Wave-parallel scanline readers cannot serve plane reads of YCbCr frames (found
+   2026-10-10, pre-existing, narrowed).** A wave-only reader (`parallel`,
+   nearest-neighbour 4:2:2/4:2:0, MCU-row DRI, >= 1024 MCUs, `num_threads != 1`,
+   `OutputTarget::Srgb8`, `DeblockMode::Off`) holds decoded RGB rows. Since 2026-10-10
+   it serves every RGB-family read and crop, RGB frames' derived reads (defined from
+   R, G, B) and `read_rows_ycbcr_native_i16` (from the planar wave); `read_rows_gray8`,
+   `read_rows_gray_f32`, `read_rows_gray_linear_f32`, `read_rows_ycbcr_f32` and
+   `read_rows_rgba_f32` on a YCbCr frame return `UnsupportedFeature` ("... use
+   num_threads(1)") instead of reading the upsampled Y/Cb/Cr planes. zenjpeg's own callers that need those reads (`decode_rows(Gray)`,
+   `decode_rows_f32`, the zencodec gray/f32 streaming decode) build their reader with
+   `DecodeConfig::for_plane_reads()`, which skips the wave-only route. Pinned by
+   `tests/colorspace_paths.rs` `wave_reader_f32_and_plane_reads`. Fix direction: decode
+   the wave as planes (`decode_wave_planar` exists) and convert rows with the frame's
+   `RowKernel`, keeping the parallel conversion.
+
+4. **The encoder's fused 4:2:0 path leaves stale chroma in the padding rows of a
+   partial bottom strip (found 2026-10-10 in the C1 review, pre-existing; C2's first
+   fix).** `convert_strip_to_ycbcr_420` (`encode/strip/convert.rs`) writes
+   `c_strip_height_for(actual)` chroma rows into `cb_down`/`cr_down` and pads them
+   only horizontally (`pad_chroma_down_strip`). `pad_chroma_down_vertically` is
+   called only by `process_strip_ycbcr_f32_subsampled` (`encode/strip/mod.rs`), and
+   `pad_strips_vertically` pads the full-resolution strips the fused path does not
+   use, so the chroma rows below the image in the last MCU row hold the previous
+   strip's rows. It costs AC bits in those blocks, and decoders that interpolate the
+   last real chroma row against the row below (jpegli's upsampler) render the last
+   row of even-height frames from it: the C1 reviewers traced most of the max
+   difference of 22 between zenjpeg's and djpegli's decode of the 1602x1300
+   colour-model oracle fixture to it. The gamma-aware fused path
+   (`convert_strip_gamma_aware`) has the same shape by code reading (not measured).
+   Fix direction: replicate the last real chroma row down after both fused
+   converters, as the f32 YCbCr path does; regression test: an even-height
+   (height % 16 in 2..=14) RGB encode decoded by djpegli, compared on the last row.
 
 ### Fixed / Resolved Bugs (historical reference)
 
-- **XYB linear-input encoder path saturated to white (FIXED 2026-04-23, commit 9e2348fe)** -
-  `EncoderConfig::xyb` + `PixelLayout::RgbF32Linear` or `PixelLayout::Rgb16Linear`
-  produced JPEGs that decoded to solid white. The scalar linear-input branch in
-  `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which returns
-  UN-scaled XYB for a 0-255-range input) and then multiplied by 255.0 again,
-  while the parallel sRGB-input SIMD branch correctly applied
-  `scale_xyb(x,y,b) = ((x+offset)*scale)` before the ×255.0 JPEG-range step.
-  Fix: linear branch now calls `linear_rgb_to_xyb(r,g,b)` on 0..1 RGB, then
-  `scale_xyb()`, then ×255.0 — same pipeline as the sRGB path. Sibling
-  `Rgb8Srgb` path unchanged; locked hashes unaffected.
-  - Tests: `xyb_linear_matches_srgb_solid_red` et al. in `xyb_roundtrip.rs`.
+- **Gamma-aware input formats (2026-09-15):** preserve linear f32/u16 precision and BGR channel order; see [reproduction and validation](docs/TUNING_HISTORY.md#gamma-aware-input-formats-2026-09-15).
 
-- **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
-  `try_fused_parallel_decode()` didn't check `decode_mode`, so it took the fused parallel
-  path (decodes directly to u8 pixels, no coefficient storage) even when
-  `DecodeMode::Coefficient` was set. This caused "no decoded data" InternalError for
-  `OutputTarget::SrgbF32`, `dequant_bias(true)`, lossless transforms, and Knusperli deblock
-  — any path needing coefficient access. Only triggered with `--features parallel` on images
-  with DRI (restart markers). Fix: return `Ok(false)` from `try_fused_parallel_decode` when
-  `decode_mode == Coefficient`. (`fused_parallel.rs:92`)
+One-line index; full write-ups migrated to `docs/TUNING_HISTORY.md` (2026-07-13).
 
-- **Progressive decoder truncation near restart markers (FIXED 2026-03-09, commit 08ef601)** -
-  Fused `decode_ac_first_scan` and `decode_ac_refine_scan` lacked a bit-by-bit Huffman
-  fallback when `peek_bits_refill(16)` failed near restart marker boundaries. When a Huffman
-  code > 9 bits occurred in the last 2-3 blocks before a restart marker (0xFF 0xDn), the
-  16-bit peek failed because the marker interrupted bitstream refill. The function incorrectly
-  treated this as scan truncation, zeroing all remaining AC coefficients. The standard
-  `decode_huffman_symbol_lenient` had this fallback but the fused functions did not.
-  Triggered at Q91-Q93 (where AC table had codes > 9 bits) with DRI=216 on 576x576 images.
-  Fix: added bit-by-bit Huffman decode fallback matching the standard function.
-  - Found during investigation of Known Bug #1 (catastrophic auto_optimize quality).
-  - Test: `cargo test --release -p zenjpeg --test quality_regression --features decoder -- diagnostic_coefficient_comparison --nocapture --ignored`
-
-- **Parallel feature skipping deringing (FIXED 2026-03-09)** - `parallel_dct_plane` in
-  `encode/parallel.rs` did `extract_block → forward_dct` without applying deringing, while
-  the sequential path in `strip/mod.rs:1027-1029` applied `preprocess_deringing_block` before
-  DCT. This caused `locked_values` test failures with `--features parallel` — not
-  non-determinism, but a deterministic quality regression (deringing silently skipped).
-  Fix: pass `deringing: Option<u16>` (dc_quant when enabled) through `parallel_dct_y_blocks`
-  into both parallel and sequential DCT plane functions. Deringing is block-local (no
-  cross-block dependencies), so it parallelizes trivially.
-
-- **zune-jpeg progressive decode issue (STALE, was Bug #5)** - Originally reported that
-  zune-jpeg decoded zenjpeg progressive output as grayscale. Investigation (2026-03-09)
-  found 70+ progressive encoding tests pass with zune-jpeg. The AC refinement trailing
-  ZRL fix (commit d355648) likely resolved the underlying scan structure issue. The only
-  remaining trace is a skip in `chroma_upsample_regression.rs:1038`. Note: zune-jpeg 0.5.12
-  still has a separate bug silently skipping AC refinement with DRI (max_diff=224).
-
-- **Grayscale scanline reader panic (FIXED 2026-02-06, commit be24fac)** - Streaming scanline
-  reader methods panicked on grayscale images. Fixed by handling 1-component images.
-
-- **XYB 4:2:0 encoder producing undecodable JPEGs (FIXED 2026-03-04, commit b0cafce)** -
-  Frequency counter clamped DC categories to 11 (`.min(11)`) but encoder wrote unclamped
-  categories. XYB produces DC differences > ±2047 at low quality (categories 12+). Huffman
-  table lacked codes for those categories, writing (code=0, len=0) → corrupted bitstream.
-  Fix: remove `.min(11)` from `collect_block_frequencies_simd`. Previously-encoded files
-  in `testdata/decode_failures/` remain permanently corrupted — tests converted to verify
-  graceful rejection (assert decode error, not success).
-  - Test: `cargo test --release -p zenjpeg --test xyb_roundtrip --features decoder`
-  - Test: `cargo test --release -p zenjpeg --test decode_xyb_failures`
-
-- **CMYK scanline transform panic (FIXED 2026-03-04, commit bde9f48)** -
-  `scanline_reader_with_transform()` had no CMYK check. Non-dimension-swapping transforms
-  (e.g., FlipHorizontal) fell through to `from_coefficients()` → `StripProcessor` with
-  `[u8; 3]` arrays → index-out-of-bounds at `h_samp[3]`. Fix: route CMYK to buffered
-  decode fallback, matching `scanline_reader()`.
-  - Test: `cargo test --release -p zenjpeg --test cmyk_transform --features decoder`
-
-- **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
-  `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
-  writes "jxl " for ALL ICC profiles (including standard sRGB), not just XYB ones. This caused
-  every cjpegli JPEG with an ICC profile to be misidentified as XYB, bypassing the fast i16
-  decode path and falling through to the f32 XYB→RGB conversion — producing completely wrong
-  colors (max_diff=252). Fix: replace "jxl " CMM check with exact-match against the known
-  720-byte XYB ICC profile, falling back to "XYB" text search in the profile description.
-  Also affected baseline streaming and fused parallel paths (would have returned "no decoded
-  data" error for cjpegli images).
-
-- **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
-  Bilinear chroma upsampler used edge replication at MCU row bottom boundaries (max ~43
-  pixel error for streaming, ~57 for coefficient/transform path). Fix: mirror the existing
-  top-boundary fixup for the bottom edge. Coefficient path peeks ahead by IDCT'ing the first
-  chroma block row of the next MCU. Streaming path pre-decodes the next MCU row and serves
-  corrected chroma through deferred buffers. Boundary max diff now ≤4 (IDCT rounding only).
-
-- **Scanline h2v2 boundary fixup buffer overflow (FIXED 2026-02-09, commit 8f1295f)** -
-  `fixup_h2v2_row0()` used hardcoded `[i16; 4096]` stack buffers, panicking on any 4:2:0
-  image wider than 8192px (chroma width > 4096). Fix: borrow disjoint struct fields directly
-  instead of copying to temp buffers. Closes #1.
-- **Progressive MCU-padded storage (FIXED 2026-02-09, commit 29d6d81)** - Progressive decoder
-  allocated coefficients with component-based counts (ceil(scaled_w/8)) but output path reads
-  with MCU-padded stride (mcu_cols * h_samp). For 4:2:0 with non-MCU-aligned width, caused
-  1-block-per-row shift accumulating to max_diff=255. Affected ~20/543 web corpus files.
-- **Progressive interleaved DC scan padding (FIXED 2026-02-09, commit 759a4a7)** - Skipping
-  entropy data for out-of-bounds MCU padding blocks desynchronized Huffman decoder. Caused
-  "invalid Huffman code" parse errors on 80/543 progressive 4:2:0 files.
-- See `docs/TUNING_HISTORY.md` for older fixed bugs.
+- **Colour model decided per path; RGB-as-RGB wrong on several paths (2026-10-10 / 2026-10-18):** the
+  model is now decided once at SOF (jpegli rule) and every MCU- or strip-walking integer
+  path converts with one `RowKernel`; fixed RGB pixels on fused/wave/fast-integer/`decode_into`/scanline paths,
+  `PixelFormat::Bgr` returning RGB order from the streaming path, scanline `bgr8` != swapped
+  `rgb8`, scanline gray8/gray_f32 wrong on the last row of every MCU row (baseline 4:2:0/4:4:0), XYB through `scanline_reader` getting the YCbCr matrix, the strip readers' last
+  column at even non-MCU-aligned 4:2:0 widths, the threaded fast-integer path's missing
+  right-edge replication, panics/divergence on fractional, 4:4:0, 4:1:1 and oversampled-gray
+  shapes, `decode_into` 4bpp nearest >8192 px panic, `decode_into` + `parallel` dropping the
+  fused result, `decode_into(Gray)` failing on every baseline grayscale file, `decode()` / `decode_into()` to `PixelFormat::Gray` on 3-component frames, the fused
+  path's double `max_memory` charge, owned progressive readers' lossy gray/YCbCr reads,
+  non-interleaved sequential files garbled by the scanline strip/wave readers, baseline XYB
+  with MCU-row DRI failing under `parallel`, AVX2 YCbCr kernels zero-extending negative Y
+  (f32 target + Jpegli IDCT), gray frames + `IdctMethod::Jpegli` on the scanline/wave
+  readers, `decode_to_ycbcr_f32` ignoring `IdctMethod`, wave-only 4:2:2 readers reporting
+  `S420`, `read_rows_ycbcr_f32` panicking on short planes, native i16 reads failing with an
+  internal error on pixel readers, 4-component APP14 non-zero transform codes decoding as YCCK,
+  fused/wave missing quant table error handling, DC-only `i16` overflow guard in strip/fused paths,
+  h2v2 alternating left-edge bias parity under `IdctMethod::Jpegli`, scanline `Boundary4Tap`
+  deblocking on preloaded and coefficient MCU rows, sequential `emit_preserved` preserving source
+  component IDs, and scanline crop/buffer-width errors returning `UnsupportedFeature`/`InvalidBufferSize`.
+  Gates: `tests/colorspace_paths.rs`; design and path table:
+  `zenjpeg/docs/DECODER_PATHS.md` "Colour model and sampling shape".
+- **`fuzz_differential` false crashes on malformed-but-recoverable input (#198)** — FIXED 2026-10-15: the target compares pixels with zune-jpeg only on streams `Strictness::Strict` accepts, as `tests/fuzz_regression.rs` does (recoveries of a malformed stream are two policies, not one contract; `truncation-ac-overflow-slow-path` differed by 27).
+- **SA-optimized `PiecewiseV4` quant tables were non-monotonic across quality (issue #12)** — FIXED
+  2026-08-27. The raw v4 anchors (each SA-optimized independently) had 1,265 per-cell violations
+  (luma DC q90=5 / q95=37 / q100=6; Cb DC q100=81 coarser than q5's 66), giving 30-34 size-vs-q
+  reversals on a 512² sweep. `encode/tables/sa_piecewise_v4.rs` now passes the raw anchors
+  (`RAW_ANCHOR_*`, kept as provenance) through a compile-time per-cell L2 isotonic (PAV) fit;
+  the public `ANCHOR_*` are the monotone result. Gates: `shipped_anchors_are_non_increasing_per_cell`,
+  `tables_for_quality_is_non_increasing_over_the_whole_q_range`, and the q1-q99 size sweep
+  `tests/piecewise_v4.rs::piecewise_v4_size_is_monotone_in_quality` (0 violations). The raw-anchor
+  pareto figures (+6.602 / +6.09 vs jpegli) have NOT been re-measured post-smoothing; the family
+  stays opt-in (default is Jpegli).
+- **`optimize_huffman(false)` baseline encodes produced undecodable JPEGs on out-of-corpus content**
+  (e.g. frymire at every quality; mozjpeg + zenjpeg decoders both rejected the output) — FIXED
+  2026-08-26 (73c84c50). The corpus-trained builtin Huffman tables lacked codes for 13,238 legal
+  symbols across 324/360 tables; `encode()` emits ZERO bits for a codeless symbol. The frymire
+  hash-lock suite had locked the corrupt bytes (hashes without decoding). `select_tables` now
+  completes every table; every hash-lock encoder test also decodes what it hashes; the locked-values
+  regenerator refuses to lock undecodable bytes. Regen `values_archmage.csv` via the
+  `regen-locked-values` workflow (x86-only hashes).
+- Lossless transform/restructure corruption class (issues #194 + #195: Transpose/Transverse wrong on
+  subsampled chroma; TrimPartialBlocks/progressive restructure corrupt on non-MCU-aligned images) —
+  FIXED 2026-08-26 (c453d299). Four root causes: count-vs-encode traversal divergence (zero-length
+  Huffman codes), emitters rederiving geometry from pixel dims instead of the MCU-padded grids,
+  trim-by-shrinking-dims-only, and progressive tokenizing padded instead of true grids. Regression
+  gates: `tests/lossless_matrix.rs` (5 modes × 5 dim classes × 8 transforms, 4 oracle layers),
+  `tests/lossless_dispatch_parity.rs` (byte-identity across SIMD token tiers),
+  `lossless::tests::trim_sentinel_tests` (padding can never leak into visible region).
+  **Verified 2026-07-15**: the 4 `quality_matrix` progressive tests that had been `#[ignore]`d citing
+  #23 (444/422/420/440) all pass, and the ignores are removed. Q10 progressive size deltas are now
+  +1.4..+2.4% *and* Rust scores +3.1..+4.1 SSIM2 better — i.e. it buys quality, not waste. The
+  sibling baseline case is still live as #78 (`test_ycbcr_420_baseline`, still `#[ignore]`d).
+- XYB bottom-partial-strip vertical padding stride (issue #186) — FIXED 2026-07-13 (0064e34a);
+  regression test `tests/bundled/xyb_edge_padding.rs`.
+- Catastrophic 4:2:0 auto_optimize quality at specific Q levels — FIXED 2026-03-09 (08ef601); root
+  cause was progressive decoder truncation near restart markers, NOT trellis lambda weights.
+- frymire_hash_locked XYB Q50 size mismatch — FIXED 2026-03-09 (stale hashes; 16-bit DQT at Q50).
+- frymire_hash_locked XYB Q50 pre-existing failure — FIXED 2026-03-27 (XYB hashes relocked).
+- Trellis dead parameters (`trellis_use_lambda_weight_tbl`, `trellis_num_loops`) — FIXED 2026-03-30 (d2a1af25).
+- XYB linear-input encoder paths saturated to white — FIXED 2026-04-23 (28658af6 + 9e2348fe).
+- Fused parallel decode bypassed coefficient storage (`DecodeMode::Coefficient`) — FIXED 2026-03-31 (c9b47ec1).
+- Progressive decoder truncation near restart markers (missing bit-by-bit Huffman fallback) — FIXED 2026-03-09 (08ef601).
+- `--features parallel` silently skipped deringing — FIXED 2026-03-09.
+- zune-jpeg "decodes our progressive as grayscale" report — STALE; separate zune 0.5.12 bug (skips AC refinement with DRI) remains upstream.
+- Grayscale scanline reader panic — FIXED 2026-02-06 (be24fac).
+- XYB 4:2:0 undecodable JPEGs (DC category clamped in frequency counter but not encoder) — FIXED 2026-03-04 (b0cafce).
+- CMYK scanline transform panic — FIXED 2026-03-04 (bde9f48).
+- False XYB ICC detection for cjpegli JPEGs (matched "jxl " CMM instead of the exact XYB profile) — FIXED 2026-02-14 (744d38a).
+- 4:2:0 scanline chroma upsampling at MCU bottom boundaries — FIXED 2026-02-09 (bd0f8d7).
+- Scanline h2v2 boundary fixup buffer overflow (>8192px wide) — FIXED 2026-02-09 (8f1295f, closes #1).
+- Progressive MCU-padded storage stride mismatch — FIXED 2026-02-09 (29d6d81).
+- Progressive interleaved DC scan padding desync — FIXED 2026-02-09 (759a4a7).
+- Older fixed bugs: `docs/TUNING_HISTORY.md`.
 
 ## Planned Features / TODO
 
@@ -1308,9 +1198,15 @@ but `false` for XYB (where SOF1 is forced for DC categories, not quant precision
 
 ### Default Tests (no external dependencies)
 ```bash
-cargo test --release                    # All non-ignored tests (~340 tests)
+cargo test --release                    # All workspace members: 2,449 run + 208 ignored (2026-10-08)
 cargo test --release --test <name>      # Specific test file
 ```
+
+**Disk:** `[profile.release]` sets `debug = true`, and plain `cargo test` also links every example
+(132 of them). Built for both default and `--features parallel`, the examples were 31 GB of a 40 GB
+`target/` (measured 2026-10-08; single binaries up to 282 MB). When disk is tight, run the same tests
+with `cargo test --release --lib --tests` plus `--doc`, and catch example/bench compile breakage
+with `cargo check --release --examples --benches`.
 
 ### Full Test Suite (requires C++, testdata, corpus)
 
@@ -1339,7 +1235,7 @@ cargo test --release --features ffi-tests -- --ignored
 
 | Category | Command | Notes |
 |----------|---------|-------|
-| Unit tests | `cargo test --release --lib` | 324 tests, no deps |
+| Unit tests | `cargo test --release --lib` | 1,264 + 4 ignored across members (zenjpeg: 1,200 + 1), 2026-10-08; no deps |
 | Integration | `cargo test --release` | Includes strip parity |
 | C++ parity | `cargo test --release -- --ignored` | Needs C++ build |
 | Corpus | `--features corpus-tests -- --ignored` | Needs image corpus |
@@ -1360,6 +1256,8 @@ cargo run --release --example benchmark_sharp_yuv
 
 ### Benchmark Output Rules (CRITICAL)
 
+NOTE 2026-07-19: NEW benches use zenbench (workspace mandate); the criterion notes below apply to legacy benches only.
+
 **NEVER re-run benchmarks just to parse output differently.** Criterion saves structured JSON:
 
 ```bash
@@ -1368,7 +1266,7 @@ cargo run --release --example benchmark_sharp_yuv
 cat target/criterion/decode_compare/jpegli-baseline/512x512/new/estimates.json | jq '.mean.point_estimate'
 
 # If you need terminal output, pipe to a file on FIRST run:
-cargo bench --bench decode_compare 2>&1 | tee /tmp/bench-output.txt
+cargo bench --bench decode_compare 2>&1 | tee ~/tmp/bench-output.txt
 ```
 
 **JSON structure:** `estimates.json` contains `mean`, `median`, `slope`, `std_dev` with `point_estimate` (nanoseconds) and `confidence_interval`.
@@ -1497,7 +1395,7 @@ encoder.finish_into(&mut output, &metadata)?;
 ### UltraHDR Conformance Notes
 
 zenjpeg uses `ultrahdr-core` for XMP metadata parsing and gain map computation. There are known
-differences from Google's libultrahdr reference implementation:
+differences from the libultrahdr reference implementation:
 
 | Behavior | libultrahdr | zenjpeg/ultrahdr-core |
 |----------|-------------|----------------------|
@@ -1529,6 +1427,32 @@ use butteraugli::compute_butteraugli;
 - NEVER use the Kodak corpus. It's overfit by every codec and gives misleading results. Use CID22, CLIC, or screenshots instead.
 - NEVER use smooth gradients for test image generators. Gradients produce degenerate DCT coefficients (0 or ±1) where arithmetic right shift is identity (`-1 >> n = -1`), making successive approximation levels indistinguishable and frequency-split comparisons meaningless. Use noise+patches, photographic content, or checkerboard patterns instead.
 
+**REQUIRED test images: flat-chroma (DC-only) coverage for any decoder path test.**
+
+The gradient ban above is about *luma frequency-split* comparisons. Do NOT
+over-read it into "make everything high-frequency" — that is its own blind spot,
+and it has cost us a real shipped-adjacent bug:
+
+- A decoder's **DC-only** block paths (`coeff_count <= 1`, `idct_int_dc_only`)
+  are **unreachable** with high-frequency content. Smooth chroma quantizes to
+  DC-only, which is what essentially **every real photograph** produces.
+- 2026-07-15: the coefficient path's vertical-context peek had a wrong DC-only
+  IDCT (`(dc + 1024) >> 11` vs the correct `(dc + 4 + 1024) >> 3`). It was
+  byte-exact vs real libjpeg-turbo on every synthetic generator in the suite, at
+  every size × subsampling × path — because they all deliberately make chroma
+  non-flat (`color_noise`: *"so chroma isn't flat"*). Only a corpus image caught
+  it (waterhouse.jpg: 76/255 wrong on the last row of every MCU row). See
+  `docs/DECODER_UNIFICATION_PLAN.md`.
+
+So: any test that sweeps decode paths MUST cover **both** chroma regimes —
+high-frequency chroma *and* chroma that is flat within each 8×8 chroma block
+(varying across MCU boundaries so boundary errors stay visible). Canonical
+generators: `smooth_chroma_image` in `tests/libjpeg_idct_all_paths_parity.rs`
+(swept via `IMAGE_KINDS`) and `smooth_chroma_bands` in
+`tests/bundled/coeff_unification.rs`. Both are verified to fail against the
+pre-fix code — do not delete them citing the gradient ban; they are not
+gradients, and they are the only reason those branches are covered.
+
 ## Git Discipline
 
 1. **Commit early, commit often** - Uncommitted work is invisible
@@ -1538,26 +1462,63 @@ use butteraugli::compute_butteraugli;
 
 ## Feature Flags
 
+Verified against `zenjpeg/Cargo.toml` on 2026-07-15. `Cargo.toml` is the source
+of truth — re-check it before relying on this list.
+
 ```toml
 [features]
-default = ["decoder"]
-trellis = []              # Rate-distortion trellis quantization (mozjpeg-style)
-decoder = []              # Enable decoder (prerelease, API will change)
-parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
-boundary-rd = ["decoder"] # Boundary-continuity refinement (#91 / PR #102, opt-in).
-moxcms = ["dep:moxcms"]   # Color management (pure-Rust, SIMD). Required for XYB + .correct_color()
-ultrahdr = ["dep:ultrahdr-core", "decoder"]  # UltraHDR HDR gain map support
-layout = ["decoder", "dep:zenlayout", "dep:zenresize"]  # Layout pipeline (geometry + resize)
-zencodec = ["decoder"]    # zencodec trait impls
-__ffi-tests = []          # C++ parity tests (requires C++ jpegli submodule + toolchain)
-__corpus-tests = []       # Corpus comparison tests
-__test-utils = []         # Testing utilities
+default = []                                   # everything below is opt-in
+
+# ── User-facing ──
+parallel = ["dep:rayon"]                       # multi-threaded DCT/quant + parallel decode
+moxcms = ["dep:moxcms"]                        # color management. Required for XYB + .correct_color()
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db"]  # zencodec trait impls + ICC synth
+layout = ["dep:zenresize"]                     # lossless transforms + decode→resize→encode
+ultrahdr = ["ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
+boundary-rd = []                               # boundary-continuity refinement (#91 / PR #102)
+target-zq = ["dep:zensim", "dep:zenpredict", ...] # all Quality::Zq* — see below
+recompress = []                                # JPEG→JPEG recompression (decoder only, cheap)
+recompress-iqa = ["recompress", "dep:zensim"]  # + closed-loop IQA refinement (Budget::MaxIterations>1)
+recompress-expert = ["recompress"]             # recompress::expert — unstable, not semver-covered
+
+# ── Internal / dev-only (`__` prefix = don't use) ──
+__ffi-tests = []                               # C++ parity (needs jpegli submodule + toolchain)
+__corpus-tests = []                            # corpus comparison tests
+__test-utils = []                              # image generation / quality verification
+__expert = []                                  # InternalParams bundle (mirrors zenwebp's __expert)
+__profile = []                                 # scope-timer instrumentation
+__debug-tokens = []                            # token serialization for C++ comparison
+__alloc-instrument = []                        # Vec utilization logging on drop
+__bdrd-trace = ["boundary-rd"]                 # per-block BD-RD refinement trace sink
+__wasm-simd = []                               # WASM SIMD128 tests
+__picker-research = [...]                      # needs sibling ../../zenanalyze/zenpredict checkout
 ```
 
-zenyuv (SIMD RGB→YCbCr) is a mandatory dependency — no feature flag. The
-old `yuv = []` gate used to select between zenyuv-via-`fast_yuv` and an
-in-crate magetypes scalar fallback; the scalar path was deleted so there's
-only one code path now.
+**Flags that no longer exist** (removed; do not use — they will fail the build,
+not no-op): `trellis`, `decoder`, `cms`, `archmage-simd`, `yuv`. Trellis, the
+decoder, icc-db synthesis, archmage/magetypes SIMD, and zenyuv are all
+unconditionally compiled. zenyuv's old `yuv = []` gate selected between
+zenyuv-via-`fast_yuv` and an in-crate magetypes scalar fallback; the scalar path
+was deleted, so there is one code path now.
+
+**Recompress split:** `recompress` needs only the decoder (no heavy deps, barely
+moves compile time). The closed loop is split into `recompress-iqa` because it
+pulls `zensim` — same reason `target-zq` does.
+
+**`target-zq` is the umbrella for every `Quality::Zq*` variant** (2026-07-16):
+- `Quality::Zq` / `Quality::ZqExplicit` — closed loop (encode→decode→zensim→correct). Needs `zensim`.
+- `Quality::ZqPicker` — realtime one-shot: the distilled picker predicts the config, single encode, **no measurement** (`achieved_score` is `NaN`). Needs `zenpredict` + `zenanalyze-api`.
+
+The one-shot and iterative paths are a caller choice: pick the `Quality` variant.
+Both retain the source pixels (`Quality::is_perceptual_target()`). Per the
+2026-07-16 decision this is ONE feature (`target-zq` pulls both the metric and
+the picker) rather than a split `picker` flag — so a realtime-only consumer
+still compiles `zensim` it doesn't call. `zenpredict` is an unpublished sibling
+path dep (`../../zenanalyze/zenpredict`), which is why **no CI job enables
+`target-zq`** and the i686 manifest-strip rewrites it to `["dep:zensim"]`; it
+resolves to a normal version dep once the picker + new zensim publish.
+`__picker-research` is now a thin alias for `target-zq` (kept for the
+`picker_v0_3_holdout_ab` dev binary).
 
 **Boundary-RD:** Adds the post-quantization refinement from issue #91.
 Disabled by default — `cargo build -p zenjpeg` (with or without trellis)
@@ -1568,8 +1529,8 @@ produces bit-for-bit identical output to pre-boundary-RD `origin/main`
 evolvable — coefficient (#94, #103) drives parameter-space exploration
 with GPU-backed metrics behind this flag.
 
-**Decoder:** The decoder API is in prerelease. Enable with `features = ["decoder"]`.
-API will have breaking changes.
+**Decoder:** The decoder API is in prerelease (always compiled — the `decoder`
+flag is gone entirely, not a no-op). API will have breaking changes.
 
 **SIMD:** archmage + magetypes are mandatory dependencies (token-based safe intrinsics).
 `wide` crate provides portable fallback. On x86_64, archmage dispatches to AVX2/FMA/AVX-512
@@ -1634,3 +1595,266 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Support `Rgba8` and `Bgra8` for encode and decode — encode: commit 44dcc4a, decode: commit 001319b
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
+
+## aarch64 / NEON dispatch audit (2026-07-31)
+
+**Fixed:** `encode::dct::forward_dct_8x8` had an x86_64 arm and a wasm32 arm but
+NO aarch64 arm, so ARM fell through to `forward_dct_8x8_scalar`. The NEON code
+already existed — `forward_dct_8x8_simd_chained_fallback` carries
+`#[magetypes(v3, neon, wasm128, scalar)]`, so a `_neon` variant was generated on
+every ARM build and was simply unreachable. Wiring the arm: **3.24x** on the
+kernel (95.2 -> 29.4 ns), end-to-end encode 1.23x -> 1.30x vs forced scalar.
+Gate: `forward_dct_8x8_dispatched_matches_scalar`.
+
+The pre-existing tests could not have caught it — they only ever exercised the
+scalar path on ARM, so they stayed green through both the bug and the fix.
+
+**The shape to grep for:** a dispatch fn with a `#[cfg(target_arch = "x86_64")]`
+arm that terminates in a bare `*_scalar(...)` call instead of
+`incant!(*_fallback(...))`. The `incant!` form dispatches NEON correctly (that
+is why `forward_dct_8x8_wide` was fine); the bare-scalar form silently drops ARM.
+
+**Still open — 4 portable-looking, 1 unclear.** These have an x86 arm, no NEON
+arm, no `incant!`, and end in a bare scalar call:
+
+| site | note |
+|---|---|
+| `encode/linear_lut.rs::linear_to_srgb_255_x8` | x86-only `_v3`, body is generic `mt_f32x8` |
+| `encode/linear_lut.rs::linear_u16_to_srgb_255_x8` | ditto |
+| `encode/linear_lut.rs::linear_rgb16_to_ycbcr_x8` | ditto |
+| `encode/linear_lut.rs::linear_rgbf32_to_ycbcr_x8` | ditto |
+| `decode/rst_scan.rs::scan_rst_markers` | byte scan, not obviously vectorizable the same way |
+
+**DONE 2026-07-31.** All four now have an aarch64 arm:
+
+    linear_to_srgb_255_x8       38.6 -> 11.2 ns   3.45x
+    linear_u16_to_srgb_255_x8   35.3 ->  9.7 ns   3.64x
+    linear_rgb16_to_ycbcr_x8   108.7 -> 20.0 ns   5.44x
+    linear_rgbf32_to_ycbcr_x8   85.9 -> 16.2 ns   5.30x
+
+They could NOT be fixed the way the DCT was, and the reason is worth keeping:
+their only sRGB step is `linear_srgb::tokens::x8::linear_to_srgb_v3`, and the
+whole `tokens::x8` module is `#[cfg(target_arch = "x86_64")]`. Adding
+`#[magetypes(v3, neon, wasm128)]` to that body was tried and reverted — it
+generates a `_neon` variant inside a module that does not exist on aarch64.
+
+The ARM arms are instead built on `linear_srgb::tokens::x4` (not arch-gated,
+NEON-capable), running the 4-wide transfer twice per 8 values. Because that is
+a different decomposition from the x86 body rather than the same code on a
+different token, each kernel is gated against the wrapper's own scalar fallback
+(`arm_linear_lut_tests`), with inputs spanning the sRGB piecewise knee
+(0.0031308), the linear segment below it, the power segment above, exact 0/1,
+and HDR values > 1 that trigger Reinhard — a transfer curve can agree in
+midtones while a branch or clamp is wrong at a boundary. Verified LIVE: scaling
+the x255 step to 254 fails all four.
+
+**Where ARM is already fine:** `color/ycbcr.rs`, `decode/idct_int.rs` and
+`quant/aq/simd.rs` all dispatch through `incant!` with magetypes-generated NEON
+variants — their extra `X64V3Token` hits are additional x86-only fast paths on
+top, not a missing ARM path. `encode/mage_simd.rs` is x86-only by design
+(callers pass `Option<Desktop64>`, which is None on ARM and falls back).
+
+**Known unrelated breakage:** `jpegli-internals-sys`'s vendored archive contains
+`adaptive_quantization.cc.o` that is "not a mach-o file" on this host, which
+breaks any target depending on it (`cpp_comparison` bench, the `__test-utils`
+integration tests). Pre-existing. `--lib` and `--bench tier_isolation` are
+unaffected.
+
+## Complete Zq candidate binding and controller repairs (2026-09-08)
+
+Read `docs/zensim-candidate-binding-2026-09-08.md` and
+`benchmarks/zensim_candidate_binding_2026-09-08.md` before candidate loop work.
+`__zensim-research` / `zq_rd_probe` use exact bakes, explicit seed q and
+scalar/neutral/active controls through complete Rust `BakeScorer`. Every current
+map is recomputed, including pass zero; unsupported terms/gates/layouts and
+legacy peak bounds fail. No process-global profile/gradient cache is imported.
+The current AQ callback includes the final flush; scaling no longer clamps
+normal strengths to 0.20. Unit scales are byte-neutral, including partial edge
+blocks. The near-q=100 global correction panic is fixed. Named Zq RGB/f32,
+subsampling and strict-bound tests pass. Two correction passes may cost three
+full encodes: use observed work counts, not the older max_passes prose.
+One training-family screen proves exact map/byte/pixel repeat and engagement;
+69 bytes saved accompanies lower quality under D/SSIMULACRA2/Butteraugli. This
+is not an RD win, calibrated targeting or replacement-model qualification.
+Use the shared zensim native targeting owner for the next full experiment.
+
+- Metadata integration found that converting an input limit through the native JPEG error
+  retained its category but lost the shared `LimitExceeded` cause. Inventory now keeps
+  that cause in its codec envelope; generic and dynamic dispatch assert actual/max.
+
+### ICC chunk parity (2026-10-12)
+
+Native `DecodedExtras::icc_profile` previously concatenated malformed ICC chunks
+that extended inspection rejected. Both now use `container/chunks.rs`; framing
+stays codec-owned and no inventory feature is required. `just metadata-icc-parity-check`
+checks native/inspection agreement and replays the existing ICC conformance cases.
+The native accessor retains its published Option signature and reports invalid
+chunk sets as None. Extended XMP's legacy concatenation remains separate and
+must not be silently replaced by a differently shaped logical packet.
+
+## Known Bugs — shared contract migration validation
+
+Resolved during the shared-contract migration: native `encode::ExifFields` and
+shared `zencodec::Exif` both have `to_bytes` methods but different contracts.
+Only the shared writer delegates to zenmeta; keep native helper tests on their
+native API. `just shared-contract-ci-check` also compiles the independent fuzz
+workspace, whose zencodec pin must match the main workspace to avoid duplicate
+trait identities.
+
+## Known Bugs: partial header ICC fixed (2026-10-25)
+
+The header-only ICC extractor ignored chunk totals and could return a partial profile. It now reuses the native chunk validator, preserving complete legacy zero-of-one profiles and refusing incomplete/duplicate/inconsistent/empty sets. `just metadata-header-check` covers the extractor, header info, zencodec header probe, native extras and structural inspection. This does not fix the separate full-probe scope or late-metadata interpretation contracts tracked in issue238.
+
+## Known Bugs — component decoding allocation review (2026-10-26)
+
+`foundation/alloc.rs::try_with_capacity` allocated through `Vec::with_capacity`
+before its fallible reserve. An injected allocation failure aborted instead of
+returning an error. The component quantization-table failure test reproduces it;
+the fix starts from an empty Vec and performs the fallible reservation first.
+The isolated Linux allocator-interposition test checks the returned context.
+
+## Native component hardening (2026-10-26)
+
+- Minimal libjpeg-turbo fixtures exposed that 8-bit two-component frames fell
+  through to the RGB reader's 1/3/4-component admission check. Route them through
+  the same native component reader as higher component counts. Regression:
+  `tests/native_hardening.rs::native_fixture_raster_hashes`.
+
+## Native decoder hardening (2026-10-26)
+
+Minimal reference fixtures exposed inconsistent routing of 8-bit two-component
+frames and Native16 CMYK rows; both now use the shared component source. Native
+processing options are validated on those routes instead of silently ignored.
+Pulse checkpoint tests preserve typed timeout errors through header and entropy
+work. Parallel RGB and planar wave decoding now poll at each MCU; collected
+fused decoding uses the same caller token. Gates: `native_hardening`,
+`just native-branch-coverage`, and `fuzz_native_components`. Branch completeness
+must be measured against the common base of the native-precision PR stack.
+
+## Known Bugs: float scanline reconstruction (2026-10-25)
+
+A 97x65 baseline RGB qualification fixture differs at the first float sample
+between `JpegStreamingDecoder` and one-shot `Decode::decode`: strip i16
+reconstruction versus the floating-point IDCT. Issue 239 tracks a shared bounded
+float reconstruction path. Controlled decoding refuses float output before
+pixel effects. RGB float packing, linear row descriptors and gray linear reads
+are repaired on the controlled-decode PR; they do not close the precision gap.
+
+## Known Bugs: grayscale restart geometry fixed on controlled-decode (2026-10-25)
+
+Encoding Gray8 through the default YCbCr configuration retained 4:2:0 MCU
+geometry even though SOF describes one component at 1x1 sampling. A 97x65 baseline
+fixture's DRI was 70 and `jpeg-decoder` rejected the missing expected RST0;
+ordinary native decode recovered while scanline decode refused. Normalize gray
+input/output geometry before coefficient layout and restart resolution. The
+controlled-decode test uses an independent reader before native row parity.
+
+## Known Bugs: full-probe auxiliary scope (fixed on controlled-decode, 2026-10-25)
+
+Full probes formerly left plain JPEG gain-map presence Unknown and did not carry
+container MPF/multi-image facts into ImageInfo. The controlled transcode adapter
+correctly refused that incomplete scope. Full probes now use the existing
+container probe across scans and image boundaries; unresolved auxiliary signals
+remain explicit. `controlled_decode` covers plain, late-signal and concatenated
+image cases for baseline and progressive sources.
+
+## Known Bugs: profile-tagged encode and fuzz graph (2026-10-25)
+
+The shared JPEG adapter previously rejected nonlinear U8 descriptors produced
+by ICC-aware conversion. The controlled-decode PR qualifies matching retained
+RGB ICC input in YCbCr mode; `just profiled-encode-check` verifies exact bytes,
+strided batches and independent readback. Issue 241 tracks the qualification.
+The standalone fuzz workspace also pinned a different zencodec revision from
+the codec; commit 8a8c1088 aligns both registry/direct edges and
+`just controlled-fuzz-check` verifies the complete target graph.
+
+## Fixed: legacy progressive entropy helpers (2026-10-27)
+
+Whole-library coverage work reproduced two defects in `entropy/encoder.rs`'s
+progressive helper methods (currently no production call sites found): first AC
+scan encoding emits magnitude-minus-one instead of complemented magnitude for
+negative coefficients (`-3` emits `0x6f`, Annex K requires `0x4f` for a single
+category-two coefficient); missing DC symbols hit the Huffman debug assertion
+before the helper can return its documented error. Regressions:
+`progressive_negative_ac_uses_ones_complement_magnitude` and
+`progressive_dc_emits_exact_annex_k_codes_and_refinement_bits`. Both pass after
+complementing the negative magnitude bits and checking symbol presence before
+calling the asserting Huffman accessor.
+
+The same coverage pass reproduced an EOB-run fallback defect in the legacy
+helper: a run of two blocks with the standard AC table panics on missing symbol
+0x10 before falling back to individual EOB codes. The exact-code regression is
+`progressive_eob_runs_use_exact_codes_or_individual_eobs`. Fixed by checking
+table presence before the asserting accessor; missing EOB symbols return an
+error, standard tables emit individual EOB codes, and run-capable tables retain
+compact coding. All exact-code regressions pass.
+
+## Known Bugs: zencodec colour carrier and 16-bit transfer (fixed on native-preflight, 2026-10-27)
+
+Reproduced on aeba4cf6 by `tests/source_color_binding.rs` (jpeg-decoder reads the
+samples and the ICC): the adapter chose its ICC from job `Metadata` only, so a checked
+`EncodeRequest` (no metadata) wrote Display P3 pixels untagged, whether the P3 came
+from the context ICC, context CICP or descriptor primaries (issue 154). Also: a stale
+metadata ICC survived an explicit sRGB context, Verbatim and `embed_icc(false)`
+dropped the only description, XYB accepted P3 pixels, linear P3 input got no carrier,
+and `RGB16_SRGB` (advertised) was encoded as linear light ((200,40,40) decoded as
+(229,111,111)). The colour contract now: the carrier describes the stored samples;
+context ICC > context CICP > non-default descriptor primaries; linear layouts are
+stored sRGB-encoded, so their carrier is (primaries, sRGB TRC) and an unidentified
+profile refuses. Metadata still labels pixels without an explicit colour context, even
+a non-default descriptor (`emit_integration` and zenpng's
+`explicit_icc_is_not_overridden_by_descriptor_derived_cicp` pin that contract), so only
+an explicit `ColorContext` can expose a stale metadata carrier. zencodec's
+`EncodeJob::plan_encode` / `Encoder::begin_declared` share one preparation with
+`begin`; `tests/row_planning.rs` compares them over 3,332 cells.
+
+Also fixed there: a configured `pre_blur` was applied only by packed RGB8 pushes
+(one-shot and accumulated encodes); `begin` + `push_rows` and `encode_from` skipped it
+and wrote different bytes for the same pixels. Row encodes now refuse it in preparation
+(`row_encodes_refuse_a_pre_blur_they_cannot_apply`). The native `pre_blur` doc still
+claims RGBA8 support; the code blurs only `Rgb8Srgb`.
+
+## Known Bugs: ICC carrier refusals under `embed_icc: false` (native-preflight stack, 2026-10-28)
+
+On main (`74ce6cee`) an encode writing no ICC (`embed_icc: false`, or a plan that drops
+it) refused only descriptions identified as non-sRGB, as `Request(CmsRequired)`: an
+unidentified colour context profile, or an unidentified job profile over Display P3
+pixels, was stripped and read back as sRGB. Now (`build_request_from`,
+`tests/encode_carrier_policy.rs`):
+
+- Every description that is not the sRGB default refuses, as `Policy(Encode)` when the
+  policy forbids ICC.
+- Exception for the deprecated best-effort `with_policy` (zencodec's dyn `set_policy`,
+  `CodecSet`'s legacy conveniences and legacy transcode reach it): job metadata on pixels
+  without a colour context drops a profile zenpixels cannot identify, as before, unless
+  the job code points or the pixels' own interpretation are not the sRGB default. The
+  established unit test `encoding_with_policy_strips_metadata` exercises this, unchanged.
+- A colour context profile, even repeated as job metadata, and a checked policy
+  (`try_set_policy`, prepared `EncodeRequest`s) never drop a profile that way.
+- Setter order (private `legacy_policy`): `with_policy` marks the policy legacy; an
+  admitted `try_set_policy` replaces policy and mark; `try_set_policy(none())` and a
+  refused checked policy change nothing, so legacy then checked `none()` stays legacy.
+- Refusals happen in preparation: one-shot encodes return no output, and a refused
+  `begin_declared` leaves `pending_output` empty (`plan_encode` refuses too). By source
+  reading, without a control: with no `begin` and no canvas size, pushed rows accumulate
+  and the refusal comes at `finish`, still before any output.
+
+Not adopted (root, 2026-10-28): dropping job bytes by a structural check. lcms 2.17
+refuses to open the tests' malformed fixtures
+(`benchmarks/icc_fixture_lcms_probe_2026-10-28.txt`), but one reader is not a validator.
+
+## RGBA float output negotiation (2026-10-29)
+
+The one-shot adapter advertised RGBAF32 but selected its output layout only
+from the native three-channel sample count, returning RGBF32. Required shared
+requests correctly refused that mismatch after decoding. The correction honors
+the negotiated RGBA layout with opaque alpha and unchanged RGB bits. Regression:
+`advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha`.
+One-shot pre-allocation descriptor admission remains a separate contract.
+
+## Ranked output negotiation regression (2026-10-29, fixed)
+
+The shared one-shot adapter formerly enabled F32 when any ranked preference was
+float, overriding an earlier supported U8 format. Precision now uses the same
+first-supported selector as layout, after parsing source component count.
+The controlled-decode target retains mixed precision ordering regressions.

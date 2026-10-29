@@ -93,16 +93,16 @@ fn list_pngs(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn load_rgb8(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    // Use `image` crate for robust PNG decoding.
-    let img = match image::open(path) {
-        Ok(i) => i.into_rgb8(),
+    let img = match zenjpeg_bench_utils::load_png(path) {
+        Ok(i) => i,
         Err(e) => {
             eprintln!("WARN load {path:?}: {e}");
             return None;
         }
     };
-    let (w, h) = img.dimensions();
-    Some((img.into_raw(), w, h))
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((bytes, w as u32, h as u32))
 }
 
 fn make_table_a(q: u8) -> EncodingTables {

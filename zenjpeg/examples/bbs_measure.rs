@@ -124,24 +124,11 @@ fn parse_args() -> Args {
     }
 }
 
-/// Load any image path that `image` crate can read (PNG, JPEG, BMP, etc.),
-/// into a flat RGB8 buffer + (width, height).
+/// Load a PNG into a flat RGB8 buffer + (width, height).
 fn load_rgb(path: &Path) -> (Vec<RGB<u8>>, usize, usize) {
-    let img =
-        image::open(path).unwrap_or_else(|e| panic!("failed to open {}: {}", path.display(), e));
-    let rgb = img.to_rgb8();
-    let (w, h) = (rgb.width() as usize, rgb.height() as usize);
-    let mut buf = Vec::with_capacity(w * h);
-    for row in rgb.rows() {
-        for p in row {
-            buf.push(RGB {
-                r: p.0[0],
-                g: p.0[1],
-                b: p.0[2],
-            });
-        }
-    }
-    (buf, w, h)
+    let img = zenjpeg_bench_utils::load_png(path)
+        .unwrap_or_else(|e| panic!("failed to open {}: {}", path.display(), e));
+    img.into_contiguous_buf()
 }
 
 /// Decode a JPEG byte stream to flat RGB u8 using zune-jpeg (no ICC applied —

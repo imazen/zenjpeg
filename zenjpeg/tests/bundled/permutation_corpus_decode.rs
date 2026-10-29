@@ -12,7 +12,7 @@
 //! using any criteria (worst-max-diff, worst-category, expected failures, etc).
 //!
 //! Run (after generating corpus):
-//!   cargo test --release -p zenjpeg --features decoder \
+//!   cargo test --release -p zenjpeg \
 //!     --test permutation_corpus_decode \
 //!     -- --nocapture --ignored
 //!
@@ -21,7 +21,7 @@
 //!   ZENJPEG_PERM_LIMIT  max files to process (for smoke runs)
 //!   ZENJPEG_PERM_REPORT output TSV path (default: <out>/validation.tsv)
 
-#![cfg(all(feature = "decoder", not(target_arch = "wasm32")))]
+#![cfg(not(target_arch = "wasm32"))]
 
 use rayon::prelude::*;
 use std::fs::{self, File};
@@ -202,7 +202,7 @@ fn zensim_regress(a: &Decoded, b: &Decoded) -> Option<(f64, String)> {
     use zensim::{PixelFormat, StridedBytes, Zensim, ZensimProfile};
     use zensim_regress::{RegressionTolerance, check_regression};
 
-    let zsim = Zensim::new(ZensimProfile::latest());
+    let zsim = Zensim::new(ZensimProfile::codec_target());
     let w = a.width as usize;
     let h = a.height as usize;
     let stride = w * 3;

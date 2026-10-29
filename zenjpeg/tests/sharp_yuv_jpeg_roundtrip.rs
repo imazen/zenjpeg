@@ -1,9 +1,8 @@
 //! Compare chroma methods through the full JPEG pipeline:
 //! encode RGB → JPEG Q85 4:2:0 → decode → compare to original.
 //!
-//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_jpeg_roundtrip --features decoder -- --nocapture`
+//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_jpeg_roundtrip -- --nocapture`
 
-#[cfg(feature = "decoder")]
 mod tests {
     use enough::Unstoppable;
     use zenjpeg::decode::Decoder;
@@ -21,7 +20,7 @@ mod tests {
             png::ColorType::Rgba => {
                 let src = &buf[..info.buffer_size()];
                 let mut out = Vec::with_capacity((info.width * info.height * 3) as usize);
-                for c in src.chunks_exact(4) {
+                for c in src.as_chunks::<4>().0 {
                     out.extend_from_slice(&c[..3]);
                 }
                 out

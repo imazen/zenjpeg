@@ -32,9 +32,9 @@
 use enough::Unstoppable;
 use std::path::PathBuf;
 use zensim::{RgbSlice, Zensim, ZensimProfile};
-use zensim_regress::Tolerance;
 use zensim_regress::checksums::ChecksumManager;
 use zensim_regress::testing::{RegressionTolerance, check_regression};
+use zensim_regress::tolerance::ToleranceSpec;
 
 use std::collections::BTreeMap;
 use zenjpeg::decoder::Decoder;
@@ -262,7 +262,7 @@ fn main() {
     };
 
     // Set up zensim and optional checksum manager
-    let zensim = Zensim::new(ZensimProfile::latest());
+    let zensim = Zensim::new(ZensimProfile::latest_preview());
 
     let mgr = if !args.no_checksums {
         std::fs::create_dir_all(&args.checksums_dir).ok();
@@ -278,7 +278,7 @@ fn main() {
         .with_min_similarity(40.0)
         .ignore_alpha();
 
-    let checksum_tol = Tolerance {
+    let checksum_tol = ToleranceSpec {
         max_delta: 255,
         min_similarity: 40.0,
         max_pixels_different: 1.0,

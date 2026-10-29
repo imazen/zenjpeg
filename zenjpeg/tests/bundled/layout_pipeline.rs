@@ -1,4 +1,3 @@
-#![cfg(feature = "trellis")]
 //! Integration tests for the layout pipeline module.
 //!
 //! Tests lossless path (DCT-domain transforms), lossy path (decode→resize→encode),
@@ -559,6 +558,23 @@ const ULTRAHDR_XMP: &str = r#"<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
 
 /// Create a fake UltraHDR JPEG: primary (with gain map XMP) + gain map JPEG appended after EOI.
 fn make_ultrahdr_jpeg(primary_w: u32, primary_h: u32, gainmap_w: u32, gainmap_h: u32) -> Vec<u8> {
+    make_ultrahdr_jpeg_with(
+        primary_w,
+        primary_h,
+        gainmap_w,
+        gainmap_h,
+        ChromaSubsampling::Quarter,
+    )
+}
+
+/// [`make_ultrahdr_jpeg`] with the gain map's chroma subsampling chosen.
+fn make_ultrahdr_jpeg_with(
+    primary_w: u32,
+    primary_h: u32,
+    gainmap_w: u32,
+    gainmap_h: u32,
+    gainmap_subsampling: ChromaSubsampling,
+) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
 
     // Encode primary with UltraHDR XMP
@@ -575,7 +591,7 @@ fn make_ultrahdr_jpeg(primary_w: u32, primary_h: u32, gainmap_w: u32, gainmap_h:
 
     // Encode gain map (grayscale-like, but RGB for simplicity)
     let gm_pixels = make_noise_pixels(gainmap_w, gainmap_h, 0xDEAD_BEEF);
-    let gm_config = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter);
+    let gm_config = EncoderConfig::ycbcr(75.0, gainmap_subsampling);
     let mut gm_encoder = gm_config
         .request()
         .encode_from_bytes(gainmap_w, gainmap_h, PixelLayout::Rgb8Srgb)
@@ -625,9 +641,12 @@ fn ultrahdr_lossless_identity_preserves_gainmap() {
     );
 }
 
+/// The gain map is 4:4:4 (8x8 MCUs, like the grayscale gain maps cameras
+/// write), so a 180-degree rotation of its 32x24 grid needs no trimming; the
+/// 4:2:0 case is `ultrahdr_lossless_rotate_rejects_partial_gainmap_blocks`.
 #[test]
 fn ultrahdr_lossless_rotate_preserves_gainmap() {
-    let ultrahdr = make_ultrahdr_jpeg(64, 48, 32, 24);
+    let ultrahdr = make_ultrahdr_jpeg_with(64, 48, 32, 24, ChromaSubsampling::None);
 
     let result = LayoutConfig::new(85.0)
         .request(&ultrahdr)
@@ -655,6 +674,26 @@ fn ultrahdr_lossless_rotate_preserves_gainmap() {
     let decoded = Decoder::new().decode(&result.data, Unstoppable).unwrap();
     assert_eq!(decoded.width(), 64);
     assert_eq!(decoded.height(), 48);
+}
+
+/// A 4:2:0 32x24 gain map would lose its bottom 8 rows to a lossless
+/// 180-degree rotation (16x16 MCUs) while the 64x48 primary loses none. The
+/// default edge handling refuses rather than drop or misregister it (#204);
+/// main trimmed the gain map silently.
+#[test]
+fn ultrahdr_lossless_rotate_rejects_partial_gainmap_blocks() {
+    let ultrahdr = make_ultrahdr_jpeg(64, 48, 32, 24);
+    let result = LayoutConfig::new(85.0_f32)
+        .request(&ultrahdr)
+        .rotate_180()
+        .execute(&Unstoppable);
+    let Err(err) = result else {
+        panic!("a partial-block gain map must not be trimmed");
+    };
+    assert!(
+        matches!(err.kind(), zenjpeg::decoder::ErrorKind::InvalidConfig(_)),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -686,6 +725,224 @@ fn ultrahdr_lossy_resize_preserves_gainmap() {
     let decoded = Decoder::new().decode(&result.data, Unstoppable).unwrap();
     assert_eq!(decoded.width(), 64);
     assert_eq!(decoded.height(), 64);
+}
+
+/// Real Ultra HDR files for the lossy gain-map tests (`ultrahdr` feature).
+#[cfg(feature = "ultrahdr")]
+mod lossy_gain_map {
+    use super::*;
+    use ultrahdr_core::pixel_buffer_from_vec;
+    use zenjpeg::decoder::GainMapHandling;
+    use zenjpeg::ultrahdr::{
+        GainMapConfig, GainMapEncodingFormat, UhdrColorGamut, UhdrColorTransfer, UhdrPixelFormat,
+        UltraHdrExtras, compute_gainmap, encode_ultrahdr_luma, encode_with_gainmap_format,
+    };
+
+    /// `w`x`h` linear HDR with `boost(x, y)` as its level.
+    fn hdr(w: u32, h: u32, boost: impl Fn(u32, u32) -> f32) -> ultrahdr_core::PixelBuffer {
+        let mut d = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let v = boost(x, y);
+                for c in [v, v, v, 1.0f32] {
+                    d.extend_from_slice(&c.to_le_bytes());
+                }
+            }
+        }
+        pixel_buffer_from_vec(
+            d,
+            w,
+            h,
+            UhdrPixelFormat::RgbaF32,
+            UhdrColorGamut::Bt709,
+            UhdrColorTransfer::Linear,
+        )
+        .unwrap()
+    }
+
+    /// The gain map's mean code value over each half: rows (`vertical`) or
+    /// columns.
+    fn gain_map_halves(jpeg: &[u8], vertical: bool) -> (f64, f64) {
+        let d = Decoder::new()
+            .gain_map(GainMapHandling::PreserveRaw)
+            .decode(jpeg, Unstoppable)
+            .unwrap();
+        let map = &d.gain_map.as_ref().expect("gain map").jpeg;
+        let g = Decoder::new().decode(map, Unstoppable).unwrap();
+        let (w, h) = (g.width() as usize, g.height() as usize);
+        let px = g.pixels_u8().unwrap();
+        let bpp = px.len() / (w * h);
+        let (mut a, mut b, mut na, mut nb) = (0.0, 0.0, 0.0, 0.0);
+        for y in 0..h {
+            for x in 0..w {
+                let v = f64::from(px[(y * w + x) * bpp]);
+                if (vertical && y < h / 2) || (!vertical && x < w / 2) {
+                    a += v;
+                    na += 1.0;
+                } else {
+                    b += v;
+                    nb += 1.0;
+                }
+            }
+        }
+        (a / na, b / nb)
+    }
+
+    #[test]
+    fn gain_map_follows_the_primary_rotation_and_crop() {
+        // The left half is boosted. The lossy path resized the map to the
+        // output's proportions but neither rotated nor cropped it.
+        let src = encode_ultrahdr_luma(&hdr(64, 32, |x, y| {
+            let level = if x < 32 { 4.0 } else { 0.25 };
+            level * (1.0 + 0.05 * (((x * 7 + y * 13) % 5) as f32 - 2.0))
+        }))
+        .unwrap();
+        let (left, right) = gain_map_halves(&src, false);
+        assert!(left > right + 50.0, "{left} {right}");
+        let cfg = LayoutConfig::new(85.0_f32);
+
+        // Rotate 90° clockwise (lossy, with a resize): left becomes top.
+        let out = cfg
+            .request(&src)
+            .rotate_90()
+            .fit(16, 32)
+            .execute(&Unstoppable)
+            .unwrap();
+        assert!(!out.lossless);
+        let (top, bottom) = gain_map_halves(&out.data, true);
+        assert!(top > bottom + 50.0, "top {top} bottom {bottom}");
+
+        // Keep the right half: the map keeps only the low boost.
+        let out = cfg
+            .request(&src)
+            .crop(32, 0, 32, 32)
+            .fit(16, 16)
+            .execute(&Unstoppable)
+            .unwrap();
+        let (l, r) = gain_map_halves(&out.data, false);
+        assert!(l < left - 50.0 && r < left - 50.0, "cropped map {l} {r}");
+    }
+
+    #[test]
+    fn gain_map_values_survive_a_downscale() {
+        // A checkerboard map (4-pixel HDR cells, one gain-map pixel each at
+        // the luma path's 1/4 scale). Resizing it in linear-light sRGB moved
+        // its mean from 110 to 143 code values.
+        let src = encode_ultrahdr_luma(&hdr(64, 64, |x, y| {
+            if (x / 4 + y / 4) % 2 == 0 { 4.0 } else { 0.25 }
+        }))
+        .unwrap();
+        let (a, b) = gain_map_halves(&src, false);
+        let out = LayoutConfig::new(95.0_f32)
+            .request(&src)
+            .fit(32, 32)
+            .execute(&Unstoppable)
+            .unwrap();
+        let (c, d) = gain_map_halves(&out.data, false);
+        let (before, after) = ((a + b) / 2.0, (c + d) / 2.0);
+        assert!((after - before).abs() < 6.0, "mean {before} -> {after}");
+    }
+
+    fn files() -> Vec<(GainMapEncodingFormat, Vec<u8>)> {
+        let h = hdr(64, 64, |x, y| if (x + y) % 16 < 8 { 3.0 } else { 0.5 });
+        let s = {
+            let mut d = Vec::new();
+            for y in 0..64u32 {
+                for x in 0..64u32 {
+                    let v = if (x + y) % 16 < 8 { 230 } else { 60 };
+                    d.extend_from_slice(&[v, v, v, 255]);
+                }
+            }
+            pixel_buffer_from_vec(
+                d,
+                64,
+                64,
+                UhdrPixelFormat::Rgba8,
+                UhdrColorGamut::Bt709,
+                UhdrColorTransfer::Srgb,
+            )
+            .unwrap()
+        };
+        let (gm, meta) = compute_gainmap(&h, &s, &GainMapConfig::default(), &Unstoppable).unwrap();
+        [
+            GainMapEncodingFormat::Xmp,
+            GainMapEncodingFormat::Iso21496,
+            GainMapEncodingFormat::Both,
+        ]
+        .into_iter()
+        .map(|f| {
+            let jpeg = encode_with_gainmap_format(
+                &s,
+                &gm,
+                &meta,
+                &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+                75.0,
+                f,
+                Unstoppable,
+            )
+            .unwrap();
+            (f, jpeg)
+        })
+        .collect()
+    }
+
+    fn iso_records(jpeg: &[u8]) -> usize {
+        jpeg.windows(zencodec::ISO_21496_1_URN.len())
+            .filter(|w| *w == zencodec::ISO_21496_1_URN)
+            .count()
+    }
+
+    #[test]
+    fn every_metadata_format_keeps_its_gain_map_and_records() {
+        // An ISO-only map was not detected (only hdrgm XMP was), so the
+        // output had no gain map; the ISO records of the other formats were
+        // dropped too.
+        for (format, src) in files() {
+            let out = LayoutConfig::new(85.0_f32)
+                .request(&src)
+                .fit(32, 32)
+                .execute(&Unstoppable)
+                .unwrap();
+            assert!(!out.lossless);
+            let d = Decoder::new().decode(&out.data, Unstoppable).unwrap();
+            let extras = d.extras().unwrap();
+            assert!(extras.gainmap().is_some(), "{format:?}: gain map dropped");
+            assert_eq!(iso_records(&out.data), iso_records(&src), "{format:?}");
+            let source = Decoder::new().decode(&src, Unstoppable).unwrap();
+            let (want, _) = source
+                .extras()
+                .unwrap()
+                .ultrahdr_metadata()
+                .unwrap()
+                .unwrap();
+            let (got, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+            assert_eq!(got, want, "{format:?}: gain parameters changed");
+        }
+    }
+
+    #[test]
+    fn the_directory_points_at_the_new_gain_map() {
+        // The primary's GContainer directory kept the source map's
+        // Item:Length after the map was re-encoded.
+        for (format, src) in files() {
+            if format == GainMapEncodingFormat::Iso21496 {
+                continue; // no XMP
+            }
+            let out = LayoutConfig::new(85.0_f32)
+                .request(&src)
+                .fit(32, 32)
+                .execute(&Unstoppable)
+                .unwrap();
+            let streams = zenjpeg::container::find_jpeg_boundaries(&out.data);
+            assert_eq!(streams.len(), 2, "{format:?}");
+            let map_len = streams[1].end - streams[1].start;
+            let d = Decoder::new().decode(&out.data, Unstoppable).unwrap();
+            let xmp = d.extras().unwrap().xmp().unwrap().to_string();
+            let items = zenjpeg::container::parse_xmp_full(&xmp).1;
+            let lengths: Vec<_> = items.iter().filter_map(|i| i.length).collect();
+            assert_eq!(lengths, vec![map_len], "{format:?}");
+        }
+    }
 }
 
 #[test]

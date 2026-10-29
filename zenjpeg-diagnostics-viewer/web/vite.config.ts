@@ -10,6 +10,7 @@ export default defineConfig({
   // resolves correctly from index.html either way.
   base: "./",
   server: {
+    host: "0.0.0.0",
     // We're prohibited from binding port 8080 (reserved on the host).
     // Pick a port in the 3000-3999 range; 3173 is the diagnostics
     // viewer's default.
@@ -21,6 +22,7 @@ export default defineConfig({
     },
   },
   preview: {
+    host: "0.0.0.0",
     port: 3173,
     strictPort: true,
   },

@@ -8,12 +8,12 @@
 //! grayscale image that triggers the crash in browser WASM environments.
 //!
 //! Run with:
-//!   wasm-pack test --node --features decoder
-//!   wasm-pack test --headless --chrome --features decoder
+//!   wasm-pack test --node
+//!   wasm-pack test --headless --chrome
 //!
 //! NOTE: Node.js WASM may pass while browser WASM crashes - this is the bug.
 
-#![cfg(all(target_arch = "wasm32", feature = "decoder"))]
+#![cfg(target_arch = "wasm32")]
 
 use enough::Unstoppable;
 use wasm_bindgen_test::*;

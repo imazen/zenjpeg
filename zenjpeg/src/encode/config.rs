@@ -2,6 +2,13 @@
 //!
 //! This module contains all configuration-related types for the JPEG encoder.
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
@@ -56,6 +63,15 @@ pub struct ComputedConfig {
     pub use_xyb: bool,
     /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
     pub xyb_subsampling: super::encoder_types::XybSubsampling,
+    /// RGB passthrough mode (issue #185): store channels without color
+    /// transformation. Always 4:4:4; headers signal RGB via component
+    /// IDs 'R','G','B' plus Adobe APP14 transform=0. Mutually exclusive
+    /// with `use_xyb`.
+    pub use_rgb: bool,
+    /// Write one component (Y) whatever the input: `EncoderConfig::grayscale`
+    /// with colour input. The strip processor still converts colour input
+    /// to YCbCr; only Y is written.
+    pub gray_output: bool,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
     /// Enable parallel encoding (requires `parallel` feature)
@@ -72,20 +88,10 @@ pub struct ComputedConfig {
     ///
     /// Has no effect for 4:4:4 (no downsampling needed).
     pub chroma_downsampling: DownsamplingMethod,
-    /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
-    #[cfg(feature = "trellis")]
-    pub hybrid_config: super::trellis::HybridConfig,
-    /// Custom AQ map (optional). If None, computed automatically.
-    /// Allows pre-scaling the AQ map for size control.
-    pub custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
-
     /// Custom encoding tables (escape hatch for experimentation).
     /// Not part of public API.
     #[doc(hidden)]
     #[allow(dead_code)]
-    // Set but not read from ComputedConfig; read from StreamingEncoderBuilder
-    pub(crate) encoding_tables: Option<Box<crate::encode::tuning::EncodingTables>>,
-
     // EncodingBackend removed - strip-based encoding is now the only backend
     /// Edge padding strategy for partial MCU blocks.
     ///
@@ -152,11 +158,22 @@ pub struct ComputedConfig {
     /// Trellis quantization configuration (mozjpeg-compatible API).
     ///
     /// When set, enables trellis quantization for rate-distortion optimization.
-    /// This is the mozjpeg-compatible API. For hybrid AQ+trellis mode, use
-    /// `hybrid_config` instead.
-    #[cfg(feature = "trellis")]
+    /// AQ-coupled (hybrid) lambda is configured via
+    /// [`TrellisConfig::aq_coupling`](super::trellis::TrellisConfig::aq_coupling).
     pub trellis: Option<super::trellis::TrellisConfig>,
 
+    /// Exact smallest-entropy selection: serialize sequential (+tiny)
+    /// and progressive candidates from the same coefficients, emit the
+    /// smallest. See `ProgressiveScanMode::Smallest`.
+    pub smallest_scan: bool,
+    /// Restart interval Smallest's sequential candidates emit (matches an
+    /// explicit Baseline encode; the progressive candidate stays
+    /// suppressed-unless-forced).
+    pub smallest_seq_restart_interval: u16,
+    /// Tiny-file mode as configured (the resolved per-image flag is
+    /// `tiny_file_active`). `Smallest` consults this to decide whether
+    /// the tiny candidate participates.
+    pub tiny_file_mode: super::encoder_types::TinyFileMode,
     /// Whether tiny-file optimizations (shared Huffman tables etc.) are
     /// active for this image. Resolved from [`TinyFileMode`] plus the image
     /// size heuristic at `ComputedConfig` construction time. Checked by the
@@ -240,6 +257,11 @@ pub(crate) fn resolve_restart_rows(
 }
 
 impl ComputedConfig {
+    /// The output has one component: gray input, or `gray_output`.
+    pub(crate) fn writes_gray(&self) -> bool {
+        self.pixel_format.is_grayscale() || self.gray_output
+    }
+
     /// MCU columns for this image's dimensions and subsampling.
     pub(crate) fn mcu_cols(&self) -> u32 {
         let h_samp = match self.subsampling {
@@ -276,6 +298,8 @@ impl Default for ComputedConfig {
             subsampling: Subsampling::S444,
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
+            use_rgb: false,
+            gray_output: false,
             restart_interval: 0,
             #[cfg(feature = "parallel")]
             parallel: false,
@@ -283,10 +307,6 @@ impl Default for ComputedConfig {
             huffman: HuffmanStrategy::Optimize,
             // Box filter matches C++ jpegli default
             chroma_downsampling: DownsamplingMethod::Box,
-            #[cfg(feature = "trellis")]
-            hybrid_config: super::trellis::HybridConfig::disabled(),
-            custom_aq_map: None,
-            encoding_tables: None,
             edge_padding: EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,
@@ -297,8 +317,10 @@ impl Default for ComputedConfig {
             scan_strategy: ScanStrategy::Default,
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
-            #[cfg(feature = "trellis")]
             trellis: None,
+            smallest_scan: false,
+            smallest_seq_restart_interval: 0,
+            tiny_file_mode: super::encoder_types::TinyFileMode::Auto,
             tiny_file_active: false,
         }
     }

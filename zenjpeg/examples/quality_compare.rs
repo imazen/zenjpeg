@@ -35,7 +35,7 @@ use std::path::Path;
 use std::time::Instant;
 use zenjpeg_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, QualityMetrics,
-    decode_jpeg_to_rgb, decode_jpeg_with_icc,
+    decode_jpeg_with_icc,
 };
 
 #[derive(Debug, Clone)]
@@ -258,7 +258,7 @@ fn run_comparison(config: &Config) -> Vec<Result> {
             let decoded = if enc.color == ColorMode::Xyb {
                 decode_jpeg_with_icc(&jpeg_data).expect("Failed to decode XYB JPEG")
             } else {
-                decode_jpeg_to_rgb(&jpeg_data).expect("Failed to decode JPEG")
+                decode_jpeg_with_icc(&jpeg_data).expect("Failed to decode JPEG")
             };
 
             let mut dssim = None;

@@ -9,37 +9,50 @@
 //! - `progressive` - Progressive scan accumulation and refinement
 //! - `output` - Pixel conversion and output formatting
 
+#[cfg(feature = "extended-jpeg")]
 mod arithmetic_scan;
+pub(crate) mod baseline_streaming;
+pub(in crate::decode) mod component_rows;
+mod fast_integer;
 mod markers;
+mod native_metadata;
 mod output;
+pub(crate) mod output_helpers;
+#[cfg(feature = "extended-jpeg")]
+pub(in crate::decode) mod predictive;
+#[cfg(not(feature = "extended-jpeg"))]
+#[path = "predictive_disabled.rs"]
+pub(in crate::decode) mod predictive;
 mod progressive;
 mod scan;
-mod transform;
 
-#[cfg(feature = "ultrahdr")]
+use super::color_model::{ColorMarkers, ColorModel, FrameShape, PathPlan};
+#[cfg(feature = "metadata")]
 use super::extras::MpfImageTypeExt;
-use super::extras::{
-    AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image,
-};
+use super::extras::{DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image};
 use super::{DecodeWarning, JpegInfo, Strictness};
 
 /// Information about a scan needed for scanline reading.
 struct ScanInfo {
     /// Huffman table mapping: (dc_table_idx, ac_table_idx) per component
-    table_mapping: [(usize, usize); 3],
+    table_mapping: [(usize, usize); 4],
+    order: [usize; 4],
+    sequential_valid: bool,
+    /// Components in this scan (Ns).
+    num_components: u8,
     /// Position in data where entropy-coded scan data begins
     data_start: usize,
 }
-use crate::color::icc::{extract_icc_profile, is_xyb_profile};
+use crate::color::icc::extract_icc_profile;
 use crate::error::{Error, ErrorKind, Result};
-use crate::foundation::alloc::{MAX_SCANS, checked_size_2d};
+use crate::foundation::alloc::{MAX_SCANS, checked_size_2d, try_with_capacity};
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DAC, MARKER_DHT, MARKER_DNL, MARKER_DQT,
     MARKER_DRI, MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES,
     MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
-use crate::types::{ColorSpace, Component, Dimensions, JpegMode};
+use crate::types::{Component, Dimensions, JpegMode};
 use enough::Stop;
 
 /// Pre-computed component info for decoding efficiency.
@@ -59,11 +72,78 @@ pub(super) struct CompInfo {
     pub(super) is_full_res: bool,
 }
 
+/// Per-component block grid for a **non-interleaved** scan (`Ns == 1`).
+///
+/// ISO/IEC 10918-1 A.2.2: when a scan carries one component the MCU *is* one
+/// data unit, and the scan contains `ceil(x_i/8) * ceil(y_i/8)` data units in
+/// raster order over that component's own grid — where `x_i`/`y_i` are the
+/// component's dimensions from A.1.1. That count is **not** the interleaved
+/// MCU grid: at 88x54 4:2:0 the luma true grid is 11x7 while the MCU-padded
+/// grid is 12x8.
+///
+/// Storage stays MCU-padded (`mcu_cols * h_samp` stride) because the output
+/// path indexes it that way, so iteration uses the true extents and indexing
+/// uses the padded stride.
+pub(super) struct ComponentBlockGrid {
+    /// Data-unit rows the scan actually contains (`ceil(y_i/8)`).
+    pub(super) comp_blocks_v: usize,
+    /// Data units per row the scan actually contains (`ceil(x_i/8)`).
+    pub(super) comp_blocks_h: usize,
+    /// Storage stride — MCU-padded to match the output path (`mcu_cols * h_samp`).
+    pub(super) padded_blocks_h: usize,
+}
+
+/// Build the [`ComponentBlockGrid`] for one component of a non-interleaved scan.
+///
+/// `max_h_samp`/`max_v_samp` are the **frame**-level maxima (A.1.1), not the
+/// scan's, and `mcu_cols` is the frame's interleaved MCU column count.
+pub(super) fn component_block_grid(
+    components: &[Component],
+    comp_idx: usize,
+    width: u32,
+    height: u32,
+    mcu_cols: usize,
+    max_h_samp: u8,
+    max_v_samp: u8,
+) -> ComponentBlockGrid {
+    let h_samp = components[comp_idx].h_samp_factor as usize;
+    let v_samp = components[comp_idx].v_samp_factor as usize;
+    let width = width as usize;
+    let height = height as usize;
+    let max_h = max_h_samp as usize;
+    let max_v = max_v_samp as usize;
+    let scaled_w = (width * h_samp).div_ceil(max_h);
+    let scaled_h = (height * v_samp).div_ceil(max_v);
+    ComponentBlockGrid {
+        comp_blocks_v: scaled_h.div_ceil(8),
+        comp_blocks_h: scaled_w.div_ceil(8),
+        padded_blocks_h: mcu_cols * h_samp,
+    }
+}
+
+/// Huffman decode tables by DHT slot, boxed. Each table carries a 2 KiB
+/// fast-lookup array, and the parser, its scan handoff and the component-row
+/// reader are moved by value through every reader construction step; inline,
+/// two sets made each move about 18 KiB, and unoptimized builds give every
+/// move its own stack slot (2.1 MB of frames overflowed 2 MiB test threads).
+pub(in crate::decode) type HuffmanTables = Box<[Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES]>;
+
+/// An empty [`HuffmanTables`] set, allocated fallibly.
+pub(in crate::decode) fn empty_huffman_tables() -> Result<HuffmanTables> {
+    let mut tables = try_with_capacity(MAX_HUFFMAN_TABLES, "Huffman decode tables")?;
+    tables.resize_with(MAX_HUFFMAN_TABLES, || None);
+    tables
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|_| Error::internal("Huffman decode table count"))
+}
+
 /// Parsed JPEG scan data needed to construct a scanline reader.
 ///
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
 /// the previous 16-parameter constructor. Created via `JpegParser::into_scan_data()`.
 pub(super) struct ParsedScanData<'a> {
+    pub precision: u8,
     pub data: &'a [u8],
     pub width: u32,
     pub height: u32,
@@ -72,13 +152,17 @@ pub(super) struct ParsedScanData<'a> {
     pub v_samp: [u8; 3],
     pub quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_QUANT_TABLES],
     pub quant_indices: [usize; 3],
-    pub dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    pub ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    pub dc_tables: HuffmanTables,
+    pub ac_tables: HuffmanTables,
     pub table_mapping: [(usize, usize); 3],
     pub scan_data_start: usize,
     pub restart_interval: u16,
-    pub is_xyb: bool,
-    pub is_rgb: bool,
+    /// The frame's colour model and sampling shape, decided at SOF.
+    pub color_model: ColorModel,
+    pub shape: FrameShape,
+    /// Whether the first scan carries every component (see
+    /// [`PathPlan::interleaved`]).
+    pub interleaved: bool,
 }
 
 impl<'a> ParsedScanData<'a> {
@@ -89,6 +173,7 @@ impl<'a> ParsedScanData<'a> {
     /// supply owned data separately (via `ScanlineReader::from_scan_data_cow`).
     pub(super) fn into_owned(self) -> ParsedScanData<'static> {
         ParsedScanData {
+            precision: self.precision,
             data: &[],
             width: self.width,
             height: self.height,
@@ -102,8 +187,9 @@ impl<'a> ParsedScanData<'a> {
             table_mapping: self.table_mapping,
             scan_data_start: self.scan_data_start,
             restart_interval: self.restart_interval,
-            is_xyb: self.is_xyb,
-            is_rgb: self.is_rgb,
+            color_model: self.color_model,
+            shape: self.shape,
+            interleaved: self.interleaved,
         }
     }
 }
@@ -126,6 +212,9 @@ pub(super) struct JpegParser<'a> {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) precision: u8,
+    pub(super) native_precision: bool,
+    /// Lazily resolve category-16 tables preceding SOF, once per parser.
+    pub(super) lossless_tables: Option<bool>,
     pub(super) num_components: u8,
     pub(super) mode: JpegMode,
 
@@ -134,8 +223,10 @@ pub(super) struct JpegParser<'a> {
 
     // Tables
     pub(super) quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_QUANT_TABLES],
-    pub(super) dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    pub(super) ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    // Latch at the first scan for each component: DQT slots can be redefined.
+    pub(super) component_quant: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_COMPONENTS],
+    pub(super) dc_tables: HuffmanTables,
+    pub(super) ac_tables: HuffmanTables,
 
     // Restart
     pub(super) restart_interval: u16,
@@ -173,17 +264,45 @@ pub(super) struct JpegParser<'a> {
     // Security limits
     pub(super) max_pixels: u64,
 
+    /// Ceiling for the decode's header-dimension-scaled allocations, in bytes
+    /// (`u64::MAX` = unlimited). See [`JpegParser::charge_memory`].
+    pub(super) max_memory: u64,
+    /// Bytes charged against [`Self::max_memory`] so far.
+    pub(super) memory_used: u64,
+
     // Extras preservation
     preserve_config: Option<PreserveConfig>,
     extras: Option<DecodedExtras>,
     /// Position of MPF TIFF header (after "MPF\0") for calculating absolute offsets
     mpf_header_pos: usize,
 
-    /// Adobe APP14 color transform (for CMYK/YCCK detection)
-    pub(super) adobe_transform: Option<AdobeColorTransform>,
+    /// JFIF / Adobe APP14 markers seen so far. Consulted once, when SOF is
+    /// parsed, to decide [`Self::color_model`]; never read afterwards.
+    pub(super) color_markers: ColorMarkers,
+
+    /// The frame's colour model, decided when SOF is parsed (jpegli
+    /// `ProcessSOF`). Every path reads this; none re-derives it.
+    pub(super) color_model: ColorModel,
+
+    /// The frame's sampling shape, classified when SOF is parsed.
+    pub(super) shape: FrameShape,
+
+    /// Whether the first scan carries every component, read (without
+    /// consuming it) when SOF is parsed. A sequential frame whose first scan
+    /// does not is non-interleaved: one scan per component, which no
+    /// MCU-walking path can stream.
+    pub(super) interleaved: bool,
 
     /// Strictness level for error handling
     pub(super) strictness: Strictness,
+
+    /// Per-site allocation-fallibility preference (set from `DecodeConfig`).
+    ///
+    /// `CodecDefault` (the construction default) keeps each allocation site's
+    /// own default: big untrusted output / coefficient buffers fallible, small
+    /// bounded MCU strip scratch infallible. `Fallible` / `Infallible` force
+    /// one path everywhere. See [`crate::foundation::alloc`].
+    pub(super) alloc_pref: zencodec::AllocPreference,
 
     /// Force f32 IDCT path (set by dimension-swapping transforms for exact results).
     pub(super) force_f32_idct: bool,
@@ -201,32 +320,114 @@ pub(super) struct JpegParser<'a> {
 
     // Arithmetic coding conditioning parameters (from DAC marker)
     /// DC conditioning: (L, U) per table, default (0, 1)
-    pub(super) arith_dc_cond: [(u8, u8); 4],
+    pub(super) arith_dc_cond: [(u8, u8); crate::entropy::arithmetic::NUM_ARITH_TBLS],
     /// AC conditioning: Kx per table, default 5
-    pub(super) arith_ac_kx: [u8; 4],
+    pub(super) arith_ac_kx: [u8; crate::entropy::arithmetic::NUM_ARITH_TBLS],
+
+    /// JBRD per-scan metadata accumulator. Set to `Some(Vec::new())` by
+    /// [`Decoder::decode_coefficients_with_jbrd_metadata`] before decode;
+    /// each SOS that runs through `decode_progressive_scan` pushes a new
+    /// `JbrdScanInfo` and tracks `reset_points`/`extra_zero_runs` during
+    /// AC entropy decode. `None` keeps the legacy zero-overhead path.
+    ///
+    /// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
+    pub(super) jbrd_scans: Option<Vec<crate::decode::image::JbrdScanInfo>>,
+
+    /// Accumulator for JBRD entropy-segment padding bits. Captured at every
+    /// scan-segment terminator (per-RST and at end-of-scan) when JBRD
+    /// tracking is enabled. See [`JbrdMetadata::padding_bits`] for semantics.
+    ///
+    /// `None` keeps the legacy zero-overhead path; `Some(_)` is set together
+    /// with `jbrd_scans` by `enable_jbrd_tracking`.
+    ///
+    /// [`JbrdMetadata::padding_bits`]: crate::decode::image::JbrdMetadata::padding_bits
+    pub(super) jbrd_padding_bits: Option<alloc::vec::Vec<u8>>,
 }
 
 impl<'a> JpegParser<'a> {
     /// Create a new parser with optional extras preservation.
+    ///
+    /// `alloc_pref` defaults to [`CodecDefault`](zencodec::AllocPreference::CodecDefault),
+    /// preserving each allocation site's own fallibility default.
     #[allow(dead_code)] // May be used by tests or future code
     pub(super) fn new(
         data: &'a [u8],
         max_pixels: u64,
         preserve_config: Option<&PreserveConfig>,
     ) -> Result<Self> {
-        Self::with_strictness(data, max_pixels, preserve_config, Strictness::default())
+        Self::with_strictness(
+            data,
+            max_pixels,
+            u64::MAX,
+            preserve_config,
+            Strictness::default(),
+            zencodec::AllocPreference::CodecDefault,
+        )
     }
 
-    /// Create a new parser with explicit strictness level.
+    /// Charge `bytes` against the decode's memory budget **before** allocating.
+    ///
+    /// This is the enforcement point for
+    /// [`Decoder::max_memory`](crate::decode::Decoder::max_memory). It is
+    /// applied at every allocation whose size is derived from the
+    /// header-declared frame dimensions — the ones an attacker controls with a
+    /// tiny file. Concretely: full-frame DCT coefficient storage (baseline,
+    /// arithmetic and progressive), the per-block coefficient-count and
+    /// nonzero-bitmap side tables, and the full-frame pixel output buffers,
+    /// including the fused-parallel ones.
+    ///
+    /// Deliberately **not** charged: per-MCU-row strip scratch, which is
+    /// `O(width)` rather than `O(width * height)` and so cannot be amplified
+    /// into a large allocation by a small header, and buffers the *caller*
+    /// supplies (`decode_into`). The budget therefore bounds the decode's
+    /// dimension-driven growth, not its exact peak RSS.
+    ///
+    /// Charges accumulate for the whole decode and are never released, so a
+    /// multi-scan file cannot spend the budget repeatedly.
+    ///
+    /// Returns [`ErrorKind::ResourceLimitExceeded`](crate::error::ErrorKind)
+    /// with [`zencodec::LimitKind::Memory`] once the running total would pass
+    /// the ceiling.
+    pub(super) fn charge_memory(&mut self, bytes: usize, context: &'static str) -> Result<()> {
+        // `0` means unlimited, matching `max_pixels` (see `read_frame_header`).
+        if self.max_memory == 0 || self.max_memory == u64::MAX {
+            return Ok(());
+        }
+        let bytes = bytes as u64;
+        let total = self
+            .memory_used
+            .checked_add(bytes)
+            .ok_or_else(|| Error::size_overflow(context))?;
+        if total > self.max_memory {
+            return Err(Error::resource_limit_exceeded(
+                zencodec::LimitKind::Memory,
+                total,
+                self.max_memory,
+            ));
+        }
+        self.memory_used = total;
+        Ok(())
+    }
+
+    /// Create a new parser with explicit strictness level and allocation
+    /// preference.
+    ///
+    /// `max_memory` is the ceiling for header-dimension-scaled allocations;
+    /// pass `u64::MAX` for unlimited. See [`JpegParser::charge_memory`].
     pub(super) fn with_strictness(
         data: &'a [u8],
         max_pixels: u64,
+        max_memory: u64,
         preserve_config: Option<&PreserveConfig>,
         strictness: Strictness,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
-        // Check for SOI
+        // Check for SOI. Missing SOI means this isn't a JPEG at all, distinct
+        // from a JPEG that starts correctly but is malformed further in —
+        // mirrors `crate::detect::ProbeError::NotJpeg` (caterr Pattern-B
+        // follow-up finding #2).
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
-            return Err(Error::invalid_jpeg_data("missing SOI marker"));
+            return Err(Error::not_a_jpeg_file());
         }
 
         // Extract ICC profile from raw data upfront
@@ -246,12 +447,15 @@ impl<'a> JpegParser<'a> {
             width: 0,
             height: 0,
             precision: 8,
+            native_precision: false,
+            lossless_tables: None,
             num_components: 0,
             mode: JpegMode::Baseline,
             components: std::array::from_fn(|_| Component::default()),
             quant_tables: [None, None, None, None],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
+            component_quant: [None; MAX_COMPONENTS],
+            dc_tables: empty_huffman_tables()?,
+            ac_tables: empty_huffman_tables()?,
             restart_interval: 0,
             coeffs: Vec::new(),
             coeff_counts: Vec::new(),
@@ -265,18 +469,26 @@ impl<'a> JpegParser<'a> {
             idct_method: super::IdctMethod::default(),
             icc_profile,
             max_pixels,
+            max_memory,
+            memory_used: 0,
             preserve_config,
             extras,
             mpf_header_pos: 0,
-            adobe_transform: None,
+            color_markers: ColorMarkers::default(),
+            color_model: ColorModel::Unknown,
+            shape: FrameShape::classify(&[]),
+            interleaved: true,
             strictness,
+            alloc_pref,
             num_threads: 0,
             #[cfg(feature = "parallel")]
             parallel_strategy: super::config::ParallelStrategy::default(),
             warnings: Vec::new(),
-            arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
-            arith_ac_kx: [5; 4],        // Default Kx=5
+            arith_dc_cond: [(0, 1); crate::entropy::arithmetic::NUM_ARITH_TBLS], // Default L=0, U=1
+            arith_ac_kx: [5; crate::entropy::arithmetic::NUM_ARITH_TBLS],        // Default Kx=5
             force_f32_idct: false,
+            jbrd_scans: None,
+            jbrd_padding_bits: None,
         })
     }
 
@@ -286,12 +498,15 @@ impl<'a> JpegParser<'a> {
     /// Display message. In Balanced/Lenient, it's collected for later retrieval.
     /// Duplicate warnings are suppressed.
     pub(super) fn warn(&mut self, warning: DecodeWarning) -> Result<()> {
-        if self.strictness == Strictness::Strict {
+        if self.strictness.is_strict() {
             return Err(Error::invalid_jpeg_data(match &warning {
                 DecodeWarning::MissingHuffmanTables => {
                     "missing Huffman table (DHT not defined before scan)"
                 }
                 DecodeWarning::TruncatedScan { .. } => "scan data truncated",
+                DecodeWarning::TruncatedBetweenScans { .. } => {
+                    "stream ended between scans (no EOI)"
+                }
                 DecodeWarning::PaddingBlockError => "padding block decode failed",
                 DecodeWarning::DnlHeightConflict { .. } => {
                     "DNL marker conflicts with SOF height (spec violation)"
@@ -319,6 +534,34 @@ impl<'a> JpegParser<'a> {
         core::mem::take(&mut self.warnings)
     }
 
+    /// Enable JBRD metadata tracking. Call before `decode()` to capture
+    /// per-scan `reset_points`, `extra_zero_runs`, and entropy-segment
+    /// padding bits.
+    pub(super) fn enable_jbrd_tracking(&mut self) {
+        if self.jbrd_scans.is_none() {
+            self.jbrd_scans = Some(Vec::new());
+        }
+        if self.jbrd_padding_bits.is_none() {
+            self.jbrd_padding_bits = Some(alloc::vec::Vec::new());
+        }
+    }
+
+    /// Take JBRD metadata out of the parser (for use after decode).
+    /// Returns `None` if tracking was not enabled.
+    pub(super) fn take_jbrd_scans(&mut self) -> Option<Vec<crate::decode::image::JbrdScanInfo>> {
+        self.jbrd_scans.take()
+    }
+
+    /// Take the accumulated entropy-segment padding bits out of the parser
+    /// (for use after decode). Returns `None` if tracking was not enabled.
+    pub(super) fn take_jbrd_padding_bits(&mut self) -> Option<alloc::vec::Vec<u8>> {
+        self.jbrd_padding_bits.take()
+    }
+
+    /// Append entropy-segment padding bits to the parser's JBRD accumulator,
+    /// if tracking is enabled. No-op when tracking is off (zero-overhead
+    /// legacy path).
+    ///
     /// Take the extras out of the parser (for use after decode).
     pub(super) fn take_extras(&mut self) -> Option<DecodedExtras> {
         self.extras.take().filter(|e| !e.is_empty())
@@ -332,20 +575,25 @@ impl<'a> JpegParser<'a> {
     ///
     /// Returns byte range `(start, end)` into `full_data` instead of copying,
     /// enabling zero-copy access to the gain map JPEG.
-    #[cfg(feature = "ultrahdr")]
+    ///
+    /// Without the `metadata` feature there is no XMP/ISO 21496 detection in
+    /// the build, so this always reports no gain map.
+    #[cfg(not(feature = "metadata"))]
+    pub(super) fn extract_gainmap_early(
+        &mut self,
+        _full_data: &[u8],
+    ) -> Result<(Option<(usize, usize)>, Option<zencodec::GainMapParams>)> {
+        Ok((None, None))
+    }
+
+    /// Returns byte range `(start, end)` into `full_data` instead of copying,
+    /// enabling zero-copy access to the gain map JPEG.
+    #[cfg(feature = "metadata")]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
-    ) -> Result<(
-        Option<(usize, usize)>,
-        Option<ultrahdr_core::GainMapMetadata>,
-    )> {
+    ) -> Result<(Option<(usize, usize)>, Option<zencodec::GainMapParams>)> {
         use super::extras::{MpfDirectory, SegmentType, detect_segment_type, parse_mpf_directory};
-        // Kept on ultrahdr_core::metadata::xmp::parse_xmp because this returns
-        // the old `GainMapMetadata` struct shape that the containing function
-        // still expects. Migrate to `crate::container::xmp::parse_xmp` (which
-        // returns `zencodec::GainMapParams`) once ultrahdr-core 0.5 lands with
-        // the GainMapMetadata-as-alias refactor from ultrahdr#6.
         use crate::container::xmp::parse_xmp;
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -353,6 +601,8 @@ impl<'a> JpegParser<'a> {
 
         let mut xmp_data: Option<String> = None;
         let mut mpf_directory: Option<MpfDirectory> = None;
+        // The primary image's ISO 21496-1 APP2 (version) record.
+        let mut primary_iso = false;
         let mut mpf_header_pos: usize = 0; // Position of MP header (after "MPF\0")
 
         // Scan through the entire JPEG for XMP and MPF markers
@@ -383,8 +633,8 @@ impl<'a> JpegParser<'a> {
             }
 
             // Markers without length
-            if (0xD0..=0xD7).contains(&marker) {
-                // RST markers
+            if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+                // Standalone TEM and RST markers
                 continue;
             }
 
@@ -427,6 +677,9 @@ impl<'a> JpegParser<'a> {
                         mpf_header_pos = pos + MPF_SIG.len();
                     }
                 }
+                0xE2 if seg_data.starts_with(zencodec::ISO_21496_1_URN) => {
+                    primary_iso = true;
+                }
                 _ => {}
             }
 
@@ -434,17 +687,12 @@ impl<'a> JpegParser<'a> {
         }
 
         // Parse metadata from XMP
-        let metadata = xmp_data.as_ref().and_then(|xmp| {
-            if !xmp.contains("hdrgm:Version") && !xmp.contains("hdrgm:GainMapMax") {
-                return None;
-            }
-            parse_xmp(xmp).ok().map(|(m, _)| m)
-        });
+        let metadata = xmp_data
+            .as_ref()
+            .and_then(|xmp| parse_xmp(xmp).ok().map(|(m, _)| m));
 
-        // If no metadata, not an UltraHDR image
-        if metadata.is_none() {
-            return Ok((None, None));
-        }
+        // hdrgm XMP or the ISO 21496-1 version record in the primary image.
+        let primary_signals = metadata.is_some() || primary_iso;
 
         // Extract gain map JPEG byte range from MPF directory
         // MPF offsets are relative to the start of the MP header (right after "MPF\0")
@@ -455,7 +703,10 @@ impl<'a> JpegParser<'a> {
                 }
                 if entry.image_type.is_gainmap() && entry.offset > 0 {
                     // Calculate absolute offset: MPF header position + relative offset
-                    let absolute_offset = mpf_header_pos + entry.offset as usize;
+                    let Some(absolute_offset) = mpf_header_pos.checked_add(entry.offset as usize)
+                    else {
+                        continue;
+                    };
                     let end = absolute_offset.saturating_add(entry.size as usize);
                     if end <= full_data.len() {
                         let data = &full_data[absolute_offset..end];
@@ -468,17 +719,56 @@ impl<'a> JpegParser<'a> {
             None
         });
 
-        // Fallback: if MPF parsing failed but XMP metadata indicates UltraHDR,
-        // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
-        // This handles non-standard MPF structures from some Android camera apps.
-        #[cfg(feature = "ultrahdr")]
-        if gainmap_range.is_none() && metadata.is_some() {
+        if !primary_signals {
+            // Neither form in the primary image. An MPF-listed gain map whose
+            // own metadata parses (its ISO 21496-1 record or its hdrgm XMP)
+            // still is one: the buffered `UltraHdrExtras` reading and
+            // libultrahdr 1.4.0 both accept it. Otherwise this is not an
+            // UltraHDR image.
+            let own_metadata = gainmap_range.is_some_and(|(start, end)| {
+                let gainmap = &full_data[start..end];
+                matches!(
+                    crate::container::iso21496_from_gainmap_jpeg(gainmap),
+                    Some(Ok(_))
+                ) || find_xmp_in_jpeg(gainmap).is_some_and(|xmp| parse_xmp(&xmp).is_ok())
+            });
+            if !own_metadata {
+                return Ok((None, None));
+            }
+        } else if gainmap_range.is_none() {
+            // Fallback: if MPF parsing failed but the metadata indicates UltraHDR,
+            // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
+            // This handles non-standard MPF structures from some Android camera apps.
             gainmap_range = find_secondary_jpeg_range(full_data);
+        }
+
+        if self.strictness.is_strict()
+            && let Some((start, _)) = gainmap_range
+            && crate::container::marker::primary_bounds(full_data)
+                .is_some_and(|primary| start < primary.end)
+        {
+            return Err(Error::invalid_jpeg_data(
+                "MPF secondary image overlaps the primary JPEG in strict mode",
+            ));
+        }
+
+        // The gain-map image's ISO 21496-1 record wins over XMP (Ultra HDR
+        // v1.1, "ISO 21496-1 Compatibility"; see `UltraHdrExtras`). One that
+        // does not parse falls back to the XMP.
+        if let Some((gm_start, gm_end)) = gainmap_range
+            && let Some(Ok(iso)) =
+                crate::container::iso21496_from_gainmap_jpeg(&full_data[gm_start..gm_end])
+        {
+            return Ok((gainmap_range, Some(iso)));
         }
 
         // If primary XMP had only hdrgm:Version but no numeric metadata,
         // check the gain map JPEG's XMP (modern format used by libultrahdr).
-        let metadata = if let (Some(meta), Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
+        let metadata = if let (None, Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
+            // No primary XMP: the gain map's own XMP (checked above).
+            find_xmp_in_jpeg(&full_data[gm_start..gm_end])
+                .and_then(|gm_xmp| parse_xmp(&gm_xmp).ok().map(|(m, _)| m))
+        } else if let (Some(meta), Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
             if meta.channels.iter().all(|c| c.max == 0.0) && meta.alternate_hdr_headroom == 0.0 {
                 // Try the gain map JPEG's XMP
                 let gm_data = &full_data[gm_start..gm_end];
@@ -503,7 +793,7 @@ impl<'a> JpegParser<'a> {
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
-#[cfg(feature = "ultrahdr")]
+#[cfg(feature = "metadata")]
 fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
     let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
     let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
@@ -615,29 +905,34 @@ impl<'a> JpegParser<'a> {
     ///
     /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode(&mut self, stop: &impl Stop) -> Result<()> {
-        // First read header
+        // First read header. The colour markers start empty again, so the
+        // SOF decision on this pass sees exactly the markers before SOF.
         self.position = 2; // Skip SOI
-        self.read_header()?;
+        self.color_markers = ColorMarkers::default();
+        self.read_header_with_stop(stop)?;
 
         // Reject non-8-bit precision before attempting decode.
         // 12-bit Extended Sequential uses different level shift (+2048 vs +128)
         // and output scaling — decoding as 8-bit produces completely wrong pixels.
-        if self.precision != 8 {
+        if self.precision != 8 && !self.native_precision {
             return Err(Error::unsupported_feature(
                 "12-bit precision JPEG (Extended Sequential) is not yet supported. \
                  Only 8-bit precision is currently implemented.",
             ));
         }
 
+        if self.mode == JpegMode::Lossless {
+            return Err(Error::unsupported_feature(
+                "predictive JPEG has samples, not DCT coefficients",
+            ));
+        }
         // Track whether we've decoded at least one scan (for truncation recovery)
         let mut scans_decoded = 0u32;
 
         // Continue parsing until we hit EOI
         loop {
             // Check for cancellation
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             let marker = match self.read_marker() {
                 Ok(m) => m,
@@ -646,14 +941,18 @@ impl<'a> JpegParser<'a> {
                     // scan as end-of-image. This handles missing EOI, truncated
                     // progressive scans, and files cut off between scans.
                     // Matches libjpeg-turbo behavior (JWRN_HIT_MARKER + partial output).
-                    if self.strictness != Strictness::Strict
+                    if self.strictness.recovers_data_errors()
                         && scans_decoded > 0
                         && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                     {
-                        self.warnings.push(DecodeWarning::TruncatedScan {
-                            blocks_decoded: 0,
-                            blocks_expected: 0,
-                        });
+                        // Truncated at a marker boundary, i.e. BETWEEN scans: every
+                        // scan we started also finished, so there is no partially
+                        // decoded scan to report counts for. Emit the whole-stream
+                        // fact instead (#92) — the previous `0, 0` claimed "0 of 0
+                        // blocks recovered", which reads as total loss when in fact
+                        // every decoded scan is intact.
+                        self.warnings
+                            .push(DecodeWarning::TruncatedBetweenScans { scans_decoded });
                         break;
                     }
                     return Err(e);
@@ -675,12 +974,20 @@ impl<'a> JpegParser<'a> {
                         Err(e) => {
                             // In Balanced/Lenient mode, truncation during a scan
                             // is recoverable if we have partial data.
-                            if self.strictness != Strictness::Strict
+                            if self.strictness.recovers_data_errors()
                                 && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                             {
+                                // Reaching here means the scan recovered *nothing*
+                                // (mid-scan truncation self-recovers inside
+                                // `parse_scan`, which emits its own TruncatedScan
+                                // with real counts and returns Ok). So 0 blocks
+                                // decoded is accurate — but `blocks_expected` must
+                                // still be the real total, not 0 (#92): "0 of N"
+                                // is the recoverable-data signal callers need,
+                                // where "0 of 0" said nothing at all.
                                 self.warnings.push(DecodeWarning::TruncatedScan {
                                     blocks_decoded: 0,
-                                    blocks_expected: 0,
+                                    blocks_expected: self.total_mcus(),
                                 });
                                 break;
                             }
@@ -688,18 +995,6 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
-                MARKER_DNL => {
-                    // Define Number of Lines - update height if it was 0 in SOF
-                    self.parse_dnl()?;
-                }
-                MARKER_DQT => self.parse_quant_table()?,
-                MARKER_DHT => self.parse_huffman_table()?,
-                MARKER_DAC => self.parse_dac()?,
-                MARKER_DRI => self.parse_restart_interval()?,
-                // Stray restart markers between scans — some encoders write a
-                // trailing RST after the final MCU interval. These are standalone
-                // 2-byte markers with no length field, so just skip them.
-                0xD0..=0xD7 => {}
                 MARKER_EOI => {
                     // Validate that we have a valid height (either from SOF or DNL)
                     if self.height == 0 {
@@ -711,8 +1006,44 @@ impl<'a> JpegParser<'a> {
                     self.extract_mpf_secondary_images()?;
                     break;
                 }
-                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
-                _ => self.skip_segment()?,
+                // Every other marker carries a table / metadata segment. Their
+                // parse errors funnel through one recovery below so that a
+                // stream cut INSIDE such a segment (between scans) gets the
+                // same treatment as a cut at the marker boundary above: no
+                // scan had started, so nothing partial exists to report (#92).
+                // Before this, a prefix ending mid-DHT/mid-DQT errored while
+                // both the shorter prefix (ending after the previous scan)
+                // and the longer one (ending in the next scan's data) decoded
+                // — a consumer re-decoding a growing prefix saw the image
+                // flicker back into an error.
+                _ => {
+                    let segment = match marker {
+                        // Define Number of Lines - update height if it was 0 in SOF
+                        MARKER_DNL => self.parse_dnl(),
+                        MARKER_DQT => self.parse_quant_table(),
+                        MARKER_DHT => self.parse_huffman_table(),
+                        MARKER_DAC => self.parse_dac(),
+                        MARKER_DRI => self.parse_restart_interval(),
+                        // Stray restart markers between scans — some encoders
+                        // write a trailing RST after the final MCU interval —
+                        // and TEM: standalone 2-byte markers with no length
+                        // field (`is_standalone_marker`), so just skip them.
+                        m if markers::is_standalone_marker(m) => Ok(()),
+                        MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker),
+                        _ => self.skip_segment(),
+                    };
+                    if let Err(e) = segment {
+                        if self.strictness.recovers_data_errors()
+                            && scans_decoded > 0
+                            && matches!(e.kind(), ErrorKind::TruncatedData { .. })
+                        {
+                            self.warnings
+                                .push(DecodeWarning::TruncatedBetweenScans { scans_decoded });
+                            break;
+                        }
+                        return Err(e);
+                    }
+                }
             }
         }
 
@@ -757,14 +1088,15 @@ impl<'a> JpegParser<'a> {
                     let num_components = self.read_u8()?;
 
                     // Support grayscale (1) and color (3) scans
-                    if num_components != 1 && num_components != 3 {
+                    if num_components == 0 || num_components > 4 {
                         return Err(Error::unsupported_feature(
-                            "scanline reader requires 1 or 3 components in scan",
+                            "scanline reader requires 1 to 4 components in scan",
                         ));
                     }
 
                     // Initialize with defaults for unused components (grayscale case)
-                    let mut table_mapping = [(0usize, 0usize); 3];
+                    let mut table_mapping = [(0usize, 0usize); 4];
+                    let mut order = [0; 4];
 
                     for _i in 0..num_components as usize {
                         let component_id = self.read_u8()?;
@@ -790,6 +1122,10 @@ impl<'a> JpegParser<'a> {
                             .position(|c| c.id == component_id)
                             .ok_or(Error::invalid_jpeg_data("unknown component in scan"))?;
 
+                        if order[.._i].contains(&comp_idx) {
+                            return Err(Error::invalid_jpeg_data("duplicate scan component"));
+                        }
+                        order[_i] = comp_idx;
                         table_mapping[comp_idx] = (dc_table, ac_table);
                     }
 
@@ -800,6 +1136,12 @@ impl<'a> JpegParser<'a> {
 
                     return Ok(ScanInfo {
                         table_mapping,
+                        order,
+                        sequential_valid: _length == 6 + 2 * num_components as u16
+                            && _ss == 0
+                            && _se == 63
+                            && _ah_al == 0,
+                        num_components,
                         data_start: self.position,
                     });
                 }
@@ -810,6 +1152,7 @@ impl<'a> JpegParser<'a> {
                 MARKER_EOI => {
                     return Err(Error::invalid_jpeg_data("unexpected EOI before SOS"));
                 }
+                m if markers::is_standalone_marker(m) => {}
                 _ => self.skip_segment()?,
             }
         }
@@ -823,21 +1166,43 @@ impl<'a> JpegParser<'a> {
             _ => return Ok(()),
         };
 
+        Self::complete_preserved_metadata(
+            self.data,
+            extras,
+            config,
+            self.position,
+            self.mpf_header_pos,
+            self.strictness.is_strict(),
+            &enough::Unstoppable,
+        )
+    }
+
+    /// Shared MPF preservation for pixel decode and metadata-only inspection.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn complete_preserved_metadata(
+        data: &[u8],
+        extras: &mut DecodedExtras,
+        config: &PreserveConfig,
+        primary_eoi_pos: usize,
+        mpf_base: usize,
+        strict: bool,
+        stop: &dyn enough::Stop,
+    ) -> Result<()> {
+        if !config.preserves_any_mpf() {
+            return Ok(());
+        }
         // Get the MPF directory from preserved segments
         let mpf_dir = match extras.mpf() {
             Some(dir) => dir.clone(), // Clone to avoid borrow issues
             None => return Ok(()),
         };
 
-        // The current position should be right after the primary EOI
-        let primary_eoi_pos = self.position;
-
-        // MPF offsets for secondary images are relative to the TIFF header within MPF
-        // (after "MPF\0" signature). We need to add the base position to get absolute offsets.
-        let mpf_base = self.mpf_header_pos;
-
-        // Extract secondary images based on MPF entries
+        // Default decoding retains readable embedded JPEGs. Strict mode rejects
+        // entries inside the primary; lossless rewriting checks relocation
+        // separately. Disjoint ranges prevent repeated-copy amplification.
+        let mut taken = Vec::new();
         for (idx, entry) in mpf_dir.images.iter().enumerate() {
+            stop.check()?;
             // Skip primary image (index 0 or BaselinePrimary type)
             if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
                 continue;
@@ -855,21 +1220,32 @@ impl<'a> JpegParser<'a> {
                 primary_eoi_pos
             } else if mpf_base > 0 {
                 // Add base position to get absolute file offset
-                mpf_base + entry.offset as usize
+                mpf_base
+                    .checked_add(entry.offset as usize)
+                    .ok_or_else(|| Error::invalid_jpeg_data("MPF secondary offset overflow"))?
             } else {
                 // Fallback: treat as absolute offset (shouldn't happen if MPF was properly parsed)
                 entry.offset as usize
             };
 
-            let end = offset.saturating_add(entry.size as usize);
-            if end <= self.data.len() {
-                let image_data = self.data[offset..end].to_vec();
-
-                // Verify it looks like a JPEG (starts with SOI)
-                if image_data.len() >= 2 && image_data[0] == 0xFF && image_data[1] == 0xD8 {
-                    extras.add_secondary_image(idx, entry.image_type, image_data);
-                }
+            if strict && offset < primary_eoi_pos {
+                return Err(Error::invalid_jpeg_data(
+                    "MPF secondary image overlaps the primary JPEG in strict mode",
+                ));
             }
+            let end = offset.saturating_add(entry.size as usize);
+            let range = offset..end;
+            if !crate::container::mpf::secondary_range_readable(data, &range, &taken) {
+                continue;
+            }
+            let bytes = &data[range.clone()];
+            let mut image_data = Vec::new();
+            image_data
+                .try_reserve_exact(bytes.len())
+                .map_err(|_| Error::allocation_failed(bytes.len(), "MPF secondary image"))?;
+            image_data.extend_from_slice(bytes);
+            taken.push(range);
+            extras.add_secondary_image(idx, entry.image_type, image_data);
         }
 
         Ok(())
@@ -880,31 +1256,8 @@ impl<'a> JpegParser<'a> {
     // =========================================================================
 
     pub(super) fn info(&self) -> JpegInfo {
-        let is_xyb = self
-            .icc_profile
-            .as_ref()
-            .map(|p| is_xyb_profile(p))
-            .unwrap_or(false);
-
-        // Detect color space from component count and IDs
-        let color_space = if is_xyb {
-            // XYB uses RGB component IDs (82, 71, 66) but is actually XYB color space
-            ColorSpace::Xyb
-        } else if self.num_components == 1 {
-            ColorSpace::Grayscale
-        } else if self.num_components == 3 {
-            // Check for RGB component IDs
-            let ids: Vec<u8> = self.components[..3].iter().map(|c| c.id).collect();
-            if ids == [b'R', b'G', b'B'] {
-                ColorSpace::Rgb
-            } else {
-                ColorSpace::YCbCr
-            }
-        } else if self.num_components == 4 {
-            ColorSpace::Cmyk
-        } else {
-            ColorSpace::Unknown
-        };
+        let color_space = self.color_model.color_space();
+        let is_xyb = self.color_model == ColorModel::Xyb;
 
         // Extract metadata from extras if available
         let (icc_profile, exif, xmp, jfif) = if let Some(ref extras) = self.extras {
@@ -948,13 +1301,19 @@ impl<'a> JpegParser<'a> {
     /// Extract scan data for constructing a scanline reader.
     ///
     /// This bundles all the parser fields needed by `ScanlineReader::new()`,
-    /// detecting RGB-JPEG and XYB along the way.
+    /// including the colour model decided at SOF.
     pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
-        let is_xyb = self.info().is_xyb;
-
         // Extract sampling factors
         let h_samp = if is_grayscale {
-            [self.components[0].h_samp_factor, 1, 1]
+            [
+                if crate::decode::precision::is_12_bit(self.precision) {
+                    1
+                } else {
+                    self.components[0].h_samp_factor
+                },
+                1,
+                1,
+            ]
         } else {
             [
                 self.components[0].h_samp_factor,
@@ -963,7 +1322,15 @@ impl<'a> JpegParser<'a> {
             ]
         };
         let v_samp = if is_grayscale {
-            [self.components[0].v_samp_factor, 1, 1]
+            [
+                if crate::decode::precision::is_12_bit(self.precision) {
+                    1
+                } else {
+                    self.components[0].v_samp_factor
+                },
+                1,
+                1,
+            ]
         } else {
             [
                 self.components[0].v_samp_factor,
@@ -985,24 +1352,20 @@ impl<'a> JpegParser<'a> {
 
         // Find SOS marker to get table mapping and scan data position
         let scan_info = self.find_scan_info()?;
-
-        // Detect RGB JPEGs
-        let is_rgb = if self.num_components == 3 {
-            match self.adobe_transform {
-                Some(AdobeColorTransform::Unknown) => true,
-                Some(AdobeColorTransform::YCbCr) => false,
-                None => {
-                    self.components[0].id == b'R'
-                        && self.components[1].id == b'G'
-                        && self.components[2].id == b'B'
-                }
-                _ => false,
-            }
-        } else {
-            false
-        };
+        // The SOS peek at SOF decided `interleaved`, and with it the route
+        // that led here; it walks the same markers with the same rule
+        // (`is_standalone_marker`), so it saw this scan. Refuse rather than
+        // walk a non-interleaved scan as interleaved MCUs if they ever differ.
+        let interleaved =
+            self.num_components == 1 || scan_info.num_components == self.num_components;
+        if interleaved != self.interleaved {
+            return Err(Error::invalid_jpeg_data(
+                "first scan's component count disagrees with the header walk",
+            ));
+        }
 
         Ok(ParsedScanData {
+            precision: self.precision,
             data: self.data,
             width: self.width,
             height: self.height,
@@ -1013,15 +1376,32 @@ impl<'a> JpegParser<'a> {
             quant_indices,
             dc_tables: self.dc_tables,
             ac_tables: self.ac_tables,
-            table_mapping: scan_info.table_mapping,
+            table_mapping: core::array::from_fn(|i| scan_info.table_mapping[i]),
             scan_data_start: scan_info.data_start,
             restart_interval: self.restart_interval,
-            is_xyb,
-            is_rgb,
+            color_model: self.color_model,
+            shape: self.shape,
+            interleaved: self.interleaved,
         })
     }
 
-    pub(super) fn extract_coefficients(&self) -> Result<crate::decode::image::DecodedCoefficients> {
+    /// Which decode paths may serve this frame (see [`PathPlan`]).
+    pub(super) fn plan(&self) -> PathPlan {
+        PathPlan {
+            model: self.color_model,
+            shape: self.shape,
+            interleaved: self.interleaved,
+        }
+    }
+
+    /// Takes the decoded coefficients out of the parser.
+    ///
+    /// Consumes `self.coeffs` (leaving each component empty) — see the flatten
+    /// comment below for why taking rather than borrowing matters for peak
+    /// memory. No caller reads `coeffs` afterwards.
+    pub(super) fn extract_coefficients(
+        &mut self,
+    ) -> Result<crate::decode::image::DecodedCoefficients> {
         use crate::decode::image::{ComponentCoefficients, DecodedCoefficients};
 
         if self.coeffs.is_empty() {
@@ -1040,7 +1420,22 @@ impl<'a> JpegParser<'a> {
         let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
         let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
 
-        let mut components = Vec::with_capacity(self.num_components as usize);
+        let mut components =
+            try_with_capacity(self.num_components as usize, "coefficient components")?;
+        let mut quant_tables = try_with_capacity(
+            MAX_QUANT_TABLES + self.num_components as usize,
+            "component quantization tables",
+        )?;
+        quant_tables.extend_from_slice(&self.quant_tables);
+        if (0..self.num_components as usize).any(|i| {
+            self.component_quant[i].is_some()
+                && self.component_quant[i]
+                    != self.quant_tables[self.components[i].quant_table_idx as usize]
+        }) {
+            // Redefined slots no longer describe the component tables. Compact
+            // the latched tables so <=4-component transcoding still uses <=4 slots.
+            quant_tables.clear();
+        }
 
         for i in 0..self.num_components as usize {
             let h_samp = self.components[i].h_samp_factor as usize;
@@ -1048,12 +1443,35 @@ impl<'a> JpegParser<'a> {
             let blocks_wide = mcu_cols * h_samp;
             let blocks_high = mcu_rows * v_samp;
 
-            // Flatten block coefficients from Vec<[i16; 64]> to Vec<i16>
-            let coeffs: Vec<i16> = self.coeffs[i]
-                .iter()
-                .flat_map(|block| block.iter().copied())
-                .collect();
+            // Flatten `Vec<[i16; 64]>` → `Vec<i16>`. This must allocate (safe
+            // Rust has no zero-copy reinterpret between the two layouts), so
+            // *take* each component's blocks rather than borrowing them: the
+            // source is freed as soon as it has been flattened, leaving the
+            // peak at "all destinations + one source" instead of "all
+            // destinations + all sources" (i.e. 2× coefficient memory).
+            // Measured (4096×4096 progressive scanline decode, peak RSS via
+            // VmHWM): 4:4:4 12.50 → 8.48 bytes/px, 4:2:0 6.29 → 5.26. Both now
+            // sit below the RGB buffered path they replaced (9.50 / 6.32).
+            // Exact-capacity so the flatten can't double-grow, and fallible
+            // because block counts come from untrusted input.
+            let src = core::mem::take(&mut self.coeffs[i]);
+            let mut coeffs: Vec<i16> =
+                try_with_capacity(src.len() * DCT_BLOCK_SIZE, "extract_coefficients")?;
+            for block in &src {
+                coeffs.extend_from_slice(block);
+            }
+            drop(src);
 
+            let original = self.components[i].quant_table_idx as usize;
+            let table = self.component_quant[i].or(self.quant_tables[original]);
+            let quant_table_idx = if quant_tables.get(original) == Some(&table) {
+                original
+            } else if let Some(index) = quant_tables.iter().position(|t| *t == table) {
+                index
+            } else {
+                quant_tables.push(table);
+                quant_tables.len() - 1
+            };
             components.push(ComponentCoefficients {
                 id: self.components[i].id,
                 coeffs,
@@ -1061,18 +1479,41 @@ impl<'a> JpegParser<'a> {
                 blocks_high,
                 h_samp: h_samp as u8,
                 v_samp: v_samp as u8,
-                quant_table_idx: self.components[i].quant_table_idx,
+                quant_table_idx: quant_table_idx as u8,
             });
         }
 
-        // Collect quantization tables
-        let quant_tables: Vec<Option<[u16; 64]>> = self.quant_tables.to_vec();
-
         Ok(DecodedCoefficients {
+            sample_precision: self.precision,
             width: self.width,
             height: self.height,
             components,
             quant_tables,
+            huffman_tables: self.harvest_huffman_tables(),
+        })
+    }
+
+    /// Rebuild an encoder-ready [`HuffmanTableSet`] from the decode tables'
+    /// stored DHT `(bits, values)` pairs. Table 0 → luma, table 1 → chroma
+    /// (luma reused when absent, e.g. grayscale). For progressive streams
+    /// this captures the final table state after all scans. `None` when the
+    /// luma tables were never defined or any table fails to rebuild (e.g. a
+    /// lenient-mode stream carried a malformed DHT).
+    fn harvest_huffman_tables(&self) -> Option<crate::huffman::optimize::HuffmanTableSet> {
+        use crate::huffman::optimize::{HuffmanTableSet, OptimizedTable};
+        let dc_luma = self.dc_tables[0].as_ref()?;
+        let ac_luma = self.ac_tables[0].as_ref()?;
+        let dc_chroma = self.dc_tables[1].as_ref().unwrap_or(dc_luma);
+        let ac_chroma = self.ac_tables[1].as_ref().unwrap_or(ac_luma);
+        let rebuild = |t: &HuffmanDecodeTable| {
+            let (bits, values) = t.to_bits_values();
+            OptimizedTable::from_bits_values(bits, values.to_vec()).ok()
+        };
+        Some(HuffmanTableSet {
+            dc_luma: rebuild(dc_luma)?,
+            ac_luma: rebuild(ac_luma)?,
+            dc_chroma: rebuild(dc_chroma)?,
+            ac_chroma: rebuild(ac_chroma)?,
         })
     }
 }
@@ -1084,7 +1525,7 @@ impl<'a> JpegParser<'a> {
 /// but we can still find the gain map JPEG by looking for JPEG boundaries.
 ///
 /// Returns the second JPEG's byte range `(start, end)` if found, or None if not found.
-#[cfg(feature = "ultrahdr")]
+#[cfg(feature = "metadata")]
 fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
     const SOI: [u8; 2] = [0xFF, 0xD8]; // Start of Image
 
@@ -1173,4 +1614,32 @@ fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
     }
 
     None
+}
+
+impl JpegParser<'_> {
+    /// Total interleaved MCUs for the frame, from the SOF dimensions and the
+    /// max sampling factors — the `blocks_expected` denominator for truncation
+    /// warnings raised outside `parse_scan` (which computes this itself).
+    ///
+    /// Returns 0 before SOF is parsed (no dimensions yet).
+    fn total_mcus(&self) -> u32 {
+        let mut max_h = 1u8;
+        let mut max_v = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h = max_h.max(self.components[i].h_samp_factor);
+            max_v = max_v.max(self.components[i].v_samp_factor);
+        }
+        let mcu_w = (max_h as usize) * 8;
+        let mcu_h = (max_v as usize) * 8;
+        let cols = (self.width as usize).div_ceil(mcu_w);
+        let rows = (self.height as usize).div_ceil(mcu_h);
+        (cols * rows) as u32
+    }
+
+    /// Set the IDCT method, normalizing 1-component sources to the
+    /// libjpeg-exact kernel (#154): the gray plane must be identical across
+    /// decode paths, and there is no chroma for the jpegli tuning to matter.
+    pub(crate) fn apply_idct_method(&mut self, method: super::IdctMethod) {
+        self.idct_method = method.for_components(self.num_components as usize);
+    }
 }

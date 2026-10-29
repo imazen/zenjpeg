@@ -1,6 +1,6 @@
 //! Sweep sharp YUV iteration count on real images.
 //!
-//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_sweep --features decoder -- --nocapture --ignored`
+//! Run: `cargo test --release -p zenjpeg --test sharp_yuv_sweep -- --nocapture --ignored`
 
 #[test]
 #[ignore] // takes ~10s
@@ -87,7 +87,7 @@ fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let src = &buf[..info.buffer_size()];
             let mut out = Vec::with_capacity((info.width * info.height * 3) as usize);
-            for c in src.chunks_exact(4) {
+            for c in src.as_chunks::<4>().0 {
                 out.extend_from_slice(&c[..3]);
             }
             out

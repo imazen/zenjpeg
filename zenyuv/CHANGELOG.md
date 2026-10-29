@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Fixed
+- No longer enables archmage's `testable_dispatch` for consumers through the
+  workspace dependency, which turned each archmage `summon()` in downstream
+  builds into a cache read. The `kernel_tiers` bench still gets it from `_dev`.
+
+### Added
+
+- `YuvContext::try_encode_420_u8`, `try_encode_420_y_only_u8`,
+  `try_encode_444_u8`, `try_encode_420_f32`, `try_encode_sharp_420_u8` and
+  `try_encode_sharp_420_f32`. They return `Result<(), YuvError>` where the
+  infallible methods panic. They refuse a short buffer, a size that overflows
+  and an image over the pixel limit, and they write nothing on refusal. Scratch
+  owned by the context is allocated fallibly, and valid input gives the same
+  bytes as the infallible method. `YuvError` is `#[non_exhaustive]`. The limit
+  defaults to `DEFAULT_MAX_PIXELS` (120 MP) and is set with
+  `YuvContext::with_max_pixels` (zenjpeg #156, items 1 and 2).
+
+- `sharp::rgb_f32_to_yuv420_sharp`: typed, strided gamma-encoded RGB f32 input
+  and Y/Cb/Cr f32 output, using caller-provided planes and the existing Sharp
+  YUV workspace/kernel. No RGB8 or Y8 intermediate and no internal allocation.
+
+### Docs
+
+- `YuvContext::new` doc: removed the stale first block that described a
+  `max_width × max_strip_height` sizing the constructor never had; the
+  accurate "no buffers until first use, grown on demand" contract stands
+  alone (zenjpeg #156, item 3).
+- README now states the encode input channel order (packed **R, G, B**,
+  3 bytes/pixel, tightly packed), documents the actual public method names
+  for 4:4:4 / 4:2:0 / f32 / Sharp encode, the panic-on-undersized-buffer
+  return contract and exact plane sizes (incl. odd-dimension `ceil` chroma),
+  the lack of a stride parameter, per-`Range` output ranges and neutral
+  chroma, and the not-yet-public status of the decode path. Found via an
+  insulated external-developer usability test (the prior README showed only
+  `encode_420_u8` on a grey-128 sample, which can't reveal channel order).
+
 ## [0.1.3] - 2026-04-26
 
 ### Breaking

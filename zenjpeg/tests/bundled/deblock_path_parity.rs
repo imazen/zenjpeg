@@ -62,7 +62,7 @@ fn deblock_path_quality_comparison() {
         .take(25)
         .collect();
 
-    let z = Zensim::new(ZensimProfile::latest());
+    let z = Zensim::new(ZensimProfile::codec_target());
     let qualities = [10, 20, 50, 85];
 
     println!("  Comparing decode() vs scanline_reader(), both with Boundary4Tap");

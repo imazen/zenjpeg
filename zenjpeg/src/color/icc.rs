@@ -17,7 +17,15 @@
 //! // ICC profile is automatically applied if present
 //! ```
 
-#![allow(unused_imports)] // Imports used by decoder-only functions
+#![allow(unused_imports)]
+// Imports used by decoder-only functions
+
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
 
 use crate::error::{Error, Result};
 
@@ -52,73 +60,65 @@ const XYB_PROFILE_MARKER: &[u8] = b"XYB";
 /// Large profiles may be split across multiple APP2 markers.
 ///
 /// Scans marker-to-marker (not byte-by-byte), stopping at SOS.
+///
+/// Only a complete, consistently numbered chunk set is returned. Chunk
+/// payloads are borrowed during validation and the output is allocated fallibly
+/// after checking [`MAX_ICC_PROFILE_SIZE`](crate::foundation::alloc::MAX_ICC_PROFILE_SIZE).
+/// A complete legacy single chunk numbered 0 of 1 remains readable.
 pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
-    let mut chunks: Vec<(u8, Vec<u8>)> = Vec::new();
-
-    // Skip SOI (0xFF 0xD8)
+    if !jpeg_data.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
     let mut i = 2;
-
-    // Scan marker-by-marker until SOS or end of markers
-    while i + 3 < jpeg_data.len() {
-        // Look for marker prefix
-        if jpeg_data[i] != 0xFF {
-            break; // Not a marker, likely scan data
+    let chunks = core::iter::from_fn(|| {
+        // Keep header probing O(header): the structural marker iterator also
+        // scans the entropy payload when it returns the first SOS.
+        while i + 3 < jpeg_data.len() {
+            if jpeg_data[i] != 0xff {
+                return None;
+            }
+            while i + 1 < jpeg_data.len() && jpeg_data[i + 1] == 0xff {
+                i += 1;
+            }
+            let marker_type = *jpeg_data.get(i + 1)?;
+            if marker_type == 0xda || marker_type == 0xd9 {
+                return None;
+            }
+            if marker_type == 0x00 || marker_type == 0x01 || (0xd0..=0xd7).contains(&marker_type) {
+                i += 2;
+                continue;
+            }
+            let length =
+                u16::from_be_bytes([*jpeg_data.get(i + 2)?, *jpeg_data.get(i + 3)?]) as usize;
+            if length < 2 {
+                return None;
+            }
+            let end = i.checked_add(2)?.checked_add(length)?;
+            let payload = jpeg_data.get(i + 4..end)?;
+            i = end;
+            if marker_type == 0xe2
+                && payload.len() >= 14
+                && payload.starts_with(ICC_PROFILE_SIGNATURE)
+            {
+                return Some((payload[12], payload[13], &payload[14..]));
+            }
         }
-
-        // Skip any fill bytes (0xFF padding)
-        while i + 1 < jpeg_data.len() && jpeg_data[i + 1] == 0xFF {
-            i += 1;
+        None
+    });
+    let profile = crate::container::chunks::icc_profile_for_decode(
+        chunks,
+        crate::foundation::alloc::MAX_ICC_PROFILE_SIZE,
+    )
+    .ok()??;
+    match profile {
+        alloc::borrow::Cow::Owned(bytes) => Some(bytes),
+        alloc::borrow::Cow::Borrowed(bytes) => {
+            let mut owned = Vec::new();
+            owned.try_reserve_exact(bytes.len()).ok()?;
+            owned.extend_from_slice(bytes);
+            Some(owned)
         }
-        if i + 3 >= jpeg_data.len() {
-            break;
-        }
-
-        let marker_type = jpeg_data[i + 1];
-
-        // Stop at SOS (start of scan) or EOI
-        if marker_type == 0xDA || marker_type == 0xD9 {
-            break;
-        }
-
-        // Markers without length (RST, SOI, EOI, TEM)
-        if marker_type == 0x00 || marker_type == 0x01 || (0xD0..=0xD7).contains(&marker_type) {
-            i += 2;
-            continue;
-        }
-
-        let length = ((jpeg_data[i + 2] as usize) << 8) | (jpeg_data[i + 3] as usize);
-        if length < 2 || i + 2 + length > jpeg_data.len() {
-            break;
-        }
-
-        // Check for APP2 with ICC_PROFILE signature
-        if marker_type == 0xE2 && length >= 16 && &jpeg_data[i + 4..i + 16] == ICC_PROFILE_SIGNATURE
-        {
-            let chunk_num = jpeg_data[i + 16];
-            let _total_chunks = jpeg_data[i + 17];
-            let icc_data = jpeg_data[i + 18..i + 2 + length].to_vec();
-            chunks.push((chunk_num, icc_data));
-        }
-
-        i += 2 + length;
     }
-
-    if chunks.is_empty() {
-        return None;
-    }
-
-    // Sort by chunk number and concatenate
-    chunks.sort_by_key(|(num, _)| *num);
-    let total_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
-
-    // Enforce maximum ICC profile size to prevent memory exhaustion
-    if total_size > crate::foundation::alloc::MAX_ICC_PROFILE_SIZE {
-        return None;
-    }
-
-    let profile: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).collect();
-
-    Some(profile)
 }
 
 /// Check if an ICC profile is an XYB profile from jpegli/JPEG XL.
@@ -321,5 +321,50 @@ mod tests {
     fn test_extract_icc_profile_empty() {
         let no_icc = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]; // JFIF
         assert!(extract_icc_profile(&no_icc).is_none());
+    }
+
+    /// Regression for the security audit's H4 finding: many APP2/ICC
+    /// chunks whose individual lengths fit in u16 but whose sum exceeds
+    /// `MAX_ICC_PROFILE_SIZE` must be rejected without buffering hundreds
+    /// of MB of u8 vectors first. We construct a JPEG-shaped byte sequence
+    /// with enough chunks to (in aggregate) exceed the 16 MB cap and
+    /// assert `extract_icc_profile` returns `None`.
+    #[test]
+    fn test_extract_icc_profile_oversize_rejected_incrementally() {
+        use crate::foundation::alloc::MAX_ICC_PROFILE_SIZE;
+
+        // Build a JPEG-like buffer: SOI then a long string of APP2 ICC
+        // chunks. Each chunk: 0xFF 0xE2 [len_hi len_lo] "ICC_PROFILE\0"
+        // [chunk_num total_chunks] [payload..]. We pick payload_len so
+        // that ~2x MAX_ICC_PROFILE_SIZE worth of payload would be
+        // accumulated if the cap weren't enforced incrementally.
+        let payload_len: usize = 65500 - 16; // marker payload after sig+chunk hdrs
+        let mut buf: Vec<u8> = Vec::with_capacity(MAX_ICC_PROFILE_SIZE * 2);
+        buf.extend_from_slice(&[0xFF, 0xD8]); // SOI
+        let mut total = 0usize;
+        let mut chunk_num: u8 = 1;
+        while total < MAX_ICC_PROFILE_SIZE * 2 {
+            let length = 2 + 12 + 2 + payload_len;
+            buf.push(0xFF);
+            buf.push(0xE2);
+            buf.push((length >> 8) as u8);
+            buf.push((length & 0xFF) as u8);
+            buf.extend_from_slice(ICC_PROFILE_SIGNATURE);
+            buf.push(chunk_num);
+            buf.push(0xFF); // total_chunks (unused in our scanner)
+            buf.extend(std::iter::repeat_n(0u8, payload_len));
+            total += payload_len;
+            chunk_num = chunk_num.wrapping_add(1);
+        }
+        // Trailing EOI to terminate the marker walk cleanly
+        buf.extend_from_slice(&[0xFF, 0xD9]);
+
+        // The function must reject without exploding peak memory. We
+        // can't directly assert peak memory in a unit test, but we *can*
+        // assert it returns None, and the buffer-building above runs in
+        // bounded ~2x MAX_ICC_PROFILE_SIZE bytes — meaning the function
+        // iterates over our crafted input and refuses, which is the
+        // intended fix.
+        assert!(extract_icc_profile(&buf).is_none());
     }
 }

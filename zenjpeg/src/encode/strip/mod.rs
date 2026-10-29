@@ -35,6 +35,13 @@
 //! 2. Build optimized Huffman tables
 //! 3. Encode from stored i16 blocks
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 mod convert;
 
 use crate::encode::encoder_types::DownsamplingMethod;
@@ -50,11 +57,8 @@ use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{PixelFormat, Subsampling};
 
 // Trellis quantization support
-#[cfg(feature = "trellis")]
-use crate::encode::trellis::HybridQuantContext;
-#[cfg(feature = "trellis")]
 use crate::encode::trellis::TrellisConfig;
-#[cfg(feature = "trellis")]
+use crate::encode::trellis::TrellisContext;
 use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
 /// Quantization context: groups all quantization tables and bias parameters.
@@ -259,11 +263,11 @@ fn extract_block_impl(
         strip.len(),
     );
 
-    let level_shift = f32x8::splat(token, 128.0);
+    let level_shift = f32x8::splat_t(token, 128.0);
     let mut rows = [[0.0f32; 8]; 8];
     for dy in 0..8 {
         let row_start = (y_start + dy) * strip_width + x_start;
-        let src = f32x8::load(token, strip[row_start..row_start + 8].try_into().unwrap());
+        let src = f32x8::load_t(token, strip[row_start..row_start + 8].try_into().unwrap());
         rows[dy] = (src - level_shift).to_array();
     }
 
@@ -406,9 +410,8 @@ impl PendingBuffers {
 /// Shared logic for both Cb and Cr (and XYB B-channel) quantization.
 /// Maps chroma block positions to the corresponding Y-block AQ strength.
 ///
-/// When the `trellis` feature is enabled, accepts optional `HybridQuantContext`
-/// for rate-distortion optimized quantization. Without `trellis`, always uses
-/// the fast SIMD quantization path.
+/// Accepts an optional `TrellisContext` for rate-distortion optimized
+/// quantization; `None` uses the fast SIMD quantization path.
 #[allow(clippy::too_many_arguments)]
 #[allow(unused_variables, unused_mut)]
 fn quantize_chroma_blocks(
@@ -419,7 +422,7 @@ fn quantize_chroma_blocks(
     quant_simd: &QuantTableSimd,
     zero_bias_simd: &ZeroBiasSimd,
     quant_values: &[u16; DCT_BLOCK_SIZE],
-    #[cfg(feature = "trellis")] hybrid_ctx: Option<&HybridQuantContext>,
+    trellis_ctx: Option<&TrellisContext>,
     use_trellis: bool,
     chroma_blocks_h: usize,
     chroma_blocks_v: usize,
@@ -431,7 +434,6 @@ fn quantize_chroma_blocks(
 
     for (i, dct) in pending.iter().enumerate() {
         // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
-        #[cfg(feature = "trellis")]
         if let Some(dc_raw) = dc_raw_output.as_deref_mut() {
             let row0: [f32; 8] = dct.rows[0];
             let dc_val = (row0[0] * 64.0).round() as i32;
@@ -449,15 +451,12 @@ fn quantize_chroma_blocks(
         } else {
             0.08 // C++ mean fallback
         };
-
-        #[cfg(feature = "trellis")]
         let zigzag = if use_trellis {
             let dct_arr = dct.to_array();
-            let natural = hybrid_ctx.unwrap().quantize_block(
+            let natural = trellis_ctx.unwrap().quantize_block(
                 &dct_arr,
                 quant_values,
                 aq_strength,
-                1.0,
                 false, // is_chroma
             );
             let mut result = [0i16; DCT_BLOCK_SIZE];
@@ -468,8 +467,6 @@ fn quantize_chroma_blocks(
         } else {
             quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength)
         };
-        #[cfg(not(feature = "trellis"))]
-        let zigzag = quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength);
 
         output.push(zigzag);
     }
@@ -487,8 +484,50 @@ pub struct StripProcessor {
     pub(super) pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
     pub(super) chroma_downsampling: DownsamplingMethod,
+    /// RGB passthrough mode (issue #185): channels stored verbatim as
+    /// components R, G, B with no color transform. Geometry is plain
+    /// S444 (`layout.use_xyb == false`), but all three planes live in
+    /// the padded-stride strip buffers like XYB, AQ reads the G plane
+    /// (component 1, matching C++ jpegli's `y_channel` for `JCS_RGB`),
+    /// and deringing is skipped (luma-calibrated preprocessor).
+    pub(super) use_rgb: bool,
 
     // === Reusable strip buffers (f32) ===
+    //
+    // BUFFER LAYOUT INVARIANTS (issue #186 class of bugs — read this
+    // before touching any padding/conversion code).
+    //
+    // The five buffers change MEANING and STRIDE depending on color mode
+    // and pipeline stage. "padded" = rows at `layout.padded_width` (or the
+    // buffer's own padded chroma width) with right-edge replication;
+    // "packed" = rows at `layout.width` (resp. `c_width`), no padding.
+    // Vertical padding (`pad_strips_vertically`) MUST use the stride the
+    // buffer is in at that moment — getting this wrong was issue #186.
+    //
+    // State immediately AFTER `color_convert_strip` (and therefore at
+    // `pad_strips_vertically` and AQ time):
+    //
+    // | mode            | y_strip     | cb_strip     | cr_strip     | cb_down       | cr_down          |
+    // |-----------------|-------------|--------------|--------------|---------------|------------------|
+    // | YCbCr (std)     | Y, padded   | Cb, packed   | Cr, packed   | (later)       | (later)          |
+    // | YCbCr gamma-awr | Y, padded   | unused       | unused       | Cb, padded-c  | Cr, padded-c     |
+    // | YCbCr fused 420 | Y, padded   | unused       | unused       | Cb, padded-c  | Cr, padded-c     |
+    // | XYB             | X, padded   | Y', padded   | scratch      | unused        | B, padded-b (*)  |
+    // | RGB passthrough | R, padded   | G, padded    | B, padded    | unused        | unused           |
+    // | Grayscale       | Y, padded   | unused       | unused       | unused        | unused           |
+    //
+    // (*) XYB B: BQuarter = 2x2-downsampled at b-geometry; Full =
+    //     full-res (mem::swap from cr_strip). Vertically padded inside
+    //     `convert_strip_to_xyb` for partial bottom strips.
+    //
+    // For the standard YCbCr path, `downsample_chroma_strip` later
+    // consumes the packed cb/cr strips (AFTER vertical padding) and
+    // produces padded-c `cb_down`/`cr_down` for the DCT stage. The DCT
+    // stage reads: y_strip (padded) always; cb_strip/cr_strip (padded)
+    // under XYB/RGB; cb_down/cr_down (padded-c / padded-b) otherwise.
+    //
+    // AQ reads the "luma role" plane: y_strip for YCbCr/gray, cb_strip
+    // for XYB (perceptual Y) and RGB (G channel) — always padded stride.
     /// Y channel strip buffer
     pub(super) y_strip: Vec<f32>,
     /// Cb channel strip buffer (full res before downsample)
@@ -558,8 +597,7 @@ pub struct StripProcessor {
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
-    #[cfg(feature = "trellis")]
-    hybrid_ctx: Option<HybridQuantContext>,
+    trellis_ctx: Option<TrellisContext>,
 
     // === Archmage SIMD token (feature-gated) ===
     /// Desktop64 token for zero-dispatch SIMD operations.
@@ -597,21 +635,10 @@ pub struct StripProcessor {
     aq_controller: Option<Box<dyn crate::encode::aq_controller::AqController>>,
     aq_controller_imcu_idx: usize,
 
-    /// Per-block encode diagnostics sink (UNSTABLE; gated behind
-    /// `__diagnostics`). When `Some`, the quantize loop captures
-    /// pre-quant DCT, post-quant levels, AQ multiplier, and entropy
-    /// bits into per-component block lists. When `None` (the default
-    /// and the only option in default builds), the encode hot path is
-    /// unchanged.
     #[cfg(feature = "__diagnostics")]
-    diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
-
-    /// Count of `quantize_prev_pending_imcu` invocations so far. Used
-    /// solely by the diagnostics capture path to map per-iMCU MCU-
-    /// traversal block indices to global raster (row, col) positions
-    /// in the per-component block grid. Incremented by 1 per call.
+    diagnostics: Option<alloc::sync::Arc<spin::Mutex<super::diagnostics::EncodeDiagnostics>>>,
     #[cfg(feature = "__diagnostics")]
-    diag_imcu_call_idx: usize,
+    diagnostics_cursor: [usize; 3],
 }
 
 impl StripProcessor {
@@ -624,7 +651,7 @@ impl StripProcessor {
         pixel_format: PixelFormat,
     ) -> Result<Self> {
         let quant = QuantContext::default_for_tests();
-        Self::with_xyb(
+        Self::with_color_modes(
             width,
             height,
             subsampling,
@@ -633,6 +660,7 @@ impl StripProcessor {
             0,
             false,
             crate::encode::encoder_types::XybSubsampling::BQuarter,
+            false, // use_rgb
             quant,
             true, // aq_enabled
         )
@@ -643,7 +671,7 @@ impl StripProcessor {
     /// All geometry is computed once by `LayoutParams` — no duplicate calculations.
     /// `quant` provides all quantization tables and zero-bias parameters.
     /// `xyb_subsampling` controls the B-channel layout when `use_xyb` is true.
-    pub fn with_xyb(
+    pub fn with_color_modes(
         width: usize,
         height: usize,
         subsampling: Subsampling,
@@ -652,10 +680,11 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
+        use_rgb: bool,
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
-        Self::with_xyb_inner(
+        Self::with_color_modes_inner(
             width,
             height,
             subsampling,
@@ -664,6 +693,7 @@ impl StripProcessor {
             _restart_interval,
             use_xyb,
             xyb_subsampling,
+            use_rgb,
             quant,
             aq_enabled,
             false,
@@ -673,7 +703,7 @@ impl StripProcessor {
     /// Like [`with_xyb`](Self::with_xyb), but when `streaming_through` is true,
     /// only allocates one strip's worth of block storage instead of the full image.
     /// Use this when blocks are drained after each strip (streaming-through mode).
-    pub fn with_xyb_streaming(
+    pub fn with_color_modes_streaming(
         width: usize,
         height: usize,
         subsampling: Subsampling,
@@ -682,10 +712,11 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
+        use_rgb: bool,
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
-        Self::with_xyb_inner(
+        Self::with_color_modes_inner(
             width,
             height,
             subsampling,
@@ -694,13 +725,14 @@ impl StripProcessor {
             _restart_interval,
             use_xyb,
             xyb_subsampling,
+            use_rgb,
             quant,
             aq_enabled,
             true,
         )
     }
 
-    fn with_xyb_inner(
+    fn with_color_modes_inner(
         width: usize,
         height: usize,
         subsampling: Subsampling,
@@ -709,6 +741,7 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
+        use_rgb: bool,
         quant: QuantContext,
         aq_enabled: bool,
         streaming_through: bool,
@@ -739,6 +772,7 @@ impl StripProcessor {
             layout,
             pixel_format,
             chroma_downsampling,
+            use_rgb,
 
             // Strip buffers (sized for PADDED width for edge handling parity)
             y_strip: try_alloc_zeroed_f32_tracked(
@@ -866,8 +900,7 @@ impl StripProcessor {
             boundary_rd: None,
 
             // Trellis quantization (disabled by default)
-            #[cfg(feature = "trellis")]
-            hybrid_ctx: None,
+            trellis_ctx: None,
 
             // Archmage SIMD token (obtained once, reused for all blocks)
             #[cfg(target_arch = "x86_64")]
@@ -906,14 +939,196 @@ impl StripProcessor {
             // No AQ controller installed by default (#113 PR-A scaffold).
             aq_controller: None,
             aq_controller_imcu_idx: 0,
-
-            // Diagnostics sink starts as `None`; opt-in via
-            // `enable_diagnostics()` (gated behind `__diagnostics`).
             #[cfg(feature = "__diagnostics")]
             diagnostics: None,
             #[cfg(feature = "__diagnostics")]
-            diag_imcu_call_idx: 0,
+            diagnostics_cursor: [0; 3],
         })
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn capture_diagnostics(
+        &mut self,
+        gray: bool,
+    ) -> Result<super::diagnostics::DiagnosticsHandle> {
+        use super::diagnostics::{
+            BlockDiagnostics, ComponentDiagnostics, DiagnosticsHandle, EncodeDiagnostics,
+        };
+        use crate::foundation::alloc::{try_alloc_filled, try_with_capacity};
+        use alloc::sync::Arc;
+        if self.diagnostics.is_some() {
+            return Err(crate::error::Error::invalid_state(
+                "diagnostics already enabled",
+            ));
+        }
+        let layout = &self.layout;
+        let flatten = |rows: &[[f32; 8]; 8]| {
+            let mut result = [0.0; 64];
+            for (i, row) in rows.iter().enumerate() {
+                result[i * 8..(i + 1) * 8].copy_from_slice(row);
+            }
+            result
+        };
+        let count = if gray { 1 } else { 3 };
+        let mut components = try_with_capacity(count, "diagnostics components")?;
+        let mut sampling_factors = try_with_capacity(count, "diagnostics sampling factors")?;
+        let dimensions = [
+            (layout.y_blocks_w, layout.y_blocks_h),
+            (layout.c_blocks_w, layout.c_blocks_h),
+            if layout.use_xyb {
+                (layout.b_blocks_w, layout.b_blocks_h)
+            } else {
+                (layout.c_blocks_w, layout.c_blocks_h)
+            },
+        ];
+        let quant = [
+            &self.quant.y_quant,
+            &self.quant.cb_quant,
+            &self.quant.cr_quant,
+        ];
+        let bias = [
+            &self.quant.y_zero_bias_simd,
+            &self.quant.cb_zero_bias_simd,
+            &self.quant.cr_zero_bias_simd,
+        ];
+        let h = if layout.use_xyb
+            && matches!(
+                layout.xyb_subsampling,
+                super::encoder_types::XybSubsampling::BQuarter
+            ) {
+            2
+        } else {
+            layout.h_samp as u8
+        };
+        let v = layout.v_samp as u8;
+        for i in 0..count {
+            let (w, h_blocks) = dimensions[i];
+            let block_count = w.checked_mul(h_blocks).ok_or_else(|| {
+                crate::error::Error::invalid_state("diagnostics dimensions overflow")
+            })?;
+            components.push(ComponentDiagnostics {
+                component_id: (i + 1) as u8,
+                block_grid: (w as u32, h_blocks as u32),
+                quant_table_base: quant[i].values,
+                zero_bias: flatten(&bias[i].offset_rows),
+                zero_bias_mul: flatten(&bias[i].mul_rows),
+                blocks: try_alloc_filled(
+                    block_count,
+                    BlockDiagnostics::default(),
+                    "diagnostics blocks",
+                )?,
+            });
+            sampling_factors.push(if gray {
+                (1, 1)
+            } else if i == 0 || (layout.use_xyb && i == 1) {
+                (h, v)
+            } else {
+                (1, 1)
+            });
+        }
+        if (self.use_rgb || layout.use_xyb) && !gray {
+            components[0].component_id = b'R';
+            components[1].component_id = b'G';
+            components[2].component_id = b'B';
+        }
+        let data = Arc::new(spin::Mutex::new(EncodeDiagnostics {
+            width: layout.width as u32,
+            height: layout.height as u32,
+            color_path: if gray {
+                "Grayscale"
+            } else if layout.use_xyb {
+                "XYB"
+            } else if self.use_rgb {
+                "RGB"
+            } else {
+                "YCbCr"
+            },
+            sampling_factors,
+            components,
+        }));
+        self.diagnostics = Some(data.clone());
+        Ok(DiagnosticsHandle(data))
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    fn capture_quantized_imcu(&mut self, buffer: usize, starts: [usize; 3], aq_start: usize) {
+        let Some(data) = &self.diagnostics else {
+            return;
+        };
+        let mut data = data.lock();
+        let pending = [
+            &self.pending.y[buffer],
+            &self.pending.cb[buffer],
+            &self.pending.cr[buffer],
+        ];
+        let levels = [&self.y_blocks, &self.cb_blocks, &self.cr_blocks];
+        let widths = [
+            self.layout.y_blocks_w,
+            self.layout.c_blocks_w,
+            if self.layout.use_xyb {
+                self.layout.b_blocks_w
+            } else {
+                self.layout.c_blocks_w
+            },
+        ];
+        let heights = [
+            self.layout.y_blocks_h,
+            self.layout.c_blocks_h,
+            if self.layout.use_xyb {
+                self.layout.b_blocks_h
+            } else {
+                self.layout.c_blocks_h
+            },
+        ];
+        for (c, component) in data.components.iter_mut().enumerate() {
+            for (i, (dct, level)) in pending[c]
+                .iter()
+                .zip(levels[c][starts[c]..].iter())
+                .enumerate()
+            {
+                let strength = if c == 0 {
+                    self.all_aq_strengths
+                        .get(aq_start + i)
+                        .copied()
+                        .unwrap_or(0.08)
+                } else {
+                    // Mirror quantize_chroma_blocks, including its per-strip fallback.
+                    let w = widths[c].max(1);
+                    let chroma_y = starts[c] / w + i / w;
+                    let y_x = (i % w) * self.layout.y_blocks_w / w;
+                    let y_y = chroma_y * self.layout.y_blocks_h / heights[c].max(1);
+                    let idx = y_y * self.layout.y_blocks_w
+                        + y_x.min(self.layout.y_blocks_w.saturating_sub(1));
+                    self.all_aq_strengths.get(idx).copied().unwrap_or(0.08)
+                };
+                if let Some(slot) = component.blocks.get_mut(self.diagnostics_cursor[c] + i) {
+                    slot.coef_pre_quant = dct.to_array();
+                    slot.coef_levels = *level;
+                    slot.aq_strength = strength;
+                }
+            }
+            self.diagnostics_cursor[c] += pending[c].len();
+        }
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    fn capture_final_levels(&self) {
+        let Some(data) = &self.diagnostics else {
+            return;
+        };
+        let mut data = data.lock();
+        let levels = [&self.y_blocks, &self.cb_blocks, &self.cr_blocks];
+        for (c, component) in data.components.iter_mut().enumerate() {
+            let offset = self.diagnostics_cursor[c].saturating_sub(levels[c].len());
+            for (block, level) in component
+                .blocks
+                .iter_mut()
+                .skip(offset)
+                .zip(levels[c].iter())
+            {
+                block.coef_levels = *level;
+            }
+        }
     }
 
     /// Returns allocation statistics for this processor.
@@ -959,8 +1174,6 @@ impl StripProcessor {
             y_dc_raw: core::mem::take(&mut self.y_dc_raw),
             cb_dc_raw: core::mem::take(&mut self.cb_dc_raw),
             cr_dc_raw: core::mem::take(&mut self.cr_dc_raw),
-            #[cfg(feature = "__diagnostics")]
-            diagnostics: None, // mid-encode take; use finalize() for final diagnostics
         }
     }
 
@@ -1022,117 +1235,26 @@ impl StripProcessor {
         self.aq_controller_imcu_idx = 0;
     }
 
+    /// Apply the controller to every quantized iMCU, including the final flush.
+    fn adjust_aq(&mut self, strengths: &mut [f32]) {
+        if let Some(ctrl) = self.aq_controller.as_mut() {
+            ctrl.adjust(strengths, self.aq_controller_imcu_idx);
+            self.aq_controller_imcu_idx += 1;
+        }
+    }
+
     /// Sets trellis quantization configuration.
     ///
     /// When enabled, uses trellis quantization for rate-distortion optimization
     /// instead of standard SIMD quantization. This typically produces 10-15%
     /// smaller files at the same quality.
-    #[cfg(feature = "trellis")]
     pub fn set_trellis(&mut self, config: TrellisConfig) {
         if config.is_enabled() {
-            self.hybrid_ctx = Some(HybridQuantContext::from_trellis_config(config));
+            self.trellis_ctx = Some(TrellisContext::new(config));
         } else {
-            self.hybrid_ctx = None;
+            self.trellis_ctx = None;
         }
     }
-
-    /// Sets hybrid quantization configuration (AQ-coupled trellis).
-    ///
-    /// Hybrid mode adjusts trellis lambda per-block based on AQ strength,
-    /// spending more bits on smooth areas and fewer on complex textures.
-    #[cfg(feature = "trellis")]
-    pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
-        self.hybrid_ctx = Some(HybridQuantContext::new(config));
-    }
-
-    /// Allocate the per-block diagnostics sink and pre-size component
-    /// block lists from the resolved layout. Idempotent: calling twice
-    /// resets to a fresh sink.
-    ///
-    /// UNSTABLE — gated behind the `__diagnostics` cargo feature.
-    #[cfg(feature = "__diagnostics")]
-    pub(crate) fn enable_diagnostics(&mut self) {
-        use crate::encode::diagnostics::{
-            ColorPathTag, ComponentDiagnostics, EncodeDiagnostics, ImageInfo,
-        };
-        let layout = &self.layout;
-        let is_grayscale = self.pixel_format.is_grayscale();
-
-        // Flatten the SIMD `[[f32; 8]; 8]` zero-bias offset rows into a
-        // natural-order `[f32; 64]` for the diagnostics consumer.
-        let flatten = |rows: &[[f32; 8]; 8]| -> [f32; 64] {
-            let mut out = [0.0f32; 64];
-            for (r, row) in rows.iter().enumerate() {
-                out[r * 8..(r + 1) * 8].copy_from_slice(row);
-            }
-            out
-        };
-
-        let mut diag = EncodeDiagnostics::default();
-        diag.image = ImageInfo {
-            width: layout.width as u32,
-            height: layout.height as u32,
-            color_path: if layout.use_xyb {
-                ColorPathTag::Xyb
-            } else if is_grayscale {
-                ColorPathTag::Grayscale
-            } else {
-                ColorPathTag::YCbCr
-            },
-            sampling_factors: Vec::new(),
-        };
-
-        let h_samp_y = layout.subsampling.h_samp_factor_luma();
-        let v_samp_y = layout.subsampling.v_samp_factor_luma();
-
-        // Y component: full resolution.
-        let y_blocks = (layout.y_blocks_w as u32) * (layout.y_blocks_h as u32);
-        diag.image.sampling_factors.push((h_samp_y, v_samp_y));
-        diag.components.push(ComponentDiagnostics {
-            component_id: 1,
-            block_grid: (layout.y_blocks_w as u32, layout.y_blocks_h as u32),
-            quant_table_base: self.quant.y_quant.values,
-            zero_bias: flatten(&self.quant.y_zero_bias_simd.offset_rows),
-            blocks: alloc::vec![Default::default(); y_blocks as usize],
-        });
-
-        // Cb / Cr (skip for grayscale).
-        if !is_grayscale {
-            let cb_blocks = (layout.c_blocks_w as u32) * (layout.c_blocks_h as u32);
-            diag.image.sampling_factors.push((1, 1));
-            diag.components.push(ComponentDiagnostics {
-                component_id: 2,
-                block_grid: (layout.c_blocks_w as u32, layout.c_blocks_h as u32),
-                quant_table_base: self.quant.cb_quant.values,
-                zero_bias: flatten(&self.quant.cb_zero_bias_simd.offset_rows),
-                blocks: alloc::vec![Default::default(); cb_blocks as usize],
-            });
-
-            // Cr / B-channel: XYB B uses b_blocks dims, others use c_blocks.
-            let (cr_w, cr_h) = if layout.use_xyb {
-                (layout.b_blocks_w as u32, layout.b_blocks_h as u32)
-            } else {
-                (layout.c_blocks_w as u32, layout.c_blocks_h as u32)
-            };
-            let cr_blocks = cr_w * cr_h;
-            diag.image.sampling_factors.push((1, 1));
-            diag.components.push(ComponentDiagnostics {
-                component_id: 3,
-                block_grid: (cr_w, cr_h),
-                quant_table_base: self.quant.cr_quant.values,
-                zero_bias: flatten(&self.quant.cr_zero_bias_simd.offset_rows),
-                blocks: alloc::vec![Default::default(); cr_blocks as usize],
-            });
-        }
-
-        self.diagnostics = Some(diag);
-    }
-
-    // Note: `take_diagnostics(&mut self)` was removed. The
-    // diagnostics record is now extracted via the
-    // `StripProcessorOutput.diagnostics` field returned from
-    // `finalize()`, intercepted by the streaming encoder's
-    // `finish_into_with_stop_threaded` callback.
 
     /// Returns whether XYB mode is enabled.
     #[must_use]
@@ -1157,7 +1279,7 @@ impl StripProcessor {
     /// C++ jpegli uses `y_channel = (jpeg_color_space == JCS_RGB) ? 1 : 0`.
     #[allow(dead_code)] // XYB encoding path (not yet integrated into streaming)
     fn aq_input_strip(&self) -> &[f32] {
-        if self.layout.use_xyb {
+        if self.layout.use_xyb || self.use_rgb {
             &self.cb_strip
         } else {
             &self.y_strip
@@ -1179,6 +1301,14 @@ impl StripProcessor {
         if self.layout.use_xyb {
             self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
             return Ok(true); // XYB handles B downsampling internally
+        }
+
+        if self.use_rgb {
+            // RGB passthrough (issue #185): deinterleave channels verbatim
+            // into all three strip buffers at padded stride. No color
+            // transform, no downsample stage (always 4:4:4).
+            self.convert_strip_to_rgb_passthrough(rgb_strip, actual_strip_height)?;
+            return Ok(true);
         }
 
         // YCbCr mode: choose optimal path based on subsampling
@@ -1258,6 +1388,14 @@ impl StripProcessor {
             ));
         }
 
+        // RGB passthrough stores untransformed channels; pre-converted
+        // YCbCr input contradicts the mode.
+        if self.use_rgb {
+            return Err(crate::error::Error::unsupported_feature(
+                "YCbCr input not supported for RGB passthrough mode",
+            ));
+        }
+
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Copy YCbCr data to strip buffers with level shift
@@ -1305,6 +1443,14 @@ impl StripProcessor {
             ));
         }
 
+        // RGB passthrough stores untransformed channels; pre-converted
+        // YCbCr input contradicts the mode.
+        if self.use_rgb {
+            return Err(crate::error::Error::unsupported_feature(
+                "YCbCr input not supported for RGB passthrough mode",
+            ));
+        }
+
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Copy Y with level shift, copy chroma directly to downsampled buffers
@@ -1337,12 +1483,23 @@ impl StripProcessor {
     ) -> Result<usize> {
         // Process AQ and check if previous iMCU strengths are ready.
         // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
+        // (perceptual Y) and RGB passthrough (G, matching C++ jpegli's
+        // `y_channel = 1` for JCS_RGB).
         // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
-        let aq_input = if self.layout.use_xyb {
+        let aq_input = if self.layout.use_xyb || self.use_rgb {
             &self.cb_strip
         } else {
             &self.y_strip
         };
+        // Invariant (see buffer-layout table above): the AQ input plane is
+        // in PADDED layout for every mode by this point.
+        debug_assert!(
+            aq_input.len() >= actual_strip_height * self.layout.padded_width,
+            "AQ input plane smaller than padded strip: {} < {}x{}",
+            aq_input.len(),
+            actual_strip_height,
+            self.layout.padded_width
+        );
         let aq_count = self.aq_state.process_y_strip_into(
             aq_input,
             strip_y,
@@ -1372,10 +1529,7 @@ impl StripProcessor {
             // which leaves `temp_buffer` untouched — encode is byte-identical
             // to the pre-controller path. Locked-hash regression tests verify
             // this is preserved (see tests/bundled/locked_values.rs).
-            if let Some(ctrl) = self.aq_controller.as_mut() {
-                ctrl.adjust(&mut temp_buffer[..count], self.aq_controller_imcu_idx);
-                self.aq_controller_imcu_idx += 1;
-            }
+            self.adjust_aq(&mut temp_buffer[..count]);
 
             self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
@@ -1431,7 +1585,10 @@ impl StripProcessor {
         //               So deringing is skipped on this loop under XYB and
         //               applied to the cb_strip (Y-perceptual-luma) loop
         //               below instead.
-        let apply_deringing_here = self.deringing && !self.layout.use_xyb;
+        //   RGB mode:   channels are untransformed data with no luma plane,
+        //               so deringing is skipped entirely (C++ jpegli has no
+        //               deringing preprocessor at all).
+        let apply_deringing_here = self.deringing && !self.layout.use_xyb && !self.use_rgb;
         #[cfg(feature = "parallel")]
         {
             let deringing = if apply_deringing_here {
@@ -1554,6 +1711,48 @@ impl StripProcessor {
                         cr_idx += 1;
                     }
                 }
+            } else if self.use_rgb {
+                // RGB passthrough: G and B are full-resolution planes in
+                // cb_strip/cr_strip (padded stride, same geometry as the R
+                // plane in y_strip). No deringing — the channels are
+                // untransformed data with no luma plane.
+                let y_size = strip_height * padded_width;
+                let plane_blocks_total = actual_strip_blocks_h * blocks_w;
+
+                let cb_start = self.pending.cb[pending_idx].len();
+                self.pending.cb[pending_idx]
+                    .resize(cb_start + plane_blocks_total, Block8x8f::default());
+                let cr_start = self.pending.cr[pending_idx].len();
+                self.pending.cr[pending_idx]
+                    .resize(cr_start + plane_blocks_total, Block8x8f::default());
+
+                let mut idx = 0;
+                for local_by in 0..strip_blocks_h {
+                    let global_by = start_block_y + local_by;
+                    if global_by >= (height + 7) / 8 {
+                        break;
+                    }
+                    for bx in 0..blocks_w {
+                        let g_block = extract_block_from_strip_wide(
+                            &self.cb_strip[..y_size],
+                            bx,
+                            local_by,
+                            padded_width,
+                        );
+                        self.pending.cb[pending_idx][cb_start + idx] =
+                            forward_dct_dispatch(simd_token, &g_block);
+
+                        let b_block = extract_block_from_strip_wide(
+                            &self.cr_strip[..y_size],
+                            bx,
+                            local_by,
+                            padded_width,
+                        );
+                        self.pending.cr[pending_idx][cr_start + idx] =
+                            forward_dct_dispatch(simd_token, &b_block);
+                        idx += 1;
+                    }
+                }
             } else {
                 // YCbCr mode: chroma dimensions from layout (single source of truth)
                 let c_blocks_w = self.layout.c_blocks_w;
@@ -1615,20 +1814,22 @@ impl StripProcessor {
     /// fast SIMD quantization.
     fn quantize_prev_pending_imcu(&mut self, aq_strengths: &[f32]) {
         let buffer_idx = self.pending.prev_idx();
+        #[cfg(feature = "__diagnostics")]
+        let starts = [
+            self.y_blocks.len(),
+            self.cb_blocks.len(),
+            self.cr_blocks.len(),
+        ];
+        #[cfg(feature = "__diagnostics")]
+        let aq_start = self.all_aq_strengths.len();
 
         // Check if we have trellis context for R-D optimization
-        #[cfg(feature = "trellis")]
-        let use_trellis = self.hybrid_ctx.is_some();
-        #[cfg(not(feature = "trellis"))]
-        let use_trellis = false;
+        let use_trellis = self.trellis_ctx.is_some();
 
-        #[cfg(feature = "trellis")]
         let store_dc_raw = self
-            .hybrid_ctx
+            .trellis_ctx
             .as_ref()
             .is_some_and(|ctx| ctx.is_dc_trellis_enabled());
-        #[cfg(not(feature = "trellis"))]
-        let store_dc_raw = false;
 
         // Boundary-RD (#91 / PR #102) only fires for the non-trellis path —
         // the trellis path will get its own D_b augmentation in a later phase.
@@ -1650,22 +1851,6 @@ impl StripProcessor {
             unreachable!("use_boundary_rd is always false without the boundary-rd feature");
         } else {
             let quant = &self.quant;
-            // Snapshot of layout values consumed inside the diagnostics
-            // capture (avoid re-borrowing `self` while we already hold
-            // `&self.quant` and `&self.pending`).
-            //
-            // Use `layout.h_samp` / `layout.v_samp` (MAX sampling factors
-            // of the JFIF frame, which correctly account for XYB
-            // BQuarter's B-channel-driven `v_samp=2` even though the
-            // underlying subsampling enum reports `S444`).
-            #[cfg(feature = "__diagnostics")]
-            let diag_h = self.layout.h_samp;
-            #[cfg(feature = "__diagnostics")]
-            let diag_v = self.layout.v_samp;
-            #[cfg(feature = "__diagnostics")]
-            let diag_y_blocks_w = self.layout.y_blocks_w;
-            #[cfg(feature = "__diagnostics")]
-            let diag_imcu_idx = self.diag_imcu_call_idx;
             // Default fast path — unchanged from before boundary-RD was added.
             for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
                 // Use get() with fallback to avoid branch on common path
@@ -1677,16 +1862,13 @@ impl StripProcessor {
                     let dc_raw = (row0[0] * 64.0).round() as i32;
                     self.y_dc_raw.push(dc_raw);
                 }
-
-                #[cfg(feature = "trellis")]
                 let zigzag = if use_trellis {
                     // Trellis path: convert to array, quantize with R-D, apply zigzag
                     let dct_arr = dct.to_array();
-                    let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                    let natural = self.trellis_ctx.as_ref().unwrap().quantize_block(
                         &dct_arr,
                         &quant.y_quant.values,
                         aq_strength,
-                        1.0,  // dampen
                         true, // is_luma
                     );
                     // Apply zigzag reordering
@@ -1703,74 +1885,21 @@ impl StripProcessor {
                         aq_strength,
                     )
                 };
-                #[cfg(not(feature = "trellis"))]
-                let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
-                    dct,
-                    &quant.y_zero_bias_simd,
-                    aq_strength,
-                );
 
                 self.y_blocks.push(zigzag);
                 self.all_aq_strengths.push(aq_strength);
-
-                // Diagnostics capture (Y, default fast path). Maps the
-                // MCU-traversal block index `i` to a global raster
-                // (row, col) in the y_blocks_w × y_blocks_h grid.
-                #[cfg(feature = "__diagnostics")]
-                if let Some(ref mut diag) = self.diagnostics {
-                    let blocks_per_mcu = diag_h * diag_v;
-                    let mcu_in_row = if blocks_per_mcu > 0 {
-                        i / blocks_per_mcu
-                    } else {
-                        i
-                    };
-                    let block_in_mcu = if blocks_per_mcu > 0 {
-                        i % blocks_per_mcu
-                    } else {
-                        0
-                    };
-                    let bc = block_in_mcu % diag_h.max(1);
-                    let br = block_in_mcu / diag_h.max(1);
-                    let global_col = mcu_in_row * diag_h.max(1) + bc;
-                    let global_row = diag_imcu_idx * diag_v.max(1) + br;
-                    let global_idx = global_row * diag_y_blocks_w + global_col;
-                    if let Some(slot) = diag
-                        .components
-                        .get_mut(0)
-                        .and_then(|c| c.blocks.get_mut(global_idx))
-                    {
-                        slot.coef_pre_quant = dct.to_array();
-                        slot.coef_levels = zigzag;
-                        slot.aq_multiplier = aq_strength;
-                    }
-                }
             }
         }
 
-        // Quantize Cb/Cr blocks — scoped so the `quant` borrow drops
-        // before any `&mut self` diagnostic captures.
-        let y_blocks_w = self.layout.y_blocks_w;
-        let y_blocks_h = self.layout.y_blocks_h;
-        let c_blocks_w = self.layout.c_blocks_w;
-        let c_blocks_h = self.layout.c_blocks_h;
-        let cr_blocks_h = if self.layout.use_xyb {
-            self.layout.b_blocks_w
-        } else {
-            c_blocks_w
-        };
-        let cr_blocks_v = if self.layout.use_xyb {
-            self.layout.b_blocks_h
-        } else {
-            c_blocks_h
-        };
-
-        #[cfg(feature = "__diagnostics")]
-        let cb_start = self.cb_blocks.len();
-        #[cfg(feature = "__diagnostics")]
-        let cr_start = self.cr_blocks.len();
+        // Quantize Cb/Cr blocks
         {
             let quant = &self.quant;
+            let y_blocks_w = self.layout.y_blocks_w;
+            let y_blocks_h = self.layout.y_blocks_h;
+            let c_blocks_w = self.layout.c_blocks_w;
+            let c_blocks_h = self.layout.c_blocks_h;
 
+            // Cb: always uses c_blocks dimensions
             let cb_dc_raw = if store_dc_raw {
                 Some(&mut self.cb_dc_raw)
             } else {
@@ -1784,8 +1913,7 @@ impl StripProcessor {
                 &quant.cb_quant_simd,
                 &quant.cb_zero_bias_simd,
                 &quant.cb_quant.values,
-                #[cfg(feature = "trellis")]
-                self.hybrid_ctx.as_ref(),
+                self.trellis_ctx.as_ref(),
                 use_trellis,
                 c_blocks_w,
                 c_blocks_h,
@@ -1793,6 +1921,17 @@ impl StripProcessor {
                 y_blocks_h,
             );
 
+            // Cr: for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
+            let cr_blocks_h = if self.layout.use_xyb {
+                self.layout.b_blocks_w
+            } else {
+                c_blocks_w
+            };
+            let cr_blocks_v = if self.layout.use_xyb {
+                self.layout.b_blocks_h
+            } else {
+                c_blocks_h
+            };
             let cr_dc_raw = if store_dc_raw {
                 Some(&mut self.cr_dc_raw)
             } else {
@@ -1806,8 +1945,7 @@ impl StripProcessor {
                 &quant.cr_quant_simd,
                 &quant.cr_zero_bias_simd,
                 &quant.cr_quant.values,
-                #[cfg(feature = "trellis")]
-                self.hybrid_ctx.as_ref(),
+                self.trellis_ctx.as_ref(),
                 use_trellis,
                 cr_blocks_h,
                 cr_blocks_v,
@@ -1815,98 +1953,8 @@ impl StripProcessor {
                 y_blocks_h,
             );
         }
-
-        // Diagnostics captures for chroma — outside the `quant` borrow scope.
         #[cfg(feature = "__diagnostics")]
-        {
-            self.capture_chroma_diag(
-                /* component_idx */ 1,
-                cb_start,
-                buffer_idx,
-                /* is_cb */ true,
-                c_blocks_w,
-                c_blocks_h,
-                y_blocks_w,
-                y_blocks_h,
-            );
-            self.capture_chroma_diag(
-                /* component_idx */ 2,
-                cr_start,
-                buffer_idx,
-                /* is_cb */ false,
-                cr_blocks_h,
-                cr_blocks_v,
-                y_blocks_w,
-                y_blocks_h,
-            );
-        }
-
-        // Advance the iMCU counter — diagnostics needs this to map
-        // per-iMCU MCU-traversal indices to global raster positions.
-        #[cfg(feature = "__diagnostics")]
-        {
-            self.diag_imcu_call_idx += 1;
-        }
-    }
-
-    /// Capture chroma per-block diagnostics after `quantize_chroma_blocks`.
-    /// `component_idx` is the index into `diagnostics.components` (1 = Cb,
-    /// 2 = Cr). `block_start` is the chroma-blocks Vec length captured
-    /// before the helper call. `is_cb` selects between `pending.cb` and
-    /// `pending.cr`. The remaining args mirror the chroma helper's
-    /// dimensions so we can replicate the AQ-strength lookup formula.
-    #[cfg(feature = "__diagnostics")]
-    #[allow(clippy::too_many_arguments)]
-    fn capture_chroma_diag(
-        &mut self,
-        component_idx: usize,
-        block_start: usize,
-        buffer_idx: usize,
-        is_cb: bool,
-        chroma_blocks_h: usize,
-        chroma_blocks_v: usize,
-        y_blocks_w: usize,
-        y_blocks_h: usize,
-    ) {
-        let blocks_h = chroma_blocks_h.max(1);
-        let pending = if is_cb {
-            &self.pending.cb[buffer_idx]
-        } else {
-            &self.pending.cr[buffer_idx]
-        };
-        let new_blocks = if is_cb {
-            &self.cb_blocks[block_start..]
-        } else {
-            &self.cr_blocks[block_start..]
-        };
-        let aq_src = &self.all_aq_strengths;
-
-        let Some(diag) = self.diagnostics.as_mut() else {
-            return;
-        };
-        let Some(component) = diag.components.get_mut(component_idx) else {
-            return;
-        };
-
-        let global_chroma_by_start = block_start / blocks_h;
-        for (i, dct) in pending.iter().enumerate() {
-            let bx = i % blocks_h;
-            let local_by = i / blocks_h;
-            let chroma_by = global_chroma_by_start + local_by;
-            let y_bx = (bx * y_blocks_w) / blocks_h;
-            let y_by = (chroma_by * y_blocks_h) / chroma_blocks_v.max(1);
-            let global_aq_idx = y_by * y_blocks_w + y_bx.min(y_blocks_w.saturating_sub(1));
-            let aq_strength = aq_src.get(global_aq_idx).copied().unwrap_or(0.08);
-
-            let global_idx = chroma_by * blocks_h + bx;
-            if let Some(slot) = component.blocks.get_mut(global_idx) {
-                slot.coef_pre_quant = dct.to_array();
-                if let Some(levels) = new_blocks.get(i) {
-                    slot.coef_levels = *levels;
-                }
-                slot.aq_multiplier = aq_strength;
-            }
-        }
+        self.capture_quantized_imcu(buffer_idx, starts, aq_start);
     }
 
     /// Non-trellis Y-plane quantize with boundary-continuity refinement
@@ -2261,7 +2309,8 @@ impl StripProcessor {
         if let Some(count) = flush_count {
             // Quantize the last pending iMCU
             if !self.pending.prev_y().is_empty() {
-                let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                self.adjust_aq(&mut temp_buffer[..count]);
                 self.quantize_prev_pending_imcu(&temp_buffer[..count]);
                 self.aq_strengths_buffer = temp_buffer;
             }
@@ -2271,21 +2320,24 @@ impl StripProcessor {
         // (for edge cases where we have blocks but no AQ was returned)
         if !self.pending.current_y().is_empty() {
             // Use default AQ strength for remaining blocks
-            let default_aq = try_alloc_filled(
+            let mut default_aq = try_alloc_filled(
                 self.pending.current_y().len(),
                 0.08f32,
                 "default_aq_strengths",
             )?;
             // Swap so current becomes prev, then quantize
             self.pending.swap();
+            self.adjust_aq(&mut default_aq);
             self.quantize_prev_pending_imcu(&default_aq);
         }
 
         // Apply DC trellis optimization if enabled
-        #[cfg(feature = "trellis")]
         if !self.y_dc_raw.is_empty() {
             self.apply_dc_trellis();
         }
+
+        #[cfg(feature = "__diagnostics")]
+        self.capture_final_levels();
 
         Ok(StripProcessorOutput {
             y_blocks: self.y_blocks,
@@ -2296,8 +2348,6 @@ impl StripProcessor {
             y_dc_raw: self.y_dc_raw,
             cb_dc_raw: self.cb_dc_raw,
             cr_dc_raw: self.cr_dc_raw,
-            #[cfg(feature = "__diagnostics")]
-            diagnostics: self.diagnostics,
         })
     }
 
@@ -2310,16 +2360,15 @@ impl StripProcessor {
     /// Processes each row of blocks independently, propagating `last_dc` from
     /// one row to the next (matching C mozjpeg behavior). When `delta_dc_weight > 0`,
     /// also considers vertical DC gradients from the row above.
-    #[cfg(feature = "trellis")]
     fn apply_dc_trellis(&mut self) {
-        let Some(ref hybrid_ctx) = self.hybrid_ctx else {
+        let Some(ref trellis_ctx) = self.trellis_ctx else {
             return;
         };
-        if !hybrid_ctx.is_dc_trellis_enabled() {
+        if !trellis_ctx.is_dc_trellis_enabled() {
             return;
         }
 
-        let config = hybrid_ctx.trellis_config();
+        let config = trellis_ctx.trellis_config();
         let lambda1 = config.lambda_log_scale1();
         let lambda2 = config.lambda_log_scale2();
         let delta_dc_weight = config.get_delta_dc_weight();
@@ -2328,7 +2377,7 @@ impl StripProcessor {
         if !self.y_dc_raw.is_empty() && !self.y_blocks.is_empty() {
             let blocks_w = self.layout.y_blocks_w;
             let dc_quantval = self.quant.y_quant.values[0];
-            let dc_table = hybrid_ctx.luma_dc_rate_table();
+            let dc_table = trellis_ctx.luma_dc_rate_table();
             dc_trellis_channel_row_by_row(
                 &self.y_dc_raw,
                 &mut self.y_blocks,
@@ -2345,7 +2394,7 @@ impl StripProcessor {
         if !self.cb_dc_raw.is_empty() && !self.cb_blocks.is_empty() {
             let blocks_w = self.layout.c_blocks_w;
             let dc_quantval = self.quant.cb_quant.values[0];
-            let dc_table = hybrid_ctx.chroma_dc_rate_table();
+            let dc_table = trellis_ctx.chroma_dc_rate_table();
             dc_trellis_channel_row_by_row(
                 &self.cb_dc_raw,
                 &mut self.cb_blocks,
@@ -2362,7 +2411,7 @@ impl StripProcessor {
         if !self.cr_dc_raw.is_empty() && !self.cr_blocks.is_empty() {
             let blocks_w = self.layout.c_blocks_w;
             let dc_quantval = self.quant.cr_quant.values[0];
-            let dc_table = hybrid_ctx.chroma_dc_rate_table();
+            let dc_table = trellis_ctx.chroma_dc_rate_table();
             dc_trellis_channel_row_by_row(
                 &self.cr_dc_raw,
                 &mut self.cr_blocks,
@@ -2386,7 +2435,6 @@ impl StripProcessor {
 /// Blocks are stored in raster order: block index = row * blocks_w + col.
 /// The zigzag-to-natural order conversion is done in-place for DC trellis,
 /// then converted back.
-#[cfg(feature = "trellis")]
 #[allow(clippy::too_many_arguments)]
 fn dc_trellis_channel_row_by_row(
     dc_raw: &[i32],
@@ -2506,12 +2554,6 @@ pub struct StripProcessorOutput {
     pub cb_dc_raw: Vec<i32>,
     /// Cr channel raw DC coefficients.
     pub cr_dc_raw: Vec<i32>,
-    /// Per-block encode diagnostics (UNSTABLE; gated behind
-    /// `__diagnostics`). `Some` when `enable_diagnostics()` was called
-    /// on the source processor; `None` (the default) for production
-    /// encodes.
-    #[cfg(feature = "__diagnostics")]
-    pub diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
 }
 
 #[cfg(test)]
@@ -2540,7 +2582,6 @@ mod tests {
     /// This test checks heights 56-72 which cross the 64-pixel boundary (4 MCU rows).
     /// Validates that decoded output is close to original (PSNR-based check).
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_strip_partial_mcu_heights() {
         use crate::encode::{EncoderConfig, PixelLayout};
         use enough::Unstoppable;
@@ -2729,13 +2770,13 @@ mod tests {
                 .expect("process_strip");
         }
 
+        processor.finalize().expect("finalize");
         let log = LOG.with(|l| l.borrow().clone());
         // 64-row 4:2:0 image is 4 iMCU rows (16 px per iMCU). StreamingAQ
         // holds back the first iMCU as lookahead for fuzzy erosion, so
-        // the trailing emission lands at flush time (not exercised by
-        // process_strip alone). What this test pins down: the hook
-        // fires, indices are monotonic from 0, slices are non-empty.
-        assert!(!log.is_empty(), "controller adjust never called");
+        // the trailing emission lands at flush time and must also be controlled.
+        assert_eq!(log.len(), height.div_ceil(strip_h));
+        assert_eq!(log.iter().map(|(_, n)| n).sum::<usize>(), 64);
         for (n, (idx, len)) in log.iter().enumerate() {
             assert_eq!(*idx, n, "imcu_idx must be monotonic from 0");
             assert!(*len > 0, "strength slice must not be empty");

@@ -137,6 +137,8 @@ fn encoder_name(encoder: &EncoderFamily) -> &'static str {
         EncoderFamily::CjpegliXyb => "cjpegli (XYB)",
         EncoderFamily::ImageMagick => "ImageMagick",
         EncoderFamily::IjgFamily => "IJG family",
+        EncoderFamily::Photoshop => "Photoshop",
+        EncoderFamily::WindowsImaging => "Windows (GDI+/WIC)",
         EncoderFamily::Unknown => "unknown",
         _ => "unknown",
     }
@@ -155,6 +157,7 @@ fn format_quality(probe: &JpegProbe) -> String {
         QualityScale::IjgQuality => format!("Q{:.0} (IJG)", probe.quality.value),
         QualityScale::MozjpegQuality => format!("Q{:.0} (mozjpeg)", probe.quality.value),
         QualityScale::ButteraugliDistance => format!("d={:.2} (butteraugli)", probe.quality.value),
+        QualityScale::WindowsQuality => format!("Q{:.0} (Windows)", probe.quality.value),
         _ => format!("{:.1} ({:?})", probe.quality.value, probe.quality.scale),
     }
 }

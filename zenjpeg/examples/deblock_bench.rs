@@ -1,6 +1,6 @@
 //! Quick benchmark for deblocking filter throughput on 2K and 4K planes.
 //!
-//! Usage: cargo run --release -p zenjpeg --features decoder,parallel --example deblock_bench
+//! Usage: cargo run --release -p zenjpeg --features parallel --example deblock_bench
 
 use std::time::Instant;
 

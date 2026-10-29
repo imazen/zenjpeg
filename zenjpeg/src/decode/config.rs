@@ -14,7 +14,8 @@ use super::extras::{DecodedExtras, PreserveConfig};
 /// How the decoder should handle image orientation.
 ///
 /// Combines EXIF auto-orientation and explicit transforms into a single enum,
-/// allowing the decoder to coalesce operations (e.g., JPEG lossless DCT rotation).
+/// allowing the decoder to coalesce operations (the combined transform is
+/// applied as a single lossless pixel permutation of the decoded image).
 ///
 /// Matches [`zencodec::OrientationHint`] when the `zencodec` feature is enabled.
 ///
@@ -46,9 +47,9 @@ pub enum OrientationHint {
 
     /// Resolve EXIF/container orientation to identity (default).
     ///
-    /// The decoder coalesces this with the decode operation when possible
-    /// (e.g., JPEG lossless DCT transform). The output will have correct
-    /// visual orientation.
+    /// The decoder applies the orientation as a lossless pixel permutation
+    /// of the decoded image — identical to decoding upright and reorienting
+    /// afterwards. The output will have correct visual orientation.
     #[default]
     Correct,
 
@@ -76,7 +77,7 @@ pub enum OrientationHint {
 ///
 /// | Method | Matches |
 /// |--------|---------|
-/// | `Triangle` | libjpeg-turbo, mozjpeg, djpeg (default) |
+/// | `Triangle` | libjpeg-turbo/mozjpeg/djpeg within ±1 (default; see below) |
 /// | `NearestNeighbor` | fastest, lowest quality |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -90,13 +91,26 @@ pub enum ChromaUpsampling {
 
     /// Fused 2D triangle filter with alternating rounding bias (default).
     ///
-    /// Uses fused vertical+horizontal interpolation with alternating `+7`/`+8`
-    /// rounding bias, avoiding systematic bias and intermediate rounding errors.
+    /// The same fused 9:3:3:1 filter as libjpeg-turbo's fancy upsampling.
+    /// 4:2:2 (h2v1) and 4:4:0 (h1v2) are bit-identical to libjpeg-turbo;
+    /// 4:2:0 (h2v2) row-alternates the `+8`/`+7` rounding bias where turbo
+    /// keeps it fixed, so odd output rows differ from turbo by ±1 on the
+    /// rounding-boundary cases (~3% of pixels; even rows bit-identical).
+    /// Both schemes are equally accurate vs the exact filter (max err 0.5,
+    /// ~zero bias).
     ///
-    /// With the default [`IdctMethod::Jpegli`] IDCT, matches libjpeg-turbo/mozjpeg
-    /// within max_diff <= 3. With [`IdctMethod::Libjpeg`], matches within
-    /// max_diff <= 2 (the remaining gap is upsampler rounding differences).
-    /// The Libjpeg IDCT adds ~37% decode overhead.
+    /// With the default [`IdctMethod::Libjpeg`] IDCT, all three stages are
+    /// turbo's — the islow IDCT, the h2v2 fixed upsampling biases, AND the
+    /// 16-bit YCbCr→RGB tables — so decoded RGB is BYTE-FOR-BYTE identical to
+    /// mozjpeg/djpeg (max_diff == 0), verified over sizes × qualities × 4:2:0 by
+    /// `test_idct_method_libjpeg_fancy_matches_mozjpeg_exact` (`__ffi-tests`).
+    /// That is the out-of-the-box behavior.
+    ///
+    /// Opting into [`IdctMethod::Jpegli`] keeps this upsampler's alternating
+    /// bias and the f32 YCbCr→RGB path, so decoded RGB then matches
+    /// libjpeg-turbo/mozjpeg only within max_diff <= 3 (the IDCT precision
+    /// differs), in exchange for ~3% faster decode
+    /// (`benches/decode_zenbench.rs`).
     #[default]
     Triangle,
 }
@@ -109,28 +123,84 @@ pub enum ChromaUpsampling {
 ///
 /// | Method | Precision | Matches |
 /// |--------|-----------|---------|
-/// | `Jpegli` | 12-bit fixed-point | jpegli (Google JPEG XL project) |
-/// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg |
+/// | `Jpegli` | 12-bit fixed-point | stb / zune-jpeg (NOT jpegli — see below) |
+/// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg (default) |
 ///
-/// The default is `Jpegli`. For pixel-exact mozjpeg matching, set
-/// `.idct_method(IdctMethod::Libjpeg)` explicitly.
+/// The default is `Libjpeg` (since 2026-07-15): it is both the more accurate
+/// integer kernel and byte-exact with libjpeg-turbo/mozjpeg/djpeg. Set
+/// `.idct_method(IdctMethod::Jpegli)` explicitly to opt into the faster 12-bit
+/// kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum IdctMethod {
-    /// 12-bit fixed-point IDCT (jpegli-derived).
+    /// 12-bit fixed-point IDCT (stb/zune-derived).
     ///
-    /// Uses AVX2 or portable wide SIMD with 12-bit precision.
-    /// This is the default and matches jpegli's IDCT behavior.
+    /// Uses AVX2 or portable wide SIMD with 12-bit precision. Roughly 3% faster
+    /// to decode than [`Libjpeg`](Self::Libjpeg) (the islow kernel's two
+    /// overflow guards), at the cost of accuracy and reference-exactness.
     /// Max diff vs libjpeg-turbo: 2-3 levels.
-    #[default]
+    ///
+    /// **The name is a misnomer** kept for API stability: this is *not* what
+    /// the C++ jpegli decoder uses. jpegli decodes with a float IDCT
+    /// (`lib/jpegli/idct.cc`) — zenjpeg's f32 path, which is what XYB and
+    /// `dequant_bias` route to. Both integer kernels here are the same Loeffler
+    /// islow butterfly, differing only in fixed-point precision (12 vs 13 bit),
+    /// rounding-bias placement, and intermediate width.
+    ///
+    /// **Less accurate than [`Libjpeg`](Self::Libjpeg)**: measured over 10k
+    /// random blocks per config against an f64 reference, this kernel carries a
+    /// systematic **+0.002..+0.004 bias** (from the extra `+512` in its pass-2
+    /// `SCALE_BITS`; 512/2^17 = +0.0039, which dominates at small coefficients),
+    /// where islow is unbiased (mean ≈ ±2e-4). See
+    /// `test_idct_accuracy_stats_vs_reference` in `idct_int.rs`.
+    ///
+    /// Note 1-component (grayscale) sources always use
+    /// [`Libjpeg`](Self::Libjpeg) regardless of this setting (#154) — the gray
+    /// plane must be identical across decode paths, and with no chroma there is
+    /// nothing for the 12-bit tuning to trade against.
     Jpegli,
 
-    /// 13-bit Loeffler IDCT (libjpeg-turbo compatible).
+    /// 13-bit Loeffler IDCT (libjpeg-turbo compatible). **Default.**
     ///
     /// Uses the Loeffler, Ligtenberg, Moschytz algorithm with 13-bit
     /// fixed-point constants, matching libjpeg-turbo's `jpeg_idct_islow`.
-    /// Use this when you need pixel-exact match with mozjpeg/djpeg output.
+    /// Also selects libjpeg-turbo's fixed h2v2 fancy-upsampling rounding
+    /// biases (see [`ChromaUpsampling::Triangle`]) and its 16-bit YCbCr→RGB
+    /// tables, so all three decode stages are bit-exact with mozjpeg/djpeg:
+    /// decoded RGB is byte-for-byte identical (max_diff == 0), verified
+    /// against libjpeg-turbo by the `__ffi-tests` parity tests
+    /// (`test_idct_method_libjpeg_fancy_matches_mozjpeg_exact`).
+    ///
+    /// Paired with the default [`ChromaUpsampling::Triangle`] this makes the
+    /// out-of-the-box decode byte-exact with mozjpeg/djpeg. It is also the more
+    /// accurate integer kernel (unbiased; see [`Jpegli`](Self::Jpegli)), which
+    /// is why it is the default despite costing ~3% of decode wall time.
+    ///
+    /// The islow kernel is SIMD (guarded, bit-exact with its scalar kernel:
+    /// inputs and pass-1 outputs must fit `[-32768, 32767]`, else it falls back
+    /// to scalar — honest 8-bit imagery peaks around |4096| and never trips it).
+    ///
+    /// Honored identically (byte-for-byte) on every u8 decode path — streaming
+    /// `decode()`, `scanline_reader()`, and the parallel path — across all
+    /// subsampling modes and baseline/progressive (see
+    /// `tests/libjpeg_idct_all_paths_parity.rs`).
+    #[default]
     Libjpeg,
+}
+
+impl IdctMethod {
+    /// The method a frame with `num_components` components decodes with:
+    /// 1-component frames always use [`Libjpeg`](Self::Libjpeg) (#154), so the
+    /// gray plane is identical on every path. Every consumer of the requested
+    /// method (`decode()`, the scanline strips, the wave reader) goes through
+    /// this.
+    pub(crate) fn for_components(self, num_components: usize) -> Self {
+        if num_components == 1 {
+            IdctMethod::Libjpeg
+        } else {
+            self
+        }
+    }
 }
 
 /// Post-decode deblocking mode.
@@ -341,6 +411,36 @@ pub enum Strictness {
     Permissive,
 }
 
+impl Strictness {
+    /// Strict mode: every recoverable data error is fatal.
+    #[inline]
+    pub(crate) fn is_strict(self) -> bool {
+        self == Self::Strict
+    }
+
+    /// Recover from data errors instead of failing — truncated scan data
+    /// (zero fill), DNL/SOF height conflicts, missing DHT (K.3 fallback),
+    /// zero quant values (clamp to 1). All levels except Strict.
+    #[inline]
+    pub(crate) fn recovers_data_errors(self) -> bool {
+        self != Self::Strict
+    }
+
+    /// Lenient and Permissive: enable the entropy decoder's lenient
+    /// recovery and warn (rather than error) on bad restart counts.
+    #[inline]
+    pub(crate) fn lenient_entropy_recovery(self) -> bool {
+        matches!(self, Self::Lenient | Self::Permissive)
+    }
+
+    /// Permissive only: skip malformed header segments, resync
+    /// out-of-sequence restart markers, clamp bad Huffman table indices.
+    #[inline]
+    pub(crate) fn is_permissive(self) -> bool {
+        self == Self::Permissive
+    }
+}
+
 /// Issues discovered during JPEG decoding.
 ///
 /// In [`Strictness::Strict`] mode, any issue triggers an immediate error
@@ -375,15 +475,32 @@ pub enum DecodeWarning {
     /// mozjpeg handles this via `std_huff_tables()` in `jinit_huff_decoder()`.
     MissingHuffmanTables,
 
-    /// Scan data was truncated; remaining blocks filled with zeros.
+    /// Scan data was truncated mid-scan; remaining blocks filled with zeros.
     ///
     /// The image may have partial content. `blocks_decoded` and `blocks_expected`
-    /// indicate how much data was recovered.
+    /// indicate how much data was recovered. Both are always real counts — a
+    /// truncation with no partial scan to describe reports
+    /// [`TruncatedBetweenScans`](Self::TruncatedBetweenScans) instead.
     TruncatedScan {
         /// Number of MCU blocks successfully decoded before truncation.
         blocks_decoded: u32,
         /// Total number of MCU blocks expected for this scan.
         blocks_expected: u32,
+    },
+
+    /// The stream ended between scans — after a complete scan, before the
+    /// next one's entropy data: at a marker boundary (a missing EOI, a file
+    /// cut between scans) or inside a table / metadata segment (DHT, DQT,
+    /// DRI, APPn, COM) that precedes the next scan.
+    ///
+    /// Every scan that was started also finished, so unlike
+    /// [`TruncatedScan`](Self::TruncatedScan) there is no partially-decoded scan
+    /// to report block counts for. For a baseline JPEG the image is complete; for
+    /// a progressive one it is decoded to `scans_decoded` scans of refinement,
+    /// which is a valid (if lower-quality) image.
+    TruncatedBetweenScans {
+        /// Number of scans fully decoded before the stream ended.
+        scans_decoded: u32,
     },
 
     /// Padding blocks beyond image boundary couldn't be decoded; filled with zeros.
@@ -408,8 +525,11 @@ pub enum DecodeWarning {
 
     /// AC coefficient index exceeded block bounds; treated as end-of-block.
     ///
-    /// Only recovered in Lenient mode. Indicates malformed run-length data
-    /// where the run + position would exceed the 64-coefficient block.
+    /// Indicates malformed run-length data where the run + position would
+    /// exceed the 64-coefficient block. Tolerated (with this warning) under
+    /// `Balanced`, `Lenient` and `Permissive` on every decode path — the
+    /// value bits are consumed and the block ends, as libjpeg-turbo does —
+    /// and rejected under `Strict`.
     AcIndexOverflow,
 
     /// Invalid Huffman code encountered; treated as end-of-block.
@@ -477,6 +597,11 @@ impl core::fmt::Display for DecodeWarning {
                 f,
                 "scan truncated at block {}/{}; remaining filled with zeros",
                 blocks_decoded, blocks_expected
+            ),
+            Self::TruncatedBetweenScans { scans_decoded } => write!(
+                f,
+                "stream ended after {} complete scan(s); no EOI",
+                scans_decoded
             ),
             Self::PaddingBlockError => {
                 write!(f, "padding block decode failed; filled with zeros")
@@ -555,6 +680,10 @@ pub enum OutputTarget {
     #[default]
     Srgb8,
 
+    /// Integer samples in the JPEG frame's native range (0–4095 for 12-bit).
+    /// RGB retains the source primaries and transfer function; no range expansion.
+    Native16,
+
     /// f32 sRGB output (gamma-encoded, \[0,1\] nominal) with unclamped integer IDCT.
     ///
     /// Same speed as `Srgb8` but preserves ringing outside \[0, 255\] as values
@@ -588,7 +717,7 @@ impl OutputTarget {
     #[inline]
     #[must_use]
     pub fn is_f32(self) -> bool {
-        !matches!(self, Self::Srgb8)
+        !matches!(self, Self::Srgb8 | Self::Native16)
     }
 
     /// Returns `true` if output is in linear light.
@@ -860,7 +989,7 @@ pub struct DecodeConfig {
     /// (default), no color conversion is performed.
     pub correct_color: Option<TargetColorSpace>,
     /// Maximum pixels allowed (for DoS protection).
-    /// Default is 100 megapixels. Set to 0 for unlimited.
+    /// Default is 120 megapixels (admits common ~108 MP camera photos). Set to 0 for unlimited.
     /// Use `max_pixels()` method to set.
     pub(crate) max_pixels: u64,
     /// Maximum total memory for allocations (for DoS protection).
@@ -901,8 +1030,10 @@ pub struct DecodeConfig {
     pub(crate) parallel_strategy: ParallelStrategy,
     /// Integer IDCT algorithm override.
     ///
-    /// When `None` (default), `IdctMethod::Jpegli` is used for all upsampling
-    /// modes. Set to `IdctMethod::Libjpeg` for pixel-exact mozjpeg matching.
+    /// When `None` (default), `IdctMethod::Libjpeg` is used for colour frames
+    /// and 1-component grayscale frames (which always use `Libjpeg` at the
+    /// parser level, `#154`). Set to `IdctMethod::Jpegli` for the 12-bit
+    /// fixed-point IDCT on colour frames.
     pub(crate) idct_method: Option<IdctMethod>,
     /// Post-decode deblocking mode.
     ///
@@ -910,6 +1041,24 @@ pub struct DecodeConfig {
     /// coefficient decode path (no streaming) since deblocking needs access
     /// to quantization tables and/or raw DCT coefficients.
     pub(crate) deblock_mode: DeblockMode,
+
+    /// Caller preference for allocation fallibility, applied per call site.
+    ///
+    /// Internal carrier (`pub(crate)`): the zencodec decode path sets it from
+    /// [`ResourceLimits::prefer_fallible_allocations`](zencodec::ResourceLimits::prefer_fallible_allocations)
+    /// in `codec::build_decode_config`; the direct [`DecodeConfig`] API leaves
+    /// it [`CodecDefault`](zencodec::AllocPreference::CodecDefault), so each
+    /// decode allocation site keeps its own default (big untrusted output /
+    /// coefficient buffers fallible, small bounded MCU scratch infallible).
+    /// See [`crate::foundation::alloc`].
+    pub(crate) alloc_pref: zencodec::AllocPreference,
+
+    /// Whether a scanline reader may take the wave-only route (`parallel`,
+    /// nearest-neighbour 4:2:2 / 4:2:0, MCU-row DRI), which keeps decoded RGB
+    /// rows only and so cannot serve luma or f32 reads of a YCbCr frame.
+    /// Internal callers that know they will make such reads clear it
+    /// ([`DecodeConfig::for_plane_reads`]). Always `true` through the public API.
+    pub(crate) wave_only_reader: bool,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -931,6 +1080,8 @@ impl core::fmt::Debug for DecodeConfig {
             .field("parallel_strategy", &self.parallel_strategy)
             .field("idct_method", &self.idct_method)
             .field("deblock_mode", &self.deblock_mode)
+            .field("alloc_pref", &self.alloc_pref)
+            .field("wave_only_reader", &self.wave_only_reader)
             .finish()
     }
 }
@@ -955,6 +1106,8 @@ impl Default for DecodeConfig {
             parallel_strategy: ParallelStrategy::default(),
             idct_method: None,
             deblock_mode: DeblockMode::default(),
+            alloc_pref: zencodec::AllocPreference::CodecDefault,
+            wave_only_reader: true,
         }
     }
 }
@@ -980,6 +1133,8 @@ impl Default for DecodeConfig {
 pub enum DecodedPixels<'a> {
     /// 8-bit pixel data (from [`OutputTarget::Srgb8`]).
     U8(&'a [u8]),
+    /// Native-range integer samples.
+    U16(&'a [u16]),
     /// 32-bit float pixel data (from [`OutputTarget::SrgbF32`], [`OutputTarget::LinearF32`], etc.).
     F32(&'a [f32]),
 }
@@ -991,6 +1146,8 @@ pub enum DecodedPixels<'a> {
 pub enum OwnedDecodedPixels {
     /// 8-bit pixel data.
     U8(Vec<u8>),
+    /// Native-range integer samples.
+    U16(Vec<u16>),
     /// 32-bit float pixel data.
     F32(Vec<f32>),
 }
@@ -1001,9 +1158,9 @@ pub enum OwnedDecodedPixels {
 
 /// Unified decode result, replacing `DecodedImage` and `DecodedImageF32`.
 ///
-/// Contains decoded pixel data in either u8 or f32 format depending on the
-/// [`OutputTarget`] used. Access pixels via [`pixels_u8()`](Self::pixels_u8)
-/// or [`pixels_f32()`](Self::pixels_f32).
+/// Contains decoded pixel data in u8, native-range u16, or f32 format depending
+/// on the [`OutputTarget`]. Use [`Self::pixels`] for a typed view, or the
+/// corresponding [`Self::pixels_u8`], [`Self::pixels_u16`] or [`Self::pixels_f32`].
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecodeResult {
@@ -1016,6 +1173,8 @@ pub struct DecodeResult {
     output_target: OutputTarget,
     pixels_u8: Option<Vec<u8>>,
     pixels_f32: Option<Vec<f32>>,
+    pixels_u16: Option<Vec<u16>>,
+    sample_precision: u8,
     /// Gain map from UltraHDR images. `None` for regular JPEGs or Discard mode.
     pub gain_map: Option<GainMapResult>,
     pub(crate) extras: Option<DecodedExtras>,
@@ -1055,6 +1214,8 @@ impl DecodeResult {
             output_target,
             pixels_u8: Some(pixels),
             pixels_f32: None,
+            pixels_u16: None,
+            sample_precision: 8,
             gain_map: None,
             extras,
             warnings,
@@ -1078,15 +1239,123 @@ impl DecodeResult {
             output_target,
             pixels_u8: None,
             pixels_f32: Some(pixels),
+            pixels_u16: None,
+            sample_precision: 8,
             gain_map: None,
             extras,
             warnings,
         }
     }
 
+    /// Samples in the JPEG frame's native integer range, with the layout in `format`.
+    pub fn pixels_u16(&self) -> Option<&[u16]> {
+        self.pixels_u16.as_deref()
+    }
+
+    /// Sample precision declared by the source JPEG frame.
+    pub fn sample_precision(&self) -> u8 {
+        self.sample_precision
+    }
+
+    pub(crate) fn set_sample_precision(&mut self, precision: u8) {
+        self.sample_precision = precision;
+    }
+
+    pub(crate) fn new_u16(
+        width: u32,
+        height: u32,
+        format: crate::types::PixelFormat,
+        precision: u8,
+        pixels: Vec<u16>,
+        extras: Option<DecodedExtras>,
+        warnings: Vec<DecodeWarning>,
+    ) -> Self {
+        let mut result = Self::new_u8(
+            width,
+            height,
+            format,
+            OutputTarget::Native16,
+            Vec::new(),
+            extras,
+            warnings,
+        );
+        result.pixels_u8 = None;
+        result.pixels_u16 = Some(pixels);
+        result.sample_precision = precision;
+        result
+    }
+
     /// Set the gain map result.
     pub(crate) fn set_gain_map(&mut self, gain_map: Option<GainMapResult>) {
         self.gain_map = gain_map;
+    }
+
+    /// Apply an orientation transform to the decoded pixels in place.
+    ///
+    /// Pure pixel permutation (no resampling, no precision loss) on whichever
+    /// buffer is present (u8 or f32), swapping `width`/`height` for
+    /// dimension-swapping transforms. Used by the pixel-domain orientation
+    /// fallback for images where the DCT-domain transform is not exact
+    /// (subsampled chroma with non-MCU-aligned dimensions, issue #149).
+    pub(crate) fn apply_pixel_transform(&mut self, transform: LosslessTransform) {
+        if transform == LosslessTransform::None {
+            return;
+        }
+        let w = self.width as usize;
+        let h = self.height as usize;
+        if let Some(px) = self.pixels_u8.take() {
+            // Interleaved u8: stride unit is bytes_per_pixel (4 for Bgrx).
+            let ch = self.format.bytes_per_pixel();
+            self.pixels_u8 = Some(permute_interleaved(&px, w, h, ch, transform));
+        }
+        if let Some(px) = self.pixels_f32.take() {
+            // f32 buffers are packed with one element per channel.
+            let ch = self.format.num_channels();
+            self.pixels_f32 = Some(permute_interleaved(&px, w, h, ch, transform));
+        }
+        if let Some(px) = self.pixels_u16.take() {
+            self.pixels_u16 = Some(permute_interleaved(
+                &px,
+                w,
+                h,
+                self.format.num_channels(),
+                transform,
+            ));
+        }
+        if transform.swaps_dimensions() {
+            core::mem::swap(&mut self.width, &mut self.height);
+        }
+    }
+
+    /// Crop the decoded pixels in place to the given rectangle.
+    ///
+    /// Coordinates are in the current (post-transform) output space and must
+    /// be fully inside the image.
+    pub(crate) fn crop_in_place(&mut self, x: u32, y: u32, new_w: u32, new_h: u32) {
+        let w = self.width as usize;
+        let (x, y) = (x as usize, y as usize);
+        let (new_w, new_h) = (new_w as usize, new_h as usize);
+        if let Some(px) = self.pixels_u8.take() {
+            let ch = self.format.bytes_per_pixel();
+            self.pixels_u8 = Some(crop_interleaved(&px, w, x, y, new_w, new_h, ch));
+        }
+        if let Some(px) = self.pixels_f32.take() {
+            let ch = self.format.num_channels();
+            self.pixels_f32 = Some(crop_interleaved(&px, w, x, y, new_w, new_h, ch));
+        }
+        if let Some(px) = self.pixels_u16.take() {
+            self.pixels_u16 = Some(crop_interleaved(
+                &px,
+                w,
+                x,
+                y,
+                new_w,
+                new_h,
+                self.format.num_channels(),
+            ));
+        }
+        self.width = new_w as u32;
+        self.height = new_h as u32;
     }
 
     /// Image width in pixels.
@@ -1159,6 +1428,8 @@ impl DecodeResult {
             DecodedPixels::U8(data)
         } else if let Some(ref data) = self.pixels_f32 {
             DecodedPixels::F32(data)
+        } else if let Some(ref data) = self.pixels_u16 {
+            DecodedPixels::U16(data)
         } else {
             panic!("DecodeResult contains no pixel data")
         }
@@ -1175,6 +1446,8 @@ impl DecodeResult {
             OwnedDecodedPixels::U8(data)
         } else if let Some(data) = self.pixels_f32 {
             OwnedDecodedPixels::F32(data)
+        } else if let Some(data) = self.pixels_u16 {
+            OwnedDecodedPixels::U16(data)
         } else {
             panic!("DecodeResult contains no pixel data")
         }
@@ -1188,7 +1461,7 @@ impl DecodeResult {
 
     /// Stride (elements per row) of the image.
     ///
-    /// For u8: bytes per row. For f32: floats per row.
+    /// For u8: bytes per row. For u16/f32: samples per row.
     #[must_use]
     pub fn stride(&self) -> usize {
         if self.output_target.is_f32() {
@@ -1238,6 +1511,8 @@ impl DecodeResult {
     }
 
     /// Decompose into parts: (pixels_u8, pixels_f32, width, height, format, extras).
+    /// Native integer samples are normalized into the f32 slot. Use
+    /// [`Self::into_pixels`] to retain native integer samples without conversion.
     #[must_use]
     pub fn into_parts(
         self,
@@ -1249,9 +1524,15 @@ impl DecodeResult {
         crate::types::PixelFormat,
         Option<DecodedExtras>,
     ) {
+        let floats = self.pixels_f32.or_else(|| {
+            self.pixels_u16.map(|samples| {
+                let max = ((1u32 << self.sample_precision) - 1) as f32;
+                samples.into_iter().map(|v| v as f32 / max).collect()
+            })
+        });
         (
             self.pixels_u8,
-            self.pixels_f32,
+            floats,
             self.width,
             self.height,
             self.format,
@@ -1304,6 +1585,149 @@ impl DecodeInfo {
     }
 }
 
+/// Apply an orientation transform to an interleaved pixel buffer.
+///
+/// `src` is `h` rows of `w` pixels with `ch` elements per pixel (tightly
+/// packed). Returns a new buffer in the transformed geometry (dimensions
+/// swap for Transpose/Rotate90/Rotate270/Transverse). Pure permutation —
+/// every output pixel is copied verbatim from exactly one input pixel.
+/// Permute an interleaved `w × h` buffer of `ch`-element pixels by
+/// `transform`, returning the oriented buffer.
+///
+/// With the `zencodec` feature this delegates to
+/// `zenpixels_convert::orient::apply_orientation_into` (#150): one permute
+/// implementation for the ecosystem, cache-tiled and SIMD (`fast-transpose`:
+/// AVX2 / NEON kernels for every pixel width from 1 to 16 bytes) where it
+/// pays. The scalar gather [`transform_interleaved`] stays as the fallback
+/// for builds without `zencodec` and for any pixel width the delegate has no
+/// descriptor for; the two are held byte-identical by
+/// `permute_delegation_matches_scalar_gather`.
+pub(crate) fn permute_interleaved<T: Copy + bytemuck::Pod>(
+    src: &[T],
+    w: usize,
+    h: usize,
+    ch: usize,
+    transform: LosslessTransform,
+) -> Vec<T> {
+    #[cfg(feature = "zencodec")]
+    if let Some(out) = permute_via_zenpixels_convert(src, w, h, ch, transform) {
+        return out;
+    }
+    transform_interleaved(src, w, h, ch, transform)
+}
+
+/// The `zenpixels_convert` delegate behind [`permute_interleaved`]. `None`
+/// when no descriptor matches the pixel width or the delegate declines —
+/// the caller then takes the scalar path. Orientation is a pure whole-pixel
+/// permutation, so only the descriptor's bytes-per-pixel matters; the
+/// channel semantics it carries are irrelevant.
+#[cfg(feature = "zencodec")]
+fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
+    src: &[T],
+    w: usize,
+    h: usize,
+    ch: usize,
+    transform: LosslessTransform,
+) -> Option<Vec<T>> {
+    use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+    if w == 0 || h == 0 || src.len() != w * h * ch {
+        return None;
+    }
+    let bpp = ch * core::mem::size_of::<T>();
+    let descriptor = match bpp {
+        1 => PixelDescriptor::GRAY8,
+        3 => PixelDescriptor::RGB8,
+        4 => PixelDescriptor::RGBA8,
+        12 => PixelDescriptor::RGBF32,
+        16 => PixelDescriptor::RGBAF32,
+        _ => return None,
+    };
+    let (ow, oh) = if transform.swaps_dimensions() {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let (w32, h32, ow32, oh32) = (
+        u32::try_from(w).ok()?,
+        u32::try_from(h).ok()?,
+        u32::try_from(ow).ok()?,
+        u32::try_from(oh).ok()?,
+    );
+    let src_slice =
+        PixelSlice::new(bytemuck::cast_slice(src), w32, h32, w * bpp, descriptor).ok()?;
+    let mut dst: Vec<T> = vec![T::zeroed(); src.len()];
+    let dst_slice = PixelSliceMut::new(
+        bytemuck::cast_slice_mut(&mut dst),
+        ow32,
+        oh32,
+        ow * bpp,
+        descriptor,
+    )
+    .ok()?;
+    zenpixels_convert::orient::apply_orientation_into(
+        src_slice,
+        transform.as_orientation(),
+        dst_slice,
+    )
+    .ok()?;
+    Some(dst)
+}
+
+/// Scalar output-sequential gather: the reference permutation and the
+/// fallback for [`permute_interleaved`].
+pub(crate) fn transform_interleaved<T: Copy>(
+    src: &[T],
+    w: usize,
+    h: usize,
+    ch: usize,
+    transform: LosslessTransform,
+) -> Vec<T> {
+    debug_assert_eq!(src.len(), w * h * ch);
+    let (ow, oh) = if transform.swaps_dimensions() {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let mut dst = Vec::with_capacity(src.len());
+    for oy in 0..oh {
+        for ox in 0..ow {
+            // Source pixel for output (ox, oy). All transforms follow EXIF
+            // display semantics (Rotate90 = 90° clockwise, EXIF 6).
+            let (sx, sy) = match transform {
+                LosslessTransform::None => (ox, oy),
+                LosslessTransform::FlipHorizontal => (w - 1 - ox, oy),
+                LosslessTransform::FlipVertical => (ox, h - 1 - oy),
+                LosslessTransform::Rotate180 => (w - 1 - ox, h - 1 - oy),
+                LosslessTransform::Transpose => (oy, ox),
+                LosslessTransform::Rotate90 => (oy, h - 1 - ox),
+                LosslessTransform::Rotate270 => (w - 1 - oy, ox),
+                LosslessTransform::Transverse => (w - 1 - oy, h - 1 - ox),
+            };
+            let s = (sy * w + sx) * ch;
+            dst.extend_from_slice(&src[s..s + ch]);
+        }
+    }
+    dst
+}
+
+/// Copy a sub-rectangle out of an interleaved pixel buffer.
+fn crop_interleaved<T: Copy>(
+    src: &[T],
+    src_w: usize,
+    x: usize,
+    y: usize,
+    new_w: usize,
+    new_h: usize,
+    ch: usize,
+) -> Vec<T> {
+    let mut dst = Vec::with_capacity(new_w * new_h * ch);
+    for row in 0..new_h {
+        let start = ((y + row) * src_w + x) * ch;
+        dst.extend_from_slice(&src[start..start + new_w * ch]);
+    }
+    dst
+}
+
 // ============================================================================
 // JpegInfo
 // ============================================================================
@@ -1315,7 +1739,7 @@ pub struct JpegInfo {
     pub dimensions: Dimensions,
     /// Color space
     pub color_space: crate::types::ColorSpace,
-    /// Sample precision (8 or 12 bits)
+    /// Sample precision (8 or 12 for DCT; 2–16 for predictive lossless).
     pub precision: u8,
     /// Number of components
     pub num_components: u8,
@@ -1340,6 +1764,62 @@ pub struct JpegInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #150: the `zenpixels_convert` delegate must be byte-identical to the
+    /// scalar gather for every transform, every pixel width the decoder
+    /// emits (u8 ×1/3/4, f32 ×1/3/4), and shapes that hit partial tiles.
+    #[cfg(feature = "zencodec")]
+    #[test]
+    fn permute_delegation_matches_scalar_gather() {
+        use crate::lossless::LosslessTransform as T;
+        let transforms = [
+            T::FlipHorizontal,
+            T::FlipVertical,
+            T::Rotate180,
+            T::Transpose,
+            T::Rotate90,
+            T::Rotate270,
+            T::Transverse,
+        ];
+        let shapes = [
+            (1, 1),
+            (1, 9),
+            (9, 1),
+            (7, 5),
+            (33, 17),
+            (64, 48),
+            (70, 130),
+        ];
+        let mut delegated = 0usize;
+        for &(w, h) in &shapes {
+            for &ch in &[1usize, 3, 4] {
+                let n = w * h * ch;
+                let src_u8: Vec<u8> = (0..n).map(|i| (i * 31 % 251) as u8).collect();
+                let src_f32: Vec<f32> = (0..n).map(|i| (i as f32) * 0.37 - 5.0).collect();
+                for &t in &transforms {
+                    let d = permute_via_zenpixels_convert(&src_u8, w, h, ch, t)
+                        .unwrap_or_else(|| panic!("u8 ch={ch} {w}x{h} {t:?}: delegate declined"));
+                    assert_eq!(
+                        d,
+                        transform_interleaved(&src_u8, w, h, ch, t),
+                        "u8 ch={ch} {w}x{h} {t:?}"
+                    );
+                    let d = permute_via_zenpixels_convert(&src_f32, w, h, ch, t)
+                        .unwrap_or_else(|| panic!("f32 ch={ch} {w}x{h} {t:?}: delegate declined"));
+                    assert_eq!(
+                        d,
+                        transform_interleaved(&src_f32, w, h, ch, t),
+                        "f32 ch={ch} {w}x{h} {t:?}"
+                    );
+                    delegated += 2;
+                }
+            }
+        }
+        assert_eq!(delegated, shapes.len() * 3 * transforms.len() * 2);
+        // Unsupported width falls back (None), never panics.
+        let odd: Vec<u8> = vec![0; 5 * 4 * 5];
+        assert!(permute_via_zenpixels_convert(&odd, 4, 5, 5, T::Rotate90).is_none());
+    }
 
     #[test]
     fn resolve_crop_basic() {
@@ -1367,5 +1847,25 @@ mod tests {
     fn resolve_crop_out_of_bounds() {
         let crop = CropRegion::pixels(600, 0, 100, 100);
         assert!(crop.resolve(640, 480, 16).is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_result_guards {
+    use super::*;
+    #[test]
+    fn absent_pixels_are_an_internal_error() {
+        let mut result = DecodeResult::new_u8(
+            0,
+            0,
+            crate::types::PixelFormat::Gray,
+            OutputTarget::Srgb8,
+            Vec::new(),
+            None,
+            Vec::new(),
+        );
+        result.pixels_u8 = None;
+        assert!(std::panic::catch_unwind(|| result.pixels()).is_err());
+        assert!(std::panic::catch_unwind(|| result.into_pixels()).is_err());
     }
 }

@@ -63,10 +63,13 @@ fn main() {
 
         // 2. Encode with Rust (XYB + hybrid)
         let rust_jpeg = {
-            use zenjpeg::encode::trellis::HybridConfig;
+            use zenjpeg::encode::trellis::TrellisConfig;
 
-            let config = EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter)
-                .hybrid_config(HybridConfig::default());
+            let config =
+                EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter).trellis(TrellisConfig {
+                    dc_enabled: false,
+                    ..TrellisConfig::default()
+                });
             let mut enc = config
                 .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                 .expect("encoder setup");

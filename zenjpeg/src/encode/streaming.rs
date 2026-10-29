@@ -34,9 +34,43 @@ use crate::encode::config::ComputedConfig;
 use crate::encode::encoder_types::HuffmanStrategy;
 use crate::encode::strip::StripProcessor;
 use crate::error::{Error, Result};
-use crate::quant::{self, QuantTable, ZeroBiasParams};
-use crate::types::{ColorSpace, JpegMode, Subsampling};
+use crate::foundation::consts::DCT_BLOCK_SIZE;
+use crate::quant::QuantTable;
+use crate::types::{JpegMode, Subsampling};
 use enough::{Stop, Unstoppable};
+
+/// Output size at or below which entropy-stage trials run (the
+/// `Smallest` sequential candidates; `TinyFileMode::Auto`'s exact
+/// tiny-table trial). For `Smallest`: progressive output at or
+/// below which the
+/// sequential candidates. Above it, the progressive stream is
+/// emitted directly (one serialization).
+///
+/// The gate lives in the BYTE domain, not pixels: the crossover is
+/// driven by progressive's per-scan overhead versus how much
+/// entropy-coded content amortizes it, and pixel count is only a
+/// proxy that degenerate content breaks (a near-flat large image
+/// produces few bytes). The trigger is self-measuring — the
+/// progressive candidate is serialized first, so its size is in
+/// hand — and self-cost-limiting: small progressive output implies
+/// little entropy content, which bounds the cost of the extra
+/// sequential passes regardless of dimensions.
+///
+/// Provenance: the original 16 KiB gate was set at ~7× the largest
+/// crossover then observed (sequential wins at ≤ ~2.4 KB of
+/// progressive output; zero wins at larger outputs in photographic
+/// RD sweeps). The 2026-06-10 `sweep_validate` run produced a
+/// counterexample ABOVE that gate: CID22 1044329 at q10 emits
+/// 19.8 KB progressive while plain baseline is 2.0 % smaller
+/// (19.4 KB) — low-q photographic content, not synthetic. Gate
+/// raised to 32 KiB (~1.6× the new largest observed crossover);
+/// regret above the gate shrinks with size (−2.0 % at 19.8 KB is
+/// the worst seen) and the trial cost stays bounded by
+/// construction. Empirical bound, not a theorem (successive
+/// approximation + EOBn restructure the symbol stream, so no
+/// partitioned-coding dominance argument closes); revisit again if
+/// a larger counterexample appears.
+pub(crate) const ENTROPY_TRIAL_MAX_BYTES: usize = 32 * 1024;
 
 pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
 
@@ -54,7 +88,13 @@ struct StreamingOutputState {
     /// Total MCUs in the full image (for restart marker logic).
     total_mcus: usize,
     /// JPEG header bytes (SOI through SOS), written at construction time.
+    /// Empty once [`StreamingEncoder::start_output`] moved it into `writer`.
     header: Vec<u8>,
+    /// Output handed out through `pending_output`: the header is at the
+    /// front of `writer`'s buffer, and `writer.as_bytes()[..sent]` is gone.
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
+    started: bool,
+    sent: usize,
 }
 
 /// Streaming input JPEG encoder.
@@ -100,6 +140,70 @@ pub(crate) struct StreamingEncoder {
     streaming: Option<StreamingOutputState>,
 }
 
+/// Per-image exact 8-bit DQT downgrade (#143 item 1).
+///
+/// A 16-bit table (`precision > 0`, some value > 255) costs 64 extra DQT
+/// bytes and forces SOF1. Zero coefficients dequantize to zero under ANY
+/// table value, so if no block of the component(s) that use a 16-bit table
+/// has a nonzero coefficient at a zigzag position where the 8-bit clamp
+/// differs from the 16-bit value, emitting the clamp instead is
+/// pixel-identical by construction. This is a dominance check over the
+/// already-quantized blocks — it does NOT re-quantize — which is why it can
+/// only run in the buffered builder (all blocks in hand before the headers
+/// are written); the streaming-through path emits its headers first and
+/// keeps whatever precision the plan chose.
+///
+/// Table → block mapping: table 0 = Y blocks; table 1 = Cb blocks, plus the
+/// Cr blocks when chroma shares one table (`!separate_chroma_tables`);
+/// table 2 = Cr blocks. RGB passthrough (`use_rgb`) writes one shared table
+/// (table 0), so it is checked against all three block sets. Tables already
+/// at 8-bit precision pass through untouched.
+fn downgrade_provably_lossless_16bit(
+    (y, cb, cr): (
+        &[[i16; DCT_BLOCK_SIZE]],
+        &[[i16; DCT_BLOCK_SIZE]],
+        &[[i16; DCT_BLOCK_SIZE]],
+    ),
+    tables: [&QuantTable; 3],
+    separate_chroma_tables: bool,
+    use_rgb: bool,
+) -> [QuantTable; 3] {
+    let sets: [&[&[[i16; DCT_BLOCK_SIZE]]]; 3] = if use_rgb {
+        [&[y, cb, cr], &[cb], &[cr]]
+    } else if separate_chroma_tables {
+        [&[y], &[cb], &[cr]]
+    } else {
+        [&[y], &[cb, cr], &[cr]]
+    };
+    let mut out = [tables[0].clone(), tables[1].clone(), tables[2].clone()];
+    for (t, blocks) in out.iter_mut().zip(sets) {
+        if t.precision == 0 {
+            continue;
+        }
+        let clamped = t.clone().clamp_to_baseline();
+        // Zigzag positions where the clamp changes the divisor.
+        let mut changed = [false; DCT_BLOCK_SIZE];
+        let mut any = false;
+        for k in 0..DCT_BLOCK_SIZE {
+            changed[k] = clamped.values[k] != t.values[k];
+            any |= changed[k];
+        }
+        if !any {
+            // Precision flag set but every value fits 8 bits already.
+            *t = clamped;
+            continue;
+        }
+        let dominated = blocks
+            .iter()
+            .flat_map(|set| set.iter())
+            .all(|block| (0..DCT_BLOCK_SIZE).all(|k| !changed[k] || block[k] == 0));
+        if dominated {
+            *t = clamped;
+        }
+    }
+    out
+}
+
 impl StreamingEncoder {
     /// Access computed config (for fused parallel encoder).
     #[cfg(feature = "parallel")]
@@ -114,8 +218,7 @@ impl StreamingEncoder {
     }
 
     /// Install a per-iMCU [`super::aq_controller::AqController`] on the
-    /// underlying strip processor. Used by the target-zq iteration loop
-    /// in [`super::zq`].
+    /// underlying strip processor for internal research instrumentation.
     pub(crate) fn set_aq_controller(
         &mut self,
         ctrl: Option<Box<dyn super::aq_controller::AqController>>,
@@ -123,13 +226,11 @@ impl StreamingEncoder {
         self.processor.set_aq_controller(ctrl);
     }
 
-    // Note: an earlier draft of this surface exposed
-    // `take_diagnostics(&mut self)` directly on `StreamingEncoder` and
-    // `StripProcessor`. The `finish_with_diagnostics` path now threads
-    // the diagnostics record out through an intercept callback in
-    // `finish_into_with_stop_threaded`, so the explicit takers were
-    // dropped to keep the dead-code lint clean under
-    // `--features __diagnostics`.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn capture_diagnostics(&mut self) -> Result<super::diagnostics::DiagnosticsHandle> {
+        self.processor
+            .capture_diagnostics(self.config.writes_gray())
+    }
 
     /// Creates a new streaming encoder builder with the given dimensions.
     ///
@@ -152,134 +253,25 @@ impl StreamingEncoder {
     }
 
     /// Creates a streaming encoder from builder configuration.
-    pub(crate) fn from_builder(builder: StreamingEncoderBuilder) -> Result<Self> {
+    pub(crate) fn from_builder(mut builder: StreamingEncoderBuilder) -> Result<Self> {
+        builder.validate_input()?;
         let width = builder.width as usize;
         let height = builder.height as usize;
 
-        if width == 0 || height == 0 {
-            return Err(Error::invalid_dimensions(
-                builder.width,
-                builder.height,
-                "dimensions must be non-zero",
-            ));
-        }
-
-        // Generate quantization tables and zero-bias params
+        // Generate quantization tables and zero-bias params. Shared with
+        // `EncoderConfig::resolve_plan` (encode::plan::resolve_quant_tables)
+        // so introspection can never drift from the encoder.
         let is_420 = builder.subsampling == Subsampling::S420;
-        let distance = builder.quality.to_distance();
-        // Per-component distance: [Y, Cb, Cr]. The scalar
-        // `chroma_distance_scale` multiplies the chroma distances
-        // identically. `scale == 1.0` reproduces the single-distance
-        // path bit-for-bit (verified by `chroma_scale_default_identity`
-        // in the tests below).
-        let chroma_scale = builder.chroma_distance_scale;
-        let chroma_distance = distance * chroma_scale;
-        let distances_per_component = [distance, chroma_distance, chroma_distance];
-        let color_space = if builder.use_xyb {
-            ColorSpace::Xyb
-        } else {
-            ColorSpace::YCbCr
-        };
-
-        let allow_16bit = builder.allow_16bit_quant_tables;
-        let ((y_quant, cb_quant, cr_quant), (y_zero_bias, cb_zero_bias, cr_zero_bias)) =
-            if let Some(ref tables) = builder.encoding_tables {
-                // Branch 1: Custom encoding tables provided explicitly
-                let quant = tables.generate_quant_tables(distances_per_component, is_420);
-                let zero_bias = tables.generate_zero_bias_all();
-                // Apply allow_16bit clamping if needed
-                let quant = if allow_16bit {
-                    quant
-                } else {
-                    (
-                        quant.0.clamp_to_baseline(),
-                        quant.1.clamp_to_baseline(),
-                        quant.2.clamp_to_baseline(),
-                    )
-                };
-                (quant, zero_bias)
-            } else if builder.quant_source == super::encoder_types::QuantTableSource::MozjpegDefault
-            {
-                // Branch 2: Mozjpeg Robidoux tables with quality scaling
-                // Use for_mozjpeg_tables() to preserve the original mozjpeg quality.
-                // to_internal() remaps for jpegli's distance system, producing wrong tables.
-                let quality_u8 = builder.quality.for_mozjpeg_tables();
-                let force_baseline = !allow_16bit;
-                // Optional independent chroma quality. `None` → chroma
-                // tables scaled with the same quality as luma (historical
-                // behaviour; bit-identical to old callers). `Some(cq)`
-                // → chroma table scaled with `cq` instead.
-                let tables = super::tables::robidoux::generate_mozjpeg_default_tables_with_chroma(
-                    quality_u8,
-                    builder.chroma_quality,
-                    force_baseline,
-                );
-                let quant = tables.generate_quant_tables(distances_per_component, is_420);
-                let zero_bias = tables.generate_zero_bias_all();
-                (quant, zero_bias)
-            } else {
-                // Branch 3: Jpegli perceptual defaults (original path)
-                //
-                // When separate_chroma_tables is false (2-table mode, jpeg_set_quality),
-                // use the Cr base matrix for both Cb and Cr tables. This matches C++
-                // jpegli behavior where the single chroma table uses the Cr matrix.
-                let cb_component = if builder.separate_chroma_tables { 1 } else { 2 };
-
-                // Luma uses the user's quality verbatim; chroma gets the
-                // scaled distance. When chroma_scale == 1.0 the
-                // `with_distance` call produces bit-identical tables to
-                // the old `ex`-variant (see quant_table_identity test).
-                let quant = (
-                    quant::generate_quant_table_ex(
-                        builder.quality,
-                        0,
-                        color_space,
-                        builder.use_xyb,
-                        is_420,
-                        allow_16bit,
-                    ),
-                    quant::generate_quant_table_with_distance(
-                        distances_per_component[1],
-                        cb_component,
-                        color_space,
-                        builder.use_xyb,
-                        is_420,
-                        allow_16bit,
-                    ),
-                    quant::generate_quant_table_with_distance(
-                        distances_per_component[2],
-                        2,
-                        color_space,
-                        builder.use_xyb,
-                        is_420,
-                        allow_16bit,
-                    ),
-                );
-
-                // Compute effective distance for quality-adaptive zero bias.
-                // Color-space aware: XYB tables invert against the XYB base
-                // matrix + GLOBAL_SCALE_XYB; YCbCr tables invert against
-                // their own matrix + GLOBAL_SCALE_YCBCR.
-                let effective_distance =
-                    quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2, builder.use_xyb);
-
-                // Auto-select zero bias based on color mode
-                let zero_bias = if builder.use_xyb {
-                    (
-                        ZeroBiasParams::for_xyb(effective_distance, 0),
-                        ZeroBiasParams::for_xyb(effective_distance, 1),
-                        ZeroBiasParams::for_xyb(effective_distance, 2),
-                    )
-                } else {
-                    (
-                        ZeroBiasParams::for_ycbcr(effective_distance, 0),
-                        ZeroBiasParams::for_ycbcr(effective_distance, 1),
-                        ZeroBiasParams::for_ycbcr(effective_distance, 2),
-                    )
-                };
-
-                (quant, zero_bias)
-            };
+        let resolved = super::plan::resolve_quant_tables(super::plan::TableResolveInputs {
+            quality: builder.quality,
+            table_config: &builder.quant_table_config,
+            use_xyb: builder.use_xyb,
+            use_rgb: builder.use_rgb,
+            is_420,
+            allow_16bit: builder.allow_16bit_quant_tables,
+        });
+        let (y_quant, cb_quant, cr_quant) = resolved.quant;
+        let (y_zero_bias, cb_zero_bias, cr_zero_bias) = resolved.zero_bias;
 
         // Build quantization context (all tables + SIMD variants)
         let quant_ctx = crate::encode::strip::QuantContext::new(
@@ -293,14 +285,12 @@ impl StreamingEncoder {
 
         // Determine if we can use streaming-through encoding early,
         // so StripProcessor can allocate minimal block storage.
-        let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
-            && builder.mode != JpegMode::Progressive
-            && !builder.use_xyb;
+        let enable_streaming = builder.streams_output();
 
         // Create strip processor with quant tables provided at construction.
         // In streaming-through mode, only allocate one strip of block storage.
         let mut processor = if enable_streaming {
-            StripProcessor::with_xyb_streaming(
+            StripProcessor::with_color_modes_streaming(
                 width,
                 height,
                 builder.subsampling,
@@ -309,11 +299,12 @@ impl StreamingEncoder {
                 builder.restart_interval,
                 builder.use_xyb,
                 builder.xyb_subsampling,
+                builder.use_rgb,
                 quant_ctx,
                 builder.aq_enabled,
             )?
         } else {
-            StripProcessor::with_xyb(
+            StripProcessor::with_color_modes(
                 width,
                 height,
                 builder.subsampling,
@@ -322,6 +313,7 @@ impl StreamingEncoder {
                 builder.restart_interval,
                 builder.use_xyb,
                 builder.xyb_subsampling,
+                builder.use_rgb,
                 quant_ctx,
                 builder.aq_enabled,
             )?
@@ -329,15 +321,6 @@ impl StreamingEncoder {
 
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
-
-        // Wire diagnostics sink (UNSTABLE; gated behind `__diagnostics`).
-        // When enabled, the strip processor allocates an
-        // `EncodeDiagnostics` struct and fills it during encoding.
-        // Retrieve via `take_diagnostics()` after `finish()`.
-        #[cfg(feature = "__diagnostics")]
-        if builder.diagnostics_enabled {
-            processor.enable_diagnostics();
-        }
 
         // Set boundary-RD config (off by default; #91). `None` keeps the
         // refinement module out of the hot path entirely.
@@ -347,13 +330,8 @@ impl StreamingEncoder {
         processor.set_boundary_rd(builder.boundary_rd_flat);
 
         // Enable trellis quantization if configured
-        #[cfg(feature = "trellis")]
-        {
-            if let Some(ref trellis) = builder.trellis {
-                processor.set_trellis(*trellis);
-            } else if builder.hybrid_config.enabled {
-                processor.set_hybrid(builder.hybrid_config);
-            }
+        if let Some(ref trellis) = builder.trellis {
+            processor.set_trellis(*trellis);
         }
 
         let strip_height = processor.strip_height();
@@ -367,7 +345,7 @@ impl StreamingEncoder {
         // Caveats applied here:
         //
         // - XYB mode already uses a shared single-pair Huffman layout (see
-        //   `write_scan_header_xyb` and `write_huffman_tables_xyb_optimized`)
+        //   `write_scan_header_rgb_ids` and `write_huffman_tables_shared_pair`)
         //   and is not the heuristic's intended target, so tiny-file mode is
         //   a no-op there.
         // - The shared-table path is currently implemented for the baseline
@@ -376,28 +354,11 @@ impl StreamingEncoder {
         //   off there for now.
         // - Optimized Huffman tables must be requested; the shared-table
         //   path builds tables from symbol frequencies.
-        let is_sequential = !matches!(builder.mode, crate::types::JpegMode::Progressive);
-        let optimize_huffman = matches!(builder.huffman, HuffmanStrategy::Optimize);
-        let tiny_file_eligible = !builder.use_xyb && is_sequential && optimize_huffman;
-        let tiny_file_active = if !tiny_file_eligible {
-            false
-        } else {
-            match builder.tiny_file_mode {
-                super::encoder_types::TinyFileMode::Off => false,
-                super::encoder_types::TinyFileMode::Force => true,
-                super::encoder_types::TinyFileMode::Auto => {
-                    // Use the subsampling-aware heuristic so we pick tighter
-                    // thresholds for 4:4:4 (crossover ~64²) versus 4:2:0
-                    // (crossover ~128²).
-                    super::encoder_types::should_activate_tiny_file_mode_for_subsampling(
-                        builder.width,
-                        builder.height,
-                        !builder.pixel_format.is_grayscale(),
-                        builder.subsampling,
-                    )
-                }
-            }
-        };
+        // Tiny-file participation is resolved at EMISSION time now:
+        // `TinyFileMode::Auto` runs an exact byte-gated trial (see
+        // `build_sequential_with_tiny_trial`), `Force` activates when
+        // structurally possible, `Off` never. Nothing to resolve here.
+        let tiny_file_active = false;
 
         // Create config for final JPEG output
         let config = ComputedConfig {
@@ -412,21 +373,21 @@ impl StreamingEncoder {
             restart_interval: builder.restart_interval,
             use_xyb: builder.use_xyb,
             xyb_subsampling: builder.xyb_subsampling,
+            use_rgb: builder.use_rgb,
+            gray_output: builder.gray_output,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
-            #[cfg(feature = "trellis")]
-            hybrid_config: builder.hybrid_config,
-            custom_aq_map: builder.custom_aq_map,
-            #[cfg(feature = "trellis")]
             trellis: builder.trellis,
-            encoding_tables: builder.encoding_tables,
             edge_padding: crate::types::EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,
             allow_16bit_quant_tables: builder.allow_16bit_quant_tables,
             force_sof1: builder.force_sof1,
-            separate_chroma_tables: builder.separate_chroma_tables,
+            separate_chroma_tables: builder.quant_table_config.separate_chroma_tables(),
             scan_strategy: builder.scan_strategy,
+            smallest_scan: builder.smallest_scan,
+            smallest_seq_restart_interval: builder.smallest_seq_restart_interval,
+            tiny_file_mode: builder.tiny_file_mode,
             tiny_file_active,
         };
 
@@ -438,6 +399,23 @@ impl StreamingEncoder {
         // conversion decode path, which processes complete MCU rows.
         if config.restart_interval > 0 {
             config.restart_interval = config.align_restart_to_row(config.restart_interval);
+        }
+
+        // Parallel entropy encoding joins segments at restart markers, so it
+        // needs a nonzero interval. Resolve the documented auto-selection
+        // ("if restart_mcu_rows is 0, the encoder auto-selects") HERE — once,
+        // before frequency counting, DRI emission, and entropy encoding — so
+        // all three agree. The pre-fix code substituted 64 inside the emitter
+        // only, producing RST markers with no DRI header and DC-prediction
+        // resets the histogram never saw (sweep issue #197).
+        #[cfg(feature = "parallel")]
+        if config.parallel && config.restart_interval == 0 {
+            config.restart_interval = super::config::resolve_restart_rows(
+                4,
+                config.width,
+                config.height,
+                config.subsampling,
+            );
         }
 
         let streaming = if enable_streaming {
@@ -478,6 +456,8 @@ impl StreamingEncoder {
                 entropy_state: crate::entropy::StreamingEntropyState::new(),
                 total_mcus: processor.layout.total_mcus,
                 header,
+                started: false,
+                sent: 0,
             })
         } else {
             None
@@ -543,6 +523,89 @@ impl StreamingEncoder {
     #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     pub(crate) fn is_streaming(&self) -> bool {
         self.streaming.is_some()
+    }
+
+    /// Stream-through only: the frame header (SOI through SOS), for the
+    /// caller to add metadata segments to before [`start_output`](Self::start_output).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_header(&mut self) -> Result<Vec<u8>> {
+        match self.streaming.as_mut() {
+            Some(st) if !st.started && self.current_y == 0 && self.rows_buffered == 0 => {
+                Ok(core::mem::take(&mut st.header))
+            }
+            _ => Err(Error::invalid_state(
+                "streaming output starts before any row, in stream-through mode",
+            )),
+        }
+    }
+
+    /// Stream-through only: make `header` (from [`take_header`](Self::take_header),
+    /// with any metadata segments added) and every later byte available
+    /// through [`pending_output`](Self::pending_output) as strips are encoded.
+    /// The bytes are those `finish` would have returned.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn start_output(&mut self, header: Vec<u8>) -> Result<()> {
+        let st = self
+            .streaming
+            .as_mut()
+            .filter(|st| !st.started && st.writer.as_bytes().is_empty())
+            .ok_or_else(|| Error::invalid_state("streaming output already started"))?;
+        st.writer.write_bytes_raw(&header);
+        st.started = true;
+        Ok(())
+    }
+
+    /// Bytes ready to send once [`start_output`](Self::start_output) ran;
+    /// otherwise empty.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn pending_output(&self) -> &[u8] {
+        match &self.streaming {
+            Some(st) if st.started => &st.writer.as_bytes()[st.sent..],
+            _ => &[],
+        }
+    }
+
+    /// Mark the first `n` pending bytes as sent.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn consume_output(&mut self, n: usize) {
+        let Some(st) = self.streaming.as_mut().filter(|st| st.started) else {
+            return;
+        };
+        let len = st.writer.as_bytes().len();
+        st.sent = (st.sent + n).min(len);
+        // Reclaim sent bytes when all are gone (the usual case: a driver
+        // drains after every push), or when they dominate the buffer.
+        if st.sent == len || (st.sent >= 64 * 1024 && st.sent > len / 2) {
+            st.writer.discard_front(st.sent);
+            st.sent = 0;
+        }
+    }
+
+    /// Append the pending bytes to `into` and mark them sent. With `into`
+    /// empty and nothing partly sent, the writer's buffer itself moves into
+    /// `into`, without a copy.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_output(&mut self, into: &mut Vec<u8>) {
+        let Some(st) = self.streaming.as_mut().filter(|st| st.started) else {
+            return;
+        };
+        if into.is_empty() && st.sent == 0 {
+            *into = st.writer.take_buffer();
+        } else {
+            into.extend_from_slice(&st.writer.as_bytes()[st.sent..]);
+            let len = st.writer.as_bytes().len();
+            st.writer.discard_front(len);
+        }
+        st.sent = 0;
+    }
+
+    /// The most pushed rows whose bytes are not yet pending, in
+    /// stream-through mode: up to a strip of rows waits to fill the strip
+    /// (an MCU row), and the strip processor quantizes each iMCU one strip
+    /// later, once adaptive quantization has seen the rows below it.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn output_lag_rows(&self) -> u32 {
+        (2 * self.strip_height - 1) as u32
     }
 
     /// Pushes a single row of pixel data.
@@ -916,7 +979,7 @@ impl StreamingEncoder {
     /// Borrows blocks from the strip processor, encodes them to the
     /// BitWriter, then clears them (keeping allocation for reuse).
     fn encode_new_blocks_streaming(&mut self) -> Result<()> {
-        let is_color = !self.config.pixel_format.is_grayscale();
+        let is_color = !self.config.writes_gray();
         let width = self.width;
         let subsampling = self.config.subsampling;
         let restart_interval = self.config.restart_interval;
@@ -937,6 +1000,9 @@ impl StreamingEncoder {
         )?;
 
         self.processor.clear_blocks();
+        // Whole bytes become visible to `pending_output` now rather than
+        // when the accumulator next fills; the byte stream is unchanged.
+        state.writer.flush_whole_bytes();
 
         Ok(())
     }
@@ -997,96 +1063,9 @@ impl StreamingEncoder {
 
     /// Finishes encoding into provided buffer with cancellation support.
     pub(crate) fn finish_into_with_stop(
-        self,
-        output: &mut Vec<u8>,
-        stop: impl Stop,
-    ) -> Result<()> {
-        #[cfg(feature = "__diagnostics")]
-        {
-            self.finish_into_with_stop_and_diagnostics(output, stop, &mut None)
-        }
-        #[cfg(not(feature = "__diagnostics"))]
-        {
-            self.finish_into_with_stop_inner(output, stop)
-        }
-    }
-
-    /// `finish_into_with_stop` variant that also captures the per-block
-    /// diagnostics record into the provided sink. The sink is set to
-    /// `Some(diag)` if diagnostics were enabled on this encoder, and
-    /// remains `None` otherwise. UNSTABLE.
-    #[cfg(feature = "__diagnostics")]
-    pub(crate) fn finish_into_with_stop_and_diagnostics(
-        self,
-        output: &mut Vec<u8>,
-        stop: impl Stop,
-        diagnostics_out: &mut Option<crate::encode::diagnostics::EncodeDiagnostics>,
-    ) -> Result<()> {
-        self.finish_into_with_stop_inner_diag(output, stop, Some(diagnostics_out))
-    }
-
-    // Inner finish dispatcher: routes to the diagnostics-instrumented
-    // body when the `__diagnostics` feature is on, the plain body
-    // otherwise. Marked allow(dead_code) because under
-    // `--features __diagnostics` this wrapper is unused (the diag
-    // path goes via `finish_into_with_stop_and_diagnostics`).
-    #[allow(dead_code)]
-    fn finish_into_with_stop_inner(
-        self,
-        output: &mut Vec<u8>,
-        stop: impl Stop,
-    ) -> Result<()> {
-        #[cfg(feature = "__diagnostics")]
-        {
-            self.finish_into_with_stop_inner_diag(output, stop, None)
-        }
-        #[cfg(not(feature = "__diagnostics"))]
-        {
-            self.finish_into_with_stop_impl(output, stop)
-        }
-    }
-
-    /// Inner finish with optional diagnostics sink. When the
-    /// `__diagnostics` feature is enabled, the sink (if provided)
-    /// receives the diagnostics from the strip processor's output.
-    #[cfg(feature = "__diagnostics")]
-    fn finish_into_with_stop_inner_diag(
-        self,
-        output: &mut Vec<u8>,
-        stop: impl Stop,
-        mut diagnostics_out: Option<
-            &mut Option<crate::encode::diagnostics::EncodeDiagnostics>,
-        >,
-    ) -> Result<()> {
-        // Wrap the existing implementation; intercept the StripProcessorOutput
-        // to extract diagnostics before downstream consumers move it.
-        self.finish_into_with_stop_threaded(output, stop, |strip_output| {
-            if let Some(sink) = diagnostics_out.as_mut() {
-                **sink = strip_output.diagnostics.take();
-            }
-        })
-    }
-
-    #[cfg(not(feature = "__diagnostics"))]
-    fn finish_into_with_stop_impl(
-        self,
-        output: &mut Vec<u8>,
-        stop: impl Stop,
-    ) -> Result<()> {
-        self.finish_into_with_stop_threaded(output, stop, |_| {})
-    }
-
-    /// Implementation core: identical to the historic `finish_into_with_stop`
-    /// body, with a callback `intercept` invoked once on the
-    /// `StripProcessorOutput` after `processor.finalize()` and before the
-    /// output is consumed by the entropy encoder. Default callbacks are
-    /// no-ops; the diagnostics path uses the callback to extract its
-    /// captured per-block record.
-    fn finish_into_with_stop_threaded(
         mut self,
         output: &mut Vec<u8>,
         stop: impl Stop,
-        mut intercept: impl FnMut(&mut crate::encode::strip::StripProcessorOutput),
     ) -> Result<()> {
         stop.check()?;
 
@@ -1109,13 +1088,12 @@ impl StreamingEncoder {
         if let Some(mut streaming) = self.streaming.take() {
             // Streaming mode: finalize the strip processor to flush the last
             // pending iMCU (AQ delays blocks by one strip), then encode them
-            let is_color = !self.config.pixel_format.is_grayscale();
+            let is_color = !self.config.writes_gray();
             let width = self.width;
             let subsampling = self.config.subsampling;
             let restart_interval = self.config.restart_interval;
 
-            let mut final_output = self.processor.finalize()?;
-            intercept(&mut final_output);
+            let final_output = self.processor.finalize()?;
             if !final_output.y_blocks.is_empty() {
                 crate::entropy::encode_blocks_mcu_order(
                     &final_output.y_blocks,
@@ -1143,8 +1121,7 @@ impl StreamingEncoder {
             let width = self.width;
             let height = self.height;
 
-            let mut strip_output = self.processor.finalize()?;
-            intercept(&mut strip_output);
+            let strip_output = self.processor.finalize()?;
 
             Self::build_jpeg_from_blocks_into(
                 &config,
@@ -1183,7 +1160,7 @@ impl StreamingEncoder {
 
         if let Some(mut streaming) = self.streaming.take() {
             // Streaming mode - no buffered blocks, no counts available
-            let is_color = !self.config.pixel_format.is_grayscale();
+            let is_color = !self.config.writes_gray();
             let width = self.width;
             let subsampling = self.config.subsampling;
             let restart_interval = self.config.restart_interval;
@@ -1214,6 +1191,25 @@ impl StreamingEncoder {
             let cr_quant = self.cr_quant;
             let strip_output = self.processor.finalize()?;
 
+            if config.smallest_scan {
+                let is_color = !config.writes_gray();
+                let counts = Box::new(config.count_block_frequencies(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                ));
+                Self::build_smallest_into(
+                    &config,
+                    &y_quant,
+                    &cb_quant,
+                    &cr_quant,
+                    &strip_output,
+                    output,
+                )?;
+                return Ok(Some(counts));
+            }
+
             match config.mode {
                 JpegMode::Progressive => {
                     if !matches!(config.huffman, HuffmanStrategy::Optimize) {
@@ -1225,7 +1221,7 @@ impl StreamingEncoder {
                     // Count frequencies from the buffered blocks. The symbol
                     // distribution is the same regardless of scan structure,
                     // so single-scan counts are useful for general-purpose table training.
-                    let is_color = !config.pixel_format.is_grayscale();
+                    let is_color = !config.writes_gray();
                     let counts = Box::new(config.count_block_frequencies(
                         &strip_output.y_blocks,
                         &strip_output.cb_blocks,
@@ -1247,12 +1243,12 @@ impl StreamingEncoder {
                 _ => {
                     // Sequential: collect_frequencies=true gets the counts
                     // from the optimize pass at no extra cost.
-                    Self::build_jpeg_sequential_into(
+                    Self::build_sequential_with_tiny_trial(
                         &config,
                         &y_quant,
                         &cb_quant,
                         &cr_quant,
-                        strip_output,
+                        &strip_output,
                         output,
                         true,
                     )
@@ -1269,8 +1265,12 @@ impl StreamingEncoder {
         streaming: StreamingOutputState,
         output: &mut Vec<u8>,
     ) -> Result<()> {
-        // Flush the BitWriter's remaining bits and scan data
+        // Flush the BitWriter's remaining bits and scan data. With
+        // streaming output the header is already at the front of the scan
+        // data, and the first `sent` bytes were handed out.
+        let sent = streaming.sent;
         let scan_data = streaming.writer.into_bytes();
+        let scan_data = &scan_data[sent..];
 
         // Assemble: header + scan data + EOI
         let total_size = streaming.header.len() + scan_data.len() + 2;
@@ -1280,7 +1280,7 @@ impl StreamingEncoder {
             .map_err(|_| Error::allocation_failed(total_size, "streaming finish output"))?;
 
         output.extend_from_slice(&streaming.header);
-        output.extend_from_slice(&scan_data);
+        output.extend_from_slice(scan_data);
         output.push(0xFF);
         output.push(crate::foundation::consts::MARKER_EOI);
 
@@ -1328,6 +1328,33 @@ impl StreamingEncoder {
     ) -> Result<()> {
         stop.check()?;
 
+        // Per-image exact 8-bit DQT downgrade (#143): every block is
+        // quantized by now, so a 16-bit table whose >255 positions carry
+        // only zero coefficients can be emitted as its 8-bit clamp with
+        // provably identical pixels.
+        let downgraded = downgrade_provably_lossless_16bit(
+            (
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+            ),
+            [y_quant, cb_quant, cr_quant],
+            config.separate_chroma_tables,
+            config.use_rgb,
+        );
+        let (y_quant, cb_quant, cr_quant) = (&downgraded[0], &downgraded[1], &downgraded[2]);
+
+        if config.smallest_scan {
+            return Self::build_smallest_into(
+                config,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                &strip_output,
+                output,
+            );
+        }
+
         // Branch based on encoding mode (mirrors encode_strip_based in encode/mod.rs)
         match config.mode {
             JpegMode::Progressive => {
@@ -1350,12 +1377,12 @@ impl StreamingEncoder {
             }
             _ => {
                 // Sequential encoding
-                Self::build_jpeg_sequential_into(
+                Self::build_sequential_with_tiny_trial(
                     config,
                     y_quant,
                     cb_quant,
                     cr_quant,
-                    strip_output,
+                    &strip_output,
                     output,
                     false,
                 )?;
@@ -1379,11 +1406,207 @@ impl StreamingEncoder {
             y_quant,
             cb_quant,
             cr_quant,
-            strip_output,
+            &strip_output,
             &mut output,
             false,
         )?;
         Ok(output)
+    }
+
+    /// Sequential emission with exact tiny-file resolution.
+    ///
+    /// `TinyFileMode::Auto` no longer uses pixel-count crossover
+    /// heuristics: the plain sequential stream is emitted, and when it
+    /// lands at or below [`ENTROPY_TRIAL_MAX_BYTES`](ENTROPY_TRIAL_MAX_BYTES)
+    /// the tiny-file shared-table variant is also serialized and the
+    /// smaller wins — identical pixels, exact `min(bytes)`. `Force`
+    /// activates tiny tables whenever structurally possible; `Off`
+    /// never does.
+    fn build_sequential_with_tiny_trial(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+        collect_frequencies: bool,
+    ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
+        use super::encoder_types::TinyFileMode;
+        // Tiny shared tables need optimized Huffman and are not defined
+        // for the XYB/RGB serialization paths (both already use a single
+        // shared table pair, so there is nothing for tiny mode to merge).
+        let tiny_possible = !config.use_xyb
+            && !config.use_rgb
+            && matches!(config.huffman, HuffmanStrategy::Optimize);
+        // Grayscale tiny mode is a DOMINANCE case, not a trial case:
+        // with a single component there is no shared-table cost to
+        // weigh — it is pure header pruning (~208 B), smaller at every
+        // size. Color tiny mode trades shared-table scan bits against
+        // header savings, so it gets the exact byte-gated trial.
+        let is_grayscale = config.writes_gray();
+        let (plain_active, trial) = match config.tiny_file_mode {
+            TinyFileMode::Off => (false, false),
+            TinyFileMode::Force => (tiny_possible, false),
+            TinyFileMode::Auto if is_grayscale => (tiny_possible, false),
+            TinyFileMode::Auto => (false, tiny_possible),
+        };
+
+        let mut plain_cfg = config.clone();
+        plain_cfg.tiny_file_active = plain_active;
+        let counts = Self::build_jpeg_sequential_into(
+            &plain_cfg,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            strip_output,
+            output,
+            collect_frequencies,
+        )?;
+
+        if trial && output.len() <= ENTROPY_TRIAL_MAX_BYTES {
+            let mut tiny_cfg = config.clone();
+            tiny_cfg.tiny_file_active = true;
+            let mut tiny = Vec::new();
+            Self::build_jpeg_sequential_into(
+                &tiny_cfg,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                strip_output,
+                &mut tiny,
+                false,
+            )?;
+            if tiny.len() < output.len() {
+                output.clear();
+                output.extend_from_slice(&tiny);
+            }
+        }
+
+        Ok(counts)
+    }
+
+    /// Smallest-entropy selection: emit the smallest byte stream for the
+    /// SAME quantized coefficients.
+    ///
+    /// At or below [`SMALLEST_TRIAL_MAX_PIXELS`](Self::SMALLEST_TRIAL_MAX_PIXELS):
+    /// exact `min` over {sequential, sequential+tiny (when eligible),
+    /// progressive} — every candidate decodes to identical pixels, so
+    /// this is a pure rate decision. Above: progressive is emitted
+    /// directly (measured-universal winner at those sizes; one
+    /// serialization).
+    fn build_smallest_into(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        if !matches!(config.huffman, HuffmanStrategy::Optimize) {
+            return Err(Error::unsupported_feature(
+                "Smallest scan selection requires optimized Huffman tables",
+            ));
+        }
+
+        // Candidate 1: progressive. The clone inherits the config's
+        // ScanStrategy, so under SmallestSearch this candidate is the
+        // scan-script search winner (which always includes the default
+        // jpegli script in its candidate set).
+        let mut prog_cfg = config.clone();
+        prog_cfg.smallest_scan = false;
+        prog_cfg.mode = JpegMode::Progressive;
+        prog_cfg.tiny_file_active = false;
+        let mut prog = Vec::new();
+        prog_cfg.encode_progressive_from_blocks_into(
+            &strip_output.y_blocks,
+            &strip_output.cb_blocks,
+            &strip_output.cr_blocks,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            &mut prog,
+        )?;
+
+        // Gate the sequential trials on the measured progressive size:
+        // above the threshold, emit progressive directly (one
+        // serialization, zero trial overhead).
+        let run_trials = prog.len() <= ENTROPY_TRIAL_MAX_BYTES;
+        if !run_trials {
+            output.clear();
+            output
+                .try_reserve(prog.len())
+                .map_err(|_| Error::allocation_failed(prog.len(), "smallest-scan output"))?;
+            output.extend_from_slice(&prog);
+            return Ok(());
+        }
+
+        // Candidate 2: plain sequential.
+        let mut seq_cfg = config.clone();
+        seq_cfg.smallest_scan = false;
+        seq_cfg.mode = JpegMode::Baseline;
+        seq_cfg.tiny_file_active = false;
+        // Pure rate minimizer: restart-free, and the progressive
+        // alternative cannot restart-parallel-decode either, so 0
+        // trades essentially nothing away. NOT a strict dominance:
+        // restart markers also re-base DC prediction, which on rare
+        // content nets out cheaper than the marker overhead
+        // (sweep_validate 2026-06-10: a 4-MCU-row-interval baseline
+        // beat this restart-free candidate by 8 bytes / 0.04 % on
+        // CID22 1044329 q10). Smallest deliberately does not sweep
+        // restart-interval space for that tail.
+        // `force_restart_markers` overrides via
+        // smallest_seq_restart_interval (resolved in byte_encoders,
+        // where that knob is in scope).
+        seq_cfg.restart_interval = config.smallest_seq_restart_interval;
+        let mut seq = Vec::new();
+        Self::build_jpeg_sequential_into(
+            &seq_cfg,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            strip_output,
+            &mut seq,
+            false,
+        )?;
+
+        let mut best = if seq.len() < prog.len() { seq } else { prog };
+
+        // Candidate 3: sequential with tiny-file shared tables. Replaces the
+        // pixel-count activation heuristic with the exact answer; skipped
+        // only when structurally ineligible (XYB) or explicitly Off.
+        let tiny_eligible = !config.use_xyb
+            && !config.use_rgb
+            && !matches!(
+                config.tiny_file_mode,
+                super::encoder_types::TinyFileMode::Off
+            );
+        if tiny_eligible {
+            let mut tiny_cfg = config.clone();
+            tiny_cfg.smallest_scan = false;
+            tiny_cfg.mode = JpegMode::Baseline;
+            tiny_cfg.tiny_file_active = true;
+            tiny_cfg.restart_interval = config.smallest_seq_restart_interval;
+            let mut tiny = Vec::new();
+            Self::build_jpeg_sequential_into(
+                &tiny_cfg,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                strip_output,
+                &mut tiny,
+                false,
+            )?;
+            if tiny.len() < best.len() {
+                best = tiny;
+            }
+        }
+
+        output.clear();
+        output
+            .try_reserve(best.len())
+            .map_err(|_| Error::allocation_failed(best.len(), "smallest-scan output"))?;
+        output.extend_from_slice(&best);
+        Ok(())
     }
 
     /// Builds sequential JPEG output from processed blocks into provided buffer.
@@ -1396,7 +1619,7 @@ impl StreamingEncoder {
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
-        strip_output: crate::encode::strip::StripProcessorOutput,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
         collect_frequencies: bool,
     ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
@@ -1414,17 +1637,19 @@ impl StreamingEncoder {
                 y_quant,
                 cb_quant,
                 cr_quant,
-                &strip_output,
+                strip_output,
                 output,
                 collect_frequencies,
             )?
+        } else if config.use_rgb {
+            Self::encode_sequential_rgb(config, y_quant, strip_output, output)?
         } else {
             Self::encode_sequential_ycbcr(
                 config,
                 y_quant,
                 cb_quant,
                 cr_quant,
-                &strip_output,
+                strip_output,
                 output,
                 collect_frequencies,
             )?
@@ -1474,7 +1699,7 @@ impl StreamingEncoder {
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
             let (dc_table, ac_table, frequencies) = if xyb_full {
-                let (dc, ac, f) = config.build_optimized_tables_xyb_full(
+                let (dc, ac, f) = config.build_optimized_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1496,15 +1721,15 @@ impl StreamingEncoder {
                 (dc, ac, None)
             };
 
-            config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
+            config.write_huffman_tables_shared_pair(output, &dc_table, &ac_table);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
             let scan_data = if xyb_full {
-                config.encode_with_tables_xyb_full(
+                config.encode_with_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1523,15 +1748,25 @@ impl StreamingEncoder {
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
             // Custom tables: XYB uses dc_luma/ac_luma as the shared pair.
-            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+            // Verify coverage against the exact symbol stream first — a
+            // codeless symbol would encode as ZERO bits (issue #197).
+            config.verify_custom_coverage_xyb(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                xyb_full,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
             let scan_data = if xyb_full {
-                config.encode_with_tables_xyb_full(
+                config.encode_with_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1555,15 +1790,15 @@ impl StreamingEncoder {
                 true,
                 config.subsampling,
             );
-            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
-            config.write_scan_header_xyb(output)?;
+            config.write_scan_header_rgb_ids(output)?;
 
             let scan_data = if xyb_full {
-                config.encode_with_tables_xyb_full(
+                config.encode_with_tables_shared_full(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1579,6 +1814,109 @@ impl StreamingEncoder {
                     &tables.ac_luma,
                 )?
             };
+            Ok((scan_data, None))
+        }
+    }
+
+    /// Encodes sequential JPEG in RGB passthrough mode (issue #185).
+    ///
+    /// Mirrors C++ jpegli's non-XYB `JCS_RGB` serialization: component IDs
+    /// 'R','G','B' at 1×1 sampling, a single shared quantization table
+    /// (slot 0) and a single shared Huffman pair (slot 0), plus an Adobe
+    /// APP14 marker with transform=0 (libjpeg also writes one for
+    /// `JCS_RGB`; jpegli relies on component IDs alone). The 1+1+1 MCU
+    /// layout is identical to XYB-Full, so the XYB-Full table builders
+    /// and entropy encoder are reused directly.
+    ///
+    /// RGB mode never collects Huffman symbol frequencies (like XYB).
+    fn encode_sequential_rgb(
+        config: &ComputedConfig,
+        quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
+        config.write_header(output)?;
+        config.write_app14_adobe(output, 0)?;
+        config.write_quant_tables_rgb(output, quant)?;
+
+        // SOF1 only when the shared table needs 16-bit precision. Unlike
+        // XYB there is no forced SOF1: passthrough DC stays in baseline
+        // category range.
+        let is_extended = quant.precision > 0;
+        config.write_frame_header_rgb(output, is_extended)?;
+
+        if matches!(config.huffman, HuffmanStrategy::Optimize) {
+            let (dc_table, ac_table, _f) = config.build_optimized_tables_shared_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+            )?;
+
+            config.write_huffman_tables_shared_pair(output, &dc_table, &ac_table);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_rgb_ids(output)?;
+
+            let scan_data = config.encode_with_tables_shared_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &dc_table,
+                &ac_table,
+            )?;
+            Ok((scan_data, None))
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            // Custom tables: like XYB, dc_luma/ac_luma serve as the shared pair.
+            // Coverage-verify against the exact symbol stream (issue #197).
+            config.verify_custom_coverage_xyb(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                true,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_rgb_ids(output)?;
+
+            let scan_data = config.encode_with_tables_shared_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            Ok((scan_data, None))
+        } else {
+            // Fixed: general-purpose trained tables; the luma pair is shared.
+            let tables = crate::huffman::builtin_tables::select_tables(
+                &config.quality,
+                false,
+                config.subsampling,
+            );
+            config.write_huffman_tables_shared_pair(output, &tables.dc_luma, &tables.ac_luma);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_rgb_ids(output)?;
+
+            let scan_data = config.encode_with_tables_shared_full(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
             Ok((scan_data, None))
         }
     }
@@ -1600,7 +1938,7 @@ impl StreamingEncoder {
         Vec<u8>,
         Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
     )> {
-        let is_color = !config.pixel_format.is_grayscale();
+        let is_color = !config.writes_gray();
 
         config.write_header(output)?;
         config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
@@ -1680,6 +2018,14 @@ impl StreamingEncoder {
             )?;
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            // Coverage-verify against the exact symbol stream (issue #197).
+            config.verify_custom_coverage_ycbcr(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                tables,
+            )?;
             config.write_huffman_tables_optimized(output, tables)?;
 
             if config.restart_interval > 0 {
@@ -1724,6 +2070,107 @@ impl StreamingEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #143 item 1: the dominance check behind the per-image 8-bit DQT
+    /// downgrade. Built directly on synthetic blocks so each branch is pinned:
+    /// clean → clamped 8-bit; a single nonzero coefficient at a clamped
+    /// position → 16-bit kept; shared chroma table checks Cr blocks too; RGB
+    /// passthrough checks all three block sets; 8-bit tables pass through.
+    #[test]
+    fn dqt_downgrade_is_exactly_the_dominance_check() {
+        fn t16(hot: &[usize]) -> QuantTable {
+            let mut values = [16u16; DCT_BLOCK_SIZE];
+            for &k in hot {
+                values[k] = 560; // > 255 → clamps to 255
+            }
+            QuantTable {
+                values,
+                precision: 1,
+            }
+        }
+        fn blocks(nonzero_at: &[(usize, usize)], n: usize) -> Vec<[i16; DCT_BLOCK_SIZE]> {
+            let mut v = vec![[0i16; DCT_BLOCK_SIZE]; n];
+            for &(b, k) in nonzero_at {
+                v[b][k] = 3;
+            }
+            v
+        }
+        let out = |y: &[(usize, usize)],
+                   cb: &[(usize, usize)],
+                   cr: &[(usize, usize)],
+                   tables: [&QuantTable; 3],
+                   separate: bool,
+                   rgb: bool| {
+            let (y, cb, cr) = (blocks(y, 4), blocks(cb, 4), blocks(cr, 4));
+            downgrade_provably_lossless_16bit((&y, &cb, &cr), tables, separate, rgb)
+        };
+        let hot = t16(&[60, 61, 62, 63]);
+        let cold = QuantTable {
+            values: [16; DCT_BLOCK_SIZE],
+            precision: 0,
+        };
+
+        // Clean: nothing nonzero at 60..64 anywhere → all three downgraded.
+        let r = out(
+            &[(0, 1), (3, 59)],
+            &[(1, 5)],
+            &[(2, 0)],
+            [&hot, &hot, &hot],
+            true,
+            false,
+        );
+        for t in &r {
+            assert_eq!(t.precision, 0);
+            assert_eq!(t.values[63], 255, "clamped, not dropped");
+            assert_eq!(t.values[0], 16);
+        }
+
+        // Y has a coefficient at a clamped position → Y stays 16-bit, chroma downgrades.
+        let r = out(&[(2, 62)], &[], &[], [&hot, &hot, &hot], true, false);
+        assert_eq!(r[0].precision, 1);
+        assert_eq!(r[0].values[62], 560);
+        assert_eq!(r[1].precision, 0);
+        assert_eq!(r[2].precision, 0);
+
+        // Shared chroma table: a Cr coefficient must block table 1 too.
+        let r = out(&[], &[], &[(0, 60)], [&hot, &hot, &hot], false, false);
+        assert_eq!(r[0].precision, 0);
+        assert_eq!(
+            r[1].precision, 1,
+            "shared chroma table must consider Cr blocks"
+        );
+        // …but not when chroma tables are separate.
+        let r = out(&[], &[], &[(0, 60)], [&hot, &hot, &hot], true, false);
+        assert_eq!(r[1].precision, 0);
+        assert_eq!(r[2].precision, 1);
+
+        // RGB passthrough: table 0 is shared by all three → a Cb hit keeps it.
+        let r = out(&[], &[(1, 63)], &[], [&hot, &hot, &hot], true, true);
+        assert_eq!(r[0].precision, 1);
+
+        // 8-bit tables are untouched, even with coefficients everywhere.
+        let r = out(
+            &[(0, 63)],
+            &[(0, 63)],
+            &[(0, 63)],
+            [&cold, &cold, &cold],
+            true,
+            false,
+        );
+        for t in &r {
+            assert_eq!(t.precision, 0);
+            assert_eq!(t.values, cold.values);
+        }
+
+        // Precision flag set but every value ≤ 255: downgrade unconditionally.
+        let flagged = QuantTable {
+            values: [200; DCT_BLOCK_SIZE],
+            precision: 1,
+        };
+        let r = out(&[(0, 63)], &[], &[], [&flagged, &cold, &cold], true, false);
+        assert_eq!(r[0].precision, 0);
+        assert_eq!(r[0].values, [200; DCT_BLOCK_SIZE]);
+    }
     use crate::encode::encoder_types::Quality;
 
     #[test]
@@ -2241,7 +2688,6 @@ mod tests {
 
     /// Decode streaming output and verify dimensions and pixel count.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_round_trip_decode() {
         let width = 128;
         let height = 128;
@@ -2253,7 +2699,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
@@ -2264,7 +2709,6 @@ mod tests {
 
     /// Decode 4:2:0 streaming output and verify dimensions.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_420_round_trip_decode() {
         let width = 128;
         let height = 128;
@@ -2277,7 +2721,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
@@ -2287,7 +2730,6 @@ mod tests {
 
     /// Decode streaming output with restart markers and verify it decodes correctly.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_restart_round_trip_decode() {
         let width = 128;
         let height = 128;
@@ -2300,7 +2742,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();
@@ -2311,7 +2752,6 @@ mod tests {
 
     /// Decode non-aligned streaming output with 4:2:0.
     #[test]
-    #[cfg(feature = "decoder")]
     fn test_streaming_non_aligned_420_round_trip() {
         let width = 100;
         let height = 75;
@@ -2324,7 +2764,6 @@ mod tests {
             .encode(&data)
             .unwrap();
 
-        #[allow(deprecated)]
         let decoded = crate::decode::Decoder::new()
             .decode(&jpeg, enough::Unstoppable)
             .unwrap();

@@ -54,6 +54,13 @@
 //! ```
 
 mod decode;
+#[cfg(feature = "zencodec")]
+pub(crate) use decode::base_color;
+#[cfg(feature = "zencodec")]
+pub(crate) use decode::metadata_with_xmp;
+
+#[cfg(feature = "inventory")]
+pub(crate) use decode::{primary_xmp_gain_map, xmp_segment_range};
 mod encode;
 
 // Re-export the main workflow functions.
@@ -66,6 +73,7 @@ pub use decode::{
 pub use encode::{
     create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_luma, encode_ultrahdr_with_curve,
     encode_ultrahdr_with_tonemapper, encode_with_gainmap, encode_with_gainmap_format,
+    encode_with_gainmap_metadata,
 };
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions).

@@ -25,13 +25,13 @@ and zenjpeg (`decode/parser/markers.rs`, `decode/parser/scan.rs`, `decode/parser
 | SOF0 Baseline | Yes | Yes | Yes |
 | SOF1 Extended Sequential | Yes | Yes (treated as baseline) | Yes (treated as baseline) |
 | SOF2 Progressive | Yes | Yes | Yes |
-| SOF3 Lossless Huffman | Yes | Error | Error |
+| SOF3 Lossless Huffman | Yes | Error | Yes, 2–16-bit |
 | SOF5-7 Differential | Error | Error | Error |
 | SOF9 Arithmetic Sequential | Yes | Error | Yes |
 | SOF10 Arithmetic Progressive | Yes | Error | Yes |
 | SOF11 Arithmetic Lossless | Yes | Error | Error |
 | SOF13-15 Diff Arithmetic | Error | Error | Error |
-| **Precision** | 8, 12, 16-bit | 8-bit only | 8 and 12-bit |
+| **Precision** | 8, 12, 16-bit | 8-bit only | DCT: 8/12-bit; SOF3: 2–16-bit |
 
 ## Marker-Level Structural Validation
 
@@ -117,7 +117,7 @@ incompatible JPEG Part 3 extensions"). Both Rust decoders skip them.
 | **Missing Huffman table** | Uses standard tables (compiled in) | Error | **Balanced/Lenient/Permissive**: uses ITU-T T.81 K.3 standard tables, warns. **Strict**: error |
 | **Wrong restart marker** | 3-action resync (discard/scan/leave) | Not explicitly handled | **Lenient**: warn. **Permissive**: resync forward. **Strict/Balanced**: error |
 | **RST sequence wrong** | 3-action resync | Not handled | **Permissive**: accept any RST value. **Others**: error |
-| **AC index overflow** | Implicit (entropy decoder bounds) | Not recovered | **Lenient/Permissive**: treat as EOB, warn |
+| **AC index overflow** | Tolerated silently (`jpeg_natural_order` carries 16 dummy slots; value bits consumed, block ends) | Not recovered | **Balanced/Lenient/Permissive**: consume value bits, treat as EOB, `AcIndexOverflow` warning — on every decode path since #92 (the fast_ac path had tolerated it silently while the bit-by-bit path errored). **Strict**: error |
 | **Invalid Huffman code** | `insufficient_data` flag, fills zeros | Error | **Lenient/Permissive**: treat as EOB, warn |
 | **Padding block decode error** | Fills zeros | Error | **Balanced/Lenient/Permissive**: fills zeros, warns |
 | **Zero quant value** | Allowed (division by zero in dequant) | Allowed | **Permissive only**: clamp to 1. **All others**: fatal |
@@ -136,7 +136,9 @@ no 12-bit, no DNL, no DAC). Validates the most SOS parameters (Ah/Al bounds). Mo
 forgiving about unknown markers (skips everything). Prioritizes fast failure on unsupported input.
 
 **zenjpeg**: Four strictness levels (`Strict`, `Balanced`, `Lenient`, `Permissive`) with
-warning collection. Supports the most modes (arithmetic sequential/progressive, 12-bit, DNL).
+warning collection. Supports arithmetic sequential/progressive DCT, 12-bit DCT,
+Huffman predictive lossless and DNL for supported DCT paths. Native precision
+limits are described in [native decoding](12bit-lossless-decoding.md).
 Validates the most at the structural level (zero quant values, sampling factor bounds, table
 indices in SOS). `Balanced` targets libjpeg-turbo compatibility, `Strict` exceeds it,
 `Lenient` goes beyond for damaged files, and `Permissive` clamps/skips errors that would

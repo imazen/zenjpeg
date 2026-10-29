@@ -7,7 +7,207 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
+  `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
+  is declared, so the zencodec-io drivers (files, streams, async sources) serve
+  JPEG. The header is reported as soon as it probes; rows come from
+  `push_decoder` once the whole file is offered. A native decoder that streams
+  baseline MCU rows as bytes arrive is the next step.
+- Streaming encode output (zencodec PR 149): `Encoder::begin` starts the row
+  encoder and returns an `OutputTiming`. With fixed or custom Huffman tables
+  and a sequential scan (`with_huffman(false)` plus `with_progressive(false)`
+  or effort 0), the header and its metadata segments are pending at once and
+  each MCU row follows as it is encoded, at most `2 x strip height - 1` rows
+  behind (31 for 4:2:0, 15 for 4:4:4; measured: first scan bytes after exactly
+  that many rows plus one). The bytes equal the one-shot encode's, with and
+  without EXIF/XMP, for every strip height tested (`tests/streaming_encode.rs`).
+  Optimized tables, progressive scans, XYB/RGB modes, target-quality loops and
+  MPF gain-map indexes report `AT_FINISH`. The output-size limit counts bytes
+  already handed out. Declares `EncodeCapabilities::streaming_output`.
+- `JpegEncoderConfig::with_huffman`: optimized, fixed, Annex K or custom
+  tables, overriding the effort preset's choice.
+- `EncoderConfig::with_prefer_streaming(true)` (zencodec's codec-agnostic
+  request): fixed tables and a sequential scan unless `with_huffman` /
+  `with_progressive` chose otherwise; `prefers_streaming()` reports it.
+- Streaming-output rules: a failed `begin` leaves the encoder unchanged (it
+  used to keep the declared size, so a later `push_rows` silently started a
+  non-streaming encode of it); a second `begin` says "called twice";
+  `encode`, `encode_srgba8` and `encode_from` refuse after `begin` or
+  `push_rows`; an image no taller than the lag reports `AT_FINISH`.
+
+### Changed
+
+- Rows pushed with a known canvas (`with_canvas_size`, now also `begin`) and
+  `encode_from` encode with the configuration as given. They were silently
+  re-encoded as baseline with fixed Huffman tables, so their output differed
+  from `encode` for the same configuration; it now matches it.
+
+### Fixed
+
+- zencodec `Encoder::finish` after a push cut short by the job's stop token
+  reported "encoding finished after N rows but image height is H" instead of
+  the cancellation. It now checks the stop token first and returns the stop
+  reason (`finish_after_a_cancelled_push_reports_the_cancellation`; fails
+  without the fix with `Request(Invalid(State))`).
+- `EncoderConfig::restart_mcu_rows` documents that the value is a minimum: small
+  images get longer segments (at least 64 MCUs, markers at most 0.3% of an
+  estimated 0.5 bpp file), down to one segment with no RST markers.
+- `BytesEncoder::push` (and so the zencodec `push_rows`) required `rows x
+  stride` bytes and rejected a strided view whose last row holds only its
+  pixels, which is how a crop of a wider image ends; it now needs
+  `(rows - 1) x stride + width x bytes per pixel`. Found by the end-to-end
+  streaming bench feeding crops of a 4000x3000 photo
+  (`strided_crops_push_without_a_trailing_stride`).
+- `JpegEncoderConfig::with_progressive` and `from_preset` were overridden by
+  the effort preset applied at encode time (effort 1, the default, always gave
+  HybridProgressive): `with_progressive(false)` still wrote a progressive file
+  and `from_preset("jpegli_baseline", ..)` a progressive one. Explicit settings
+  now outrank the effort preset; a later `with_generic_effort` replaces a
+  named preset.
+
+### Added
+
+- **BQuarter-aware XYB subsampling pick in `EncoderConfig::adaptive`** — when
+  the adaptive oracle chooses XYB, it now picks Full vs BQuarter from
+  zenanalyze's `xyb_bquarter_chroma_loss` (id 139, the per-color-sensitivity-
+  weighted B-subsample loss) instead of hardcoding BQuarter. BQuarter stays the
+  RD-smart default (wins/ties XYB-Full on ~94% of an all-GPU butteraugli RD
+  sweep by spending the saved B-channel bytes on X/Y); the pick escalates to
+  Full only where the source has blue-yellow detail the 2× B-subsample would
+  drop (`xyb_bquarter_chroma_loss > 4.0`, recovering ~80% of the oracle RD gain
+  held-out). Pareto-safe over always-BQuarter. Bumps the zenanalyze dependency
+  to `13d40c3b` (adds ids 138/139, computed in the generic `analyze_features`
+  path). `adaptive.rs::pick_xyb_b_subsampling`.
+
+- **`recompress` module** — JPEG→JPEG recompression to a target zensim
+  Profile A quality with no size regression, merged in from the standalone
+  `zenjpeg-recompress` crate (2026-05-29). Single entry point
+  `recompress::recompress` routing NoOp / Lossless / Preserve (coefficient-
+  domain requant, incl. same-family Robidoux retargeting for
+  mozjpeg/ImageMagick) / Tuned / Deblock, with per-encoder calibration
+  (libjpeg-turbo, mozjpeg, jpegli) fit on 50 CID22-512 references.
+  - **Features:** `recompress` (core router/strategies/calibration; needs
+    only `decoder` + `trellis`, no heavy deps — base builds unaffected),
+    `recompress-iqa` (the `Budget::MaxIterations`/`MaxTime` closed loop;
+    pulls `zensim` for the generation-loss measurement), `recompress-expert`
+    (unstable `recompress::expert` internals). The module reaches the
+    codec's `pub(crate)` entropy/huffman/foundation/quant internals
+    directly — no `__test-utils` exposure.
+  - The closed loop's metric is pinned to `ZensimProfile::A` ("Profile A",
+    the dial the recompressor targets) — a distinct profile, NOT any
+    `PreviewV0_*` variant — and zensim is wired to the in-monorepo local
+    crate (0.3.0), which carries Profile A (crates.io 0.2.x dropped it).
+    Pinned to the `A` variant, not `latest()`, so a zensim rotation can't
+    silently shift the baked tables.
+  - Calibration validity confirmed post-integration: a full n=50 3-encoder
+    revalidation under the local-zensim Profile A reproduces the committed
+    gate **exactly** (turbo 8.6 % / mozjpeg 7.0 % / jpegli 3.6 % under-target,
+    0 size regressions, aggregate byte ratios identical to 4 dp) — the
+    calibration was always fit against this same local Profile A, and the
+    zensim `avx512` default vs the calibration's scalar build flips no cell.
+  - New workspace member `zjr-calibrate` (the calibration sweep CLI) and
+    `recompress`-gated examples; methodology in
+    `docs/recompress/RECOMPRESSION_COMPENDIUM.md`.
+
+## [0.8.7] - 2026-05-28
+
+### Fixed
+
+- JBRD `reset_points` / `extra_zero_runs` emission now matches libjxl bit-for-
+  bit. Adds a parallel signed `eobrun_signed: i32` tracker to
+  `decode_ac_first_scan_tracked` and `decode_ac_refine_scan_tracked` that
+  mirrors libjxl's `*eobrun` semantics from `enc_jpeg_data_reader.cc:602-617`
+  (init -1, RST resets to -1, decrement at end of every non-fast-path block,
+  EOB branches set to post-line-617 value). The reset_state predicate is now
+  `k == Ss && eobrun_signed == 0` — the libjxl-exact condition. Pre-fix
+  pushed a phantom reset_point at every AC-scan start AND shifted all
+  subsequent indices by -1 from cjxl's emission. Verified on 3 representative
+  JPEGs (10-scan progressive, 9-scan progressive, 1-scan baseline): per-scan
+  reset_point counts AND cumulative indices now bit-identical to cjxl.
+  Closes the +1.99% JBRD bloat regression introduced in 0.8.4-0.8.6 (the
+  initial JBRD emission API): 50-file paired A/B `cjxl-rs` vs `cjxl` bench
+  shows -0.50pp recovery (+2.15% → +1.65%); 200-file aggregate now +1.24%.
+
+## [0.8.6] - 2026-05-28
+
+### Added
+
+- `BitReader::partial_byte_padding_bits()` returns the current partial-byte
+  unconsumed bits in bitstream order (MSB-first), as a `Vec<u8>` of length
+  `0..=7`. Read-only — does NOT mutate reader state. Mirrors libjxl's
+  `BitReaderState::FinishStream` (`enc_jpeg_data_reader.cc:441-470`)
+  `npadbits = bits_left_ & 7` extraction. Used by JBRD-aware decoding
+  to capture the per-segment entropy padding bits a JPEG-XL transcoder
+  needs to reproduce the source's exact bytes (some encoders pad with
+  0-bits instead of the spec-recommended 1-bits).
+- `EntropyDecoder::partial_byte_padding_bits()` forwards to the above.
+- `JbrdMetadata` extended with two new public fields:
+  - `has_zero_padding_bit: bool` — set iff the JPEG contains any non-1
+    padding bit at any entropy-segment boundary (per-RST or end-of-scan).
+  - `padding_bits: Vec<u8>` — concatenated MSB-first bit sequence across
+    every entropy-segment terminator in bitstream order. Empty when
+    `has_zero_padding_bit == false` (libjxl's compact-payload pattern,
+    `jpeg_data.cc:368-380`).
+- `decode_coefficients_with_jbrd_metadata` now populates the new
+  `JbrdMetadata` padding-bit fields. Used by jxl-encoder task #11
+  to byte-roundtrip baseline JPEGs whose source encoder uses
+  non-spec zero-bit entropy padding.
+- New tracking parameter on `EntropyDecoder::decode_ac_first_scan_tracked`
+  and `EntropyDecoder::decode_ac_refine_scan_tracked`: an additional
+  `Option<&mut Vec<u8>>` after the existing `jbrd: Option<&mut JbrdScanInfo>`
+  for per-RST padding-bit accumulation. The non-tracked variants
+  (`decode_ac_first_scan` / `decode_ac_refine_scan`) are unchanged —
+  they continue to pass `None` for both tracking parameters.
+
+### Compatibility
+
+- The 0.8.5 public surface remains additive-compatible. `JbrdMetadata`
+  was already declared `#[non_exhaustive]` in 0.8.5, so adding fields
+  preserves construction-from-other-crates safety. Existing
+  callers that just `.scans` are unaffected.
+- The new `EntropyDecoder` tracking-parameter on the two
+  `*_scan_tracked` methods IS a signature change, but those methods
+  were added in 0.8.5 specifically for libjxl JBRD parity work — no
+  other use case exists in tree.
+
+## [0.8.5] - 2026-05-28
+
+### Added
+
+- `Decoder::decode_coefficients_with_jbrd_metadata(data, stop)` returns
+  `(DecodedCoefficients, JbrdMetadata)` in a single decode pass. The new
+  `JbrdMetadata` carries per-scan `reset_points` (block-scan indices where
+  two end-of-block runs occur back-to-back) and `extra_zero_runs` (block
+  indices and counts of ZRL symbols preceding a natural EOB in AC-first
+  scans). These are the libjxl `JPEGScanInfo` fields a JPEG-XL transcoder
+  needs to reconstruct the exact original entropy-coded bitstream from
+  DCT coefficients (the "JBRD" box in the JXL spec). Existing
+  `decode_coefficients()` / `decode_coefficients_with_extras()` are
+  unchanged — zero overhead, no tracking. Used by jxl-encoder's
+  `jpeg-reencoding` feature to close known-DIFF cases on progressive
+  JPEGs with successive-approximation refinement scans (jxl-encoder task #10).
+- New public types `zenjpeg::decoder::{JbrdMetadata, JbrdScanInfo}`.
+- New public methods on `EntropyDecoder`:
+  `decode_ac_first_scan_tracked` and `decode_ac_refine_scan_tracked` —
+  tracking-aware variants that accept an `Option<&mut JbrdScanInfo>`
+  parameter. The non-tracked methods (`decode_ac_first_scan` /
+  `decode_ac_refine_scan`) are now thin shims that delegate with `None`,
+  preserving zero overhead and back-compat.
+
+### Compatibility
+
+- The existing 0.8.4 public surface is preserved unchanged. No struct
+  field additions on existing public types, no signature changes on
+  existing methods. `DecodedCoefficients` is byte-for-byte identical.
+  The new JBRD types live in a separate, additive namespace.
+
+## [Unreleased]
+
 ### QUEUED BREAKING CHANGES
+
+- Temporarily remove content-adaptive constructors/types, packed source-feature hooks, Zq variants/metrics, analyzer-seeded targeting, and the `target-zq`, `__picker-research`, `__zensim-research`, `recompress-iqa` features. Preserve the full integration at `to-revisit/zenanalyze` (`fc19be17`). Ordinary JPEG AQ and trellis remain; recompression uses its existing unmeasured one-shot path (`adcbc608`).
 <!-- Breaking changes that will ship together in the next minor release.
      Until the next minor ships, keep adding here rather than releasing piecemeal. -->
 

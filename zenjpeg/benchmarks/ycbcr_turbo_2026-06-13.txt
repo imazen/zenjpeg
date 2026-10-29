@@ -1,0 +1,44 @@
+# ycbcr_turbo: turbo (libjpeg-exact, magetypes-generic) vs default (hand AVX-512/AVX2 14-bit)
+# date: 2026-06-13
+# host: lilith Ryzen 9 7950X, WSL2
+# parent commit: 0706247cd0e9 (turbo color = 0706247c)
+# command: cargo bench -p zenjpeg --bench ycbcr_turbo --features __test-utils
+# throughput = megapixels/s; turbo % = slowdown vs default
+
+  ycbcr_rgb_64x64  30 rounds × 166 calls
+  ├─ default-14bit   1.2 ±0.0µs  [1.2–1.2]µs          3.43G
+  ╰─ turbo-16bit     5.9 ±0.2µs  [+371.4%–+384.3%]     691M
+  ycbcr_bgra_64x64  30 rounds × 149 calls
+  ├─ default-14bit   1.2 ±0.1µs  [1.2–1.2]µs          3.37G
+  ╰─ turbo-16bit     6.3 ±0.3µs  [+413.2%–+426.9%]     645M
+  ycbcr_fusedbox_64x64  30 rounds × 227 calls
+  ├─ default-14bit   1.4 ±0.0µs  [1.3–1.4]µs          3.03G
+  ╰─ turbo-16bit     4.4 ±0.2µs  [+220.1%–+225.7%]     926M
+  ycbcr_rgb_512x512  30 rounds × 13 calls
+  ├─ default-14bit     82.7 ±2.1µs  [81.1–84.7]µs        3.17G
+  ╰─ turbo-16bit     380.5 ±21.3µs  [+350.2%–+365.6%]     689M
+  ycbcr_bgra_512x512  30 rounds × 12 calls
+  ├─ default-14bit     84.8 ±4.7µs  [82.6–87.4]µs        3.09G
+  ╰─ turbo-16bit     421.7 ±13.8µs  [+390.9%–+401.1%]     622M
+  ycbcr_fusedbox_512x512  30 rounds × 16 calls
+  ├─ default-14bit     92.9 ±2.7µs  [90.2–96.1]µs        2.82G
+  ╰─ turbo-16bit     294.1 ±18.3µs  [+208.2%–+220.5%]     891M
+  ycbcr_rgb_1024x1024  30 rounds × 3 calls
+  ├─ default-14bit    415.2 ±29.7µs  [398.8–434.3]µs      2.53G
+  ╰─ turbo-16bit     1510.3 ±56.4µs  [+262.4%–+273.7%]     694M
+  ycbcr_bgra_1024x1024  30 rounds × 2 calls
+  ├─ default-14bit    483.1 ±37.1µs  [460.3–509.7]µs      2.17G
+  ╰─ turbo-16bit     1691.9 ±81.9µs  [+248.0%–+260.7%]     620M
+  ycbcr_fusedbox_1024x1024  30 rounds × 4 calls
+  ├─ default-14bit    367.1 ±18.5µs  [360.9–373.9]µs      2.86G
+  ╰─ turbo-16bit     1138.0 ±36.2µs  [+206.2%–+211.2%]     921M
+  ycbcr_rgb_2048x2048  30 rounds × 1 calls
+  ├─ default-14bit   1.7 ±0.1ms  [1.7–1.8]ms          2.44G
+  ╰─ turbo-16bit     6.2 ±0.3ms  [+259.0%–+268.0%]     676M
+  ycbcr_bgra_2048x2048  30 rounds × 1 calls
+  ├─ default-14bit   2.0 ±0.1ms  [1.9–2.0]ms          2.13G
+  ╰─ turbo-16bit     6.7 ±0.2ms  [+234.4%–+242.3%]     629M
+  ycbcr_fusedbox_2048x2048  30 rounds × 1 calls
+  ├─ default-14bit   1.6 ±0.1ms  [1.6–1.7]ms          2.59G
+  ╰─ turbo-16bit     4.6 ±0.2ms  [+181.4%–+189.3%]     908M
+  total: 51.5s  (83 noisy rounds)

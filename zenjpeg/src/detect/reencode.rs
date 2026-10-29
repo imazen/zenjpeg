@@ -385,6 +385,7 @@ fn grid_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> Calibratio
         | EncoderFamily::ImageMagick
         | EncoderFamily::IjgFamily
         | EncoderFamily::Photoshop
+        | EncoderFamily::WindowsImaging
         | EncoderFamily::Unknown => {
             if *scale == QualityScale::ButteraugliDistance {
                 CalibrationGrid {
@@ -409,6 +410,7 @@ fn min_delta_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> &'sta
         | EncoderFamily::ImageMagick
         | EncoderFamily::IjgFamily
         | EncoderFamily::Photoshop
+        | EncoderFamily::WindowsImaging
         | EncoderFamily::Unknown => {
             if *scale == QualityScale::ButteraugliDistance {
                 JPEGLI_MIN_DELTA
@@ -433,6 +435,7 @@ fn prop_grid_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> Calib
         | EncoderFamily::ImageMagick
         | EncoderFamily::IjgFamily
         | EncoderFamily::Photoshop
+        | EncoderFamily::WindowsImaging
         | EncoderFamily::Unknown => {
             if *scale == QualityScale::ButteraugliDistance {
                 CalibrationGrid {
@@ -457,6 +460,7 @@ fn shrink_cap_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> &'st
         | EncoderFamily::ImageMagick
         | EncoderFamily::IjgFamily
         | EncoderFamily::Photoshop
+        | EncoderFamily::WindowsImaging
         | EncoderFamily::Unknown => {
             if *scale == QualityScale::ButteraugliDistance {
                 JPEGLI_SHRINK_CAP

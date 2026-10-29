@@ -1,0 +1,10 @@
+# jpeg_resource_calibrate
+commit: ae044612
+host: lilith
+date: 2026-06-14
+bin: target/release/examples/jpeg_probe
+sizes: [512, 1024, 2048]
+qualities: [50, 85]
+configs(trellis,brd): [(0, 0), (1, 0), (0, 1), (1, 1)]
+content_classes: ['ai-illustration', 'document', 'photo', 'screenshot']
+measure: jpeg_probe VmHWM delta + wall (Instant) + user/sys (/proc/self/stat), single-thread, one process per op; ycbcr 4:2:0, progressive default.

@@ -224,7 +224,7 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
         return None;
     }
 
-    // Parse container items from XMP (using shared ultrahdr-core parser)
+    // Parse container items through the shared namespace-aware zenmeta parser.
     let items = parse_container_items(xmp);
     if items.is_empty() {
         return None;
@@ -274,7 +274,10 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
     // Walk the container directory, calculating offsets for appended items.
     // The first item is always the primary JPEG (already decoded).
     // Subsequent items are appended sequentially after the primary's EOI.
-    let mut offset = primary_end;
+    let mut offset = primary_end.checked_add(items[0].padding.unwrap_or(0))?;
+    if offset > file_data.len() {
+        return None;
+    }
     let mut depth_data: Option<Vec<u8>> = None;
     let mut depth_mime = String::from("image/jpeg");
     let mut confidence_data: Option<Vec<u8>> = None;
@@ -287,7 +290,7 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
         }
 
         let length = item.length.unwrap_or(0);
-        let end = offset.saturating_add(length);
+        let end = offset.checked_add(length)?;
         if end > file_data.len() {
             break;
         }
@@ -818,10 +821,11 @@ mod tests {
     // === DDF parsing ===
 
     #[test]
+    #[cfg(feature = "metadata")]
     fn parse_ddf_container_directory() {
         use crate::container::types::{ItemSemantic, parse_container_items};
 
-        let xmp = r#"<x:xmpmeta>
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GDepth="http://ns.google.com/photos/1.0/depthmap/">
   <rdf:RDF>
     <rdf:Description
       xmlns:Container="http://ns.google.com/photos/dd/1.0/container/"
@@ -855,6 +859,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metadata")]
     fn parse_ddf_extracts_depth() {
         // Build a fake DDF file: primary JPEG + depth JPEG + confidence PNG
         let primary_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9]; // 8 bytes
@@ -866,15 +871,14 @@ mod tests {
         file_data.extend_from_slice(&conf_png);
 
         let xmp = alloc::format!(
-            r#"<x:xmpmeta>
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GDepth="http://ns.google.com/photos/1.0/depthmap/">
   <rdf:RDF>
     <rdf:Description
       xmlns:Container="http://ns.google.com/photos/dd/1.0/container/"
       xmlns:Item="http://ns.google.com/photos/dd/1.0/item/"
       GDepth:Format="RangeInverse"
       GDepth:Near="0.2"
-      GDepth:Far="50.0"
-      Container:Directory="true">
+      GDepth:Far="50.0">
       <Container:Directory>
         <rdf:Seq>
           <rdf:li>
@@ -911,6 +915,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "metadata")]
+    fn parse_ddf_honors_primary_padding() {
+        // Dynamic Depth 1.0: Padding belongs to the primary, before the
+        // first appended resource. Test opaque bytes, not re-encoded images.
+        let depth = [0xff, 0xd8, 1, 2, 0xff, 0xd9];
+        let confidence = [0x89, b'P', b'N', b'G'];
+        let mut file = vec![0xff, 0xd8, 0xff, 0xd9, 0xaa, 0xbb, 0xcc, 0xdd];
+        file.extend_from_slice(&depth);
+        file.extend_from_slice(&confidence);
+        let xmp = |padding: usize| {
+            alloc::format!(
+                r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+            xmlns:c="http://ns.google.com/photos/dd/1.0/container/"
+            xmlns:i="http://ns.google.com/photos/dd/1.0/item/">
+            <rdf:Description><c:Directory><rdf:Seq>
+            <rdf:li><c:Item i:Semantic="Primary" i:Mime="image/jpeg" i:Padding="{padding}"/></rdf:li>
+            <rdf:li><c:Item i:Semantic="DepthMap" i:Mime="image/jpeg" i:Length="6"/></rdf:li>
+            <rdf:li><c:Item i:Semantic="ConfidenceMap" i:Mime="image/png" i:Length="4"/></rdf:li>
+            </rdf:Seq></c:Directory></rdf:Description></rdf:RDF>"#
+            )
+        };
+        let result = parse_ddf(&xmp(4), &file).unwrap();
+        assert_eq!(result.data, depth);
+        assert_eq!(result.confidence.as_deref(), Some(confidence.as_slice()));
+        assert!(parse_ddf(&xmp(usize::MAX), &file).is_none());
+        assert!(parse_ddf(&xmp(file.len()), &file).is_none());
+    }
+
+    #[test]
     fn parse_ddf_no_directory() {
         let xmp = r#"<rdf:Description hdrgm:Version="1.0"/>"#;
         assert!(parse_ddf(xmp, &[0xFF, 0xD8, 0xFF, 0xD9]).is_none());
@@ -920,12 +953,11 @@ mod tests {
     fn parse_ddf_truncated_file() {
         let primary_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9];
         // File has no appended data, but directory claims 5000 bytes
-        let xmp = r#"<x:xmpmeta>
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GDepth="http://ns.google.com/photos/1.0/depthmap/">
   <rdf:RDF>
     <rdf:Description
       xmlns:Container="http://ns.google.com/photos/dd/1.0/container/"
-      xmlns:Item="http://ns.google.com/photos/dd/1.0/item/"
-      Container:Directory="true">
+      xmlns:Item="http://ns.google.com/photos/dd/1.0/item/">
       <Container:Directory>
         <rdf:Seq>
           <rdf:li>
@@ -1151,7 +1183,7 @@ mod tests {
 
     #[test]
     fn gdepth_google_spec_example() {
-        // Based on Google's GDepth specification example
+        // Based on the GDepth specification example
         let depth_data = vec![0xFF, 0xD8, 0x00, 0xFF, 0xD9]; // Fake JPEG
         let b64 = base64_encode(&depth_data);
 

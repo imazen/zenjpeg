@@ -180,8 +180,7 @@ fn test_corpus_comparison() {
     let cjpegli_path = match find_cjpegli_path() {
         Some(p) => p,
         None => {
-            eprintln!("Skipping: C++ cjpegli not available. Set CJPEGLI_PATH env var.");
-            return;
+            panic!("missing test prerequisite: C++ cjpegli not available - set CJPEGLI_PATH");
         }
     };
     let _ = cjpegli_path; // Used by register_cpp_jpegli
@@ -189,8 +188,7 @@ fn test_corpus_comparison() {
     let corpus_path = match find_corpus_path() {
         Some(p) => p,
         None => {
-            eprintln!("Skipping: Corpus not available. Set CORPUS_DIR env var.");
-            return;
+            panic!("missing test prerequisite: corpus not available - set CORPUS_DIR");
         }
     };
 

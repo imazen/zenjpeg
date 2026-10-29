@@ -5,6 +5,13 @@
 //! - Huffman table building from symbol frequencies
 //! - Lookup table generation for fast encoding/decoding
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use crate::error::{Error, Result};
 
 /// Builds a Huffman encode table at compile time from JPEG-format bits and values.
@@ -212,9 +219,19 @@ impl HuffmanEncodeTable {
     }
 
     /// Returns the code and length for a symbol.
+    ///
+    /// A symbol absent from the table has length 0: writing it emits ZERO
+    /// bits and silently desyncs the bitstream (the issue #194 corruption
+    /// class). Table construction must guarantee every emitted symbol was
+    /// counted; the debug assert catches any traversal divergence in tests.
     #[inline(always)]
     pub fn encode(&self, symbol: u8) -> (u32, u8) {
         let idx = symbol as usize;
+        debug_assert!(
+            self.lengths[idx] > 0,
+            "Huffman symbol {symbol:#04x} has no code — frequency counting \
+             diverged from the encode traversal"
+        );
         (self.codes[idx], self.lengths[idx])
     }
 
@@ -261,6 +278,10 @@ pub struct HuffmanDecodeTable {
     pub maxcode_16bit: [i32; MAX_CODE_LENGTH + 2],
     /// Offset for decoding codes of each length
     pub valoffset: [i32; MAX_CODE_LENGTH + 2],
+    /// DHT code-length histogram (codes per length 1-16), as parsed.
+    /// Kept alongside `values` so a decoded table can be re-serialized
+    /// for re-encoding (decode → encode table reuse, issue #77).
+    pub bits: [u8; 16],
     /// Symbol values
     pub values: Vec<u8>,
     /// Whether the table is valid
@@ -280,14 +301,36 @@ impl HuffmanDecodeTable {
             maxcode: [-1; MAX_CODE_LENGTH + 2],
             maxcode_16bit: [i32::MAX; MAX_CODE_LENGTH + 2],
             valoffset: [0; MAX_CODE_LENGTH + 2],
+            bits: [0; 16],
             values: Vec::new(),
             valid: false,
         }
     }
 
+    /// Recover the canonical DHT `(bits, values)` pair this table was
+    /// built from — e.g. to feed
+    /// [`OptimizedTable::from_bits_values`](crate::huffman::optimize::OptimizedTable::from_bits_values)
+    /// for decode → re-encode table reuse.
+    #[must_use]
+    pub fn to_bits_values(&self) -> ([u8; 16], &[u8]) {
+        (self.bits, &self.values)
+    }
+
     /// Creates a decoding table from JPEG-format bits and values.
     /// For DC tables, pass is_ac = false. For AC tables, pass is_ac = true to build fast_ac.
     pub fn from_bits_values(bits: &[u8; 16], values: &[u8]) -> Result<Self> {
+        Self::from_bits_values_impl(bits, values, false)
+    }
+
+    /// Creates a DC decoding table. DC symbols are difference categories
+    /// 0..=15 (T.81 F.1.2.1; 16 exists only in lossless coding, which this
+    /// decoder does not support). libjpeg-turbo (`jpeg_make_d_derived_tbl`)
+    /// and jpegli (`decode_marker.cc`) reject a larger symbol when the table
+    /// is defined, at every strictness; so does every caller of this.
+    pub(crate) fn from_bits_values_dc(bits: &[u8; 16], values: &[u8]) -> Result<Self> {
+        if values.iter().any(|&v| v > 15) {
+            return Err(Error::invalid_huffman_table(0, "DC symbol above 15"));
+        }
         Self::from_bits_values_impl(bits, values, false)
     }
 
@@ -298,6 +341,7 @@ impl HuffmanDecodeTable {
 
     fn from_bits_values_impl(bits: &[u8; 16], values: &[u8], is_ac: bool) -> Result<Self> {
         let mut table = Self::new();
+        table.bits = *bits;
         table.values = values.to_vec();
 
         // Build huffsize and huffcode arrays

@@ -32,6 +32,7 @@ test.beforeEach(async ({ page }) => {
       { timeout: 60_000 },
     )
     .toBe("done");
+  await page.locator('[data-testid="auto-encode-toggle"]').uncheck();
 });
 
 test("page loads, triptych populated, diagnostics non-empty", async ({ page }) => {
@@ -89,6 +90,7 @@ test("AQ heatmap canvas has been drawn (non-zero pixels)", async ({ page }) => {
 test("dragging an h_eq slider re-renders the utilization heatmap", async ({
   page,
 }) => {
+  await page.locator('[data-testid="tab-quant"]').click();
   // Snapshot the utilization canvas before the change.
   const beforeHash = await canvasFingerprint(page, '[data-testid="comp-0-utilization"]');
 
@@ -119,6 +121,9 @@ test("changing color path to XYB re-encodes and updates components", async ({
       return d?.colorPath;
     });
   }, { timeout: 60_000 }).toBe("XYB");
+  await page.locator('[data-testid="xyb-subsampling-select"]').selectOption("bQuarter");
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(async () => page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.samplingFactors)).toEqual([[2, 2], [2, 2], [1, 1]]);
 });
 
 test("subsampling 4:2:0 produces half-resolution chroma block grids", async ({
@@ -157,11 +162,7 @@ test("quality slider drag changes encoded byte size", async ({ page }) => {
     await expect.poll(async () => {
       return await page.evaluate(() => document.body.dataset["encodeState"]);
     }, { timeout: 60_000 }).toBe("done");
-    return await page.evaluate(() => {
-      const txt = document.querySelector<HTMLElement>("#status")?.textContent ?? "";
-      const m = txt.match(/Encoded (\d+) bytes/);
-      return m ? parseInt(m[1]!, 10) : 0;
-    });
+    return await page.evaluate(() => window.__zenjpegDiagnostics.getLastEncode()?.bytes ?? 0);
   };
   const lowQ = await sizeAt("20");
   const hiQ = await sizeAt("95");
@@ -170,6 +171,7 @@ test("quality slider drag changes encoded byte size", async ({ page }) => {
 });
 
 test("Reset EQ button restores h_eq/v_eq to 1", async ({ page }) => {
+  await page.locator('[data-testid="tab-quant"]').click();
   await page.locator('[data-testid="comp-0-h-eq-3"]').evaluate((el) => {
     const i = el as HTMLInputElement;
     i.value = "1.7";
@@ -199,3 +201,53 @@ async function canvasFingerprint(page: import("@playwright/test").Page, sel: str
     return String(h);
   }, sel);
 }
+
+
+test("table edit is encoded and survives a quality change", async ({ page }) => {
+  await page.locator('[data-testid="tab-quant"]').click();
+  const slider = page.locator('[data-testid="comp-0-h-eq-0"]');
+  await slider.evaluate((el) => {
+    const input = el as HTMLInputElement;
+    input.value = "2";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await expect(page.locator('[data-testid="status"]')).toContainText("custom Q");
+  const edited = await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().customQuantTables);
+  expect(edited?.y).toHaveLength(64);
+  expect(edited?.cb).toHaveLength(64);
+  expect(edited?.cr).toHaveLength(64);
+  const actual = await page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.components[0]?.quantTableBase[0]);
+  expect(actual).toBe(Math.round(edited!.y[0]!));
+  await page.locator('[data-testid="tab-quality"]').click();
+  await page.locator('[data-testid="quality-slider"]').evaluate((el) => {
+    const input = el as HTMLInputElement;
+    input.value = "65";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await expect(page.locator('[data-testid="status"]')).toContainText("custom Q");
+  expect(await slider.inputValue()).toBe("2");
+});
+
+test("upload and zoom inspector respond to interaction", async ({ page }) => {
+  const png = await page.evaluate(() => {
+    const c = document.createElement("canvas");
+    c.width = 64; c.height = 48;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#2596be"; ctx.fillRect(0, 0, 64, 48);
+    ctx.fillStyle = "#a53a62"; ctx.fillRect(3, 7, 20, 30);
+    ctx.clearRect(0, 0, 2, 2);
+    return c.toDataURL("image/png").split(",")[1]!;
+  });
+  await page.locator('[data-testid="image-input"]').setInputFiles({ name: "test.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.height)).toBe(48);
+  const alpha = await page.locator('[data-testid="source-canvas"]').evaluate((el) => (el as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 1, 1).data[3]);
+  expect(alpha).toBe(255);
+  await page.locator('[data-testid="source-canvas"]').click();
+  await expect(page.locator('[data-testid="zoom-modal"]')).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="zoom-modal"]')).toBeHidden();
+});

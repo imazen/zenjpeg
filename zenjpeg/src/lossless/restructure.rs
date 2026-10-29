@@ -17,8 +17,11 @@ use crate::huffman::optimize::{ContextConfig, ProgressiveTokenBuffer};
 use enough::Stop;
 
 use super::coeff_transform::{TransformConfig, TransformedCoefficients, transform_coefficients};
+use super::geometry::McuGeom;
 use super::pipeline::{
-    component_to_blocks, encode_from_coefficients, write_marker_segment, write_quant_tables,
+    coefficient_out_of_range, component_to_blocks, encode_from_coefficients, finish_container,
+    transform_secondary_images, write_after_first_scan_segments, write_after_sof_segments,
+    write_preserved_segments, write_quant_tables,
 };
 
 /// Output scan structure for restructured JPEG.
@@ -99,9 +102,10 @@ pub fn restructure(
     // Step 2: Optionally transform coefficients
     let coeffs = if let Some(ref transform_config) = config.transform {
         transform_coefficients(&decoded_coeffs, transform_config)
-            .map_err(|e| Error::io_error(alloc::format!("{e}")))?
+            .map_err(|e| Error::invalid_config(alloc::format!("{e}")))?
     } else {
         TransformedCoefficients {
+            sample_precision: decoded_coeffs.sample_precision,
             width: decoded_coeffs.width,
             height: decoded_coeffs.height,
             components: decoded_coeffs.components,
@@ -112,15 +116,35 @@ pub fn restructure(
     stop.check()?;
 
     // Step 3: Compute restart interval in MCUs
-    let restart_mcus = compute_restart_interval(&coeffs.components, config.restart_interval);
+    let restart_mcus =
+        compute_restart_interval(&coeffs.components, coeffs.width, config.restart_interval);
 
-    // Step 4: Encode with the requested structure
-    let preserved = extras.as_ref().map(|e| e.segments());
+    // Step 4: MPF secondary images follow the primary's transform (verbatim
+    // when there is none; their own scan structure is left alone).
+    let identity = TransformConfig::default();
+    let transform_config = config.transform.as_ref().unwrap_or(&identity);
+    let carry = transform_secondary_images(
+        jpeg_data,
+        extras.as_ref(),
+        transform_config,
+        false,
+        (decoded_coeffs.width, decoded_coeffs.height),
+        (coeffs.width, coeffs.height),
+        &stop,
+    )?;
+
+    // Step 5: Encode with the requested structure, each preserved segment on
+    // its source side of SOF (`placement`)
+    let segments = extras.as_ref().map(|e| e.segments()).unwrap_or(&[]);
+    let positions = super::placement::source_positions(jpeg_data, segments);
+    let preserved = Some(super::placement::Placed::new(segments, &positions));
 
     match config.output_mode {
-        OutputMode::Sequential => encode_from_coefficients(&coeffs, preserved, restart_mcus, &stop),
+        OutputMode::Sequential => {
+            encode_from_coefficients(&coeffs, preserved, &carry, restart_mcus, &stop)
+        }
         OutputMode::Progressive => {
-            encode_progressive_from_coefficients(&coeffs, preserved, restart_mcus, &stop)
+            encode_progressive_from_coefficients(&coeffs, preserved, &carry, restart_mcus, &stop)
         }
     }
 }
@@ -128,6 +152,7 @@ pub fn restructure(
 /// Compute the restart interval in MCUs from the configuration.
 fn compute_restart_interval(
     components: &[ComponentCoefficients],
+    width: u32,
     interval: RestartInterval,
 ) -> u16 {
     match interval {
@@ -144,14 +169,48 @@ fn compute_restart_interval(
             let max_v_samp = components.iter().map(|c| c.v_samp).max().unwrap_or(1) as usize;
             let _ = max_v_samp; // MCU rows is about horizontal MCU count
 
-            // Luma blocks_wide / max_h_samp = MCU columns
+            // Luma blocks_wide / max_h_samp = MCU columns. A one-component
+            // frame's MCU is one block of its true grid (T.81 A.2.2),
+            // whatever sampling factors it declares.
             let luma = &components[0];
-            let mcus_wide = (luma.blocks_wide + max_h_samp - 1) / max_h_samp;
+            let mcus_wide = if components.len() == 1 {
+                (width as usize).div_ceil(8)
+            } else {
+                (luma.blocks_wide + max_h_samp - 1) / max_h_samp
+            };
 
             let mcus_per_interval = mcus_wide * rows as usize;
             mcus_per_interval.min(u16::MAX as usize) as u16
         }
     }
+}
+
+/// Whether `scan` codes without category 16 (see `coefficient_out_of_range`),
+/// walking the blocks the way `ProgressiveTokenBuffer` tokenizes them: a DC
+/// first scan predicts per component in block order with no restarts. An AC
+/// first scan refuses -32768 at any `al`, as the baseline writer does: it has
+/// no category at `al = 0`, and a flip, which negates it, has no `i16`
+/// result (`BlockTransform::apply` leaves it -32768). Refinement scans emit
+/// single bits.
+fn scan_is_codable(scan: &ProgressiveScan, all_blocks: &[Vec<[i16; DCT_BLOCK_SIZE]>]) -> bool {
+    if scan.ah != 0 {
+        return true;
+    }
+    if scan.ss == 0 {
+        return scan.components.iter().all(|&c| {
+            let mut prev = 0i16;
+            all_blocks[usize::from(c)].iter().all(|block| {
+                let dc = block[0] >> scan.al;
+                let diff = dc.wrapping_sub(prev);
+                prev = dc;
+                diff != i16::MIN
+            })
+        });
+    }
+    let band = usize::from(scan.ss)..=usize::from(scan.se);
+    all_blocks[usize::from(scan.components[0])]
+        .iter()
+        .all(|block| !block[band.clone()].contains(&i16::MIN))
 }
 
 /// Generate jpegli-style progressive scan script.
@@ -238,25 +297,61 @@ fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<Progres
 ///
 /// Two-pass: tokenize all scans → optimize Huffman tables → replay with
 /// optimized tables.
-fn encode_progressive_from_coefficients(
+pub(crate) fn encode_progressive_from_coefficients(
     coeffs: &TransformedCoefficients,
-    preserved_segments: Option<&[crate::decode::PreservedSegment]>,
+    preserved_segments: Option<super::placement::Placed<'_>>,
+    carry: &super::pipeline::Carry<'_>,
     _restart_interval: u16,
     stop: &impl Stop,
 ) -> Result<Vec<u8>> {
     let num_components = coeffs.components.len();
-    let is_color = num_components >= 3;
+    if !(1..=4).contains(&num_components) || !matches!(coeffs.sample_precision, 8 | 12) {
+        return Err(Error::unsupported_feature(
+            "coefficient encoding requires 1–4 components and 8/12-bit precision",
+        ));
+    }
+    let is_color = num_components > 1;
 
-    // Determine if subsampled
-    let is_subsampled = if is_color {
-        coeffs.components[0].h_samp > 1 || coeffs.components[0].v_samp > 1
-    } else {
-        false
-    };
+    // An interleaved DC scan walks each component's blocks one per MCU, which
+    // is the interleaved order only when every component is sampled 1x1. Any
+    // other layout (including chroma sampled above luma, e.g. luma 1x1 with
+    // chroma 2x1) takes non-interleaved scans.
+    let is_subsampled = is_color
+        && coeffs
+            .components
+            .iter()
+            .any(|c| c.h_samp > 1 || c.v_samp > 1);
 
-    // Convert to block arrays
-    let all_blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> =
-        coeffs.components.iter().map(component_to_blocks).collect();
+    // Validated grid geometry (fails loudly on inconsistent grids).
+    let geom = McuGeom::from_components(coeffs.width, coeffs.height, &coeffs.components)?;
+
+    // Convert to block arrays, cropped to each component's TRUE grid.
+    //
+    // The stored grids are MCU-padded, but every scan this emitter writes is
+    // either non-interleaved (subsampled case) or has 1×1 sampling throughout
+    // (4:4:4 / grayscale, where padded == true). Per T.81 A.2.2 a
+    // non-interleaved scan contains exactly ceil(comp_dim/8) data units per
+    // row — tokenizing the padded grid emits extra block rows/columns the
+    // decoder does not expect and corrupts every following scan (issue #195's
+    // "extraneous bytes before marker" failure on non-MCU-aligned images).
+    let all_blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> = coeffs
+        .components
+        .iter()
+        .zip(&geom.comps)
+        .map(|(comp, cg)| {
+            let full = component_to_blocks(comp);
+            if cg.true_bw == cg.padded_bw && cg.true_bh == cg.padded_bh {
+                full
+            } else {
+                let mut cropped = Vec::with_capacity(cg.true_bw * cg.true_bh);
+                for by in 0..cg.true_bh {
+                    let row_start = by * cg.padded_bw;
+                    cropped.extend_from_slice(&full[row_start..row_start + cg.true_bw]);
+                }
+                cropped
+            }
+        })
+        .collect();
 
     stop.check()?;
 
@@ -273,6 +368,9 @@ fn encode_progressive_from_coefficients(
     let mut token_buffer = ProgressiveTokenBuffer::new(num_components, context_config.num_contexts);
 
     for (scan_idx, scan) in scans.iter().enumerate() {
+        if !scan_is_codable(scan, &all_blocks) {
+            return Err(coefficient_out_of_range());
+        }
         let context = if scan.ss == 0 && scan.se == 0 {
             context_config.dc_context(scan.components[0] as usize) as u8
         } else {
@@ -323,18 +421,26 @@ fn encode_progressive_from_coefficients(
     output.push(0xFF);
     output.push(MARKER_SOI);
 
-    // Preserved metadata
-    if let Some(segments) = preserved_segments {
-        for seg in segments {
-            write_marker_segment(&mut output, seg.marker, &seg.data);
-        }
-    }
+    // Preserved metadata + MPF index placeholder
+    let mpf_at = write_preserved_segments(&mut output, preserved_segments, carry)?;
 
     // DQT
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
 
     // SOF2 (progressive)
-    write_sof2(&mut output, coeffs.width, coeffs.height, &coeffs.components);
+    write_sof2(
+        &mut output,
+        coeffs.width,
+        coeffs.height,
+        &coeffs.components,
+        coeffs.sample_precision,
+    );
+
+    // Preserved segments the source placed after SOF stay there; those it
+    // placed after its first SOS go before the second scan header, or here
+    // when there is only one scan (`placement`).
+    let single_scan = scans.len() < 2;
+    write_after_sof_segments(&mut output, preserved_segments, single_scan, carry)?;
 
     // DHT — DC tables initially
     write_progressive_dc_tables(&mut output, &tables, num_dc_tables);
@@ -385,7 +491,7 @@ fn encode_progressive_from_coefficients(
             &token_buffer,
             scan_idx,
             scan,
-            is_color,
+            num_components,
             &context_config,
             &tables,
             num_dc_tables,
@@ -393,17 +499,29 @@ fn encode_progressive_from_coefficients(
             &ac_slot_ids,
         )?;
         output.extend_from_slice(&scan_data);
+        if scan_idx == 0 && !single_scan {
+            write_after_first_scan_segments(&mut output, preserved_segments, carry)?;
+        }
     }
 
     // EOI
     output.push(0xFF);
     output.push(MARKER_EOI);
 
+    // MPF index + secondary images
+    finish_container(&mut output, carry, mpf_at)?;
+
     Ok(output)
 }
 
 /// Write SOF2 (progressive) frame header using actual component IDs.
-fn write_sof2(output: &mut Vec<u8>, width: u32, height: u32, components: &[ComponentCoefficients]) {
+fn write_sof2(
+    output: &mut Vec<u8>,
+    width: u32,
+    height: u32,
+    components: &[ComponentCoefficients],
+    precision: u8,
+) {
     let num_components = components.len();
     let len = 2 + 1 + 2 + 2 + 1 + num_components * 3;
 
@@ -411,7 +529,7 @@ fn write_sof2(output: &mut Vec<u8>, width: u32, height: u32, components: &[Compo
     output.push(MARKER_SOF2);
     output.push((len >> 8) as u8);
     output.push((len & 0xFF) as u8);
-    output.push(8); // Sample precision
+    output.push(precision); // Sample precision
     output.push((height >> 8) as u8);
     output.push((height & 0xFF) as u8);
     output.push((width >> 8) as u8);
@@ -528,7 +646,7 @@ fn replay_scan(
     token_buffer: &ProgressiveTokenBuffer,
     scan_idx: usize,
     scan: &ProgressiveScan,
-    is_color: bool,
+    num_components: usize,
     context_config: &ContextConfig,
     tables: &[crate::huffman::optimize::OptimizedTable],
     num_dc_tables: usize,
@@ -540,7 +658,6 @@ fn replay_scan(
         .map(|s| s.num_tokens + s.ref_tokens.len())
         .unwrap_or(1024);
     let mut encoder = EntropyEncoder::with_capacity(estimated_tokens * 2);
-    let num_components = if is_color { 3 } else { 1 };
 
     // Set up DC tables
     for (i, table) in tables.iter().take(num_dc_tables).enumerate() {

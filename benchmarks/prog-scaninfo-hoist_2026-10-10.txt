@@ -1,0 +1,45 @@
+# candidate 003: ScanTokenInfo hoist — measurements
+# measured code commit: 9ac022dd50ca7875724765022a491392c61af48d
+#   (code identical in this commit; docs-only amendments followed)
+# parent: fc535f4640c8871aadfc3e50799ad0260c8cd056 (landed main)
+# canonical numbers: adversarial reviewer's independent matched
+#   rustc-1.99.0 builds (reviews/003-scaninfo-hoist/verdict.md G3)
+# companions: .meta (commands/provenance), .wall.tsv (90 cells, raw
+#   medians), .resources.txt (run-heavy lines incl. repeats/controls)
+
+profile_encode total Ir:   60,181,032,159 -> 56,282,047,148   (-6.4787606%)
+valgrind_decode total Ir:     105,360,785 ->    105,360,648   (-0.0001300%, noise)
+run-heavy: encode pair 191s/195s rc=0; decode pair 0s/0s rc=0 (see .resources.txt)
+
+Inclusive Ir, tokenize_ac_refinement_scan (author's matched 1.99.0 pair):
+  22,137,621,214 -> 17,633,121,614 (-20.35%)
+Inclusive Ir, tokenize_ac_first_scan: 10,721,594,645 (identical)
+
+Author-side secondary pairs (non-canonical, different build env; the
+parent total differs from the reviewer's by 768,155,857 Ir, cause not
+established — reviewer numbers are the headline):
+  rustc 1.99.0: encode 60,949,188,016 -> 56,282,030,690 (-7.657%)
+  rustc 1.98.1: encode 61,386,008,296 -> 56,745,603,152 (-7.56%)
+
+perf_manifest byte-identity (full corpus, #corpus ok; reviewer-reproduced
+byte-for-byte on independent builds):
+  default  35,376 rows sha256 a1bcc4e5eb5c1e1d1ecb1a7b10e452e92da7b15e738b736cf961b61d49ffbd63
+  parallel 42,948 rows sha256 6abcd4a40cb47e7a1643ae169c5cdccf0ae487052ea05cf880b191887edbb39a
+
+wall clock: raw per-cell medians in .wall.tsv (90 cells, 48 processes,
+7,560 timings). Paired median-ratio ranges: default-st 0.943878-1.045770,
+parallel-st 0.935176-1.086848, parallel-mt 0.954163-1.086475.
+Qualification: parallel-build 64^2 progressive encode measured 1.0868/1.0865
+(ST/MT) on the initial 7-iteration passes, but 0.988401/1.006937 on a
+31-iteration same-binary repeat and 1.010120/1.030119 on a 32-warmup/
+1000-iteration debug=0 control — within noise; no persistent regression
+and no tiny-case speedup established. Firm result is the matched
+instruction reduction; no wall-time claim is made.
+Controls are recorded separately in .resources.txt (31-iter repeat block
+and tiny-steady 1000-iter block) and small-repeat/tiny-steady dirs of the
+review dir.
+
+memory: /usr/bin/time -v max RSS parity (KiB, worst of 6 paired runs):
+  perf-default 493,984 -> 494,132   perf-parallel 515,296 -> 515,864
+  prog-default 238,776 -> 238,800   prog-parallel 240,932 -> 239,728
+  run-heavy resource lines for every run: .resources.txt

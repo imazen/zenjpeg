@@ -1,9 +1,10 @@
-//! Shared IDCT helpers for sequential and parallel output paths.
+//! Shared IDCT and padding helpers for the integer output paths.
 //!
-//! These functions are used by both `output.rs` (sequential) and
-//! `output_parallel.rs` (parallel) to avoid duplicating IDCT+dequant logic.
+//! The fast integer path (`fast_integer.rs`, sequential and threaded) uses
+//! the IDCT helpers and the padding helper; the streaming baseline loops
+//! (`baseline_streaming.rs`) and the fused parallel decoder
+//! (`fused_parallel.rs`) use only `edge_replicate_h_padding`.
 
-use crate::decode::idct_int::idct_int_dc_only;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE};
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 
@@ -25,8 +26,17 @@ pub(super) fn idct_block_into(
     dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     if coeff_count <= 1 {
-        let dc = coeffs[0] as i32 * quant[0] as i32;
-        idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+        // Dequantize just the DC coefficient and let `idct_fn` pick its own
+        // DC-only variant — the Libjpeg lane replicates turbo's NASM wrap
+        // (pmullw + psllw in i16), the Jpegli lane stays i32-exact.
+        dequant_buf.fill(0);
+        dequant_buf[0] = coeffs[0] as i32 * quant[0] as i32;
+        idct_fn(
+            dequant_buf,
+            &mut strip[dst_offset..],
+            strip_width,
+            coeff_count,
+        );
     } else {
         dequantize_unzigzag_i32_into_partial(coeffs, quant, dequant_buf, coeff_count);
         idct_fn(
@@ -145,6 +155,35 @@ pub(super) fn idct_chroma_into_ext(
                 last_valid_start..last_valid_start + c_strip_width,
                 pad_start,
             );
+        }
+    }
+}
+
+/// Edge-replicate horizontal padding columns in a chroma strip.
+///
+/// libjpeg-turbo's upsampler uses `downsampled_width`, not the MCU-padded
+/// width. Replicate the last real column over the padding columns so
+/// upsamplers that walk the full `stride` don't interpolate with
+/// IDCT-rounded padding data. No-op when there is no horizontal padding.
+///
+/// Shared by the baseline-streaming, buffered-output, and fused-parallel
+/// decode paths (issue #186 review follow-up: this logic used to be
+/// hand-rolled in each).
+#[inline]
+pub(crate) fn edge_replicate_h_padding(
+    buf: &mut [i16],
+    downsampled_w: usize,
+    stride: usize,
+    total_rows: usize,
+) {
+    if downsampled_w >= stride {
+        return;
+    }
+    for row in 0..total_rows {
+        let row_off = row * stride;
+        let last_val = buf[row_off + downsampled_w - 1];
+        for col in downsampled_w..stride {
+            buf[row_off + col] = last_val;
         }
     }
 }

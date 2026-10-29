@@ -5,7 +5,7 @@
 //!
 //! Tests MCU-aligned, non-aligned, progressive, and externally-encoded JPEGs.
 //!
-//! Run: cargo run --release -p zenjpeg --example diag_stripe --features decoder
+//! Run: cargo run --release -p zenjpeg --example diag_stripe
 
 use enough::Unstoppable;
 use zenjpeg::decode::{ChromaUpsampling, Decoder};

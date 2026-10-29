@@ -9,17 +9,17 @@
 
 use super::config::{ChromaUpsampling, IdctMethod, OutputTarget};
 use super::idct_int::{
-    idct_int_dc_only, idct_int_dc_only_unclamped, idct_int_tiered, idct_int_tiered_libjpeg,
-    idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
+    idct_int_tiered, idct_int_tiered_libjpeg, idct_int_tiered_libjpeg_unclamped,
+    idct_int_tiered_unclamped,
 };
 use super::upsample::{
-    upsample_h1v2_i16_libjpeg_strided, upsample_h1v2_i16_nearest_strided,
+    H2v2Bias, upsample_h1v2_i16_libjpeg_strided, upsample_h1v2_i16_nearest_strided,
     upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
-    upsample_h2v2_i16_libjpeg_strided, upsample_h2v2_i16_nearest_strided,
-    upsample_h2v2_libjpeg_row,
+    upsample_h2v2_i16_libjpeg_strided, upsample_h2v2_i16_libjpeg_strided_turbo,
+    upsample_h2v2_i16_nearest_strided, upsample_h2v2_libjpeg_row,
 };
 use crate::error::Result;
-use crate::foundation::alloc::try_alloc_maybeuninit;
+use crate::foundation::alloc::try_alloc_maybeuninit_pref;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::Subsampling;
@@ -97,6 +97,7 @@ pub(super) struct StripProcessor {
     pub chroma_upsampling: ChromaUpsampling,
     pub idct_method: IdctMethod,
     pub output_target: OutputTarget,
+    pub precision: u8,
 }
 
 impl StripProcessor {
@@ -135,10 +136,16 @@ impl StripProcessor {
             chroma_upsampling: ChromaUpsampling::default(),
             idct_method: IdctMethod::default(),
             output_target: OutputTarget::default(),
+            precision: 8,
         }
     }
 
     /// Create a new strip processor with allocated buffers.
+    ///
+    /// `alloc_pref` is the per-site fallibility preference. Every buffer here is
+    /// a per-MCU-row strip / upsample / context-row scratch, bounded by the row
+    /// width × strip height — so all default infallible (a single `calloc`);
+    /// an explicit `Fallible` can still force the `try_reserve` path.
     pub fn new(
         width: u32,
         num_components: u8,
@@ -147,15 +154,16 @@ impl StripProcessor {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
         output_target: OutputTarget,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
         // StripProcessor assumes Cb and Cr share the same sampling factors.
-        // Asymmetric chroma should be routed through the f32 generic path in
-        // output.rs (see `cb_h != cr_h` guards in scanline_reader /
-        // Decoder::decode / can_use_fast_i16_subsampled). If any caller slips
-        // through, panic loudly in debug builds rather than silently producing
-        // wrong chroma.
+        // Asymmetric chroma is classified `ChromaLayout::Other`, which no strip
+        // path accepts (`PathPlan::strip`, `decode::color_model`), so it takes
+        // the per-component path in output.rs. If any caller slips through,
+        // panic loudly in debug builds rather than silently producing wrong
+        // chroma.
         debug_assert!(
             num_components < 3 || (h_samp[1] == h_samp[2] && v_samp[1] == v_samp[2]),
             "StripProcessor requires symmetric Cb/Cr sampling factors; \
@@ -219,15 +227,26 @@ impl StripProcessor {
         let chroma_strip_height = if is_grayscale { 0 } else { chroma_v * 8 };
         let chroma_strip_size = chroma_strip_stride * chroma_strip_height;
 
-        // Allocate strip buffers
-        let y_strip = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
+        // Allocate strip buffers (per-MCU-row scratch → default infallible).
+        let y_strip =
+            try_alloc_maybeuninit_pref(alloc_pref, false, y_strip_size, "Y strip buffer")?;
 
         let (cb_strip, cr_strip) = if is_grayscale {
             (Vec::new(), Vec::new())
         } else {
             (
-                try_alloc_maybeuninit(chroma_strip_size, "Cb strip buffer")?,
-                try_alloc_maybeuninit(chroma_strip_size, "Cr strip buffer")?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    chroma_strip_size,
+                    "Cb strip buffer",
+                )?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    chroma_strip_size,
+                    "Cr strip buffer",
+                )?,
             )
         };
 
@@ -236,8 +255,18 @@ impl StripProcessor {
         let (cb_upsampled, cr_upsampled) = if !is_grayscale && subsampling != Subsampling::S444 {
             let upsampled_size = strip_stride * mcu_height;
             (
-                try_alloc_maybeuninit(upsampled_size, "Cb upsampled buffer")?,
-                try_alloc_maybeuninit(upsampled_size, "Cr upsampled buffer")?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    upsampled_size,
+                    "Cb upsampled buffer",
+                )?,
+                try_alloc_maybeuninit_pref(
+                    alloc_pref,
+                    false,
+                    upsampled_size,
+                    "Cr upsampled buffer",
+                )?,
             )
         } else {
             (Vec::new(), Vec::new())
@@ -247,10 +276,30 @@ impl StripProcessor {
         let (prev_cb_row, prev_cr_row, next_cb_row, next_cr_row) =
             if !is_grayscale && needs_vertical_upsample {
                 (
-                    try_alloc_maybeuninit(chroma_strip_stride, "prev Cb context row")?,
-                    try_alloc_maybeuninit(chroma_strip_stride, "prev Cr context row")?,
-                    try_alloc_maybeuninit(chroma_strip_stride, "next Cb context row")?,
-                    try_alloc_maybeuninit(chroma_strip_stride, "next Cr context row")?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "prev Cb context row",
+                    )?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "prev Cr context row",
+                    )?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "next Cb context row",
+                    )?,
+                    try_alloc_maybeuninit_pref(
+                        alloc_pref,
+                        false,
+                        chroma_strip_stride,
+                        "next Cr context row",
+                    )?,
                 )
             } else {
                 (Vec::new(), Vec::new(), Vec::new(), Vec::new())
@@ -260,9 +309,9 @@ impl StripProcessor {
         let (deferred_y_row, deferred_cb_row, deferred_cr_row) =
             if !is_grayscale && needs_vertical_upsample {
                 (
-                    try_alloc_maybeuninit(strip_stride, "deferred Y row")?,
-                    try_alloc_maybeuninit(strip_stride, "deferred Cb row")?,
-                    try_alloc_maybeuninit(strip_stride, "deferred Cr row")?,
+                    try_alloc_maybeuninit_pref(alloc_pref, false, strip_stride, "deferred Y row")?,
+                    try_alloc_maybeuninit_pref(alloc_pref, false, strip_stride, "deferred Cb row")?,
+                    try_alloc_maybeuninit_pref(alloc_pref, false, strip_stride, "deferred Cr row")?,
                 )
             } else {
                 (Vec::new(), Vec::new(), Vec::new())
@@ -297,8 +346,9 @@ impl StripProcessor {
             has_deferred_bottom: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling,
-            idct_method,
+            idct_method: idct_method.for_components(num_components as usize),
             output_target,
+            precision: 8,
         })
     }
 
@@ -355,35 +405,38 @@ impl StripProcessor {
             }
         };
 
+        if crate::decode::precision::is_12_bit(self.precision) {
+            self.dequant_buf.fill(0);
+            dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
+            super::idct_int::idct_libjpeg_precision::<12>(&self.dequant_buf, strip, stride);
+            return;
+        }
         let unclamped = self.output_target.needs_unclamped_idct();
+        // Gray-normalized in `new` (`IdctMethod::for_components`, #154).
+        let method = self.idct_method;
 
         if coeff_count <= 1 {
-            let dc = coeffs[0] as i32 * quant[0] as i32;
-            if unclamped {
-                idct_int_dc_only_unclamped(dc, strip, stride);
-            } else {
-                idct_int_dc_only(dc, strip, stride);
-            }
+            self.dequant_buf[0] = coeffs[0] as i32 * quant[0] as i32;
         } else {
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
-            match (unclamped, self.idct_method) {
-                (false, IdctMethod::Libjpeg) => {
-                    idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
-                }
-                (false, IdctMethod::Jpegli) => {
-                    idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
-                }
-                (true, IdctMethod::Libjpeg) => {
-                    idct_int_tiered_libjpeg_unclamped(
-                        &mut self.dequant_buf,
-                        strip,
-                        stride,
-                        coeff_count,
-                    );
-                }
-                (true, IdctMethod::Jpegli) => {
-                    idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
-                }
+        }
+        match (unclamped, method) {
+            (false, IdctMethod::Libjpeg) => {
+                idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
+            }
+            (false, IdctMethod::Jpegli) => {
+                idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+            }
+            (true, IdctMethod::Libjpeg) => {
+                idct_int_tiered_libjpeg_unclamped(
+                    &mut self.dequant_buf,
+                    strip,
+                    stride,
+                    coeff_count,
+                );
+            }
+            (true, IdctMethod::Jpegli) => {
+                idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
             }
         }
     }
@@ -446,20 +499,35 @@ impl StripProcessor {
         }
 
         // Horizontal padding (all MCU rows if image width not MCU-aligned)
-        if let Some(downsampled_w) = (image_width + h_ratio.saturating_sub(1)).checked_div(h_ratio)
-            && downsampled_w < strip_w
-        {
-            let rows = self.chroma_strip_height;
-            for row in 0..rows {
-                let row_off = row * stride;
-                let last_val_cb = self.cb_strip[row_off + downsampled_w - 1];
-                let last_val_cr = self.cr_strip[row_off + downsampled_w - 1];
-                for col in downsampled_w..strip_w {
-                    self.cb_strip[row_off + col] = last_val_cb;
-                    self.cr_strip[row_off + col] = last_val_cr;
-                }
-            }
+        let downsampled_w = image_width.div_ceil(h_ratio);
+        let rows = self.chroma_strip_height;
+        for row in 0..rows {
+            let row_off = row * stride;
+            replicate_last_column(
+                &mut self.cb_strip[row_off..row_off + strip_w],
+                downsampled_w,
+            );
+            replicate_last_column(
+                &mut self.cr_strip[row_off..row_off + strip_w],
+                downsampled_w,
+            );
         }
+    }
+
+    /// Replicate the last real chroma column over the horizontal MCU padding
+    /// of the next MCU row's first chroma row (`next_cb_row`/`next_cr_row`),
+    /// as [`Self::truncate_chroma_padding`] does for the strip: the bottom
+    /// boundary fix-up interpolates against that row, and its padding must
+    /// not reach the last visible column.
+    pub fn truncate_next_row_padding(&mut self, image_width: usize) {
+        if self.subsampling != Subsampling::S420 {
+            return;
+        }
+        let h_ratio = self.h_samp[0] as usize / self.h_samp[1].max(1) as usize;
+        let downsampled_w = image_width.div_ceil(h_ratio.max(1));
+        let w = self.chroma_strip_width;
+        replicate_last_column(&mut self.next_cb_row[..w], downsampled_w);
+        replicate_last_column(&mut self.next_cr_row[..w], downsampled_w);
     }
 
     /// Upsample chroma buffers to full resolution.
@@ -598,7 +666,17 @@ impl StripProcessor {
     fn upsample_h2v2(&mut self) {
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg_strided,
+            // IdctMethod::Libjpeg selects turbo's fixed rounding bias so the
+            // whole decode is libjpeg-turbo-exact (see H2v2Bias).
+            ChromaUpsampling::Triangle => match self.idct_method {
+                super::IdctMethod::Libjpeg
+                    if crate::decode::precision::is_12_bit(self.precision) =>
+                {
+                    super::upsample::upsample_h2v2_12bit
+                }
+                super::IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_strided_turbo,
+                _ => upsample_h2v2_i16_libjpeg_strided,
+            },
             ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
         };
         self.upsample_both_channels(upsample_fn);
@@ -674,22 +752,32 @@ impl StripProcessor {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_stride];
-                upsample_h2v2_libjpeg_row(
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
+                    super::upsample::upsample_h2v2_libjpeg_row_scalar
+                } else {
+                    upsample_h2v2_libjpeg_row
+                };
+                row_fn(
                     &self.cb_strip[last_chroma_offset..last_chroma_offset + in_width],
                     &self.next_cb_row[..in_width],
                     cb_out,
                     in_width,
                     out_width,
-                    false, // is_upper = false → lower half
+                    H2v2Bias::for_idct_method(self.idct_method, false), // lower half
                 );
                 let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_stride];
-                upsample_h2v2_libjpeg_row(
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
+                    super::upsample::upsample_h2v2_libjpeg_row_scalar
+                } else {
+                    upsample_h2v2_libjpeg_row
+                };
+                row_fn(
                     &self.cr_strip[last_chroma_offset..last_chroma_offset + in_width],
                     &self.next_cr_row[..in_width],
                     cr_out,
                     in_width,
                     out_width,
-                    false,
+                    H2v2Bias::for_idct_method(self.idct_method, false),
                 );
             }
             ChromaUpsampling::NearestNeighbor => {
@@ -755,22 +843,32 @@ impl StripProcessor {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.deferred_cb_row[..out_width];
-                upsample_h2v2_libjpeg_row(
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
+                    super::upsample::upsample_h2v2_libjpeg_row_scalar
+                } else {
+                    upsample_h2v2_libjpeg_row
+                };
+                row_fn(
                     &self.prev_cb_row[..in_width],
                     &self.cb_strip[..in_width],
                     cb_out,
                     in_width,
                     out_width,
-                    false, // lower
+                    H2v2Bias::for_idct_method(self.idct_method, false), // lower
                 );
                 let cr_out = &mut self.deferred_cr_row[..out_width];
-                upsample_h2v2_libjpeg_row(
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
+                    super::upsample::upsample_h2v2_libjpeg_row_scalar
+                } else {
+                    upsample_h2v2_libjpeg_row
+                };
+                row_fn(
                     &self.prev_cr_row[..in_width],
                     &self.cr_strip[..in_width],
                     cr_out,
                     in_width,
                     out_width,
-                    false,
+                    H2v2Bias::for_idct_method(self.idct_method, false),
                 );
             }
             ChromaUpsampling::NearestNeighbor => {
@@ -871,22 +969,32 @@ impl StripProcessor {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.cb_upsampled[..out_stride];
-                upsample_h2v2_libjpeg_row(
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
+                    super::upsample::upsample_h2v2_libjpeg_row_scalar
+                } else {
+                    upsample_h2v2_libjpeg_row
+                };
+                row_fn(
                     &self.cb_strip[..in_width],
                     &self.prev_cb_row[..in_width],
                     cb_out,
                     in_width,
                     out_width,
-                    true, // is_upper
+                    H2v2Bias::for_idct_method(self.idct_method, true), // upper
                 );
                 let cr_out = &mut self.cr_upsampled[..out_stride];
-                upsample_h2v2_libjpeg_row(
+                let row_fn = if crate::decode::precision::is_12_bit(self.precision) {
+                    super::upsample::upsample_h2v2_libjpeg_row_scalar
+                } else {
+                    upsample_h2v2_libjpeg_row
+                };
+                row_fn(
                     &self.cr_strip[..in_width],
                     &self.prev_cr_row[..in_width],
                     cr_out,
                     in_width,
                     out_width,
-                    true,
+                    H2v2Bias::for_idct_method(self.idct_method, true),
                 );
             }
             ChromaUpsampling::NearestNeighbor => {
@@ -918,4 +1026,14 @@ impl StripProcessor {
             }
         }
     }
+}
+
+/// Overwrite `row[real..]` with `row[real - 1]` (no-op when `real` covers the
+/// row or is zero).
+fn replicate_last_column(row: &mut [i16], real: usize) {
+    if real == 0 || real >= row.len() {
+        return;
+    }
+    let last = row[real - 1];
+    row[real..].fill(last);
 }

@@ -1,0 +1,41 @@
+# zenjpeg NEON vs forced-scalar — first tier-isolated measurement
+date:    2026-07-28
+host:    Apple M4 Pro (12 core), macOS, aarch64
+command: cargo bench -p zenjpeg --bench tier_isolation --features _dev
+build:   release, NO -C target-cpu=native
+input:   1024x1024 noise+patches (per this repo's banned-test-images rule: no
+         gradients, no Kodak), Q85 4:2:0
+
+## Why this file exists
+
+zenjpeg has ~139 SIMD dispatch sites and ~20 files carrying NEON kernels, and
+no bench could tell you what any of them were worth on ARM. The existing SIMD
+benches either compare zenjpeg against mozjpeg/libjpeg-turbo — which answers
+"are we competitive", not "is our SIMD earning its keep" — or are written
+`#[cfg(target_arch = "x86_64")]` and do not build on aarch64 at all
+(`mage_simd.rs` is entirely x86-gated). A kernel slower than its own scalar
+fallback was invisible to both.
+
+## Result
+
+| pipeline | NEON    | scalar  | speedup |
+|----------|---------|---------|---------|
+| encode   | 25.6ms  | 32.7ms  |  1.28x  |
+| decode   | 13.2ms  | 17.3ms  |  1.31x  |
+
+No regression.
+
+## Context: this is on the low side, and that is expected here
+
+Compare the same method on the same host: zenflate checksums 12-21x, zenpng
+scan predicates 3.6-7.7x, butteraugli 3.4-3.7x, zenresize linear 4.0-4.3x, vs
+zenjpeg 1.3x. JPEG encode/decode is not one big vectorisable kernel — a large
+share of both pipelines is Huffman/entropy coding, which is inherently serial
+(this repo's own profiling notes call entropy encoding "inherently serial" and
+put it at ~11.7% of encode, with AQ 14.5%, DCT+quant 8.6%, deringing 6.9%).
+1.3x end-to-end is consistent with SIMD covering the transform/colour/AQ
+stages while the entropy stages stay scalar by nature.
+
+NOT MEASURED here: the per-stage split on ARM. The percentages above are from
+this repo's existing x86 flamegraph notes, not from this run. Attributing the
+remaining time on aarch64 needs a profile.

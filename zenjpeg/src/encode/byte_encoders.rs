@@ -14,14 +14,7 @@ use crate::error::{Error, Result};
 
 /// Encoder for raw byte input with explicit pixel layout.
 ///
-/// This encoder wraps `StreamingEncoder` to provide true streaming encoding
-/// without buffering the entire image in memory — except when the
-/// configured [`super::encoder_types::Quality`] is a target-perceptual-
-/// quality variant ([`super::encoder_types::Quality::Zq`] or
-/// [`super::encoder_types::Quality::ZqExplicit`]). In those modes the
-/// encoder must re-encode the same image multiple times to converge on
-/// the perceptual target, so it buffers all incoming pixels until
-/// [`Self::finish_with_metrics`] is called.
+/// This encoder wraps `StreamingEncoder` and accepts rows incrementally.
 pub struct BytesEncoder {
     /// v2 config (no longer holds metadata)
     config: EncoderConfig,
@@ -30,7 +23,7 @@ pub struct BytesEncoder {
     /// Image dimensions
     width: u32,
     height: u32,
-    /// Inner streaming encoder (handles actual encoding when NOT in Zq mode).
+    /// Inner streaming encoder.
     inner: StreamingEncoder,
     /// ICC profile (per-image metadata)
     icc_profile: Option<alloc::vec::Vec<u8>>,
@@ -38,12 +31,30 @@ pub struct BytesEncoder {
     exif_data: Option<super::exif::Exif>,
     /// XMP data (per-image metadata)
     xmp_data: Option<alloc::vec::Vec<u8>>,
-    /// Pixel buffer for the closed-loop target-zq iteration path.
-    /// `Some` when `config.quality.is_zq_target()`; pushes route into
-    /// here instead of the inner streaming encoder. `None` for the
-    /// regular streaming path — pushes go straight into `inner`.
-    /// Capacity = `width * height * bytes_per_pixel`.
-    zq_pixel_buffer: Option<alloc::vec::Vec<u8>>,
+}
+
+// Validate before allocating the pixel encoder or writing any output.
+fn validate_metadata(config: &EncoderConfig, exif: Option<&super::exif::Exif>) -> Result<()> {
+    if let Some(segments) = &config.segments {
+        for segment in segments.segments() {
+            if segment.data.len() > u16::MAX as usize - 2 {
+                return Err(Error::invalid_config(
+                    "metadata exceeds a JPEG segment carrier".into(),
+                ));
+            }
+        }
+    }
+    let exif_len = match exif {
+        Some(super::exif::Exif::Raw(bytes)) => super::exif::strip_app1_exif_header(bytes).len(),
+        Some(fields) => fields.to_bytes().map_or(0, |bytes| bytes.len()),
+        None => 0,
+    };
+    if exif_len > MAX_EXIF_BYTES {
+        return Err(Error::invalid_config(
+            "EXIF exceeds the JPEG APP1 carrier".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl BytesEncoder {
@@ -62,6 +73,7 @@ impl BytesEncoder {
         exif_data: Option<super::exif::Exif>,
         xmp_data: Option<alloc::vec::Vec<u8>>,
     ) -> Result<Self> {
+        validate_metadata(&config, exif_data.as_ref())?;
         // Validate dimensions
         if width == 0 || height == 0 {
             return Err(Error::invalid_dimensions(
@@ -82,33 +94,7 @@ impl BytesEncoder {
         }
 
         // Build and start the streaming encoder with config from v2.
-        //
-        // For target-zq quality variants, the inner encoder is built using
-        // `Quality::to_internal()` (which resolves Zq → starting jpegli q).
-        // It serves as the pass-0 encoder when the iteration loop runs.
         let inner = Self::build_streaming_encoder(&config, width, height, layout)?;
-
-        // When in target-zq mode AND the `target-zq` feature is enabled,
-        // allocate a pixel buffer so we can re-encode the same image
-        // across iteration passes. The streaming path is bypassed
-        // entirely in that case (see `push`/`push_packed`). Without the
-        // feature, Zq variants degrade to ApproxJpegli at the resolved
-        // starting quality (no iteration, no measurement).
-        let zq_pixel_buffer = if cfg!(feature = "target-zq") && config.quality.is_zq_target() {
-            let bpp = layout.bytes_per_pixel();
-            let total = (width as usize)
-                .checked_mul(height as usize)
-                .and_then(|n| n.checked_mul(bpp))
-                .ok_or_else(|| Error::invalid_dimensions(width, height, "buffer size overflow"))?;
-            let mut buf = alloc::vec::Vec::new();
-            buf.try_reserve_exact(total).map_err(|_| {
-                Error::invalid_dimensions(width, height, "could not allocate Zq pixel buffer")
-            })?;
-            Some(buf)
-        } else {
-            None
-        };
-
         Ok(Self {
             config,
             layout,
@@ -118,27 +104,21 @@ impl BytesEncoder {
             icc_profile,
             exif_data,
             xmp_data,
-            zq_pixel_buffer,
         })
     }
 
-    /// Build a StreamingEncoder from v2 config.
-    fn build_streaming_encoder(
+    /// Apply the builder configuration shared by every encode entry point
+    /// (interleaved-pixel and YCbCr-planar): restart resolution, scan-mode
+    /// decomposition, deringing/AQ, boundary-RD, 16-bit tables, tiny-file
+    /// mode, parallelism, and trellis. Callers add input-specific settings
+    /// (pixel format, color-mode wiring) before calling `.start()`.
+    fn apply_common_builder_config(
+        mut builder: crate::encode::streaming_builder::StreamingEncoderBuilder,
         config: &EncoderConfig,
         width: u32,
         height: u32,
-        layout: PixelLayout,
-    ) -> Result<StreamingEncoder> {
-        use crate::encode::streaming::StreamingEncoder as SE;
-        use crate::types::PixelFormat;
-
-        let pixel_format: PixelFormat = layout.into();
-        let subsampling = match config.color_mode {
-            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
-            super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
-            super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
-        };
-
+        subsampling: crate::types::Subsampling,
+    ) -> crate::encode::streaming_builder::StreamingEncoderBuilder {
         // Progressive mode: restart markers provide no benefit (progressive
         // decode requires multi-pass coefficient storage — parallel decode via
         // restart segments is impossible) but cost ~10% in overhead from RST
@@ -151,32 +131,40 @@ impl BytesEncoder {
         } else {
             super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
         };
-
-        let mut builder = SE::new(width, height)
+        builder = builder
             .quality(config.quality)
-            .pixel_format(pixel_format)
             .subsampling(subsampling)
             .huffman(config.huffman.clone())
             .chroma_downsampling(config.downsampling_method)
-            .restart_interval(restart_interval);
-
-        // Decompose QuantTableConfig into builder's individual fields
-        if let Some(tables) = config.quant_table_config.custom_tables() {
-            builder = builder.encoding_tables(Box::new(tables.clone()));
-        }
-        builder = builder.quant_source(config.quant_table_config.quant_source());
-        builder =
-            builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
+            .restart_interval(restart_interval)
+            .quant_table_config(config.quant_table_config.clone());
 
         // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
         }
-        builder = builder.scan_strategy(config.scan_mode.scan_strategy());
-
-        if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
-            builder = builder.use_xyb(true).xyb_subsampling(subsampling);
+        if matches!(
+            config.scan_mode,
+            super::encoder_types::ProgressiveScanMode::Smallest
+                | super::encoder_types::ProgressiveScanMode::SmallestSearch
+        ) {
+            // Sequential candidates are restart-free (pure rate
+            // minimizer) unless restart markers are explicitly forced.
+            let seq_interval = if config.force_restart_markers {
+                super::config::resolve_restart_rows(
+                    config.restart_mcu_rows,
+                    width,
+                    height,
+                    subsampling,
+                )
+            } else {
+                0
+            };
+            builder = builder
+                .smallest_scan(true)
+                .smallest_seq_restart_interval(seq_interval);
         }
+        builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
@@ -197,8 +185,6 @@ impl BytesEncoder {
         ));
 
         builder = builder.tiny_file_mode(config.tiny_file_mode);
-        builder = builder.chroma_distance_scale(config.chroma_distance_scale);
-        builder = builder.chroma_quality(config.chroma_quality);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
@@ -207,28 +193,96 @@ impl BytesEncoder {
             builder = builder.parallel(true);
         }
 
-        // Apply trellis or hybrid quantization config
-        #[cfg(feature = "trellis")]
-        {
-            if let Some(ref trellis) = config.trellis {
-                builder = builder.trellis(*trellis);
-            } else if config.hybrid_config.enabled {
-                builder = builder.hybrid_config(config.hybrid_config);
-            }
+        // Apply trellis quantization config
+        if let Some(ref trellis) = config.trellis {
+            builder = builder.trellis(*trellis);
         }
 
-        // UNSTABLE diagnostics capture (gated; default: off, no behavior change).
-        #[cfg(feature = "__diagnostics")]
-        {
-            builder = builder.diagnostics(config.diagnostics_enabled);
+        builder
+    }
+
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn plan_output(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        exif: Option<&super::exif::Exif>,
+    ) -> Result<Option<u32>> {
+        validate_metadata(config, exif)?;
+        if width as u64 * height as u64 > u32::MAX as u64 {
+            return Err(Error::invalid_dimensions(
+                width,
+                height,
+                "dimensions too large",
+            ));
+        }
+        let lag = Self::streaming_builder(config, width, height, layout).planned_output_lag()?;
+        // An MPF index records the primary image's length, so it is written
+        // once that length is known: no bytes before `finish`.
+        if config.segments.as_ref().is_some_and(|s| s.has_mpf_images()) {
+            return Ok(None);
+        }
+        Ok(lag)
+    }
+
+    /// Build a StreamingEncoder from v2 config.
+    fn build_streaming_encoder(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Result<StreamingEncoder> {
+        Self::streaming_builder(config, width, height, layout).start()
+    }
+
+    fn streaming_builder(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> crate::encode::streaming_builder::StreamingEncoderBuilder {
+        use crate::encode::streaming::StreamingEncoder as SE;
+        use crate::types::PixelFormat;
+
+        let pixel_format: PixelFormat = layout.into();
+        let subsampling = match config.color_mode {
+            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
+            super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::Rgb => crate::types::Subsampling::S444,
+        };
+
+        let mut builder = SE::new(width, height).pixel_format(pixel_format);
+
+        if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
+            builder = builder.use_xyb(true).xyb_subsampling(subsampling);
+        }
+        if matches!(config.color_mode, super::encoder_types::ColorMode::Rgb) {
+            builder = builder.use_rgb(true);
+        }
+        if matches!(
+            config.color_mode,
+            super::encoder_types::ColorMode::Grayscale
+        ) {
+            builder = builder.gray_output(true);
         }
 
-        builder.start()
+        // A one-component frame has one 8x8 block per MCU, regardless of the
+        // color configuration's unused chroma subsampling. Resolve restart
+        // cadence and every downstream layout from that same geometry.
+        let subsampling = if pixel_format.is_grayscale() {
+            crate::types::Subsampling::S444
+        } else {
+            subsampling
+        };
+        Self::apply_common_builder_config(builder, config, width, height, subsampling)
     }
 
     /// Push rows with explicit stride.
     ///
-    /// - `data`: Raw pixel bytes
+    /// - `data`: Raw pixel bytes: `rows` rows `stride_bytes` apart, the last
+    ///   needing only `width * bytes_per_pixel` bytes
     /// - `rows`: Number of scanlines to push
     /// - `stride_bytes`: Bytes per row in buffer (>= width * bytes_per_pixel)
     /// - `stop`: Cancellation token (use `enough::Unstoppable` if not needed)
@@ -240,9 +294,7 @@ impl BytesEncoder {
         stop: impl Stop,
     ) -> Result<()> {
         // Check cancellation
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         let bpp = self.layout.bytes_per_pixel();
         let min_stride = self.width as usize * bpp;
@@ -252,44 +304,30 @@ impl BytesEncoder {
             return Err(Error::stride_too_small(self.width, stride_bytes));
         }
 
-        // Validate row count. In Zq mode, rows pushed are tracked by the
-        // buffer length; in streaming mode, by the inner encoder.
-        let current_rows: u32 = if let Some(buf) = &self.zq_pixel_buffer {
-            (buf.len() / min_stride) as u32
-        } else {
-            self.inner.rows_pushed() as u32
-        };
+        let current_rows = self.inner.rows_pushed() as u32;
         let new_total = current_rows + rows as u32;
         if new_total > self.height {
             return Err(Error::too_many_rows(self.height, new_total));
         }
 
-        // Validate buffer size
-        let expected_size = rows * stride_bytes;
+        // Validate buffer size. The last row needs only its pixels, not a
+        // full stride: a strided view of a larger image (a crop) ends there.
+        let expected_size = match rows {
+            0 => 0,
+            n => (n - 1) * stride_bytes + min_stride,
+        };
         if data.len() < expected_size {
             return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
 
-        if let Some(buf) = self.zq_pixel_buffer.as_mut() {
-            // Target-zq path: store packed rows for later iteration.
-            for row in 0..rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
-                let src_start = row * stride_bytes;
-                let src_end = src_start + min_stride;
-                buf.extend_from_slice(&data[src_start..src_end]);
-            }
-        } else if stride_bytes == min_stride {
+        if stride_bytes == min_stride {
             // Streaming path, packed data — direct push.
             self.inner
                 .push_rows_with_stop(&data[..rows * min_stride], rows, &stop)?;
         } else {
             // Streaming path, strided data — row by row.
             for row in 0..rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
 
                 let src_start = row * stride_bytes;
                 let src_end = src_start + min_stride;
@@ -352,16 +390,7 @@ impl BytesEncoder {
     /// Get number of rows pushed so far.
     #[must_use]
     pub fn rows_pushed(&self) -> u32 {
-        if let Some(buf) = &self.zq_pixel_buffer {
-            let bpp = self.layout.bytes_per_pixel();
-            let row_bytes = self.width as usize * bpp;
-            buf.len()
-                .checked_div(row_bytes)
-                .map(|n| n as u32)
-                .unwrap_or(0)
-        } else {
-            self.inner.rows_pushed() as u32
-        }
+        self.inner.rows_pushed() as u32
     }
 
     /// Get number of rows remaining.
@@ -384,11 +413,8 @@ impl BytesEncoder {
         self.layout
     }
 
-    /// Install a per-iMCU `AqController` on the inner streaming encoder.
-    /// Used by the target-zq iteration loop in [`super::zq`] to scale
-    /// streaming AQ multiplicatively between passes. Not exposed
-    /// publicly — the public API is [`super::Quality::Zq`].
-    #[allow(dead_code)] // wired only on the Zq path; #[cfg(test)] callers exist via __test-utils.
+    /// Install an internal per-iMCU AQ controller for research instrumentation.
+    #[allow(dead_code)] // Research instrumentation is not part of the normal encoder path.
     pub(crate) fn set_aq_controller(
         &mut self,
         ctrl: Option<Box<dyn super::aq_controller::AqController>>,
@@ -396,52 +422,32 @@ impl BytesEncoder {
         self.inner.set_aq_controller(ctrl);
     }
 
+    /// Start an unstable per-block capture before pushing any rows.
+    /// The returned handle owns the data after this encoder is finished.
+    #[cfg(feature = "__diagnostics")]
+    pub fn capture_diagnostics(&mut self) -> Result<super::diagnostics::DiagnosticsHandle> {
+        if self.rows_pushed() != 0 {
+            return Err(Error::invalid_state(
+                "diagnostics must be enabled before the first row",
+            ));
+        }
+        self.inner.capture_diagnostics()
+    }
+
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
     ///
-    /// For target-zq quality variants, this transparently routes through
-    /// [`Self::finish_with_metrics`] and discards the metrics — call
-    /// `finish_with_metrics` directly if you need them.
     pub fn finish(self) -> Result<Vec<u8>> {
-        // Target-zq path: iteration loop owns finishing.
-        #[cfg(feature = "target-zq")]
-        if self.zq_pixel_buffer.is_some() {
-            let (bytes, _metrics) = self.finish_with_metrics()?;
-            return Ok(bytes);
-        }
         let mut output = Vec::new();
         self.finish_into(&mut output)?;
         Ok(output)
-    }
-
-    /// Finish encoding and return both the JPEG bytes and the captured
-    /// per-block diagnostics record. Returns `(bytes, Some(diag))` when
-    /// `with_diagnostics(true)` was set on the source `EncoderConfig`,
-    /// `(bytes, None)` otherwise. UNSTABLE — gated behind the
-    /// `__diagnostics` cargo feature.
-    #[cfg(feature = "__diagnostics")]
-    pub fn finish_with_diagnostics(
-        self,
-    ) -> Result<(
-        Vec<u8>,
-        Option<crate::encode::diagnostics::EncodeDiagnostics>,
-    )> {
-        use enough::Unstoppable;
-        let mut output = Vec::new();
-        let mut diag: Option<crate::encode::diagnostics::EncodeDiagnostics> = None;
-        self.inner
-            .finish_into_with_stop_and_diagnostics(&mut output, Unstoppable, &mut diag)?;
-        Ok((output, diag))
     }
 
     /// Finish encoding, writing directly to the provided buffer.
     ///
     /// This is the most efficient way to complete encoding as it avoids
     /// intermediate allocations. The buffer is cleared before writing.
-    ///
-    /// For target-zq quality variants, transparently routes through
-    /// [`Self::finish_with_metrics`].
     ///
     /// # Example
     ///
@@ -451,14 +457,6 @@ impl BytesEncoder {
     /// // output now contains the JPEG data
     /// ```
     pub fn finish_into(mut self, output: &mut Vec<u8>) -> Result<()> {
-        // Target-zq path: iteration writes its own bytes.
-        #[cfg(feature = "target-zq")]
-        if self.zq_pixel_buffer.is_some() {
-            let (bytes, _metrics) = self.finish_with_metrics()?;
-            output.clear();
-            output.extend_from_slice(&bytes);
-            return Ok(());
-        }
         let rows_pushed = self.inner.rows_pushed() as u32;
         if rows_pushed != self.height {
             return Err(Error::incomplete_image(self.height, rows_pushed));
@@ -466,58 +464,80 @@ impl BytesEncoder {
 
         // Finish streaming encoder directly into output
         self.inner.finish_into(output)?;
+        // With streaming output the metadata went into the header at
+        // `start_output`, and this injects nothing.
+        inject_metadata(
+            self.config.color_mode,
+            &mut self.config.segments,
+            &mut self.exif_data,
+            &mut self.xmp_data,
+            &mut self.icc_profile,
+            output,
+        )
+    }
 
-        // When using EncoderSegments with MPF images, we need to merge individual
-        // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
-        // calling inject_encoder_segments. This ensures the MPF offset calculation
-        // includes all metadata that will be in the final output.
-        if let Some(mut segments) = self.config.segments.take() {
-            // Merge individual metadata into segments if MPF is present
-            // (MPF offset calculation needs all data to be accounted for)
-            if segments.has_mpf_images() {
-                if let Some(ref xmp_data) = self.xmp_data {
-                    if !xmp_data.is_empty() {
-                        // Convert raw XMP bytes to string for set_xmp
-                        if let Ok(xmp_str) = core::str::from_utf8(xmp_data) {
-                            segments = segments.set_xmp(xmp_str);
-                        }
-                    }
-                    self.xmp_data = None; // Mark as handled
-                }
-                if let Some(ref exif) = self.exif_data {
-                    if let Some(exif_bytes) = exif.to_bytes() {
-                        segments.set_exif_mut(exif_bytes);
-                    }
-                    self.exif_data = None; // Mark as handled
-                }
-                if let Some(ref icc_data) = self.icc_profile {
-                    if !icc_data.is_empty() {
-                        segments = segments.set_icc(icc_data.clone());
-                    }
-                    self.icc_profile = None; // Mark as handled
-                }
-            }
-            inject_encoder_segments_inplace(output, &segments);
+    /// Whether this encode can hand out bytes before `finish`: stream-through
+    /// mode (fixed or custom Huffman tables, sequential, not XYB or RGB),
+    /// no target-quality loop, and no MPF index (which records the primary
+    /// image's length).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn can_stream_output(&self) -> bool {
+        self.inner.is_streaming()
+            && !self
+                .config
+                .segments
+                .as_ref()
+                .is_some_and(|s| s.has_mpf_images())
+    }
+
+    /// Write the header, metadata included, and make it and every later
+    /// byte available through [`pending_output`](Self::pending_output) as
+    /// rows are encoded. Call before the first row, only when
+    /// [`can_stream_output`](Self::can_stream_output). The bytes handed out
+    /// plus `finish`'s return equal what `finish` alone would return.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn start_output(&mut self) -> Result<()> {
+        if !self.can_stream_output() {
+            return Err(Error::invalid_state(
+                "this configuration cannot stream its output",
+            ));
         }
+        let mut header = self.inner.take_header()?;
+        inject_metadata(
+            self.config.color_mode,
+            &mut self.config.segments,
+            &mut self.exif_data,
+            &mut self.xmp_data,
+            &mut self.icc_profile,
+            &mut header,
+        )?;
+        self.inner.start_output(header)
+    }
 
-        // Fall back to individual metadata fields for backwards compatibility
-        // These are applied after EncoderSegments if both are provided
-        // (allows override of specific fields while keeping bulk segments)
-        if let Some(ref exif) = self.exif_data
-            && let Some(exif_bytes) = exif.to_bytes()
-        {
-            inject_exif_inplace(output, &exif_bytes);
-        }
+    /// Bytes ready to send after [`start_output`](Self::start_output).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn pending_output(&self) -> &[u8] {
+        self.inner.pending_output()
+    }
 
-        if let Some(ref xmp_data) = self.xmp_data {
-            inject_xmp_inplace(output, xmp_data);
-        }
+    /// Mark the first `n` pending bytes as sent.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn consume_output(&mut self, n: usize) {
+        self.inner.consume_output(n);
+    }
 
-        if let Some(ref icc_data) = self.icc_profile {
-            inject_icc_profile_inplace(output, icc_data);
-        }
+    /// Hand the pending bytes to `into`; see the streaming encoder's
+    /// `take_output`.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn take_output(&mut self, into: &mut Vec<u8>) {
+        self.inner.take_output(into);
+    }
 
-        Ok(())
+    /// The most pushed rows whose bytes are not yet pending, once output
+    /// streams.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn output_lag_rows(&self) -> u32 {
+        self.inner.output_lag_rows()
     }
 
     /// Finish encoding and return both JPEG bytes and Huffman frequency counts.
@@ -548,81 +568,6 @@ impl BytesEncoder {
         self.finish_into(&mut jpeg)?;
         output.write_all(&jpeg)?;
         Ok(output)
-    }
-
-    /// Finish encoding and return JPEG bytes plus
-    /// [`super::zq::EncodeMetrics`].
-    ///
-    /// For non-target-zq quality variants, returns minimal metrics
-    /// (`achieved_score = NaN`, `targets_met = true`) and the same
-    /// bytes [`Self::finish`] would. For target-zq variants
-    /// ([`super::Quality::Zq`] / [`super::Quality::ZqExplicit`]) and
-    /// when the `target-zq` feature is enabled, this triggers the
-    /// closed-loop iteration: encode → decode → measure → adjust
-    /// per-block AQ → repeat, returning the smallest-bytes feasible
-    /// candidate observed across `max_passes`.
-    ///
-    /// Errors when [`super::zq::ZqTarget::max_undershoot`] or
-    /// [`super::zq::BlockArtifactBound::max_overshoot`] strictness was
-    /// set and the achieved value falls outside that band.
-    #[cfg_attr(not(feature = "target-zq"), allow(unused_mut))]
-    pub fn finish_with_metrics(mut self) -> Result<(Vec<u8>, super::zq::EncodeMetrics)> {
-        #[cfg(feature = "target-zq")]
-        if let (Some(buf), Some(target)) =
-            (self.zq_pixel_buffer.take(), self.config.quality.zq_target())
-        {
-            // Validate complete row count was pushed.
-            let bpp = self.layout.bytes_per_pixel();
-            let row_bytes = self.width as usize * bpp;
-            let pushed_rows = if row_bytes == 0 {
-                0
-            } else {
-                buf.len() / row_bytes
-            };
-            if pushed_rows != self.height as usize {
-                return Err(Error::incomplete_image(self.height, pushed_rows as u32));
-            }
-
-            let ctx = super::zq::IterationContext {
-                config: &self.config,
-                width: self.width,
-                height: self.height,
-                layout: self.layout,
-                pixels: &buf,
-                target,
-            };
-            let (mut bytes, metrics) = super::zq::run_iteration_loop(ctx)?;
-
-            // Inject metadata after iteration. Each per-pass encode ran
-            // without metadata; the same post-encode injection helpers
-            // used by `finish_into` apply here.
-            if let Some(ref exif) = self.exif_data
-                && let Some(exif_bytes) = exif.to_bytes()
-            {
-                inject_exif_inplace(&mut bytes, &exif_bytes);
-            }
-            if let Some(ref xmp_data) = self.xmp_data {
-                inject_xmp_inplace(&mut bytes, xmp_data);
-            }
-            if let Some(ref icc_data) = self.icc_profile {
-                inject_icc_profile_inplace(&mut bytes, icc_data);
-            }
-
-            let final_len = bytes.len();
-            return Ok((
-                bytes,
-                super::zq::EncodeMetrics {
-                    bytes: final_len,
-                    ..metrics
-                },
-            ));
-        }
-
-        // Non-Zq path: existing single-pass encode + minimal metrics.
-        let mut bytes = Vec::new();
-        self.finish_into(&mut bytes)?;
-        let metrics = super::zq::EncodeMetrics::no_target(bytes.len());
-        Ok((bytes, metrics))
     }
 }
 
@@ -733,41 +678,6 @@ const XMP_NAMESPACE: &[u8; 29] = b"http://ns.adobe.com/xap/1.0/\0";
 #[allow(dead_code)] // Used by inject_xmp (consuming variant, not currently called)
 const MAX_XMP_BYTES: usize = 65504;
 
-/// Inject EXIF data into a JPEG as APP1 marker, right after SOI.
-#[allow(dead_code)] // Consuming variant; _inplace version is used instead
-fn inject_exif(jpeg: Vec<u8>, exif_data: &[u8]) -> Vec<u8> {
-    if exif_data.is_empty() {
-        return jpeg;
-    }
-
-    // Truncate if too large
-    let exif_len = exif_data.len().min(MAX_EXIF_BYTES);
-
-    // Build EXIF APP1 marker
-    let mut marker = Vec::with_capacity(4 + 6 + exif_len);
-    marker.push(0xFF);
-    marker.push(0xE1); // APP1
-
-    // Length: 2 (length field) + 6 (signature) + data
-    let segment_length = 2 + 6 + exif_len;
-    marker.push((segment_length >> 8) as u8);
-    marker.push(segment_length as u8);
-
-    // EXIF signature
-    marker.extend_from_slice(EXIF_SIGNATURE);
-
-    // EXIF data
-    marker.extend_from_slice(&exif_data[..exif_len]);
-
-    // Insert after SOI (2 bytes)
-    let mut result = Vec::with_capacity(jpeg.len() + marker.len());
-    result.extend_from_slice(&jpeg[..2]); // SOI
-    result.extend_from_slice(&marker);
-    result.extend_from_slice(&jpeg[2..]);
-
-    result
-}
-
 /// Inject XMP data into a JPEG as APP1 marker.
 ///
 /// Inserts after SOI and any existing APP1 (EXIF) markers.
@@ -827,13 +737,17 @@ fn inject_icc_profile_inplace(jpeg: &mut Vec<u8>, icc_data: &[u8]) {
 }
 
 /// Inject EXIF data into a JPEG in-place using splice.
-fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) {
+fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) -> Result<()> {
     if exif_data.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // Truncate if too large
-    let exif_len = exif_data.len().min(MAX_EXIF_BYTES);
+    let exif_len = exif_data.len();
+    if exif_len > MAX_EXIF_BYTES {
+        return Err(Error::invalid_config(
+            "EXIF exceeds the JPEG APP1 carrier".into(),
+        ));
+    }
 
     // Build EXIF APP1 marker
     let mut marker = Vec::with_capacity(4 + 6 + exif_len);
@@ -853,6 +767,7 @@ fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) {
 
     // Insert after SOI (2 bytes) using splice
     jpeg.splice(2..2, marker);
+    Ok(())
 }
 
 /// Inject XMP data into a JPEG in-place using splice.
@@ -885,12 +800,112 @@ fn inject_xmp_inplace(jpeg: &mut Vec<u8>, xmp_data: &[u8]) {
     jpeg.splice(insert_pos..insert_pos, markers);
 }
 
+/// Drop the caller-supplied segments that would contradict the colour model
+/// this encode writes, however they were added (`EncoderSegments::set_jfif`,
+/// `set_printer_dpi`, `add_segment`, or preserved `DecodedExtras`):
+///
+/// - A JFIF APP0 (payload starting with `JFIF`) unless the output is YCbCr or
+///   gray. JFIF means YCbCr to libjpeg-turbo, jpegli and zenjpeg, and
+///   libjpeg-turbo's `jpeg_set_colorspace` writes it only for gray and YCbCr.
+///   The JFIF density goes with it.
+/// - Every Adobe APP14 (payload starting with `Adobe`). For YCbCr and gray
+///   output libjpeg-turbo writes no Adobe segment, and a caller's transform 0
+///   (any Adobe-RGB source, or zenjpeg's own RGB output, re-encoded with
+///   preserved extras) would make the YCbCr data decode as RGB. For RGB and
+///   XYB output the encoder writes its own APP14 (transform 0), so a caller's
+///   copy is a duplicate whose transform may disagree.
+/// - For XYB output, every ICC chunk: XYB writes its own profile.
+fn drop_caller_colour_signals(
+    segments: super::extras::EncoderSegments,
+    mode: super::encoder_types::ColorMode,
+) -> super::extras::EncoderSegments {
+    let allows_jfif = mode.allows_jfif();
+    let xyb = matches!(mode, super::encoder_types::ColorMode::Xyb { .. });
+    segments.remove_where(|s| {
+        (s.marker == 0xE0 && s.data.starts_with(b"JFIF") && !allows_jfif)
+            || (s.marker == 0xEE && s.data.starts_with(b"Adobe"))
+            || (xyb && s.segment_type == crate::decode::SegmentType::Icc)
+    })
+}
+
 /// Inject encoder segments into a JPEG in-place.
 fn inject_encoder_segments_inplace(jpeg: &mut Vec<u8>, segments: &super::extras::EncoderSegments) {
     // For now, use the existing function and replace contents
     // This is still more efficient than the old finish_to_vec which allocated twice
     let new_jpeg = inject_encoder_segments(core::mem::take(jpeg), segments);
     *jpeg = new_jpeg;
+}
+
+/// Insert the metadata segments (encoder segments, EXIF, XMP, ICC)
+/// after SOI. Every insertion point is among the leading APPn
+/// segments, so `output` may be the whole file or only its header
+/// (SOI through SOS); the bytes are the same either way. Consumes the
+/// metadata: a second call inserts nothing.
+fn inject_metadata(
+    mode: super::encoder_types::ColorMode,
+    segments_slot: &mut Option<super::extras::EncoderSegments>,
+    exif_data: &mut Option<super::exif::Exif>,
+    xmp_data: &mut Option<alloc::vec::Vec<u8>>,
+    icc_profile: &mut Option<alloc::vec::Vec<u8>>,
+    output: &mut Vec<u8>,
+) -> Result<()> {
+    if let Some(segments) = segments_slot.take() {
+        *segments_slot = Some(drop_caller_colour_signals(segments, mode));
+    }
+    if matches!(mode, super::encoder_types::ColorMode::Xyb { .. }) {
+        // XYB writes its own ICC profile (the XYB transform); a caller's
+        // would be a second, contradicting profile set.
+        *icc_profile = None;
+    }
+    // When using EncoderSegments with MPF images, we need to merge individual
+    // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
+    // calling inject_encoder_segments. This ensures the MPF offset calculation
+    // includes all metadata that will be in the final output.
+    if let Some(mut segments) = segments_slot.take() {
+        // Merge individual metadata into segments if MPF is present
+        // (MPF offset calculation needs all data to be accounted for)
+        if segments.has_mpf_images() {
+            // Taking each field marks it handled.
+            if let Some(xmp) = xmp_data.take()
+                && !xmp.is_empty()
+            {
+                // Convert raw XMP bytes to string for set_xmp
+                if let Ok(xmp_str) = core::str::from_utf8(&xmp) {
+                    segments = segments.set_xmp(xmp_str);
+                }
+            }
+            if let Some(exif) = exif_data.take()
+                && let Some(exif_bytes) = exif.to_bytes()
+            {
+                segments.set_exif_mut(exif_bytes);
+            }
+            if let Some(icc) = icc_profile.take()
+                && !icc.is_empty()
+            {
+                segments = segments.set_icc(icc);
+            }
+        }
+        inject_encoder_segments_inplace(output, &segments);
+    }
+
+    // Fall back to individual metadata fields for backwards compatibility
+    // These are applied after EncoderSegments if both are provided
+    // (allows override of specific fields while keeping bulk segments)
+    if let Some(exif) = exif_data.take()
+        && let Some(exif_bytes) = exif.to_bytes()
+    {
+        inject_exif_inplace(output, &exif_bytes)?;
+    }
+
+    if let Some(xmp_data) = xmp_data.take() {
+        inject_xmp_inplace(output, &xmp_data);
+    }
+
+    if let Some(icc_data) = icc_profile.take() {
+        inject_icc_profile_inplace(output, &icc_data);
+    }
+
+    Ok(())
 }
 
 /// Marker trait for supported rgb crate pixel types.
@@ -1023,6 +1038,12 @@ impl<P: Pixel> RgbEncoder<P> {
         self.inner.encode_stats()
     }
 
+    /// Start an unstable per-block capture before pushing any rows.
+    #[cfg(feature = "__diagnostics")]
+    pub fn capture_diagnostics(&mut self) -> Result<super::diagnostics::DiagnosticsHandle> {
+        self.inner.capture_diagnostics()
+    }
+
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
@@ -1041,23 +1062,6 @@ impl<P: Pixel> RgbEncoder<P> {
     /// Finish encoding to Write destination.
     pub fn finish_to<W: Write>(self, output: W) -> Result<W> {
         self.inner.finish_to(output)
-    }
-
-    /// Finish encoding and return both the JPEG bytes and the captured
-    /// diagnostics record.
-    ///
-    /// Returns `Ok((bytes, Some(diag)))` when `with_diagnostics(true)`
-    /// was set on the source `EncoderConfig`; otherwise returns
-    /// `Ok((bytes, None))`. UNSTABLE — gated behind the
-    /// `__diagnostics` cargo feature.
-    #[cfg(feature = "__diagnostics")]
-    pub fn finish_with_diagnostics(
-        self,
-    ) -> Result<(
-        Vec<u8>,
-        Option<crate::encode::diagnostics::EncodeDiagnostics>,
-    )> {
-        self.inner.finish_with_diagnostics()
     }
 }
 
@@ -1120,6 +1124,7 @@ impl YCbCrPlanarEncoder {
         exif_data: Option<super::exif::Exif>,
         xmp_data: Option<alloc::vec::Vec<u8>>,
     ) -> Result<Self> {
+        validate_metadata(&config, exif_data.as_ref())?;
         // Validate dimensions
         if width == 0 || height == 0 {
             return Err(Error::invalid_dimensions(
@@ -1190,77 +1195,16 @@ impl YCbCrPlanarEncoder {
             _ => crate::types::Subsampling::S444,
         };
 
-        // Progressive mode: restart markers provide no benefit (progressive
-        // decode requires multi-pass coefficient storage — parallel decode via
-        // restart segments is impossible) but cost ~10% in overhead from RST
-        // marker pairs + byte-alignment padding + DC prediction resets.
-        // `force_restart_markers(true)` overrides this for test scaffolding /
-        // decoder-side interop.
-        let restart_interval = if config.scan_mode.is_progressive() && !config.force_restart_markers
-        {
-            0
-        } else {
-            super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
-        };
-
         // Use RGB pixel format - the streaming encoder will accept YCbCr data
         // via push_ycbcr_strip_f32, but needs a pixel format for buffer sizing
-        let mut builder = StreamingEncoder::new(width, height)
-            .quality(config.quality)
-            .pixel_format(PixelFormat::Rgb) // Buffer sizing only
-            .subsampling(subsampling)
-            .huffman(config.huffman.clone())
-            .chroma_downsampling(config.downsampling_method)
-            .restart_interval(restart_interval);
+        let builder = StreamingEncoder::new(width, height).pixel_format(PixelFormat::Rgb); // Buffer sizing only
 
-        // Decompose QuantTableConfig into builder's individual fields
-        if let Some(tables) = config.quant_table_config.custom_tables() {
-            builder = builder.encoding_tables(Box::new(tables.clone()));
-        }
-        builder = builder.quant_source(config.quant_table_config.quant_source());
-        builder =
-            builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
-
-        // Decompose ProgressiveScanMode into builder's individual fields
-        if config.scan_mode.is_progressive() {
-            builder = builder.progressive(true);
-        }
-        builder = builder.scan_strategy(config.scan_mode.scan_strategy());
-
-        // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
-        builder = builder.deringing(config.deringing);
-        builder = builder.aq_enabled(config.aq_enabled);
-
-        // Boundary-RD (#91 / PR #102, off by default). The public composable
-        // config is resolved into the flat internal knob struct here. Only
-        // compiled when `--features boundary-rd` is enabled.
-        #[cfg(feature = "boundary-rd")]
-        {
-            builder = builder.boundary_rd_flat(config.resolve_boundary_rd());
-        }
-
-        builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
-        builder = builder.force_sof1(matches!(
-            config.color_mode,
-            super::encoder_types::ColorMode::Xyb { .. }
-        ));
-
-        builder = builder.tiny_file_mode(config.tiny_file_mode);
-        builder = builder.chroma_distance_scale(config.chroma_distance_scale);
-        builder = builder.chroma_quality(config.chroma_quality);
-
-        #[cfg(feature = "parallel")]
-        if config.parallel.is_some() {
-            builder = builder.parallel(true);
-        }
-
-        // UNSTABLE diagnostics capture (gated; default: off, no behavior change).
-        #[cfg(feature = "__diagnostics")]
-        {
-            builder = builder.diagnostics(config.diagnostics_enabled);
-        }
-
-        builder.start()
+        // NOTE: the shared config applies `.trellis()` here where the old
+        // planar-specific bridge did not; the planar encoder previously
+        // silently ignored a configured trellis, which was itself a bug
+        // (config said trellis, output was non-trellis).
+        BytesEncoder::apply_common_builder_config(builder, config, width, height, subsampling)
+            .start()
     }
 
     /// Push full-resolution planes. Encoder subsamples chroma as needed.
@@ -1281,9 +1225,7 @@ impl YCbCrPlanarEncoder {
     /// - Y: 0.0 to 255.0
     /// - Cb, Cr: -128.0 to 127.0
     pub fn push(&mut self, planes: &YCbCrPlanes<'_>, rows: usize, stop: impl Stop) -> Result<()> {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         let width = self.width as usize;
 
@@ -1295,9 +1237,7 @@ impl YCbCrPlanarEncoder {
 
         let mut src_row = 0;
         while src_row < rows {
-            if stop.should_stop() {
-                return Err(Error::cancelled());
-            }
+            stop.check()?;
 
             // How many rows can we add to the buffer?
             let rows_to_add = (rows - src_row).min(self.strip_height - self.buffered_rows);
@@ -1395,9 +1335,7 @@ impl YCbCrPlanarEncoder {
         y_rows: usize,
         stop: impl Stop,
     ) -> Result<()> {
-        if stop.should_stop() {
-            return Err(Error::cancelled());
-        }
+        stop.check()?;
 
         // Check that we don't have buffered full-resolution data
         // (can't mix push() and push_subsampled())
@@ -1458,9 +1396,7 @@ impl YCbCrPlanarEncoder {
 
             // Copy Y plane
             for row in 0..y_rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+                stop.check()?;
                 let dst_start = row * width;
                 let dst_end = dst_start + width;
                 let src_start = row * planes.y_stride;
@@ -1558,6 +1494,7 @@ impl YCbCrPlanarEncoder {
         // calling inject_encoder_segments. This ensures the MPF offset calculation
         // includes all metadata that will be in the final output.
         if let Some(mut segments) = self.config.segments.take() {
+            segments = drop_caller_colour_signals(segments, self.config.color_mode);
             // Merge individual metadata into segments if MPF is present
             // (MPF offset calculation needs all data to be accounted for)
             if segments.has_mpf_images() {
@@ -1590,7 +1527,7 @@ impl YCbCrPlanarEncoder {
         if let Some(ref exif) = self.exif_data
             && let Some(exif_bytes) = exif.to_bytes()
         {
-            inject_exif_inplace(output, &exif_bytes);
+            inject_exif_inplace(output, &exif_bytes)?;
         }
 
         if let Some(ref xmp_data) = self.xmp_data {

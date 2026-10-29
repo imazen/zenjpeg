@@ -2,9 +2,8 @@
 //!
 //! This module handles parsing of JPEG marker segments during header reading.
 
-use crate::decode::extras::{
-    AdobeColorTransform, SegmentType, detect_segment_type, should_preserve_segment,
-};
+use crate::decode::color_model::{ColorModel, FrameShape};
+use crate::decode::extras::{SegmentType, detect_segment_type, should_preserve_segment};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
@@ -16,20 +15,28 @@ use crate::foundation::consts::{
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
 
-use super::super::{DecodeWarning, Strictness};
+use super::super::DecodeWarning;
 use super::JpegParser;
 
 /// Marker parsing methods for JpegParser.
 impl<'a> JpegParser<'a> {
     /// Read and parse the JPEG header up to (but not including) SOS.
     pub(crate) fn read_header(&mut self) -> Result<()> {
+        self.read_header_with_stop(&enough::Unstoppable)
+    }
+
+    pub(crate) fn read_header_with_stop(&mut self, stop: &dyn enough::Stop) -> Result<()> {
         loop {
+            stop.check()?;
             let marker = self.read_marker()?;
 
             match marker {
                 MARKER_SOF0 | MARKER_SOF1 => {
                     self.mode = JpegMode::Baseline;
                     self.parse_frame_header()?;
+                    if marker == MARKER_SOF0 && self.precision != 8 {
+                        return Err(Error::invalid_jpeg_data("SOF0 requires 8-bit precision"));
+                    }
                     return Ok(());
                 }
                 MARKER_SOF2 => {
@@ -48,9 +55,9 @@ impl<'a> JpegParser<'a> {
                     return Ok(());
                 }
                 MARKER_SOF3 => {
-                    return Err(Error::unsupported_feature(
-                        "lossless JPEG (SOF3) is not supported",
-                    ));
+                    self.mode = JpegMode::Lossless;
+                    self.parse_frame_header()?;
+                    return Ok(());
                 }
                 MARKER_SOF7 => {
                     return Err(Error::unsupported_feature(
@@ -76,7 +83,7 @@ impl<'a> JpegParser<'a> {
                 }
                 // Standalone markers (no length field) — skip silently.
                 // RST0-RST7 and TEM can appear as stray bytes in corrupted files.
-                0xD0..=0xD7 | 0x01 => {}
+                m if is_standalone_marker(m) => {}
                 _ => self.parse_header_marker(|s| s.skip_segment())?,
             }
         }
@@ -88,7 +95,7 @@ impl<'a> JpegParser<'a> {
     /// invalid values, etc.), we skip it and continue to the next marker.
     /// This mimics libjpeg-turbo's tolerance of fuzz-mutated files.
     fn parse_header_marker(&mut self, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
-        if self.strictness != Strictness::Permissive {
+        if !self.strictness.is_permissive() {
             return f(self);
         }
         // Save position so we can recover on error
@@ -121,7 +128,11 @@ impl<'a> JpegParser<'a> {
 
         self.precision = self.read_u8()?;
         // Validate precision: must be 8 for baseline JPEG, 8 or 12 for extended
-        if self.precision != 8 && self.precision != 12 {
+        if if self.mode == JpegMode::Lossless {
+            !(2..=16).contains(&self.precision)
+        } else {
+            self.precision != 8 && self.precision != 12
+        } {
             return Err(Error::invalid_jpeg_data(
                 "invalid data precision (must be 8 or 12)",
             ));
@@ -158,7 +169,7 @@ impl<'a> JpegParser<'a> {
             return Err(Error::invalid_jpeg_data("number of components is zero"));
         }
         if self.num_components > MAX_COMPONENTS as u8 {
-            return Err(Error::unsupported_feature("more than 4 components"));
+            return Err(Error::unsupported_feature("more than 10 components"));
         }
 
         // Validate marker length matches expected size
@@ -169,6 +180,12 @@ impl<'a> JpegParser<'a> {
 
         for i in 0..self.num_components as usize {
             self.components[i].id = self.read_u8()?;
+            if self.components[..i]
+                .iter()
+                .any(|c| c.id == self.components[i].id)
+            {
+                return Err(Error::invalid_jpeg_data("duplicate frame component"));
+            }
             let sampling = self.read_u8()?;
             let h_samp = sampling >> 4;
             let v_samp = sampling & 0x0F;
@@ -193,7 +210,54 @@ impl<'a> JpegParser<'a> {
                     "quantization table index out of range",
                 ));
             }
+            if self.mode == JpegMode::Lossless && quant_idx != 0 {
+                return Err(Error::invalid_jpeg_data(
+                    "lossless frame quantization selector must be zero",
+                ));
+            }
             self.components[i].quant_table_idx = quant_idx;
+        }
+
+        if !cfg!(feature = "extended-jpeg")
+            && (self.precision != 8
+                || matches!(
+                    self.mode,
+                    JpegMode::Lossless
+                        | JpegMode::ArithmeticSequential
+                        | JpegMode::ArithmeticProgressive
+                ))
+        {
+            return Err(Error::unsupported_feature(
+                "this JPEG requires extended-jpeg",
+            ));
+        }
+
+        // The colour model and sampling shape are decided here, once, from
+        // the markers seen before SOF (jpegli `ProcessSOF`). Every entry point
+        // reads the header up to SOF, so they all see the same decision.
+        let components = &self.components[..self.num_components as usize];
+        let icc_is_xyb = self
+            .icc_profile
+            .as_deref()
+            .is_some_and(crate::color::icc::is_xyb_profile);
+        self.color_model = ColorModel::decide(components, self.color_markers, icc_is_xyb);
+        if self.mode == JpegMode::Lossless
+            && self.num_components == 3
+            && !self.color_markers.saw_jfif
+            && self.color_markers.adobe_transform.is_none()
+        {
+            self.color_model = ColorModel::Rgb;
+        }
+        self.shape = FrameShape::classify(components);
+        self.interleaved = self.num_components == 1
+            || peek_first_scan_components(self.data, self.position) == Some(self.num_components);
+
+        // 1-component sources always use the libjpeg-exact IDCT kernel
+        // (#154): no chroma exists for the jpegli tuning to matter, and the
+        // gray plane must be identical across decode paths. Post-header
+        // assignments route through `apply_idct_method` for the same rule.
+        if self.num_components == 1 {
+            self.idct_method = super::super::IdctMethod::Libjpeg;
         }
 
         Ok(())
@@ -259,7 +323,7 @@ impl<'a> JpegParser<'a> {
             // Read values in zigzag order (as stored in JPEG)
             let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
-            let strict = self.strictness == Strictness::Strict;
+            let strict = self.strictness.is_strict();
             let mut had_zero = false;
 
             if precision == 0 {
@@ -380,7 +444,25 @@ impl<'a> JpegParser<'a> {
 
             if table_class == 0 {
                 // DC table - use standard lookup
-                let table = HuffmanDecodeTable::from_bits_values(&bits, &values)?;
+                let lossless = self.mode == JpegMode::Lossless
+                    || (self.width == 0
+                        && values.contains(&16)
+                        && *self.lossless_tables.get_or_insert_with(|| {
+                            crate::container::marker::iter(self.data)
+                                .find_map(|span| match span.kind {
+                                    crate::container::marker::MarkerKind::Sof(n) => Some(n == 3),
+                                    _ => None,
+                                })
+                                .unwrap_or(false)
+                        }));
+                let table = if lossless {
+                    if values.iter().any(|&v| v > 16) {
+                        return Err(Error::invalid_jpeg_data("lossless DC symbol above 16"));
+                    }
+                    HuffmanDecodeTable::from_bits_values(&bits, &values)?
+                } else {
+                    HuffmanDecodeTable::from_bits_values_dc(&bits, &values)?
+                };
                 self.dc_tables[table_idx] = Some(table);
             } else {
                 // AC table - use fast AC lookup for combined decode + sign extend
@@ -402,7 +484,10 @@ impl<'a> JpegParser<'a> {
         if length != 4 {
             let extra = (length as usize).saturating_sub(4);
             if self.position + extra > self.data.len() {
-                return Err(Error::invalid_jpeg_data("DRI marker length exceeds data"));
+                // Declared body runs past the data: a cut inside the segment,
+                // reported as truncation so the between-scans recovery applies
+                // (#92, found by fuzz_truncation).
+                return Err(Error::truncated_data("DRI segment body"));
             }
             self.position += extra;
             self.warn(DecodeWarning::MalformedSegmentSkipped)?;
@@ -419,7 +504,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// Format per table: Tc/Th (1 byte) + Cs (1 byte)
     /// - Tc: 0=DC, 1=AC
-    /// - Th: table destination (0-3)
+    /// - Th: table destination (0-15)
     /// - Cs: For DC: L in low 4 bits, U in high 4 bits
     ///       For AC: Kx value (0-63)
     pub(super) fn parse_dac(&mut self) -> Result<()> {
@@ -430,8 +515,8 @@ impl<'a> JpegParser<'a> {
             let table_class = info >> 4; // 0=DC, 1=AC
             let table_idx = (info & 0x0F) as usize;
 
-            if table_idx >= 4 {
-                return Err(Error::invalid_jpeg_data("DAC table index out of range"));
+            if table_class > 1 {
+                return Err(Error::invalid_jpeg_data("DAC table class out of range"));
             }
 
             let cs = self.read_u8()?;
@@ -469,7 +554,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn parse_dnl(&mut self) -> Result<()> {
         let length = self.read_u16()?;
         if length != 4 {
-            if self.strictness == Strictness::Permissive {
+            if self.strictness.is_permissive() {
                 // Skip malformed DNL marker using declared length
                 if length >= 2 {
                     self.position += (length as usize).saturating_sub(2);
@@ -502,7 +587,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn skip_segment(&mut self) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
-            if self.strictness == Strictness::Permissive {
+            if self.strictness.is_permissive() {
                 self.warn(DecodeWarning::MalformedSegmentSkipped)?;
                 return Ok(());
             }
@@ -510,7 +595,10 @@ impl<'a> JpegParser<'a> {
         }
         let skip = length - 2;
         if self.position + skip > self.data.len() {
-            return Err(Error::invalid_jpeg_data("segment length exceeds data"));
+            // The declared body runs past the data: a stream cut inside the
+            // segment. Reported as truncation so the between-scans recovery
+            // applies (a growing prefix must never flip back to an error).
+            return Err(Error::truncated_data("marker segment body"));
         }
         self.position += skip;
         Ok(())
@@ -520,7 +608,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn process_app_or_com(&mut self, marker: u8) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
-            if self.strictness == Strictness::Permissive {
+            if self.strictness.is_permissive() {
                 self.warn(DecodeWarning::MalformedSegmentSkipped)?;
                 return Ok(());
             }
@@ -528,16 +616,38 @@ impl<'a> JpegParser<'a> {
         }
         let data_len = length - 2;
 
-        // Validate that segment data doesn't extend past input
+        // Validate that segment data doesn't extend past input. The declared
+        // body running past the data is a stream cut inside the segment
+        // (MPF / Ultra HDR trailers sit after the scan data): report it as
+        // truncation so the between-scans recovery applies and a growing
+        // prefix never flips back to an error (#92, found by fuzz_truncation).
         if self.position + data_len > self.data.len() {
-            return Err(Error::invalid_jpeg_data("segment length exceeds data"));
+            return Err(Error::truncated_data("APPn/COM segment body"));
         }
 
-        // Always check for APP14 Adobe marker (needed for CMYK/YCCK detection)
-        if marker == MARKER_APP14 && self.position + data_len <= self.data.len() {
+        let data = &self.data[self.position..self.position + data_len];
+        if self.strictness.is_strict()
+            && marker == 0xE2
+            && data.starts_with(b"ICC_PROFILE\0")
+            && data.get(12) == Some(&0)
+        {
+            return Err(Error::invalid_jpeg_data(
+                "ICC sequence numbers must start at 1 in strict mode",
+            ));
+        }
+
+        // JFIF APP0 and Adobe APP14 decide the colour model at SOF (jpegli
+        // `ProcessAPP`: a JFIF payload of at least 14 bytes; "Adobe" with at
+        // least 12, transform byte at offset 11). The last one wins. The JFIF
+        // identifier is "JFIF\0", as libjpeg-turbo's `examine_app0` and this
+        // crate's own segment parser (`detect_segment_type`) require.
+        {
             let data = &self.data[self.position..self.position + data_len];
-            if let Some(transform) = parse_adobe_app14(data) {
-                self.adobe_transform = Some(transform);
+            if marker == MARKER_APP0 && data.len() >= 14 && data.starts_with(b"JFIF\0") {
+                self.color_markers.saw_jfif = true;
+            }
+            if marker == MARKER_APP14 && data.len() >= 12 && data.starts_with(b"Adobe") {
+                self.color_markers.adobe_transform = Some(data[11]);
             }
         }
 
@@ -564,24 +674,40 @@ impl<'a> JpegParser<'a> {
     }
 }
 
-/// Parse Adobe APP14 segment to extract color transform.
-/// Format: "Adobe\0" + version (2 bytes) + flags0 (2) + flags1 (2) + color_transform (1)
-fn parse_adobe_app14(data: &[u8]) -> Option<AdobeColorTransform> {
-    const ADOBE_SIG: &[u8] = b"Adobe";
-    if data.len() < ADOBE_SIG.len() + 7 {
-        return None;
-    }
-    if !data.starts_with(ADOBE_SIG) {
-        return None;
-    }
+/// Markers without a length field between SOI and EOI (T.81 B.1.1.3): TEM
+/// and RST0-7. Every walker of the header and the inter-scan markers
+/// (`read_header`, the `decode()` loop, `find_scan_info`, the SOS peek)
+/// classifies markers with this rule, so they agree on which SOS comes first:
+/// a TEM read as a length segment hides the bytes after it from one walker
+/// and not the others. jpegli and IJG libjpeg treat TEM the same way.
+pub(super) const fn is_standalone_marker(marker: u8) -> bool {
+    matches!(marker, 0x01 | 0xD0..=0xD7)
+}
 
-    let offset = ADOBE_SIG.len();
-    let color_transform_byte = data[offset + 6];
-
-    Some(match color_transform_byte {
-        0 => AdobeColorTransform::Unknown, // CMYK (raw, values often inverted)
-        1 => AdobeColorTransform::YCbCr,   // Standard YCbCr
-        2 => AdobeColorTransform::Ycck,    // YCCK
-        _ => AdobeColorTransform::Unknown,
-    })
+/// The component count of the first SOS at or after `pos`, found by walking
+/// the marker segments without consuming them (fill bytes and stray bytes
+/// between segments are skipped, as the parser does). `None` if the data ends
+/// or a segment length is malformed before an SOS.
+fn peek_first_scan_components(data: &[u8], mut pos: usize) -> Option<u8> {
+    loop {
+        while *data.get(pos)? != 0xFF {
+            pos += 1;
+        }
+        while *data.get(pos + 1)? == 0xFF {
+            pos += 1;
+        }
+        match *data.get(pos + 1)? {
+            0x00 => pos += 2,
+            m if is_standalone_marker(m) => pos += 2,
+            0xDA => return data.get(pos + 4).copied(),
+            0xD9 => return None,
+            _ => {
+                let len = u16::from_be_bytes([*data.get(pos + 2)?, *data.get(pos + 3)?]) as usize;
+                if len < 2 {
+                    return None;
+                }
+                pos += 2 + len;
+            }
+        }
+    }
 }

@@ -10,7 +10,8 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgRefMut;
-use zenresize::{PixelDescriptor, StreamingResize};
+use whereat::ResultAtExt;
+use zenresize::StreamingResize;
 
 use crate::decode::{ChromaUpsampling, DecodeConfig, JpegInfo};
 use crate::encode::encoder_types::PixelLayout as EncPixelLayout;
@@ -121,17 +122,16 @@ fn decode_resize_encode(
 
         let available = resizer
             .push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32)
-            .map_err(|e| {
-                crate::error::Error::new(crate::error::ErrorKind::InternalError {
-                    reason: match e.error() {
-                        zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
-                        zenresize::StreamingError::InputTooShort => "resize: input row too short",
-                        zenresize::StreamingError::RingBufferOverflow => {
-                            "resize: ring buffer overflow"
-                        }
-                        _ => "resize: unknown streaming error",
-                    },
-                })
+            // `push_rows` returns `At<StreamingError>`; map the inner variant to our
+            // `ErrorKind` with `map_err_at` so the resize-call trace is carried through
+            // (the trailing `?` then wraps the resulting `At<ErrorKind>` into `Error`).
+            .map_err_at(|inner| crate::error::ErrorKind::InternalError {
+                reason: match inner {
+                    zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
+                    zenresize::StreamingError::InputTooShort => "resize: input row too short",
+                    zenresize::StreamingError::RingBufferOverflow => "resize: ring buffer overflow",
+                    _ => "resize: unknown streaming error",
+                },
             })?;
         drain_resizer(&mut resizer, available, &mut encoder, stop)?;
     }
@@ -143,84 +143,80 @@ fn decode_resize_encode(
     encoder.finish()
 }
 
-/// Simple decode → resize → encode without a full plan.
+/// Decode → transform → encode a secondary image (an Ultra HDR gain map)
+/// with `plan`, the primary's plan scaled to it ([`Plan::for_secondary`]).
 ///
-/// Used for gain map proportional resize where no crop/pad/orient is needed.
-pub(crate) fn resize_simple(
+/// The map keeps its channel count (a one-component map stays grayscale),
+/// its own metadata (ICC, EXIF, XMP) and its ISO 21496-1 records, which
+/// carry its gain parameters. A plan that changes nothing returns the map's
+/// bytes as they are.
+pub(crate) fn transform_secondary(
     jpeg_data: &[u8],
     info: &JpegInfo,
     config: &LayoutConfig,
-    dst_w: u32,
-    dst_h: u32,
+    plan: &Plan,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
-    let src_w = info.dimensions.width;
-    let src_h = info.dimensions.height;
-
-    if dst_w == src_w && dst_h == src_h {
-        return decode_reencode(jpeg_data, info, config, src_w, src_h, false, false, stop);
+    if plan.is_identity {
+        return Ok(jpeg_data.to_vec());
     }
-
-    let resize_config = zenresize::ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
-        .filter(config.filter)
-        .format(PixelDescriptor::RGB8_SRGB)
-        .linear()
-        .build();
-
+    let gray = info.num_components == 1;
+    let (channels, layout) = if gray {
+        (1usize, EncPixelLayout::Gray8Srgb)
+    } else {
+        (3usize, EncPixelLayout::Rgb8Srgb)
+    };
+    let src_w = info.dimensions.width;
     let batch = 8u32;
-    let mut resizer = StreamingResize::with_batch_hint(&resize_config, batch);
+    let mut resizer =
+        StreamingResize::with_batch_hint(&plan.resize, batch).with_orientation(plan.orient);
 
-    let encoder_config = config.build_encoder_config();
-    let mut request = encoder_config.request();
+    let encoder_config = if gray {
+        crate::encode::encoder_config::EncoderConfig::grayscale(config.quality)
+            .progressive(config.progressive)
+    } else {
+        config.build_encoder_config()
+    };
+    let mut segments = crate::encode::EncoderSegments::new();
+    for span in crate::container::iter(jpeg_data) {
+        if matches!(span.kind, crate::container::MarkerKind::Sos) {
+            break;
+        }
+        if matches!(span.kind, crate::container::MarkerKind::App(2))
+            && span.payload.starts_with(zencodec::ISO_21496_1_URN)
+        {
+            segments = segments.add_raw(0xE2, span.payload.to_vec());
+        }
+    }
+    let mut request = encoder_config.request().segments(segments);
     request = attach_metadata(request, info, false);
     request = request.stop(stop);
+    let mut encoder = request.encode_from_bytes(plan.final_w, plan.final_h, layout)?;
 
-    let mut encoder = request.encode_from_bytes(dst_w, dst_h, EncPixelLayout::Rgb8Srgb)?;
-
-    let decoder = {
-        let mut dc = DecodeConfig::new();
-        dc.chroma_upsampling = if config.fancy_upsampling {
-            ChromaUpsampling::Triangle
-        } else {
-            ChromaUpsampling::NearestNeighbor
-        };
-        dc
-    };
-    let mut reader = decoder.scanline_reader(jpeg_data)?;
-
-    let row_bytes = src_w as usize * 3;
+    let mut reader = DecodeConfig::new().scanline_reader(jpeg_data)?;
+    let row_bytes = src_w as usize * channels;
     let batch = batch as usize;
     let mut buf = vec![0u8; row_bytes * batch];
-
     while !reader.is_finished() {
         stop.check()?;
-
-        let img = ImgRefMut::new(&mut buf, src_w as usize * 3, batch);
-        let rows_read = reader.read_rows_rgb8(img)?;
+        let img = ImgRefMut::new(&mut buf, row_bytes, batch);
+        let rows_read = if gray {
+            reader.read_rows_gray8(img)?
+        } else {
+            reader.read_rows_rgb8(img)?
+        };
         if rows_read == 0 {
             break;
         }
-
         let available = resizer
             .push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32)
-            .map_err(|e| {
-                crate::error::Error::new(crate::error::ErrorKind::InternalError {
-                    reason: match e.error() {
-                        zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
-                        zenresize::StreamingError::InputTooShort => "resize: input row too short",
-                        zenresize::StreamingError::RingBufferOverflow => {
-                            "resize: ring buffer overflow"
-                        }
-                        _ => "resize: unknown streaming error",
-                    },
-                })
+            .map_err_at(|_| crate::error::ErrorKind::InternalError {
+                reason: "resize: gain-map rows rejected",
             })?;
         drain_resizer(&mut resizer, available, &mut encoder, stop)?;
     }
-
     let remaining = resizer.finish();
     drain_resizer(&mut resizer, remaining, &mut encoder, stop)?;
-
     encoder.finish()
 }
 

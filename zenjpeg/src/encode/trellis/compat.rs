@@ -122,6 +122,87 @@ impl TrellisSpeedMode {
     }
 }
 
+/// Per-block AQ→lambda coupling for trellis quantization.
+///
+/// When `scale != 0.0`, the per-block trellis lambda is adjusted from the
+/// block's adaptive-quantization strength before the rate-distortion search:
+///
+/// ```text
+/// adj    = clamp(±max_adjustment)( aq^exponent × scale [× chroma_mul] )
+/// scale1 = lambda_log_scale1 + adj            (additive, default)
+///        | lambda_log_scale1 × (1 + adj)      (multiplicative)
+/// ```
+///
+/// `scale == 0.0` (the default) is exactly mozjpeg-style standalone trellis —
+/// the lambda is fixed for every block.
+///
+/// Positive `scale` spends more bits on high-AQ (smooth/sensitive) blocks;
+/// negative spends fewer. Measured envelope: `scale = -4` ≈ 2 % smaller files
+/// at ~3 % DSSIM cost on photos; `+4` ≈ 2–3 % better DSSIM at ~3 % size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AqCoupling {
+    /// Lambda adjustment per unit of AQ strength. `0.0` = coupling off.
+    pub scale: f32,
+    /// Non-linear AQ mapping exponent (`1.0` = linear).
+    pub exponent: f32,
+    /// Minimum AQ strength before any adjustment applies.
+    pub threshold: f32,
+    /// Clamp `|adjustment|` to this bound. `0.0` = unclamped.
+    pub max_adjustment: f32,
+    /// Extra multiplier applied to the adjustment on chroma blocks.
+    pub chroma_mul: f32,
+    /// Multiplicative coupling (`scale1 × (1 + adj)`) instead of additive.
+    pub multiplicative: bool,
+}
+
+impl Default for AqCoupling {
+    fn default() -> Self {
+        Self::OFF
+    }
+}
+
+impl AqCoupling {
+    /// Coupling disabled — fixed-lambda (standalone) trellis.
+    pub const OFF: Self = Self {
+        scale: 0.0,
+        exponent: 1.0,
+        threshold: 0.0,
+        max_adjustment: 0.0,
+        chroma_mul: 1.0,
+        multiplicative: false,
+    };
+
+    /// Whether this coupling changes any block's lambda.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.scale != 0.0
+    }
+
+    /// Compute the lambda adjustment for one block.
+    ///
+    /// `aq_strength` is the block's AQ strength (typically 0.0–0.5);
+    /// `is_chroma` selects the [`chroma_mul`](Self::chroma_mul) term.
+    #[must_use]
+    pub fn compute_adjustment(&self, aq_strength: f32, is_chroma: bool) -> f32 {
+        if !self.is_active() || aq_strength < self.threshold {
+            return 0.0;
+        }
+        let effective_aq = if self.exponent != 1.0 {
+            aq_strength.powf(self.exponent)
+        } else {
+            aq_strength
+        };
+        let mut adjustment = effective_aq * self.scale;
+        if is_chroma {
+            adjustment *= self.chroma_mul;
+        }
+        if self.max_adjustment > 0.0 {
+            adjustment = adjustment.clamp(-self.max_adjustment, self.max_adjustment);
+        }
+        adjustment
+    }
+}
+
 /// Configuration for trellis quantization.
 ///
 /// Trellis quantization uses dynamic programming to find optimal quantization
@@ -169,6 +250,10 @@ pub struct TrellisConfig {
     /// large vertical DC jumps that create visible banding.
     /// Default: 0.0 (disabled, matching C mozjpeg default).
     pub delta_dc_weight: f32,
+    /// AQ→lambda coupling. [`AqCoupling::OFF`] (default) keeps the classic
+    /// fixed-lambda mozjpeg behaviour; a non-zero `scale` adjusts the lambda
+    /// per block from the AQ strength (the old "hybrid" mode).
+    pub aq_coupling: AqCoupling,
 }
 
 /// Default lambda_log_scale1 value (matches mozjpeg)
@@ -190,6 +275,7 @@ impl Default for TrellisConfig {
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             speed_mode: TrellisSpeedMode::Adaptive,
             delta_dc_weight: 0.0,
+            aq_coupling: AqCoupling::OFF,
         }
     }
 }
@@ -214,6 +300,7 @@ impl TrellisConfig {
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             speed_mode: TrellisSpeedMode::Adaptive,
             delta_dc_weight: 0.0,
+            aq_coupling: AqCoupling::OFF,
         }
     }
 
@@ -254,6 +341,15 @@ impl TrellisConfig {
             speed_mode: TrellisSpeedMode::Thorough,
             ..Self::default()
         }
+    }
+
+    /// Set the AQ→lambda coupling (see [`AqCoupling`]).
+    ///
+    /// `AqCoupling::OFF` (the default) is classic fixed-lambda trellis.
+    #[must_use]
+    pub fn aq_coupling(mut self, coupling: AqCoupling) -> Self {
+        self.aq_coupling = coupling;
+        self
     }
 
     // === Builder Methods ===
@@ -339,30 +435,6 @@ impl TrellisConfig {
         self
     }
 
-    /// Set the speed optimization level (0-10).
-    ///
-    /// This uses the formula-based [`TrellisSpeedMode::Level`] mode.
-    /// For C mozjpeg compatibility, use [`TrellisSpeedMode::Adaptive`] instead.
-    ///
-    /// | Level | Speed | Quality | Notes |
-    /// |-------|-------|---------|-------|
-    /// | 0 | ~1x | Optimal | Full search on all blocks |
-    /// | 7 | ~1.3x | Excellent | ≈ C mozjpeg adaptive |
-    /// | 10 | ~1.5x | Very good | Most aggressive limiting |
-    ///
-    /// Speed gains are most significant for Q80-100 on noisy/high-detail images.
-    /// At lower quality or on smooth images, most blocks have few non-zero
-    /// coefficients and the optimization rarely triggers.
-    #[deprecated(
-        since = "0.7.0",
-        note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead"
-    )]
-    #[must_use]
-    pub fn speed_level(mut self, level: u8) -> Self {
-        self.speed_mode = TrellisSpeedMode::Level(level.min(10));
-        self
-    }
-
     /// Set the weight for vertical DC gradient consideration in DC trellis.
     ///
     /// When > 0.0, DC trellis considers the difference between the current
@@ -400,18 +472,6 @@ impl TrellisConfig {
     #[must_use]
     pub fn get_speed_mode(&self) -> TrellisSpeedMode {
         self.speed_mode
-    }
-
-    /// Get the current speed level (deprecated).
-    #[deprecated(since = "0.7.0", note = "Use get_speed_mode() instead")]
-    #[must_use]
-    pub fn get_speed_level(&self) -> u8 {
-        match self.speed_mode {
-            TrellisSpeedMode::Thorough => 0,
-            TrellisSpeedMode::Adaptive => 7,
-            TrellisSpeedMode::Level(l) => l,
-            TrellisSpeedMode::Custom { .. } => 7, // Approximate
-        }
     }
 
     /// Check if any trellis optimization is enabled.
@@ -503,11 +563,29 @@ mod tests {
         assert!((config.lambda_log_scale1 - (DEFAULT_LAMBDA_LOG_SCALE1 - 1.0)).abs() < 0.01);
     }
 
+    /// `Level(n)` is clamped to 10 where it is *used*, not where it is set.
+    ///
+    /// The removed `speed_level()` setter clamped on the way in
+    /// (`Level(level.min(10))`) and `test_speed_level_clamping` pinned that.
+    /// `speed_mode()` stores the mode verbatim, so an out-of-range `Level(15)`
+    /// now reaches `get_limits` — which clamps it itself. That is the invariant
+    /// that actually governs encode behavior, so it is what gets tested.
     #[test]
-    #[allow(deprecated)]
-    fn test_speed_level_clamping() {
-        let config = TrellisConfig::default().speed_level(15);
-        assert_eq!(config.speed_mode, TrellisSpeedMode::Level(10)); // Clamped to max
+    fn test_level_is_clamped_in_get_limits() {
+        // Across the nonzero_count domain, an over-range level must behave
+        // exactly like the max level.
+        for nonzero_count in [0i32, 1, 10, 31, 32, 48, 63, 64] {
+            assert_eq!(
+                TrellisSpeedMode::Level(15).get_limits(nonzero_count),
+                TrellisSpeedMode::Level(10).get_limits(nonzero_count),
+                "Level(15) must clamp to Level(10) at nonzero_count={nonzero_count}"
+            );
+            assert_eq!(
+                TrellisSpeedMode::Level(255).get_limits(nonzero_count),
+                TrellisSpeedMode::Level(10).get_limits(nonzero_count),
+                "Level(255) must clamp to Level(10) at nonzero_count={nonzero_count}"
+            );
+        }
     }
 
     #[test]

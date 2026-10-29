@@ -1,11 +1,11 @@
 [package]
 name = "zenjpeg"
-version = "0.8.4"
+version = "0.9.0"
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 repository = "https://github.com/imazen/zenjpeg"
 documentation = "https://docs.rs/zenjpeg"
-readme = "README.md"
+readme = "README.crates.md"
 description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
 keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
 categories = ["multimedia::images", "encoding"]
@@ -20,6 +20,7 @@ exclude = [
     "fuzz/",
     "scripts/",
     "reports/",
+    "benchmarks/",
     "*.log",
     "*.csv",
     "*.png",
@@ -51,19 +52,12 @@ bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
+how-far = { version = "0.1.0", default-features = false }
 zencodec = { workspace = true }
+zencodec-coroutine = { version = "0.1.0", optional = true }
+zenmeta = { version = "0.1.0", default-features = false }
 zenpixels = { workspace = true }
-# Image content analyzers (variance, edges, chroma sharpness, DCT energy)
-# used by `EncoderConfig::adaptive`. Pulls rows on demand from any
-# PixelSlice via zenpixels-convert internally.
-# Note: the `composites` feature (classifier-style likelihoods —
-# TextLikelihood, ScreenContentLikelihood, NaturalLikelihood) was
-# deleted upstream in zenanalyze (commit b1623ba, 2026-05-01). The
-# adaptive bucket inference in encode/adaptive.rs ports those
-# formulas inline; we read primitive features (EdgeDensity,
-# Uniformity, ChromaComplexity, FlatColorBlockRatio, etc.) directly.
-# `hdr` retained from upstream main for HDR-aware analyzer support.
-zenanalyze = { workspace = true, features = ["experimental", "hdr"] }
+zenpixels-convert = { workspace = true, optional = true }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes
@@ -95,15 +89,21 @@ zentone = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
-# Perceptual metric used by Quality::Zq target-perceptual-quality variants
-# (issue #113). Pulled in only when the `target-zq` feature is enabled.
-zensim = { workspace = true, optional = true }
+spin = { version = "0.12.3", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
 
 [dev-dependencies]
+# The unit tests' `for_each_token_permutation` needs `testable_dispatch` to
+# disable tokens the build guarantees at compile time (SSE2 on x86-64, NEON on
+# aarch64); without it, those permutations are dropped with a warning. As a
+# dev-dependency it stays out of published and downstream builds.
+archmage = { workspace = true, features = ["testable_dispatch"] }
 wide = { workspace = true }
 zenyuv = { workspace = true }
+# Oracle for the color-emit synthesized-ICC test (bundled DISPLAY_P3_V4 const).
+zenpixels-convert = { workspace = true }
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
+how-far = { version = "0.1.0", default-features = false }
 test-case = { workspace = true }
 fast-ssim2 = { workspace = true }
 serde = { workspace = true }
@@ -115,6 +115,11 @@ zune-jpeg.workspace = true
 zune-core = "0.5.1"
 codec-corpus = "1.1.0"
 tempfile = "3"
+# The root patch table keeps the conformance harness on the same shared
+# contract as the codec. Provides `check_decode_truncation_series`
+# (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
+zencodec-testkit = ">=0.1.0, <0.3.0"
+zencodec-io = { version = "0.1.0", features = ["std"] }
 
 
 # WASM testing dependencies (browser + Node.js)
@@ -142,45 +147,65 @@ proptest = { workspace = true }
 criterion = { workspace = true }
 zenbench = { workspace = true }
 png = { workspace = true }
-# zenpng = { workspace = true }  # Temporarily disabled: zencodec/zenpixels API mismatch
+# PNG-encodes visual-diff montages (tests/bundled/visual_diff_regression.rs).
+zenpng = { workspace = true }
 dssim-core = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg-rs = { workspace = true }
 rayon = { workspace = true }
-# zenresize = { workspace = true }  # Disabled: linear-srgb version mismatch
+# Downscaling test/calibration corpus images (zq_pareto_calibrate,
+# boundary_rd_perf_bench, boundary_rd_callgrind).
+zenresize = { workspace = true }
 # For corpus comparison tests (requires local codec-eval crate)
 codec-eval = { workspace = true }
-# Picker held-out A/B harness (loads ZNPR v2 .bin externally for v0.3 picker A/B)
-zenpredict = { path = "../../zenanalyze/zenpredict" }
 # Metadata crates (for integration testing)
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
 # UltraHDR integration testing
 ultrahdr-core = { workspace = true }
-# Visual regression testing (diff images, montages, checksum management)
-zensim-regress = "0.3.0"
-zensim = { version = "0.2", features = ["classification"] }
-image = "0.25"
+# Visual regression testing (diff images, montages, checksum management).
+# Pinned to the SAME imazen/zensim git rev as the `zensim` dep above: the
+# crates.io zensim-regress 0.3.1 depends on zensim 0.2.x, which collides with
+# our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
+# `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
+# Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
+zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "8557758809156baba7364bd8cfe32889a61da4e8" }
+zensim = { workspace = true, features = ["classification"] }
 
 [features]
-default = ["decoder"]
-# Enable the decoder API.
-decoder = []
+# Qualified whole-source controlled decoding with admitted byte/row storage.
+controlled-decode = ["zencodec", "dep:zencodec-coroutine", "metadata"]
+metadata-rewrite = ["metadata", "zenmeta/rewrite"]
+# Full decoding by default. Disable defaults for ordinary 8-bit Huffman JPEG
+# (including XYB); enable extended-jpeg for arithmetic, 12-bit DCT and SOF3.
+default = ["extended-jpeg", "metadata"]
+# XMP container-directory parsing (zenmeta/xmp + roxmltree), gain-map and
+# depth-map detection, and the encoder-detection probe (`detect::probe`).
+# Disabling removes the XML parser from the binary (~90 KB code) at the cost
+# of `container::xmp`, gain-map extraction, GContainer directories, and probe
+# reporting. Pixel decoding, ICC extraction, MPF, and EXIF orientation are
+# unaffected.
+metadata = ["zenmeta/xmp"]
+extended-jpeg = []
+# Optional structural inspection and validated metadata reassembly. The entire
+# implementation is excluded when disabled, not just hidden from public docs.
+extended-metadata = []
+inventory = ["zencodec", "metadata"]
+__oracle-exiftool = ["extended-metadata"]
+# Dev-only: enables archmage/testable_dispatch so benches/tier_isolation.rs can
+# disable the baseline SIMD token (NEON on aarch64) and measure a real scalar
+# arm. Never enable in a published build.
+_dev = ["archmage/testable_dispatch", "__test-utils"]
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
-# Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
-# with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
-trellis = []
 # Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time
 # overhead when `BoundaryRd::On` is used (default remains `BoundaryRd::Off` which
 # keeps the module out of the hot path). Even with this feature enabled, the
 # default `EncoderConfig` produces byte-identical output to a feature-off build.
 # The knob set and defaults are evolvable — coefficient (#94, #103) will use this
 # feature for broader parameter-space exploration with GPU-backed metrics.
-# Requires `decoder` because the refinement IDCTs candidate blocks through the
-# decode path.
-boundary-rd = ["decoder"]
+boundary-rd = []
 # Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
 moxcms = ["dep:moxcms"]
 # ── Internal / dev-only features (prefixed with __ to signal "don't use") ──
@@ -188,6 +213,10 @@ moxcms = ["dep:moxcms"]
 __ffi-tests = []
 # Corpus comparison tests (requires local codec-corpus directory)
 __corpus-tests = []
+# Independent-decoder oracles for the colour model (tests/colorspace_oracles.rs):
+# needs python3 + Pillow and IJG djpeg; djpegli when ZENJPEG_DJPEGLI is set.
+# Run through `just colorspace-oracles`.
+__oracle-tests = []
 # Debug token serialization for C++ comparison
 __debug-tokens = []
 # Internal profiling instrumentation (scope timers)
@@ -209,18 +238,12 @@ __test-utils = []
 # `zenwebp`'s `__expert` feature. No new public knobs are exposed —
 # `InternalParams` only re-bundles existing builder methods.
 __expert = []
+# Unstable, opt-in per-block data for the diagnostics viewer.
+__diagnostics = ["dep:spin"]
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
-# Per-block encode diagnostics for tooling (visualizers, calibration UIs).
-# UNSTABLE — types are `#[doc(hidden)]` and can change between any two
-# patch versions. Captures pre-quant DCT coefficients, post-quant levels,
-# AQ multipliers, entropy bits, AQ field, scan script, and resolved
-# config snapshot during encode. Routes encodes through the strip
-# processor (skips `FusedParallelEncode` even if `parallel` is enabled);
-# diagnostics output may differ from the default fused path by a handful
-# of bytes at quant/AQ boundaries due to ordering. Off in every
-# production build.
-__diagnostics = []
+
+
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is
@@ -228,21 +251,61 @@ __diagnostics = []
 # + zenjpeg::container::xmp; types fold to zenpixels (PixelFormat,
 # ColorPrimaries, TransferFunction, PixelBuffer).
 # `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
-ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
-# zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
-zencodec = ["decoder"]
-# Target-perceptual-quality (`Quality::Zq` / `Quality::ZqExplicit`) closed-loop
-# encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
-# score target (issue #113). Pulls in `decoder` (for re-decoding each pass)
-# and the zensim crate (for the perceptual metric).
-target-zq = ["decoder", "dep:zensim"]
+# `ultrahdr-core/f16` restores HdrOutputFormat::LinearF16 (ultrahdr-core 0.6.0
+# made it default-off; ReconstructHdr's `wants_f16` output path needs it).
+ultrahdr = [
+    "metadata",
+    "ultrahdr-core/std",
+    "ultrahdr-core/tonemap",
+    "ultrahdr-core/f16",
+    "dep:half",
+    "dep:zentone",
+    # Measured content-light-level for the ReconstructHdr envelope (appendix
+    # AA): the zenpixels measurement owner (`CllMeasure::measure_max`) lives
+    # behind zenpixels-convert's `hdr-experimental` gate (stable math; the
+    # gate covers pre-0.3.0 surface churn).
+    "dep:zenpixels-convert",
+    "zenpixels-convert/hdr-experimental",
+    # The SDR base's ICC profile comes from `synthesize_icc_for_cicp`, which
+    # serves exact, cicp-tagged profiles (that libultrahdr recognises) only
+    # from the icc-db blob; without it a BT.2020 base with the sRGB transfer
+    # had no profile at all.
+    "zenpixels-convert/icc-db",
+]
+# zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
+# zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
+# path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
+# Includes zenpixels-convert's `icc-db` (a bundled ~36 KB LZ4 profile blob +
+# pure-Rust lz4_flex, no moxcms): full ITU-T H.273 grid coverage incl PQ/HLG,
+# so a CICP-described color always gets a real embedded ICC. Only a CICP
+# outside the assigned H.273 grid is an encode error (never a silently
+# mislabeled image). icc-db is unconditional because feature unification made
+# the old `cms` opt-in untestable and environment-dependent: zenpixels-convert
+# 0.2.13 ships icc-db in its defaults, so any default-features consumer
+# anywhere in a build graph flipped the capability on regardless of zenjpeg's
+# flag.
+# `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
+# kernels, which the decoder's auto-orient permute delegates to (#150); it
+# adds no dependency (archmage + magetypes are already mandatory here).
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
+
+# One-shot JPEG→JPEG recompression with calibrated routing and no metric runtime.
+recompress = ["metadata"]
+# Expose `recompress::expert` (per-strategy entry points, calibration-table
+# inspection, block classification). Unstable internals; not semver-covered.
+recompress-expert = ["recompress"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode.
 # Geometry/constraint solving (FitMode) and EXIF-orientation bridge live in
 # zenresize itself; orientation group algebra comes from zenpixels (re-exported
 # via zenresize). No separate zenlayout dep needed.
-layout = ["decoder", "dep:zenresize"]
+layout = ["dep:zenresize", "metadata"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
 # zennode = ["dep:zennode", "zencodec"]
+
+[[bench]]
+name = "tier_isolation"
+harness = false
+required-features = ["_dev"]
 
 [[bench]]
 name = "encode"
@@ -251,7 +314,6 @@ harness = false
 [[bench]]
 name = "decode"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "cpp_comparison"
@@ -268,7 +330,6 @@ harness = false
 [[bench]]
 name = "color_convert"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "simd_blocks"
@@ -306,27 +367,50 @@ required-features = ["__test-utils"]
 [[bench]]
 name = "decode_compare"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "decode_zenbench"
 harness = false
-required-features = ["decoder", "zencodec"]
+required-features = ["zencodec"]
+
+# Heap profile of effective-job planning vs native startup (no pixels read).
+# Profile with scripts/profile-encode-planning.py under heaptrack.
+[[example]]
+name = "encode_planning_probe"
+required-features = ["zencodec"]
+
+# Auto-orient permute A/B (#150). No required-features on purpose: run with
+# and without `zencodec` to compare the scalar gather against the
+# zenpixels-convert delegate.
+[[bench]]
+name = "decode_orient_zenbench"
+harness = false
 
 [[bench]]
 name = "huffman_decode"
 harness = false
-required-features = ["decoder"]
+
+[[bench]]
+name = "idct_kernels"
+harness = false
+
+[[bench]]
+name = "ycbcr_turbo"
+harness = false
+required-features = ["__test-utils"]
+
+[[bench]]
+name = "upsample_ab"
+harness = false
 
 [[bench]]
 name = "decode_mozjpeg"
 harness = false
-required-features = ["decoder"]
 
 [[bench]]
 name = "wide_migration"
 harness = false
-required-features = ["decoder", "parallel"]
+required-features = ["parallel"]
 
 [[bench]]
 name = "encode_zenbench"
@@ -352,87 +436,94 @@ required-features = ["__test-utils"]
 #
 # `bbs_measure` is independent of boundary-RD (it measures block-boundary
 # scores on any JPEG) so it stays outside the feature gate. `rd_explore`
-# uses `auto_optimize` (trellis-only). The other three examples
+# uses `auto_optimize`. The other three examples
 # instantiate `BoundaryRd::On(...)` or call the boundary-RD harness
 # directly — they require `--features boundary-rd`.
 [[example]]
 name = "bbs_measure"
 
 [[example]]
+name = "sweep_plan"
+required-features = ["__expert"]
+
+[[example]]
+name = "sweep_validate"
+required-features = ["__expert"]
+
+[[example]]
+name = "sweep_cell"
+required-features = ["__expert"]
+
+[[example]]
 name = "rd_explore"
-required-features = ["trellis"]
 
 [[example]]
 name = "rd_compare"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 [[example]]
 name = "boundary_rd_low_q_sweep"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 [[example]]
 name = "boundary_rd_perf_bench"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
 [[example]]
 name = "boundary_rd_callgrind"
-required-features = ["trellis", "decoder", "boundary-rd"]
+required-features = ["boundary-rd"]
 
-# v0.3 picker held-out A/B harness (loads .bin externally; lives in
-# dev/ so the file isn't shipped as part of the public examples dir).
-# See dev/picker_v0_3_holdout_ab.rs for the full methodology block.
 [[example]]
-name = "picker_v0_3_holdout_ab"
-path = "dev/picker_v0_3_holdout_ab.rs"
-required-features = ["target-zq", "trellis"]
+name = "jpeg_probe"
+required-features = ["boundary-rd"]
 
-# Per-class quant table signal probe (gating experiment, 2026-05-04).
-# See dev/per_class_signal_probe.rs.
 [[example]]
 name = "per_class_signal_probe"
 path = "dev/per_class_signal_probe.rs"
 
-# Examples requiring trellis feature
+# Per-class signal probe — B' variant (HF quant INCREASED).
+# Step-0 gate before any per-class SA work; see dev/per_class_signal_probe_bprime.rs.
 [[example]]
-name = "hybrid_auto_detect"
-required-features = ["trellis"]
+name = "per_class_signal_probe_bprime"
+path = "dev/per_class_signal_probe_bprime.rs"
 
+# Per-image color-space loss probe for the YCbCr-vs-XYB picker (research).
+# Color-only (no DCT) round-trip loss per path; see dev/color_loss.rs.
+# Gated behind __test-utils (makes zenjpeg::color public).
+[[example]]
+name = "color_loss"
+path = "dev/color_loss.rs"
+required-features = ["__test-utils"]
+
+# Expert/tuning examples
 [[example]]
 name = "hybrid_parameter_sweep"
-required-features = ["trellis"]
 
 [[example]]
 name = "knobs_vs_jpegli"
-required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "mozjpeg_parity_regress"
-required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "mozjpeg_parity_tuning"
-required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "mozjpeg_quality_vs_original"
-required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "ssim2_pareto_sweep"
-required-features = ["trellis"]
 
 [[example]]
 name = "xyb_parity_test"
-required-features = ["trellis"]
 
 [[example]]
 name = "xyb_cpp_comparison"
-required-features = ["trellis"]
 
 # C++ comparison tools
 [[example]]
 name = "cpp_parity_matrix"
-required-features = ["decoder", "__test-utils", "moxcms"]
+required-features = ["__test-utils", "moxcms"]
 
 # Note: cpp_quality_comparison and quality_matrix were previously standalone
 # [[test]] entries with required-features. They now live under tests/bundled/ and
@@ -450,11 +541,10 @@ required-features = ["ultrahdr"]
 
 [[example]]
 name = "reencode_calibration"
-required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "bench_decode_matrix"
-required-features = ["parallel", "decoder"]
+required-features = ["parallel"]
 
 [[example]]
 name = "layout_cli"
@@ -462,4 +552,39 @@ required-features = ["layout"]
 
 [[example]]
 name = "deblock_harness"
-required-features = ["decoder"]
+
+# --- recompress module examples (moved from the zenjpeg-recompress crate) ---
+[[example]]
+name = "jxl_phase0_recompress"
+required-features = ["recompress"]
+
+[[example]]
+name = "dump_estimates"
+required-features = ["recompress-expert"]
+
+[[example]]
+name = "gm_extract_diff"
+required-features = ["ultrahdr"]
+
+[[example]]
+name = "gray_path_diff"
+
+[[example]]
+name = "gray_decode_bench"
+
+[[test]]
+name = "extended_metadata_exiftool"
+required-features = ["extended-metadata", "__oracle-exiftool"]
+
+[[bench]]
+name = "metadata_walk"
+harness = false
+required-features = ["extended-metadata"]
+
+[[example]]
+name = "inventory_dump"
+required-features = ["inventory"]
+
+[[test]]
+name = "inventory_oracle"
+required-features = ["inventory"]

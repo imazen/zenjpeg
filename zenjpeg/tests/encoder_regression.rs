@@ -19,10 +19,11 @@ use zenjpeg::encoder::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, Pix
 // =============================================================================
 
 fn load_frymire() -> (Vec<u8>, u32, u32) {
-    let img = image::open("tests/images/frymire.png").expect("frymire.png not found");
-    let rgb = img.to_rgb8();
-    let (w, h) = rgb.dimensions();
-    (rgb.into_raw(), w, h)
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new("tests/images/frymire.png"))
+        .expect("frymire.png not found");
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, w as u32, h as u32)
 }
 
 // =============================================================================
@@ -46,7 +47,14 @@ impl Config {
             .optimize_huffman(self.optimize_huffman);
         let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
         enc.push_packed(rgb, Unstoppable).unwrap();
-        enc.finish().unwrap()
+        let jpeg = enc.finish().unwrap();
+        // Cross-tier byte comparisons pass even when EVERY tier is corrupt —
+        // each compared stream must also decode (2026-08-26 fixed-table audit).
+        let decoded = zenjpeg::decoder::Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .unwrap_or_else(|e| panic!("{}: encoded stream does not decode: {e}", self.name));
+        assert_eq!((decoded.width, decoded.height), (w, h), "{}", self.name);
+        jpeg
     }
 }
 
@@ -151,13 +159,28 @@ fn test_dispatch_parity() {
 // 2. Quality floor: zensim score vs source must exceed threshold
 // =============================================================================
 
-fn min_zensim_score(quality: u8) -> f64 {
-    // Floors accommodate both 4:4:4 (higher) and 4:2:0 (lower due to chroma loss)
-    match quality {
-        50 => 52.0, // 4:2:0 ~52.9, 4:4:4 ~63.2
-        75 => 59.0, // 4:2:0 ~60.1, 4:4:4 ~72.2
-        90 => 63.0, // 4:2:0 ~63.6, 4:4:4 ~80.7
-        _ => 50.0,
+/// Per-(subsampling, quality) zensim floor against the frymire source.
+///
+/// **Recalibrated 2026-05-31 for the `ZensimProfile::codec_target()` (= `A`)
+/// bake** — the canonical codec-target metric (zensim git rev 9d8f73a5).
+/// The earlier single-floor-per-quality table was calibrated against the old
+/// crates.io zensim 0.2.x default, whose score scale differs substantially
+/// from `A`. The `A` bake deliberately remaps the low-quality region (its docs
+/// note "scores below 55 are clamped flat" and that codec consumers operate in
+/// the 60–90 band), so 4:2:0 and 4:4:4 now diverge far more than before and
+/// need separate floors. Floors sit a few points under the measured `A` scores
+/// (frymire, this encoder) to catch real regressions without flapping on
+/// rounding. Measured `A` values are in the trailing comments.
+fn min_zensim_score(config_name: &str, quality: u8) -> f64 {
+    let is_420 = config_name.contains("420");
+    match (is_420, quality) {
+        (true, 50) => 30.0,  // measured A: 34.0
+        (true, 75) => 41.0,  // measured A: 45.1
+        (true, 90) => 48.0,  // measured A: 52.2
+        (false, 50) => 47.0, // measured A: 50.9
+        (false, 75) => 60.0, // measured A: 63.9
+        (false, 90) => 72.0, // measured A: 76.2
+        _ => 30.0,
     }
 }
 
@@ -168,7 +191,9 @@ fn test_quality_floor() {
     let _lock = archmage::testing::lock_token_testing();
     let (rgb, w, h) = load_frymire();
 
-    let zensim = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
+    // These stored floors were measured with Profile A, not the moving codec target.
+    #[allow(deprecated)]
+    let zensim = zensim::Zensim::new(zensim::ZensimProfile::A).with_parallel(false);
     let source_pixels: &[[u8; 3]] = bytemuck::cast_slice(&rgb);
     let source = zensim::RgbSlice::new(source_pixels, w as usize, h as usize);
 
@@ -187,7 +212,7 @@ fn test_quality_floor() {
             let distorted = zensim::RgbSlice::new(dist_pixels, dec_w, dec_h);
             let result = zensim.compute(&source, &distorted).unwrap();
             let score = result.score();
-            let threshold = min_zensim_score(q);
+            let threshold = min_zensim_score(config.name, q);
 
             assert!(
                 score >= threshold,
@@ -196,11 +221,6 @@ fn test_quality_floor() {
                 q,
                 score,
                 threshold
-            );
-
-            eprintln!(
-                "{} Q{}: zensim {:.1} (floor {:.1})",
-                config.name, q, score, threshold
             );
         }
     }
@@ -294,7 +314,9 @@ fn test_content_checksums() {
 
             // Convert RGB to RGBA for zensim-regress
             let rgba: Vec<u8> = dec_pixels
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .flat_map(|px| [px[0], px[1], px[2], 255])
                 .collect();
 

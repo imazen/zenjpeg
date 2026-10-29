@@ -1,0 +1,51 @@
+# Bgr output speed, round-3 review S2 (PR #237, feat/c1-colour-model-on-main)
+# host: dev (Ryzen 9 9950X3D, Zen 5), 2026-10-17, rustc 1.99.0, release profile, default
+# features, built --locked from exports; no target-cpu flags (runtime dispatch).
+# Variants (examples/decode_wall with the --format option from b557ca58 applied to each):
+#   main = ce0220ad (zenjpeg main the port is based on)
+#   pr0  = 6cc03ca4 (PR with round-3 B1/S1/N4/N1, before S2)
+#   pr   = 65a5b2dd (PR with S2: fused YCbCr kernels for Bgr + garb SIMD R/B swap)
+# Fixtures: the 2026-10-15 port bench's mozjpeg-rs q85 encodes of
+#   codec-corpus clic2025/final-test/07b9f93f...png (2048x1360), 4:2:0/4:2:2/4:4:0/4:4:4
+#   baseline and 4:2:0 progressive (fx-big-*.jpg).
+# Command: decode_wall <fx> --reps 40 --format rgb|bgr, lanes interleaved per rep,
+#   5 rounds cycling main/pr0/pr; numbers are medians of the 5 round medians (ms).
+#   zen-default = Triangle upsampling, zen-box = NearestNeighbor.
+# Correctness column: max|zen-moz| with zenjpeg's Bgr output swapped back to RGB and
+#   compared with mozjpeg-nasm's RGB. main returns RGB-ordered bytes for a Bgr request
+#   on the sequential fixtures (its unswapped output matches mozjpeg exactly, so it
+#   reads as 255 here); pr0 and pr return correct BGR. main's Bgr times therefore
+#   exclude the swap that correct output needs.
+# Raw logs (dev:/mnt/v/output/zenjpeg/bgr-output-round3-2026-10-17/):
+#   bench4.log (this table; 63,473 bytes) sha256 b0bdb5ab25bcc95f8f96232092d8cf97cfef229d287ccf6dd6448747499227ef
+#   bench3.log (pr with the scalar swap, before garb) sha256 167c0a2026605d92ec77a950d5fd1d783b0125101c64ea47c0756623548b3b26
+# run-heavy: bench4 done rc=0 204s | peak-RSS 0.04GiB | min-avail 26135MiB | peak-load 8.32
+#   (the box carried other agents' load, ~7-8 of 32 threads)
+#
+fixture          fmt  lane             main      pr0       pr   pr/pr0  pr/main   max|zen-moz| main/pr0/pr
+fx-big-420.jpg   rgb  zen-default     4.440    4.426    4.538    1.025    1.022   0/0/0
+fx-big-420.jpg   rgb  zen-box         4.191    4.144    4.076    0.984    0.973   0/0/0
+fx-big-420.jpg   bgr  zen-default     4.413    4.803    4.682    0.975    1.061   255/0/0
+fx-big-420.jpg   bgr  zen-box         4.167    4.786    4.220    0.882    1.013   255/0/0
+fx-big-420p.jpg  rgb  zen-default    11.338   11.737   11.152    0.950    0.984   0/0/0
+fx-big-420p.jpg  rgb  zen-box        10.927   11.381   10.770    0.946    0.986   0/0/0
+fx-big-420p.jpg  bgr  zen-default    12.057   12.185   11.456    0.940    0.950   0/0/0
+fx-big-420p.jpg  bgr  zen-box        11.596   11.835   11.066    0.935    0.954   0/0/0
+fx-big-422.jpg   rgb  zen-default     5.320    5.261    5.216    0.991    0.980   0/0/0
+fx-big-422.jpg   rgb  zen-box         7.045    4.836    4.804    0.993    0.682   0/0/0
+fx-big-422.jpg   bgr  zen-default     5.331    6.670    5.317    0.797    0.997   255/0/0
+fx-big-422.jpg   bgr  zen-box         7.063    5.481    4.896    0.893    0.693   255/0/0
+fx-big-440.jpg   rgb  zen-default     5.120    5.146    5.122    0.995    1.000   0/0/0
+fx-big-440.jpg   rgb  zen-box         8.848    8.713    8.608    0.988    0.973   0/0/0
+fx-big-440.jpg   bgr  zen-default     5.091    7.293    5.278    0.724    1.037   255/0/0
+fx-big-440.jpg   bgr  zen-box         9.463    9.524    8.769    0.921    0.927   255/0/0
+fx-big-444.jpg   rgb  zen-default     5.833    5.855    5.861    1.001    1.005   0/0/0
+fx-big-444.jpg   rgb  zen-box         5.845    5.869    5.852    0.997    1.001   0/0/0
+fx-big-444.jpg   bgr  zen-default     5.897    6.529    6.065    0.929    1.028   255/0/0
+fx-big-444.jpg   bgr  zen-box         5.907    6.529    6.068    0.929    1.027   255/0/0
+#
+# Summary: pr's Bgr costs 2-3.5% over its own Rgb on every fixture (e.g. 4:2:0 triangle
+# 4.682 vs 4.538 ms). Against pr0, Bgr is 0.72-0.98x (4:4:0 triangle 7.293 -> 5.278 ms,
+# 4:2:2 triangle 6.670 -> 5.317 ms). Rgb lanes are unchanged within run-to-run noise.
+# With the scalar swap still in place (bench3.log), the fused gate alone gave 4:2:2
+# 0.875x and 4:4:0 0.789x but 4:2:0 triangle 1.064x vs pr0; the SIMD swap removes that.

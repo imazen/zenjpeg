@@ -6,7 +6,6 @@ use super::encoder_types::{
     ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, TinyFileMode,
     XybSubsampling,
 };
-#[cfg(feature = "trellis")]
 use super::trellis::TrellisConfig;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
@@ -463,9 +462,6 @@ pub struct EncoderConfig {
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: Option<super::encoder_types::ParallelEncoding>,
-    /// Hybrid quantization configuration (requires `trellis` feature).
-    #[cfg(feature = "trellis")]
-    pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -477,7 +473,6 @@ pub struct EncoderConfig {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Trellis quantization configuration (mozjpeg-compatible API).
     /// When Some, enables trellis quantization for rate-distortion optimization.
-    #[cfg(feature = "trellis")]
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
@@ -499,30 +494,6 @@ pub struct EncoderConfig {
     /// byte-identical to a feature-off build.
     #[cfg(feature = "boundary-rd")]
     pub(crate) boundary_rd_mode: BoundaryRd,
-    /// Multiplier applied to the butteraugli distance for chroma (Cb, Cr)
-    /// components only, independent of luma. Default `1.0` preserves the
-    /// existing single-quality behaviour bit-for-bit.
-    ///
-    /// - `> 1.0` — chroma is encoded more aggressively (flat-chroma case).
-    /// - `< 1.0` — chroma is encoded more carefully (sharp-chroma case).
-    ///
-    /// Clamped to `[0.1, 5.0]` by the builder.
-    pub(crate) chroma_distance_scale: f32,
-    /// Optional independent chroma quality on the mozjpeg 1–100 scale.
-    /// Only honoured by the mozjpeg-compat (Robidoux) quant-table path;
-    /// the jpegli perceptual path uses [`Self::chroma_distance_scale`]
-    /// for the same purpose. `None` keeps the historical behaviour of
-    /// using the same quality for both tables.
-    pub(crate) chroma_quality: Option<u8>,
-
-    /// Per-block encode diagnostics capture (UNSTABLE). When `true`,
-    /// the encoder allocates an
-    /// [`EncodeDiagnostics`](crate::encode::diagnostics::EncodeDiagnostics)
-    /// struct and fills it during encoding; retrieve via the encoder's
-    /// `take_diagnostics()` method after `finish()`. Gated behind the
-    /// `__diagnostics` cargo feature.
-    #[cfg(feature = "__diagnostics")]
-    pub(crate) diagnostics_enabled: bool,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -618,6 +589,45 @@ impl EncoderConfig {
         }
     }
 
+    /// Create an RGB passthrough encoder configuration (no color transform).
+    ///
+    /// Channels are stored verbatim as JPEG components R, G, B — no
+    /// RGB→YCbCr matrix and no chroma subsampling (always 4:4:4), so the
+    /// only loss is DCT quantization per channel. The file signals RGB via
+    /// component IDs 'R','G','B' and an Adobe APP14 marker with
+    /// transform=0; libjpeg-family decoders (and zenjpeg's own decoder)
+    /// return the channels unmixed.
+    ///
+    /// Use this for images whose channels carry independent information
+    /// (e.g. fluorescence microscopy stains packed into R/G/B), where
+    /// cross-channel artifacts from a color transform are unacceptable.
+    /// For natural photos, [`ycbcr`](Self::ycbcr) compresses substantially
+    /// better at the same quality.
+    ///
+    /// Matches C++ jpegli / libjpeg `JCS_RGB` behavior: a single shared
+    /// quantization table (ITU-T T.81 Annex K luminance, linearly scaled
+    /// from `quality`) and a single shared Huffman table pair for all
+    /// three components. Adaptive quantization uses the G channel as the
+    /// luma proxy (as jpegli does); deringing does not apply.
+    ///
+    /// Requires an 8-bit RGB-family input layout (RGB, RGBA, BGR, BGRA,
+    /// BGRX — alpha/padding bytes are ignored).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::encoder::EncoderConfig;
+    ///
+    /// let config = EncoderConfig::rgb(90);
+    /// ```
+    #[must_use]
+    pub fn rgb(quality: impl Into<Quality>) -> Self {
+        Self {
+            quality: quality.into(),
+            color_mode: ColorMode::Rgb,
+            ..Self::default_internal()
+        }
+    }
+
     /// Create a YCbCr encoder with effort-based defaults.
     ///
     /// Combines quality, subsampling, and an [`Effort`] level into a single call.
@@ -667,22 +677,15 @@ impl EncoderConfig {
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
-            #[cfg(feature = "trellis")]
-            hybrid_config: super::trellis::HybridConfig::disabled(),
             deringing: true,
             aq_enabled: true,
             allow_16bit_quant_tables: false,
-            #[cfg(feature = "trellis")]
             trellis: None,
             segments: None,
             pre_blur: 0.0,
             tiny_file_mode: TinyFileMode::Auto,
             #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
-            chroma_distance_scale: 1.0,
-            chroma_quality: None,
-            #[cfg(feature = "__diagnostics")]
-            diagnostics_enabled: false,
         }
     }
 
@@ -786,7 +789,7 @@ impl EncoderConfig {
     /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, QuantTableConfig};
     ///
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .quant_table_config(QuantTableConfig::MozjpegRobidoux);
+    ///     .quant_table_config(QuantTableConfig::MozjpegRobidoux { chroma_quality: None });
     /// ```
     #[must_use]
     pub fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
@@ -809,13 +812,15 @@ impl EncoderConfig {
                 // Preserve current config if already jpegli; otherwise default to Jpegli
                 if matches!(
                     self.quant_table_config,
-                    QuantTableConfig::MozjpegRobidoux | QuantTableConfig::Custom(_)
+                    QuantTableConfig::MozjpegRobidoux { .. } | QuantTableConfig::Custom(_)
                 ) {
-                    self.quant_table_config = QuantTableConfig::Jpegli;
+                    self.quant_table_config = QuantTableConfig::default();
                 }
             }
             QuantTableSource::MozjpegDefault => {
-                self.quant_table_config = QuantTableConfig::MozjpegRobidoux;
+                self.quant_table_config = QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None,
+                };
             }
         }
         self
@@ -830,32 +835,29 @@ impl EncoderConfig {
         let scan_mode = match preset {
             JpegliBaseline => ProgressiveScanMode::Baseline,
             JpegliProgressive => ProgressiveScanMode::Progressive,
-            #[cfg(feature = "trellis")]
             MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
-            #[cfg(feature = "trellis")]
             HybridProgressive => ProgressiveScanMode::Progressive,
-            #[cfg(feature = "trellis")]
             MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
-            #[cfg(feature = "trellis")]
             MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
         };
 
         // Quant table config: bundles source + chroma layout
         let quant_table_config = match preset {
-            JpegliBaseline | JpegliProgressive => QuantTableConfig::Jpegli,
-            #[cfg(feature = "trellis")]
+            JpegliBaseline | JpegliProgressive => QuantTableConfig::default(),
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
-                QuantTableConfig::MozjpegRobidoux
+                QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: None,
+                }
             }
-            #[cfg(feature = "trellis")]
-            HybridBaseline | HybridProgressive | HybridMaxCompression => QuantTableConfig::Jpegli,
+            HybridBaseline | HybridProgressive | HybridMaxCompression => {
+                QuantTableConfig::default()
+            }
         };
 
         // Trellis configuration depends on preset lineage:
         // - Jpegli: no trellis (AQ-driven quality, no rate-distortion opt)
         // - Mozjpeg: Thorough (full search, matching C mozjpeg default)
         // - Hybrid: Adaptive (zenjpeg heuristic, good speed/quality balance)
-        #[cfg(feature = "trellis")]
         let trellis = {
             use super::trellis::{TrellisConfig, TrellisSpeedMode};
             match preset {
@@ -876,11 +878,8 @@ impl EncoderConfig {
         // to match C mozjpeg's default profile.
         let deringing = match preset {
             JpegliBaseline | JpegliProgressive => true,
-            #[cfg(feature = "trellis")]
             MozjpegBaseline | MozjpegProgressive => false,
-            #[cfg(feature = "trellis")]
             MozjpegMaxCompression => true,
-            #[cfg(feature = "trellis")]
             HybridBaseline | HybridProgressive | HybridMaxCompression => true,
         };
 
@@ -890,7 +889,6 @@ impl EncoderConfig {
             huffman: HuffmanStrategy::Optimize,
             deringing,
             aq_enabled: preset.uses_aq(),
-            #[cfg(feature = "trellis")]
             trellis,
             // Presets force baseline quant tables (matching cjpegli CLI and C
             // mozjpeg behavior). XYB SOF1 is handled by force_sof1, not this flag.
@@ -960,77 +958,6 @@ impl EncoderConfig {
         self
     }
 
-    /// Scale the butteraugli distance applied to chroma (Cb, Cr) relative to
-    /// luma. Default `1.0` is bit-identical to the single-quality path.
-    ///
-    /// A typical consumer is an analyzer that has already measured chroma
-    /// sharpness on the image (e.g. [`evalchroma`](https://lib.rs/crates/evalchroma))
-    /// and wants to exploit flat chroma for extra bpp savings, or preserve
-    /// sharp chroma when 4:4:4 alone isn't enough.
-    ///
-    /// - `> 1.0` — chroma encoded more aggressively (flat chroma case).
-    ///   Each step of `+0.25` applies a larger per-coefficient quant value,
-    ///   compounding onto the existing Cb/Cr base-table asymmetry.
-    /// - `< 1.0` — chroma encoded more carefully (sharp chroma case).
-    ///
-    /// Clamped to `[0.1, 5.0]`. Applied identically to Cb and Cr; the
-    /// base-table asymmetry (Cb ≈ 2× Cr in median quant) is preserved.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Quality};
-    ///
-    /// // Analyzer decided chroma is flat enough to take a 30% discount.
-    /// let luma_dist   = Quality::ApproxJpegli(85.0).to_distance();
-    /// let chroma_dist = Quality::ApproxJpegli(70.0).to_distance();
-    /// let scale = chroma_dist / luma_dist;
-    ///
-    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-    ///     .chroma_distance_scale(scale);
-    /// ```
-    #[must_use]
-    pub fn chroma_distance_scale(mut self, scale: f32) -> Self {
-        self.chroma_distance_scale = scale.clamp(0.1, 5.0);
-        self
-    }
-
-    /// Set an independent chroma quality on the mozjpeg 1–100 scale.
-    ///
-    /// Only honoured by the mozjpeg-compat path
-    /// ([`QuantTableConfig::MozjpegRobidoux`]). On the jpegli
-    /// perceptual path (default), use
-    /// [`Self::chroma_distance_scale`] instead; the two surfaces do
-    /// the same thing but at different "scales of truth" — quality
-    /// numbers for mozjpeg users, butteraugli distance ratios for
-    /// jpegli users.
-    ///
-    /// `None` (the default) preserves the pre-existing behaviour of
-    /// using [`Self::quality`] for both luma and chroma tables —
-    /// output is bit-identical to callers that never touched this
-    /// setter.
-    ///
-    /// `Some(q)` scales the Robidoux chrominance base table by
-    /// `q`'s scale factor and the luminance table by the luma
-    /// quality's scale factor. Typical uses:
-    /// - `chroma_quality(Some(user_q - 15))` for flat-chroma
-    ///   photos to save bits on Cb/Cr without touching luma
-    /// - `chroma_quality(Some(user_q))` (or `None`) for
-    ///   text/screen content where chroma fidelity matters
-    ///
-    /// Clamped to 1..=100.
-    ///
-    /// *Hidden from rustdoc while the surface is experimental and
-    /// downstream calibration is ongoing. The API is stable and
-    /// tested, but we may tighten the semantics (e.g. whether
-    /// out-of-range clamps or errors) before promoting it.*
-    #[doc(hidden)]
-    #[must_use]
-    pub fn chroma_quality(mut self, quality: Option<u8>) -> Self {
-        self.chroma_quality = quality.map(|q| q.clamp(1, 100));
-        self
-    }
-
     /// Use separate quantization tables for Cb and Cr components.
     ///
     /// When enabled (default), uses 3 quantization tables:
@@ -1061,23 +988,35 @@ impl EncoderConfig {
     pub fn separate_chroma_tables(mut self, enable: bool) -> Self {
         // Map the bool to the appropriate QuantTableConfig variant,
         // preserving mozjpeg vs jpegli distinction.
-        match &self.quant_table_config {
-            QuantTableConfig::Custom(_) | QuantTableConfig::GlassaLowBpp(_) => {
-                // Don't touch custom or Glassa tables (Glassa always uses shared chroma)
+        match self.quant_table_config {
+            QuantTableConfig::Custom(_)
+            | QuantTableConfig::GlassaLowBpp
+            | QuantTableConfig::PiecewiseV4 => {
+                // Custom/Glassa/Piecewise tables define their own layout.
             }
-            QuantTableConfig::MozjpegRobidoux => {
+            QuantTableConfig::MozjpegRobidoux { .. } => {
                 // MozjpegRobidoux is always shared chroma; can't separate
                 if enable {
                     // User is asking for separate chroma with mozjpeg tables,
                     // which isn't a valid combo — switch to Jpegli
-                    self.quant_table_config = QuantTableConfig::Jpegli;
+                    self.quant_table_config = QuantTableConfig::default();
                 }
             }
-            QuantTableConfig::Jpegli | QuantTableConfig::JpegliSharedChroma => {
+            QuantTableConfig::Jpegli {
+                chroma_distance_scales,
+            }
+            | QuantTableConfig::JpegliSharedChroma {
+                chroma_distance_scales,
+            } => {
+                // Preserve the chroma scales across the layout toggle.
                 self.quant_table_config = if enable {
-                    QuantTableConfig::Jpegli
+                    QuantTableConfig::Jpegli {
+                        chroma_distance_scales,
+                    }
                 } else {
-                    QuantTableConfig::JpegliSharedChroma
+                    QuantTableConfig::JpegliSharedChroma {
+                        chroma_distance_scales,
+                    }
                 };
             }
         }
@@ -1138,6 +1077,15 @@ impl EncoderConfig {
     ///
     /// - `0`: disable restart markers entirely
     /// - `4` (default): good balance of parallelism and overhead
+    ///
+    /// # Small images
+    ///
+    /// The value is a minimum. At encode time the interval grows until each
+    /// segment holds at least 64 MCUs and the markers cost at most 0.3% of
+    /// the file size estimated at 0.5 bits per pixel. An image too small for
+    /// one marker within that budget is written as a single segment: the DRI
+    /// segment names the whole image and the scan has no RST markers. A
+    /// 203x131 4:2:0 image at `restart_mcu_rows(1)` is one such image.
     #[must_use]
     pub fn restart_mcu_rows(mut self, rows: u16) -> Self {
         self.restart_mcu_rows = rows;
@@ -1196,35 +1144,13 @@ impl EncoderConfig {
         self
     }
 
-    /// Configure hybrid quantization (jpegli AQ + mozjpeg trellis).
-    ///
-    /// Set hybrid AQ+trellis configuration directly.
-    ///
-    /// **Expert API.** Prefer using [`.expert()`](Self::expert) with
-    /// [`ExpertConfig`](super::search::ExpertConfig) for full control.
-    ///
-    /// When a `HybridConfig` with `enabled = true` is set, it takes
-    /// priority over any `TrellisConfig`.
-    #[doc(hidden)]
-    #[cfg(feature = "trellis")]
-    #[must_use]
-    pub fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
-        self.hybrid_config = config;
-        if config.enabled {
-            self.trellis = None;
-        }
-        self
-    }
-
     // === Trellis Quantization ===
 
     /// Set trellis quantization configuration directly.
     ///
-    /// **Expert API.** Prefer using [`.expert()`](Self::expert) with
-    /// [`ExpertConfig`](super::search::ExpertConfig) for full control,
-    /// or [`.optimization()`](Self::optimization) with presets.
-    #[doc(hidden)]
-    #[cfg(feature = "trellis")]
+    /// **Expert API.** Prefer [`.optimization()`](Self::optimization)
+    /// presets. Set [`TrellisConfig::aq_coupling`] for AQ-coupled
+    /// (hybrid) per-block lambda.
     #[must_use]
     pub fn trellis(mut self, config: TrellisConfig) -> Self {
         self.trellis = Some(config);
@@ -1232,50 +1158,9 @@ impl EncoderConfig {
     }
 
     /// Get the trellis configuration, if set.
-    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn get_trellis(&self) -> Option<&TrellisConfig> {
         self.trellis.as_ref()
-    }
-
-    /// Apply expert configuration overlay.
-    ///
-    /// Customizes quantization tables and trellis/hybrid settings on top of
-    /// the current configuration. Only specified fields are overridden.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ExpertConfig, QuantTableConfig, ChromaSubsampling};
-    /// use zenjpeg::encode::trellis::TrellisConfig;
-    ///
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .expert(ExpertConfig::default()
-    ///         .tables(QuantTableConfig::MozjpegRobidoux)
-    ///         .trellis(TrellisConfig::default()));
-    /// ```
-    #[cfg(feature = "trellis")]
-    #[must_use]
-    pub fn expert(mut self, expert: super::encoder_types::ExpertConfig) -> Self {
-        // Apply tables if specified
-        if let Some(tables) = expert.tables {
-            self.quant_table_config = tables;
-        }
-
-        // Apply trellis/hybrid - hybrid takes priority
-        if let Some(ref hybrid) = expert.hybrid
-            && hybrid.enabled
-        {
-            self.hybrid_config = *hybrid;
-            self.trellis = None;
-        }
-        if (expert.hybrid.is_none() || !expert.hybrid.as_ref().is_some_and(|h| h.enabled))
-            && let Some(trellis) = expert.trellis
-        {
-            self.trellis = Some(trellis);
-        }
-
-        self
     }
 
     // === Color Mode ===
@@ -1346,8 +1231,7 @@ impl EncoderConfig {
     /// - vs JpegliProg: **+1.5 SSIM2** points average
     /// - vs cjpegli-444: **+1.6 SSIM2** and **-0.3 Butteraugli**
     ///
-    /// Uses jpegli quant tables with hybrid trellis λ=14.5 and progressive encoding.
-    /// Requires the `trellis` feature. Without it, this method is not available.
+    /// Uses jpegli quant tables with fixed-λ₁=14.5 AC trellis and progressive encoding.
     ///
     /// Quality thresholds (below these, falls back to defaults):
     /// - 4:2:0: q50+ (distance < 5.0)
@@ -1360,7 +1244,6 @@ impl EncoderConfig {
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .auto_optimize(true);
     /// ```
-    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn auto_optimize(mut self, enable: bool) -> Self {
         if !enable {
@@ -1369,23 +1252,21 @@ impl EncoderConfig {
 
         let distance = self.quality.to_distance();
 
-        // Determine if we're in the quality range where hybrid optimization wins
+        // Determine if we're in the quality range where trellis wins
         // (q50+ for both 4:2:0 and 4:4:4 based on R-D benchmarks)
-        let should_use_hybrid = match self.color_mode {
+        let should_use_trellis = match self.color_mode {
             ColorMode::YCbCr { .. } => distance < 5.0, // q50+
             _ => false,
         };
 
-        // Enable hybrid trellis with λ=14.5 (best R-D tradeoff from benchmarks)
-        // Uses default jpegli quant tables - NOT CMA-ES scaling (incompatible)
-        if should_use_hybrid {
-            self.hybrid_config = super::trellis::HybridConfig {
-                enabled: true,
-                base_lambda_scale1: 14.5,
-                ..Default::default()
-            };
-            // Clear standalone trellis (hybrid supersedes it)
-            self.trellis = None;
+        // Fixed-lambda AC trellis, λ1=14.5 (best R-D tradeoff from benchmarks;
+        // DC trellis off, matching historical auto_optimize behaviour).
+        if should_use_trellis {
+            self.trellis = Some(TrellisConfig {
+                lambda_log_scale1: 14.5,
+                dc_enabled: false,
+                ..TrellisConfig::default()
+            });
         }
 
         // Enable progressive for better compression
@@ -1455,29 +1336,6 @@ impl EncoderConfig {
     #[must_use]
     pub fn aq_enabled(mut self, enable: bool) -> Self {
         self.aq_enabled = enable;
-        self
-    }
-
-    /// Enable per-block encode diagnostics capture (UNSTABLE).
-    ///
-    /// When `true`, the encoder fills an
-    /// [`EncodeDiagnostics`](crate::encode::diagnostics::EncodeDiagnostics)
-    /// struct with pre-quant DCT coefficients, post-quant levels,
-    /// per-block AQ multipliers, entropy bits, and image-level state
-    /// (resolved config, AQ field, scan script). Retrieve from the
-    /// concrete encoder via its `take_diagnostics()` method after
-    /// `finish()`.
-    ///
-    /// **UNSTABLE.** Gated behind the `__diagnostics` cargo feature.
-    /// Type shape may change between any two patch versions.
-    /// Diagnostics encoding routes through the strip processor
-    /// (skipping `FusedParallelEncode` even with `parallel`); output
-    /// may differ from the default fused path by a handful of bytes
-    /// at quant/AQ boundaries.
-    #[cfg(feature = "__diagnostics")]
-    #[must_use]
-    pub fn with_diagnostics(mut self, enable: bool) -> Self {
-        self.diagnostics_enabled = enable;
         self
     }
 
@@ -1615,11 +1473,47 @@ impl EncoderConfig {
     /// Invalid combinations:
     /// - Progressive mode with disabled Huffman optimization
     pub fn validate(&self) -> Result<()> {
+        // The 2-table shared-chroma layouts and Robidoux psychovisual
+        // tables are YCbCr concepts; they have no defined meaning for
+        // X,Y,B channels.
+        if matches!(self.color_mode, ColorMode::Xyb { .. }) {
+            match self.quant_table_config {
+                QuantTableConfig::JpegliSharedChroma { .. } => {
+                    return Err(crate::error::Error::invalid_config(
+                        "XYB color mode requires per-component quant tables; \
+                         QuantTableConfig::JpegliSharedChroma is YCbCr-only"
+                            .into(),
+                    ));
+                }
+                QuantTableConfig::MozjpegRobidoux { .. } => {
+                    return Err(crate::error::Error::invalid_config(
+                        "MozjpegRobidoux tables are YCbCr psychovisual tables; \
+                         use QuantTableConfig::Jpegli (default) or Custom for XYB"
+                            .into(),
+                    ));
+                }
+                QuantTableConfig::PiecewiseV4 => {
+                    return Err(crate::error::Error::invalid_config(
+                        "PiecewiseV4 anchors are YCbCr-trained; \
+                         use QuantTableConfig::Jpegli (default) or Custom for XYB"
+                            .into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
         if self.scan_mode.is_progressive() && !matches!(self.huffman, HuffmanStrategy::Optimize) {
             return Err(crate::error::Error::invalid_config(
                 "progressive mode requires optimized Huffman tables".into(),
             ));
         }
+        // Custom Huffman tables (e.g. tables harvested from a decoded JPEG,
+        // issue #77) are deliberately NOT completeness-checked here: per-image
+        // optimized tables legitimately cover only the symbols that image
+        // produces, and the DHT must round-trip byte-identically. Safety is
+        // enforced at emission instead — encode_block_to_writer errors on any
+        // codeless symbol rather than writing zero bits (issue #197), and the
+        // XYB custom arms pre-verify their block arrays.
         Ok(())
     }
 
@@ -1892,6 +1786,7 @@ impl EncoderConfig {
             ColorMode::YCbCr { subsampling } => subsampling.into(),
             ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             ColorMode::Grayscale => crate::types::Subsampling::S444,
+            ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
         StreamingEncoder::new(width, height)
@@ -1931,6 +1826,7 @@ impl EncoderConfig {
             ColorMode::YCbCr { subsampling } => subsampling.into(),
             ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             ColorMode::Grayscale => crate::types::Subsampling::S444,
+            ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
         StreamingEncoder::new(width, height)
@@ -1982,20 +1878,6 @@ impl EncoderConfig {
         self.allow_16bit_quant_tables
     }
 
-    /// Returns the configured chroma-distance multiplier. `1.0` when unset.
-    #[must_use]
-    pub fn get_chroma_distance_scale(&self) -> f32 {
-        self.chroma_distance_scale
-    }
-
-    /// Returns the configured independent chroma quality, or `None`
-    /// when the mozjpeg-compat path should reuse the luma quality.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn get_chroma_quality(&self) -> Option<u8> {
-        self.chroma_quality
-    }
-
     /// Check if adaptive quantization (AQ) is enabled.
     #[must_use]
     pub fn is_aq_enabled(&self) -> bool {
@@ -2022,6 +1904,17 @@ impl EncoderConfig {
     /// Use this to preserve metadata during round-trip encoding or to inject
     /// custom metadata and MPF secondary images.
     ///
+    /// Segments that would contradict the output's colour model are dropped:
+    ///
+    /// - For RGB and XYB output ([`crate::encoder::ColorMode::Rgb`],
+    ///   [`crate::encoder::ColorMode::Xyb`]) any JFIF APP0, with its pixel
+    ///   density: JFIF means YCbCr to libjpeg-turbo, jpegli and zenjpeg, so
+    ///   keeping it would make the file decode as YCbCr. libjpeg-turbo writes no
+    ///   JFIF for RGB output either.
+    /// - For every output, any Adobe APP14: YCbCr and gray output carry none (a
+    ///   preserved transform 0 from an Adobe-RGB source would make YCbCr data
+    ///   decode as RGB), and RGB and XYB output get the encoder's own.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -2044,7 +1937,9 @@ impl EncoderConfig {
 
     /// Add a single segment (convenience method).
     ///
-    /// The segment type is inferred from the marker and data.
+    /// The segment type is inferred from the marker and data. A JFIF APP0 is
+    /// dropped for RGB and XYB output and an Adobe APP14 for every output; see
+    /// [`with_segments`](Self::with_segments).
     #[must_use]
     pub fn add_segment(mut self, marker: u8, data: Vec<u8>) -> Self {
         use super::extras::EncoderSegments;
@@ -2095,7 +1990,6 @@ impl EncoderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "trellis")]
     use crate::encode::trellis::TrellisSpeedMode;
 
     #[test]
@@ -2190,8 +2084,6 @@ mod tests {
             }
         ));
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_trellis_config() {
         // Default config has no trellis
@@ -2208,8 +2100,6 @@ mod tests {
         assert!(trellis.is_dc_enabled());
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Adaptive);
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_trellis_config_builder() {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(
@@ -2225,8 +2115,6 @@ mod tests {
         assert!(!trellis.is_dc_enabled());
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Level(5));
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_trellis_disabled() {
         let config =
@@ -2247,13 +2135,10 @@ mod tests {
             .optimization(OptimizationPreset::JpegliBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(config.deringing);
-        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
-        #[cfg(feature = "trellis")]
+        assert_eq!(config.quant_table_config, QuantTableConfig::default());
         assert!(config.trellis.is_none());
         assert!(!config.allow_16bit_quant_tables);
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_baseline() {
         use crate::encode::encoder_types::{
@@ -2263,14 +2148,15 @@ mod tests {
             .optimization(OptimizationPreset::MozjpegBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
-        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::MozjpegRobidoux { .. }
+        ));
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
         assert!(!config.allow_16bit_quant_tables);
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_progressive() {
         use crate::encode::encoder_types::{
@@ -2280,14 +2166,15 @@ mod tests {
             .optimization(OptimizationPreset::MozjpegProgressive);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveMozjpeg);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
-        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::MozjpegRobidoux { .. }
+        ));
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
         assert!(!config.allow_16bit_quant_tables);
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_max() {
         use crate::encode::encoder_types::{
@@ -2297,14 +2184,15 @@ mod tests {
             .optimization(OptimizationPreset::MozjpegMaxCompression);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
         assert!(config.deringing); // JCP_MAX_COMPRESSION enables overshoot
-        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::MozjpegRobidoux { .. }
+        ));
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough);
         assert!(!config.allow_16bit_quant_tables);
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_hybrid_progressive() {
         use crate::encode::encoder_types::{
@@ -2314,7 +2202,7 @@ mod tests {
             .optimization(OptimizationPreset::HybridProgressive);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
         assert!(config.deringing);
-        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+        assert_eq!(config.quant_table_config, QuantTableConfig::default());
         assert!(config.trellis.is_some());
         assert!(!config.allow_16bit_quant_tables);
     }
@@ -2332,8 +2220,6 @@ mod tests {
             }
         ));
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_overridable() {
         use crate::encode::encoder_types::{OptimizationPreset, ProgressiveScanMode};
@@ -2386,9 +2272,11 @@ mod tests {
         // MozjpegRobidoux is always shared chroma; requesting separate
         // should switch to Jpegli tables
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .quant_table_config(QuantTableConfig::MozjpegRobidoux)
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            })
             .separate_chroma_tables(true);
-        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+        assert_eq!(config.quant_table_config, QuantTableConfig::default());
     }
 
     #[test]
@@ -2396,8 +2284,6 @@ mod tests {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         assert!(config.is_aq_enabled(), "AQ should be enabled by default");
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_aq_enabled_mozjpeg_preset() {
         use crate::encode::encoder_types::OptimizationPreset;
@@ -2425,8 +2311,6 @@ mod tests {
             .optimization(OptimizationPreset::JpegliProgressive);
         assert!(config.is_aq_enabled());
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_aq_enabled_hybrid_preset() {
         use crate::encode::encoder_types::OptimizationPreset;
@@ -2456,8 +2340,6 @@ mod tests {
         assert!(config.is_aq_enabled()); // JpegliBaseline uses AQ
         assert!(!config.scan_mode.is_progressive()); // Baseline
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_effort_constructors_trellis() {
         use crate::encode::encoder_types::Effort;
@@ -2496,8 +2378,6 @@ mod tests {
             .unwrap();
         enc.finish().unwrap()
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_mozjpeg_aq_disabled_identical_output() {
         use crate::encode::encoder_types::OptimizationPreset;

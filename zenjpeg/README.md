@@ -1,27 +1,44 @@
-# zenjpeg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenjpeg/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenjpeg?style=flat-square)](https://crates.io/crates/zenjpeg) [![lib.rs](https://img.shields.io/crates/v/zenjpeg?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenjpeg) [![docs.rs](https://img.shields.io/docsrs/zenjpeg?style=flat-square)](https://docs.rs/zenjpeg) [![license](https://img.shields.io/crates/l/zenjpeg?style=flat-square)](https://github.com/imazen/zenjpeg/blob/main/LICENSE)
+# zenjpeg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenjpeg/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenjpeg?style=flat-square)](https://crates.io/crates/zenjpeg) [![lib.rs](https://img.shields.io/crates/v/zenjpeg?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenjpeg) [![docs.rs](https://img.shields.io/docsrs/zenjpeg?style=flat-square)](https://docs.rs/zenjpeg) [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenjpeg?style=flat-square)](#license)
 
-A pure Rust JPEG encoder and decoder. Heavily inspired by jpegli and mozjpeg, with significant original research: streaming single-pass decode and encode with bounded memory, parallel decode/encode, hybrid trellis quantization, fixed Huffman tables that are 2x better than the JPEG spec defaults, and perceptual quality tuning. A streaming encode uses ~1.8 MB peak for 1080p with fixed Huffman tables — only ~5% larger than optimized Huffman on photo content, yet still beats many popular encoders on perceptual quality. Safe SIMD on x86_64 and aarch64 via archmage tokens. `#![forbid(unsafe_code)]`.
+zenjpeg is a pure-Rust JPEG encoder and decoder with perceptual optimization. It
+began as a port of [jpegli](https://github.com/google/jpegli)
+(Bruse, Versari, Szabadka and Alakuijala) from the JPEG XL project and, after several rewrites, adds streaming single-pass
+encode and decode with bounded memory, parallel encode/decode, adaptive
+quantization, optional trellis quantization, an optional XYB perceptual color
+space, UltraHDR gain maps, lossless DCT-domain transforms, and JPEG→JPEG
+recompression. Safe SIMD on x86-64 (AVX2/AVX-512) and aarch64 (NEON) via
+[archmage](https://github.com/imazen/archmage) tokens. `#![forbid(unsafe_code)]`,
+no C dependencies.
 
 > **Note:** This crate was previously published as `jpegli-rs`. If migrating, update imports from `use jpegli::` to `use zenjpeg::`.
 
 ## Quick Start
 
-### Encode
+```toml
+[dependencies]
+zenjpeg = "0.8"
+```
+
+Encode with the `EncoderConfig` builder and decode with `Decoder`. The builder
+covers chroma subsampling, XYB color, progressive scans, embedded ICC/EXIF/XMP,
+resource limits, and cooperative cancellation.
+
+### Encode (builder)
 
 ```rust
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
 enc.push_packed(&rgb_bytes, Unstoppable)?;
 let jpeg_bytes: Vec<u8> = enc.finish()?;
 ```
 
-### Decode
+### Decode (builder)
 
 ```rust
 use zenjpeg::decoder::Decoder;
-use enough::Unstoppable;
+use zenjpeg::encoder::Unstoppable;
 
 let result = Decoder::new().decode(&jpeg_bytes, Unstoppable)?;
 let rgb_pixels: &[u8] = result.pixels_u8().expect("u8 output");
@@ -45,13 +62,54 @@ while !reader.is_finished() {
 }
 ```
 
+## End-to-End: decode → re-encode (server-side, with limits + cancellation)
+
+Read a JPEG, decode it under a pixel/memory limit and a cancellation token, then
+re-encode the RGB pixels at quality 80. Every type is imported with its real path.
+
+```rust
+use std::fs;
+use zenjpeg::decoder::Decoder;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
+
+fn transcode(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let jpeg_bytes = fs::read(input_path)?;
+
+    // Decode with DoS limits + a stop token. `Unstoppable` never cancels;
+    // pass any `&impl zenjpeg::encoder::Stop` (e.g. a shared atomic flag) instead
+    // to support user-initiated cancellation.
+    let decoded = Decoder::new()
+        .max_pixels(120_000_000) // reject decompression bombs (120 MP, admits ~108 MP camera photos)
+        .max_memory(512 * 1024 * 1024) // cap allocation at 512 MB
+        .decode(&jpeg_bytes, Unstoppable)?;
+
+    let (width, height) = decoded.dimensions();
+    let rgb: &[u8] = decoded.pixels_u8().expect("u8 output (default OutputTarget::Srgb8)");
+
+    // Re-encode at quality 80.0, 4:2:0 chroma.
+    let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(rgb, Unstoppable)?;
+    let out: Vec<u8> = enc.finish()?;
+
+    fs::write(output_path, &out)?;
+    Ok(())
+}
+```
+
+`Unstoppable` is re-exported from `zenjpeg::encoder` and is the same type the
+decoder accepts, so a single import covers both the decode and encode calls. To
+set all limits in one value (and reuse them via the request builder), use
+[`Limits`](#per-image-metadata-three-layer-pattern):
+`zenjpeg::encoder::Limits::default().max_pixels(120_000_000).max_memory(512 * 1024 * 1024)`.
+
 ## Heritage
 
-Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli) from Google's JPEG XL project. After six rewrites it shares ideas but little code with the original.
+Started as a port of [jpegli](https://github.com/google/jpegli) (Bruse, Versari, Szabadka and Alakuijala) from the JPEG XL project. After six rewrites it shares ideas but little code with the original.
 
 **From jpegli:** adaptive quantization, XYB color space, perceptual quant tables, zero-bias coefficient rounding.
 
-**From mozjpeg:** overshoot deringing (enabled by default), trellis quantization, hybrid trellis mode. Requires `trellis` feature.
+**From mozjpeg:** overshoot deringing (enabled by default), trellis quantization, hybrid trellis mode.
 
 **Our own:** pure safe Rust, streaming row-by-row API, parallel encode/decode, deblocking filters, UltraHDR gain maps, JPEG source detection and re-encoding recommendations.
 
@@ -59,32 +117,42 @@ Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpe
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `decoder` | **yes** | JPEG decoder (streaming, parallel, deblocking) |
-| `trellis` | no | Trellis quantization, `auto_optimize()`, mozjpeg/hybrid presets. Compile error without it. |
+| `extended-jpeg` | yes | Arithmetic, 12-bit DCT and predictive lossless decoding; disable defaults for the smaller core decoder |
+| `metadata` | yes | XMP container directories (`container::xmp`), gain-map and depth-map detection, and the `detect` encoder probe; disabling drops the XML parser from the binary (~185 KB code) — pixel decode, ICC extraction, MPF and EXIF orientation are unaffected |
 | `parallel` | no | Multi-threaded encode/decode via rayon |
-| `moxcms` | no | Color management (pure Rust). Required for `.correct_color()` and XYB |
+| `moxcms` | no | ICC color management (pure Rust), required for `.correct_color()` |
 | `ultrahdr` | no | UltraHDR HDR gain map encode/decode |
 | `zencodec` | no | zencodec trait implementations for cross-codec pipelines |
 | `layout` | no | Lossless transforms + lossy decode→resize→encode pipeline |
+| `recompress` | no | JPEG→JPEG recompression to a target perceptual quality (see [Recompress](#recompress)). Core path; no heavy deps |
+| `recompress-expert` | no | Exposes `recompress::expert` internals (unstable, not semver-covered) |
+| `boundary-rd` | no | Opt-in block-boundary continuity refinement (off by default; output is byte-identical unless enabled) |
 
-`decoder` is on by default. The decoder API is prerelease; expect breaking changes.
+Ordinary 8-bit sequential/progressive Huffman JPEG and XYB decoding remain
+available without `extended-jpeg`. Applications already using
+`default-features = false` must explicitly enable `extended-jpeg` to retain
+arithmetic, 12-bit DCT and predictive lossless decoding. Excluded formats return
+an unsupported-feature error; internal arithmetic precision is unchanged.
+
+The **decoder and trellis quantization are always compiled** — the historical
+`decoder` and `trellis` feature flags are now no-ops kept only so existing
+`features = [...]` lines keep resolving. `auto_optimize()` and the mozjpeg/hybrid
+presets need no feature flag; trellis is data-gated and off by default at runtime,
+turned on via `auto_optimize(true)`. The decoder API is prerelease — expect
+breaking changes.
 
 ```toml
 # Encode + decode (most common)
 [dependencies]
 zenjpeg = "0.8"
 
-# Best compression (trellis + auto_optimize)
+# High-performance server (parallel encode + decode)
 [dependencies]
-zenjpeg = { version = "0.6", features = ["trellis"] }
-
-# High-performance server
-[dependencies]
-zenjpeg = { version = "0.6", features = ["parallel", "trellis"] }
+zenjpeg = { version = "0.8", features = ["parallel"] }
 
 # Color-managed decode (XYB, ICC profiles)
 [dependencies]
-zenjpeg = { version = "0.6", features = ["moxcms"] }
+zenjpeg = { version = "0.8", features = ["moxcms"] }
 ```
 
 ## Encoder
@@ -96,23 +164,29 @@ zenjpeg = { version = "0.6", features = ["moxcms"] }
 | `EncoderConfig::ycbcr(q, sub)` | Standard JPEG (most compatible) |
 | `EncoderConfig::xyb(q, b_sub)` | XYB perceptual color (better quality, needs `moxcms` to decode) |
 | `EncoderConfig::grayscale(q)` | Single-channel |
+| `EncoderConfig::rgb(q)` | No color transform — channels stored verbatim as R, G, B at 4:4:4 (Adobe APP14 transform=0). For channel-packed data (e.g. microscopy stains); larger files than YCbCr on photos |
+
+Quality accepts a plain number (`85` or `85.0`, the 0–100 scale) or a `Quality`
+variant (see [Quality Options](#quality-options)).
 
 ### Entry Points
 
 | Method | Input Type | Use Case |
 |--------|------------|----------|
-| `encode_from_bytes(w, h, layout)` | `&[u8]` | Raw byte buffers |
-| `encode_from_rgb::<P>(w, h)` | `rgb` crate types | `RGB<u8>`, `RGBA<f32>`, etc. |
-| `encode_from_ycbcr_planar(w, h)` | `YCbCrPlanes` | Video pipeline output |
+| `encode_from_bytes(w: u32, h: u32, layout)` | `&[u8]` | Raw byte buffers |
+| `encode_from_rgb::<P>(w: u32, h: u32)` | `rgb` crate types | `RGB<u8>`, `RGBA<f32>`, etc. |
+| `encode_from_ycbcr_planar(w: u32, h: u32)` | `YCbCrPlanes` | Video pipeline output |
 
-All three return a streaming `Encoder`. Push rows with `push_packed()`, finish with `finish()`. One-shot convenience: `config.request().encode(&pixels, w, h)`.
+Width and height are `u32` (pixels) on every entry point. All three return a streaming `Encoder`. Push rows with `push_packed()`, finish with `finish()`. One-shot convenience: `config.request().encode(&pixels, w, h)`.
+
+**Streaming output.** Pushing rows keeps memory low; getting bytes out before `finish` also needs fixed (or custom) Huffman tables and a sequential scan, since optimized tables and progressive scans need every block first. Through the `zencodec` feature, `JpegEncoderConfig::new().with_progressive(false).with_huffman(false)` makes `Encoder::begin` report `OutputTiming::streaming(31)` (4:2:0): the header is pending at once and each MCU row follows at most 31 rows behind, byte-identical to the one-shot encode. Fixed tables make the file larger than optimized ones.
 
 ### Builder Methods
 
 | Method | Default | Notes |
 |--------|---------|-------|
 | `.progressive(bool)` | `true` | ~3% smaller, ~2x slower |
-| `.auto_optimize(bool)` | `false` | Best quality/size (hybrid trellis). Requires `trellis` feature |
+| `.auto_optimize(bool)` | `false` | Best quality/size (hybrid trellis) |
 | `.deringing(bool)` | `true` | Overshoot deringing for documents/graphics |
 | `.separate_chroma_tables(bool)` | `true` | 3 quant tables (Y, Cb, Cr) vs 2 |
 | `.huffman(strategy)` | `Optimize` | Huffman table strategy |
@@ -124,7 +198,7 @@ All three return a streaming `Encoder`. Push rows with `push_packed()`, finish w
 use zenjpeg::encoder::{EncoderConfig, Quality, ChromaSubsampling};
 
 // Simple quality scale (0-100)
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 
 // Target a specific metric
 let config = EncoderConfig::ycbcr(Quality::ApproxMozjpeg(80), ChromaSubsampling::Quarter);
@@ -132,15 +206,15 @@ let config = EncoderConfig::ycbcr(Quality::ApproxSsim2(90.0), ChromaSubsampling:
 let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(1.0), ChromaSubsampling::Quarter);
 ```
 
-### Trellis Modes (requires `trellis` feature)
+### Trellis Modes
 
 **Default (no trellis):** adaptive quantization with perceptual zero-bias. Fast, good quality.
 
 **Hybrid trellis (`auto_optimize(true)`):** combines jpegli AQ with mozjpeg trellis. Best quality/size tradeoff. +1.5 SSIMULACRA2 points vs default at matched file size.
 
 ```rust
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    .auto_optimize(true); // requires trellis feature
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    .auto_optimize(true);
 ```
 
 **Mozjpeg-compatible presets:** `MozjpegBaseline`, `MozjpegProgressive`, `HybridProgressive`, `HybridMaxCompression` via `ExpertConfig::from_preset()`.
@@ -150,26 +224,30 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 For encoding multiple images with the same config but different metadata:
 
 ```rust
-use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Limits, Unstoppable};
 
 // Layer 1: Reusable config
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
     .progressive(true);
 
 // Layer 2: Per-image request (metadata, limits, stop token)
 let jpeg = config.request()
     .icc_profile(&srgb_icc_bytes)
+    .limits(Limits::default().max_output(20 * 1024 * 1024)) // cap encoded size at 20 MB
     .encode(&pixels, 1920, 1080)?;
 
 // Layer 3: Streaming execution
 let mut encoder = config.request()
     .icc_profile(&p3_icc_bytes)
     .encode_from_rgb::<rgb::RGB<u8>>(1920, 1080)?;
-encoder.push_packed(&pixels, enough::Unstoppable)?;
+encoder.push_packed(&pixels, Unstoppable)?;
 let jpeg = encoder.finish()?;
 ```
 
-Request builder methods: `.icc_profile()`, `.exif()`, `.xmp()`, `.stop()`, `.limits()`.
+Request builder methods (on `config.request()`): `.icc_profile(&[u8])`,
+`.exif(impl Into<Exif>)`, `.xmp(&[u8])`, `.stop(&dyn Stop)`, and `.limits(Limits)` —
+where `Limits` is `zenjpeg::encoder::Limits` built via
+`Limits::default().max_pixels(n).max_memory(n).max_output(n)`.
 
 ### Pixel Layouts
 
@@ -199,9 +277,23 @@ Request builder methods: `.icc_profile()`, `.exif()`, `.xmp()`, `.stop()`, `.lim
 | `.transform(t)` | none | Lossless rotation/flip during decode |
 | `.crop(region)` | none | Pixel-level crop (IDCT skipped outside region) |
 | `.num_threads(n)` | `0` (auto) | `1` forces sequential |
-| `.strictness(level)` | `Balanced` | `Strict`, `Balanced`, `Lenient`, `Permissive` |
-| `.max_pixels(n)` | 100M | DoS protection |
-| `.max_memory(n)` | 512 MB | Memory limit |
+| `.strictness(Strictness)` | `Balanced` | `Strictness::{Strict, Balanced, Lenient, Permissive}` (type at `zenjpeg::decoder::Strictness`) |
+| `.max_pixels(u64)` | 120M | DoS protection |
+| `.max_memory(u64)` | 512 MB | Memory limit |
+
+`Strictness` is `zenjpeg::decoder::Strictness`; `.max_pixels` / `.max_memory` take a
+`u64`. Example:
+
+```rust
+use zenjpeg::decoder::{Decoder, Strictness};
+use zenjpeg::encoder::Unstoppable;
+
+let result = Decoder::new()
+    .strictness(Strictness::Strict)   // reject any spec violation or truncation
+    .max_pixels(120_000_000)          // 120 MP cap (admits ~108 MP camera photos)
+    .max_memory(512 * 1024 * 1024)    // 512 MB cap
+    .decode(&jpeg_bytes, Unstoppable)?;
+```
 
 ### Decode Paths
 
@@ -209,7 +301,7 @@ For most web JPEGs, `Decoder::new().decode(&data, stop)` hits the streaming path
 
 Progressive, CMYK, f32 output, deblocking (Knusperli), and transforms go through the coefficient path. Parallel decode activates automatically when DRI restart markers are present and the image has 1024+ MCU blocks.
 
-See `docs/DECODER_PATHS.md` for the full decision flow and path matrix.
+See [docs/DECODER_PATHS.md](https://github.com/imazen/zenjpeg/blob/main/zenjpeg/docs/DECODER_PATHS.md) for the full decision flow and path matrix.
 
 ### Output Targets
 
@@ -238,10 +330,11 @@ JPEG's 8x8 block structure creates visible grid artifacts at low quality. The de
 
 ```rust
 use zenjpeg::decoder::{Decoder, DeblockMode};
+use zenjpeg::encoder::Unstoppable;
 
 let result = Decoder::new()
     .deblock(DeblockMode::Auto)
-    .decode(&jpeg_data, enough::Unstoppable)?;
+    .decode(&jpeg_data, Unstoppable)?;
 ```
 
 | DeblockMode | Quality gain (zensim vs original) | Speed | Streaming? |
@@ -259,11 +352,12 @@ All modes work with both `decode()` and `scanline_reader()`. When `scanline_read
 Requires the `moxcms` feature (pure Rust). Converts the embedded ICC profile to the target color space during decode.
 
 ```rust
-use zenjpeg::color::icc::TargetColorSpace;
+use zenjpeg::decoder::{Decoder, TargetColorSpace};
+use zenjpeg::encoder::Unstoppable;
 
 let img = Decoder::new()
     .correct_color(Some(TargetColorSpace::Srgb))
-    .decode(&jpeg_data, enough::Unstoppable)?;
+    .decode(&jpeg_data, Unstoppable)?;
 ```
 
 Default is `None` -- no color conversion. Pixels are returned in the JPEG's native color space.
@@ -274,15 +368,16 @@ Rotate, flip, and transpose by manipulating DCT coefficients directly. No decode
 
 ```rust
 use zenjpeg::lossless::{transform, apply_exif_orientation, LosslessTransform, TransformConfig};
+use zenjpeg::encoder::Unstoppable;
 
 // Rotate 90 degrees losslessly
 let rotated = transform(&jpeg_data, &TransformConfig {
     transform: LosslessTransform::Rotate90,
     ..Default::default()
-}, enough::Unstoppable)?;
+}, Unstoppable)?;
 
 // Auto-correct EXIF orientation
-let oriented = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
+let oriented = apply_exif_orientation(&jpeg_data, Unstoppable)?;
 ```
 
 All 8 D4 dihedral group elements: `None`, `FlipHorizontal`, `FlipVertical`, `Transpose`, `Rotate90`, `Rotate180`, `Rotate270`, `Transverse`.
@@ -294,8 +389,11 @@ UltraHDR embeds a gain map inside a standard JPEG so HDR-capable displays get HD
 #### Encode
 
 ```rust
-use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
-use zenjpeg::ultrahdr::{encode_ultrahdr, GainMapConfig, ToneMapConfig, UhdrRawImage};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Unstoppable};
+use zenjpeg::ultrahdr::{
+    encode_ultrahdr, GainMapConfig, ToneMapConfig, UhdrColorGamut, UhdrColorTransfer,
+    UhdrPixelFormat, UhdrRawImage,
+};
 
 // Your HDR pixels (linear RGB float, any gamut)
 let hdr = UhdrRawImage::from_f32_rgb(
@@ -311,7 +409,7 @@ let ultrahdr_jpeg = encode_ultrahdr(
     &ToneMapConfig::default(),   // SDR tonemapping parameters
     &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
     75.0,                        // gain map JPEG quality
-    enough::Unstoppable,
+    Unstoppable,
 )?;
 // ultrahdr_jpeg is a standard JPEG — works everywhere, HDR on supported displays
 ```
@@ -351,7 +449,10 @@ Memory stays bounded regardless of image size — ~500KB peak for SDR-only, ~1MB
 #### Detection
 
 ```rust
-let decoded = Decoder::new().decode(&jpeg_data, enough::Unstoppable)?;
+use zenjpeg::decoder::Decoder;
+use zenjpeg::encoder::Unstoppable;
+
+let decoded = Decoder::new().decode(&jpeg_data, Unstoppable)?;
 if let Some(extras) = decoded.extras() {
     if extras.is_ultrahdr() {
         let (metadata, _) = extras.ultrahdr_metadata().unwrap().unwrap();
@@ -364,15 +465,49 @@ Non-UltraHDR JPEGs decode normally — the feature adds zero overhead when no ga
 
 ### Cooperative Cancellation
 
-Both encoder and decoder accept `Stop` tokens for graceful shutdown:
+Both encoder and decoder accept a `Stop` token for graceful shutdown. `Unstoppable`
+and the `Stop` trait are both re-exported from `zenjpeg::encoder` (backed by the
+`enough` crate) — you do **not** need to depend on `enough` directly. The same
+`Unstoppable` value works for every decode and encode call.
+
+The no-cancel case needs nothing beyond zenjpeg:
 
 ```rust
-use enough::Unstoppable;
+use zenjpeg::decoder::Decoder;
+use zenjpeg::encoder::Unstoppable; // re-export; no direct `enough` dep needed
 
-// Never cancel
 let image = Decoder::new().decode(&jpeg_data, Unstoppable)?;
+```
 
-// Custom cancellation (e.g., user clicked cancel)
+For real cancellation, implement the `Stop` trait on your own type (an `AtomicBool`
+flag is the usual choice). The trait's one required method is
+`check(&self) -> Result<(), StopReason>`; `StopReason` lives in the `enough` crate,
+so this case needs `enough` as a direct dependency:
+
+```toml
+[dependencies]
+zenjpeg = "0.8"
+enough = "0.4"
+```
+
+```rust
+use std::sync::atomic::{AtomicBool, Ordering};
+use enough::{Stop, StopReason};
+use zenjpeg::decoder::Decoder;
+
+struct CancelFlag(AtomicBool);
+impl Stop for CancelFlag {
+    fn check(&self) -> Result<(), StopReason> {
+        if self.0.load(Ordering::Relaxed) {
+            Err(StopReason::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+let cancel_token = CancelFlag(AtomicBool::new(false));
+// ... a watchdog thread can flip the flag: cancel_token.0.store(true, Ordering::Relaxed);
 let result = Decoder::new().decode(&jpeg_data, &cancel_token);
 ```
 
@@ -396,8 +531,56 @@ let config = EncoderConfig::ycbcr(
 
 Detected families: `LibjpegTurbo`, `Mozjpeg`, `CjpegliYcbcr`, `CjpegliXyb`, `ImageMagick`, `IjgFamily`, `Unknown`. Configurable quality/size tradeoff via `info.reencode_settings(tolerance)`.
 
+## Recompress
+
+Requires the `recompress` feature. Recompress an already-encoded JPEG to a
+target **zensim Profile A** quality (`[0, 100]`, higher = closer to the
+original) with **minimal generation loss** and **no size regression**. One
+entry point routes between `NoOp` / `Lossless` (scan re-pack) / `Preserve`
+(coefficient-domain requant, incl. same-family Robidoux retargeting for
+mozjpeg/ImageMagick) / `Tuned` / `Deblock`, picking the smallest output that
+hits the target, using per-encoder calibration (libjpeg-turbo, mozjpeg,
+jpegli) fit on 50 CID22-512 references.
+
+```rust
+use zenjpeg::recompress::{recompress, Budget, Confidence, RecompressOptions};
+
+let opts = RecompressOptions::new(80.0)        // target zensim-A, 0..=100
+    .with_budget(Budget::OneShot)               // default; no IQA loop
+    .with_confidence(Confidence::P50);          // P25/P50/P75/P90/P95 delivery confidence
+
+let result = recompress(&jpeg_bytes, &opts)?;
+
+// `output_bytes()` is `Some` for a recompressed/lossless result, `None` for
+// NoOp (source already meets target — keep the input):
+let out: &[u8] = result.output_bytes().unwrap_or(&jpeg_bytes);
+# Ok::<(), zenjpeg::recompress::Error>(())
+```
+
+The result carries `strategy` and the calibrated projected quality. Measured
+IQA refinement is temporarily removed; `measured_zensim_a` is `None` and
+all budget variants use one-shot routing. Content-adaptive configuration and
+learned picker/targeting APIs are also deferred. The complete integration is
+preserved on [to-revisit/zenanalyze](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze).
+JPEG adaptive quantization and trellis remain available.
+
+Invariants: output is **never larger than the source** (lossless fallback +
+byte-level guard), and the user's target — not the confidence-shifted aim —
+gates the `NoOp` decision. See
+[docs/recompress/RECOMPRESSION_COMPENDIUM.md](https://github.com/imazen/zenjpeg/blob/main/docs/recompress/RECOMPRESSION_COMPENDIUM.md)
+for the strategy taxonomy, generation-loss math, and calibration provenance.
+
 ## Performance
 
+Decode is competitive with libjpeg-turbo (C+NASM) on baseline and faster on
+progressive; encode lands within ~15–20% of C++ jpegli at matched quality, and
+parallel decode scales near-linearly when restart markers are present. All
+numbers below were measured on a Ryzen 9 7950X (WSL2) with the default compiler
+target (**no** `-C target-cpu=native`). Full methodology, competitor versions,
+and pinned-commit reproduction:
+**[benchmarks/README.md](https://github.com/imazen/zenjpeg/blob/main/benchmarks/README.md)**.
+
+<!-- crates.io:skip-start -->
 ### Encode
 
 Tested on CID22 corpus (337 real photos), size-matched comparison against mozjpeg (Ryzen 9 7950X):
@@ -430,13 +613,14 @@ Parallel decode (baseline with DRI, `--features parallel`):
 | 4096 | 65.3ms | 8.74ms | **0.13x** |
 
 Parallel activates automatically with DRI and 1024+ MCU blocks. Use `num_threads(1)` to force sequential.
+<!-- crates.io:skip-end -->
 
 ## Known Limitations
 
-- **Baseline decode speed**: 6% slower than libjpeg-turbo (C+NASM) on baseline JPEGs. Faster on progressive.
-- **XYB decode speed**: XYB images use the f32 pipeline; standard JPEGs use fast integer IDCT.
+- **Baseline decode speed**: ~6% slower than libjpeg-turbo (C+NASM) on baseline JPEGs with the default Triangle upsampling. Faster on progressive.
+- **XYB decode speed**: XYB images use the f32 pipeline; standard JPEGs use the fast integer IDCT.
 - **XYB file size**: Baseline mode is 2-3% larger than C++ jpegli. Progressive mode matches or beats.
-- **Trellis is opt-in**: `auto_optimize()` and mozjpeg presets require `features = ["trellis"]`.
+- **Decoder API is prerelease**: expect breaking changes.
 
 ## Table Optimization
 
@@ -466,6 +650,18 @@ Tested against C++ jpegli on frymire.png (1118x1105) using `jpegli_set_distance(
 
 When comparing: always use `jpegli_set_distance()`, not `jpeg_set_quality()`. The latter uses 2 chroma tables vs our 3, inflating apparent differences. Use `.separate_chroma_tables(false)` to match 2-table mode.
 
+## SIMD and Platform Support
+
+SIMD dispatch is handled by [archmage](https://github.com/imazen/archmage) at
+runtime — no compile-time target flags required. Supported instruction sets:
+
+- **x86-64**: AVX2/FMA, AVX-512
+- **aarch64**: NEON
+- **wasm32**: SIMD128 (build with `RUSTFLAGS="-C target-feature=+simd128"`)
+- Scalar fallback on all other targets
+
+CI runs on Ubuntu x86-64, Ubuntu ARM64, macOS ARM64, macOS Intel, Windows x86-64, Windows ARM64, and i686 (via `cross`).
+
 ## Development
 
 ```bash
@@ -474,24 +670,130 @@ cargo test --release --test cpp_parity_locked  # Quick C++ parity check
 cargo test --release -- --ignored       # Full suite (needs C++ build + corpus)
 ```
 
-## License
-
-Sustainable, large-scale open source work requires a funding model, and I have been
-doing this full-time for 15 years. If you are using this for closed-source development
-AND make over $1 million per year, you'll need to buy a commercial license at
-https://www.imazen.io/pricing
-
-Commercial licenses are similar to the Apache 2 license but company-specific, and on
-a sliding scale. You can also use this under the AGPL v3.
-
 ## Acknowledgments
 
-Built on ideas from [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
-(Google, BSD-3-Clause) and [mozjpeg](https://github.com/nickt/mozjpeg-rs) (Mozilla).
-After six rewrites from the initial jpegli port, zenjpeg is an independent project
-with its own architecture, streaming pipeline, and quality optimizations.
+Built on ideas from [jpegli](https://github.com/google/jpegli)
+(Bruse, Versari, Szabadka and Alakuijala — see their [Jpegli paper](https://arxiv.org/abs/2403.18589))
+and [mozjpeg](https://github.com/mozilla/mozjpeg)
+(the mozilla/mozjpeg project). After six rewrites from the initial jpegli port, zenjpeg is an
+independent project with its own architecture, streaming pipeline, and quality
+optimizations.
 
 ## AI Disclosure
 
-Developed with assistance from Claude (Anthropic). Extensively tested against
-C++ reference with 930+ tests. Report issues at https://github.com/imazen/zenjpeg/issues
+Developed with assistance from Claude (Anthropic). Extensively tested against the
+C++ reference with 930+ tests. Report issues at <https://github.com/imazen/zenjpeg/issues>.
+
+## License
+
+Dual-licensed: [AGPL-3.0](https://github.com/imazen/zenjpeg/blob/main/LICENSE-AGPL3) or [commercial](https://github.com/imazen/zenjpeg/blob/main/LICENSE-COMMERCIAL).
+
+I've maintained and developed open-source image server software -- and the 40+
+library ecosystem it depends on -- full-time since 2011. Fifteen years of
+continual maintenance, backwards compatibility, support, and the (very rare)
+security patch. That kind of stability requires sustainable funding, and
+dual-licensing is how we make it work without venture capital or rug-pulls.
+Support sustainable and secure software; swap patch tuesday for patch leap-year.
+
+[Our open-source products](https://www.imazen.io/open-source)
+
+**Your options:**
+
+- **Startup license** -- $1 if your company has under $1M revenue and fewer
+  than 5 employees. [Get a key](https://www.imazen.io/pricing)
+- **Commercial subscription** -- Governed by the Imazen Site-wide Subscription
+  License v1.1 or later. Apache 2.0-like terms, no source-sharing requirement.
+  Sliding scale by company size.
+  [Pricing & 60-day free trial](https://www.imazen.io/pricing)
+- **AGPL v3** -- Free and open. Share your source if you distribute.
+
+See [LICENSE-COMMERCIAL](https://github.com/imazen/zenjpeg/blob/main/LICENSE-COMMERCIAL) for details.
+
+## Image tech I maintain
+
+| | |
+|:--|:--|
+| **Codecs** ¹ | **zenjpeg** · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenjxl-decoder] · [jxl-encoder] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
+| Codec internals | [zenrav1e] · [rav1d-safe] · [zenravif] · [zenavif-parse] · [zenavif-serialize] |
+| Compression | [zenflate] · [zenzop] · [zenzstd] |
+| Processing | [zenresize] · [zenquant] · [zenblend] · [zenfilters] · [zensally] · [zentone] |
+| Pixels & color | [zenpixels] · [zenpixels-convert] · [linear-srgb] · [garb] · [zenyuv] |
+| Pipeline & framework | [zenpipe] · [zencodec] · [zencodecs] · [zenlayout] · [zennode] · [zenwasm] · [zentract] |
+| Metrics | [zensim] · [fast-ssim2] · [butteraugli] · [zenmetrics] · [resamplescope-rs] |
+| Pickers & ML | [zenanalyze] · [zenpredict] · [zenpicker] · [zenanalyze-api] |
+| Test corpora | [codec-corpus] · [imazen-26] |
+| Products | [Imageflow] image engine ([.NET][imageflow-dotnet] · [Node][imageflow-node] · [Go][imageflow-go]) · [Imageflow Server] · [ImageResizer] (C#) |
+
+<sub>¹ pure-Rust, `#![forbid(unsafe_code)]` codecs, as of 2026</sub>
+
+### General Rust awesomeness
+
+[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter] · [zenutils]
+
+[Open source](https://www.imazen.io/open-source) · [@imazen](https://github.com/imazen) · [@lilith](https://github.com/lilith) · [lib.rs/~lilith](https://lib.rs/~lilith)
+
+[zenpng]: https://github.com/imazen/zenpng
+[zenwebp]: https://github.com/imazen/zenwebp
+[zengif]: https://github.com/imazen/zengif
+[zenavif]: https://github.com/imazen/zenavif
+[zenjxl]: https://github.com/imazen/zenjxl
+[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
+[jxl-encoder]: https://github.com/imazen/jxl-encoder
+[zenbitmaps]: https://github.com/imazen/zenbitmaps
+[heic]: https://github.com/imazen/heic
+[zentiff]: https://github.com/imazen/zenextras
+[zenpdf]: https://github.com/imazen/zenextras
+[zensvg]: https://github.com/imazen/zenextras
+[zenjp2]: https://github.com/imazen/zenextras
+[zenraw]: https://github.com/imazen/zenraw
+[ultrahdr]: https://github.com/imazen/ultrahdr
+[zenrav1e]: https://github.com/imazen/zenrav1e
+[rav1d-safe]: https://github.com/imazen/rav1d-safe
+[zenravif]: https://github.com/imazen/cavif-rs
+[zenavif-parse]: https://github.com/imazen/zenavif
+[zenavif-serialize]: https://github.com/imazen/zenavif
+[zenflate]: https://github.com/imazen/zenflate
+[zenzop]: https://github.com/imazen/zenzop
+[zenzstd]: https://github.com/imazen/zenzstd
+[zenresize]: https://github.com/imazen/zenresize
+[zenquant]: https://github.com/imazen/zenquant
+[zenblend]: https://github.com/imazen/zenblend
+[zenfilters]: https://github.com/imazen/zenpipe
+[zensally]: https://github.com/imazen/zensally
+[zentone]: https://github.com/imazen/zentone
+[zenpixels]: https://github.com/imazen/zenpixels
+[zenpixels-convert]: https://github.com/imazen/zenpixels
+[linear-srgb]: https://github.com/imazen/linear-srgb
+[garb]: https://github.com/imazen/garb
+[zenyuv]: https://github.com/imazen/zenjpeg
+[zenpipe]: https://github.com/imazen/zenpipe
+[zencodec]: https://github.com/imazen/zencodec
+[zencodecs]: https://github.com/imazen/zenpipe
+[zenlayout]: https://github.com/imazen/zenpipe
+[zennode]: https://github.com/imazen/zennode
+[zenwasm]: https://github.com/imazen/zenwasm
+[zentract]: https://github.com/imazen/zentract
+[zensim]: https://github.com/imazen/zensim
+[fast-ssim2]: https://github.com/imazen/fast-ssim2
+[butteraugli]: https://github.com/imazen/butteraugli
+[zenmetrics]: https://github.com/imazen/zenmetrics
+[resamplescope-rs]: https://github.com/imazen/resamplescope-rs
+[zenanalyze]: https://github.com/imazen/zenanalyze
+[zenpredict]: https://github.com/imazen/zenanalyze
+[zenpicker]: https://github.com/imazen/zenanalyze
+[zenanalyze-api]: https://github.com/imazen/zenanalyze
+[codec-corpus]: https://github.com/imazen/codec-corpus
+[imazen-26]: https://github.com/imazen/imazen-26
+[zenbench]: https://github.com/imazen/zenbench
+[archmage]: https://github.com/imazen/archmage
+[magetypes]: https://github.com/imazen/archmage
+[enough]: https://github.com/imazen/enough
+[whereat]: https://github.com/lilith/whereat
+[cargo-copter]: https://github.com/imazen/cargo-copter
+[zenutils]: https://github.com/imazen/zenutils
+[Imageflow]: https://github.com/imazen/imageflow
+[Imageflow Server]: https://github.com/imazen/imageflow-dotnet-server
+[ImageResizer]: https://github.com/imazen/resizer
+[imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
+[imageflow-node]: https://github.com/imazen/imageflow-node
+[imageflow-go]: https://github.com/imazen/imageflow-go

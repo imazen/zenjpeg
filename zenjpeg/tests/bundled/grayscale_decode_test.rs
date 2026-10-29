@@ -28,8 +28,7 @@ fn load_test_image(path: &str) -> Option<Vec<u8>> {
 #[test]
 fn test_grayscale_decode_basic() {
     let Some(data) = load_test_image(GRAY_TEST_IMAGE) else {
-        eprintln!("Skipping test: {} not found", GRAY_TEST_IMAGE);
-        return;
+        panic!("missing test prerequisite: {GRAY_TEST_IMAGE} not found");
     };
 
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
@@ -61,8 +60,7 @@ fn test_grayscale_decode_basic() {
 #[test]
 fn test_grayscale_decode_to_rgb() {
     let Some(data) = load_test_image(GRAY_TEST_IMAGE) else {
-        eprintln!("Skipping test: {} not found", GRAY_TEST_IMAGE);
-        return;
+        panic!("missing test prerequisite: {GRAY_TEST_IMAGE} not found");
     };
 
     // Decode grayscale as RGB (should expand gray to R=G=B)
@@ -98,8 +96,7 @@ fn test_grayscale_decode_to_rgb() {
 #[test] // Grayscale scanline reading not yet supported
 fn test_grayscale_scanline_reader() {
     let Some(data) = load_test_image(GRAY_TEST_IMAGE) else {
-        eprintln!("Skipping test: {} not found", GRAY_TEST_IMAGE);
-        return;
+        panic!("missing test prerequisite: {GRAY_TEST_IMAGE} not found");
     };
 
     // Try scanline reader
@@ -141,8 +138,10 @@ fn test_grayscale_scanline_reader() {
 fn test_ultrahdr_gainmap_extraction() {
     let ultrahdr_path = ultrahdr_test_image_path();
     let Some(data) = load_test_image(ultrahdr_path.to_str().unwrap()) else {
-        eprintln!("Skipping test: {} not found", ultrahdr_path.display());
-        return;
+        panic!(
+            "missing test prerequisite: {} not found",
+            ultrahdr_path.display()
+        );
     };
 
     let decoder = Decoder::new();
@@ -203,24 +202,24 @@ fn test_ultrahdr_gainmap_extraction() {
 fn test_gainmap_grayscale_decode_streaming() {
     let ultrahdr_path = ultrahdr_test_image_path();
     let Some(data) = load_test_image(ultrahdr_path.to_str().unwrap()) else {
-        eprintln!("Skipping test: {} not found", ultrahdr_path.display());
-        return;
+        panic!(
+            "missing test prerequisite: {} not found",
+            ultrahdr_path.display()
+        );
     };
 
     let decoded = Decoder::new().decode(&data, Unstoppable).expect("decode");
     let extras = match decoded.extras() {
         Some(e) if e.is_ultrahdr() => e,
         _ => {
-            eprintln!("Skipping: not an UltraHDR image");
-            return;
+            panic!("test asset is not an UltraHDR image - wrong prerequisite file?");
         }
     };
 
     let gainmap_jpeg = match extras.gainmap() {
         Some(gm) => gm,
         None => {
-            eprintln!("Skipping: no gain map found");
-            return;
+            panic!("UltraHDR test asset has no gain map - wrong prerequisite file?");
         }
     };
 

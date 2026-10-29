@@ -1,0 +1,1768 @@
+# zenjpeg public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenjpeg.txt 1722 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3553 lines (915 hidden + 7085 excluded-feature)
+
+## summary
+#
+#   pub modules                                19
+#   pub types (struct/enum/trait/alias)       148
+#   pub consts/statics                         94
+#   pub macros                                  2
+#   free functions                             65
+#   inherent methods                          507
+#   struct fields                             396
+#   enum variants                             406
+#   re-exports                                  2
+#   trait roster entries (type × trait)       508
+#   auto-trait-complete types                 107
+#   auto-trait exceptions                      14
+#
+# per-module pub lines:
+#   (root)                           68
+#   blur                              1
+#   container                       295
+#   deblock                          16
+#   decoder                         577
+#   detect                           56
+#   encoder                         534
+#   heuristics                       24
+#   lossless                         43
+#   profile                           7
+#   target_quality                   18
+
+## items (1583 lines)
+
+pub mod zenjpeg
+pub mod blur
+pub fn blur::gaussian_blur_rgb(&[u8], usize, usize, f32) -> alloc::vec::Vec<u8>
+pub mod container
+pub mod container::marker
+pub container::marker::MarkerKind::App(u8)
+pub container::marker::MarkerKind::Com
+pub container::marker::MarkerKind::Dht
+pub container::marker::MarkerKind::Dnl
+pub container::marker::MarkerKind::Dqt
+pub container::marker::MarkerKind::Dri
+pub container::marker::MarkerKind::Eoi
+pub container::marker::MarkerKind::Other(u8)
+pub container::marker::MarkerKind::Restart(u8)
+pub container::marker::MarkerKind::Sof(u8)
+pub container::marker::MarkerKind::Soi
+pub container::marker::MarkerKind::Sos
+pub fn container::marker::MarkerIter<'a>::new(&'a [u8]) -> Self
+pub fn container::marker::MarkerIter<'a>::position(&self) -> usize
+pub container::marker::MarkerSpan::kind: container::marker::MarkerKind
+pub container::marker::MarkerSpan::length: usize
+pub container::marker::MarkerSpan::offset: usize
+pub container::marker::MarkerSpan::payload: &'a [u8]
+pub mod container::metadata
+#[non_exhaustive] pub enum container::metadata::Error
+pub container::metadata::Error::Allocation
+pub container::metadata::Error::DropColorProfile
+pub container::metadata::Error::DropOrientation
+pub container::metadata::Error::InvalidExif
+pub container::metadata::Error::KeepSourceXmp
+pub container::metadata::Error::MalformedJpeg
+pub fn container::metadata::filter_for_gain_map(&[u8], &zencodec::metadata::MetadataPolicy) -> core::result::Result<alloc::vec::Vec<u8>, container::metadata::Error>
+pub mod container::mpf
+pub container::mpf::MpfError::BadEndian([u8; 2])
+pub container::mpf::MpfError::BadEntryOffset
+pub container::mpf::MpfError::BadEntryOffset::needed: usize
+pub container::mpf::MpfError::BadEntryOffset::offset: usize
+pub container::mpf::MpfError::BadEntryOffset::payload_len: usize
+pub container::mpf::MpfError::BadIfdOffset
+pub container::mpf::MpfError::BadIfdOffset::offset: usize
+pub container::mpf::MpfError::BadIfdOffset::payload_len: usize
+pub container::mpf::MpfError::NoImages
+pub container::mpf::MpfError::NotFound
+#[non_exhaustive] pub container::mpf::MpfError::OffsetOverflow
+pub container::mpf::MpfError::OffsetOverflow::data_offset: usize
+pub container::mpf::MpfError::OffsetOverflow::tiff_header_pos: usize
+pub container::mpf::MpfError::Other(alloc::string::String)
+pub container::mpf::MpfError::OutOfMemory
+pub container::mpf::MpfError::TooShort
+pub container::mpf::MpfError::TooShort::got: usize
+pub const container::mpf::MAX_MPF_ENTRIES: usize
+pub const container::mpf::MPF_IDENTIFIER: &[u8; 4]
+pub const container::mpf::MPF_VERSION: &[u8; 4]
+pub mod container::probe
+pub container::probe::GainMapPresence::GContainerOnly
+pub container::probe::GainMapPresence::Iso21496
+pub container::probe::GainMapPresence::IsoAndGContainer
+pub container::probe::GainMapPresence::IsoAndXmp
+pub container::probe::GainMapPresence::None
+pub container::probe::GainMapPresence::XmpHdrgmLegacy
+pub fn container::probe::ContainerProbe::exif(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::extended_xmp(&self) -> &[core::ops::range::Range<u32>]
+pub fn container::probe::ContainerProbe::gainmap_presence(&self) -> container::probe::GainMapPresence
+pub fn container::probe::ContainerProbe::has_xmp_gcontainer_gainmap(&self) -> bool
+pub fn container::probe::ContainerProbe::has_xmp_hdrgm(&self) -> bool
+pub fn container::probe::ContainerProbe::icc_identification(&self) -> core::option::Option<&zenpixels::icc::IccIdentification>
+pub fn container::probe::ContainerProbe::icc_profile(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::image_ranges(&self) -> &[core::ops::range::Range<u32>]
+pub fn container::probe::ContainerProbe::iso_gainmap(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::mpf(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::scan_count(&self) -> u16
+pub fn container::probe::ContainerProbe::sof(&self) -> core::option::Option<&container::probe::ProbeSof>
+pub fn container::probe::ContainerProbe::truncated(&self) -> bool
+pub fn container::probe::ContainerProbe::xmp(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub container::probe::ProbeSof::height: u16
+pub container::probe::ProbeSof::num_components: u8
+pub container::probe::ProbeSof::sofn: u8
+pub container::probe::ProbeSof::width: u16
+pub const container::probe::Wants::ALL: Self
+pub const container::probe::Wants::EXIF_LOCATION: Self
+pub const container::probe::Wants::ICC_IDENTIFY: Self
+pub const container::probe::Wants::ICC_LOCATION: Self
+pub const container::probe::Wants::IMAGE_RANGES: Self
+pub const container::probe::Wants::ISO_GAINMAP: Self
+pub const container::probe::Wants::MPF_LOCATION: Self
+pub const container::probe::Wants::SCAN_COUNT: Self
+pub const container::probe::Wants::SOF_DIMENSIONS: Self
+pub const container::probe::Wants::ULTRAHDR_DETECT: Self
+pub const container::probe::Wants::XMP_GAINMAP_FLAGS: Self
+pub const container::probe::Wants::XMP_LOCATION: Self
+pub const fn container::probe::Wants::contains(self, Self) -> bool [also: (root)]
+pub const fn container::probe::Wants::is_empty(self) -> bool [also: (root)]
+pub mod container::types
+pub container::types::ItemSemantic::ConfidenceMap
+pub container::types::ItemSemantic::DepthMap
+pub container::types::ItemSemantic::GainMap
+pub container::types::ItemSemantic::Other(alloc::string::String)
+pub container::types::ItemSemantic::Primary
+pub fn container::types::ItemSemantic::as_xmp_str(&self) -> &str
+pub fn container::types::ItemSemantic::from_xmp(&str) -> Self
+pub container::types::MpImageType::BaselinePrimary
+pub container::types::MpImageType::Disparity
+pub container::types::MpImageType::LargeThumbnailFullHd
+pub container::types::MpImageType::LargeThumbnailVga
+pub container::types::MpImageType::MultiAngle
+pub container::types::MpImageType::Other(u32)
+pub container::types::MpImageType::Panorama
+pub container::types::MpImageType::Undefined
+pub fn container::types::MpImageType::from_type_code(u32) -> Self
+pub fn container::types::MpImageType::type_code(self) -> u32
+pub container::types::ContainerItem::length: core::option::Option<usize>
+pub container::types::ContainerItem::mime: alloc::string::String
+pub container::types::ContainerItem::padding: core::option::Option<usize>
+pub container::types::ContainerItem::semantic: container::types::ItemSemantic
+pub fn container::types::ContainerItem::primary(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn container::types::ContainerItem::secondary(container::types::ItemSemantic, impl core::convert::Into<alloc::string::String>, usize) -> Self
+pub container::types::MpfEntry::image_type: container::types::MpImageType
+pub container::types::MpfEntry::offset: usize
+pub container::types::MpfEntry::size: usize
+pub mod container::xmp
+pub container::xmp::XmpError::Invalid(alloc::string::String)
+pub container::xmp::XmpError::LengthLimit
+pub container::xmp::XmpError::LengthLimit::got: usize
+pub container::xmp::XmpError::LengthLimit::max: usize
+pub container::xmp::XmpError::NotUltraHdr
+#[non_exhaustive] pub enum container::GainMapPresence [also: container::probe]
+pub container::GainMapPresence::GContainerOnly
+pub container::GainMapPresence::Iso21496
+pub container::GainMapPresence::IsoAndGContainer
+pub container::GainMapPresence::IsoAndXmp
+pub container::GainMapPresence::None
+pub container::GainMapPresence::XmpHdrgmLegacy
+#[non_exhaustive] pub enum container::ItemSemantic [also: container::types]
+pub container::ItemSemantic::ConfidenceMap
+pub container::ItemSemantic::DepthMap
+pub container::ItemSemantic::GainMap
+pub container::ItemSemantic::Other(alloc::string::String)
+pub container::ItemSemantic::Primary
+pub fn container::types::ItemSemantic::as_xmp_str(&self) -> &str
+pub fn container::types::ItemSemantic::from_xmp(&str) -> Self
+#[non_exhaustive] pub enum container::MarkerKind [also: container::marker]
+pub container::MarkerKind::App(u8)
+pub container::MarkerKind::Com
+pub container::MarkerKind::Dht
+pub container::MarkerKind::Dnl
+pub container::MarkerKind::Dqt
+pub container::MarkerKind::Dri
+pub container::MarkerKind::Eoi
+pub container::MarkerKind::Other(u8)
+pub container::MarkerKind::Restart(u8)
+pub container::MarkerKind::Sof(u8)
+pub container::MarkerKind::Soi
+pub container::MarkerKind::Sos
+#[non_exhaustive] pub enum container::MpImageType [also: container::types]
+pub container::MpImageType::BaselinePrimary
+pub container::MpImageType::Disparity
+pub container::MpImageType::LargeThumbnailFullHd
+pub container::MpImageType::LargeThumbnailVga
+pub container::MpImageType::MultiAngle
+pub container::MpImageType::Other(u32)
+pub container::MpImageType::Panorama
+pub container::MpImageType::Undefined
+pub fn container::types::MpImageType::from_type_code(u32) -> Self
+pub fn container::types::MpImageType::type_code(self) -> u32
+#[non_exhaustive] pub enum container::MpfError [also: container::mpf]
+pub container::MpfError::BadEndian([u8; 2])
+pub container::MpfError::BadEntryOffset
+pub container::MpfError::BadEntryOffset::needed: usize
+pub container::MpfError::BadEntryOffset::offset: usize
+pub container::MpfError::BadEntryOffset::payload_len: usize
+pub container::MpfError::BadIfdOffset
+pub container::MpfError::BadIfdOffset::offset: usize
+pub container::MpfError::BadIfdOffset::payload_len: usize
+pub container::MpfError::NoImages
+pub container::MpfError::NotFound
+#[non_exhaustive] pub container::MpfError::OffsetOverflow
+pub container::MpfError::OffsetOverflow::data_offset: usize
+pub container::MpfError::OffsetOverflow::tiff_header_pos: usize
+pub container::MpfError::Other(alloc::string::String)
+pub container::MpfError::OutOfMemory
+pub container::MpfError::TooShort
+pub container::MpfError::TooShort::got: usize
+#[non_exhaustive] pub enum container::XmpError [also: container::xmp]
+pub container::XmpError::Invalid(alloc::string::String)
+pub container::XmpError::LengthLimit
+pub container::XmpError::LengthLimit::got: usize
+pub container::XmpError::LengthLimit::max: usize
+pub container::XmpError::NotUltraHdr
+#[non_exhaustive] pub struct container::ContainerItem [also: container::types]
+pub container::ContainerItem::length: core::option::Option<usize>
+pub container::ContainerItem::mime: alloc::string::String
+pub container::ContainerItem::padding: core::option::Option<usize>
+pub container::ContainerItem::semantic: container::types::ItemSemantic
+pub fn container::types::ContainerItem::primary(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn container::types::ContainerItem::secondary(container::types::ItemSemantic, impl core::convert::Into<alloc::string::String>, usize) -> Self
+#[non_exhaustive] pub struct container::ContainerProbe [also: container::probe]
+pub fn container::probe::ContainerProbe::exif(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::extended_xmp(&self) -> &[core::ops::range::Range<u32>]
+pub fn container::probe::ContainerProbe::gainmap_presence(&self) -> container::probe::GainMapPresence
+pub fn container::probe::ContainerProbe::has_xmp_gcontainer_gainmap(&self) -> bool
+pub fn container::probe::ContainerProbe::has_xmp_hdrgm(&self) -> bool
+pub fn container::probe::ContainerProbe::icc_identification(&self) -> core::option::Option<&zenpixels::icc::IccIdentification>
+pub fn container::probe::ContainerProbe::icc_profile(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::image_ranges(&self) -> &[core::ops::range::Range<u32>]
+pub fn container::probe::ContainerProbe::iso_gainmap(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::mpf(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub fn container::probe::ContainerProbe::scan_count(&self) -> u16
+pub fn container::probe::ContainerProbe::sof(&self) -> core::option::Option<&container::probe::ProbeSof>
+pub fn container::probe::ContainerProbe::truncated(&self) -> bool
+pub fn container::probe::ContainerProbe::xmp(&self) -> core::option::Option<&core::ops::range::Range<u32>>
+pub struct container::MarkerIter<'a> [also: container::marker]
+pub fn container::marker::MarkerIter<'a>::new(&'a [u8]) -> Self
+pub fn container::marker::MarkerIter<'a>::position(&self) -> usize
+pub struct container::MarkerSpan<'a> [also: container::marker]
+pub container::MarkerSpan::kind: container::marker::MarkerKind
+pub container::MarkerSpan::length: usize
+pub container::MarkerSpan::offset: usize
+pub container::MarkerSpan::payload: &'a [u8]
+pub container::MpfEntry::image_type: container::types::MpImageType
+pub container::MpfEntry::offset: usize
+pub container::MpfEntry::size: usize
+#[non_exhaustive] pub struct container::ProbeSof [also: container::probe]
+pub container::ProbeSof::height: u16
+pub container::ProbeSof::num_components: u8
+pub container::ProbeSof::sofn: u8
+pub container::ProbeSof::width: u16
+pub struct container::Wants [also: container::probe]
+pub const container::probe::Wants::ALL: Self
+pub const container::probe::Wants::EXIF_LOCATION: Self
+pub const container::probe::Wants::ICC_IDENTIFY: Self
+pub const container::probe::Wants::ICC_LOCATION: Self
+pub const container::probe::Wants::IMAGE_RANGES: Self
+pub const container::probe::Wants::ISO_GAINMAP: Self
+pub const container::probe::Wants::MPF_LOCATION: Self
+pub const container::probe::Wants::SCAN_COUNT: Self
+pub const container::probe::Wants::SOF_DIMENSIONS: Self
+pub const container::probe::Wants::ULTRAHDR_DETECT: Self
+pub const container::probe::Wants::XMP_GAINMAP_FLAGS: Self
+pub const container::probe::Wants::XMP_LOCATION: Self
+pub const container::CONTAINER_NAMESPACE: &str [also: container::xmp]
+pub const container::HDRGM_NAMESPACE: &str [also: container::xmp]
+pub const container::ITEM_NAMESPACE: &str [also: container::xmp]
+pub const container::MAX_XMP_LENGTH: usize [also: container::xmp]
+pub fn container::create_mpf_header(usize, usize, core::option::Option<usize>) -> alloc::vec::Vec<u8> [also: container::mpf]
+pub fn container::create_mpf_header_typed(usize, &[(container::types::MpImageType, usize)], core::option::Option<usize>) -> alloc::vec::Vec<u8> [also: container::mpf]
+pub fn container::create_xmp_app1_marker(&str) -> alloc::vec::Vec<u8> [also: container::xmp]
+pub fn container::find_jpeg_boundaries(&[u8]) -> alloc::vec::Vec<core::ops::range::Range<usize>> [also: container::marker]
+pub fn container::generate_container_directory(&[container::types::ContainerItem]) -> alloc::string::String [also: container::types]
+pub fn container::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String [also: container::xmp]
+pub fn container::generate_primary_xmp(usize) -> alloc::string::String [also: container::xmp]
+pub fn container::generate_primary_xmp_with_items(&[container::types::ContainerItem]) -> alloc::string::String [also: container::xmp]
+pub fn container::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String [also: container::xmp]
+pub fn container::generate_xmp_with_items(&zencodec::gainmap::GainMapParams, &[container::types::ContainerItem]) -> alloc::string::String [also: container::xmp]
+pub fn container::is_ultrahdr(&[u8]) -> bool [also: container::probe]
+pub fn container::iter(&[u8]) -> container::marker::MarkerIter<'_> [also: container::marker]
+pub fn container::parse_container_items(&str) -> alloc::vec::Vec<container::types::ContainerItem> [also: container::types]
+pub fn container::parse_mpf(&[u8]) -> core::result::Result<alloc::vec::Vec<container::types::MpfEntry>, container::mpf::MpfError> [also: container::mpf]
+pub fn container::parse_mpf_segment(&[u8], usize) -> core::result::Result<alloc::vec::Vec<container::types::MpfEntry>, container::mpf::MpfError> [also: container::mpf]
+pub fn container::parse_xmp(&str) -> core::result::Result<(zencodec::gainmap::GainMapParams, core::option::Option<usize>), container::xmp::XmpError> [also: container::xmp]
+pub fn container::parse_xmp_full(&str) -> (core::option::Option<zencodec::gainmap::GainMapParams>, alloc::vec::Vec<container::types::ContainerItem>) [also: container::xmp]
+pub fn container::primary_bounds(&[u8]) -> core::option::Option<core::ops::range::Range<usize>> [also: container::marker]
+pub fn container::probe(&[u8], container::probe::Wants) -> container::probe::ContainerProbe [also: container::probe]
+pub mod deblock
+pub mod deblock::boundary
+pub deblock::boundary::BoundaryStrength::max_delta: f32
+pub deblock::boundary::BoundaryStrength::threshold: f32
+pub fn deblock::boundary::BoundaryStrength::from_dc_quant(u16) -> Self
+pub mod deblock::knusperli
+pub struct deblock::BoundaryStrength [also: deblock::boundary]
+pub deblock::BoundaryStrength::max_delta: f32
+pub deblock::BoundaryStrength::threshold: f32
+pub fn deblock::boundary::BoundaryStrength::from_dc_quant(u16) -> Self
+pub fn deblock::filter_interleaved_u8_boundary_4tap(&mut [u8], usize, usize, usize, deblock::boundary::BoundaryStrength) [also: deblock::boundary]
+pub fn deblock::filter_plane_boundary_4tap(&mut [f32], usize, usize, deblock::boundary::BoundaryStrength) [also: deblock::boundary]
+pub fn deblock::process_component(&[i16], usize, usize, &[u16; 64]) -> alloc::vec::Vec<f32> [also: deblock::knusperli]
+pub mod decoder
+#[repr(u8)] pub enum decoder::AdobeColorTransform
+pub decoder::AdobeColorTransform::Unknown = 0
+pub decoder::AdobeColorTransform::YCbCr = 1
+pub decoder::AdobeColorTransform::Ycck = 2
+#[non_exhaustive] pub enum decoder::ChromaUpsampling
+pub decoder::ChromaUpsampling::NearestNeighbor
+pub decoder::ChromaUpsampling::Triangle
+#[non_exhaustive] #[repr(u8)] pub enum decoder::ColorSpace
+pub decoder::ColorSpace::Cmyk = 4
+pub decoder::ColorSpace::Grayscale = 1
+pub decoder::ColorSpace::Rgb = 2
+pub decoder::ColorSpace::Unknown = 0
+pub decoder::ColorSpace::Xyb = 6
+pub decoder::ColorSpace::YCbCr = 3
+pub decoder::ColorSpace::Ycck = 5
+pub const fn decoder::ColorSpace::default_subsampling(self) -> bool
+pub const fn decoder::ColorSpace::num_components(self) -> usize
+pub enum decoder::CropRegion
+pub decoder::CropRegion::Percent
+pub decoder::CropRegion::Percent::height: f32
+pub decoder::CropRegion::Percent::width: f32
+pub decoder::CropRegion::Percent::x: f32
+pub decoder::CropRegion::Percent::y: f32
+pub decoder::CropRegion::Pixels
+pub decoder::CropRegion::Pixels::height: u32
+pub decoder::CropRegion::Pixels::width: u32
+pub decoder::CropRegion::Pixels::x: u32
+pub decoder::CropRegion::Pixels::y: u32
+pub fn decoder::CropRegion::percent(f32, f32, f32, f32) -> Self
+pub fn decoder::CropRegion::pixels(u32, u32, u32, u32) -> Self
+#[non_exhaustive] pub enum decoder::DeblockMode
+pub decoder::DeblockMode::Auto
+pub decoder::DeblockMode::AutoStreamable
+pub decoder::DeblockMode::Boundary4Tap
+pub decoder::DeblockMode::Knusperli
+pub decoder::DeblockMode::Off
+#[non_exhaustive] pub enum decoder::DecodeWarning
+pub decoder::DecodeWarning::AcIndexOverflow
+pub decoder::DecodeWarning::ArithmeticBadCode
+pub decoder::DecodeWarning::DnlHeightConflict
+pub decoder::DecodeWarning::DnlHeightConflict::dnl_height: u32
+pub decoder::DecodeWarning::DnlHeightConflict::sof_height: u32
+pub decoder::DecodeWarning::ExtraneousBytesSkipped
+pub decoder::DecodeWarning::ExtraneousBytesSkipped::count: u32
+pub decoder::DecodeWarning::InvalidHuffmanCode
+pub decoder::DecodeWarning::MalformedSegmentSkipped
+pub decoder::DecodeWarning::MissingHuffmanTables
+pub decoder::DecodeWarning::PaddingBlockError
+pub decoder::DecodeWarning::RestartMarkerResync
+pub decoder::DecodeWarning::RestartMarkerResync::count: u32
+pub decoder::DecodeWarning::TruncatedBetweenScans
+pub decoder::DecodeWarning::TruncatedBetweenScans::scans_decoded: u32
+pub decoder::DecodeWarning::TruncatedProgressiveScan
+pub decoder::DecodeWarning::TruncatedScan
+pub decoder::DecodeWarning::TruncatedScan::blocks_decoded: u32
+pub decoder::DecodeWarning::TruncatedScan::blocks_expected: u32
+pub decoder::DecodeWarning::ZeroQuantValue
+pub decoder::DecodeWarning::ZeroQuantValue::table_idx: u8
+#[repr(u8)] pub enum decoder::DensityUnits
+pub decoder::DensityUnits::None = 0
+pub decoder::DensityUnits::PixelsPerCm = 2
+pub decoder::DensityUnits::PixelsPerInch = 1
+pub enum decoder::DepthSource
+pub decoder::DepthSource::DynamicDepth
+pub decoder::DepthSource::GDepthXmp
+pub decoder::DepthSource::MpfDisparity
+#[non_exhaustive] pub enum decoder::ErrorKind [also: encoder]
+pub decoder::ErrorKind::AllocationFailed
+pub decoder::ErrorKind::AllocationFailed::bytes: usize
+pub decoder::ErrorKind::AllocationFailed::context: &'static str
+pub decoder::ErrorKind::Cancelled(enough::reason::StopReason)
+pub decoder::ErrorKind::DecodeError(alloc::string::String)
+pub decoder::ErrorKind::EncodePolicyRejected
+pub decoder::ErrorKind::EncodePolicyRejected::reason: &'static str
+pub decoder::ErrorKind::IccError(alloc::string::String)
+pub decoder::ErrorKind::ImageTooLarge
+pub decoder::ErrorKind::ImageTooLarge::limit: u64
+pub decoder::ErrorKind::ImageTooLarge::pixels: u64
+pub decoder::ErrorKind::IncompleteImage
+pub decoder::ErrorKind::IncompleteImage::height: u32
+pub decoder::ErrorKind::IncompleteImage::pushed: u32
+pub decoder::ErrorKind::InternalError
+pub decoder::ErrorKind::InternalError::reason: &'static str
+pub decoder::ErrorKind::InvalidBufferSize
+pub decoder::ErrorKind::InvalidBufferSize::actual: usize
+pub decoder::ErrorKind::InvalidBufferSize::expected: usize
+pub decoder::ErrorKind::InvalidColorFormat
+pub decoder::ErrorKind::InvalidColorFormat::reason: &'static str
+pub decoder::ErrorKind::InvalidConfig(alloc::string::String)
+pub decoder::ErrorKind::InvalidDimensions
+pub decoder::ErrorKind::InvalidDimensions::height: u32
+pub decoder::ErrorKind::InvalidDimensions::reason: &'static str
+pub decoder::ErrorKind::InvalidDimensions::width: u32
+pub decoder::ErrorKind::InvalidHuffmanTable
+pub decoder::ErrorKind::InvalidHuffmanTable::reason: &'static str
+pub decoder::ErrorKind::InvalidHuffmanTable::table_idx: u8
+pub decoder::ErrorKind::InvalidJpegData
+pub decoder::ErrorKind::InvalidJpegData::reason: &'static str
+pub decoder::ErrorKind::InvalidMarker
+pub decoder::ErrorKind::InvalidMarker::context: &'static str
+pub decoder::ErrorKind::InvalidMarker::marker: u8
+pub decoder::ErrorKind::InvalidQuality
+pub decoder::ErrorKind::InvalidQuality::valid_range: &'static str
+pub decoder::ErrorKind::InvalidQuality::value: f32
+pub decoder::ErrorKind::InvalidQuantTable
+pub decoder::ErrorKind::InvalidQuantTable::reason: &'static str
+pub decoder::ErrorKind::InvalidQuantTable::table_idx: u8
+pub decoder::ErrorKind::InvalidScanScript(alloc::string::String)
+pub decoder::ErrorKind::InvalidState
+pub decoder::ErrorKind::InvalidState::reason: &'static str
+pub decoder::ErrorKind::IoError
+pub decoder::ErrorKind::IoError::reason: alloc::string::String
+pub decoder::ErrorKind::NotAJpegFile
+pub decoder::ErrorKind::PolicyRejected
+pub decoder::ErrorKind::PolicyRejected::reason: &'static str
+pub decoder::ErrorKind::ResourceLimitExceeded
+pub decoder::ErrorKind::ResourceLimitExceeded::actual: u64
+pub decoder::ErrorKind::ResourceLimitExceeded::kind: zencodec::limits::LimitKind
+pub decoder::ErrorKind::ResourceLimitExceeded::limit: u64
+pub decoder::ErrorKind::SizeOverflow
+pub decoder::ErrorKind::SizeOverflow::context: &'static str
+pub decoder::ErrorKind::StrideTooSmall
+pub decoder::ErrorKind::StrideTooSmall::stride: usize
+pub decoder::ErrorKind::StrideTooSmall::width: u32
+pub decoder::ErrorKind::TooManyRows
+pub decoder::ErrorKind::TooManyRows::height: u32
+pub decoder::ErrorKind::TooManyRows::pushed: u32
+pub decoder::ErrorKind::TooManyScans
+pub decoder::ErrorKind::TooManyScans::count: usize
+pub decoder::ErrorKind::TooManyScans::limit: usize
+pub decoder::ErrorKind::TruncatedData
+pub decoder::ErrorKind::TruncatedData::context: &'static str
+pub decoder::ErrorKind::UnsupportedFeature
+pub decoder::ErrorKind::UnsupportedFeature::feature: &'static str
+pub decoder::ErrorKind::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub decoder::ErrorKind::UnsupportedPixelDescriptor
+pub decoder::ErrorKind::UnsupportedPixelDescriptor::reason: &'static str
+pub decoder::ErrorKind::UnsupportedPixelFormat
+pub decoder::ErrorKind::UnsupportedPixelFormat::format: decoder::PixelFormat
+pub fn encoder::ErrorKind::as_argument_error(&self) -> core::option::Option<error::ArgumentError>
+pub fn encoder::ErrorKind::as_resource_error(&self) -> core::option::Option<error::ResourceError>
+pub enum decoder::GDepthFormat
+pub decoder::GDepthFormat::RangeInverse
+pub decoder::GDepthFormat::RangeLinear
+pub enum decoder::GDepthMeasureType
+pub decoder::GDepthMeasureType::OpticRay
+pub decoder::GDepthMeasureType::OpticalAxis
+pub enum decoder::GDepthUnits
+pub decoder::GDepthUnits::Diopters
+pub decoder::GDepthUnits::Meters
+#[non_exhaustive] pub enum decoder::GainMapHandling
+pub decoder::GainMapHandling::Decode
+pub decoder::GainMapHandling::Discard
+pub decoder::GainMapHandling::PreserveRaw
+pub enum decoder::IccPreserve
+pub decoder::IccPreserve::All
+pub decoder::IccPreserve::DropStandard
+pub decoder::IccPreserve::None
+#[non_exhaustive] pub enum decoder::IdctMethod
+pub decoder::IdctMethod::Jpegli
+pub decoder::IdctMethod::Libjpeg
+#[non_exhaustive] pub enum decoder::JpegMode
+pub decoder::JpegMode::ArithmeticProgressive
+pub decoder::JpegMode::ArithmeticSequential
+pub decoder::JpegMode::Baseline
+pub decoder::JpegMode::Extended
+pub decoder::JpegMode::Lossless
+pub decoder::JpegMode::Progressive
+#[non_exhaustive] pub enum decoder::MpfImageType
+pub decoder::MpfImageType::BaselinePrimary
+pub decoder::MpfImageType::Disparity
+pub decoder::MpfImageType::LargeThumbnailFullHd
+pub decoder::MpfImageType::LargeThumbnailVga
+pub decoder::MpfImageType::MultiAngle
+pub decoder::MpfImageType::Other(u32)
+pub decoder::MpfImageType::Panorama
+pub decoder::MpfImageType::Undefined
+pub fn container::types::MpImageType::from_type_code(u32) -> Self
+pub fn container::types::MpImageType::type_code(self) -> u32
+#[non_exhaustive] pub enum decoder::OutputTarget
+pub decoder::OutputTarget::LinearF32
+pub decoder::OutputTarget::LinearF32Precise
+pub decoder::OutputTarget::Native16
+pub decoder::OutputTarget::Srgb8
+pub decoder::OutputTarget::SrgbF32
+pub decoder::OutputTarget::SrgbF32Precise
+pub fn decoder::OutputTarget::is_f32(self) -> bool
+pub fn decoder::OutputTarget::is_linear(self) -> bool
+pub fn decoder::OutputTarget::is_precise(self) -> bool
+#[non_exhaustive] pub enum decoder::PixelFormat
+pub decoder::PixelFormat::Bgr
+pub decoder::PixelFormat::Bgra
+pub decoder::PixelFormat::Bgrx
+pub decoder::PixelFormat::Cmyk
+pub decoder::PixelFormat::Gray
+pub decoder::PixelFormat::Gray16
+pub decoder::PixelFormat::GrayF32
+pub decoder::PixelFormat::Rgb
+pub decoder::PixelFormat::Rgb16
+pub decoder::PixelFormat::RgbF32
+pub decoder::PixelFormat::Rgba
+pub decoder::PixelFormat::Rgba16
+pub decoder::PixelFormat::RgbaF32
+pub const fn decoder::PixelFormat::bit_depth(self) -> u8
+pub const fn decoder::PixelFormat::bytes_per_pixel(self) -> usize
+pub const fn decoder::PixelFormat::color_space(self) -> decoder::ColorSpace
+pub const fn decoder::PixelFormat::has_alpha_or_padding(self) -> bool
+pub const fn decoder::PixelFormat::is_fast_path(self) -> bool
+pub const fn decoder::PixelFormat::is_float(self) -> bool
+pub const fn decoder::PixelFormat::is_grayscale(self) -> bool
+pub const fn decoder::PixelFormat::num_channels(self) -> usize
+#[non_exhaustive] pub enum decoder::PixelLayout [also: encoder]
+pub decoder::PixelLayout::Bgr8Srgb
+pub decoder::PixelLayout::Bgra8Srgb
+pub decoder::PixelLayout::Bgrx8Srgb
+pub decoder::PixelLayout::Gray16Linear
+pub decoder::PixelLayout::Gray8Srgb
+pub decoder::PixelLayout::GrayF32Linear
+pub decoder::PixelLayout::Rgb16Linear
+pub decoder::PixelLayout::Rgb8Srgb
+pub decoder::PixelLayout::RgbF32Linear
+pub decoder::PixelLayout::Rgba16Linear
+pub decoder::PixelLayout::Rgba8Srgb
+pub decoder::PixelLayout::RgbaF32Linear
+pub decoder::PixelLayout::Rgbx16Linear
+pub decoder::PixelLayout::Rgbx8Srgb
+pub decoder::PixelLayout::RgbxF32Linear
+pub decoder::PixelLayout::YCbCr8
+pub decoder::PixelLayout::YCbCrF32
+pub const fn encoder::PixelLayout::bytes_per_pixel(&self) -> usize [also: (root)]
+pub const fn encoder::PixelLayout::channels(&self) -> usize [also: (root)]
+pub const fn encoder::PixelLayout::is_16bit(&self) -> bool [also: (root)]
+pub const fn encoder::PixelLayout::is_bgr(&self) -> bool [also: (root)]
+pub const fn encoder::PixelLayout::is_float(&self) -> bool [also: (root)]
+pub const fn encoder::PixelLayout::is_grayscale(&self) -> bool [also: (root)]
+pub const fn encoder::PixelLayout::is_ycbcr(&self) -> bool [also: (root)]
+pub enum decoder::SegmentType
+pub decoder::SegmentType::Adobe
+pub decoder::SegmentType::Comment
+pub decoder::SegmentType::Exif
+pub decoder::SegmentType::Icc
+pub decoder::SegmentType::Iptc
+pub decoder::SegmentType::Jfif
+pub decoder::SegmentType::Mpf
+pub decoder::SegmentType::Unknown
+pub decoder::SegmentType::Xmp
+pub decoder::SegmentType::XmpExtended
+pub enum decoder::StandardProfile
+pub decoder::StandardProfile::DisplayP3
+pub decoder::StandardProfile::SrgbIec61966
+pub enum decoder::Strictness
+pub decoder::Strictness::Balanced
+pub decoder::Strictness::Lenient
+pub decoder::Strictness::Permissive
+pub decoder::Strictness::Strict
+#[non_exhaustive] pub enum decoder::Subsampling
+pub decoder::Subsampling::S420
+pub decoder::Subsampling::S422
+pub decoder::Subsampling::S440
+pub decoder::Subsampling::S444
+pub const fn decoder::Subsampling::h_samp_factor_luma(self) -> u8
+pub const fn decoder::Subsampling::mcu_size(self) -> usize
+pub const fn decoder::Subsampling::v_samp_factor_luma(self) -> u8
+#[non_exhaustive] pub enum decoder::TargetColorSpace
+pub decoder::TargetColorSpace::DisplayP3
+pub decoder::TargetColorSpace::Rec2020
+pub decoder::TargetColorSpace::Srgb
+pub struct decoder::AdobeInfo
+pub decoder::AdobeInfo::color_transform: decoder::AdobeColorTransform
+pub decoder::AdobeInfo::version: u16
+pub struct decoder::Cmyk16
+pub decoder::Cmyk16::c: u16
+pub decoder::Cmyk16::k: u16
+pub decoder::Cmyk16::m: u16
+pub decoder::Cmyk16::y: u16
+pub struct decoder::DecodeConfig
+pub decoder::DecodeConfig::chroma_upsampling: decoder::ChromaUpsampling
+pub decoder::DecodeConfig::correct_color: core::option::Option<decoder::TargetColorSpace>
+pub decoder::DecodeConfig::gain_map: decoder::GainMapHandling
+pub decoder::DecodeConfig::output_format: core::option::Option<decoder::PixelFormat>
+pub decoder::DecodeConfig::output_target: decoder::OutputTarget
+pub decoder::DecodeConfig::preserve: decoder::PreserveConfig
+pub decoder::DecodeConfig::strictness: decoder::Strictness
+pub fn decoder::DecodeConfig::auto_orient(self, bool) -> Self
+pub fn decoder::DecodeConfig::chroma_upsampling(self, decoder::ChromaUpsampling) -> Self
+pub fn decoder::DecodeConfig::crop(self, decoder::CropRegion) -> Self
+pub fn decoder::DecodeConfig::deblock(self, decoder::DeblockMode) -> Self
+pub fn decoder::DecodeConfig::decode(&self, &[u8], impl enough::Stop) -> encoder::Result<decoder::DecodeResult>
+pub fn decoder::DecodeConfig::decode_coefficients(&self, &[u8], impl enough::Stop) -> encoder::Result<decoder::DecodedCoefficients>
+pub fn decoder::DecodeConfig::decode_coefficients_with_extras(&self, &[u8], impl enough::Stop) -> encoder::Result<(decoder::DecodedCoefficients, core::option::Option<decoder::DecodedExtras>)>
+pub fn decoder::DecodeConfig::decode_coefficients_with_jbrd_metadata(&self, &[u8], impl enough::Stop) -> encoder::Result<(decoder::DecodedCoefficients, decode::image::JbrdMetadata)>
+pub fn decoder::DecodeConfig::decode_into(&self, &[u8], decoder::PixelFormat, &mut [u8], impl enough::Stop) -> encoder::Result<usize>
+pub fn decoder::DecodeConfig::decode_rows<F>(&self, &[u8], decoder::PixelFormat, F, impl enough::Stop) -> encoder::Result<decoder::ScanlineInfo> where F: core::ops::function::FnMut(decoder::RowSlice<'_>) -> encoder::Result<()>
+pub fn decoder::DecodeConfig::decode_rows_f32<F>(&self, &[u8], decoder::PixelFormat, F, impl enough::Stop) -> encoder::Result<decoder::ScanlineInfo> where F: core::ops::function::FnMut(decoder::RowSliceF32<'_>) -> encoder::Result<()>
+pub fn decoder::DecodeConfig::decode_to_ycbcr_f32(&self, &[u8], impl enough::Stop) -> encoder::Result<decoder::DecodedYCbCr>
+pub fn decoder::DecodeConfig::decode_with_pulse(&self, &[u8], core::option::Option<&dyn how_far::pulse::Pulse>) -> encoder::Result<decoder::DecodeResult>
+pub fn decoder::DecodeConfig::dequant_bias(self, bool) -> Self
+pub fn decoder::DecodeConfig::estimate_memory_usage(&self, u32, u32) -> usize
+pub fn decoder::DecodeConfig::gain_map(self, decoder::GainMapHandling) -> Self
+pub fn decoder::DecodeConfig::get_max_memory(&self) -> u64
+pub fn decoder::DecodeConfig::get_max_pixels(&self) -> u64
+pub fn decoder::DecodeConfig::idct_method(self, decoder::IdctMethod) -> Self
+pub fn decoder::DecodeConfig::lenient(self) -> Self
+pub fn decoder::DecodeConfig::limits(self, encoder::Limits) -> Self
+pub fn decoder::DecodeConfig::max_memory(self, u64) -> Self
+pub fn decoder::DecodeConfig::max_pixels(self, u64) -> Self
+pub fn decoder::DecodeConfig::new() -> Self
+pub fn decoder::DecodeConfig::num_threads(self, usize) -> Self
+pub fn decoder::DecodeConfig::orientation(self, decode::config::OrientationHint) -> Self
+pub fn decoder::DecodeConfig::output_format(self, decoder::PixelFormat) -> Self
+pub fn decoder::DecodeConfig::output_target(self, decoder::OutputTarget) -> Self
+pub fn decoder::DecodeConfig::parallel_strategy(self, decode::config::ParallelStrategy) -> Self
+pub fn decoder::DecodeConfig::permissive(self) -> Self
+pub fn decoder::DecodeConfig::preserve(self, decoder::PreserveConfig) -> Self
+pub fn decoder::DecodeConfig::preserve_all_metadata(self) -> Self
+pub fn decoder::DecodeConfig::preserve_no_metadata(self) -> Self
+pub fn decoder::DecodeConfig::read_info(&self, &[u8]) -> encoder::Result<decoder::JpegInfo>
+pub fn decoder::DecodeConfig::request<'a>(&'a self, &'a [u8]) -> decoder::DecodeRequest<'a>
+pub fn decoder::DecodeConfig::scanline_reader<'a>(&self, &'a [u8]) -> encoder::Result<decoder::ScanlineReader<'a>>
+pub fn decoder::DecodeConfig::scanline_reader_cow<'a>(&self, alloc::borrow::Cow<'a, [u8]>) -> encoder::Result<decoder::ScanlineReader<'a>>
+pub fn decoder::DecodeConfig::scanline_reader_with_pulse<'a>(&self, &'a [u8], core::option::Option<&'a dyn how_far::pulse::Pulse>) -> encoder::Result<decoder::ScanlineReader<'a>>
+pub fn decoder::DecodeConfig::strict(self) -> Self
+pub fn decoder::DecodeConfig::strictness(self, decoder::Strictness) -> Self
+pub fn decoder::DecodeConfig::transform(self, lossless::LosslessTransform) -> Self
+pub struct decoder::DecodeInfo
+pub decoder::DecodeInfo::bytes_written: usize
+pub decoder::DecodeInfo::format: decoder::PixelFormat
+pub decoder::DecodeInfo::gain_map: core::option::Option<decoder::GainMapResult>
+pub decoder::DecodeInfo::height: u32
+pub decoder::DecodeInfo::width: u32
+pub fn decoder::DecodeInfo::extras(&self) -> core::option::Option<&decoder::DecodedExtras>
+pub fn decoder::DecodeInfo::take_extras(&mut self) -> core::option::Option<decoder::DecodedExtras>
+pub fn decoder::DecodeInfo::warnings(&self) -> &[decoder::DecodeWarning]
+pub struct decoder::DecodePool
+pub fn decoder::DecodePool::active_count(&self) -> usize
+pub fn decoder::DecodePool::new() -> Self
+pub fn decoder::DecodePool::parallel_threshold(self, usize) -> Self
+pub struct decoder::DecodeRequest<'a, S: enough::Stop>
+pub fn decoder::DecodeRequest<'a, S>::decode(self) -> encoder::Result<decoder::DecodeResult>
+pub fn decoder::DecodeRequest<'a, S>::pool(self, &'a decoder::DecodePool) -> Self
+pub fn decoder::DecodeRequest<'a, S>::scanline_reader(self) -> encoder::Result<decoder::ScanlineReader<'a>>
+pub fn decoder::DecodeRequest<'a, S>::stop<S2: enough::Stop>(self, S2) -> decoder::DecodeRequest<'a, S2>
+#[non_exhaustive] pub struct decoder::DecodeResult
+pub decoder::DecodeResult::format: decoder::PixelFormat
+pub decoder::DecodeResult::gain_map: core::option::Option<decoder::GainMapResult>
+pub decoder::DecodeResult::height: u32
+pub decoder::DecodeResult::width: u32
+pub fn decoder::DecodeResult::bytes_per_pixel(&self) -> usize
+pub fn decoder::DecodeResult::dimensions(&self) -> (u32, u32)
+pub fn decoder::DecodeResult::extras(&self) -> core::option::Option<&decoder::DecodedExtras>
+pub fn decoder::DecodeResult::format(&self) -> decoder::PixelFormat
+pub fn decoder::DecodeResult::has_warnings(&self) -> bool
+pub fn decoder::DecodeResult::height(&self) -> u32
+pub fn decoder::DecodeResult::into_parts(self) -> (core::option::Option<alloc::vec::Vec<u8>>, core::option::Option<alloc::vec::Vec<f32>>, u32, u32, decoder::PixelFormat, core::option::Option<decoder::DecodedExtras>)
+pub fn decoder::DecodeResult::into_pixels(self) -> decode::config::OwnedDecodedPixels
+pub fn decoder::DecodeResult::into_pixels_f32(self) -> core::option::Option<alloc::vec::Vec<f32>>
+pub fn decoder::DecodeResult::into_pixels_u8(self) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn decoder::DecodeResult::output_target(&self) -> decoder::OutputTarget
+pub fn decoder::DecodeResult::pixels(&self) -> decode::config::DecodedPixels<'_>
+pub fn decoder::DecodeResult::pixels_f32(&self) -> core::option::Option<&[f32]>
+pub fn decoder::DecodeResult::pixels_u16(&self) -> core::option::Option<&[u16]>
+pub fn decoder::DecodeResult::pixels_u8(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodeResult::sample_precision(&self) -> u8
+pub fn decoder::DecodeResult::stride(&self) -> usize
+pub fn decoder::DecodeResult::take_extras(&mut self) -> core::option::Option<decoder::DecodedExtras>
+pub fn decoder::DecodeResult::to_u16(&self) -> core::option::Option<alloc::vec::Vec<u16>>
+pub fn decoder::DecodeResult::warnings(&self) -> &[decoder::DecodeWarning]
+pub fn decoder::DecodeResult::width(&self) -> u32
+pub struct decoder::DecodedCoefficients
+pub decoder::DecodedCoefficients::components: alloc::vec::Vec<decode::image::ComponentCoefficients>
+pub decoder::DecodedCoefficients::height: u32
+pub decoder::DecodedCoefficients::quant_tables: alloc::vec::Vec<core::option::Option<[u16; 64]>>
+pub decoder::DecodedCoefficients::sample_precision: u8
+pub decoder::DecodedCoefficients::width: u32
+pub fn decoder::DecodedCoefficients::compare(&self, &decoder::DecodedCoefficients) -> decode::image::CoefficientComparison
+pub fn decoder::DecodedCoefficients::huffman_tables(&self) -> core::option::Option<&encoder::HuffmanTableSet>
+pub fn decoder::DecodedCoefficients::num_components(&self) -> usize
+pub struct decoder::DecodedExtras
+pub fn decoder::DecodedExtras::adobe(&self) -> core::option::Option<decoder::AdobeInfo>
+pub fn decoder::DecodedExtras::chrominance_qt(&self) -> core::option::Option<&[u16; 64]>
+pub fn decoder::DecodedExtras::comments(&self) -> impl core::iter::traits::iterator::Iterator<Item = &str>
+pub fn decoder::DecodedExtras::depth_map(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodedExtras::dqt_tables(&self) -> core::option::Option<&[detect::DqtTable]>
+pub fn decoder::DecodedExtras::encoder(&self) -> core::option::Option<detect::EncoderFamily>
+pub fn decoder::DecodedExtras::exif(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodedExtras::gainmap(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodedExtras::icc_is_standard(&self) -> core::option::Option<decoder::StandardProfile>
+pub fn decoder::DecodedExtras::icc_profile(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodedExtras::iptc(&self) -> core::option::Option<&[u8]>
+pub fn decoder::DecodedExtras::is_empty(&self) -> bool
+pub fn decoder::DecodedExtras::jfif(&self) -> core::option::Option<decoder::JfifInfo>
+pub fn decoder::DecodedExtras::luminance_qt(&self) -> core::option::Option<&[u16; 64]>
+pub fn decoder::DecodedExtras::mpf(&self) -> core::option::Option<&decoder::MpfDirectory>
+pub fn decoder::DecodedExtras::probe(&self) -> core::option::Option<&detect::JpegProbe>
+pub fn decoder::DecodedExtras::quality_estimate(&self) -> core::option::Option<&detect::QualityEstimate>
+pub fn decoder::DecodedExtras::secondary_image(&self, usize) -> core::option::Option<&[u8]>
+pub fn decoder::DecodedExtras::secondary_images(&self) -> &[decoder::PreservedMpfImage]
+pub fn decoder::DecodedExtras::segments(&self) -> &[decoder::PreservedSegment]
+pub fn decoder::DecodedExtras::segments_by_marker(&self, u8) -> impl core::iter::traits::iterator::Iterator<Item = &decoder::PreservedSegment>
+pub fn decoder::DecodedExtras::segments_by_type(&self, decoder::SegmentType) -> impl core::iter::traits::iterator::Iterator<Item = &decoder::PreservedSegment>
+pub fn decoder::DecodedExtras::to_encoder_segments(&self) -> encode::extras::EncoderSegments
+pub fn decoder::DecodedExtras::to_encoder_segments_filtered<F>(&self, F) -> encode::extras::EncoderSegments where F: core::ops::function::Fn(&decoder::PreservedSegment) -> bool
+pub fn decoder::DecodedExtras::to_raw_segments(&self) -> alloc::vec::Vec<(u8, alloc::vec::Vec<u8>)>
+pub fn decoder::DecodedExtras::xmp(&self) -> core::option::Option<&str>
+pub fn decoder::DecodedExtras::extract_depth_map(&self, core::option::Option<&[u8]>) -> core::option::Option<decoder::DepthMapData>
+pub fn decoder::DecodedExtras::has_depth_map(&self) -> bool
+#[non_exhaustive] pub struct decoder::DecodedImage
+pub decoder::DecodedImage::data: alloc::vec::Vec<u8>
+pub decoder::DecodedImage::format: decoder::PixelFormat
+pub decoder::DecodedImage::height: u32
+pub decoder::DecodedImage::width: u32
+pub fn decoder::DecodedImage::bytes_per_pixel(&self) -> usize
+pub fn decoder::DecodedImage::dimensions(&self) -> (u32, u32)
+pub fn decoder::DecodedImage::extras(&self) -> core::option::Option<&decoder::DecodedExtras>
+pub fn decoder::DecodedImage::has_warnings(&self) -> bool
+pub fn decoder::DecodedImage::height(&self) -> u32
+pub fn decoder::DecodedImage::into_parts(self) -> (alloc::vec::Vec<u8>, u32, u32, decoder::PixelFormat, core::option::Option<decoder::DecodedExtras>)
+pub fn decoder::DecodedImage::pixels(&self) -> &[u8]
+pub fn decoder::DecodedImage::stride(&self) -> usize
+pub fn decoder::DecodedImage::take_extras(&mut self) -> core::option::Option<decoder::DecodedExtras>
+pub fn decoder::DecodedImage::warnings(&self) -> &[decoder::DecodeWarning]
+pub fn decoder::DecodedImage::width(&self) -> u32
+#[non_exhaustive] pub struct decoder::DecodedImageF32
+pub decoder::DecodedImageF32::data: alloc::vec::Vec<f32>
+pub decoder::DecodedImageF32::format: decoder::PixelFormat
+pub decoder::DecodedImageF32::height: u32
+pub decoder::DecodedImageF32::width: u32
+pub fn decoder::DecodedImageF32::channels(&self) -> usize
+pub fn decoder::DecodedImageF32::dimensions(&self) -> (u32, u32)
+pub fn decoder::DecodedImageF32::has_warnings(&self) -> bool
+pub fn decoder::DecodedImageF32::height(&self) -> u32
+pub fn decoder::DecodedImageF32::pixels(&self) -> &[f32]
+pub fn decoder::DecodedImageF32::stride(&self) -> usize
+pub fn decoder::DecodedImageF32::to_u16(&self) -> alloc::vec::Vec<u16>
+pub fn decoder::DecodedImageF32::to_u8(&self) -> decoder::DecodedImage
+pub fn decoder::DecodedImageF32::warnings(&self) -> &[decoder::DecodeWarning]
+pub fn decoder::DecodedImageF32::width(&self) -> u32
+#[non_exhaustive] pub struct decoder::DecodedYCbCr
+pub decoder::DecodedYCbCr::cb: alloc::vec::Vec<f32>
+pub decoder::DecodedYCbCr::cr: alloc::vec::Vec<f32>
+pub decoder::DecodedYCbCr::height: u32
+pub decoder::DecodedYCbCr::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
+pub decoder::DecodedYCbCr::width: u32
+pub decoder::DecodedYCbCr::y: alloc::vec::Vec<f32>
+pub fn decoder::DecodedYCbCr::cb_to_jpeg_range(&self) -> alloc::vec::Vec<f32>
+pub fn decoder::DecodedYCbCr::cr_to_jpeg_range(&self) -> alloc::vec::Vec<f32>
+pub fn decoder::DecodedYCbCr::dimensions(&self) -> (u32, u32)
+pub fn decoder::DecodedYCbCr::plane_size(&self) -> usize
+pub fn decoder::DecodedYCbCr::shift_to_jpeg_range(&mut self)
+pub fn decoder::DecodedYCbCr::y_to_jpeg_range(&self) -> alloc::vec::Vec<f32>
+pub struct decoder::DepthMapData
+pub decoder::DepthMapData::confidence: core::option::Option<alloc::vec::Vec<u8>>
+pub decoder::DepthMapData::confidence_mime: core::option::Option<alloc::string::String>
+pub decoder::DepthMapData::data: alloc::vec::Vec<u8>
+pub decoder::DepthMapData::metadata: core::option::Option<decoder::GDepthMetadata>
+pub decoder::DepthMapData::mime: alloc::string::String
+pub decoder::DepthMapData::source: decoder::DepthSource
+pub struct decoder::Dimensions
+pub decoder::Dimensions::height: u32
+pub decoder::Dimensions::width: u32
+pub const fn decoder::Dimensions::height_in_blocks(self) -> u32
+pub const fn decoder::Dimensions::new(u32, u32) -> Self
+pub const fn decoder::Dimensions::num_pixels(self) -> u64
+pub const fn decoder::Dimensions::width_in_blocks(self) -> u32
+pub struct decoder::Error(pub whereat::at::At<encoder::ErrorKind>) [also: encoder]
+pub fn encoder::Error::allocation_failed(usize, &'static str) -> Self
+pub fn encoder::Error::at(self) -> Self
+pub fn encoder::Error::cancelled() -> Self
+pub fn encoder::Error::decode_error(alloc::string::String) -> Self
+pub fn encoder::Error::encode_policy_rejected(&'static str) -> Self
+pub fn encoder::Error::icc_error(alloc::string::String) -> Self
+pub fn encoder::Error::image_too_large(u64, u64) -> Self
+pub fn encoder::Error::incomplete_image(u32, u32) -> Self
+pub fn encoder::Error::inner(&self) -> &whereat::at::At<encoder::ErrorKind>
+pub fn encoder::Error::internal(&'static str) -> Self
+pub fn encoder::Error::into_inner(self) -> whereat::at::At<encoder::ErrorKind>
+pub fn encoder::Error::into_kind(self) -> encoder::ErrorKind
+pub fn encoder::Error::invalid_buffer_size(usize, usize) -> Self
+pub fn encoder::Error::invalid_color_format(&'static str) -> Self
+pub fn encoder::Error::invalid_config(alloc::string::String) -> Self
+pub fn encoder::Error::invalid_dimensions(u32, u32, &'static str) -> Self
+pub fn encoder::Error::invalid_huffman_table(u8, &'static str) -> Self
+pub fn encoder::Error::invalid_jpeg_data(&'static str) -> Self
+pub fn encoder::Error::invalid_marker(u8, &'static str) -> Self
+pub fn encoder::Error::invalid_quality(f32, &'static str) -> Self
+pub fn encoder::Error::invalid_quant_table(u8, &'static str) -> Self
+pub fn encoder::Error::invalid_scan_script(alloc::string::String) -> Self
+pub fn encoder::Error::invalid_state(&'static str) -> Self
+pub fn encoder::Error::io_error(alloc::string::String) -> Self
+pub fn encoder::Error::kind(&self) -> &encoder::ErrorKind
+pub fn encoder::Error::new(encoder::ErrorKind) -> Self
+pub const fn encoder::Error::new_untraced(encoder::ErrorKind) -> Self [also: (root)]
+pub fn encoder::Error::not_a_jpeg_file() -> Self
+pub fn encoder::Error::policy_rejected(&'static str) -> Self
+pub fn encoder::Error::resource_limit_exceeded(zencodec::limits::LimitKind, u64, u64) -> Self
+pub fn encoder::Error::size_overflow(&'static str) -> Self
+pub fn encoder::Error::stride_too_small(u32, usize) -> Self
+pub fn encoder::Error::too_many_rows(u32, u32) -> Self
+pub fn encoder::Error::too_many_scans(usize, usize) -> Self
+pub fn encoder::Error::truncated_data(&'static str) -> Self
+pub fn encoder::Error::unsupported_feature(&'static str) -> Self
+pub fn encoder::Error::unsupported_pixel_descriptor(&'static str) -> Self
+pub fn encoder::Error::unsupported_pixel_format(decoder::PixelFormat) -> Self
+pub struct decoder::GDepthMetadata
+pub decoder::GDepthMetadata::far: f32
+pub decoder::GDepthMetadata::format: decoder::GDepthFormat
+pub decoder::GDepthMetadata::measure_type: decoder::GDepthMeasureType
+pub decoder::GDepthMetadata::near: f32
+pub decoder::GDepthMetadata::units: decoder::GDepthUnits
+pub struct decoder::GainMapResult
+pub decoder::GainMapResult::height: u32
+pub decoder::GainMapResult::jpeg: alloc::vec::Vec<u8>
+pub decoder::GainMapResult::pixels: core::option::Option<alloc::vec::Vec<u8>>
+pub decoder::GainMapResult::width: u32
+pub struct decoder::JfifInfo
+pub decoder::JfifInfo::density_units: decoder::DensityUnits
+pub decoder::JfifInfo::version_major: u8
+pub decoder::JfifInfo::version_minor: u8
+pub decoder::JfifInfo::x_density: u16
+pub decoder::JfifInfo::y_density: u16
+pub struct decoder::JpegInfo
+pub decoder::JpegInfo::color_space: decoder::ColorSpace
+pub decoder::JpegInfo::dimensions: decoder::Dimensions
+pub decoder::JpegInfo::exif: core::option::Option<alloc::vec::Vec<u8>>
+pub decoder::JpegInfo::has_icc_profile: bool
+pub decoder::JpegInfo::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
+pub decoder::JpegInfo::is_xyb: bool
+pub decoder::JpegInfo::jfif: core::option::Option<decoder::JfifInfo>
+pub decoder::JpegInfo::mode: decoder::JpegMode
+pub decoder::JpegInfo::num_components: u8
+pub decoder::JpegInfo::precision: u8
+pub decoder::JpegInfo::subsampling: decoder::Subsampling
+pub decoder::JpegInfo::xmp: core::option::Option<alloc::string::String>
+pub struct decoder::Limits [also: encoder]
+pub decoder::Limits::max_memory: core::option::Option<u64>
+pub decoder::Limits::max_output: core::option::Option<u64>
+pub decoder::Limits::max_pixels: core::option::Option<u64>
+pub fn encoder::Limits::effective_max_memory(&self) -> u64
+pub fn encoder::Limits::effective_max_output(&self) -> u64
+pub fn encoder::Limits::effective_max_pixels(&self) -> u64
+pub fn encoder::Limits::max_memory(self, u64) -> Self
+pub fn encoder::Limits::max_output(self, u64) -> Self
+pub fn encoder::Limits::max_pixels(self, u64) -> Self
+pub struct decoder::MpfDirectory
+pub decoder::MpfDirectory::images: alloc::vec::Vec<decoder::MpfEntry>
+pub decoder::MpfDirectory::version: [u8; 4]
+pub struct decoder::MpfEntry [also: container, container::types]
+pub decoder::MpfEntry::dependent_image1: core::option::Option<u16>
+pub decoder::MpfEntry::dependent_image2: core::option::Option<u16>
+pub decoder::MpfEntry::image_type: container::types::MpImageType
+pub decoder::MpfEntry::offset: u32
+pub decoder::MpfEntry::size: u32
+pub struct decoder::PreserveConfig
+pub decoder::PreserveConfig::adobe: bool
+pub decoder::PreserveConfig::app_unknown: bool
+pub decoder::PreserveConfig::com: bool
+pub decoder::PreserveConfig::exif: bool
+pub decoder::PreserveConfig::icc: decoder::IccPreserve
+pub decoder::PreserveConfig::iptc: bool
+pub decoder::PreserveConfig::jfif: bool
+pub decoder::PreserveConfig::mpf_depth: bool
+pub decoder::PreserveConfig::mpf_filter: core::option::Option<alloc::sync::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
+pub decoder::PreserveConfig::mpf_gainmaps: bool
+pub decoder::PreserveConfig::mpf_multiframe: bool
+pub decoder::PreserveConfig::mpf_thumbnails: bool
+pub decoder::PreserveConfig::xmp: bool
+pub fn decoder::PreserveConfig::adobe(self, bool) -> Self
+pub fn decoder::PreserveConfig::all() -> Self
+pub fn decoder::PreserveConfig::app_unknown(self, bool) -> Self
+pub fn decoder::PreserveConfig::com(self, bool) -> Self
+pub fn decoder::PreserveConfig::exif(self, bool) -> Self
+pub fn decoder::PreserveConfig::icc(self, decoder::IccPreserve) -> Self
+pub fn decoder::PreserveConfig::iptc(self, bool) -> Self
+pub fn decoder::PreserveConfig::jfif(self, bool) -> Self
+pub fn decoder::PreserveConfig::mpf_depth(self, bool) -> Self
+pub fn decoder::PreserveConfig::mpf_filter<F>(self, F) -> Self where F: core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn decoder::PreserveConfig::mpf_gainmaps(self, bool) -> Self
+pub fn decoder::PreserveConfig::mpf_multiframe(self, bool) -> Self
+pub fn decoder::PreserveConfig::mpf_thumbnails(self, bool) -> Self
+pub fn decoder::PreserveConfig::none() -> Self
+pub fn decoder::PreserveConfig::xmp(self, bool) -> Self
+pub struct decoder::PreservedMpfImage
+pub decoder::PreservedMpfImage::data: alloc::vec::Vec<u8>
+pub decoder::PreservedMpfImage::image_type: container::types::MpImageType
+pub decoder::PreservedMpfImage::mpf_index: usize
+pub struct decoder::PreservedSegment
+pub decoder::PreservedSegment::data: alloc::vec::Vec<u8>
+pub decoder::PreservedSegment::marker: u8
+pub decoder::PreservedSegment::segment_type: decoder::SegmentType
+pub struct decoder::RowSlice<'a>
+pub fn decoder::RowSlice<'a>::as_bytes(&self) -> &[u8]
+pub fn decoder::RowSlice<'a>::as_gray(&self) -> &[u8]
+pub fn decoder::RowSlice<'a>::as_rgb(&self) -> &[rgb::formats::rgb::Rgb<u8>]
+pub fn decoder::RowSlice<'a>::as_rgba(&self) -> &[rgb::formats::rgba::Rgba<u8>]
+pub fn decoder::RowSlice<'a>::format(&self) -> decoder::PixelFormat
+pub fn decoder::RowSlice<'a>::row_index(&self) -> usize
+pub fn decoder::RowSlice<'a>::width(&self) -> usize
+pub struct decoder::RowSliceF32<'a>
+pub fn decoder::RowSliceF32<'a>::as_slice(&self) -> &[f32]
+pub fn decoder::RowSliceF32<'a>::format(&self) -> decoder::PixelFormat
+pub fn decoder::RowSliceF32<'a>::row_index(&self) -> usize
+pub fn decoder::RowSliceF32<'a>::width(&self) -> usize
+pub struct decoder::ScanlineInfo
+pub decoder::ScanlineInfo::color_space: decoder::ColorSpace
+pub decoder::ScanlineInfo::dimensions: decoder::Dimensions
+pub decoder::ScanlineInfo::is_xyb: bool
+pub decoder::ScanlineInfo::subsampling: decoder::Subsampling
+pub struct decoder::ScanlineReader<'a>
+pub fn decoder::ScanlineReader<'a>::chroma_height(&self) -> u32
+pub fn decoder::ScanlineReader<'a>::chroma_rows_per_mcu(&self) -> usize
+pub fn decoder::ScanlineReader<'a>::chroma_width(&self) -> u32
+pub fn decoder::ScanlineReader<'a>::component_ids(&self) -> &[u8]
+pub fn decoder::ScanlineReader<'a>::current_row(&self) -> usize
+pub fn decoder::ScanlineReader<'a>::height(&self) -> u32
+pub fn decoder::ScanlineReader<'a>::info(&self) -> decoder::ScanlineInfo
+pub fn decoder::ScanlineReader<'a>::is_buffered(&self) -> bool
+pub fn decoder::ScanlineReader<'a>::is_finished(&self) -> bool
+pub fn decoder::ScanlineReader<'a>::is_grayscale(&self) -> bool
+pub fn decoder::ScanlineReader<'a>::luma_rows_per_mcu(&self) -> usize
+pub fn decoder::ScanlineReader<'a>::num_components(&self) -> u8
+pub fn decoder::ScanlineReader<'a>::read_rows_bgr8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_bgra8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_bgrx8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_cmyk16(&mut self, imgref::ImgRefMut<'_, decoder::Cmyk16>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_components16<const N: usize>(&mut self, imgref::ImgRefMut<'_, [u16; N]>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_gray16(&mut self, imgref::ImgRefMut<'_, u16>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_gray8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_gray_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_gray_linear_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_rgb16(&mut self, imgref::ImgRefMut<'_, rgb::formats::rgb::Rgb<u16>>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_rgb8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_rgba8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_rgba_f32(&mut self, imgref::ImgRefMut<'_, f32>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_rgbx8(&mut self, imgref::ImgRefMut<'_, u8>) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_f32(&mut self, &mut [f32], &mut [f32], &mut [f32], usize, usize) -> encoder::Result<usize>
+pub fn decoder::ScanlineReader<'a>::read_rows_ycbcr_native_i16(&mut self, &mut [i16], usize, &mut [i16], &mut [i16], usize, usize) -> encoder::Result<(usize, usize)>
+pub fn decoder::ScanlineReader<'a>::sample_precision(&self) -> u8
+pub fn decoder::ScanlineReader<'a>::subsampling(&self) -> decoder::Subsampling
+pub fn decoder::ScanlineReader<'a>::width(&self) -> u32
+pub trait decoder::MpfImageTypeExt
+pub fn decoder::MpfImageTypeExt::is_depth(&self) -> bool
+pub fn decoder::MpfImageTypeExt::is_gainmap(&self) -> bool
+pub fn decoder::MpfImageTypeExt::is_multiframe(&self) -> bool
+pub fn decoder::MpfImageTypeExt::is_thumbnail(&self) -> bool
+pub fn decoder::MpfImageTypeExt::to_type_code(self) -> u32
+pub fn decoder::extract_icc_profile(&[u8]) -> core::option::Option<alloc::vec::Vec<u8>>
+pub type decoder::DecodeError = encoder::Error
+pub type decoder::Decoder = decoder::DecodeConfig
+pub type decoder::Result<T> = core::result::Result<T, encoder::Error> [also: encoder]
+pub mod detect
+pub enum detect::Confidence
+pub detect::Confidence::Approximate
+pub detect::Confidence::Exact
+#[non_exhaustive] pub enum detect::EncoderFamily
+pub detect::EncoderFamily::CjpegliXyb
+pub detect::EncoderFamily::CjpegliYcbcr
+pub detect::EncoderFamily::IjgFamily
+pub detect::EncoderFamily::ImageMagick
+pub detect::EncoderFamily::LibjpegTurbo
+pub detect::EncoderFamily::Mozjpeg
+pub detect::EncoderFamily::Photoshop
+pub detect::EncoderFamily::Unknown
+pub detect::EncoderFamily::WindowsImaging
+#[non_exhaustive] pub enum detect::ProbeError
+pub detect::ProbeError::NoQuantTables
+pub detect::ProbeError::NotJpeg
+pub detect::ProbeError::TooShort
+pub detect::ProbeError::Truncated
+#[non_exhaustive] pub enum detect::QualityScale
+pub detect::QualityScale::ButteraugliDistance
+pub detect::QualityScale::IjgQuality
+pub detect::QualityScale::MozjpegQuality
+pub detect::QualityScale::WindowsQuality
+#[non_exhaustive] pub enum detect::ReencodeError
+pub detect::ReencodeError::InvalidTolerance
+pub detect::ReencodeError::ToleranceTooTight
+pub detect::ReencodeError::ToleranceTooTight::best_effort: detect::ReencodeSettings
+pub detect::ReencodeError::ToleranceTooTight::min_achievable: f32
+pub struct detect::DqtTable
+pub detect::DqtTable::index: u8
+pub detect::DqtTable::precision: u8
+pub detect::DqtTable::values: [u16; 64]
+pub struct detect::JpegProbe
+pub detect::JpegProbe::dimensions: decoder::Dimensions
+pub detect::JpegProbe::dqt_tables: alloc::vec::Vec<detect::DqtTable>
+pub detect::JpegProbe::encoder: detect::EncoderFamily
+pub detect::JpegProbe::mode: decoder::JpegMode
+pub detect::JpegProbe::num_components: u8
+pub detect::JpegProbe::quality: detect::QualityEstimate
+pub detect::JpegProbe::scan_count: u16
+pub detect::JpegProbe::subsampling: decoder::Subsampling
+pub fn detect::JpegProbe::estimated_ba(&self) -> f32
+pub fn detect::JpegProbe::quality_ceiling(f32) -> encoder::Quality
+pub fn detect::JpegProbe::recommended_quality(&self) -> encoder::Quality
+pub fn detect::JpegProbe::recommended_subsampling(&self) -> encoder::ChromaSubsampling
+pub fn detect::JpegProbe::reencode_settings(&self, f32) -> core::result::Result<detect::ReencodeSettings, detect::ReencodeError>
+pub fn detect::JpegProbe::reencode_settings_proportional(&self, f32) -> core::result::Result<detect::ReencodeSettings, detect::ReencodeError>
+pub struct detect::QualityEstimate
+pub detect::QualityEstimate::confidence: detect::Confidence
+pub detect::QualityEstimate::scale: detect::QualityScale
+pub detect::QualityEstimate::value: f32
+pub struct detect::ReencodeSettings
+pub detect::ReencodeSettings::quality: encoder::Quality
+pub detect::ReencodeSettings::shrink_cap: core::option::Option<encoder::Quality>
+pub detect::ReencodeSettings::subsampling: encoder::ChromaSubsampling
+pub fn detect::probe(&[u8]) -> core::result::Result<detect::JpegProbe, detect::ProbeError>
+pub mod encoder
+pub use encoder::Stop
+pub use encoder::Unstoppable
+#[non_exhaustive] pub enum encoder::ChromaSubsampling
+pub encoder::ChromaSubsampling::HalfHorizontal
+pub encoder::ChromaSubsampling::HalfVertical
+pub encoder::ChromaSubsampling::None
+pub encoder::ChromaSubsampling::Quarter
+pub const fn encoder::ChromaSubsampling::h_factor(&self) -> u8
+pub const fn encoder::ChromaSubsampling::h_samp_factor_luma(self) -> u8
+pub const fn encoder::ChromaSubsampling::mcu_size(self) -> usize
+pub const fn encoder::ChromaSubsampling::v_factor(&self) -> u8
+pub const fn encoder::ChromaSubsampling::v_samp_factor_luma(self) -> u8
+#[non_exhaustive] pub enum encoder::ColorMode
+pub encoder::ColorMode::Grayscale
+pub encoder::ColorMode::Rgb
+pub encoder::ColorMode::Xyb
+pub encoder::ColorMode::Xyb::subsampling: encoder::XybSubsampling
+pub encoder::ColorMode::YCbCr
+pub encoder::ColorMode::YCbCr::subsampling: encoder::ChromaSubsampling
+#[non_exhaustive] pub enum encoder::DownsamplingMethod
+pub encoder::DownsamplingMethod::Box
+pub encoder::DownsamplingMethod::GammaAware
+pub encoder::DownsamplingMethod::GammaAwareIterative
+pub const fn encoder::DownsamplingMethod::uses_gamma_aware(self) -> bool
+pub encoder::ErrorKind::AllocationFailed
+pub encoder::ErrorKind::AllocationFailed::bytes: usize
+pub encoder::ErrorKind::AllocationFailed::context: &'static str
+pub encoder::ErrorKind::Cancelled(enough::reason::StopReason)
+pub encoder::ErrorKind::DecodeError(alloc::string::String)
+pub encoder::ErrorKind::EncodePolicyRejected
+pub encoder::ErrorKind::EncodePolicyRejected::reason: &'static str
+pub encoder::ErrorKind::IccError(alloc::string::String)
+pub encoder::ErrorKind::ImageTooLarge
+pub encoder::ErrorKind::ImageTooLarge::limit: u64
+pub encoder::ErrorKind::ImageTooLarge::pixels: u64
+pub encoder::ErrorKind::IncompleteImage
+pub encoder::ErrorKind::IncompleteImage::height: u32
+pub encoder::ErrorKind::IncompleteImage::pushed: u32
+pub encoder::ErrorKind::InternalError
+pub encoder::ErrorKind::InternalError::reason: &'static str
+pub encoder::ErrorKind::InvalidBufferSize
+pub encoder::ErrorKind::InvalidBufferSize::actual: usize
+pub encoder::ErrorKind::InvalidBufferSize::expected: usize
+pub encoder::ErrorKind::InvalidColorFormat
+pub encoder::ErrorKind::InvalidColorFormat::reason: &'static str
+pub encoder::ErrorKind::InvalidConfig(alloc::string::String)
+pub encoder::ErrorKind::InvalidDimensions
+pub encoder::ErrorKind::InvalidDimensions::height: u32
+pub encoder::ErrorKind::InvalidDimensions::reason: &'static str
+pub encoder::ErrorKind::InvalidDimensions::width: u32
+pub encoder::ErrorKind::InvalidHuffmanTable
+pub encoder::ErrorKind::InvalidHuffmanTable::reason: &'static str
+pub encoder::ErrorKind::InvalidHuffmanTable::table_idx: u8
+pub encoder::ErrorKind::InvalidJpegData
+pub encoder::ErrorKind::InvalidJpegData::reason: &'static str
+pub encoder::ErrorKind::InvalidMarker
+pub encoder::ErrorKind::InvalidMarker::context: &'static str
+pub encoder::ErrorKind::InvalidMarker::marker: u8
+pub encoder::ErrorKind::InvalidQuality
+pub encoder::ErrorKind::InvalidQuality::valid_range: &'static str
+pub encoder::ErrorKind::InvalidQuality::value: f32
+pub encoder::ErrorKind::InvalidQuantTable
+pub encoder::ErrorKind::InvalidQuantTable::reason: &'static str
+pub encoder::ErrorKind::InvalidQuantTable::table_idx: u8
+pub encoder::ErrorKind::InvalidScanScript(alloc::string::String)
+pub encoder::ErrorKind::InvalidState
+pub encoder::ErrorKind::InvalidState::reason: &'static str
+pub encoder::ErrorKind::IoError
+pub encoder::ErrorKind::IoError::reason: alloc::string::String
+pub encoder::ErrorKind::NotAJpegFile
+pub encoder::ErrorKind::PolicyRejected
+pub encoder::ErrorKind::PolicyRejected::reason: &'static str
+pub encoder::ErrorKind::ResourceLimitExceeded
+pub encoder::ErrorKind::ResourceLimitExceeded::actual: u64
+pub encoder::ErrorKind::ResourceLimitExceeded::kind: zencodec::limits::LimitKind
+pub encoder::ErrorKind::ResourceLimitExceeded::limit: u64
+pub encoder::ErrorKind::SizeOverflow
+pub encoder::ErrorKind::SizeOverflow::context: &'static str
+pub encoder::ErrorKind::StrideTooSmall
+pub encoder::ErrorKind::StrideTooSmall::stride: usize
+pub encoder::ErrorKind::StrideTooSmall::width: u32
+pub encoder::ErrorKind::TooManyRows
+pub encoder::ErrorKind::TooManyRows::height: u32
+pub encoder::ErrorKind::TooManyRows::pushed: u32
+pub encoder::ErrorKind::TooManyScans
+pub encoder::ErrorKind::TooManyScans::count: usize
+pub encoder::ErrorKind::TooManyScans::limit: usize
+pub encoder::ErrorKind::TruncatedData
+pub encoder::ErrorKind::TruncatedData::context: &'static str
+pub encoder::ErrorKind::UnsupportedFeature
+pub encoder::ErrorKind::UnsupportedFeature::feature: &'static str
+pub encoder::ErrorKind::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub encoder::ErrorKind::UnsupportedPixelDescriptor
+pub encoder::ErrorKind::UnsupportedPixelDescriptor::reason: &'static str
+pub encoder::ErrorKind::UnsupportedPixelFormat
+pub encoder::ErrorKind::UnsupportedPixelFormat::format: decoder::PixelFormat
+pub fn encoder::ErrorKind::as_argument_error(&self) -> core::option::Option<error::ArgumentError>
+pub fn encoder::ErrorKind::as_resource_error(&self) -> core::option::Option<error::ResourceError>
+pub enum encoder::Exif
+pub encoder::Exif::Fields(encoder::ExifFields)
+pub encoder::Exif::Raw(alloc::vec::Vec<u8>)
+pub fn encoder::Exif::build() -> encoder::ExifFields
+pub fn encoder::Exif::raw(impl core::convert::Into<alloc::vec::Vec<u8>>) -> Self
+pub fn encoder::Exif::to_bytes(&self) -> core::option::Option<alloc::vec::Vec<u8>>
+#[non_exhaustive] pub enum encoder::HuffmanMethod
+pub encoder::HuffmanMethod::JpegliCreateTree
+pub encoder::HuffmanMethod::MozjpegClassic
+#[non_exhaustive] pub enum encoder::HuffmanStrategy
+pub encoder::HuffmanStrategy::Custom(alloc::boxed::Box<encoder::HuffmanTableSet>)
+pub encoder::HuffmanStrategy::Fixed
+pub encoder::HuffmanStrategy::FixedAnnexK
+pub encoder::HuffmanStrategy::Optimize
+#[non_exhaustive] pub enum encoder::OptimizationPreset
+pub encoder::OptimizationPreset::HybridBaseline
+pub encoder::OptimizationPreset::HybridMaxCompression
+pub encoder::OptimizationPreset::HybridProgressive
+pub encoder::OptimizationPreset::JpegliBaseline
+pub encoder::OptimizationPreset::JpegliProgressive
+pub encoder::OptimizationPreset::MozjpegBaseline
+pub encoder::OptimizationPreset::MozjpegMaxCompression
+pub encoder::OptimizationPreset::MozjpegProgressive
+pub fn encoder::OptimizationPreset::all() -> impl core::iter::traits::iterator::Iterator<Item = Self>
+pub const fn encoder::OptimizationPreset::is_progressive(self) -> bool
+pub const fn encoder::OptimizationPreset::name(self) -> &'static str
+pub const fn encoder::OptimizationPreset::quant_table_source(self) -> encode::encoder_types::QuantTableSource
+pub const fn encoder::OptimizationPreset::scan_strategy(self) -> encode::encoder_types::ScanStrategy
+pub const fn encoder::OptimizationPreset::uses_aq(self) -> bool
+pub const fn encoder::OptimizationPreset::uses_trellis(self) -> bool
+#[repr(u16)] pub enum encoder::Orientation
+pub encoder::Orientation::FlipHorizontal = 2
+pub encoder::Orientation::FlipVertical = 4
+pub encoder::Orientation::Normal = 1
+pub encoder::Orientation::Rotate180 = 3
+pub encoder::Orientation::Rotate270 = 8
+pub encoder::Orientation::Rotate90 = 6
+pub encoder::Orientation::Transpose = 5
+pub encoder::Orientation::Transverse = 7
+pub encoder::PixelLayout::Bgr8Srgb
+pub encoder::PixelLayout::Bgra8Srgb
+pub encoder::PixelLayout::Bgrx8Srgb
+pub encoder::PixelLayout::Gray16Linear
+pub encoder::PixelLayout::Gray8Srgb
+pub encoder::PixelLayout::GrayF32Linear
+pub encoder::PixelLayout::Rgb16Linear
+pub encoder::PixelLayout::Rgb8Srgb
+pub encoder::PixelLayout::RgbF32Linear
+pub encoder::PixelLayout::Rgba16Linear
+pub encoder::PixelLayout::Rgba8Srgb
+pub encoder::PixelLayout::RgbaF32Linear
+pub encoder::PixelLayout::Rgbx16Linear
+pub encoder::PixelLayout::Rgbx8Srgb
+pub encoder::PixelLayout::RgbxF32Linear
+pub encoder::PixelLayout::YCbCr8
+pub encoder::PixelLayout::YCbCrF32
+#[non_exhaustive] pub enum encoder::ProgressiveScanMode
+pub encoder::ProgressiveScanMode::Baseline
+pub encoder::ProgressiveScanMode::Progressive
+pub encoder::ProgressiveScanMode::ProgressiveMozjpeg
+pub encoder::ProgressiveScanMode::ProgressiveSearch
+pub encoder::ProgressiveScanMode::Smallest
+pub encoder::ProgressiveScanMode::SmallestSearch
+pub const fn encoder::ProgressiveScanMode::is_progressive(self) -> bool
+pub const fn encoder::ProgressiveScanMode::scan_strategy(self) -> encode::encoder_types::ScanStrategy
+#[non_exhaustive] pub enum encoder::Quality
+pub encoder::Quality::ApproxButteraugli(f32)
+pub encoder::Quality::ApproxJpegli(f32)
+pub encoder::Quality::ApproxMozjpeg(u8)
+pub encoder::Quality::ApproxSsim2(f32)
+pub fn encoder::Quality::for_mozjpeg_tables(&self) -> u8
+pub fn encoder::Quality::to_distance(&self) -> f32
+pub fn encoder::Quality::to_internal(&self) -> f32
+#[non_exhaustive] pub enum encoder::QuantTableConfig
+pub encoder::QuantTableConfig::Custom(alloc::boxed::Box<encode::tuning::EncodingTables>)
+pub encoder::QuantTableConfig::GlassaLowBpp
+pub encoder::QuantTableConfig::Jpegli
+pub encoder::QuantTableConfig::Jpegli::chroma_distance_scales: [f32; 2]
+pub encoder::QuantTableConfig::JpegliSharedChroma
+pub encoder::QuantTableConfig::JpegliSharedChroma::chroma_distance_scales: [f32; 2]
+pub encoder::QuantTableConfig::MozjpegRobidoux
+pub encoder::QuantTableConfig::MozjpegRobidoux::chroma_quality: core::option::Option<u8>
+pub encoder::QuantTableConfig::PiecewiseV4
+pub fn encoder::QuantTableConfig::chroma_distance_scales(&self) -> core::option::Option<[f32; 2]>
+pub fn encoder::QuantTableConfig::chroma_quality(&self) -> core::option::Option<u8>
+pub const fn encoder::QuantTableConfig::jpegli_chroma_scale(f32) -> Self
+pub const fn encoder::QuantTableConfig::quant_source(&self) -> encode::encoder_types::QuantTableSource
+pub const fn encoder::QuantTableConfig::separate_chroma_tables(&self) -> bool
+#[non_exhaustive] pub enum encoder::QuantTablePreset
+pub encoder::QuantTablePreset::Ahumada
+pub encoder::QuantTablePreset::Flat
+pub encoder::QuantTablePreset::JpegAnnexK
+pub encoder::QuantTablePreset::Klein
+pub encoder::QuantTablePreset::MssimTuned
+pub encoder::QuantTablePreset::Peterson
+pub encoder::QuantTablePreset::PsnrHvsM
+pub encoder::QuantTablePreset::Robidoux
+pub encoder::QuantTablePreset::Watson
+pub const encoder::QuantTablePreset::ImageMagick: Self
+#[non_exhaustive] pub enum encoder::SofMarker
+pub encoder::SofMarker::Baseline
+pub encoder::SofMarker::Extended
+pub encoder::SofMarker::Progressive
+#[non_exhaustive] pub enum encoder::TinyFileMode
+pub encoder::TinyFileMode::Auto
+pub encoder::TinyFileMode::Force
+pub encoder::TinyFileMode::Off
+pub enum encoder::TrellisSpeedMode
+pub encoder::TrellisSpeedMode::Adaptive
+pub encoder::TrellisSpeedMode::Custom
+pub encoder::TrellisSpeedMode::Custom::tier1_candidates: u8
+pub encoder::TrellisSpeedMode::Custom::tier1_lookback: u8
+pub encoder::TrellisSpeedMode::Custom::tier1_threshold: u8
+pub encoder::TrellisSpeedMode::Custom::tier2_candidates: u8
+pub encoder::TrellisSpeedMode::Custom::tier2_lookback: u8
+pub encoder::TrellisSpeedMode::Custom::tier2_threshold: u8
+pub encoder::TrellisSpeedMode::Level(u8)
+pub encoder::TrellisSpeedMode::Thorough
+pub fn encoder::TrellisSpeedMode::get_limits(&self, i32) -> (usize, usize)
+#[non_exhaustive] pub enum encoder::XybSubsampling
+pub encoder::XybSubsampling::BQuarter
+pub encoder::XybSubsampling::Full
+pub struct encoder::AqCoupling
+pub encoder::AqCoupling::chroma_mul: f32
+pub encoder::AqCoupling::exponent: f32
+pub encoder::AqCoupling::max_adjustment: f32
+pub encoder::AqCoupling::multiplicative: bool
+pub encoder::AqCoupling::scale: f32
+pub encoder::AqCoupling::threshold: f32
+pub const encoder::AqCoupling::OFF: Self
+pub fn encoder::AqCoupling::compute_adjustment(&self, f32, bool) -> f32
+pub fn encoder::AqCoupling::is_active(&self) -> bool
+pub struct encoder::BytesEncoder
+pub fn encoder::BytesEncoder::encode_stats(&self) -> &encoder::EncodeStats
+pub fn encoder::BytesEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::BytesEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::BytesEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
+pub fn encoder::BytesEncoder::finish_with_huffman_frequencies(self) -> encoder::Result<(alloc::vec::Vec<u8>, core::option::Option<alloc::boxed::Box<encode::blocks::HuffmanSymbolFrequencies>>)>
+pub fn encoder::BytesEncoder::height(&self) -> u32
+pub fn encoder::BytesEncoder::layout(&self) -> encoder::PixelLayout
+pub fn encoder::BytesEncoder::push(&mut self, &[u8], usize, usize, impl enough::Stop) -> encoder::Result<()>
+pub fn encoder::BytesEncoder::push_packed(&mut self, &[u8], impl enough::Stop) -> encoder::Result<()>
+pub fn encoder::BytesEncoder::rows_pushed(&self) -> u32
+pub fn encoder::BytesEncoder::rows_remaining(&self) -> u32
+pub fn encoder::BytesEncoder::width(&self) -> u32
+#[non_exhaustive] pub struct encoder::EncodePlan
+pub encoder::EncodePlan::aq_enabled: bool
+pub encoder::EncodePlan::color_mode: encoder::ColorMode
+pub encoder::EncodePlan::deringing: bool
+pub encoder::EncodePlan::distances: [f32; 3]
+pub encoder::EncodePlan::downsampling: encoder::DownsamplingMethod
+pub encoder::EncodePlan::dqt_16bit: [bool; 3]
+pub encoder::EncodePlan::internal_quality: f32
+pub encoder::EncodePlan::optimized_huffman: bool
+pub encoder::EncodePlan::pre_blur_sigma: f32
+pub encoder::EncodePlan::quality_drives_tables: bool
+pub encoder::EncodePlan::quant_max: [u16; 3]
+pub encoder::EncodePlan::restart_interval_mcus: u16
+pub encoder::EncodePlan::scan_mode: encoder::ProgressiveScanMode
+pub encoder::EncodePlan::separate_chroma_tables: bool
+pub encoder::EncodePlan::sof: encoder::SofMarker
+pub encoder::EncodePlan::table_family: encoder::QuantTableConfig
+pub encoder::EncodePlan::tiny_file_active: bool
+pub encoder::EncodePlan::trellis: core::option::Option<encoder::TrellisConfig>
+pub struct encoder::EncodeRequest<'a>
+pub fn encoder::EncodeRequest<'a>::encode<P: encoder::Pixel>(self, &[P], u32, u32) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::EncodeRequest<'a>::encode_bytes(self, &[u8], u32, u32, encoder::PixelLayout) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::EncodeRequest<'a>::encode_bytes_into(self, &[u8], u32, u32, encoder::PixelLayout, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::EncodeRequest<'a>::encode_from_bytes(self, u32, u32, encoder::PixelLayout) -> encoder::Result<encoder::BytesEncoder>
+pub fn encoder::EncodeRequest<'a>::encode_from_rgb<P: encoder::Pixel>(self, u32, u32) -> encoder::Result<encoder::RgbEncoder<P>>
+pub fn encoder::EncodeRequest<'a>::encode_from_ycbcr_planar(self, u32, u32) -> encoder::Result<encoder::YCbCrPlanarEncoder>
+pub fn encoder::EncodeRequest<'a>::encode_into<P: encoder::Pixel>(self, &[P], u32, u32, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::EncodeRequest<'a>::exif(self, impl core::convert::Into<encoder::Exif>) -> Self
+pub fn encoder::EncodeRequest<'a>::icc_profile(self, &'a [u8]) -> Self
+pub fn encoder::EncodeRequest<'a>::icc_profile_owned(self, alloc::vec::Vec<u8>) -> Self
+pub fn encoder::EncodeRequest<'a>::limits(self, encoder::Limits) -> Self
+pub fn encoder::EncodeRequest<'a>::segments(self, encode::extras::EncoderSegments) -> Self
+pub fn encoder::EncodeRequest<'a>::stop(self, &'a dyn enough::Stop) -> Self
+pub fn encoder::EncodeRequest<'a>::xmp(self, &'a [u8]) -> Self
+pub fn encoder::EncodeRequest<'a>::xmp_owned(self, alloc::vec::Vec<u8>) -> Self
+pub struct encoder::EncodeStats
+pub encoder::EncodeStats::allocations: alloc::vec::Vec<foundation::alloc::AllocationInfo>
+pub encoder::EncodeStats::by_context: alloc::vec::Vec<(&'static str, usize)>
+pub encoder::EncodeStats::count: usize
+pub encoder::EncodeStats::detailed: bool
+pub encoder::EncodeStats::peak_bytes: usize
+pub encoder::EncodeStats::total_bytes: usize
+pub fn encoder::EncodeStats::by_context_summary(&self) -> alloc::string::String
+pub fn encoder::EncodeStats::detailed_report(&self) -> alloc::string::String
+pub fn encoder::EncodeStats::merge(&mut self, &encoder::EncodeStats)
+pub fn encoder::EncodeStats::new() -> Self
+pub fn encoder::EncodeStats::record_alloc(&mut self, usize)
+pub fn encoder::EncodeStats::record_alloc_explicit(&mut self, usize, &'static str, usize, usize, &'static str)
+pub fn encoder::EncodeStats::record_alloc_named(&mut self, usize, &'static str)
+pub fn encoder::EncodeStats::record_alloc_typed<T>(&mut self, usize, &'static str)
+pub fn encoder::EncodeStats::record_dealloc(&mut self, usize)
+pub fn encoder::EncodeStats::reset(&mut self)
+pub fn encoder::EncodeStats::summary(&self) -> alloc::string::String
+pub fn encoder::EncodeStats::with_detailed_tracking() -> Self
+pub struct encoder::EncoderConfig
+pub fn encoder::EncoderConfig::add_gainmap(self, alloc::vec::Vec<u8>) -> Self
+pub fn encoder::EncoderConfig::add_mpf_image(self, alloc::vec::Vec<u8>, container::types::MpImageType) -> Self
+pub fn encoder::EncoderConfig::add_segment(self, u8, alloc::vec::Vec<u8>) -> Self
+pub fn encoder::EncoderConfig::allow_16bit_quant_tables(self, bool) -> Self
+pub fn encoder::EncoderConfig::aq_enabled(self, bool) -> Self
+pub fn encoder::EncoderConfig::auto_optimize(self, bool) -> Self
+pub fn encoder::EncoderConfig::color_mode(self, encoder::ColorMode) -> Self
+pub fn encoder::EncoderConfig::deringing(self, bool) -> Self
+pub fn encoder::EncoderConfig::downsampling_method(self, encoder::DownsamplingMethod) -> Self
+pub fn encoder::EncoderConfig::encode<P: encoder::Pixel>(&self, &[P], u32, u32) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::EncoderConfig::encode_bytes(&self, &[u8], u32, u32, encoder::PixelLayout) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::EncoderConfig::encode_bytes_into(&self, &[u8], u32, u32, encoder::PixelLayout, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::EncoderConfig::encode_from_bytes(&self, u32, u32, encoder::PixelLayout) -> encoder::Result<encoder::BytesEncoder>
+pub fn encoder::EncoderConfig::encode_from_rgb<P: encoder::Pixel>(&self, u32, u32) -> encoder::Result<encoder::RgbEncoder<P>>
+pub fn encoder::EncoderConfig::encode_from_ycbcr_planar(&self, u32, u32) -> encoder::Result<encoder::YCbCrPlanarEncoder>
+pub fn encoder::EncoderConfig::encode_into<P: encoder::Pixel>(&self, &[P], u32, u32, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::EncoderConfig::estimate_memory(&self, u32, u32) -> usize
+pub fn encoder::EncoderConfig::estimate_memory_ceiling(&self, u32, u32) -> usize
+pub fn encoder::EncoderConfig::force_baseline(self) -> Self
+pub fn encoder::EncoderConfig::force_restart_markers(self, bool) -> Self
+pub fn encoder::EncoderConfig::get_color_mode(&self) -> encoder::ColorMode
+pub fn encoder::EncoderConfig::get_quality(&self) -> encoder::Quality
+pub fn encoder::EncoderConfig::get_quant_table_config(&self) -> &encoder::QuantTableConfig
+pub fn encoder::EncoderConfig::get_scan_mode(&self) -> encoder::ProgressiveScanMode
+pub fn encoder::EncoderConfig::get_segments(&self) -> core::option::Option<&encode::extras::EncoderSegments>
+pub fn encoder::EncoderConfig::get_tiny_file_mode(&self) -> encoder::TinyFileMode
+pub fn encoder::EncoderConfig::get_trellis(&self) -> core::option::Option<&encoder::TrellisConfig>
+pub fn encoder::EncoderConfig::grayscale(impl core::convert::Into<encoder::Quality>) -> Self
+pub fn encoder::EncoderConfig::huffman(self, impl core::convert::Into<encoder::HuffmanStrategy>) -> Self
+pub fn encoder::EncoderConfig::is_allow_16bit_quant_tables(&self) -> bool
+pub fn encoder::EncoderConfig::is_aq_enabled(&self) -> bool
+pub fn encoder::EncoderConfig::is_optimize_huffman(&self) -> bool
+pub fn encoder::EncoderConfig::is_progressive(&self) -> bool
+pub fn encoder::EncoderConfig::is_separate_chroma_tables(&self) -> bool
+pub fn encoder::EncoderConfig::pre_blur(self, f32) -> Self
+pub fn encoder::EncoderConfig::progressive(self, impl core::convert::Into<encoder::ProgressiveScanMode>) -> Self
+pub fn encoder::EncoderConfig::quality(self, impl core::convert::Into<encoder::Quality>) -> Self
+pub fn encoder::EncoderConfig::quant_source(self, encode::encoder_types::QuantTableSource) -> Self
+pub fn encoder::EncoderConfig::quant_table_config(self, encoder::QuantTableConfig) -> Self
+pub fn encoder::EncoderConfig::request(&self) -> encoder::EncodeRequest<'_>
+pub fn encoder::EncoderConfig::restart_mcu_rows(self, u16) -> Self
+pub fn encoder::EncoderConfig::rgb(impl core::convert::Into<encoder::Quality>) -> Self
+pub fn encoder::EncoderConfig::separate_chroma_tables(self, bool) -> Self
+pub fn encoder::EncoderConfig::sharp_yuv(self, bool) -> Self
+pub fn encoder::EncoderConfig::tables(self, alloc::boxed::Box<encode::tuning::EncodingTables>) -> Self
+pub fn encoder::EncoderConfig::tiny_file_mode(self, encoder::TinyFileMode) -> Self
+pub fn encoder::EncoderConfig::trellis(self, encoder::TrellisConfig) -> Self
+pub fn encoder::EncoderConfig::validate(&self) -> encoder::Result<()>
+pub fn encoder::EncoderConfig::with_segments(self, encode::extras::EncoderSegments) -> Self
+pub fn encoder::EncoderConfig::xyb(impl core::convert::Into<encoder::Quality>, encoder::XybSubsampling) -> Self
+pub fn encoder::EncoderConfig::ycbcr(impl core::convert::Into<encoder::Quality>, encoder::ChromaSubsampling) -> Self
+pub fn encoder::EncoderConfig::resolve_plan(&self, u32, u32) -> encoder::EncodePlan
+pub fn encoder::Error::allocation_failed(usize, &'static str) -> Self
+pub fn encoder::Error::at(self) -> Self
+pub fn encoder::Error::cancelled() -> Self
+pub fn encoder::Error::decode_error(alloc::string::String) -> Self
+pub fn encoder::Error::encode_policy_rejected(&'static str) -> Self
+pub fn encoder::Error::icc_error(alloc::string::String) -> Self
+pub fn encoder::Error::image_too_large(u64, u64) -> Self
+pub fn encoder::Error::incomplete_image(u32, u32) -> Self
+pub fn encoder::Error::inner(&self) -> &whereat::at::At<encoder::ErrorKind>
+pub fn encoder::Error::internal(&'static str) -> Self
+pub fn encoder::Error::into_inner(self) -> whereat::at::At<encoder::ErrorKind>
+pub fn encoder::Error::into_kind(self) -> encoder::ErrorKind
+pub fn encoder::Error::invalid_buffer_size(usize, usize) -> Self
+pub fn encoder::Error::invalid_color_format(&'static str) -> Self
+pub fn encoder::Error::invalid_config(alloc::string::String) -> Self
+pub fn encoder::Error::invalid_dimensions(u32, u32, &'static str) -> Self
+pub fn encoder::Error::invalid_huffman_table(u8, &'static str) -> Self
+pub fn encoder::Error::invalid_jpeg_data(&'static str) -> Self
+pub fn encoder::Error::invalid_marker(u8, &'static str) -> Self
+pub fn encoder::Error::invalid_quality(f32, &'static str) -> Self
+pub fn encoder::Error::invalid_quant_table(u8, &'static str) -> Self
+pub fn encoder::Error::invalid_scan_script(alloc::string::String) -> Self
+pub fn encoder::Error::invalid_state(&'static str) -> Self
+pub fn encoder::Error::io_error(alloc::string::String) -> Self
+pub fn encoder::Error::kind(&self) -> &encoder::ErrorKind
+pub fn encoder::Error::new(encoder::ErrorKind) -> Self
+pub fn encoder::Error::not_a_jpeg_file() -> Self
+pub fn encoder::Error::policy_rejected(&'static str) -> Self
+pub fn encoder::Error::resource_limit_exceeded(zencodec::limits::LimitKind, u64, u64) -> Self
+pub fn encoder::Error::size_overflow(&'static str) -> Self
+pub fn encoder::Error::stride_too_small(u32, usize) -> Self
+pub fn encoder::Error::too_many_rows(u32, u32) -> Self
+pub fn encoder::Error::too_many_scans(usize, usize) -> Self
+pub fn encoder::Error::truncated_data(&'static str) -> Self
+pub fn encoder::Error::unsupported_feature(&'static str) -> Self
+pub fn encoder::Error::unsupported_pixel_descriptor(&'static str) -> Self
+pub fn encoder::Error::unsupported_pixel_format(decoder::PixelFormat) -> Self
+pub struct encoder::ExifFields
+pub fn encoder::ExifFields::copyright(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn encoder::ExifFields::orientation(self, encoder::Orientation) -> Self
+pub fn encoder::ExifFields::to_bytes(&self) -> core::option::Option<alloc::vec::Vec<u8>>
+pub struct encoder::ExpertConfig
+pub encoder::ExpertConfig::allow_16bit_quant_tables: bool
+pub encoder::ExpertConfig::aq_enabled: bool
+pub encoder::ExpertConfig::aq_trellis_chroma_scale: f32
+pub encoder::ExpertConfig::aq_trellis_coupling: f32
+pub encoder::ExpertConfig::aq_trellis_exponent: f32
+pub encoder::ExpertConfig::aq_trellis_max_adjustment: f32
+pub encoder::ExpertConfig::aq_trellis_multiplicative: bool
+pub encoder::ExpertConfig::aq_trellis_threshold: f32
+pub encoder::ExpertConfig::deringing: bool
+pub encoder::ExpertConfig::downsampling_method: encoder::DownsamplingMethod
+pub encoder::ExpertConfig::quality: encoder::Quality
+pub encoder::ExpertConfig::scan_mode: encoder::ProgressiveScanMode
+pub encoder::ExpertConfig::tables: encode::tuning::EncodingTables
+pub encoder::ExpertConfig::trellis_dc_enabled: bool
+pub encoder::ExpertConfig::trellis_delta_dc_weight: f32
+pub encoder::ExpertConfig::trellis_enabled: bool
+pub encoder::ExpertConfig::trellis_lambda_log_scale1: f32
+pub encoder::ExpertConfig::trellis_lambda_log_scale2: f32
+pub encoder::ExpertConfig::trellis_speed_mode: encoder::TrellisSpeedMode
+pub encoder::ExpertConfig::zero_bias_hq: encode::tuning::PerComponent<[f32; 64]>
+pub encoder::ExpertConfig::zero_bias_hq_distance: f32
+pub encoder::ExpertConfig::zero_bias_lq: encode::tuning::PerComponent<[f32; 64]>
+pub encoder::ExpertConfig::zero_bias_lq_distance: f32
+pub fn encoder::ExpertConfig::blend_zero_bias(&mut self)
+pub fn encoder::ExpertConfig::default_ycbcr(impl core::convert::Into<encoder::Quality>) -> Self
+pub fn encoder::ExpertConfig::from_preset(encoder::OptimizationPreset, impl core::convert::Into<encoder::Quality>) -> Self
+pub fn encoder::ExpertConfig::to_encoder_config(&self, encoder::ColorMode) -> encoder::EncoderConfig
+pub fn encoder::ExpertConfig::uses_quality_scaling(&self) -> bool
+pub struct encoder::HuffmanTableSet
+pub encoder::HuffmanTableSet::ac_chroma: huffman::optimize::frequency::OptimizedTable
+pub encoder::HuffmanTableSet::ac_luma: huffman::optimize::frequency::OptimizedTable
+pub encoder::HuffmanTableSet::dc_chroma: huffman::optimize::frequency::OptimizedTable
+pub encoder::HuffmanTableSet::dc_luma: huffman::optimize::frequency::OptimizedTable
+pub fn encoder::HuffmanTableSet::annex_k() -> encoder::Result<Self>
+pub fn encoder::HuffmanTableSet::from_standard() -> encoder::Result<Self>
+pub encoder::Limits::max_memory: core::option::Option<u64>
+pub encoder::Limits::max_output: core::option::Option<u64>
+pub encoder::Limits::max_pixels: core::option::Option<u64>
+pub fn encoder::Limits::effective_max_memory(&self) -> u64
+pub fn encoder::Limits::effective_max_output(&self) -> u64
+pub fn encoder::Limits::effective_max_pixels(&self) -> u64
+pub fn encoder::Limits::max_memory(self, u64) -> Self
+pub fn encoder::Limits::max_output(self, u64) -> Self
+pub fn encoder::Limits::max_pixels(self, u64) -> Self
+pub struct encoder::MozjpegTables
+pub fn encoder::MozjpegTables::chrominance_base(encoder::QuantTablePreset) -> &'static [u16; 64]
+pub fn encoder::MozjpegTables::generate(u8, encoder::QuantTablePreset) -> alloc::boxed::Box<encode::tuning::EncodingTables>
+pub fn encoder::MozjpegTables::generate_ex(u8, encoder::QuantTablePreset, bool) -> alloc::boxed::Box<encode::tuning::EncodingTables>
+pub fn encoder::MozjpegTables::luminance_base(encoder::QuantTablePreset) -> &'static [u16; 64]
+pub struct encoder::RgbEncoder<P: encoder::Pixel>
+pub fn encoder::RgbEncoder<P>::encode_stats(&self) -> &encoder::EncodeStats
+pub fn encoder::RgbEncoder<P>::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::RgbEncoder<P>::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::RgbEncoder<P>::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
+pub fn encoder::RgbEncoder<P>::height(&self) -> u32
+pub fn encoder::RgbEncoder<P>::push(&mut self, &[P], usize, usize, impl enough::Stop) -> encoder::Result<()>
+pub fn encoder::RgbEncoder<P>::push_packed(&mut self, &[P], impl enough::Stop) -> encoder::Result<()>
+pub fn encoder::RgbEncoder<P>::rows_pushed(&self) -> u32
+pub fn encoder::RgbEncoder<P>::rows_remaining(&self) -> u32
+pub fn encoder::RgbEncoder<P>::width(&self) -> u32
+pub struct encoder::TrellisConfig
+pub encoder::TrellisConfig::aq_coupling: encoder::AqCoupling
+pub encoder::TrellisConfig::dc_enabled: bool
+pub encoder::TrellisConfig::delta_dc_weight: f32
+pub encoder::TrellisConfig::enabled: bool
+pub encoder::TrellisConfig::lambda_log_scale1: f32
+pub encoder::TrellisConfig::lambda_log_scale2: f32
+pub encoder::TrellisConfig::speed_mode: encoder::TrellisSpeedMode
+pub fn encoder::TrellisConfig::ac_trellis(self, bool) -> Self
+pub fn encoder::TrellisConfig::aq_coupling(self, encoder::AqCoupling) -> Self
+pub fn encoder::TrellisConfig::dc_trellis(self, bool) -> Self
+pub fn encoder::TrellisConfig::delta_dc_weight(self, f32) -> Self
+pub const fn encoder::TrellisConfig::disabled() -> Self
+pub fn encoder::TrellisConfig::favor_quality() -> Self
+pub fn encoder::TrellisConfig::favor_size() -> Self
+pub fn encoder::TrellisConfig::get_delta_dc_weight(&self) -> f32
+pub fn encoder::TrellisConfig::get_speed_mode(&self) -> encoder::TrellisSpeedMode
+pub fn encoder::TrellisConfig::is_ac_enabled(&self) -> bool
+pub fn encoder::TrellisConfig::is_dc_enabled(&self) -> bool
+pub fn encoder::TrellisConfig::is_enabled(&self) -> bool
+pub fn encoder::TrellisConfig::lambda_log_scale1(&self) -> f32
+pub fn encoder::TrellisConfig::lambda_log_scale2(&self) -> f32
+pub fn encoder::TrellisConfig::lambda_scales(self, f32, f32) -> Self
+pub fn encoder::TrellisConfig::new() -> Self
+pub fn encoder::TrellisConfig::rd_factor(self, f32) -> Self
+pub fn encoder::TrellisConfig::speed_mode(self, encoder::TrellisSpeedMode) -> Self
+pub fn encoder::TrellisConfig::thorough() -> Self
+pub struct encoder::YCbCrPlanarEncoder
+pub fn encoder::YCbCrPlanarEncoder::finish(self) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn encoder::YCbCrPlanarEncoder::finish_into(self, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::YCbCrPlanarEncoder::finish_to<W: core::io::write::Write>(self, W) -> encoder::Result<W>
+pub fn encoder::YCbCrPlanarEncoder::height(&self) -> u32
+pub fn encoder::YCbCrPlanarEncoder::push(&mut self, &encoder::YCbCrPlanes<'_>, usize, impl enough::Stop) -> encoder::Result<()>
+pub fn encoder::YCbCrPlanarEncoder::push_subsampled(&mut self, &encoder::YCbCrPlanes<'_>, usize, impl enough::Stop) -> encoder::Result<()>
+pub fn encoder::YCbCrPlanarEncoder::rows_pushed(&self) -> u32
+pub fn encoder::YCbCrPlanarEncoder::rows_remaining(&self) -> u32
+pub fn encoder::YCbCrPlanarEncoder::width(&self) -> u32
+pub struct encoder::YCbCrPlanes<'a>
+pub encoder::YCbCrPlanes::cb: &'a [f32]
+pub encoder::YCbCrPlanes::cb_stride: usize
+pub encoder::YCbCrPlanes::cr: &'a [f32]
+pub encoder::YCbCrPlanes::cr_stride: usize
+pub encoder::YCbCrPlanes::y: &'a [f32]
+pub encoder::YCbCrPlanes::y_stride: usize
+pub trait encoder::Pixel: core::marker::Copy + 'static + bytemuck::pod::Pod
+pub const encoder::Pixel::LAYOUT: encoder::PixelLayout
+pub fn encoder::should_activate_tiny_file_mode(u32, u32, bool) -> bool
+pub fn encoder::should_activate_tiny_file_mode_for_subsampling(u32, u32, bool, decoder::Subsampling) -> bool
+pub type encoder::EncodeError = encoder::Error
+pub type encoder::EncodeResult<T> = core::result::Result<T, encoder::EncodeError>
+pub mod heuristics
+#[non_exhaustive] pub struct heuristics::DecodeEstimate
+pub heuristics::DecodeEstimate::allocations: u32
+pub heuristics::DecodeEstimate::output_bytes: u64
+pub heuristics::DecodeEstimate::peak_memory_bytes: u64
+pub heuristics::DecodeEstimate::peak_memory_bytes_max: u64
+pub heuristics::DecodeEstimate::peak_memory_bytes_min: u64
+pub heuristics::DecodeEstimate::time_ms: f32
+pub heuristics::DecodeEstimate::time_ms_max: f32
+pub heuristics::DecodeEstimate::time_ms_min: f32
+#[non_exhaustive] pub struct heuristics::EncodeEstimate
+pub heuristics::EncodeEstimate::allocations: u32
+pub heuristics::EncodeEstimate::input_bytes: u64
+pub heuristics::EncodeEstimate::output_bytes: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes_max: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes_min: u64
+pub heuristics::EncodeEstimate::time_ms: f32
+pub heuristics::EncodeEstimate::time_ms_max: f32
+pub heuristics::EncodeEstimate::time_ms_min: f32
+pub fn heuristics::encode_threading_info() -> zencodec::estimate::ThreadingInformation
+pub fn heuristics::estimate_decode(u32, u32, decoder::PixelFormat) -> heuristics::DecodeEstimate
+pub fn heuristics::estimate_decode_streaming(u32, u32) -> heuristics::DecodeEstimate
+pub fn heuristics::estimate_encode(u32, u32, &encoder::EncoderConfig) -> heuristics::EncodeEstimate
+pub fn heuristics::estimate_encode_ceiling(u32, u32, &encoder::EncoderConfig) -> heuristics::EncodeEstimate
+pub mod lossless
+pub enum lossless::EdgeHandling
+pub lossless::EdgeHandling::RejectPartialBlocks
+pub lossless::EdgeHandling::TrimPartialBlocks
+pub enum lossless::LosslessTransform
+pub lossless::LosslessTransform::FlipHorizontal
+pub lossless::LosslessTransform::FlipVertical
+pub lossless::LosslessTransform::None
+pub lossless::LosslessTransform::Rotate180
+pub lossless::LosslessTransform::Rotate270
+pub lossless::LosslessTransform::Rotate90
+pub lossless::LosslessTransform::Transpose
+pub lossless::LosslessTransform::Transverse
+pub const lossless::LosslessTransform::ALL: [Self; 8]
+pub fn lossless::LosslessTransform::inverse(self) -> Self
+pub fn lossless::LosslessTransform::output_dimensions(self, u32, u32) -> (u32, u32)
+pub fn lossless::LosslessTransform::swaps_dimensions(self) -> bool
+pub fn lossless::LosslessTransform::then(self, Self) -> Self
+pub fn lossless::LosslessTransform::from_exif_orientation(u8) -> core::option::Option<Self>
+pub enum lossless::OutputMode
+pub lossless::OutputMode::Progressive
+pub lossless::OutputMode::Sequential
+pub enum lossless::RestartInterval
+pub lossless::RestartInterval::EveryMcuRows(u16)
+pub lossless::RestartInterval::EveryMcus(u16)
+pub lossless::RestartInterval::None
+pub struct lossless::BlockTransform
+pub lossless::BlockTransform::entries: [(u8, bool); 64]
+pub fn lossless::BlockTransform::apply(&self, &[i16; 64]) -> [i16; 64]
+pub fn lossless::BlockTransform::for_transform(lossless::LosslessTransform) -> Self
+pub struct lossless::RestructureConfig
+pub lossless::RestructureConfig::output_mode: lossless::OutputMode
+pub lossless::RestructureConfig::restart_interval: lossless::RestartInterval
+pub lossless::RestructureConfig::transform: core::option::Option<lossless::TransformConfig>
+pub struct lossless::TransformConfig
+pub lossless::TransformConfig::edge_handling: lossless::EdgeHandling
+pub lossless::TransformConfig::transform: lossless::LosslessTransform
+pub fn lossless::apply_exif_orientation(&[u8], impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn lossless::apply_exif_orientation_with_edge_handling(&[u8], lossless::EdgeHandling, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn lossless::parse_exif_orientation(&[u8]) -> core::option::Option<u8>
+pub fn lossless::restructure(&[u8], &lossless::RestructureConfig, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn lossless::set_exif_orientation(&mut [u8], u8) -> bool
+pub fn lossless::transform(&[u8], &lossless::TransformConfig, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn lossless::transform_coefficients(&decoder::DecodedCoefficients, &lossless::TransformConfig) -> core::result::Result<lossless::coeff_transform::TransformedCoefficients, lossless::coeff_transform::TransformError>
+pub mod profile
+pub struct profile::ProfileGuard
+pub fn profile::ProfileGuard::new(&'static str) -> Self
+pub struct profile::ProfileStats
+pub fn profile::ProfileStats::new() -> Self
+pub fn profile::ProfileStats::print_summary()
+pub fn profile::ProfileStats::record(&'static str, core::time::Duration)
+pub fn profile::ProfileStats::reset()
+pub mod target_quality
+pub struct target_quality::TargetOptions
+pub target_quality::TargetOptions::max_encodes: u8
+pub target_quality::TargetOptions::max_quality: f32
+pub target_quality::TargetOptions::min_quality: f32
+pub target_quality::TargetOptions::q_start: core::option::Option<f32>
+pub target_quality::TargetOptions::quality_step: f32
+pub target_quality::TargetOptions::tolerance: f64
+pub struct target_quality::TargetSearchResult
+pub target_quality::TargetSearchResult::converged: bool
+pub target_quality::TargetSearchResult::encodes: u8
+pub target_quality::TargetSearchResult::quality: f32
+pub target_quality::TargetSearchResult::score: f64
+pub struct target_quality::TargetedEncode
+pub target_quality::TargetedEncode::data: alloc::vec::Vec<u8>
+pub target_quality::TargetedEncode::search: target_quality::TargetSearchResult
+pub fn target_quality::anchor_guess(f64) -> f32
+pub fn target_quality::encode_with_target<E, Err>(f64, &target_quality::TargetOptions, E) -> core::result::Result<target_quality::TargetedEncode, Err> where E: core::ops::function::FnMut(f32) -> core::result::Result<(alloc::vec::Vec<u8>, f64), Err>
+pub fn target_quality::search_target<E, Err>(f64, &target_quality::TargetOptions, E) -> core::result::Result<target_quality::TargetSearchResult, Err> where E: core::ops::function::FnMut(f32) -> core::result::Result<f64, Err>
+pub macro profile_block!
+pub macro profile_scope!
+
+## trait impls (124 types)
+
+container::marker::MarkerIter<'a>: Iterator
+container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
+container::marker::MarkerSpan<'a>: Clone, Copy, Debug
+container::metadata::Error: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+container::mpf::MpfError: Clone, Debug, Display, Eq, Error, PartialEq
+container::probe::ContainerProbe: Clone, Debug, Default
+container::probe::GainMapPresence: Clone, Copy, Debug, Default, Eq, PartialEq
+container::probe::ProbeSof: Clone, Copy, Debug, Eq, PartialEq
+container::probe::Wants: BitOr, BitOrAssign, Clone, Copy, Debug, Eq, PartialEq
+container::types::ContainerItem: Clone, Debug, Eq, PartialEq
+container::types::ItemSemantic: Clone, Debug, Eq, PartialEq
+container::types::MpImageType: Clone, Copy, Debug, Default, Eq, PartialEq, decoder::MpfImageTypeExt
+container::types::MpfEntry: Clone, Copy, Debug, Eq, PartialEq
+container::xmp::XmpError: Debug, Display, Error
+deblock::boundary::BoundaryStrength: Clone, Copy, Debug
+decoder::AdobeColorTransform: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::AdobeInfo: Clone, Debug, Default
+decoder::ChromaUpsampling: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::Cmyk16: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::ColorSpace: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+decoder::CropRegion: Clone, Copy, Debug, PartialEq
+decoder::DeblockMode: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::DecodeConfig: Clone, Debug, Default
+decoder::DecodeInfo: Clone, Debug
+decoder::DecodePool: Debug, Default
+decoder::DecodeResult: Clone, Debug
+decoder::DecodeWarning: Clone, Debug, Display, Eq, PartialEq
+decoder::DecodedCoefficients: Clone, Debug
+decoder::DecodedExtras: Clone, Debug
+decoder::DecodedImage: Clone, Debug
+decoder::DecodedImageF32: Clone, Debug
+decoder::DecodedYCbCr: Clone, Debug
+decoder::DensityUnits: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::DepthMapData: Clone, Debug
+decoder::DepthSource: Clone, Copy, Debug, Eq, PartialEq
+decoder::Dimensions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+decoder::GDepthFormat: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::GDepthMeasureType: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::GDepthMetadata: Clone, Debug
+decoder::GDepthUnits: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::GainMapHandling: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::GainMapResult: Clone, Debug
+decoder::IccPreserve: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::IdctMethod: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::JfifInfo: Clone, Debug, Default
+decoder::JpegInfo: Clone, Debug
+decoder::JpegMode: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+decoder::MpfDirectory: Clone, Debug
+decoder::MpfEntry: Clone, Debug
+decoder::OutputTarget: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::PixelFormat: Clone, Copy, Debug, Default, Eq, From<encoder::PixelLayout>, Hash, PartialEq
+decoder::PreserveConfig: Clone, Debug, Default
+decoder::PreservedMpfImage: Clone, Debug
+decoder::PreservedSegment: Clone, Debug
+decoder::ScanlineInfo: Clone, Debug
+decoder::SegmentType: Clone, Copy, Debug, Eq, Hash, PartialEq
+decoder::StandardProfile: Clone, Copy, Debug, Eq, PartialEq
+decoder::Strictness: Clone, Copy, Debug, Default, Eq, PartialEq
+decoder::Subsampling: Clone, Copy, Debug, Default, Eq, From<encoder::ChromaSubsampling>, Hash, PartialEq
+decoder::TargetColorSpace: Clone, Copy, Debug, Default, Eq, PartialEq
+detect::Confidence: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::DqtTable: Clone, Debug
+detect::EncoderFamily: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::JpegProbe: Clone, Debug, zencodec::detect::SourceEncodingDetails
+detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq, zencodec::error::CategorizedError
+detect::QualityEstimate: Clone, Debug
+detect::QualityScale: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::ReencodeError: Clone, Debug, Display, Error
+detect::ReencodeSettings: Clone, Debug
+encoder::AqCoupling: Clone, Copy, Debug, Default, PartialEq
+encoder::ChromaSubsampling: Clone, Copy, Debug, Eq, From<decoder::Subsampling>, PartialEq
+encoder::ColorMode: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::DownsamplingMethod: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::EncodePlan: Clone, Debug, Display
+encoder::EncodeStats: Clone, Debug, Default
+encoder::EncoderConfig: Clone, Debug
+encoder::Error: Debug, Display, Error, From<core::io::error::Error>, From<encoder::ErrorKind>, From<enough::reason::StopReason>, From<whereat::at::At<encoder::ErrorKind>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, PartialEq, zencodec::error::CategorizedError
+encoder::ErrorKind: Clone, Debug, Display, Error, From<enough::reason::StopReason>, PartialEq, zencodec::error::CategorizedError
+encoder::Exif: Clone, Debug, From<encoder::ExifFields>
+encoder::ExifFields: Clone, Debug, Default
+encoder::ExpertConfig: Clone, Debug
+encoder::HuffmanMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+encoder::HuffmanStrategy: Clone, Debug, Default, From<bool>, From<encoder::HuffmanTableSet>
+encoder::HuffmanTableSet: Clone, Debug
+encoder::Limits: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::OptimizationPreset: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+encoder::Orientation: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::PixelLayout: Clone, Copy, Debug, Eq, From<decoder::PixelFormat>, PartialEq
+encoder::ProgressiveScanMode: Clone, Copy, Debug, Default, Eq, From<bool>, PartialEq
+encoder::Quality: Clone, Copy, Debug, Default, From<f32>, From<i32>, From<u8>, PartialEq
+encoder::QuantTableConfig: Clone, Debug, Default, PartialEq
+encoder::QuantTablePreset: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::SofMarker: Clone, Copy, Debug, Eq, PartialEq
+encoder::TinyFileMode: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::TrellisConfig: Clone, Copy, Debug, Default, PartialEq
+encoder::TrellisSpeedMode: Clone, Copy, Debug, Default, PartialEq
+encoder::XybSubsampling: Clone, Copy, Debug, Default, Eq, PartialEq
+encoder::YCbCrPlanes<'a>: Clone, Copy, Debug
+heuristics::DecodeEstimate: Clone, Copy, Debug
+heuristics::EncodeEstimate: Clone, Copy, Debug
+lossless::EdgeHandling: Clone, Copy, Debug, Default, Eq, PartialEq
+lossless::LosslessTransform: Clone, Copy, Debug, Eq, PartialEq
+lossless::OutputMode: Clone, Copy, Debug, Eq, PartialEq
+lossless::RestartInterval: Clone, Copy, Debug, Eq, PartialEq
+lossless::RestructureConfig: Clone, Debug, Default
+lossless::TransformConfig: Clone, Debug, Default
+profile::ProfileGuard: Drop
+profile::ProfileStats: Default
+rgb::formats::bgr::Bgr<u8>: encoder::Pixel
+rgb::formats::bgra::Bgra<u8>: encoder::Pixel
+rgb::formats::gray::Gray_v08<f32>: encoder::Pixel
+rgb::formats::gray::Gray_v08<u16>: encoder::Pixel
+rgb::formats::gray::Gray_v08<u8>: encoder::Pixel
+rgb::formats::rgb::Rgb<f32>: encoder::Pixel
+rgb::formats::rgb::Rgb<u16>: encoder::Pixel
+rgb::formats::rgb::Rgb<u8>: encoder::Pixel
+rgb::formats::rgba::Rgba<f32>: encoder::Pixel
+rgb::formats::rgba::Rgba<u16>: encoder::Pixel
+rgb::formats::rgba::Rgba<u8>: encoder::Pixel
+target_quality::TargetOptions: Clone, Debug, Default
+target_quality::TargetSearchResult: Clone, Copy, Debug, PartialEq
+target_quality::TargetedEncode: Clone, Debug
+whereat::at::At<encoder::ErrorKind>: From<encoder::Error>
+whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder::ErrorKind>
+
+## auto traits
+
+107 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+decoder::DecodeConfig: !RefUnwindSafe !UnwindSafe
+decoder::DecodeInfo: !Freeze
+decoder::DecodePool: !Freeze
+decoder::DecodeRequest<'a, S>: !Freeze !RefUnwindSafe !Unpin !UnwindSafe
+decoder::DecodeResult: !Freeze
+decoder::DecodedExtras: !Freeze
+decoder::DecodedImage: !Freeze
+decoder::PreserveConfig: !RefUnwindSafe !UnwindSafe
+decoder::ScanlineReader<'a>: !RefUnwindSafe !UnwindSafe
+encoder::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
+encoder::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
+encoder::Error: !RefUnwindSafe !UnwindSafe
+encoder::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+encoder::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe

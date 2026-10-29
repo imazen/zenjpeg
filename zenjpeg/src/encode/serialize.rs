@@ -138,6 +138,19 @@ impl ComputedConfig {
         }
     }
 
+    /// Writes the single shared quantization table for RGB passthrough mode.
+    ///
+    /// All three components reference table 0 (see `write_frame_header_rgb`),
+    /// matching C++ jpegli's `JCS_RGB` component setup, so only one table is
+    /// emitted.
+    pub(crate) fn write_quant_tables_rgb(
+        &self,
+        output: &mut Vec<u8>,
+        quant: &QuantTable,
+    ) -> Result<()> {
+        Self::write_dqt_segment(output, &[(0u8, quant)])
+    }
+
     /// Writes quantization tables for XYB mode (3 separate tables).
     ///
     /// Supports both 8-bit (baseline) and 16-bit (extended) precision based on
@@ -233,11 +246,7 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(marker);
 
-        let num_components = if self.pixel_format.is_grayscale() {
-            1u8
-        } else {
-            3u8
-        };
+        let num_components = if self.writes_gray() { 1u8 } else { 3u8 };
 
         let length = 8u16 + num_components as u16 * 3;
         output.push((length >> 8) as u8);
@@ -358,6 +367,56 @@ impl ComputedConfig {
         self.write_frame_header_xyb_ex(output, false)
     }
 
+    /// Writes the frame header for RGB passthrough mode (SOF0/SOF1/SOF2).
+    ///
+    /// 3 components with IDs 'R','G','B', all 1×1 sampling, all
+    /// referencing quantization table 0 — the component setup C++
+    /// jpegli's `jpegli_set_colorspace(JCS_RGB)` produces.
+    ///
+    /// # Arguments
+    /// * `is_extended` - If true and mode is not progressive, use SOF1
+    ///   instead of SOF0 (needed when the shared quant table is 16-bit).
+    pub(crate) fn write_frame_header_rgb(
+        &self,
+        output: &mut Vec<u8>,
+        is_extended: bool,
+    ) -> Result<()> {
+        let marker = if self.mode == JpegMode::Progressive {
+            MARKER_SOF2
+        } else if is_extended {
+            MARKER_SOF1
+        } else {
+            MARKER_SOF0
+        };
+
+        output.push(0xFF);
+        output.push(marker);
+
+        // 3 components: R, G, B
+        let length = 8u16 + 3 * 3; // 17 bytes
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        // Use original dimensions (before MCU padding) for the header
+        let header_width = self.original_width.unwrap_or(self.width);
+        let header_height = self.original_height.unwrap_or(self.height);
+
+        output.push(8); // Sample precision
+        output.push((header_height >> 8) as u8);
+        output.push(header_height as u8);
+        output.push((header_width >> 8) as u8);
+        output.push(header_width as u8);
+        output.push(3); // Number of components
+
+        for id in *b"RGB" {
+            output.push(id);
+            output.push(0x11); // 1x1 sampling (always 4:4:4)
+            output.push(0); // All components share quant table 0
+        }
+
+        Ok(())
+    }
+
     /// Writes standard Huffman tables in a single DHT segment.
     #[allow(dead_code)] // Standard table fallback; optimized version preferred
     pub(crate) fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
@@ -444,11 +503,7 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
-        let num_components = if self.pixel_format.is_grayscale() {
-            1u8
-        } else {
-            3u8
-        };
+        let num_components = if self.writes_gray() { 1u8 } else { 3u8 };
 
         let length = 6u16 + num_components as u16 * 2;
         output.push((length >> 8) as u8);
@@ -624,11 +679,7 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
-        let num_components = if self.pixel_format.is_grayscale() {
-            1u8
-        } else {
-            3u8
-        };
+        let num_components = if self.writes_gray() { 1u8 } else { 3u8 };
 
         let length = 6u16 + num_components as u16 * 2;
         output.push((length >> 8) as u8);
@@ -658,7 +709,7 @@ impl ComputedConfig {
     }
 
     /// Writes scan header for XYB mode.
-    pub(crate) fn write_scan_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_scan_header_rgb_ids(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
@@ -689,7 +740,7 @@ impl ComputedConfig {
     }
 
     /// Writes DHT markers for XYB optimized tables.
-    pub(crate) fn write_huffman_tables_xyb_optimized(
+    pub(crate) fn write_huffman_tables_shared_pair(
         &self,
         output: &mut Vec<u8>,
         dc_table: &OptimizedTable,
@@ -739,7 +790,7 @@ impl ComputedConfig {
 
         for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
             // Component ID: 1-based for YCbCr, or 'R','G','B' for XYB
-            let comp_id = if self.use_xyb {
+            let comp_id = if self.use_xyb || self.use_rgb {
                 match comp_idx {
                     0 => b'R', // 82
                     1 => b'G', // 71

@@ -1,5 +1,10 @@
 # `EncoderConfig::adaptive` — design notes
 
+> Integration status (2026-10-26): content-adaptive configuration, learned
+> pickers, Zq targeting and measured recompression IQA are deferred. Their
+> implementation is preserved on [to-revisit/zenanalyze](https://github.com/imazen/zenjpeg/tree/to-revisit/zenanalyze)
+> at `fc19be17`. Related APIs/features described below are historical.
+
 This file is the **design rationale**: why we made the choices we did,
 post-mortems of earlier approaches, and what's still open.
 

@@ -5,13 +5,11 @@
 //! - `classic`: Optimal Huffman table generation (mozjpeg-style algorithms)
 //! - `types`: Additional Huffman types and comparisons
 //! - `optimize`: Two-pass Huffman optimization with frequency counting and clustering
-//! - `trained`: Pre-trained Huffman tables for streaming encoding
 
 pub(crate) mod builtin_tables;
 pub mod classic;
 pub mod encode;
 pub mod optimize;
-pub mod trained;
 pub mod types;
 
 // Re-export commonly used items from encode (the main huffman.rs functionality)
@@ -22,7 +20,6 @@ pub use encode::{
 };
 
 // Decoder-only exports
-#[cfg(feature = "decoder")]
 pub use encode::HuffmanDecodeTable;
 
 // Re-export from classic

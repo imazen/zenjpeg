@@ -147,7 +147,7 @@ mod bench {
         }
 
         // Sort by pixel count descending
-        source_images.sort_by(|a, b| (b.2 as u64 * b.3 as u64).cmp(&(a.2 as u64 * a.3 as u64)));
+        source_images.sort_by_key(|e| std::cmp::Reverse(e.2 as u64 * e.3 as u64));
 
         // Encode each image in multiple modes
         struct EncodedSet {

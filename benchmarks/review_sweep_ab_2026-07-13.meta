@@ -1,0 +1,18 @@
+date: 2026-07-14 (UTC)
+comparison: ebcb9882 (base, pre R4-R8) vs 8764ed65 (final, full review sweep)
+wall-clock host: zen-bench-x86 — Hetzner CCX33, 8 dedicated vCPU x86_64,
+  Ubuntu 24.04, rustc 1.97.0 (2d8144b78 2026-07-07), idle/dedicated,
+  offline vendored builds, box deleted after the run
+callgrind host: WSL2 Ryzen 9 7950X, valgrind callgrind, release builds,
+  identical committed example harnesses (valgrind_decode, profile_encode)
+commands:
+  cargo bench -p zenjpeg --bench decode_zenbench --features zencodec
+  cargo bench -p zenjpeg --bench encode_zenbench
+  valgrind --tool=callgrind target/release/examples/valgrind_decode jpegli 2048 [progressive]
+  valgrind --tool=callgrind target/release/examples/profile_encode
+corpus: CID22/CID22-512/training (209 images) via CODEC_CORPUS_CACHE
+base-tree deviations (build-only, measurement-neutral): zenpredict path-dep
+  lines removed + __picker-research blanked (CI-standard strip), cjpegli-ffi
+  dev-dep feature removed, R8 graceful sys-crate build.rs backported
+analysis script: per-group zen/reference throughput-ratio comparison
+  (zenbench interleaves lanes within a run; ratios are load-robust)

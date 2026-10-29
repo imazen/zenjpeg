@@ -6,8 +6,16 @@
 //! - Quality parameter handling (traditional and butteraugli distance)
 //! - Adaptive quantization support
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 // Adaptive quantization submodule
 pub mod aq;
+pub mod identify;
 
 // Quality conversion between encoders
 pub mod quality_conversion;
@@ -358,6 +366,22 @@ impl ZeroBiasParams {
         Self { mul, offset }
     }
 
+    /// Zero-bias parameters for RGB passthrough mode (no color transform).
+    ///
+    /// Matches C++ jpegli's `InitQuantizer` defaults when adaptive
+    /// quantization is enabled and `jpeg_color_space != JCS_YCbCr`:
+    /// flat 0.5 multiplier and offset for AC coefficients, 0 for DC.
+    /// The distance-blended YCbCr tables are luma/chroma-calibrated and
+    /// deliberately not applied to untransformed channel data.
+    #[must_use]
+    pub fn for_rgb() -> Self {
+        let mut mul = [0.5f32; DCT_BLOCK_SIZE];
+        let mut offset = [0.5f32; DCT_BLOCK_SIZE];
+        mul[0] = 0.0;
+        offset[0] = 0.0;
+        Self { mul, offset }
+    }
+
     /// Compute zero-bias parameters for non-adaptive quantization (simpler default).
     ///
     /// For YCbCr, applies only the offsets without the multiplier blending.
@@ -567,6 +591,76 @@ pub fn quant_vals_to_distance(
     }
 }
 
+/// Per-component variant of [`quant_vals_to_distance`]: inverts ONE
+/// component's quantization table against its own third of the base matrix.
+///
+/// Used for zero-bias derivation when per-component distances diverge
+/// (non-neutral `chroma_distance_scales`): each channel's zero-bias then
+/// follows that channel's own effective distance. The joint
+/// three-component inversion above remains the C++-parity path for
+/// uniform distances (bit-identical to historical output).
+#[must_use]
+pub fn quant_table_to_distance_component(
+    quant: &QuantTable,
+    component: usize,
+    use_xyb: bool,
+) -> f32 {
+    use crate::foundation::consts::{
+        BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
+    };
+
+    const DIST_MAX: f32 = 10000.0;
+
+    let (base_matrix, global_scale) = if use_xyb {
+        (&BASE_QUANT_MATRIX_XYB[..], GLOBAL_SCALE_XYB)
+    } else {
+        (&BASE_QUANT_MATRIX_YCBCR[..], GLOBAL_SCALE_YCBCR)
+    };
+
+    let quant_max = if quant.precision > 0 {
+        QUANT_MAX_EXTENDED
+    } else {
+        QUANT_MAX_BASELINE
+    };
+
+    let mut dist_min = 0.0f32;
+    let mut dist_max = DIST_MAX;
+
+    let base_idx = component.min(2) * DCT_BLOCK_SIZE;
+    let base_qm = &base_matrix[base_idx..base_idx + DCT_BLOCK_SIZE];
+
+    for k in 0..DCT_BLOCK_SIZE {
+        let mut dmin = 0.0f32;
+        let mut dmax = DIST_MAX;
+        let invq = 1.0 / base_qm[k] / global_scale;
+        let qval = quant.values[k];
+
+        if qval > 1 {
+            let scale_min = (qval as f32 - 0.5) * invq;
+            dmin = scale_to_distance(scale_min, k);
+        }
+        if qval < quant_max {
+            let scale_max = (qval as f32 + 0.5) * invq;
+            dmax = scale_to_distance(scale_max, k);
+        }
+
+        if dmin <= dist_max {
+            dist_min = dist_min.max(dmin);
+        }
+        if dmax >= dist_min {
+            dist_max = dist_max.min(dmax);
+        }
+    }
+
+    if dist_min == 0.0 {
+        dist_max
+    } else if dist_max >= DIST_MAX {
+        dist_min
+    } else {
+        0.5 * (dist_min + dist_max)
+    }
+}
+
 /// Standard JPEG luminance quantization table.
 /// From ITU-T T.81 (1992) K.1
 pub const STD_LUMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
@@ -637,7 +731,7 @@ pub fn generate_quant_table_ex(
 /// When called with `distance = quality.to_distance()` for every
 /// component the output is bit-identical to `generate_quant_table_ex`.
 ///
-/// See [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]
+/// See [`crate::encode::encoder_types::QuantTableConfig::Jpegli`]'s `chroma_distance_scale`
 /// for the caller-facing API that drives this.
 #[must_use]
 pub fn generate_quant_table_with_distance(
@@ -730,6 +824,47 @@ fn generate_standard_quant_table(
         let q = (base_val * scale).round();
         // Store unclamped value - create_quant_table will handle clamping and precision
         values[i] = q as u16;
+    }
+
+    create_quant_table(values, allow_16bit)
+}
+
+/// Maps butteraugli distance to a linear quality scale factor.
+///
+/// Port of C++ jpegli's `DistanceToLinearQuality` (quant.cc). Used for
+/// colorspaces that take the std-table path (`JCS_RGB`, CMYK, unknown),
+/// where quant values scale linearly instead of via the per-frequency
+/// non-linear `distance_to_scale`.
+#[must_use]
+pub fn distance_to_linear_quality(distance: f32) -> f32 {
+    if distance <= 0.1 {
+        1.0
+    } else if distance <= 4.6 {
+        (200.0 / 9.0) * (distance - 0.1)
+    } else if distance <= 6.4 {
+        5000.0 / (100.0 - (distance - 0.1) / 0.09)
+    } else if distance < 25.0 {
+        530000.0 / (3450.0 - 300.0 * ((848.0 * distance - 5330.0) / 120.0).sqrt())
+    } else {
+        5000.0
+    }
+}
+
+/// Generates the shared quantization table for RGB passthrough mode.
+///
+/// Matches C++ jpegli's `SetQuantMatrices` for non-XYB `JCS_RGB`: the
+/// ITU-T T.81 Annex K luminance base matrix scaled linearly by
+/// `0.01 * distance_to_linear_quality(distance)`. All three components
+/// reference this single table (quant_tbl_no = 0), so no chroma table
+/// is generated.
+#[must_use]
+pub fn generate_rgb_quant_table(distance: f32, allow_16bit: bool) -> QuantTable {
+    let scale = 0.01 * distance_to_linear_quality(distance);
+    let base = &BASE_QUANT_MATRIX_STD[..DCT_BLOCK_SIZE];
+
+    let mut values = [0u16; DCT_BLOCK_SIZE];
+    for (i, &base_val) in base.iter().enumerate() {
+        values[i] = (base_val * scale).round() as u16;
     }
 
     create_quant_table(values, allow_16bit)
@@ -877,34 +1012,6 @@ pub fn quantize_block_with_zero_bias_simd(
     result
 }
 
-/// Alternative: compare with simple quantization
-pub fn quantize_block_compare(
-    coeffs: &[f32; DCT_BLOCK_SIZE],
-    quant: &[u16; DCT_BLOCK_SIZE],
-    zero_bias: &ZeroBiasParams,
-    aq_strength: f32,
-) -> ([i16; DCT_BLOCK_SIZE], usize) {
-    let mut result = [0i16; DCT_BLOCK_SIZE];
-    let mut zeros_from_bias = 0usize;
-    for k in 0..DCT_BLOCK_SIZE {
-        let q = quant[k] as f32;
-        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
-        let qval = coeffs[k] * 8.0 / q;
-        let simple_result = qval.round() as i16;
-        let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
-
-        if qval.abs() >= threshold {
-            result[k] = simple_result;
-        } else {
-            // Would have been non-zero without zero-biasing
-            if simple_result != 0 {
-                zeros_from_bias += 1;
-            }
-        }
-    }
-    (result, zeros_from_bias)
-}
-
 /// Dequantizes a block of coefficients to i32 for integer IDCT.
 ///
 /// This is the fast path for standard (non-XYB) JPEG decoding.
@@ -918,38 +1025,6 @@ pub fn dequantize_block_i32(
     for k in 0..DCT_BLOCK_SIZE {
         result[k] = quantized[k] as i32 * quant[k] as i32;
     }
-    result
-}
-
-/// Partial dequantize + unzigzag: only processes the first `coeff_count` zigzag
-/// positions. Remaining positions are zero. For typical Q85 photos, most blocks
-/// have 10-15 non-zero coefficients, saving 75-85% of multiply work.
-///
-/// Uses natural-order iteration with sequential writes for cache efficiency.
-/// Coefficients beyond coeff_count are zero in the input (guaranteed by
-/// entropy decoder), so multiplying them by quant produces zero — same result
-/// as partial iteration without the zeroing overhead.
-#[inline(always)]
-pub fn dequantize_unzigzag_i32_partial(
-    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
-    quant_natural: &[u16; DCT_BLOCK_SIZE],
-    _coeff_count: u8,
-) -> [i32; DCT_BLOCK_SIZE] {
-    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
-
-    // Iterate in natural (raster) order: sequential writes to result,
-    // sequential reads from quant_natural, gathered reads from zigzag_coeffs.
-    // Every position is written so zeroing is redundant, but the compiler
-    // may not eliminate it without MaybeUninit (which requires unsafe).
-    let mut result = [0i32; DCT_BLOCK_SIZE];
-    for natural_idx in 0..DCT_BLOCK_SIZE {
-        // Mask with 63 to prove zigzag_idx < 64 to the compiler,
-        // eliminating bounds checks. All JPEG_ZIGZAG_ORDER values are 0-63
-        // so the mask is a no-op for correctness.
-        let zigzag_idx = (JPEG_ZIGZAG_ORDER[natural_idx] & 63) as usize;
-        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
-    }
-
     result
 }
 
@@ -984,6 +1059,24 @@ pub fn dequantize_unzigzag_i32_into_partial(
     for zigzag_idx in 0..count {
         let natural_idx = (JPEG_NATURAL_ORDER[zigzag_idx] & 63) as usize;
         result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+    }
+}
+
+/// Dequantize a natural-order coefficient block into an existing i32 buffer.
+///
+/// Contiguous multiply — fully vectorizable — for decoders that store
+/// coefficients in natural order at entropy-decode time (the baseline
+/// streaming path's `decode_block_into_natural`, matching libjpeg-turbo's
+/// `jpeg_natural_order[]` layout). Writes all 64 positions, so no
+/// pre-zeroing of `result` is needed.
+#[inline(always)]
+pub fn dequantize_natural_i32_into(
+    coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    result: &mut [i32; DCT_BLOCK_SIZE],
+) {
+    for k in 0..DCT_BLOCK_SIZE {
+        result[k] = coeffs[k] as i32 * quant[k] as i32;
     }
 }
 

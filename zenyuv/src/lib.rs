@@ -33,10 +33,16 @@
 // ── Modules ────────────────────────────────────────────────────────────────
 
 pub mod context;
+/// Public under `_dev` so `benches/kernel_tiers.rs` can measure the decode
+/// kernels per-tier. Not public API, not semver-covered.
+#[cfg(feature = "_dev")]
+pub mod decode;
+#[cfg(not(feature = "_dev"))]
 mod decode;
 mod decode_generic;
 mod encode;
 mod encode_generic;
+mod error;
 pub mod sharp;
 pub(crate) mod types;
 
@@ -53,7 +59,8 @@ mod wasm_encode;
 
 // ── Public re-exports ──────────────────────────────────────────────────────
 
-pub use context::YuvContext;
+pub use context::{DEFAULT_MAX_PIXELS, YuvContext};
+pub use error::YuvError;
 pub use sharp::SharpYuvConfig;
 pub use types::{Matrix, Range};
 
@@ -260,6 +267,7 @@ mod tests {
     /// equivalence here, but pin its values directly against libwebp's
     /// reference in `webp_encoder_matches_libwebp_kwebp_matrix` rather
     /// than against a derived f64 ground truth.
+    #[cfg(target_arch = "x86_64")]
     const ALL_DISPATCH_MATRIX_RANGE: &[(Matrix, Range, &str)] = &[
         (Matrix::Bt601, Range::Full, "BT.601 Full"),
         (Matrix::Bt601, Range::Limited, "BT.601 Limited"),

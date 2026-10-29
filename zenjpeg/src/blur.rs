@@ -271,4 +271,24 @@ mod tests {
         let result = gaussian_blur_rgb(&src, 3, 3, 0.4);
         assert_eq!(result.len(), src.len());
     }
+    #[test]
+    fn degenerate_shapes_preserve_every_sample() {
+        for (width, height) in [(0, 3), (1, 3), (3, 0), (3, 1)] {
+            let src: Vec<u8> = (0..width * height * 3).map(|i| (i * 37) as u8).collect();
+            assert_eq!(gaussian_blur_rgb(&src, width, height, 0.3), src);
+        }
+    }
+
+    #[test]
+    fn three_tap_impulse_has_exact_fixed_point_raster() {
+        let mut src = vec![0u8; 27];
+        src[12..15].fill(255);
+        // At sigma 0.3 the normalized fixed-point weights are [1, 254, 1].
+        // Each separable pass truncates after shifting by eight.
+        let expected: Vec<u8> = [0, 0, 0, 0, 251, 0, 0, 0, 0]
+            .into_iter()
+            .flat_map(|value| [value; 3])
+            .collect();
+        assert_eq!(gaussian_blur_rgb(&src, 3, 3, 0.3), expected);
+    }
 }

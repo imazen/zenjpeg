@@ -1,5 +1,4 @@
 #![allow(clippy::collapsible_if)]
-#![cfg(feature = "trellis")]
 //! Comprehensive zensim regression testing: zenjpeg vs mozjpeg across the entire
 //! imageflow codec corpus.
 //!
@@ -37,7 +36,7 @@
 //! Run:
 //! ```bash
 //! cargo test --release -p zenjpeg --test imageflow_corpus_zensim \
-//!     --features "trellis decoder" -- --nocapture --ignored
+//!      -- --nocapture --ignored
 //! ```
 
 use enough::Unstoppable;
@@ -327,7 +326,7 @@ fn process_image_quality(img: &LoadedImage, quality: u8) -> ImageResult {
 
     // Compute zensim of each decoded output against the original source
     thread_local! {
-        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
     }
 
     let (moz_score, zen_score) = ZENSIM.with(|z| {
@@ -846,7 +845,7 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
     let compat_max_diff = max_pixel_diff(&moz_dec, &zen_compat);
 
     thread_local! {
-        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
     }
 
     let (default_score, compat_score) = ZENSIM.with(|z| {
@@ -1166,7 +1165,7 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
     let cross_max_diff = max_pixel_diff(&moz_dec, &zen_dec);
 
     thread_local! {
-        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
     }
 
     let cross_score = ZENSIM.with(|z| {
@@ -1447,7 +1446,7 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
     let (_, _, zen_dec) = decode_to_rgb(&zen_jpeg);
 
     thread_local! {
-        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
     }
 
     let (moz_score, zen_score) = ZENSIM.with(|z| {

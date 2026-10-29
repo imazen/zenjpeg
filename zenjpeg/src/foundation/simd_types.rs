@@ -4,7 +4,14 @@
 //! Computation uses scalar loops (portable) or `magetypes` (archmage dispatch).
 //! The array storage is layout-compatible with SIMD vectors (32-byte aligned).
 
-#![allow(clippy::wrong_self_convention)] // to_* methods need &self for SIMD types
+// to_* methods need &self for SIMD types
+
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
 
 use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
@@ -46,7 +53,7 @@ impl Block8x8f {
 
     /// Convert to a flat array (for compatibility with existing code)
     #[inline]
-    pub fn to_array(&self) -> [f32; 64] {
+    pub fn to_array(self) -> [f32; 64] {
         let mut arr = [0.0f32; 64];
         for (row_idx, row) in self.rows.iter().enumerate() {
             arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(row);
@@ -134,7 +141,7 @@ impl Block8x8i16 {
 
     /// Convert to a flat array
     #[inline]
-    pub fn to_array(&self) -> [i16; 64] {
+    pub fn to_array(self) -> [i16; 64] {
         let mut arr = [0i16; 64];
         for (row_idx, row) in self.rows.iter().enumerate() {
             arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(row);
@@ -314,7 +321,7 @@ impl Block8x8i32 {
 
     /// Convert to i16 block (with saturation)
     #[inline]
-    pub fn to_i16(&self) -> Block8x8i16 {
+    pub fn to_i16(self) -> Block8x8i16 {
         let mut result = Block8x8i16::ZERO;
         for i in 0..8 {
             for j in 0..8 {
@@ -326,7 +333,7 @@ impl Block8x8i32 {
 
     /// Convert to flat i16 array
     #[inline]
-    pub fn to_i16_array(&self) -> [i16; 64] {
+    pub fn to_i16_array(self) -> [i16; 64] {
         self.to_i16().to_array()
     }
 }
@@ -357,15 +364,15 @@ fn mage_quantize_block_zigzag(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let aq_m = f32x8::splat(token, aq_strength);
-    let zero_i32 = i32x8::zero(token);
+    let aq_m = f32x8::splat_t(token, aq_strength);
+    let zero_i32 = i32x8::zero_t(token);
     let mut result = [0i16; 64];
 
     for row in 0..8 {
-        let block_m = f32x8::from_array(token, block.rows[row]);
-        let mul_m = f32x8::from_array(token, mul_rows[row]);
-        let offset_m = f32x8::from_array(token, zero_bias.offset_rows[row]);
-        let bias_mul_m = f32x8::from_array(token, zero_bias.mul_rows[row]);
+        let block_m = f32x8::from_array_t(token, block.rows[row]);
+        let mul_m = f32x8::from_array_t(token, mul_rows[row]);
+        let offset_m = f32x8::from_array_t(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = f32x8::from_array_t(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
@@ -406,15 +413,15 @@ fn mage_quantize_block(
     #[allow(non_camel_case_types)]
     type i32x8 = GenericI32x8<Token>;
 
-    let aq_m = f32x8::splat(token, aq_strength);
-    let zero_i32 = i32x8::zero(token);
+    let aq_m = f32x8::splat_t(token, aq_strength);
+    let zero_i32 = i32x8::zero_t(token);
     let mut result = [0i16; 64];
 
     for row in 0..8 {
-        let block_m = f32x8::from_array(token, block.rows[row]);
-        let mul_m = f32x8::from_array(token, mul_rows[row]);
-        let offset_m = f32x8::from_array(token, zero_bias.offset_rows[row]);
-        let bias_mul_m = f32x8::from_array(token, zero_bias.mul_rows[row]);
+        let block_m = f32x8::from_array_t(token, block.rows[row]);
+        let mul_m = f32x8::from_array_t(token, mul_rows[row]);
+        let offset_m = f32x8::from_array_t(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = f32x8::from_array_t(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
@@ -481,6 +488,7 @@ mod tests {
 
     /// Build realistic test data for quantize dispatch testing.
     /// Returns (block, quant_table, zero_bias, aq_strength).
+    #[cfg(target_arch = "x86_64")]
     fn quantize_test_data() -> (Block8x8f, QuantTableSimd, ZeroBiasSimd, f32) {
         // Simulate DCT coefficients: DC large, AC coefficients decaying
         let mut coeffs = [0.0f32; 64];

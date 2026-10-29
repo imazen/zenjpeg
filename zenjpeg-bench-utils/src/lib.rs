@@ -985,38 +985,29 @@ pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
 }
 
 /// Load PNG from in-memory bytes into an RGB image buffer.
+///
+/// Decodes via `zenpng`; any source depth/channel layout (gray, gray+alpha,
+/// RGB, RGBA, 16-bit) is normalized to RGB8 via
+/// [`zenpixels_convert::PixelBufferConvertTypedExt::to_rgb8`].
 pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
-    let decoder = png::Decoder::new(std::io::Cursor::new(data));
-    let mut reader = decoder
-        .read_info()
-        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG output buffer size")];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let bytes = &buf[..info.buffer_size()];
-    let pixels: Vec<RGB8> = match info.color_type {
-        png::ColorType::Grayscale => bytes.iter().map(|&g| RGB8::new(g, g, g)).collect(),
-        png::ColorType::GrayscaleAlpha => bytes
-            .chunks_exact(2)
-            .map(|c| RGB8::new(c[0], c[0], c[0]))
-            .collect(),
-        png::ColorType::Rgb => bytes
-            .chunks_exact(3)
-            .map(|c| RGB8::new(c[0], c[1], c[2]))
-            .collect(),
-        png::ColorType::Rgba => bytes
-            .chunks_exact(4)
-            .map(|c| RGB8::new(c[0], c[1], c[2]))
-            .collect(),
-        ct => {
-            return Err(PngLoadError::Decode(format!(
-                "unsupported color type: {ct:?}"
-            )));
-        }
-    };
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+
+    let output = zenpng::decode(
+        data,
+        &zenpng::PngDecodeConfig::default(),
+        &enough::Unstoppable,
+    )
+    .map_err(|e| PngLoadError::Decode(e.to_string()))?;
+    let width = output.info.width as usize;
+    let height = output.info.height as usize;
+    let rgb8 = output.pixels.to_rgb8();
+    let bytes = rgb8.as_slice().contiguous_bytes();
+    let pixels: Vec<RGB8> = bytes
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
     Ok(ImgVec::new(pixels, width, height))
 }
 
@@ -1042,6 +1033,38 @@ impl std::fmt::Display for PngLoadError {
 }
 
 impl std::error::Error for PngLoadError {}
+
+/// Write an 8-bit RGB PNG (the save-side companion of [`load_png`]) —
+/// for handing decoded pixels to external scorers that only read PNG.
+pub fn save_png(path: &std::path::Path, img: RgbImageRef<'_>) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let file = std::fs::File::create(path)?;
+    let mut enc = png::Encoder::new(
+        std::io::BufWriter::new(file),
+        img.width() as u32,
+        img.height() as u32,
+    );
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc
+        .write_header()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let mut stream = writer
+        .stream_writer()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    // Row by row to handle stride.
+    for row in img.rows() {
+        use rgb::ComponentBytes;
+        stream.write_all(row.as_bytes())?;
+    }
+    stream
+        .finish()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    writer
+        .finish()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok(())
+}
 
 /// Write a PPM file from an RGB image (for C++ tool interop).
 pub fn write_ppm(path: &std::path::Path, img: RgbImageRef<'_>) -> std::io::Result<()> {
@@ -1229,7 +1252,9 @@ pub fn bytes_to_rgb(data: &[u8], width: usize, height: usize) -> RgbImage {
     );
 
     let pixels: Vec<RGB8> = data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
 
@@ -1512,7 +1537,7 @@ pub fn load_corpus(dir: &std::path::Path, max_files: Option<usize>) -> Vec<Image
 /// Distinguishes between Rust and C++ implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncoderImpl {
-    /// zenjpeg: Pure Rust port of Google's jpegli
+    /// zenjpeg: Pure Rust port of jpegli (Bruse et al.)
     JpegliRs,
     /// cjpegli: Original C++ jpegli via FFI (requires cjpegli-ffi feature)
     CJpegli,
@@ -1779,9 +1804,9 @@ impl EncoderConfig {
     pub fn encode(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         match self.encoder {
             EncoderImpl::JpegliRs => self.encode_with_jpegli_rs(img),
-            #[cfg(feature = "cjpegli-ffi")]
+            #[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
             EncoderImpl::CJpegli => self.encode_with_cjpegli_ffi(img),
-            #[cfg(not(feature = "cjpegli-ffi"))]
+            #[cfg(not(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp))))]
             EncoderImpl::CJpegli => Err("cjpegli requires cjpegli-ffi feature".to_string()),
         }
     }
@@ -1818,7 +1843,7 @@ impl EncoderConfig {
     /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
     ///
     /// Note: XYB mode is NOT supported via the libjpeg API.
-    #[cfg(feature = "cjpegli-ffi")]
+    #[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
     fn encode_with_cjpegli_ffi(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         use jpegli_internals_sys::*;
         use std::mem::MaybeUninit;
@@ -2014,7 +2039,7 @@ pub fn encode_jpegli_rs_xyb_progressive_444(img: &ImageData, quality: u8) -> Vec
 }
 
 /// Encode with C++ jpegli via FFI (requires cjpegli-ffi feature).
-#[cfg(feature = "cjpegli-ffi")]
+#[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
 pub fn encode_cjpegli_ffi(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
@@ -2024,7 +2049,7 @@ pub fn encode_cjpegli_ffi(img: &ImageData, quality: u8) -> Vec<u8> {
 }
 
 /// Encode with C++ jpegli via FFI, progressive mode.
-#[cfg(feature = "cjpegli-ffi")]
+#[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
 pub fn encode_cjpegli_ffi_progressive(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
@@ -2035,7 +2060,7 @@ pub fn encode_cjpegli_ffi_progressive(img: &ImageData, quality: u8) -> Vec<u8> {
 }
 
 /// Encode with C++ jpegli via FFI with specific subsampling.
-#[cfg(feature = "cjpegli-ffi")]
+#[cfg(all(feature = "cjpegli-ffi", not(missing_jpegli_cpp)))]
 pub fn encode_cjpegli_ffi_with_subsampling(
     img: &ImageData,
     quality: u8,

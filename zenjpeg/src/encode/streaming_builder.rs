@@ -6,12 +6,11 @@
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
-use super::encoder_types::QuantTableSource;
+use super::encoder_types::QuantTableConfig;
 use super::encoder_types::ScanStrategy;
 use super::encoder_types::TinyFileMode;
 use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
-use crate::encode::tuning::EncodingTables;
 use crate::error::Result;
 use crate::types::{JpegMode, PixelFormat, Subsampling};
 
@@ -28,13 +27,19 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) mode: JpegMode,
     pub(crate) huffman: HuffmanStrategy,
     pub(crate) chroma_downsampling: DownsamplingMethod,
+    /// Quantization table family + its live knobs. Resolved via
+    /// `encode::plan::resolve_quant_tables` at construction.
+    pub(crate) quant_table_config: QuantTableConfig,
     pub(crate) restart_interval: u16,
-    /// Custom encoding tables (quantization + zero-bias).
-    /// `None` means use perceptual defaults based on color mode and quality.
-    pub(crate) encoding_tables: Option<Box<EncodingTables>>,
     pub(crate) use_xyb: bool,
     /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
     pub(crate) xyb_subsampling: super::encoder_types::XybSubsampling,
+    /// RGB passthrough mode (issue #185): no color transform, 4:4:4,
+    /// component IDs 'R','G','B' + Adobe APP14 transform=0. Mutually
+    /// exclusive with `use_xyb`.
+    pub(crate) use_rgb: bool,
+    /// Write only Y (see `ComputedConfig::gray_output`).
+    pub(crate) gray_output: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -52,45 +57,21 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Force SOF1 (extended sequential) regardless of quant table precision.
     /// Required for XYB (DC categories can exceed baseline limit of 11).
     pub(crate) force_sof1: bool,
-    /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
-    pub(crate) separate_chroma_tables: bool,
     /// Progressive scan script strategy
     pub(crate) scan_strategy: ScanStrategy,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
-    /// Hybrid quantization configuration
-    #[cfg(feature = "trellis")]
-    pub(crate) hybrid_config: super::trellis::HybridConfig,
-    /// Custom AQ map
-    pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
-    #[cfg(feature = "trellis")]
     pub(crate) trellis: Option<super::trellis::TrellisConfig>,
-    /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
-    /// Only used when `encoding_tables` is `None` (no custom tables).
-    pub(crate) quant_source: QuantTableSource,
     /// Tiny-file optimization mode (default: Auto).
     pub(crate) tiny_file_mode: TinyFileMode,
-    /// Multiplier applied to the butteraugli distance for chroma (Cb, Cr)
-    /// components only. Default `1.0` is bit-identical to the single-
-    /// quality path. Clamped to `[0.1, 5.0]` on ingress by the public
-    /// [`EncoderConfig::chroma_distance_scale`] setter.
-    pub(crate) chroma_distance_scale: f32,
-    /// Independent chroma quality on the mozjpeg 1–100 scale. `None`
-    /// (the default) keeps the historical behaviour of using `quality`
-    /// for both luma and chroma tables. Only honoured by the mozjpeg-
-    /// compat (`QuantTableSource::MozjpegDefault`) path — the jpegli
-    /// path uses `chroma_distance_scale` for the same purpose.
-    pub(crate) chroma_quality: Option<u8>,
-
-    /// Per-block encode diagnostics capture. UNSTABLE — gated behind
-    /// the `__diagnostics` feature. When `true`, the underlying
-    /// `StripProcessor` allocates an `EncodeDiagnostics` struct and
-    /// fills it during encoding; retrieve via `take_diagnostics()`
-    /// after `finish()`.
-    #[cfg(feature = "__diagnostics")]
-    pub(crate) diagnostics_enabled: bool,
+    /// Exact smallest-entropy selection (ProgressiveScanMode::Smallest).
+    pub(crate) smallest_scan: bool,
+    /// Restart interval the SEQUENTIAL candidates use under Smallest —
+    /// exactly what an explicit Baseline encode would emit (the
+    /// progressive candidate keeps progressive suppression).
+    pub(crate) smallest_seq_restart_interval: u16,
 }
 
 impl StreamingEncoderBuilder {
@@ -105,10 +86,12 @@ impl StreamingEncoderBuilder {
             mode: JpegMode::Baseline,
             huffman: HuffmanStrategy::Optimize,
             chroma_downsampling: DownsamplingMethod::Box,
+            quant_table_config: QuantTableConfig::default(),
             restart_interval: 0,
-            encoding_tables: None,
             use_xyb: false,
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
+            use_rgb: false,
+            gray_output: false,
             deringing: true,
             aq_enabled: true,
             // Boundary-RD defaults to `None` (feature off). When the public
@@ -118,34 +101,14 @@ impl StreamingEncoderBuilder {
             boundary_rd_flat: None,
             allow_16bit_quant_tables: false,
             force_sof1: false,
-            separate_chroma_tables: true,
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
-            #[cfg(feature = "trellis")]
-            hybrid_config: super::trellis::HybridConfig::disabled(),
-            custom_aq_map: None,
-            #[cfg(feature = "trellis")]
             trellis: None,
-            quant_source: QuantTableSource::default(),
             tiny_file_mode: TinyFileMode::default(),
-            chroma_distance_scale: 1.0,
-            chroma_quality: None,
-            #[cfg(feature = "__diagnostics")]
-            diagnostics_enabled: false,
+            smallest_scan: false,
+            smallest_seq_restart_interval: 0,
         }
-    }
-
-    /// Enable per-block encode diagnostics capture (UNSTABLE).
-    ///
-    /// When `true`, the encoder fills an `EncodeDiagnostics` struct
-    /// during encoding; retrieve via `take_diagnostics()` after
-    /// `finish()`. Gated behind the `__diagnostics` cargo feature.
-    #[cfg(feature = "__diagnostics")]
-    #[must_use]
-    pub(crate) fn diagnostics(mut self, enable: bool) -> Self {
-        self.diagnostics_enabled = enable;
-        self
     }
 
     /// Sets the quality using jpegli's native quality scale.
@@ -169,7 +132,22 @@ impl StreamingEncoderBuilder {
     ///
     /// When disabled, if the current mode is Progressive, it switches to Baseline.
     /// Otherwise, the current mode (e.g., Extended) is preserved.
+    ///
+    /// Enables exact smallest-entropy selection (implies progressive
+    /// buffering + optimized Huffman; the winner may still be sequential).
     #[must_use]
+    pub(crate) fn smallest_scan(mut self, enable: bool) -> Self {
+        self.smallest_scan = enable;
+        self
+    }
+
+    /// Restart interval for Smallest's sequential candidates.
+    #[must_use]
+    pub(crate) fn smallest_seq_restart_interval(mut self, interval: u16) -> Self {
+        self.smallest_seq_restart_interval = interval;
+        self
+    }
+
     pub(crate) fn progressive(mut self, enable: bool) -> Self {
         if enable {
             self.mode = JpegMode::Progressive;
@@ -219,25 +197,14 @@ impl StreamingEncoderBuilder {
     /// Enables parallel encoding for improved throughput on multi-core systems.
     ///
     /// When enabled, the encoder will use multiple threads for entropy encoding
-    /// (and optionally DCT). This requires restart markers, so if `restart_interval`
-    /// is 0, it will be automatically set to 64 MCUs.
+    /// (and optionally DCT). This requires restart markers, so if the restart
+    /// interval is 0 it is auto-resolved (4+ MCU rows via the standard restart
+    /// heuristics) at config computation — consistently for the DRI header,
+    /// frequency counting, and emission.
     #[cfg(feature = "parallel")]
     #[must_use]
     pub(crate) fn parallel(mut self, enable: bool) -> Self {
         self.parallel = enable;
-        self
-    }
-
-    /// Sets custom encoding tables (quantization + zero-bias).
-    ///
-    /// This replaces both quantization tables and zero-bias configuration
-    /// with values from the provided `EncodingTables`.
-    ///
-    /// Takes `Box<EncodingTables>` since custom tables are rarely used and
-    /// the struct is ~1.5KB.
-    #[must_use]
-    pub(crate) fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
-        self.encoding_tables = Some(tables);
         self
     }
 
@@ -256,6 +223,24 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn xyb_subsampling(mut self, sub: super::encoder_types::XybSubsampling) -> Self {
         self.xyb_subsampling = sub;
+        self
+    }
+
+    /// Enables RGB passthrough encoding (no color transformation).
+    ///
+    /// Channels are stored verbatim as JPEG components R, G, B at 4:4:4,
+    /// signaled via component IDs 'R','G','B' and an Adobe APP14 marker
+    /// with transform=0 (issue #185). Mutually exclusive with `use_xyb`;
+    /// requires `Subsampling::S444` and an 8-bit RGB-family pixel format.
+    #[must_use]
+    pub(crate) fn use_rgb(mut self, enable: bool) -> Self {
+        self.use_rgb = enable;
+        self
+    }
+
+    /// Write only the Y component whatever the input format.
+    pub(crate) fn gray_output(mut self, enable: bool) -> Self {
+        self.gray_output = enable;
         self
     }
 
@@ -318,16 +303,6 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Use separate Cb and Cr quantization tables.
-    ///
-    /// When enabled (default), uses 3 tables: Y, Cb, Cr.
-    /// When disabled, uses 2 tables: Y, shared chroma.
-    #[must_use]
-    pub(crate) fn separate_chroma_tables(mut self, enable: bool) -> Self {
-        self.separate_chroma_tables = enable;
-        self
-    }
-
     /// Sets the progressive scan script strategy.
     #[must_use]
     pub(crate) fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
@@ -335,34 +310,17 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets custom hybrid quantization configuration.
-    #[cfg(feature = "trellis")]
-    #[must_use]
-    pub(crate) fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
-        self.hybrid_config = config;
-        self
-    }
-
     /// Sets trellis quantization configuration (mozjpeg-compatible API).
-    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn trellis(mut self, config: super::trellis::TrellisConfig) -> Self {
         self.trellis = Some(config);
         self
     }
 
-    /// Sets the quantization table source.
+    /// Sets the quantization table configuration (family + live knobs).
     #[must_use]
-    pub(crate) fn quant_source(mut self, source: QuantTableSource) -> Self {
-        self.quant_source = source;
-        self
-    }
-
-    /// Sets a custom AQ (adaptive quantization) strength map.
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
-        self.custom_aq_map = Some(map);
+    pub(crate) fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
+        self.quant_table_config = config;
         self
     }
 
@@ -373,23 +331,72 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets the chroma-distance multiplier. See
-    /// [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]
-    /// for full semantics. Default `1.0` is bit-identical to pre-existing
-    /// single-quality behaviour.
-    #[must_use]
-    pub(crate) fn chroma_distance_scale(mut self, scale: f32) -> Self {
-        self.chroma_distance_scale = scale.clamp(0.1, 5.0);
-        self
+    // Shared by planning and startup. No native pixel/coefficients allocation.
+    pub(crate) fn validate_input(&mut self) -> Result<()> {
+        use crate::error::Error;
+        // Header, coefficient order, frequency counting and restart units must
+        // all agree for a single-component frame, including direct builders.
+        if self.gray_output || self.pixel_format.is_grayscale() {
+            self.subsampling = Subsampling::S444;
+        }
+
+        if self.width == 0 || self.height == 0 {
+            return Err(Error::invalid_dimensions(
+                self.width,
+                self.height,
+                "dimensions must be non-zero",
+            ));
+        }
+
+        if self.use_rgb {
+            if self.use_xyb {
+                return Err(Error::invalid_config(
+                    "RGB passthrough mode and XYB mode are mutually exclusive".into(),
+                ));
+            }
+            if self.subsampling != Subsampling::S444 {
+                return Err(Error::invalid_config(
+                    "RGB passthrough mode requires 4:4:4 (no chroma subsampling)".into(),
+                ));
+            }
+            match self.pixel_format {
+                crate::types::PixelFormat::Rgb
+                | crate::types::PixelFormat::Rgba
+                | crate::types::PixelFormat::Bgr
+                | crate::types::PixelFormat::Bgra
+                | crate::types::PixelFormat::Bgrx => {}
+                _ => {
+                    return Err(Error::unsupported_feature(
+                        "RGB passthrough mode requires an 8-bit RGB-family pixel format",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
-    /// Sets the mozjpeg-compat chroma quality. Only honoured by the
-    /// mozjpeg Robidoux path (`quant_source == QuantTableSource::MozjpegDefault`).
-    /// See [`crate::encode::encoder_config::EncoderConfig::chroma_quality`].
-    #[must_use]
-    pub(crate) fn chroma_quality(mut self, quality: Option<u8>) -> Self {
-        self.chroma_quality = quality.map(|q| q.clamp(1, 100));
-        self
+    pub(crate) fn streams_output(&self) -> bool {
+        !matches!(self.huffman, HuffmanStrategy::Optimize)
+            && self.mode != JpegMode::Progressive
+            && !self.use_xyb
+            && !self.use_rgb
+    }
+
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn planned_output_lag(mut self) -> Result<Option<u32>> {
+        self.validate_input()?;
+        if !self.streams_output() {
+            return Ok(None);
+        }
+        let layout = LayoutParams::new_xyb(
+            self.width as usize,
+            self.height as usize,
+            self.subsampling,
+            self.use_xyb,
+            self.xyb_subsampling,
+        );
+        Ok(Some((2 * layout.strip_height - 1) as u32))
     }
 
     /// Starts a streaming encoder for row-by-row input.

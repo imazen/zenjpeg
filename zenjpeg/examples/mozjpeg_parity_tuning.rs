@@ -289,7 +289,7 @@ fn main() {
         None => QUALITY_LEVELS.to_vec(),
     };
 
-    let zensim = Zensim::new(ZensimProfile::latest());
+    let zensim = Zensim::new(ZensimProfile::latest_preview());
 
     // ─── Header ─────────────────────────────────────────────────────────
 

@@ -2,9 +2,17 @@
 //!
 //! Provides `EntropyDecoder` for baseline and progressive JPEG decoding.
 
-use crate::error::{Error, Result, ScanRead, ScanResult};
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
+use crate::decode::JbrdScanInfo;
+use crate::error::{Error, ErrorKind, Result, ScanRead, ScanResult};
 use crate::foundation::bitstream::BitReader;
-use crate::foundation::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
 use crate::huffman::HuffmanDecodeTable;
 
 use super::decode_value;
@@ -385,13 +393,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run as usize;
                         if i >= DCT_BLOCK_SIZE {
-                            if self.lenient {
-                                self.had_ac_overflow = true;
-                                break; // Treat as EOB
-                            }
-                            return Err(Error::invalid_jpeg_data(
-                                "AC coefficient index out of bounds",
-                            ));
+                            // Run past the block. Consume the value bits the way
+                            // libjpeg-turbo does (its natural-order table carries 16
+                            // dummy slots for exactly this) and end the block; every
+                            // path reports it and Strict rejects at scan end. The
+                            // fast_ac path always tolerated this silently, so a cut
+                            // that forced the bit-by-bit path here turned a stream
+                            // that decodes in full into an error (#92).
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.read_bits(ac_cat)?;
+                            break;
                         }
 
                         let bits = match self.reader.read_bits(ac_cat)? {
@@ -437,13 +448,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run as usize;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 let bits = match self.reader.read_bits(ac_cat)? {
@@ -558,6 +572,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             coeffs[i] = value;
                             last_nonzero = (i + 1) as u8;
                             i += 1;
+                        } else {
+                            // Same run-past-the-block as the slow paths below:
+                            // the value bits are already consumed (fast_ac packs
+                            // them), so only the report is needed.
+                            self.had_ac_overflow = true;
                         }
                         continue;
                     }
@@ -589,13 +608,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
-                            if self.lenient {
-                                self.had_ac_overflow = true;
-                                break; // Treat as EOB
-                            }
-                            return Err(Error::invalid_jpeg_data(
-                                "AC coefficient index out of bounds",
-                            ));
+                            // Run past the block. Consume the value bits the way
+                            // libjpeg-turbo does (its natural-order table carries 16
+                            // dummy slots for exactly this) and end the block; every
+                            // path reports it and Strict rejects at scan end. The
+                            // fast_ac path always tolerated this silently, so a cut
+                            // that forced the bit-by-bit path here turned a stream
+                            // that decodes in full into an error (#92).
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.read_bits(ac_cat)?;
+                            break;
                         }
 
                         // Fast path: after peek_bits_refill(9) + skip(code_length), we often have
@@ -661,13 +683,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 // Fast path when we have enough bits
@@ -729,6 +754,53 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> ScanResult<u8> {
+        self.decode_block_impl::<false>(
+            coeffs,
+            prev_coeff_count,
+            component,
+            dc_table_idx,
+            ac_table_idx,
+        )
+    }
+
+    /// Like [`decode_block_into`], but stores coefficients in natural
+    /// (row-major) order instead of zigzag order — libjpeg-turbo's
+    /// `jpeg_natural_order[]` layout in `decode_mcu` — so the dequant pass
+    /// becomes a contiguous multiply rather than a scatter.
+    ///
+    /// # Returns
+    /// * `ScanResult<u8>` - natural extent (`1 + max` natural index written)
+    ///   instead of a zigzag count. It serves the same roles: `<= 1` iff no
+    ///   AC was written, and zeroing `coeffs[..extent]` before the next block
+    ///   covers every position this block can have touched (callers pass it
+    ///   back as `prev_coeff_count`).
+    #[inline(always)]
+    pub(crate) fn decode_block_into_natural(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        prev_coeff_count: u8,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> ScanResult<u8> {
+        self.decode_block_impl::<true>(
+            coeffs,
+            prev_coeff_count,
+            component,
+            dc_table_idx,
+            ac_table_idx,
+        )
+    }
+
+    #[inline(always)]
+    fn decode_block_impl<const NATURAL: bool>(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        prev_coeff_count: u8,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> ScanResult<u8> {
         // Get table references once (tables are borrowed, no copying)
         let dc_table =
             self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
@@ -743,8 +815,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // Caller tracks prev_coeff_count per-component for interleaved MCUs.
         let clear_len = prev_coeff_count as usize;
         if clear_len > 0 {
-            // Zero only what was written, not full 64 elements
-            coeffs[..clear_len].fill(0);
+            // Zero only what was written, not full 64 elements.
+            // Fixed-size loop over the whole 128-byte block: variable-length
+            // `fill` lowers to a libc memset call per block, which costs more
+            // than unconditionally clearing this L1-hot array.
+            for c in coeffs.iter_mut() {
+                *c = 0;
+            }
         }
 
         // Decode DC coefficient — inline fast path to avoid function call overhead
@@ -820,9 +897,20 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         self.reader.skip_bits_fast(total_bits);
                         i += run;
                         if i < DCT_BLOCK_SIZE {
-                            coeffs[i] = value;
-                            last_nonzero = (i + 1) as u8;
+                            if NATURAL {
+                                let nat = JPEG_NATURAL_ORDER[i] as usize;
+                                coeffs[nat] = value;
+                                last_nonzero = last_nonzero.max(nat as u8 + 1);
+                            } else {
+                                coeffs[i] = value;
+                                last_nonzero = (i + 1) as u8;
+                            }
                             i += 1;
+                        } else {
+                            // Same run-past-the-block as the slow paths below:
+                            // the value bits are already consumed (fast_ac packs
+                            // them), so only the report is needed.
+                            self.had_ac_overflow = true;
                         }
                         continue;
                     }
@@ -851,13 +939,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
-                            if self.lenient {
-                                self.had_ac_overflow = true;
-                                break; // Treat as EOB
-                            }
-                            return Err(Error::invalid_jpeg_data(
-                                "AC coefficient index out of bounds",
-                            ));
+                            // Run past the block. Consume the value bits the way
+                            // libjpeg-turbo does (its natural-order table carries 16
+                            // dummy slots for exactly this) and end the block; every
+                            // path reports it and Strict rejects at scan end. The
+                            // fast_ac path always tolerated this silently, so a cut
+                            // that forced the bit-by-bit path here turned a stream
+                            // that decodes in full into an error (#92).
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.read_bits(ac_cat)?;
+                            break;
                         }
 
                         let bits = if self.reader.bits_available() >= ac_cat {
@@ -869,8 +960,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 ScanRead::Truncated => return Ok(ScanRead::Truncated),
                             }
                         };
-                        coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
-                        last_nonzero = (i + 1) as u8;
+                        if NATURAL {
+                            let nat = JPEG_NATURAL_ORDER[i] as usize;
+                            coeffs[nat] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                            last_nonzero = last_nonzero.max(nat as u8 + 1);
+                        } else {
+                            coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                            last_nonzero = (i + 1) as u8;
+                        }
                         i += 1;
                     }
                     continue;
@@ -905,13 +1002,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 let bits = if self.reader.bits_available() >= ac_cat {
@@ -923,8 +1023,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         ScanRead::Truncated => return Ok(ScanRead::Truncated),
                     }
                 };
-                coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
-                last_nonzero = (i + 1) as u8;
+                if NATURAL {
+                    let nat = JPEG_NATURAL_ORDER[i] as usize;
+                    coeffs[nat] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                    last_nonzero = last_nonzero.max(nat as u8 + 1);
+                } else {
+                    coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
+                    last_nonzero = (i + 1) as u8;
+                }
                 i += 1;
             }
         }
@@ -1050,6 +1156,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         coeffs[i] = value;
                         last_nonzero = (i + 1) as u8;
                         i += 1;
+                    } else {
+                        // Same run-past-the-block as the slow paths below:
+                        // the value bits are already consumed (fast_ac packs
+                        // them), so only the report is needed.
+                        self.had_ac_overflow = true;
                     }
                     continue;
                 }
@@ -1080,13 +1191,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 } else {
                     i += run;
                     if i >= DCT_BLOCK_SIZE {
-                        if self.lenient {
-                            self.had_ac_overflow = true;
-                            break; // Treat as EOB
-                        }
-                        return Err(Error::invalid_jpeg_data(
-                            "AC coefficient index out of bounds",
-                        ));
+                        // Run past the block. Consume the value bits the way
+                        // libjpeg-turbo does (its natural-order table carries 16
+                        // dummy slots for exactly this) and end the block; every
+                        // path reports it and Strict rejects at scan end. The
+                        // fast_ac path always tolerated this silently, so a cut
+                        // that forced the bit-by-bit path here turned a stream
+                        // that decodes in full into an error (#92).
+                        self.had_ac_overflow = true;
+                        let _ = self.reader.read_bits(ac_cat)?;
+                        break;
                     }
 
                     // Read value bits - ensure we have enough
@@ -1130,13 +1244,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        break; // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the block. Consume the value bits the way
+                    // libjpeg-turbo does (its natural-order table carries 16
+                    // dummy slots for exactly this) and end the block; every
+                    // path reports it and Strict rejects at scan end. The
+                    // fast_ac path always tolerated this silently, so a cut
+                    // that forced the bit-by-bit path here turned a stream
+                    // that decodes in full into an error (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(ac_cat)?;
+                    break;
                 }
 
                 if self.reader.bits_available() < ac_cat
@@ -1159,9 +1276,54 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.reader.position()
     }
 
+    /// Shared Huffman difference decoding. In predictive JPEG (T.81 H.1.2.2),
+    /// category 16 denotes -32768 without magnitude bits. DCT DC coding
+    /// accepts categories 0–15; category 16 is specific to lossless coding.
+    pub(crate) fn decode_difference<const LOSSLESS: bool>(
+        &mut self,
+        table_idx: usize,
+    ) -> ScanResult<i32> {
+        let table = self.get_dc_table(table_idx)?;
+        let category = match self.decode_huffman(table)? {
+            ScanRead::Value(v) => v,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
+        match category {
+            0 => Ok(ScanRead::Value(0)),
+            16 if LOSSLESS => Ok(ScanRead::Value(-32768)),
+            1..=15 => self.reader.read_bits(category).map(|value| match value {
+                ScanRead::Value(bits) => {
+                    ScanRead::Value(decode_value(category, bits as u16) as i32)
+                }
+                ScanRead::EndOfScan => ScanRead::EndOfScan,
+                ScanRead::Truncated => ScanRead::Truncated,
+            }),
+            _ => Err(Error::invalid_jpeg_data(
+                "invalid difference category for coding mode",
+            )),
+        }
+    }
+
     /// Aligns to byte boundary (call before reading restart marker).
     pub fn align_to_byte(&mut self) {
         self.reader.align_to_byte();
+    }
+
+    /// Returns the partial-byte padding bits currently in the bit reader, in
+    /// bitstream order (MSB-first). Read-only — does NOT consume the bits.
+    ///
+    /// Use this immediately BEFORE [`align_to_byte`] at every entropy-segment
+    /// terminator to capture the JBRD padding bits for byte-exact JPEG-XL
+    /// transcoding.
+    ///
+    /// See [`crate::foundation::bitstream::BitReader::partial_byte_padding_bits`]
+    /// for the underlying algorithm.
+    ///
+    /// [`align_to_byte`]: Self::align_to_byte
+    #[must_use]
+    pub fn partial_byte_padding_bits(&self) -> alloc::vec::Vec<u8> {
+        self.reader.partial_byte_padding_bits()
     }
 
     /// Saves the current decoder state for potential rollback.
@@ -1192,6 +1354,20 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.reader.read_restart_marker(expected_num)
     }
 
+    /// Like [`read_restart_marker`](Self::read_restart_marker), but a stream
+    /// that ENDS where the marker should be is reported as `Ok(false)` — a
+    /// truncation at a restart-interval boundary — instead of an error. The
+    /// reader is left exhausted, so every block decoded afterwards comes
+    /// back `Truncated` and the caller's normal zero-fill applies. Corruption
+    /// (wrong bytes where the marker should be) is still an error.
+    pub(crate) fn read_restart_marker_tolerant(&mut self, expected_num: u8) -> Result<bool> {
+        match self.reader.read_restart_marker(expected_num) {
+            Ok(()) => Ok(true),
+            Err(e) if matches!(e.kind(), ErrorKind::TruncatedData { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     // ===== Progressive decoding methods =====
 
     /// Decodes DC coefficient for progressive first scan (ah=0).
@@ -1202,31 +1378,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         dc_table_idx: usize,
         al: u8,
     ) -> ScanResult<i16> {
-        let dc_table = self.get_dc_table(dc_table_idx)?;
-
-        let dc_cat = match self.decode_huffman(dc_table)? {
-            ScanRead::Value(v) => v,
+        let dc_diff = match self.decode_difference::<false>(dc_table_idx)? {
+            ScanRead::Value(v) => v as i16,
             ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
             ScanRead::Truncated => return Ok(ScanRead::Truncated),
-        };
-
-        // DC category must be 0-16; values > 16 would cause shift overflow in
-        // decode_value (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
-        if dc_cat > 16 {
-            return Err(Error::invalid_jpeg_data(
-                "DC Huffman category out of range (0-16)",
-            ));
-        }
-
-        let dc_diff = if dc_cat == 0 {
-            0
-        } else {
-            let bits = match self.reader.read_bits(dc_cat)? {
-                ScanRead::Value(v) => v as u16,
-                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                ScanRead::Truncated => return Ok(ScanRead::Truncated),
-            };
-            decode_value(dc_cat, bits)
         };
 
         let shifted_dc = self.prev_dc[component].wrapping_add(dc_diff);
@@ -1305,13 +1460,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 k += run as usize;
                 if k > se as usize {
-                    if self.lenient {
-                        self.had_ac_overflow = true;
-                        return Ok(ScanRead::Value(())); // Treat as EOB
-                    }
-                    return Err(Error::invalid_jpeg_data(
-                        "AC coefficient index out of bounds",
-                    ));
+                    // Run past the band: consume the value bits (libjpeg-turbo
+                    // parity) and end the block; reported on every path, Strict
+                    // rejects at scan end (#92).
+                    self.had_ac_overflow = true;
+                    let _ = self.reader.read_bits(size)?;
+                    return Ok(ScanRead::Value(()));
                 }
 
                 let bits = match self.reader.read_bits(size)? {
@@ -1556,16 +1710,90 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         restart_interval: u32,
         stop: &impl enough::Stop,
     ) -> Result<bool> {
+        self.decode_ac_first_scan_tracked(
+            coeffs,
+            bitmaps,
+            comp_idx,
+            ac_table_idx,
+            ss,
+            se,
+            al,
+            blocks_h,
+            blocks_v,
+            padded_blocks_h,
+            restart_interval,
+            None,
+            None,
+            stop,
+        )
+    }
+
+    /// Tracking variant of [`decode_ac_first_scan`] that, when `jbrd` is
+    /// `Some`, populates the scan's `reset_points` and `extra_zero_runs`
+    /// fields per the libjxl JBRD semantics (see
+    /// `enc_jpeg_data_reader.cc:537-619` `DecodeDCTBlock`).
+    ///
+    /// `block_scan_index` accounting: this function processes ONE
+    /// component (progressive AC scans are always non-interleaved),
+    /// one block per inner loop iteration. The libjxl `block_scan_index`
+    /// is therefore exactly the running `mcu_count`.
+    ///
+    /// When `jbrd` is `None`, this is identical to `decode_ac_first_scan`
+    /// and incurs no extra cost beyond a single None-check per scan.
+    ///
+    /// [`decode_ac_first_scan`]: Self::decode_ac_first_scan
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_ac_first_scan_tracked(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        mut jbrd: Option<&mut JbrdScanInfo>,
+        mut jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
         let fast_ac = ac_table.fast_ac_array();
         let se_usize = se as usize;
         let mut eob_run = 0u16;
         let mut mcu_count = 0u32;
         let mut next_restart_num = 0u8;
+        // JBRD per-block state. Reset at block boundaries (and ZRL counters reset on real coeffs).
+        // `eobrun_allowed = ss > 0` matches libjxl's `DecodeDCTBlock`: AC scans always
+        // have ss>0 (Ss==0 is DC-only), so we treat EOB-run starts as JBRD reset_state
+        // candidates per the libjxl spec.
+        let track_jbrd = jbrd.is_some();
+        let eobrun_allowed = ss > 0;
+        // JBRD reset_state semantics (libjxl `enc_jpeg_data_reader.cc`):
+        // libjxl initialises `eobrun = -1` (line 776) and decrements it at
+        // the END of every block (line 617), so the line-602 predicate
+        // `*eobrun == 0` is TRUE iff the PRIOR block ended with eobrun == 1
+        // (post-EOB-introduce + 1-decrement = 0) OR the fast-path consumed
+        // the last entry of a run (1 → 0). It is NOT true at scan start
+        // (init -1), after RST (libjxl line 815 resets to -1), or after a
+        // block whose loop exited via a real coefficient (decrements to a
+        // negative value).
+        //
+        // We do not change `eob_run`'s u16 type (used by the JPEG decode
+        // logic itself). Instead we mirror libjxl's signed semantics in a
+        // parallel `eobrun_signed` tracker, used ONLY for the JBRD push
+        // predicate.
+        //
+        // This matches libjxl's "two end-of-block runs right after each
+        // other" semantic (the comment at line 603-604).
+        let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
-            if block_y & 15 == 0 && stop.should_stop() {
-                return Err(Error::cancelled());
+            if block_y & 15 == 0 {
+                stop.check()?;
             }
 
             for block_x in 0..blocks_h {
@@ -1574,7 +1802,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // Drain any unloaded coded bytes before the marker.
                     // The fast_ac path triggers fewer refills than the standard
                     // Huffman path, so position may lag behind consumed data.
-                    while self.reader.marker_found().is_none() {
+                    // Stop once real data is exhausted: past EOF, `refill()` keeps
+                    // claiming synthetic zero bits (overread), so
+                    // `bits_available() >= 32` stays true and `marker_found()`
+                    // never fires on a truncated / marker-less scan — an infinite
+                    // loop (a small progressive JPEG with a restart interval but a
+                    // missing RST hung the decoder, fuzz zenpipe#47). When
+                    // exhausted, `read_restart_marker` below reports the missing
+                    // marker cleanly.
+                    while self.reader.marker_found().is_none() && !self.reader.is_exhausted() {
                         let _ = self.reader.refill();
                         if self.reader.bits_available() >= 32 {
                             self.reader.skip_bits_fast(32);
@@ -1582,11 +1818,25 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             break;
                         }
                     }
+                    // JBRD: capture per-RST entropy-segment pad bits BEFORE
+                    // aligning. The drain loop above ensures we've actually
+                    // reached the marker (refill stops loading when it sees
+                    // the 0xFF prefix); `partial_byte_padding_bits` then
+                    // extracts the trailing-byte pad bits via the BitReader.
+                    if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                        buf.extend_from_slice(&self.reader.partial_byte_padding_bits());
+                    }
                     self.reader.align_to_byte();
-                    self.reader.read_restart_marker(next_restart_num)?;
+                    if !self.read_restart_marker_tolerant(next_restart_num)? {
+                        // Cut at the restart boundary: the scan is truncated.
+                        return Ok(false);
+                    }
                     next_restart_num = (next_restart_num + 1) & 7;
                     self.prev_dc = [0; 4];
                     eob_run = 0;
+                    // libjxl resets `eobrun = -1` after RST (line 815) → no
+                    // reset_state push for the first block after a restart.
+                    eobrun_signed = -1;
                 }
 
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -1595,10 +1845,28 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                 // EOB fast path — most common case in progressive
                 if eob_run > 0 {
+                    // Mirror libjxl's line 570-572: --(*eobrun); return.
+                    // Decrement the SIGNED tracker once; next non-fast-path
+                    // block will see eobrun_signed == 0 iff this was the
+                    // last block of the run.
+                    eobrun_signed -= 1;
                     eob_run -= 1;
                     mcu_count += 1;
                     continue;
                 }
+
+                // JBRD per-block ZRL accumulator. Reset every block, incremented
+                // on each ZRL (run=15, size=0), reset to 0 when a real coefficient
+                // is placed (size > 0). Matches libjxl DecodeDCTBlock semantics
+                // (enc_jpeg_data_reader.cc:574 init, :597 reset, :600 increment).
+                let mut block_num_zero_runs: u32 = 0;
+                // Track whether the Huffman loop exited via an EOB symbol
+                // (single, multi, or AC overflow) or via natural loop
+                // completion (k > Se after real-coeff path). libjxl decrements
+                // `*eobrun` at end of every block (line 617) — the EOB branches
+                // already accounted for that in their pre-decrement set.
+                // For the real-coeff exit we need the explicit decrement here.
+                let mut exited_via_eob = false;
 
                 let mut k = ss as usize;
                 'block: while k <= se_usize {
@@ -1609,20 +1877,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // available-bits validation (the MSB-aligned zero-padding
                     // still gives a valid fast_lookup index for codes ≤ avail bits).
                     let fast_bits = HuffmanDecodeTable::FAST_BITS as u8;
-                    let bits9;
-                    let partial_peek;
-                    match self.reader.peek_bits_refill(fast_bits) {
-                        Some(b) => {
-                            bits9 = b;
-                            partial_peek = false;
-                        }
+
+                    let (bits9, partial_peek) = match self.reader.peek_bits_refill(fast_bits) {
+                        Some(b) => (b, false),
                         None => {
                             let avail = self.reader.bits_available();
                             if avail == 0 {
                                 return Ok(false);
                             }
-                            bits9 = self.reader.peek_top(fast_bits);
-                            partial_peek = true;
+                            (self.reader.peek_top(fast_bits), true)
                         }
                     };
 
@@ -1636,10 +1899,17 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             self.reader.skip_bits_fast(total_bits);
                             k += run;
                             if k > se_usize {
+                                // Run past the band; the value bits are
+                                // already consumed. Reported as on every
+                                // other scan path (Strict rejects, #224).
+                                self.had_ac_overflow = true;
                                 break 'block;
                             }
                             block[k] = value << al;
                             *bitmap |= 1u64 << (k & 63);
+                            // JBRD: real coefficient placed → reset ZRL run accumulator.
+                            // (libjxl enc_jpeg_data_reader.cc:597)
+                            block_num_zero_runs = 0;
                             k += 1;
                             continue 'block;
                         }
@@ -1656,48 +1926,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         self.reader.skip_bits_fast(code_len);
                         (lookup & 0xFF) as u8
                     } else {
-                        // Slow path: need 16 bits for extended Huffman codes
-                        match self.reader.peek_bits_refill(16) {
-                            Some(bits16) => {
-                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
-                                    self.reader.skip_bits_fast(len);
-                                    sym
-                                } else {
-                                    // Invalid code — treat as EOB
-                                    break 'block;
-                                }
-                            }
-                            None => {
-                                // Edge case: near restart marker or end of scan,
-                                // fewer than 16 bits available. Fall back to
-                                // bit-by-bit Huffman decode (matches the standard
-                                // decode_huffman_symbol_lenient fallback).
-                                let mut code = 0u32;
-                                let mut found_symbol = None;
-                                for len in 1..=16usize {
-                                    let bit = match self.reader.read_bits(1)? {
-                                        ScanRead::Value(b) => b,
-                                        ScanRead::EndOfScan | ScanRead::Truncated => {
-                                            return Ok(false);
-                                        }
-                                    };
-                                    code = (code << 1) | bit;
-                                    if (code as i32) <= ac_table.maxcode[len] {
-                                        let idx = (code as i32 + ac_table.valoffset[len]) as usize;
-                                        if idx < ac_table.values.len() {
-                                            found_symbol = Some(ac_table.values[idx]);
-                                            break;
-                                        }
-                                    }
-                                }
-                                match found_symbol {
-                                    Some(sym) => sym,
-                                    None => {
-                                        // Invalid code or truly exhausted
-                                        break 'block;
-                                    }
-                                }
-                            }
+                        // Codes longer than FAST_BITS, and invalid codes, take
+                        // the shared decoder: an invalid code is an error, or
+                        // EOB plus `had_invalid_huffman` when lenient, as on
+                        // every other scan path (#224).
+                        match self.decode_huffman(ac_table)? {
+                            ScanRead::Value(sym) => sym,
+                            ScanRead::EndOfScan | ScanRead::Truncated => return Ok(false),
                         }
                     };
 
@@ -1706,24 +1941,68 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                     if size == 0 {
                         if run == 15 {
+                            // JBRD: ZRL → increment per-block zero-run counter.
+                            // libjxl enc_jpeg_data_reader.cc:600
+                            block_num_zero_runs += 1;
                             k += 16;
                         } else if run == 0 {
-                            // Single EOB
+                            // Single EOB. JBRD reset_state semantic
+                            // (libjxl enc_jpeg_data_reader.cc:602): fires iff
+                            // k == Ss AND *eobrun == 0 (our `eobrun_signed`).
+                            if track_jbrd
+                                && eobrun_allowed
+                                && k == ss as usize
+                                && eobrun_signed == 0
+                                && let Some(j) = jbrd.as_deref_mut()
+                            {
+                                j.reset_points.push(mcu_count);
+                            }
+                            // libjxl line 607: *eobrun = 1<<0 = 1.
+                            // line 617: --(*eobrun) → 0.
+                            eobrun_signed = 0;
+                            exited_via_eob = true;
                             break 'block;
                         } else {
-                            // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits)
+                            // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits).
+                            // Same JBRD predicate as single-EOB.
+                            // libjxl enc_jpeg_data_reader.cc:602-606
+                            if track_jbrd
+                                && eobrun_allowed
+                                && k == ss as usize
+                                && eobrun_signed == 0
+                                && let Some(j) = jbrd.as_deref_mut()
+                            {
+                                j.reset_points.push(mcu_count);
+                            }
                             let _ = self.reader.refill();
                             if self.reader.bits_available() < run {
                                 return Ok(false);
                             }
                             let extra = self.reader.read_bits_fast(run) as u16;
                             eob_run = (1 << run) + extra - 1;
+                            // libjxl line 607-612: *eobrun = (1<<r)+extra;
+                            // line 617: --(*eobrun). Net: eob_run.
+                            eobrun_signed = eob_run as i32;
+                            exited_via_eob = true;
                             break 'block;
                         }
                     } else {
                         k += run as usize;
                         if k > se_usize {
-                            // AC overflow — treat as EOB
+                            // Run past the band: consume the value bits and
+                            // end the block, as `decode_ac_first` and
+                            // libjpeg-turbo do; reported, Strict rejects
+                            // (#224). libjxl returns an error here so we
+                            // don't have a canonical line-617 equivalent.
+                            // Mark as EOB-exited so the post-block
+                            // decrement is skipped.
+                            self.had_ac_overflow = true;
+                            let _ = self.reader.refill();
+                            if self.reader.bits_available() < size {
+                                return Ok(false);
+                            }
+                            let _ = self.reader.read_bits_fast(size);
+                            exited_via_eob = true;
                             break 'block;
                         }
                         // Extra bits for coefficient value (size ≤ 10)
@@ -1735,8 +2014,29 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         let value = decode_value(size, bits);
                         block[k] = value << al;
                         *bitmap |= 1u64 << (k & 63);
+                        // JBRD: real coefficient placed → reset ZRL run accumulator.
+                        // libjxl enc_jpeg_data_reader.cc:597
+                        block_num_zero_runs = 0;
                         k += 1;
                     }
+                }
+
+                // JBRD: end of block — record extra zero runs if any accumulated.
+                // libjxl enc_jpeg_data_reader.cc:852-857
+                if track_jbrd
+                    && block_num_zero_runs > 0
+                    && let Some(j) = jbrd.as_deref_mut()
+                {
+                    j.extra_zero_runs.push((mcu_count, block_num_zero_runs));
+                }
+
+                // Mirror libjxl line 617: `--(*eobrun);` runs at end of
+                // every non-fast-path block. The EOB branches already
+                // accounted for the libjxl pre-decrement + decrement (net
+                // = `eob_run` for multi-EOB, 0 for single-EOB). Only the
+                // real-coeff-completion path needs the decrement here.
+                if !exited_via_eob {
+                    eobrun_signed -= 1;
                 }
 
                 mcu_count += 1;
@@ -1782,6 +2082,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut code = 0u32;
         for len in 1..=16usize {
             let bit = self.reader.read_bit_refine();
+            if self.reader.starved() {
+                // The code runs past the end of the data (truncated scan):
+                // finishing it against zeros would fabricate a symbol.
+                return None;
+            }
             code = (code << 1) | (bit as u32);
             if (code as i32) <= ac_table.maxcode[len] {
                 let idx = (code as i32 + ac_table.valoffset[len]) as usize;
@@ -1813,6 +2118,55 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         restart_interval: u32,
         stop: &impl enough::Stop,
     ) -> Result<bool> {
+        self.decode_ac_refine_scan_tracked(
+            coeffs,
+            bitmaps,
+            comp_idx,
+            ac_table_idx,
+            ss,
+            se,
+            al,
+            blocks_h,
+            blocks_v,
+            padded_blocks_h,
+            restart_interval,
+            None,
+            None,
+            stop,
+        )
+    }
+
+    /// Tracking variant of [`decode_ac_refine_scan`]. When `jbrd` is `Some`,
+    /// populates the scan's `reset_points` per libjxl JBRD semantics
+    /// (see `enc_jpeg_data_reader.cc:621-728` `RefineDCTBlock`).
+    ///
+    /// `RefineDCTBlock` does NOT track extra zero runs — only reset points —
+    /// because refinement scans encode each coefficient position explicitly
+    /// (no run-length encoding of multi-zero gaps via separate ZRL symbols
+    /// the way first-scan does). Per libjxl the ZRL in refinement scans
+    /// is an in-block skip-and-refine, not a JBRD-trackable accumulation.
+    ///
+    /// `block_scan_index` accounting matches `decode_ac_first_scan_tracked`.
+    ///
+    /// [`decode_ac_refine_scan`]: Self::decode_ac_refine_scan
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_ac_refine_scan_tracked(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        mut jbrd: Option<&mut JbrdScanInfo>,
+        mut jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
         let bit_val = 1i16 << al;
         let range_mask = range_bitmap(ss, se);
@@ -1820,17 +2174,32 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut eob_run = 0u16;
         let mut mcu_count = 0u32;
         let mut next_restart_num = 0u8;
+        let track_jbrd = jbrd.is_some();
+        let eobrun_allowed = ss > 0;
+        // JBRD reset_state for refinement-scan path mirrors libjxl
+        // `RefineDCTBlock` line 661-665, with the same `*eobrun == 0`
+        // predicate as first-scan. We mirror libjxl's signed `eobrun`
+        // semantics in a parallel `eobrun_signed` tracker (see the comment
+        // in `decode_ac_first_scan_tracked` for full semantics).
+        let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
-            if block_y & 15 == 0 && stop.should_stop() {
-                return Err(Error::cancelled());
+            if block_y & 15 == 0 {
+                stop.check()?;
             }
 
             for block_x in 0..blocks_h {
                 // Restart marker handling
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                    // Drain any unloaded coded bytes before the marker.
-                    while self.reader.marker_found().is_none() {
+                    // Drain any unloaded coded bytes before the marker. Stop once
+                    // real data is exhausted: past EOF, `refill()` keeps claiming
+                    // synthetic zero bits (overread), so `bits_available() >= 32`
+                    // stays true and `marker_found()` never fires on a truncated /
+                    // marker-less scan — an infinite loop (a tiny progressive JPEG
+                    // with a restart interval but no RST hung the decoder, fuzz
+                    // zenpipe#47). When exhausted, `read_restart_marker` below
+                    // reports the missing marker cleanly.
+                    while self.reader.marker_found().is_none() && !self.reader.is_exhausted() {
                         let _ = self.reader.refill();
                         if self.reader.bits_available() >= 32 {
                             self.reader.skip_bits_fast(32);
@@ -1838,16 +2207,35 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             break;
                         }
                     }
+                    // JBRD: capture per-RST entropy-segment pad bits BEFORE
+                    // aligning. Same pattern as
+                    // `decode_ac_first_scan_tracked`.
+                    if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                        buf.extend_from_slice(&self.reader.partial_byte_padding_bits());
+                    }
                     self.reader.align_to_byte();
-                    self.reader.read_restart_marker(next_restart_num)?;
+                    if !self.read_restart_marker_tolerant(next_restart_num)? {
+                        // Cut at the restart boundary: the scan is truncated.
+                        return Ok(false);
+                    }
                     next_restart_num = (next_restart_num + 1) & 7;
                     self.prev_dc = [0; 4];
                     eob_run = 0;
+                    // libjxl resets `eobrun = -1` after RST → no reset_state
+                    // push for the first block of a fresh segment.
+                    eobrun_signed = -1;
                 }
 
                 let block_idx = block_y * padded_blocks_h + block_x;
                 let block = &mut coeffs[comp_idx][block_idx];
                 let bitmap = &mut bitmaps[comp_idx][block_idx];
+
+                // Track whether this block's Huffman loop exited via an EOB
+                // symbol (single, multi, AC overflow) or via natural loop
+                // completion. The EOB branches set `eobrun_signed` to the
+                // libjxl post-line-617 value; the loop-completion path
+                // requires us to decrement here.
+                let mut exited_via_eob = false;
 
                 // EOB fast path — apply refinement bits to existing nonzero coefficients
                 if eob_run > 0 {
@@ -1884,6 +2272,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             }
                         }
                     }
+                    // Mirror libjxl's line 570-572: --(*eobrun); return.
+                    // Decrement signed tracker once; next non-fast-path block
+                    // sees eobrun_signed == 0 iff this was the last entry.
+                    eobrun_signed -= 1;
                     eob_run -= 1;
                     mcu_count += 1;
                     continue;
@@ -1905,7 +2297,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // Huffman decode with tiered fallback via helper.
                     let symbol = match self.decode_refine_symbol(ac_table) {
                         Some(sym) => sym,
-                        None => break,
+                        None => {
+                            if self.reader.starved() {
+                                return Ok(false);
+                            }
+                            break;
+                        }
                     };
 
                     let run = symbol >> 4;
@@ -1913,7 +2310,17 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                     if size == 0 {
                         if run != 15 {
-                            // EOB — apply refinement to remaining nonzero coeffs
+                            // EOB — apply refinement to remaining nonzero coeffs.
+                            // JBRD reset_state (libjxl `RefineDCTBlock` line
+                            // 661-665): fires iff k == Ss AND *eobrun == 0.
+                            if track_jbrd
+                                && eobrun_allowed
+                                && k == ss as usize
+                                && eobrun_signed == 0
+                                && let Some(j) = jbrd.as_deref_mut()
+                            {
+                                j.reset_points.push(mcu_count);
+                            }
                             if run != 0 {
                                 let _ = self.reader.refill();
                                 if self.reader.bits_available() < run {
@@ -1921,7 +2328,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 }
                                 let extra = self.reader.read_bits_fast(run) as u16;
                                 eob_run = (1 << run) + extra - 1;
+                                // libjxl line 666-672: *eobrun = (1<<r)+extra;
+                                // line 705: --(*eobrun) → eob_run.
+                                eobrun_signed = eob_run as i32;
+                            } else {
+                                // run==0: *eobrun=1; --(*eobrun)→0.
+                                eobrun_signed = 0;
                             }
+                            exited_via_eob = true;
                             let rem_count = nz_remaining.count_ones() as u8;
                             if rem_count > 0 {
                                 if rem_count > self.reader.bits_available() {
@@ -1988,6 +2402,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         // NEW_NZ: skip `run` zero positions, then place new coefficient.
                         // Separate path avoids Option wrapping and `size == 0` checks.
                         let sign_bit = self.reader.read_bit_refine();
+                        if self.reader.starved() {
+                            // The sign bit is past the cut: placing `-bit_val`
+                            // on a made-up 0 would be a phantom coefficient.
+                            return Ok(false);
+                        }
                         let new_val = if sign_bit != 0 { bit_val } else { -bit_val };
                         let mut num_zeros_to_skip = run as usize;
 
@@ -2022,11 +2441,23 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     }
                 }
 
+                // Mirror libjxl `RefineDCTBlock` line 705: `--(*eobrun);`
+                // runs at end of every non-fast-path block. The EOB branch
+                // already accounted for the line-666 set + line-705
+                // decrement (net = eob_run or 0). Only the real-coeff /
+                // ZRL-only completion path needs the decrement here.
+                if !exited_via_eob {
+                    eobrun_signed -= 1;
+                }
+
                 mcu_count += 1;
             }
         }
 
-        Ok(true)
+        // Correction bits read past the cut come back as 0 ("leave the
+        // coefficient alone"), which is exactly the pre-scan state — so the
+        // coefficients are right, but the scan did NOT complete: report it.
+        Ok(!self.reader.starved())
     }
 }
 
@@ -2034,6 +2465,60 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 mod tests {
     use super::*;
     use crate::huffman::HuffmanDecodeTable;
+
+    #[test]
+    fn lossless_category_sixteen_consumes_no_magnitude_bits() {
+        // Canonical codes: 0 -> category 16, 10 -> category 0.
+        // The second difference immediately follows the one-bit first code.
+        let table = HuffmanDecodeTable::from_bits_values(
+            &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[16, 0],
+        )
+        .unwrap();
+        let mut decoder = EntropyDecoder::new(&[0b01011111, 0xff, 0xd9]);
+        decoder.set_dc_table(0, &table);
+        assert!(matches!(
+            decoder.decode_difference::<true>(0).unwrap(),
+            ScanRead::Value(-32768)
+        ));
+        assert!(matches!(
+            decoder.decode_difference::<true>(0).unwrap(),
+            ScanRead::Value(0)
+        ));
+    }
+
+    #[test]
+    fn lossless_difference_categories_cover_signed_extremes() {
+        use crate::foundation::bitstream::BitWriter;
+        for category in 1..=15u8 {
+            let table = HuffmanDecodeTable::from_bits_values_dc(
+                &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                &[category],
+            )
+            .unwrap();
+            for magnitude in [
+                0,
+                (1u32 << (category - 1)) - 1,
+                1u32 << (category - 1),
+                (1u32 << category) - 1,
+            ] {
+                let mut writer = BitWriter::new();
+                writer.write_bits(0, 1);
+                writer.write_bits(magnitude, category);
+                let data = writer.into_bytes();
+                let mut decoder = EntropyDecoder::new(&data);
+                decoder.set_dc_table(0, &table);
+                let expected = if magnitude < 1 << (category - 1) {
+                    magnitude as i32 + 1 - (1 << category)
+                } else {
+                    magnitude as i32
+                };
+                assert!(
+                    matches!(decoder.decode_difference::<true>(0).unwrap(), ScanRead::Value(v) if v == expected)
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_entropy_decoder_new() {
@@ -2079,5 +2564,21 @@ mod tests {
         let data = [0u8; 10];
         let decoder = EntropyDecoder::new(&data);
         assert_eq!(decoder.position(), 0);
+    }
+}
+
+#[cfg(test)]
+mod native_category_guards {
+    use super::*;
+    #[test]
+    fn category_sixteen_is_lossless_only() {
+        let table = HuffmanDecodeTable::from_bits_values(
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[16],
+        )
+        .unwrap();
+        let mut decoder = EntropyDecoder::new(&[0, 0, 0]);
+        decoder.set_dc_table(0, &table);
+        assert!(decoder.decode_difference::<false>(0).is_err());
     }
 }

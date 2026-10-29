@@ -40,7 +40,7 @@ use enough::Stop;
 use crate::decode::DecodeConfig;
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::ChromaSubsampling;
-use crate::error::Result;
+use crate::error::{Error, Result};
 pub use crate::lossless::EdgeHandling;
 
 pub use self::command::{Command, FlipAxis, Rotation};
@@ -65,7 +65,7 @@ impl LayoutConfig {
     /// Create a layout config with the given encode quality (0-100).
     ///
     /// Defaults: 4:2:0 subsampling, progressive encoding, Robidoux filter,
-    /// trim partial blocks for lossless, fancy upsampling for decode.
+    /// reject pixel-trimming lossless transforms, fancy upsampling for decode.
     pub fn new(quality: impl Into<f32>) -> Self {
         Self {
             quality: quality.into(),
@@ -73,7 +73,7 @@ impl LayoutConfig {
             progressive: true,
             auto_optimize: true,
             filter: zenresize::Filter::default(),
-            edge_handling: EdgeHandling::TrimPartialBlocks,
+            edge_handling: EdgeHandling::RejectPartialBlocks,
             fancy_upsampling: true,
         }
     }
@@ -84,7 +84,7 @@ impl LayoutConfig {
         self
     }
 
-    /// Set edge handling for lossless transforms (default: TrimPartialBlocks).
+    /// Set edge handling for lossless transforms (default: RejectPartialBlocks).
     pub fn with_edge_handling(mut self, eh: EdgeHandling) -> Self {
         self.edge_handling = eh;
         self
@@ -130,11 +130,9 @@ impl LayoutConfig {
 
     /// Build an `EncoderConfig` from layout settings.
     pub(crate) fn build_encoder_config(&self) -> EncoderConfig {
-        let config =
-            EncoderConfig::ycbcr(self.quality, self.subsampling).progressive(self.progressive);
-        #[cfg(feature = "trellis")]
-        let config = config.auto_optimize(self.auto_optimize);
-        config
+        EncoderConfig::ycbcr(self.quality, self.subsampling)
+            .progressive(self.progressive)
+            .auto_optimize(self.auto_optimize)
     }
 }
 
@@ -258,16 +256,13 @@ impl<'a> LayoutRequest<'a> {
         let src_w = info.dimensions.width;
         let src_h = info.dimensions.height;
 
-        // Detect UltraHDR gain map
-        let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
-
         // Resolve any AutoOrient(0) sentinels against source EXIF.
         let mut commands = self.resolve_auto_orient(&info);
 
         // When optimizing for decode, auto-apply EXIF orientation if it can be
         // done without trimming any pixels. Only inject if the user didn't
         // already add an AutoOrient command.
-        let auto_oriented = if self.optimize_for_decode {
+        let mut auto_oriented = if self.optimize_for_decode {
             let has_explicit_orient = commands
                 .iter()
                 .any(|cmd| matches!(cmd, Command::AutoOrient(_)));
@@ -287,59 +282,30 @@ impl<'a> LayoutRequest<'a> {
         };
 
         // Try lossless path first
-        if let Some(transform) = lossless::detect_lossless(&commands) {
-            let primary = if self.optimize_for_decode {
-                // Early exit: if already baseline and decode-ready (small images
-                // don't need DRI; larger ones need MCU-row-aligned DRI).
-                if transform == crate::lossless::LosslessTransform::None
-                    && info.mode == crate::types::JpegMode::Baseline
-                    && lossless::is_decode_ready(self.jpeg_data, &info)
+        if let Some(mut transform) = lossless::detect_lossless(&commands) {
+            let mut data = match self.run_lossless(transform, &info, stop) {
+                // `safe_auto_orient` checks only the primary's MCU grid; an
+                // MPF secondary (a gain map with partial blocks) can still be
+                // rejected by the edge policy. The orientation was our
+                // addition, not the caller's request: serve the request
+                // without it rather than fail.
+                Err(e)
+                    if auto_oriented
+                        && matches!(e.kind(), crate::error::ErrorKind::InvalidConfig(_)) =>
                 {
-                    self.jpeg_data.to_vec()
-                } else {
-                    // Use restructure: converts progressive→sequential, adds DRI,
-                    // and optionally applies the spatial transform in one pass.
-                    lossless::execute_restructure(
-                        self.jpeg_data,
-                        transform,
-                        self.config.edge_handling,
-                        stop,
-                    )?
+                    commands.remove(0);
+                    auto_oriented = false;
+                    transform = lossless::detect_lossless(&commands)
+                        .ok_or_else(|| Error::internal("lossless commands became lossy"))?;
+                    self.run_lossless(transform, &info, stop)?
                 }
-            } else {
-                lossless::execute_lossless(
-                    self.jpeg_data,
-                    transform,
-                    self.config.edge_handling,
-                    stop,
-                )?
+                r => r?,
             };
 
-            // Compute output dimensions
-            let (out_w, out_h) = if transform.swaps_dimensions() {
-                (src_h, src_w)
-            } else {
-                (src_w, src_h)
-            };
-
-            // Transform and reattach gain map if present.
-            // Skip for identity (None) — the input already includes the gain map.
-            let mut data = if transform != crate::lossless::LosslessTransform::None {
-                if let Some(gm_bytes) = gain_map_jpeg {
-                    let gm_fn = if self.optimize_for_decode {
-                        lossless::execute_restructure
-                    } else {
-                        lossless::execute_lossless
-                    };
-                    let gm_transformed =
-                        gm_fn(&gm_bytes, transform, self.config.edge_handling, stop)?;
-                    gainmap::assemble_ultrahdr(primary, gm_transformed)
-                } else {
-                    primary
-                }
-            } else {
-                primary
-            };
+            // The lossless pipeline owns MPF secondary transformation and assembly.
+            // It may also trim partial MCUs; report the actual encoded dimensions.
+            let output_info = decoder.read_info(&data)?;
+            let (out_w, out_h) = (output_info.dimensions.width, output_info.dimensions.height);
 
             // Reset EXIF orientation to 1 when we auto-applied it on the lossless path.
             // The restructure preserves metadata as-is, so we patch the output.
@@ -363,9 +329,24 @@ impl<'a> LayoutRequest<'a> {
         // EXIF orientation reset needed if the plan applies any orient.
         let has_orientation = !plan.orient.is_identity();
 
+        // The pixel path transforms the gain map with the primary's plan
+        // (crop, resize and orientation, scaled to the map) and points the
+        // primary's GContainer directory at the new map before encoding it.
+        let gain_map = match self.detect_and_extract_gainmap() {
+            Some(source_map) => {
+                let map = self.transform_gainmap_lossy(source_map, &plan, src_w, src_h, stop)?;
+                Some((source_map, map))
+            }
+            None => None,
+        };
+        let mut primary_info = info.clone();
+        if let Some((_, map)) = &gain_map {
+            primary_info.xmp = gainmap::with_gain_map_length(info.xmp.as_deref(), map.len())?;
+        }
+
         let primary = lossy::execute_lossy(
             self.jpeg_data,
-            &info,
+            &primary_info,
             self.config,
             &plan,
             has_orientation,
@@ -373,14 +354,8 @@ impl<'a> LayoutRequest<'a> {
             stop,
         )?;
 
-        // Transform gain map proportionally if present
-        let data = match gain_map_jpeg {
-            Some(gm_bytes) => match self
-                .transform_gainmap_lossy(&gm_bytes, src_w, src_h, target_w, target_h, stop)?
-            {
-                Some(gm_transformed) => gainmap::assemble_ultrahdr(primary, gm_transformed),
-                None => primary,
-            },
+        let data = match gain_map {
+            Some((_, map)) => gainmap::assemble_ultrahdr(self.jpeg_data, primary, map),
             None => primary,
         };
 
@@ -392,46 +367,75 @@ impl<'a> LayoutRequest<'a> {
         })
     }
 
-    /// Detect UltraHDR content and extract the gain map JPEG if present.
-    fn detect_and_extract_gainmap(&self, info: &crate::decode::JpegInfo) -> Option<Vec<u8>> {
-        let xmp = info.xmp.as_deref()?;
-        if !gainmap::is_ultrahdr_xmp(xmp) {
-            return None;
+    /// The lossless path's bytes for `transform`: a restructure to baseline
+    /// with restart markers when optimizing for decode (or the input itself
+    /// when it is already decode-ready and nothing turns), else a plain
+    /// lossless transform.
+    fn run_lossless(
+        &self,
+        transform: crate::lossless::LosslessTransform,
+        info: &crate::decode::JpegInfo,
+        stop: &dyn Stop,
+    ) -> Result<Vec<u8>> {
+        if self.optimize_for_decode {
+            // Early exit: if already baseline and decode-ready (small images
+            // don't need DRI; larger ones need MCU-row-aligned DRI).
+            if transform == crate::lossless::LosslessTransform::None
+                && info.mode == crate::types::JpegMode::Baseline
+                && lossless::is_decode_ready(self.jpeg_data, info)
+            {
+                Ok(self.jpeg_data.to_vec())
+            } else {
+                // Use restructure: converts progressive→sequential, adds DRI,
+                // and optionally applies the spatial transform in one pass.
+                lossless::execute_restructure(
+                    self.jpeg_data,
+                    transform,
+                    self.config.edge_handling,
+                    stop,
+                )
+            }
+        } else {
+            lossless::execute_lossless(self.jpeg_data, transform, self.config.edge_handling, stop)
         }
-        gainmap::find_secondary_jpeg(self.jpeg_data)
     }
 
-    /// Transform the gain map through the lossy path with proportional dimensions.
+    /// The gain-map JPEG every gain-map reader finds in the source (its MPF
+    /// gain map, signalled by `hdrgm` XMP or ISO 21496-1 in the primary or
+    /// by the map's own metadata), if any.
+    fn detect_and_extract_gainmap(&self) -> Option<&'a [u8]> {
+        let (start, end) = crate::decode::gain_map_range(self.jpeg_data)?;
+        self.jpeg_data.get(start..end)
+    }
+
+    /// Transform the gain map with the primary's `plan`, scaled to the map.
+    ///
+    /// An unreadable gain map is an error: the primary keeps its gain-map
+    /// signalling, so dropping the map would leave a file that names a map it
+    /// does not have.
     fn transform_gainmap_lossy(
         &self,
         gm_bytes: &[u8],
+        plan: &plan::Plan,
         primary_src_w: u32,
         primary_src_h: u32,
-        primary_dst_w: u32,
-        primary_dst_h: u32,
         stop: &dyn Stop,
-    ) -> Result<Option<Vec<u8>>> {
-        let decoder = DecodeConfig::new();
-        let gm_info = match decoder.read_info(gm_bytes) {
-            Ok(info) => info,
-            Err(_) => return Ok(None), // Corrupted gain map — skip silently
+    ) -> Result<Vec<u8>> {
+        let gm_info = DecodeConfig::new().read_info(gm_bytes)?;
+        let format = if gm_info.num_components == 1 {
+            zenresize::PixelDescriptor::GRAY8_SRGB
+        } else {
+            zenresize::PixelDescriptor::RGB8_SRGB
         };
-        let gm_src_w = gm_info.dimensions.width;
-        let gm_src_h = gm_info.dimensions.height;
-
-        let (gm_dst_w, gm_dst_h) = gainmap::compute_gainmap_target(
+        let gm_plan = plan.for_secondary(
             primary_src_w,
             primary_src_h,
-            primary_dst_w,
-            primary_dst_h,
-            gm_src_w,
-            gm_src_h,
+            gm_info.dimensions.width,
+            gm_info.dimensions.height,
+            self.config,
+            format,
         );
-
-        let gm_transformed =
-            lossy::resize_simple(gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, stop)?;
-
-        Ok(Some(gm_transformed))
+        lossy::transform_secondary(gm_bytes, &gm_info, self.config, &gm_plan, stop)
     }
 
     /// Resolve auto_orient commands that read from source EXIF.
@@ -467,6 +471,87 @@ mod tests {
     use crate::encode::encoder_config::EncoderConfig;
     use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout};
     use enough::Unstoppable;
+
+    #[test]
+    fn lossless_layout_assembles_mpf_once() {
+        use crate::container::{marker, mpf, xmp::generate_primary_xmp};
+        use crate::encode::EncoderSegments;
+        let gray: Vec<u8> = (0..32 * 24)
+            .map(|i| ((i * 71 + i / 11) % 256) as u8)
+            .collect();
+        let mut enc = EncoderConfig::grayscale(80)
+            .encode_from_bytes(32, 24, PixelLayout::Gray8Srgb)
+            .unwrap();
+        enc.push_packed(&gray, Unstoppable).unwrap();
+        let secondary = enc.finish().unwrap();
+        let segments = EncoderSegments::new()
+            .set_xmp(&generate_primary_xmp(secondary.len()))
+            .add_gainmap(secondary);
+        let rgb: Vec<u8> = (0..64 * 48 * 3)
+            .map(|i| ((i * 37 + i / 17) % 256) as u8)
+            .collect();
+        let mut enc = EncoderConfig::ycbcr(90, ChromaSubsampling::Quarter)
+            .with_segments(segments)
+            .progressive(true)
+            .encode_from_bytes(64, 48, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&rgb, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        for optimize in [false, true] {
+            let cfg =
+                LayoutConfig::new(90.0_f32).with_edge_handling(EdgeHandling::RejectPartialBlocks);
+            let request = cfg.request(&jpeg).rotate_90();
+            let result = if optimize {
+                request.optimize_for_decode()
+            } else {
+                request
+            }
+            .execute(&Unstoppable)
+            .unwrap();
+            let ranges = marker::find_jpeg_boundaries(&result.data);
+            assert_eq!(ranges.len(), 2, "optimize={optimize}");
+            assert_eq!(
+                marker::iter(&result.data)
+                    .filter(|s| s.payload.starts_with(b"MPF\0"))
+                    .count(),
+                1
+            );
+            let index = mpf::parse_mpf(&result.data).unwrap();
+            assert_eq!(index.len(), 2);
+            assert_eq!(index[0].size, ranges[0].end - ranges[0].start);
+            for (range, dimensions) in ranges.iter().zip([(48, 64), (24, 32)]) {
+                let decoded = DecodeConfig::new()
+                    .decode(&result.data[range.clone()], Unstoppable)
+                    .unwrap();
+                assert_eq!((decoded.width(), decoded.height()), dimensions);
+            }
+        }
+    }
+
+    #[test]
+    fn lossless_layout_reports_trimmed_dimensions() {
+        let jpeg = make_test_jpeg(63, 47);
+        for optimize in [false, true] {
+            let cfg =
+                LayoutConfig::new(85.0_f32).with_edge_handling(EdgeHandling::TrimPartialBlocks);
+            let request = cfg.request(&jpeg).rotate_90();
+            let result = if optimize {
+                request.optimize_for_decode()
+            } else {
+                request
+            }
+            .execute(&Unstoppable)
+            .unwrap();
+            let decoded = DecodeConfig::new()
+                .decode(&result.data, Unstoppable)
+                .unwrap();
+            assert_eq!(
+                (result.width, result.height),
+                (decoded.width(), decoded.height())
+            );
+        }
+    }
 
     /// Create a small test JPEG for layout tests.
     fn make_test_jpeg(width: u32, height: u32) -> Vec<u8> {

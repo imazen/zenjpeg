@@ -4,8 +4,6 @@
 //! libjpeg-turbo silently clamps these to 1. zenjpeg should do the same
 //! in non-Strict modes (Balanced, Lenient, Permissive).
 
-#![cfg(feature = "decoder")]
-
 use enough::Unstoppable;
 use zenjpeg::decoder::{Decoder, Strictness};
 

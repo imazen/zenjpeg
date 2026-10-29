@@ -154,16 +154,25 @@ pub struct JfifInfo {
     pub y_density: u16,
 }
 
-/// Adobe segment color transform.
+/// Adobe APP14 segment color transform flag.
+///
+/// When parsed into [`AdobeInfo`], transform byte `0` (RGB or CMYK without
+/// transform) and unrecognised bytes `3..=255` both map to
+/// [`Self::Unknown`] because this enum is `#[repr(u8)]` and exhaustive.
+/// During decoding, however, the frame's colour model is decided from the raw
+/// APP14 transform byte at SOF (matching jpegli and libjpeg-turbo): any
+/// non-zero byte selects YCbCr on 3-component frames and YCCK on 4-component
+/// frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AdobeColorTransform {
-    /// Unknown or RGB/CMYK (no transform)
+    /// Transform byte `0` (RGB/CMYK without transform), or an unrecognised
+    /// byte `3..=255` when read via [`AdobeInfo`].
     #[default]
     Unknown = 0,
-    /// YCbCr
+    /// YCbCr (transform byte `1`)
     YCbCr = 1,
-    /// YCCK
+    /// YCCK (transform byte `2`)
     Ycck = 2,
 }
 
@@ -189,7 +198,7 @@ const MAX_EXTENDED_XMP_CHUNK_BYTES: usize = 65458;
 const MAX_ICC_CHUNK_BYTES: usize = 65519;
 
 /// XMP namespace signature (with null terminator).
-const XMP_NAMESPACE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+pub(crate) const XMP_NAMESPACE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 
 /// Extended XMP namespace signature.
 const XMP_EXTENDED_NAMESPACE: &[u8] = b"http://ns.adobe.com/xmp/extension/\0";
@@ -387,23 +396,19 @@ impl EncoderSegments {
 
     /// Set/replace EXIF data.
     ///
-    /// The data should be raw TIFF bytes (without the "Exif\0\0" prefix,
-    /// which is added automatically).
+    /// The data is the TIFF structure; the "Exif\0\0" APP1 header is added
+    /// automatically. Data that already starts with that header is accepted
+    /// and gets it once, not twice.
     #[must_use]
     pub fn set_exif(self, data: Vec<u8>) -> Self {
-        // Build full EXIF APP1 data with signature
-        let mut full_data = Vec::with_capacity(EXIF_SIGNATURE.len() + data.len());
-        full_data.extend_from_slice(EXIF_SIGNATURE);
-        full_data.extend_from_slice(&data);
+        let full_data = exif_app1_payload(&data);
         self.replace(0xE1, full_data, SegmentType::Exif)
     }
 
     /// Set/replace EXIF data (mutable version).
     pub fn set_exif_mut(&mut self, data: Vec<u8>) -> &mut Self {
         self.remove_mut(SegmentType::Exif);
-        let mut full_data = Vec::with_capacity(EXIF_SIGNATURE.len() + data.len());
-        full_data.extend_from_slice(EXIF_SIGNATURE);
-        full_data.extend_from_slice(&data);
+        let full_data = exif_app1_payload(&data);
         self.add_mut(0xE1, full_data, SegmentType::Exif)
     }
 
@@ -565,6 +570,10 @@ impl EncoderSegments {
     }
 
     /// Set JFIF info (density/DPI).
+    ///
+    /// The encoder drops this segment, density included, when the output is
+    /// RGB or XYB: JFIF means YCbCr to every decoder (see
+    /// [`crate::encoder::EncoderConfig::with_segments`]).
     #[must_use]
     pub fn set_jfif(self, info: JfifInfo) -> Self {
         let mut data = Vec::with_capacity(16);
@@ -595,6 +604,9 @@ impl EncoderSegments {
     /// let segments = EncoderSegments::new()
     ///     .set_printer_dpi(300);
     /// ```
+    ///
+    /// Like [`set_jfif`](Self::set_jfif), the segment is dropped for RGB and
+    /// XYB output.
     #[must_use]
     pub fn set_printer_dpi(self, dpi: u16) -> Self {
         self.set_jfif(JfifInfo {
@@ -738,6 +750,16 @@ fn detect_segment_type(marker: u8, data: &[u8]) -> SegmentType {
 /// byte output identical to the legacy inline writer.
 pub(crate) fn write_segment(output: &mut Vec<u8>, marker: u8, data: &[u8]) {
     crate::container::marker::write_raw_segment(output, marker, &[], data);
+}
+
+/// The APP1 payload for EXIF data: the "Exif\0\0" header, then the TIFF
+/// structure (a header already present in `data` is not repeated).
+fn exif_app1_payload(data: &[u8]) -> Vec<u8> {
+    let tiff = super::exif::strip_app1_exif_header(data);
+    let mut full_data = Vec::with_capacity(EXIF_SIGNATURE.len() + tiff.len());
+    full_data.extend_from_slice(EXIF_SIGNATURE);
+    full_data.extend_from_slice(tiff);
+    full_data
 }
 
 /// Write all encoder segments to output buffer (in correct order).
@@ -1010,6 +1032,27 @@ mod tests {
         assert!(segments.has(SegmentType::Exif));
         let exif_data = segments.get(SegmentType::Exif).unwrap();
         assert!(exif_data.starts_with(EXIF_SIGNATURE));
+    }
+
+    #[test]
+    fn set_exif_writes_the_app1_header_once() {
+        // Data that already carries the header (a decoder's APP1 payload)
+        // gets it once, through both setters.
+        let tiff = b"II*\0\x08\0\0\0\0\0\0\0\0\0";
+        let prefixed = [EXIF_SIGNATURE, &tiff[..]].concat();
+        for data in [tiff.to_vec(), prefixed] {
+            let segments = EncoderSegments::new().set_exif(data.clone());
+            assert_eq!(
+                segments.get(SegmentType::Exif).unwrap(),
+                [EXIF_SIGNATURE, &tiff[..]].concat()
+            );
+            let mut segments = EncoderSegments::new();
+            segments.set_exif_mut(data);
+            assert_eq!(
+                segments.get(SegmentType::Exif).unwrap(),
+                [EXIF_SIGNATURE, &tiff[..]].concat()
+            );
+        }
     }
 
     #[test]

@@ -13,6 +13,13 @@
 //! v.push(1);
 //! ```
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
@@ -329,5 +336,33 @@ mod tests {
         v.push(2);
         let inner: Vec<u8> = v.into_inner();
         assert_eq!(inner, vec![1, 2]);
+    }
+    #[test]
+    fn instrumentation_preserves_values_and_tracks_capacity_changes() {
+        let mut v = InstrumentedVec::new("growth");
+        assert_eq!(v.stats().utilization_pct(), 100.0);
+        assert_eq!(v.stats().wasted_bytes(), 0);
+        v.push(7u16);
+        let first = v.stats();
+        assert_eq!(first.realloc_count, 0);
+        v.reserve(first.final_capacity + 1);
+        let grown = v.stats();
+        assert_eq!(grown.realloc_count, 1);
+        assert!(grown.peak_capacity > first.peak_capacity);
+        v.resize(3, 9);
+        v.extend([11, 13]);
+        assert_eq!(v.inner(), &[7, 9, 9, 11, 13]);
+        v[0] = 5;
+        let stats = v.stats();
+        assert_eq!(stats.context, "growth");
+        assert_eq!(stats.final_len, 5);
+        assert_eq!(stats.element_size, 2);
+        assert_eq!(stats.wasted_bytes(), (v.capacity() - v.len()) * 2);
+        assert_eq!(stats.utilization_pct(), 5.0 / v.capacity() as f32 * 100.0);
+        let values: Vec<_> = v.into();
+        assert_eq!(values, [5, 9, 9, 11, 13]);
+        let wrapped = InstrumentedVec::from_vec(values, "wrapped");
+        assert_eq!(wrapped.stats().initial_capacity, wrapped.capacity());
+        assert_eq!(wrapped.into_inner(), [5, 9, 9, 11, 13]);
     }
 }

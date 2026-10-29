@@ -146,6 +146,41 @@ mod native_metadata_tests {
     }
 
     #[test]
+    fn native_exif_with_app1_header_is_written_once() {
+        // A blob that still carries the JPEG APP1 header (the payload a JPEG
+        // decoder returns) must not get a second one, through `Exif::raw` or
+        // through `EncoderSegments::set_exif`.
+        let exif_tiff = create_minimal_exif_tiff();
+        let prefixed = [b"Exif\0\0".as_slice(), &exif_tiff].concat();
+        let pixels = create_test_image(32, 32);
+        let via_request = encode_with_exif(32, 32, 80.0, &prefixed);
+        let via_segments = {
+            let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
+                .with_segments(zenjpeg::encode::EncoderSegments::new().set_exif(prefixed.clone()));
+            let mut encoder = config.encode_from_rgb::<RGB<u8>>(32, 32).unwrap();
+            encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+            encoder.finish().unwrap()
+        };
+        for jpeg_data in [via_request, via_segments] {
+            assert_eq!(
+                jpeg_data.windows(6).filter(|w| w == b"Exif\0\0").count(),
+                1,
+                "exactly one Exif header"
+            );
+            let decoded = Decoder::new()
+                .preserve(zenjpeg::decode::PreserveConfig::all())
+                .decode(&jpeg_data, enough::Unstoppable)
+                .unwrap();
+            assert_eq!(decoded.extras().unwrap().exif(), Some(&prefixed[..]));
+            // An independent reader sees the same TIFF structure.
+            let jpeg = Jpeg::from_bytes(jpeg_data.into()).expect("Should parse JPEG");
+            let extracted = jpeg.exif().expect("EXIF should be present");
+            let tiff = extracted.strip_prefix(b"Exif\0\0").unwrap_or(&extracted);
+            assert_eq!(tiff, exif_tiff.as_slice());
+        }
+    }
+
+    #[test]
     fn native_xmp_embeds_correctly() {
         let xmp = br#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -993,7 +1028,6 @@ mod cross_crate_tests {
 
 // ── Extended XMP round-trip tests ───────────────────────────────────────────
 
-#[cfg(feature = "decoder")]
 mod extended_xmp {
     use super::*;
     use enough::Unstoppable;

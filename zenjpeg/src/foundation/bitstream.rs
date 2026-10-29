@@ -3,6 +3,13 @@
 //! This module provides bit-level I/O with byte stuffing (0xFF -> 0xFF 0x00)
 //! as required by JPEG.
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use crate::error::{Error, Result, ScanRead, ScanResult};
 use crate::foundation::instrumented_vec::{ProfiledVec, ProfiledVecExt};
 
@@ -247,6 +254,48 @@ impl BitWriter {
         &self.buffer
     }
 
+    /// Moves every whole byte from the bit accumulator into the buffer
+    /// (with 0xFF stuffing), keeping fewer than 8 bits back.
+    ///
+    /// The byte stream is unchanged; the bytes only become visible in
+    /// [`as_bytes`](Self::as_bytes) sooner. Streaming output calls this
+    /// after each strip so a driver can send everything but the last
+    /// partial byte.
+    pub fn flush_whole_bytes(&mut self) {
+        while self.bits_in_buffer >= 8 {
+            self.bits_in_buffer -= 8;
+            let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
+            self.buffer.push(byte);
+            if byte == 0xFF {
+                self.buffer.push(0x00);
+            }
+        }
+    }
+
+    /// Takes the buffer's bytes, leaving an empty buffer with the same
+    /// capacity for what follows. The bit accumulator is untouched, so the
+    /// stream continues exactly as if the bytes had been dropped with
+    /// [`discard_front`](Self::discard_front).
+    #[allow(clippy::useless_conversion)] // ProfiledVec<u8> = InstrumentedVec<u8> when alloc-instrument enabled
+    pub fn take_buffer(&mut self) -> Vec<u8> {
+        let capacity = self.buffer.len();
+        let taken = core::mem::replace(
+            &mut self.buffer,
+            ProfiledVec::with_capacity_profiled(capacity, "BitWriter::take_buffer"),
+        );
+        taken.into()
+    }
+
+    /// Drops the first `n` bytes of the buffer: bytes already handed out.
+    /// Later bytes, and the bit accumulator, are untouched.
+    pub fn discard_front(&mut self, n: usize) {
+        if n >= self.buffer.len() {
+            self.buffer.clear();
+        } else {
+            self.buffer.drain(..n);
+        }
+    }
+
     /// Returns the current byte position.
     #[must_use]
     pub fn position(&self) -> usize {
@@ -363,6 +412,12 @@ pub struct BitReader<'a> {
     marker_found: Option<u8>,
     /// Number of bytes we've over-read past end of data
     overread_by: usize,
+    /// Set once a read asked for a bit the stream no longer had — past the
+    /// end of the data with no marker in sight, i.e. a truncated scan. Reads
+    /// that hit a *marker* are not starved: the entropy segment ended where
+    /// the encoder said it would, and the zero-extension there is the usual
+    /// "decode the last symbol against zero padding" tolerance.
+    starved: bool,
     /// When true, accept any RST marker instead of requiring exact sequence.
     permissive_rst: bool,
     /// Count of RST marker resyncs (wrong number accepted or forward-scanned).
@@ -377,6 +432,7 @@ pub struct BitReaderState {
     bits_in_buffer: u8,
     marker_found: Option<u8>,
     overread_by: usize,
+    starved: bool,
     permissive_rst: bool,
     rst_resync_count: u32,
 }
@@ -416,6 +472,7 @@ impl<'a> BitReader<'a> {
             bits_in_buffer: 0,
             marker_found: None,
             overread_by: 0,
+            starved: false,
             permissive_rst: false,
             rst_resync_count: 0,
         }
@@ -496,12 +553,28 @@ impl<'a> BitReader<'a> {
             return true;
         }
 
-        // If we've found a marker or are overreading, extend with zeros.
-        // The freed positions in aligned_buffer are already 0 (from left-shifts),
-        // so we just claim more bits without modifying the buffer.
-        if self.marker_found.is_some() || self.overread_by > 0 {
+        // At a marker, extend with zeros: the entropy-coded segment ended
+        // where the encoder said it would, and a conformant stream's last
+        // symbol always fits in the real bits, so the padding only ever
+        // feeds a peek. The freed positions in aligned_buffer are already 0
+        // (from left-shifts), so we just claim more bits without modifying
+        // the buffer.
+        //
+        // Past the END OF THE DATA with no marker (a truncated scan) we do
+        // NOT fabricate bits. Zero-extending there let every decode path
+        // keep "decoding" the rest of the scan out of nothing: each block
+        // below the cut turned into whatever symbol the all-zero code maps
+        // to (an optimized AC table's `0x01` → a `-1 << al` coefficient in
+        // every block, 66k phantom coefficients on a 800×600 progressive
+        // prefix — #92). With no synthetic bits, `bits_available()` is the
+        // real count, the guarded fast paths fall back to the bit-by-bit
+        // decoders, and those report `Truncated` exactly at the last real bit.
+        if self.marker_found.is_some() {
             self.bits_in_buffer = self.bits_in_buffer.saturating_add(32).min(64);
             return true;
+        }
+        if self.overread_by > 0 {
+            return self.bits_in_buffer > 0;
         }
 
         // Try fast 8-byte path first when we have room for 5+ bytes.
@@ -572,6 +645,9 @@ impl<'a> BitReader<'a> {
         if self.bits_in_buffer == 0 {
             let _ = self.refill();
             if self.bits_in_buffer == 0 {
+                // Only reachable past the end of the data (a marker would
+                // have zero-extended the buffer): the scan is truncated.
+                self.starved = true;
                 return 0;
             }
         }
@@ -736,6 +812,54 @@ impl<'a> BitReader<'a> {
         self.aligned_buffer = 0;
     }
 
+    /// Returns the partial-byte padding bits currently in the buffer, MSB-first.
+    ///
+    /// JPEG entropy-coded segments end with `0..7` "padding bits" before the
+    /// next marker (or before a restart marker) when the entropy stream ends
+    /// mid-byte. Per ITU-T T.81 Section F.1.2.3 the encoder pads with 1-bits,
+    /// but some encoders pad with 0-bits, and byte-exact JPEG-XL transcoding
+    /// (JBRD) needs to preserve those padding bits verbatim.
+    ///
+    /// This helper extracts the padding bits WITHOUT consuming them or
+    /// modifying state — it is safe to call before `align_to_byte`, before
+    /// reading a restart marker, or before exiting a scan loop. The returned
+    /// vector is empty when the partial-byte count (`bits_in_buffer & 7`) is
+    /// zero (i.e. the entropy stream ended exactly on a byte boundary).
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<u8>` of length `0..=7` containing the padding-bit values in
+    /// the order they would appear in the bitstream (oldest bit first).
+    /// Each entry is `0` or `1`.
+    ///
+    /// # Mapping to libjxl
+    ///
+    /// Mirrors `BitReaderState::FinishStream` in libjxl's
+    /// `enc_jpeg_data_reader.cc:441-470` — specifically the
+    /// `npadbits = bits_left_ & 7` + push-bits-msb-first loop. The accompanying
+    /// "give back unused full bytes" logic from libjxl is not needed here
+    /// because zenjpeg's `BitReader` only loads bytes via byte-stuffed reads
+    /// and detects markers via `marker_found` before the bytes containing
+    /// the marker are loaded into the bit buffer — so the unconsumed bits
+    /// always represent ONLY the partial trailing byte at end-of-segment.
+    #[must_use]
+    pub fn partial_byte_padding_bits(&self) -> alloc::vec::Vec<u8> {
+        let npadbits = self.bits_in_buffer & 7;
+        let mut out = alloc::vec::Vec::with_capacity(npadbits as usize);
+        if npadbits > 0 {
+            // The OLDEST unconsumed bits sit at the top of `aligned_buffer`
+            // (reads consume from MSB downward via left-shift). The partial
+            // byte's `8 - K` unused trailing bits are the OLDEST of the
+            // unconsumed window, so they occupy positions [63..63-npadbits+1].
+            // Extract them MSB-first.
+            for i in 0..npadbits {
+                let bit = ((self.aligned_buffer >> (63 - i)) & 1) as u8;
+                out.push(bit);
+            }
+        }
+        out
+    }
+
     /// Saves the current reader state for potential rollback.
     #[must_use]
     pub fn save_state(&self) -> BitReaderState {
@@ -745,6 +869,7 @@ impl<'a> BitReader<'a> {
             bits_in_buffer: self.bits_in_buffer,
             marker_found: self.marker_found,
             overread_by: self.overread_by,
+            starved: self.starved,
             permissive_rst: self.permissive_rst,
             rst_resync_count: self.rst_resync_count,
         }
@@ -757,6 +882,7 @@ impl<'a> BitReader<'a> {
         self.bits_in_buffer = state.bits_in_buffer;
         self.marker_found = state.marker_found;
         self.overread_by = state.overread_by;
+        self.starved = state.starved;
         self.permissive_rst = state.permissive_rst;
         self.rst_resync_count = state.rst_resync_count;
     }
@@ -772,11 +898,12 @@ impl<'a> BitReader<'a> {
         // Clear the marker_found flag since we're explicitly reading the marker
         self.marker_found = None;
 
-        // Read first byte - should be 0xFF
+        // Read first byte - should be 0xFF. Running out of data here is a
+        // truncated stream (a cut at a restart-interval boundary), not
+        // corruption: callers recover it the same way as a cut mid-segment.
         if self.position >= self.data.len() {
-            return Err(Error::invalid_jpeg_data(
-                "unexpected end of data before restart marker",
-            ));
+            self.starved = true;
+            return Err(Error::truncated_data("restart marker"));
         }
         let first = self.data[self.position];
         if first != 0xFF {
@@ -790,9 +917,8 @@ impl<'a> BitReader<'a> {
 
         // Read second byte - should be 0xD0 + expected_num
         if self.position >= self.data.len() {
-            return Err(Error::invalid_jpeg_data(
-                "unexpected end of data in restart marker",
-            ));
+            self.starved = true;
+            return Err(Error::truncated_data("restart marker"));
         }
         let second = self.data[self.position];
         let expected_marker = 0xD0 + (expected_num & 7);
@@ -847,7 +973,15 @@ impl<'a> BitReader<'a> {
             pos += 1;
         }
 
-        // Couldn't find any RST marker within range — treat as truncation
+        // No RST marker before the end of the data: the stream is cut
+        // (#92 — a prefix of a stream that decodes in full via resync must
+        // not turn into a corruption error). Only when the 4096-byte window
+        // ran out with data still ahead is it corruption.
+        if scan_end == self.data.len() {
+            self.position = scan_end;
+            self.starved = true;
+            return Err(Error::truncated_data("restart marker resync"));
+        }
         Err(Error::invalid_jpeg_data(
             "could not resync to restart marker",
         ))
@@ -900,15 +1034,33 @@ impl<'a> BitReader<'a> {
         self.bits_in_buffer
     }
 
+    /// Whether any read has asked for bits past the end of the data with no
+    /// marker present — the truncated-scan signal. Once set it stays set
+    /// (until [`restore_state`](Self::restore_state) rewinds past it), so a
+    /// scan decoder can check it once at the end instead of after every
+    /// [`read_bit_refine`](Self::read_bit_refine).
+    #[must_use]
+    pub(crate) fn starved(&self) -> bool {
+        self.starved
+    }
+
     /// Returns the appropriate end state based on why we stopped reading.
     ///
     /// - `EndOfScan` if a marker was found (legitimate end of entropy-coded segment)
     /// - `Truncated` if data ended without finding a marker
+    ///
+    /// `Truncated` also drops whatever bits were still buffered: they are the
+    /// head of a symbol or value the stream never finished, and leaving them
+    /// let the NEXT block decode them as its own DC (#92 — a truncated
+    /// baseline prefix showed a DC that exists in no version of the stream).
     #[inline]
-    fn end_state<T>(&self) -> ScanRead<T> {
+    fn end_state<T>(&mut self) -> ScanRead<T> {
         if self.marker_found.is_some() {
             ScanRead::EndOfScan
         } else {
+            self.starved = true;
+            self.bits_in_buffer = 0;
+            self.aligned_buffer = 0;
             ScanRead::Truncated
         }
     }
@@ -917,6 +1069,144 @@ impl<'a> BitReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #92: past the end of the data with no marker, the reader must not
+    /// fabricate bits — every decode path keyed "phantom" symbols off the
+    /// zero-extension that used to happen here.
+    #[test]
+    fn eof_without_marker_serves_only_real_bits() {
+        let data = [0b1010_1100u8, 0b1111_0000];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(
+            reader.read_bits(12).unwrap(),
+            ScanRead::Value(0b1010_1100_1111)
+        );
+        assert!(!reader.starved());
+        // 4 real bits left: a 9-bit peek must fail rather than pad.
+        assert_eq!(reader.peek_bits_refill(9), None);
+        assert_eq!(reader.bits_available(), 4);
+        assert!(!reader.ensure_bits());
+        assert_eq!(
+            reader.bits_available(),
+            4,
+            "ensure_bits must not invent bits at EOF"
+        );
+        assert_eq!(reader.read_bits(4).unwrap(), ScanRead::Value(0));
+        assert_eq!(reader.bits_available(), 0);
+        assert!(
+            !reader.starved(),
+            "reading exactly the real bits is not starvation"
+        );
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Truncated);
+        assert!(reader.starved());
+        assert_eq!(reader.read_bit_refine(), 0);
+        assert!(reader.starved());
+    }
+
+    /// `flush_whole_bytes`, `discard_front` and `take_buffer` change only when bytes become
+    /// visible, never the byte stream: interleaving them with writes (all-ones
+    /// runs included, so 0xFF stuffing happens at flush points) and keeping
+    /// the discarded prefixes reproduces the plain writer's output exactly.
+    #[test]
+    fn early_whole_byte_flushes_keep_the_stream() {
+        let mut x = 0x2545_f491u32;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        for every in [1usize, 2, 3, 7, 50] {
+            let mut plain = BitWriter::new();
+            let mut early = BitWriter::new();
+            let mut taken = Vec::new();
+            for i in 0..4000 {
+                let r = next();
+                let count = (r % 24 + 1) as u8;
+                // Every fourth write is all ones, to force 0xFF bytes.
+                let bits = if i % 4 == 0 {
+                    (1u32 << count) - 1
+                } else {
+                    (r >> 8) & ((1u32 << count) - 1)
+                };
+                plain.write_bits(bits, count);
+                early.write_bits(bits, count);
+                if i % every == 0 {
+                    early.flush_whole_bytes();
+                    // Hand out a varying share of what is visible, all of it
+                    // sometimes by taking the buffer itself.
+                    if i % 3 == 2 && (i / every) % 2 == 0 {
+                        taken.extend_from_slice(&early.take_buffer());
+                    } else {
+                        let n = early.as_bytes().len() * (i % 3) / 2;
+                        taken.extend_from_slice(&early.as_bytes()[..n]);
+                        early.discard_front(n);
+                    }
+                }
+            }
+            taken.extend_from_slice(&early.into_bytes());
+            assert_eq!(taken, plain.into_bytes(), "flush every {every} writes");
+        }
+    }
+
+    /// A read that needs more bits than the data has left is `Truncated`
+    /// AND consumes the residue: the leftover bits are the head of something
+    /// the stream never finished, not the start of the next symbol.
+    #[test]
+    fn truncated_read_drops_the_residual_bits() {
+        // Not 0xFF: a lone 0xFF is a marker prefix and loads no bits at all.
+        let data = [0b1110_0101u8];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(3).unwrap(), ScanRead::Value(0b111));
+        assert_eq!(reader.bits_available(), 5);
+        assert_eq!(reader.read_bits(6).unwrap(), ScanRead::Truncated);
+        assert_eq!(
+            reader.bits_available(),
+            0,
+            "residue must not be served to a later read"
+        );
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Truncated);
+        assert_eq!(reader.read_bit_refine(), 0);
+    }
+
+    /// At a marker the zero-extension stays: the last symbol of a conformant
+    /// segment is decoded against padding, and `EndOfScan` (not `Truncated`)
+    /// is the end state. `starved` never fires on a marker.
+    #[test]
+    fn marker_still_zero_extends_and_is_not_starvation() {
+        let data = [0b1010_1100u8, 0xFF, 0xD9];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0b1010_1100));
+        assert_eq!(reader.peek_bits_refill(9), Some(0));
+        assert!(reader.bits_available() >= 9);
+        assert_eq!(reader.marker_found(), Some(0xD9));
+        assert_eq!(reader.read_bit_refine(), 0);
+        assert!(!reader.starved());
+        // Drain the padding: the reader keeps zero-extending at a marker
+        // (reads never fail there), and the end state is the marker, not
+        // truncation.
+        while reader.bits_available() > 0 {
+            reader.skip_bits(reader.bits_available());
+        }
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0));
+        assert_eq!(reader.end_state::<u32>(), ScanRead::EndOfScan);
+        assert!(!reader.starved());
+    }
+
+    /// `restore_state` rewinds the starvation flag with everything else
+    /// (speculative padding-block decodes roll back through it).
+    #[test]
+    fn restore_state_rewinds_starvation() {
+        let data = [0xA5u8];
+        let mut reader = BitReader::new(&data);
+        let saved = reader.save_state();
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xA5));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Truncated);
+        assert!(reader.starved());
+        reader.restore_state(saved);
+        assert!(!reader.starved());
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xA5));
+    }
 
     #[test]
     fn test_write_read_bits() {
@@ -963,5 +1253,92 @@ mod tests {
         // 1-bit category: 0 -> -1, 1 -> 1
         assert_eq!(reader.read_signed(1).unwrap(), ScanRead::Value(-1));
         assert_eq!(reader.read_signed(1).unwrap(), ScanRead::Value(1));
+    }
+
+    /// `partial_byte_padding_bits` returns an empty vector when the entropy
+    /// stream ended exactly on a byte boundary (`bits_in_buffer % 8 == 0`).
+    /// Construct that state by reading 8 bits from a single-byte input.
+    #[test]
+    fn test_partial_byte_padding_bits_empty_on_byte_aligned() {
+        let data = [0xE8u8, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        // Read all 8 bits of E8. Marker handling kicks in at the next refill.
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xE8));
+        let pads = reader.partial_byte_padding_bits();
+        assert!(pads.is_empty(), "expected no pad bits, got {pads:?}");
+    }
+
+    /// Source-pattern case: 1 entropy bit consumed from the partial byte (0x00),
+    /// 7 zero pad bits expected to follow. Reproduces the exact bitstream from
+    /// the JPEG-in-JXL recompression bug at byte 1129739 of `20230706_124619.jpg`.
+    #[test]
+    fn test_partial_byte_padding_bits_seven_zeros() {
+        // Bitstream: `0xE8` (full entropy byte) + `0x00` (1 entropy bit `0`,
+        // then 7 pad bits `0000000`) + `0xFF 0xD0` (RST0 marker).
+        let data = [0xE8u8, 0x00, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        // Consume 9 bits = all of E8 + top bit of 0x00 (which is 0).
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xE8));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads.len(), 7, "expected 7 pad bits, got {pads:?}");
+        assert!(pads.iter().all(|&b| b == 0), "all pads should be 0");
+    }
+
+    /// Spec-compliant 1-bit padding (the `0x7F` case our re-encoder defaults to
+    /// emit). 1 entropy bit `0`, 7 pad bits `1111111`.
+    #[test]
+    fn test_partial_byte_padding_bits_seven_ones() {
+        let data = [0xE8u8, 0x7F, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xE8));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads.len(), 7);
+        assert!(pads.iter().all(|&b| b == 1));
+    }
+
+    /// 2 entropy bits + 6 pad bits — the second diff in `20230706_124619.jpg`
+    /// (byte 2431077 = `0x00` source, `0x3F` from spec-compliant emitter).
+    #[test]
+    fn test_partial_byte_padding_bits_six_zeros() {
+        // 0xB4 fully consumed + 0x00 with 2 entropy bits + 6 pad zero-bits.
+        let data = [0xB4u8, 0x00, 0xFF, 0xD1];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xB4));
+        // Read 2 entropy bits — they're both `0` (top 2 of 0x00).
+        assert_eq!(reader.read_bits(2).unwrap(), ScanRead::Value(0));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads.len(), 6, "expected 6 pad bits, got {pads:?}");
+        assert!(pads.iter().all(|&b| b == 0));
+    }
+
+    /// Mixed pads (some 0, some 1). 3 entropy bits + 5 pad bits `01010`.
+    /// Partial byte is `eee_01010` = entropy `eee` + pad `01010`. With eee = 110
+    /// (the 3 MSBs of 0xC0 -- wait, that's `11000000`, only top 3 = 110), the
+    /// byte = `110_01010` = `0b11001010` = 0xCA.
+    #[test]
+    fn test_partial_byte_padding_bits_mixed() {
+        let data = [0xCAu8, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        // Consume 3 entropy bits = top 3 of 0xCA = 0b110 = 6.
+        assert_eq!(reader.read_bits(3).unwrap(), ScanRead::Value(0b110));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads, alloc::vec![0u8, 1, 0, 1, 0]);
+    }
+
+    /// `partial_byte_padding_bits` does not mutate the reader state.
+    /// Calling it repeatedly returns the same result.
+    #[test]
+    fn test_partial_byte_padding_bits_is_read_only() {
+        let data = [0xE8u8, 0x00, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        let _ = reader.read_bits(8);
+        let _ = reader.read_bits(1);
+        let pads1 = reader.partial_byte_padding_bits();
+        let pads2 = reader.partial_byte_padding_bits();
+        assert_eq!(pads1, pads2);
+        let pads3 = reader.partial_byte_padding_bits();
+        assert_eq!(pads1, pads3);
     }
 }

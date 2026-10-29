@@ -187,8 +187,7 @@ fn test_metrics_distortion_levels() {
 fn test_metrics_encoder_quality() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
-        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
-        return;
+        panic!("missing test prerequisite: test file not found - set JPEGLI_TESTDATA");
     }
 
     let img = zenjpeg_bench_utils::load_png(&path).expect("Failed to load PNG");

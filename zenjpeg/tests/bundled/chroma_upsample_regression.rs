@@ -5,7 +5,7 @@
 //! zenjpeg (Triangle / fancy) and zune-jpeg, comparing pixel values row-by-row
 //! to detect systematic differences at MCU boundaries (stripes).
 //!
-//! Run: cargo test --release -p zenjpeg --test chroma_upsample_regression --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test chroma_upsample_regression -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
@@ -188,13 +188,16 @@ fn test_fancy_420_vs_zune_reference() {
 
 /// Test with real photographs from the corpus.
 #[test]
+#[ignore = "requires fuzz seed corpus (gitignored; fuzz-sync pull)"]
 fn test_fancy_420_real_photos() {
-    let test_files = ["/home/lilith/work/zen/zenjpeg/zenjpeg/fuzz/corpus/seed/flower_420.jpg"];
+    let test_files = [concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fuzz/corpus/seed/flower_420.jpg"
+    )];
 
     for path in test_files {
         let Ok(jpeg) = std::fs::read(path) else {
-            println!("SKIP {path} (not found)");
-            continue;
+            panic!("missing test prerequisite: {path} (fuzz seed corpus; see fuzz-sync)");
         };
         let name = std::path::Path::new(path)
             .file_name()

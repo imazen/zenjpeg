@@ -148,11 +148,8 @@ fn stratified_sample(entries: &[CorpusEntry], total: usize, seed: u64) -> Vec<Co
 }
 
 fn load_and_downscale(path: &Path, max_side: u32) -> Option<(Vec<u8>, usize, usize)> {
-    let img = match image::open(path) {
-        Ok(i) => i,
-        Err(_) => return None,
-    };
-    let (w, h) = (img.width(), img.height());
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (w, h) = (img.width() as u32, img.height() as u32);
     let scaled = if w.max(h) > max_side {
         let (tw, th) = if w >= h {
             (
@@ -165,24 +162,28 @@ fn load_and_downscale(path: &Path, max_side: u32) -> Option<(Vec<u8>, usize, usi
                 max_side,
             )
         };
-        img.resize_exact(tw, th, image::imageops::FilterType::Triangle)
+        let config = zenresize::ResizeConfig::builder(w, h, tw, th)
+            .filter(zenresize::Filter::Triangle)
+            .build();
+        zenresize::resize_3ch(img.as_ref(), tw, th, &config)
     } else {
         img
     };
     // Round dims down to MCU-aligned when possible for fair measurements.
-    let w = (scaled.width() as usize) & !7;
-    let h = (scaled.height() as usize) & !7;
+    let w = (scaled.width()) & !7;
+    let h = (scaled.height()) & !7;
     if w < 64 || h < 64 {
         return None;
     }
-    let rgb = scaled.to_rgb8();
     // If downscale caused non-MCU dims, crop to top-left w×h.
-    let orig_w = rgb.width() as usize;
+    let orig_w = scaled.width();
     let mut buf = Vec::with_capacity(w * h * 3);
-    let raw = rgb.as_raw();
+    let raw = scaled.buf();
     for y in 0..h {
-        let row_start = y * orig_w * 3;
-        buf.extend_from_slice(&raw[row_start..row_start + w * 3]);
+        let row_start = y * orig_w;
+        for p in &raw[row_start..row_start + w] {
+            buf.extend_from_slice(&[p.r, p.g, p.b]);
+        }
     }
     Some((buf, w, h))
 }

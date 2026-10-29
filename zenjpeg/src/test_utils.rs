@@ -601,22 +601,11 @@ pub fn find_djpegli() -> Option<PathBuf> {
         })
 }
 
-/// Macro for skipping tests when test data is not available.
-#[macro_export]
-macro_rules! skip_if_missing {
-    ($path:expr) => {
-        if !$path.exists() {
-            eprintln!("Skipping test: {:?} not found", $path);
-            return;
-        }
-    };
-    ($path:expr, $msg:expr) => {
-        if !$path.exists() {
-            eprintln!("Skipping test: {} ({:?} not found)", $msg, $path);
-            return;
-        }
-    };
-}
+// NOTE: the old `skip_if_missing!` macro (silently return when a file is
+// absent) was removed 2026-07-13: silent skips are banned (CLAUDE.md "NO
+// GRACEFUL SKIPS IN TESTS"). Resource-dependent tests are `#[ignore]`d and
+// panic with a "missing test prerequisite:" message when run explicitly
+// without the resource.
 
 /// Read test data file, returning None if not found.
 pub fn read_test_data(filename: &str) -> Option<Vec<u8>> {

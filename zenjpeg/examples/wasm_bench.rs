@@ -7,14 +7,14 @@
 //! CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
 //! RUSTFLAGS="-C target-feature=+simd128" \
 //! cargo run --release -p zenjpeg --example wasm_bench \
-//!     --target wasm32-wasip1 --no-default-features --features "std,decoder"
+//!     --target wasm32-wasip1 --no-default-features
 //! ```
 //!
 //! Run without SIMD (scalar):
 //! ```sh
 //! CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" \
 //! cargo run --release -p zenjpeg --example wasm_bench \
-//!     --target wasm32-wasip1 --no-default-features --features "std,decoder"
+//!     --target wasm32-wasip1 --no-default-features
 //! ```
 
 use std::time::Instant;

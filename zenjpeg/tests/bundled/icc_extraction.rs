@@ -11,14 +11,13 @@ const DISPLAY_P3_PATH: &str = "/home/lilith/work/imageflow/.image-cache/sources/
 const CANON_SRGB_PATH: &str = "/home/lilith/work/imageflow/.image-cache/sources/imageflow-resources/test_inputs/wide-gamut/srgb-reference/canon_eos_5d_mark_iv/wmc_81b268fc64ea796c.jpg";
 const ADOBE_RGB_PATH: &str = "/home/lilith/work/imageflow/.image-cache/sources/imageflow-resources/test_inputs/wide-gamut/adobe-rgb/flickr_0119a8378404ece9.jpg";
 
-/// Helper: read file or skip test.
+/// Helper: read a required local-cache file; panics when absent so
+/// `--ignored` runs fail loudly instead of silently passing.
 fn read_or_skip(path: &str) -> Vec<u8> {
     match std::fs::read(path) {
         Ok(data) => data,
         Err(_) => {
-            eprintln!("SKIP: cached image not found at {path}");
-            // Return empty to let caller handle
-            vec![]
+            panic!("missing test prerequisite: cached image not found at {path}")
         }
     }
 }
@@ -28,6 +27,7 @@ fn read_or_skip(path: &str) -> Vec<u8> {
 // ============================================================================
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
     if data.is_empty() {
@@ -45,6 +45,7 @@ fn extract_icc_rec2020() {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_display_p3() {
     let data = read_or_skip(DISPLAY_P3_PATH);
     if data.is_empty() {
@@ -62,6 +63,7 @@ fn extract_icc_display_p3() {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_adobe_rgb() {
     let data = read_or_skip(ADOBE_RGB_PATH);
     if data.is_empty() {
@@ -79,6 +81,7 @@ fn extract_icc_adobe_rgb() {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_canon_srgb() {
     let data = read_or_skip(CANON_SRGB_PATH);
     if data.is_empty() {
@@ -100,6 +103,7 @@ fn extract_icc_canon_srgb() {
 // ============================================================================
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn read_info_returns_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
     if data.is_empty() {
@@ -123,6 +127,7 @@ fn read_info_returns_icc_rec2020() {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn read_info_returns_icc_display_p3() {
     let data = read_or_skip(DISPLAY_P3_PATH);
     if data.is_empty() {
@@ -138,6 +143,7 @@ fn read_info_returns_icc_display_p3() {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn read_info_returns_icc_adobe_rgb() {
     let data = read_or_skip(ADOBE_RGB_PATH);
     if data.is_empty() {
@@ -159,6 +165,7 @@ fn read_info_returns_icc_adobe_rgb() {
 
 #[cfg(feature = "zencodec")]
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn zencodec_probe_returns_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
     if data.is_empty() {
@@ -187,6 +194,7 @@ fn zencodec_probe_returns_icc_rec2020() {
 
 #[cfg(feature = "zencodec")]
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn zencodec_decode_returns_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
     if data.is_empty() {
@@ -242,6 +250,7 @@ fn build_jpeg_with_icc(icc_payload: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_synthetic_single_chunk() {
     let icc_payload: Vec<u8> = (0..=255).cycle().take(1024).collect();
     let jpeg = build_jpeg_with_icc(&icc_payload);
@@ -288,6 +297,7 @@ fn build_jpeg_with_multi_chunk_icc(icc_payload: &[u8], chunk_size: usize) -> Vec
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_synthetic_multi_chunk() {
     let icc_payload: Vec<u8> = (0..=255).cycle().take(6600).collect();
     let jpeg = build_jpeg_with_multi_chunk_icc(&icc_payload, 2200);
@@ -303,6 +313,7 @@ fn extract_icc_synthetic_multi_chunk() {
 }
 
 #[test]
+#[ignore = "requires local imageflow image cache"]
 fn extract_icc_with_interleaved_app1() {
     let icc_payload: Vec<u8> = (0..=255).cycle().take(1024).collect();
 

@@ -1,5 +1,4 @@
 #![allow(clippy::collapsible_if)]
-#![cfg(feature = "trellis")]
 //! zensim regression testing on real photographic corpora: CID22, CLIC, gb82.
 //!
 //! **No synthetic images, no gradients, no test patterns.** Every image is a
@@ -40,7 +39,7 @@
 //! Run:
 //! ```bash
 //! cargo test --release -p zenjpeg --test photo_corpus_zensim \
-//!     --features "trellis decoder" -- --nocapture --ignored
+//!      -- --nocapture --ignored
 //! ```
 
 use enough::Unstoppable;
@@ -67,7 +66,7 @@ const MAX_PIXELS: u64 = 6_000_000;
 // ── Shared infrastructure ───────────────────────────────────────────────────
 
 thread_local! {
-    static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+    static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
 }
 
 /// Load corpus, or return empty vec (test will skip).

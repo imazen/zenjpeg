@@ -13,6 +13,13 @@
 //! `ProfiledVec<T>` which logs utilization stats on drop. This helps identify
 //! over-allocated buffers.
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use crate::error::{Error, Result};
 
 // Re-export for use by callers who want to profile specific allocations
@@ -25,9 +32,9 @@ pub use crate::foundation::instrumented_vec::{
 /// Slightly under 64K to prevent overflow in 16-bit calculations.
 pub const JPEG_MAX_DIMENSION: u32 = 65500;
 
-/// Default maximum pixels (100 megapixels).
-/// This is a reasonable limit for most applications.
-pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+/// Default maximum pixels (120 megapixels).
+/// This is a reasonable limit for most applications (admits common ~108 MP camera photos).
+pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
 /// Maximum number of progressive scans allowed.
 pub const MAX_SCANS: usize = 256;
@@ -573,73 +580,239 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
         .checked_mul(core::mem::size_of::<T>())
         .ok_or_else(|| Error::size_overflow(context))?;
 
-    let mut v = Vec::with_capacity(capacity);
+    let mut v = Vec::new();
     v.try_reserve_exact(capacity)
         .map_err(|_| Error::allocation_failed(byte_size, context))?;
     Ok(v)
 }
 
-/// Allocate a Vec with zeroed memory using the platform's zeroed-page allocator.
+// ============================================================================
+// Per-site AllocPreference policy (3-mode override)
+// ============================================================================
+//
+// A JPEG decode mixes two allocation regimes:
+//
+// * **Big, untrusted-sized buffers** (the full output pixel buffer, the
+//   progressive/full-frame coefficient storage) default to the *fallible*
+//   `try_reserve` path — a malicious SOF can demand gigabytes, so we want a
+//   graceful [`Error::AllocationFailed`] rather than an abort.
+// * **Small, bounded scratch** (one MCU strip of `i16`, one upsampled chroma
+//   row) defaults to the *infallible* `vec!` path — a single `calloc` is
+//   faster and the size is bounded by the image width × 8, not unbounded.
+//
+// [`AllocPreference`](zencodec::AllocPreference) is a **3-mode, per-site
+// override** of that default: `Fallible` / `Infallible` force one path
+// everywhere; `CodecDefault` (and any future `#[non_exhaustive]` variant)
+// keeps each site's own default. The `*_pref` helpers below take the caller's
+// preference *and* the site default and resolve them together; the existing
+// non-`_pref` helpers keep the always-fallible behaviour for callers that do
+// not thread a preference.
+
+/// Resolve the 3-mode [`AllocPreference`](zencodec::AllocPreference) against
+/// THIS site's default fallibility.
 ///
-/// Uses `vec![T::default(); count]` which Rust specializes to `alloc_zeroed`
-/// (calloc) for types where `T::default()` is all-zero bytes (u8, i16, u32, etc.).
-/// On Linux, calloc for large allocations returns zero-mapped pages via mmap,
-/// deferring page faults until first write. This is much faster than the previous
-/// `try_reserve_exact` + `resize` approach which did `malloc` + serial `memset`.
+/// * [`Fallible`](zencodec::AllocPreference::Fallible) → always `true`.
+/// * [`Infallible`](zencodec::AllocPreference::Infallible) → always `false`.
+/// * [`CodecDefault`](zencodec::AllocPreference::CodecDefault) (and any future
+///   `#[non_exhaustive]` variant) → the site default, unchanged.
+#[inline]
+#[must_use]
+pub fn resolve_fallible(pref: zencodec::AllocPreference, site_default_fallible: bool) -> bool {
+    match pref {
+        zencodec::AllocPreference::Fallible => true,
+        zencodec::AllocPreference::Infallible => false,
+        _ => site_default_fallible,
+    }
+}
+
+/// [`try_alloc_maybeuninit`] honoring a per-site [`AllocPreference`].
 ///
-/// All callers are expected to overwrite the contents before reading, so the
-/// zeroing is technically unnecessary but ensures memory safety.
+/// `pref` is the caller's preference; `site_default_fallible` is this site's
+/// default when `pref` is `CodecDefault`. When resolved fallible this is exactly
+/// [`try_alloc_maybeuninit`]; when resolved infallible it is `vec![T::default();
+/// count]` (a single `calloc` for zero-`Default` types, aborting on OOM).
+#[inline]
+pub fn try_alloc_maybeuninit_pref<T: Default + Clone>(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<T>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_maybeuninit(count, context)
+    } else {
+        Ok(vec![T::default(); count])
+    }
+}
+
+/// [`try_alloc_zeroed_bytes`] honoring a per-site [`AllocPreference`].
 ///
-/// Panics on OOM for the allocation itself; returns Err only for overflow checks.
-/// This is acceptable because callers have already validated dimensions.
+/// When resolved fallible this is exactly [`try_alloc_zeroed_bytes`]; when
+/// resolved infallible it is `vec![0u8; count]` (a single `calloc`).
+#[inline]
+pub fn try_alloc_zeroed_bytes_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<u8>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_zeroed_bytes(count, context)
+    } else {
+        Ok(vec![0u8; count])
+    }
+}
+
+/// [`try_alloc_zeroed`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_zeroed`]; when resolved
+/// infallible it is `vec![0u8; count]` (a single `calloc`).
+#[inline]
+pub fn try_alloc_zeroed_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<u8>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_zeroed(count, context)
+    } else {
+        Ok(vec![0u8; count])
+    }
+}
+
+/// [`try_alloc_zeroed_f32`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_zeroed_f32`]; when
+/// resolved infallible it is `vec![0.0f32; count]` (a single `calloc`).
+#[inline]
+pub fn try_alloc_zeroed_f32_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<f32>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_zeroed_f32(count, context)
+    } else {
+        Ok(vec![0.0f32; count])
+    }
+}
+
+/// [`try_alloc_dct_blocks`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_dct_blocks`]; when
+/// resolved infallible it is `vec![[0i16; 64]; count]`.
+#[inline]
+pub fn try_alloc_dct_blocks_pref(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<[i16; 64]>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_dct_blocks(count, context)
+    } else {
+        Ok(vec![[0i16; 64]; count])
+    }
+}
+
+/// [`try_alloc_filled`] honoring a per-site [`AllocPreference`].
+///
+/// When resolved fallible this is exactly [`try_alloc_filled`]; when resolved
+/// infallible it is `vec![value; count]`.
+#[inline]
+pub fn try_alloc_filled_pref<T: Clone>(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    value: T,
+    context: &'static str,
+) -> Result<Vec<T>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        try_alloc_filled(count, value, context)
+    } else {
+        Ok(vec![value; count])
+    }
+}
+
+/// Allocate a `Vec<T>` of zero-initialized elements using fallible
+/// allocation.
+///
+/// Reserves capacity via [`Vec::try_reserve_exact`] and then fills with
+/// `T::default()`. The fill step on freshly-reserved capacity for types
+/// whose `Default` is all-zero bytes is internally specialized to
+/// `alloc_zeroed`/`calloc`, so the Linux fast path of returning
+/// zero-mapped pages from the OS without touching them is preserved on
+/// the happy path while OOM is reported as
+/// [`Error::AllocationFailed`](crate::error::Error) instead of panicking.
+///
+/// Originally named `try_alloc_maybeuninit` for its zero-page fast
+/// path. The "maybeuninit" in the name was misleading — the buffer is
+/// always fully initialized — and the previous body called
+/// `vec![T::default(); count]` directly, which panics on OOM. The
+/// name is kept for API compatibility; the body now propagates OOM.
 #[inline]
 pub fn try_alloc_maybeuninit<T: Default + Clone>(
     count: usize,
     context: &'static str,
 ) -> Result<Vec<T>> {
-    count
+    let byte_size = count
         .checked_mul(core::mem::size_of::<T>())
         .ok_or_else(|| Error::size_overflow(context))?;
 
-    // vec![T::default(); n] triggers Rust's SpecFromElem specialization:
-    // for types where default() is all-zero bytes, this compiles to
-    // alloc_zeroed (calloc) instead of alloc (malloc) + memset.
-    Ok(vec![T::default(); count])
+    let mut v: Vec<T> = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::allocation_failed(byte_size, context))?;
+    v.resize(count, T::default());
+    Ok(v)
 }
 
-/// Allocate a zero-initialized `Vec<u8>` using the platform's zeroed-page allocator.
+/// Allocate a zero-initialized `Vec<u8>` using fallible allocation.
 ///
-/// Uses `vec![0u8; n]` which Rust specializes to `alloc_zeroed` (calloc).
-/// On Linux, calloc for large allocations returns zero-mapped pages via mmap —
-/// page faults are deferred until first write, allowing parallel writers to
-/// distribute the cost across threads.
+/// Reserves capacity with [`Vec::try_reserve_exact`] and then fills
+/// with zero. For `u8`, `Vec::resize` on freshly-reserved capacity
+/// hits Rust's `SpecFromElem` zero specialization → `alloc_zeroed` →
+/// `calloc`, so on Linux the kernel still hands out zero-mapped pages
+/// without committing them. OOM is reported as
+/// [`Error::AllocationFailed`](crate::error::Error) instead of
+/// panicking.
 #[inline]
 pub fn try_alloc_zeroed_bytes(count: usize, context: &'static str) -> Result<Vec<u8>> {
     if count == 0 {
         return Ok(Vec::new());
     }
-    // Check size won't overflow
     if count > isize::MAX as usize {
         return Err(Error::size_overflow(context));
     }
-    // vec![0u8; n] uses Rust's SpecFromElem specialization for u8:
-    // when elem==0, it calls RawVec::with_capacity_zeroed → alloc_zeroed → calloc.
-    // This is much faster than alloc + memset for large buffers because calloc
-    // returns zero-mapped pages from the OS without touching them.
-    //
-    // Panics on OOM (no try_ variant available in stable Rust), which is acceptable
-    // for the parallel decode path where we've already validated dimensions.
-    Ok(vec![0u8; count])
+
+    let mut v: Vec<u8> = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::allocation_failed(count, context))?;
+    v.resize(count, 0u8);
+    Ok(v)
 }
 
-/// Allocate a Vec of DCT blocks (64 i16 values each) using calloc.
+/// Allocate a Vec of DCT blocks (64 i16 values each) using fallible
+/// allocation.
+///
+/// Each block is `[i16; 64]` (128 bytes). Reserves capacity with
+/// `try_reserve_exact` and fills with zero blocks. OOM is reported
+/// as `Error::AllocationFailed` rather than panicking — important
+/// because this is called with attacker-influenced sizes
+/// (`mcu_cols * mcu_rows * h_samp * v_samp`) on validated but
+/// possibly very large dimensions.
 #[inline]
 pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[i16; 64]>> {
-    count
+    let byte_size = count
         .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
         .ok_or_else(|| Error::size_overflow(context))?;
 
-    Ok(vec![[0i16; 64]; count])
+    let mut v: Vec<[i16; 64]> = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::allocation_failed(byte_size, context))?;
+    v.resize(count, [0i16; 64]);
+    Ok(v)
 }
 
 /// Allocate a Vec filled with a specific value using fallible allocation.
@@ -709,7 +882,7 @@ pub fn try_rgba_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     v.try_reserve_exact(len)
         .map_err(|_| Error::allocation_failed(len, context))?;
 
-    for chunk in data.chunks_exact(4) {
+    for chunk in data.as_chunks::<4>().0 {
         v.push(chunk[0]);
         v.push(chunk[1]);
         v.push(chunk[2]);
@@ -725,7 +898,7 @@ pub fn try_bgr_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     v.try_reserve_exact(data.len())
         .map_err(|_| Error::allocation_failed(data.len(), context))?;
 
-    for chunk in data.chunks_exact(3) {
+    for chunk in data.as_chunks::<3>().0 {
         v.push(chunk[2]);
         v.push(chunk[1]);
         v.push(chunk[0]);
@@ -746,7 +919,7 @@ pub fn try_bgra_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     v.try_reserve_exact(len)
         .map_err(|_| Error::allocation_failed(len, context))?;
 
-    for chunk in data.chunks_exact(4) {
+    for chunk in data.as_chunks::<4>().0 {
         v.push(chunk[2]);
         v.push(chunk[1]);
         v.push(chunk[0]);
@@ -780,7 +953,7 @@ mod tests {
         assert!(validate_dimensions(70000, 100, DEFAULT_MAX_PIXELS).is_err());
 
         // Exceeds max_pixels
-        assert!(validate_dimensions(20000, 20000, 100_000_000).is_err()); // 400M > 100M
+        assert!(validate_dimensions(20000, 20000, 120_000_000).is_err()); // 400M > 120M
     }
 
     #[test]
@@ -937,5 +1110,121 @@ mod tests {
         let summary = stats.summary();
         assert!(summary.contains("2 allocations"));
         assert!(summary.contains("MB")); // Total should be in MB
+    }
+
+    // ── AllocPreference (3-mode per-site override) ──────────────────────────
+
+    use crate::error::ErrorKind;
+    use zencodec::AllocPreference;
+
+    #[test]
+    fn codec_default_keeps_site_default_true() {
+        // Big-buffer site (default fallible): CodecDefault stays fallible.
+        assert!(resolve_fallible(AllocPreference::CodecDefault, true));
+    }
+
+    #[test]
+    fn codec_default_keeps_site_default_false() {
+        // Small-scratch site (default infallible): CodecDefault stays infallible.
+        assert!(!resolve_fallible(AllocPreference::CodecDefault, false));
+    }
+
+    #[test]
+    fn explicit_fallible_overrides_any_site_default() {
+        assert!(resolve_fallible(AllocPreference::Fallible, false));
+        assert!(resolve_fallible(AllocPreference::Fallible, true));
+    }
+
+    #[test]
+    fn explicit_infallible_overrides_any_site_default() {
+        assert!(!resolve_fallible(AllocPreference::Infallible, true));
+        assert!(!resolve_fallible(AllocPreference::Infallible, false));
+    }
+
+    #[test]
+    fn alloc_zeroed_bytes_pref_all_modes_equal_bytes() {
+        let a =
+            try_alloc_zeroed_bytes_pref(AllocPreference::CodecDefault, true, 4096, "t").unwrap();
+        let b = try_alloc_zeroed_bytes_pref(AllocPreference::Infallible, true, 4096, "t").unwrap();
+        let c = try_alloc_zeroed_bytes_pref(AllocPreference::Fallible, false, 4096, "t").unwrap();
+        assert_eq!(a.len(), 4096);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn alloc_maybeuninit_pref_all_modes_equal_bytes() {
+        let a: Vec<i16> =
+            try_alloc_maybeuninit_pref(AllocPreference::CodecDefault, true, 1024, "t").unwrap();
+        let b: Vec<i16> =
+            try_alloc_maybeuninit_pref(AllocPreference::Infallible, false, 1024, "t").unwrap();
+        let c: Vec<i16> =
+            try_alloc_maybeuninit_pref(AllocPreference::Fallible, true, 1024, "t").unwrap();
+        assert_eq!(a.len(), 1024);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn alloc_dct_blocks_pref_all_modes_equal() {
+        let a = try_alloc_dct_blocks_pref(AllocPreference::CodecDefault, true, 16, "t").unwrap();
+        let b = try_alloc_dct_blocks_pref(AllocPreference::Infallible, true, 16, "t").unwrap();
+        let c = try_alloc_dct_blocks_pref(AllocPreference::Fallible, false, 16, "t").unwrap();
+        assert_eq!(a.len(), 16);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|blk| blk.iter().all(|&v| v == 0)));
+    }
+
+    #[test]
+    fn alloc_filled_pref_all_modes_equal() {
+        let a: Vec<u8> =
+            try_alloc_filled_pref(AllocPreference::CodecDefault, true, 64, 7u8, "t").unwrap();
+        let b: Vec<u8> =
+            try_alloc_filled_pref(AllocPreference::Infallible, true, 64, 7u8, "t").unwrap();
+        let c: Vec<u8> =
+            try_alloc_filled_pref(AllocPreference::Fallible, false, 64, 7u8, "t").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert!(a.iter().all(|&x| x == 7));
+    }
+
+    #[test]
+    fn alloc_pref_fallible_oom_returns_err() {
+        // The fallible path must return Err (not abort) for an impossible size.
+        // `usize::MAX` exceeds `isize::MAX`, so the size-overflow guard rejects
+        // it gracefully on every target. (The largest *allocatable* size,
+        // `isize::MAX` ≈ 2 GiB, can actually succeed on 32-bit, so this size
+        // exercises the guard rather than the allocator.)
+        let r: Result<Vec<u8>> =
+            try_alloc_zeroed_bytes_pref(AllocPreference::Fallible, true, usize::MAX, "oom");
+        assert!(matches!(
+            r.unwrap_err().kind(),
+            ErrorKind::SizeOverflow { .. }
+        ));
+
+        // The allocation-failure path needs a *valid* layout the host cannot
+        // satisfy; that is only reliably unsatisfiable on 64-bit (on 32-bit
+        // `isize::MAX` ≈ 2 GiB is allocatable, so the assertion would be flaky —
+        // which is exactly the bug this guards against).
+        #[cfg(target_pointer_width = "64")]
+        {
+            let r: Result<Vec<u8>> = try_alloc_zeroed_bytes_pref(
+                AllocPreference::Fallible,
+                true,
+                isize::MAX as usize,
+                "oom",
+            );
+            assert!(matches!(
+                r.unwrap_err().kind(),
+                ErrorKind::AllocationFailed { .. }
+            ));
+        }
+
+        let r2: Result<Vec<i16>> =
+            try_alloc_maybeuninit_pref(AllocPreference::Fallible, true, usize::MAX, "oom");
+        assert!(r2.is_err());
     }
 }

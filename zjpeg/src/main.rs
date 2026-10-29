@@ -2,10 +2,12 @@ mod batch;
 mod coord;
 mod info;
 mod optimize;
+mod orient;
 mod output;
 mod process;
 mod restructure;
 mod search;
+mod strip;
 mod transform;
 
 use std::path::PathBuf;

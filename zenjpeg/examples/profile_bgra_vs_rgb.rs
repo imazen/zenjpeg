@@ -4,7 +4,7 @@
 //! 4 bytes/pixel) is the source of the BGRA-path slowdown in the imageflow
 //! decode bench.
 //!
-//! Usage: `cargo run --release --example profile_bgra_vs_rgb --features decoder -- /tmp/zenjpeg_profile_1024x1024.jpg 500`
+//! Usage: `cargo run --release --example profile_bgra_vs_rgb -- /tmp/zenjpeg_profile_1024x1024.jpg 500`
 
 use enough::Unstoppable;
 use std::hint::black_box;

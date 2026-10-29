@@ -5,9 +5,11 @@
 //! as [`super::UhdrRawImage`] for back-compat).
 
 use crate::container::xmp::{create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp};
+use crate::decode::SegmentType;
 use crate::encode::extras::EncoderSegments;
 use crate::encoder::{EncoderConfig, PixelLayout};
 use crate::error::{Error, Result};
+use alloc::borrow::Cow;
 use enough::{Stop, Unstoppable};
 use ultrahdr_core::{
     ColorPrimaries, GainMap, GainMapChannel, GainMapEncodingFormat, GainMapMetadata,
@@ -46,7 +48,7 @@ pub fn encode_ultrahdr(
     stop.check()?;
 
     let (gainmap, metadata) =
-        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_jpegli_error)?;
+        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_zenjpeg_error)?;
     stop.check()?;
 
     encode_with_gainmap(
@@ -72,11 +74,11 @@ pub fn encode_ultrahdr_with_tonemapper(
     gainmap_quality: f32,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
-    let sdr = tonemapper.apply(hdr).map_err(ultrahdr_to_jpegli_error)?;
+    let sdr = tonemapper.apply(hdr).map_err(ultrahdr_to_zenjpeg_error)?;
     stop.check()?;
 
     let (gainmap, metadata) =
-        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_jpegli_error)?;
+        compute_gainmap(hdr, &sdr, gainmap_config, &stop).map_err(ultrahdr_to_zenjpeg_error)?;
     stop.check()?;
 
     encode_with_gainmap(
@@ -106,7 +108,7 @@ pub fn create_gainmap_computer(
         hdr_gamut,
         ColorPrimaries::Bt709,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Encode an HDR image as Ultra HDR JPEG using a caller-supplied tone curve.
@@ -170,8 +172,10 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
 ///
 /// Sampling matches `compute_gainmap_slice`: each gain-map cell `(gx, gy)`
 /// reads the source pixel at `(gx*scale + scale/2, gy*scale + scale/2)`,
-/// clamped to image bounds. Gain-map metadata bounds are accumulated across
-/// the same pixels via `compute_gain_row`'s `observed_min_max` accumulator.
+/// clamped to image bounds. `compute_gain_row`'s `observed_min_max`
+/// accumulator is tracked across the same pixels, but the declared metadata
+/// range is the CONFIG grid the bytes were quantized on — the accumulator
+/// only widens the alternate headroom (see [`build_gainmap_metadata`]).
 fn split_and_compute_gainmap<C: LumaToneMap>(
     hdr: &PixelBuffer,
     curve: &C,
@@ -200,7 +204,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
         hdr_gamut,
         TransferFunction::Linear,
     )
-    .map_err(ultrahdr_to_jpegli_error)?;
+    .map_err(ultrahdr_to_zenjpeg_error)?;
 
     let w = width as usize;
     let scale = gainmap_config.scale_factor.max(1) as u32;
@@ -208,7 +212,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
     let gm_height = height.div_ceil(scale);
     let gm_w = gm_width as usize;
 
-    let mut gainmap = GainMap::new(gm_width, gm_height).map_err(ultrahdr_to_jpegli_error)?;
+    let mut gainmap = GainMap::new(gm_width, gm_height).map_err(ultrahdr_to_zenjpeg_error)?;
 
     let mut hdr_row = vec![0.0_f32; w * 4];
     let mut sdr_row = vec![0.0_f32; w * 4];
@@ -283,17 +287,38 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
     Ok((sdr_buffer, gainmap, metadata))
 }
 
-/// Build [`GainMapMetadata`] from the configured ranges and the `(min, max)`
-/// gain accumulator returned by `compute_gain_row` across the image. Mirrors
-/// `compute_gainmap_slice`'s metadata construction (clamp to config range,
-/// log2 conversion, ISO 21496-1 fields), kept here so we don't depend on
-/// ultrahdr-core's `pub(crate) metadata_from_arrays`.
+/// Build the [`GainMapMetadata`] that matches gain-map bytes quantized by
+/// `compute_gain_row` on `config`'s boost grid.
+///
+/// **Contract (zenjpeg #193, ultrahdr #33): the declared per-channel
+/// `min`/`max` ARE the dequantization grid.** `compute_gain_row` normalizes
+/// each byte over `log(config.min_boost) ..= log(config.max_boost)`, and
+/// every conformant reader reconstructs
+/// `gain = 2^(min + byte/255 · (max − min))` from the declared range — so
+/// the metadata must declare exactly that grid. Declaring the content's
+/// observed range instead (what this function did before #193) made every
+/// reader dequantize on a narrower grid than the bytes were written on,
+/// reconstructing under-boosted HDR whenever the content's gain range was
+/// narrower than the configured one.
+///
+/// `min_max` — the `(min, max)` gain accumulator `compute_gain_row` fills
+/// across the image — does not feed the declared range. Its `max` only
+/// widens `alternate_hdr_headroom` so full gain application stays reachable
+/// when the content exceeds the configured headroom; a non-finite or
+/// non-positive value (no pixel observed) falls back to the grid top.
+///
+/// Mirrors ultrahdr-core's `pub(crate) metadata_for_config_grid`
+/// (`a09478f0bfaa`), replicated here because it is not exported.
 fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMapMetadata {
-    let actual_min = min_max.0.max(config.min_boost);
-    let actual_max = min_max.1.min(config.max_boost);
+    let observed_max = min_max.1;
+    let observed = if observed_max.is_finite() && observed_max > 0.0 {
+        observed_max.clamp(config.min_boost, config.max_boost)
+    } else {
+        config.max_boost
+    };
     let channel = GainMapChannel {
-        min: (actual_min as f64).log2(),
-        max: (actual_max as f64).log2(),
+        min: (config.min_boost as f64).log2(),
+        max: (config.max_boost as f64).log2(),
         gamma: config.gamma as f64,
         base_offset: config.base_offset as f64,
         alternate_offset: config.alternate_offset as f64,
@@ -301,7 +326,7 @@ fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMa
     let mut metadata = GainMapMetadata::default();
     metadata.channels = [channel; 3];
     metadata.base_hdr_headroom = (config.base_hdr_headroom as f64).log2();
-    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(actual_max) as f64).log2();
+    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(observed) as f64).log2();
     metadata.use_base_color_space = true;
     metadata.backward_direction = false;
     metadata
@@ -434,18 +459,61 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
 /// matrix of knobs use [`encode_ultrahdr`].
 pub fn encode_ultrahdr_luma(hdr: &PixelBuffer) -> Result<Vec<u8>> {
     use crate::encoder::ChromaSubsampling;
-    // BT.2446 Method C: 1000-nit HDR peak → 203-nit SDR reference
-    // (HDR-10 nominal, BT.2408 SDR diffuse white). Reasonable defaults
-    // for general HDR10 content; users with PQ 10000-nit content can call
-    // `encode_ultrahdr_with_curve` with `Bt2446C::new(10000.0, 203.0)`.
+    // BT.2446 Method C over the content's MEASURED light (appendix AA):
+    // the curve consumes the pixels' own luminance per sample, so the two
+    // constructor constants must state FACTS, never an assumed content
+    // peak. `Bt2446C::new(input_scale, sdr_ref)`:
+    //
+    // - `input_scale` is the INPUT NORMALIZATION — "what luma 1.0 means,
+    //   in nits" (the zentone `LumaToneMap` contract). It must state the
+    //   unit convention of the rows the fused splitter feeds, which
+    //   depends on the input transfer (`curve_input_scale_nits`). The
+    //   previous `1000.0` asserted a nominal HDR10 content peak instead —
+    //   config, not measurement (and the old doc advice of `10000.0` for
+    //   PQ content compounded it).
+    // - `sdr_ref = 100.0` is the curve's CALIBRATED SDR reference —
+    //   BT.2446-1 is specified against a ~100-nit SDR display ("typically
+    //   100, or 120 for Method C's super-whites" per zentone's docs),
+    //   under which SDR diffuse white (203 nits in) tone-maps to white
+    //   (~0.91), not mid-gray. The previous `203.0` pasted BT.2408's
+    //   HDR-terms diffuse white into the SDR-reference slot.
+    //
+    // VERSION FACT (pinned by `bt2446c_params_inert_at_zentone_0_1`): the
+    // published zentone 0.1.0 this build resolves RESERVES both params
+    // (`let _ = (hdr_peak_nits, sdr_peak_nits)`) — its curve is
+    // input-relative (1.0 == "HDR peak", percent domain), so this change
+    // is byte-neutral TODAY. The constants go live with zentone's
+    // nits-faithful curve (local zentone 0.2.0); stating the correct
+    // values now means that dependency bump changes rendering because the
+    // CURVE improved, not because stale config constants suddenly started
+    // being believed.
+    let scale = curve_input_scale_nits(hdr);
     encode_ultrahdr_with_curve(
         hdr,
-        &Bt2446C::new(1000.0, 203.0),
+        &Bt2446C::new(scale, 100.0),
         &GainMapConfig::default(),
         &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
         75.0,
         Unstoppable,
     )
+}
+
+/// What luma value `1.0` means, in cd/m², for the linearized rows
+/// [`extract_hdr_row_rgba_linear`] produces from this input — i.e. the
+/// [`LumaToneMap`] input normalization that makes a tone curve see the
+/// content's TRUE (measured) luminance:
+///
+/// - Linear float and 8-bit sRGB rows are SDR-white-relative
+///   (BT.2408: `1.0` = 203 cd/m² — the crate's `LinearFloat` convention).
+/// - PQ rows come out of `pq_eotf` PQ-normalized (`1.0` = 10 000 cd/m²).
+/// - HLG rows come out of `hlg_eotf(·, 1000.0)` in absolute display nits
+///   at the BT.2100 1000-nit reference (scale `1.0`).
+fn curve_input_scale_nits(hdr: &PixelBuffer) -> f32 {
+    match hdr.as_slice().descriptor().transfer() {
+        TransferFunction::Pq => 10_000.0,
+        TransferFunction::Hlg => 1.0,
+        _ => 203.0,
+    }
 }
 
 /// Convert a linear-light f32 RGBA `PixelBuffer` to an sRGB-encoded
@@ -498,7 +566,7 @@ fn linear_f32_to_srgb_rgba8(sdr_linear: &PixelBuffer) -> Result<PixelBuffer> {
         sdr_linear.descriptor().primaries,
         TransferFunction::Srgb,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Encode SDR image with pre-computed gain map.
@@ -524,6 +592,18 @@ pub fn encode_with_gainmap(
 }
 
 /// Encode SDR image with pre-computed gain map and metadata format control.
+///
+/// `metadata_format` picks the gain-map metadata the file carries:
+/// - [`GainMapEncodingFormat::Xmp`]: Ultra HDR `hdrgm` XMP, in the primary
+///   image (version and GContainer directory) and in the gain-map image (the
+///   parameters).
+/// - [`GainMapEncodingFormat::Iso21496`]: ISO 21496-1 only: the version
+///   record in the primary image and the full record in the gain-map image,
+///   no XMP.
+/// - [`GainMapEncodingFormat::Both`]: both forms, as the Ultra HDR Image
+///   Format v1.1 recommends for encoders.
+///
+/// Every format locates the gain map with an MPF directory.
 pub fn encode_with_gainmap_format(
     sdr: &PixelBuffer,
     gainmap: &GainMap,
@@ -542,12 +622,18 @@ pub fn encode_with_gainmap_format(
         gainmap_final = inject_marker_after_soi(&gainmap_final, marker)?;
     }
 
-    let primary_xmp = generate_primary_xmp(gainmap_final.len());
-
-    let mut segments = EncoderSegments::new().set_xmp(&primary_xmp).add_mpf_image(
+    let include_xmp = matches!(
+        metadata_format,
+        GainMapEncodingFormat::Xmp | GainMapEncodingFormat::Both
+    );
+    let gainmap_len = gainmap_final.len();
+    let mut segments = EncoderSegments::new().add_mpf_image(
         gainmap_final,
         crate::encode::extras::MpfImageType::Undefined,
     );
+    if include_xmp {
+        segments = segments.set_xmp(&generate_primary_xmp(gainmap_len));
+    }
 
     let include_iso = matches!(
         metadata_format,
@@ -560,10 +646,112 @@ pub fn encode_with_gainmap_format(
     encode_sdr_base(sdr, encoder_config, segments, stop)
 }
 
+/// Encode a precomputed gain map while applying an explicit source-metadata policy.
+///
+/// Required gain-map XMP/ISO/MPF is regenerated independently of source XMP.
+/// Retained source XMP refuses (merging arbitrary RDF cannot preserve it exactly).
+/// EXIF and ICC are emitted after filtering. CICP/HDR luminance fields this JPEG
+/// path cannot serialize refuse instead of silently losing display information.
+/// The supplied metadata must describe the supplied base pixels; color conversion
+/// and orientation baking remain explicit caller operations.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_with_gainmap_metadata(
+    sdr: &PixelBuffer,
+    gainmap: &GainMap,
+    metadata: &GainMapMetadata,
+    encoder_config: &EncoderConfig,
+    gainmap_quality: f32,
+    metadata_format: GainMapEncodingFormat,
+    source: &zencodec::Metadata,
+    policy: &zencodec::MetadataPolicy,
+    stop: impl Stop,
+) -> Result<Vec<u8>> {
+    let mut retained = zenmeta::display::filter_for_gain_map(source, metadata, policy)
+        .map_err(ultrahdr_to_zenjpeg_error)?;
+    if retained.xmp.is_some()
+        || retained.content_light_level.is_some()
+        || retained.mastering_display.is_some()
+        || retained
+            .diffuse_white
+            .is_some_and(|w| w != zenpixels::hdr::DiffuseWhite::BT2408)
+    {
+        return Err(Error::unsupported_feature(
+            "gain-map JPEG cannot preserve source XMP/HDR fields; resolve them explicitly before encoding",
+        ));
+    }
+    if metadata.backward_direction || !metadata.use_base_color_space {
+        return Err(Error::unsupported_feature(
+            "gain-map XMP requires SDR base and base color space",
+        ));
+    }
+    // JPEG has no CICP carrier. Reuse the same profile synthesizer as the
+    // ordinary zencodec adapter, with no pixel conversion or pixel scan.
+    if let Some(cicp) = retained.cicp
+        && (cicp.matrix_coefficients != 0
+            || !cicp.full_range
+            || cicp.transfer_characteristics != 13)
+    {
+        return Err(Error::unsupported_feature(
+            "SDR gain-map base requires full-range RGB with sRGB transfer",
+        ));
+    }
+    if retained.icc_profile.is_none() {
+        let cicp = if let Some(cicp) = retained.cicp {
+            cicp
+        } else {
+            let primaries = sdr.descriptor().primaries.to_cicp().ok_or_else(|| {
+                Error::unsupported_feature("unknown base primaries require an ICC profile")
+            })?;
+            zencodec::Cicp::new(primaries, 13, 0, true)
+        };
+        use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+        match synthesize_icc_for_cicp(cicp) {
+            SynthesizedIcc::Profile(icc) => retained.icc_profile = Some(icc.as_ref().into()),
+            SynthesizedIcc::NotNeeded => {}
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "cannot represent base color without an ICC profile",
+                ));
+            }
+        }
+    }
+    // JPEG needs an EXIF carrier even when orientation existed only as a field.
+    // Filtering reconciles existing tags; author a missing tag at this boundary.
+    if retained.orientation != zencodec::Orientation::Identity {
+        let mut exif = match retained.exif.as_deref() {
+            Some(bytes) => zencodec::exif::Exif::parse(bytes).ok_or_else(|| {
+                Error::unsupported_feature("cannot preserve orientation in malformed EXIF")
+            })?,
+            None => zencodec::exif::Exif::default(),
+        };
+        if exif.orientation() != Some(retained.orientation) {
+            exif.set_orientation(retained.orientation);
+            retained.exif = Some(zenmeta::exif::serialize(&exif).into());
+        }
+    }
+    let mut segments = EncoderSegments::new();
+    if let Some(icc) = retained.icc_profile {
+        segments = segments.set_icc(icc.to_vec());
+    }
+    if let Some(exif) = retained.exif {
+        segments = segments.set_exif(exif.to_vec());
+    }
+    let config = encoder_config.clone().with_segments(segments);
+    encode_with_gainmap_format(
+        sdr,
+        gainmap,
+        metadata,
+        &config,
+        gainmap_quality,
+        metadata_format,
+        stop,
+    )
+}
+
 /// Tonemap HDR to a Bt709/Srgb `PixelBuffer`. Centralizes the conversion to
 /// the pattern ultrahdr-rs uses (`tonemap_image_to_srgb8` + `pixel_buffer_from_vec`).
 fn tonemap_to_pixel_buffer(hdr: &PixelBuffer, target_gamut: ColorPrimaries) -> Result<PixelBuffer> {
-    let bytes = tonemap_image_to_srgb8(hdr, target_gamut).map_err(ultrahdr_to_jpegli_error)?;
+    let bytes = tonemap_image_to_srgb8(hdr, target_gamut).map_err(ultrahdr_to_zenjpeg_error)?;
     pixel_buffer_from_vec(
         bytes,
         hdr.width(),
@@ -572,7 +760,7 @@ fn tonemap_to_pixel_buffer(hdr: &PixelBuffer, target_gamut: ColorPrimaries) -> R
         target_gamut,
         TransferFunction::Srgb,
     )
-    .map_err(ultrahdr_to_jpegli_error)
+    .map_err(ultrahdr_to_zenjpeg_error)
 }
 
 /// Build the gain-map secondary's metadata APP markers (XMP APP1 and/or
@@ -619,7 +807,14 @@ fn wrap_app2(body: &[u8]) -> Vec<u8> {
 /// Inject a complete JPEG marker segment after SOI.
 fn inject_marker_after_soi(jpeg: &[u8], marker: &[u8]) -> Result<Vec<u8>> {
     if jpeg.len() < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
-        return Err(Error::unsupported_feature("gain map JPEG missing SOI"));
+        // `jpeg` here is always our own freshly-`encode_gainmap_jpeg`-produced
+        // buffer (see the sole call site), never caller-supplied — a missing
+        // SOI means this encoder's own output is broken, an internal
+        // invariant violation, not an unsupported feature (caterr Pattern-B
+        // follow-up finding #1 investigation).
+        return Err(Error::internal(
+            "gain map JPEG missing SOI (internal encoder invariant)",
+        ));
     }
     let mut result = Vec::with_capacity(jpeg.len() + marker.len());
     result.extend_from_slice(&jpeg[..2]); // SOI
@@ -645,10 +840,19 @@ fn encode_gainmap_jpeg(gainmap: &GainMap, quality: f32, stop: &impl Stop) -> Res
 }
 
 /// Encode the SDR base image. The SDR `PixelBuffer` must be `Rgba8` or `Rgb8`.
+///
+/// `gainmap_segments` (the gain-map image, its XMP and ISO 21496-1 records)
+/// are added to the segments the caller set on `config`, which are kept: an
+/// ICC profile, EXIF, IPTC, comments. The Ultra HDR XMP, when there is one,
+/// replaces the caller's XMP (a JPEG holds one standard XMP packet), and the
+/// gain map replaces any MPF images or ISO 21496-1 records of the caller's.
+/// Without a caller ICC profile, a base whose primaries are not BT.709 gets
+/// one (see [`base_icc_profile`]): JPEG has no other colour carrier, and an
+/// untagged base is read as sRGB.
 fn encode_sdr_base(
     sdr: &PixelBuffer,
     config: &EncoderConfig,
-    segments: EncoderSegments,
+    gainmap_segments: EncoderSegments,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
     let format = sdr.descriptor().pixel_format();
@@ -662,6 +866,51 @@ fn encode_sdr_base(
         }
     };
 
+    // The caller's segments, without what the gain map replaces (their MPF
+    // images are not copied at all). A caller XMP that signals a gain map
+    // (hdrgm properties or a GContainer directory, as one preserved from an
+    // Ultra HDR source does) describes a map this file does not carry: it is
+    // dropped even when the format writes no XMP of its own.
+    let replaces_xmp =
+        gainmap_segments.has(SegmentType::Xmp) || caller_xmp_signals_a_gain_map(config);
+    let mut segments = EncoderSegments::new();
+    for seg in config.segments.iter().flat_map(EncoderSegments::segments) {
+        let replaced = seg.data.starts_with(zencodec::ISO_21496_1_URN)
+            || (replaces_xmp
+                && matches!(
+                    seg.segment_type,
+                    SegmentType::Xmp | SegmentType::XmpExtended
+                ));
+        if !replaced {
+            segments = segments.add(seg.marker, seg.data.clone(), seg.segment_type);
+        }
+    }
+    for seg in gainmap_segments.segments() {
+        segments = segments.add(seg.marker, seg.data.clone(), seg.segment_type);
+    }
+    for image in gainmap_segments.mpf_images() {
+        segments = segments.add_mpf_image(image.data.clone(), image.image_type);
+    }
+    let xyb = matches!(
+        config.color_mode,
+        crate::encode::encoder_types::ColorMode::Xyb { .. }
+    );
+    if xyb {
+        // XYB writes its own ICC profile (the XYB transform) and converts
+        // its input as sRGB: another profile would be a second, conflicting
+        // ICC set, and non-sRGB pixels would be converted wrongly.
+        if segments.has(SegmentType::Icc) || base_icc_profile(sdr)?.is_some() {
+            return Err(Error::unsupported_feature(
+                "an XYB UltraHDR SDR base takes sRGB pixels and no caller ICC profile \
+                 (XYB writes its own); convert the base to sRGB or encode it as YCbCr",
+            ));
+        }
+    } else if !segments.has(SegmentType::Icc)
+        && let Some(icc) = base_icc_profile(sdr)?
+    {
+        segments = segments.set_icc(icc.into_owned());
+    }
+
     let config_with_segments = config.clone().with_segments(segments);
     let mut encoder = config_with_segments.encode_from_bytes(sdr.width(), sdr.height(), layout)?;
 
@@ -669,7 +918,164 @@ fn encode_sdr_base(
     encoder.finish()
 }
 
-/// Convert ultrahdr_core::Error to jpegli Error.
-fn ultrahdr_to_jpegli_error(e: ultrahdr_core::Error) -> Error {
+/// The ICC profile an SDR base needs so readers do not take it for sRGB:
+/// none for BT.709 primaries with the sRGB transfer (the colour every reader
+/// assumes for an untagged JPEG) or unknown primaries (nothing to state); a
+/// bundled profile otherwise, including BT.709 primaries with the BT.709
+/// transfer, whose curve differs from sRGB's; an error when none exists, since
+/// the base would be mislabelled. A caller with another colour supplies its
+/// profile in the `EncoderConfig` segments instead.
+fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
+    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+    let desc = sdr.descriptor();
+    // Untagged means sRGB to every reader: right for BT.709 primaries with
+    // the sRGB (or unstated) transfer, and for unknown primaries (nothing to
+    // state). BT.709 primaries with another transfer (BT.709, linear, gamma
+    // 2.2, PQ, HLG) need a profile like any other colour: the BT.709 OETF is
+    // not the sRGB curve (zenpixels#88).
+    let srgb_like_transfer = matches!(
+        desc.transfer,
+        TransferFunction::Srgb | TransferFunction::Unknown
+    );
+    if desc.primaries == ColorPrimaries::Unknown
+        || (desc.primaries == ColorPrimaries::Bt709 && srgb_like_transfer)
+    {
+        return Ok(None);
+    }
+    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(synthesize_icc_for_cicp);
+    match synthesized {
+        Some(SynthesizedIcc::Profile(icc)) => Ok(Some(icc)),
+        Some(SynthesizedIcc::NotNeeded) => Ok(None),
+        _ => Err(Error::icc_error(alloc::format!(
+            "UltraHDR SDR base in {:?} primaries with {:?} transfer: no ICC profile \
+             describes it here; supply one in the EncoderConfig's segments (an APP2 \
+             ICC_PROFILE segment)",
+            desc.primaries,
+            desc.transfer
+        ))),
+    }
+}
+
+/// Whether `config`'s XMP (from its segments) signals a gain map: Ultra HDR
+/// `hdrgm` properties or a GContainer directory with a secondary item.
+fn caller_xmp_signals_a_gain_map(config: &EncoderConfig) -> bool {
+    const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+    let Some(segments) = config.segments.as_ref() else {
+        return false;
+    };
+    segments.segments().iter().any(|seg| {
+        seg.segment_type == SegmentType::Xmp
+            && seg
+                .data
+                .strip_prefix(XMP_NS)
+                .and_then(|x| core::str::from_utf8(x).ok())
+                .is_some_and(|xmp| {
+                    let (params, items) = crate::container::parse_xmp_full(xmp);
+                    params.is_some()
+                        || items
+                            .iter()
+                            .any(|i| i.semantic != crate::container::ItemSemantic::Primary)
+                        || xmp.contains("http://ns.adobe.com/hdr-gain-map/1.0/")
+                })
+    })
+}
+
+/// Convert an ultrahdr_core error to a zenjpeg Error.
+///
+/// Generic over `Display` so it accepts both bare `ultrahdr_core::Error` and
+/// the `At<Error>` location wrapper (ultrahdr-core #31).
+fn ultrahdr_to_zenjpeg_error(e: impl core::fmt::Display) -> Error {
     Error::decode_error(e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buf_with_transfer(transfer: TransferFunction) -> PixelBuffer {
+        let px: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+        let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
+        let desc = zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer);
+        PixelBuffer::from_vec(bytes, 1, 1, desc).expect("fixture")
+    }
+
+    /// BT.709 primaries: the sRGB transfer stays untagged (every reader
+    /// assumes it); the BT.709 transfer gets a profile that says so, since
+    /// its curve is not sRGB's (zenpixels#88). It was untagged.
+    #[test]
+    fn bt709_base_is_tagged_only_when_its_curve_is_not_srgb() {
+        let base = |transfer| {
+            let desc = zenpixels::PixelDescriptor::RGBA8_SRGB
+                .with_primaries(ColorPrimaries::Bt709)
+                .with_transfer(transfer);
+            PixelBuffer::from_vec(alloc::vec![128u8; 4], 1, 1, desc).expect("fixture")
+        };
+        assert!(
+            base_icc_profile(&base(TransferFunction::Srgb))
+                .unwrap()
+                .is_none()
+        );
+        let icc = base_icc_profile(&base(TransferFunction::Bt709))
+            .unwrap()
+            .expect("a BT.709-transfer base needs a profile");
+        assert_eq!(
+            zenpixels::icc::extract_cicp(&icc),
+            Some(zenpixels::Cicp::new(1, 1, 0, true))
+        );
+    }
+
+    /// Appendix AA: the tone curve's input normalization states the ROW
+    /// convention (what the linearizer's `1.0` means in nits), never an
+    /// assumed content peak. Linear/sRGB rows are SDR-white-relative (203),
+    /// PQ rows PQ-normalized (10 000), HLG rows absolute nits (1.0). The
+    /// old configured `1000.0` matched none of them.
+    #[test]
+    fn curve_input_scale_matches_row_convention() {
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Linear)),
+            203.0
+        );
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Srgb)),
+            203.0
+        );
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Pq)),
+            10_000.0
+        );
+        assert_eq!(
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Hlg)),
+            1.0
+        );
+    }
+
+    /// VERSION PIN: the published zentone 0.1.0 this build resolves treats
+    /// `Bt2446C::new`'s two parameters as RESERVED (`let _ = ...`) — its
+    /// curve is input-relative, so every construction behaves identically.
+    /// This pin does two jobs: (1) it documents that the appendix-AA
+    /// constant correction in `encode_ultrahdr_luma` is byte-neutral at
+    /// this zentone version, and (2) it FAILS the moment a zentone bump
+    /// makes the parameters live (the nits-faithful curve in zentone git),
+    /// forcing that bump to be taken consciously: re-verify that
+    /// `curve_input_scale_nits` + the 100-nit SDR reference then map SDR
+    /// diffuse white (input 1.0 = 203 nits) to white (~0.9) in the base —
+    /// the assertion to flip this test to.
+    #[test]
+    fn bt2446c_params_inert_at_zentone_0_1() {
+        use zentone::LumaToneMap as _;
+        let corrected = Bt2446C::new(203.0, 100.0);
+        let legacy = Bt2446C::new(1000.0, 203.0);
+        for y in [0.05_f32, 0.25, 1.0, 4.0, 40.0] {
+            let (c, l) = (corrected.map_luma(y), legacy.map_luma(y));
+            assert!(
+                (c - l).abs() < 1e-7,
+                "zentone made Bt2446C's constructor params LIVE (map_luma({y}): \
+                 corrected {c} vs legacy {l}) — re-verify encode_ultrahdr_luma's \
+                 measured-scale constants and flip this test to assert \
+                 map_luma(1.0) ≈ 0.9 (SDR white → white) per appendix AA"
+            );
+        }
+        // Monotone into the highlights under the pinned semantics too.
+        assert!(corrected.map_luma(4.0) > corrected.map_luma(1.0));
+    }
 }

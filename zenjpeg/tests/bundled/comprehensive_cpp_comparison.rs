@@ -227,10 +227,10 @@ fn test_comprehensive_cpp_comparison() {
         .unwrap_or(10);
 
     let images = find_corpus_images(max_images);
-    if images.is_empty() {
-        println!("Skipping: no corpus images found");
-        return;
-    }
+    assert!(
+        !images.is_empty(),
+        "missing test prerequisite: no corpus images found"
+    );
 
     // Quality levels: 2, 4, 6, ..., 100
     let qualities: Vec<u8> = (1..=50).map(|i| i * 2).collect();

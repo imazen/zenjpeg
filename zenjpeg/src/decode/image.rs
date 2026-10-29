@@ -396,6 +396,8 @@ impl ComponentCoefficients {
 /// For analysis of large images, consider streaming APIs.
 #[derive(Debug, Clone)]
 pub struct DecodedCoefficients {
+    /// Sample precision of the source DCT frame (8 or 12).
+    pub sample_precision: u8,
     /// Image width in pixels
     pub width: u32,
     /// Image height in pixels
@@ -405,6 +407,9 @@ pub struct DecodedCoefficients {
     /// Quantization tables (one per table slot used)
     /// Index matches component's quant_table_idx
     pub quant_tables: Vec<Option<[u16; 64]>>,
+    /// Huffman tables harvested from the bitstream, if reconstructible.
+    /// Access via [`huffman_tables()`](Self::huffman_tables).
+    pub(crate) huffman_tables: Option<crate::huffman::optimize::HuffmanTableSet>,
 }
 
 impl DecodedCoefficients {
@@ -412,6 +417,49 @@ impl DecodedCoefficients {
     #[must_use]
     pub fn num_components(&self) -> usize {
         self.components.len()
+    }
+
+    /// Huffman tables harvested from the decoded bitstream, ready to feed
+    /// back into the encoder via
+    /// [`EncoderConfig::huffman`](crate::encoder::EncoderConfig::huffman)
+    /// for transcode-time table reuse (single-pass re-encoding with the
+    /// source's symbol distribution).
+    ///
+    /// Slot mapping follows the baseline Y/C convention: DC/AC table 0 →
+    /// luma, table 1 → chroma. Grayscale baseline streams define no chroma
+    /// tables; the luma tables are reused in the chroma slots (harmless —
+    /// they are unused when encoding grayscale). For **progressive** JPEGs
+    /// this is the final table state after all scans; scan scripts spread
+    /// tables across slots per scan, so the slots need not correspond to
+    /// Y/C and the set is best treated as a same-distribution warm start
+    /// rather than an exact table carry-over. Custom tables are a
+    /// baseline-encode strategy (progressive re-encoding always optimizes
+    /// per scan).
+    ///
+    /// Returns `None` when the stream's tables could not be reconstructed
+    /// (e.g. no luma tables were ever defined).
+    ///
+    /// ```
+    /// use enough::Unstoppable;
+    /// use zenjpeg::decoder::Decoder;
+    /// use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    ///
+    /// let rgb: Vec<u8> = (0..48 * 48 * 3).map(|i| (i * 31 % 251) as u8).collect();
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
+    /// let jpeg = config.encode_bytes(&rgb, 48, 48, PixelLayout::Rgb8Srgb)?;
+    ///
+    /// // Harvest the tables, then re-encode single-pass with them.
+    /// let coeffs = Decoder::new().decode_coefficients(&jpeg, Unstoppable)?;
+    /// let tables = coeffs.huffman_tables().expect("baseline stream").clone();
+    /// let reencoded = config
+    ///     .huffman(tables)
+    ///     .encode_bytes(&rgb, 48, 48, PixelLayout::Rgb8Srgb)?;
+    /// # let _ = reencoded;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn huffman_tables(&self) -> Option<&crate::huffman::optimize::HuffmanTableSet> {
+        self.huffman_tables.as_ref()
     }
 
     /// Compares coefficients with another decode result, returning statistics.
@@ -503,4 +551,109 @@ impl CoefficientComparison {
             100.0 * self.diff_by_position[0] as f64 / self.total_blocks as f64
         }
     }
+}
+
+// ============================================================================
+// JbrdMetadata — per-scan signals for JPEG-Bitstream-Reconstruction (JXL JBRD)
+// ============================================================================
+
+/// Per-scan JPEG-Bitstream-Reconstruction (JBRD) metadata.
+///
+/// This is the metadata a downstream JPEG-XL transcoder needs to reproduce
+/// the *exact original* JPEG entropy-coded bitstream from DCT coefficients,
+/// per the JXL spec's JBRD box. It is intentionally NOT included in
+/// [`DecodedCoefficients`] — that struct is the legacy 0.8.x public surface
+/// and we keep it byte-for-byte backwards-compatible.
+///
+/// Callers wanting JBRD reconstruction use
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`] which returns this
+/// alongside the coefficients.
+///
+/// # Mapping to libjxl `JPEGScanInfo`
+///
+/// Each [`JbrdScanInfo`] corresponds 1-to-1 with a `JPEGScanInfo` in libjxl's
+/// `enc_jpeg_data_reader.cc`. The `block_idx` values inside `reset_points`
+/// and `extra_zero_runs` are libjxl's `block_scan_index` — a per-scan
+/// running counter across ALL components and ALL blocks decoded so far in
+/// that scan (for interleaved scans, MCU-by-MCU, component-by-component,
+/// block-by-block within each component).
+///
+/// # When entries are populated
+///
+/// - `reset_points`: signaled in AC scans (`Ss > 0`) when two end-of-block
+///   runs occur back-to-back. Empty for DC-only scans.
+/// - `extra_zero_runs`: signaled in the AC FIRST scan (`Ah == 0, Ss > 0`)
+///   when ZRL (run=15, size=0) symbols accumulate before a natural EOB.
+///   Always empty in AC refinement scans (`Ah > 0`) and DC scans.
+///
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct JbrdMetadata {
+    /// Per-scan signals, in the order scans appear in the JPEG bitstream.
+    ///
+    /// For a baseline sequential JPEG this contains exactly one entry.
+    /// For a progressive JPEG with N SOS markers, this contains N entries.
+    pub scans: Vec<JbrdScanInfo>,
+    /// Whether the JPEG contains any non-1 entropy-segment padding bits.
+    ///
+    /// JPEG entropy-coded segments end with `0..7` padding bits before the
+    /// next marker when the entropy stream ends mid-byte. ITU-T T.81 §F.1.2.3
+    /// recommends these padding bits be 1, but some encoders pad with 0 (or
+    /// mixed values). Byte-exact JPEG-XL transcoding (JBRD) needs to preserve
+    /// the source's actual padding bits.
+    ///
+    /// When `false`, all padding bits are 1 — the standard fast path — and
+    /// `padding_bits` is empty. When `true`, `padding_bits` contains the
+    /// explicit bit sequence (one entry per pad bit, value `0` or `1`).
+    pub has_zero_padding_bit: bool,
+    /// Padding-bit values for every entropy-segment boundary (per RST marker
+    /// AND at end-of-scan), in bitstream order, MSB-first.
+    ///
+    /// Empty when `has_zero_padding_bit` is `false`. Total length equals the
+    /// sum of `bits_in_buffer & 7` at every scan-segment terminator (each
+    /// terminator contributes `0..=7` bits).
+    ///
+    /// Maps directly to libjxl's `JPEGData::padding_bits` field (see
+    /// `enc_jpeg_data_reader.cc:441-470` `FinishStream`).
+    pub padding_bits: Vec<u8>,
+}
+
+/// Per-scan reset-point + extra-zero-run signals (JBRD).
+///
+/// One of these is collected per SOS scan when
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`] is used.
+///
+/// The semantics match libjxl's `JPEGScanInfo::reset_points` and
+/// `JPEGScanInfo::extra_zero_runs` (see `enc_jpeg_data_reader.cc:849-857`).
+///
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct JbrdScanInfo {
+    /// Spectral selection start (`Ss`).
+    pub ss: u8,
+    /// Spectral selection end (`Se`).
+    pub se: u8,
+    /// Successive approximation high (`Ah`).
+    pub ah: u8,
+    /// Successive approximation low (`Al`).
+    pub al: u8,
+    /// Block-scan indices at which two end-of-block runs occurred
+    /// back-to-back — the encoder must force a state reset here.
+    ///
+    /// Always empty for DC-only scans (`Ss == 0`). Populated only when an
+    /// AC scan emits a fresh EOB run at the beginning of a block with no
+    /// preceding active EOB run.
+    pub reset_points: Vec<u32>,
+    /// Extra zero runs that occurred before a natural end-of-block in
+    /// the AC first scan (`Ah == 0, Ss > 0`).
+    ///
+    /// Each entry is `(block_scan_index, num_extra_zero_runs)`. A "ZRL"
+    /// symbol encodes 16 consecutive zeros; runs of ZRL symbols
+    /// immediately preceding an EOB are *extra* in the sense that the
+    /// re-encoder would otherwise prefer to emit them via an EOB-run
+    /// instead. Always empty for DC scans and AC refinement scans
+    /// (`Ah > 0`).
+    pub extra_zero_runs: Vec<(u32, u32)>,
 }

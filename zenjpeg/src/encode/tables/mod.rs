@@ -64,10 +64,11 @@ pub mod glassa;
 
 /// SA-optimized piecewise quantization tables (v4) for jpegli-style encoding.
 ///
-/// 20 quality-anchored tables (q5-q100, step 5) with linear interpolation.
-/// Beats jpegli's parametric tables on 99/100 quality levels with mean
-/// pareto +6.602 on CID22-512 training and +6.09 on holdout. See module
-/// docs for corpus / metric / when-to-use.
+/// 20 quality-anchored tables (q5-q100, step 5) with linear interpolation,
+/// monotonized per coefficient position at compile time (#12). The raw
+/// anchors' pareto figures (+6.602 CID22-512 training / +6.09 holdout vs
+/// jpegli) have not been re-measured after smoothing. See module docs for
+/// corpus / metric / when-to-use.
 pub mod sa_piecewise_v4;
 
 // Re-export base quantization matrices

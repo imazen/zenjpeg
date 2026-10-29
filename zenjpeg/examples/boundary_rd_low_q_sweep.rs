@@ -75,18 +75,14 @@ fn parse_args() -> Args {
         limit_images: None,
         limit_configs: None,
         lineart_dir: PathBuf::from("benchmarks/boundary_rd/sweep_corpus/lineart"),
-        screenshots_dir: PathBuf::from(
-            std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join("work/codec-eval/codec-corpus/gb82-sc"))
-                .unwrap_or_else(|| PathBuf::from("gb82-sc")),
-        ),
-        photo_dir: PathBuf::from(
-            std::env::var_os("HOME")
-                .map(|h| {
-                    PathBuf::from(h).join("work/codec-eval/codec-corpus/CID22/CID22-512/validation")
-                })
-                .unwrap_or_else(|| PathBuf::from("CID22/validation")),
-        ),
+        screenshots_dir: std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("work/codec-eval/codec-corpus/gb82-sc"))
+            .unwrap_or_else(|| PathBuf::from("gb82-sc")),
+        photo_dir: std::env::var_os("HOME")
+            .map(|h| {
+                PathBuf::from(h).join("work/codec-eval/codec-corpus/CID22/CID22-512/validation")
+            })
+            .unwrap_or_else(|| PathBuf::from("CID22/validation")),
         photo_names: vec![
             "1025469.png".into(),
             "1044329.png".into(),
@@ -205,11 +201,9 @@ fn build_grid() -> Vec<ConfigKnob> {
 // ---------------- corpus loading ----------------
 
 fn load_rgb(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
-    let img = image::open(path).ok()?;
-    let rgb = img.to_rgb8();
-    let w = rgb.width() as usize;
-    let h = rgb.height() as usize;
-    let buf = rgb.into_raw();
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (rgb, w, h) = img.into_contiguous_buf();
+    let buf: Vec<u8> = rgb.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     debug_assert_eq!(buf.len(), w * h * 3);
     Some((buf, w, h))
 }

@@ -18,8 +18,10 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 
 # Image I/O
+# Decoding uses zenpng (below); `png` (encoder only) stays for save_png's PNG output.
 png = { workspace = true }
-# zenpng = { workspace = true }  # Temporarily disabled: zencodec/zenpixels API mismatch
+zenpng = { workspace = true }
+zenpixels-convert = { workspace = true, features = ["rgb"] }
 
 # JPEG decoding (de-facto standard decoder for comparisons)
 zune-jpeg = { workspace = true }
@@ -34,7 +36,7 @@ butteraugli = { workspace = true }
 
 # For test image discovery and encoding (decoder required for comparison utilities)
 # moxcms enables ICC profile support for XYB JPEG decoding
-zenjpeg = { path = "../zenjpeg", default-features = false, features = ["__test-utils", "decoder", "moxcms"] }
+zenjpeg = { path = "../zenjpeg", default-features = false, features = ["__test-utils", "moxcms"] }
 
 # C++ jpegli FFI bindings (optional)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }

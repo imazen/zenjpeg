@@ -6,24 +6,23 @@
 //!
 //! Run:
 //! ```bash
-//! cargo bench -p zenjpeg --bench wide_migration --features "decoder,trellis"
+//! cargo bench -p zenjpeg --bench wide_migration --features "trellis"
 //! ```
 //!
 //! Save baseline:
 //! ```bash
-//! cargo bench -p zenjpeg --bench wide_migration --features "decoder,trellis" -- --save-baseline=pre-migration
+//! cargo bench -p zenjpeg --bench wide_migration --features "trellis" -- --save-baseline=pre-migration
 //! ```
 //!
 //! Compare after migration:
 //! ```bash
-//! cargo bench -p zenjpeg --bench wide_migration --features "decoder,trellis" -- --baseline=pre-migration
+//! cargo bench -p zenjpeg --bench wide_migration --features "trellis" -- --baseline=pre-migration
 //! ```
 
 use enough::Unstoppable;
 use zenbench::prelude::*;
 use zenjpeg::decode::Decoder;
 use zenjpeg::decoder::PixelFormat;
-#[cfg(feature = "trellis")]
 use zenjpeg::encode::trellis::TrellisConfig;
 use zenjpeg::encode::{
     ChromaSubsampling, EncoderConfig, ParallelEncoding, PixelLayout, XybSubsampling,
@@ -58,7 +57,7 @@ fn create_rgb8(width: usize, height: usize) -> Vec<u8> {
 fn create_rgba8(width: usize, height: usize) -> Vec<u8> {
     let rgb = create_rgb8(width, height);
     let mut rgba = Vec::with_capacity(width * height * 4);
-    for chunk in rgb.chunks_exact(3) {
+    for chunk in rgb.as_chunks::<3>().0 {
         rgba.extend_from_slice(chunk);
         rgba.push(255);
     }
@@ -68,7 +67,7 @@ fn create_rgba8(width: usize, height: usize) -> Vec<u8> {
 fn create_bgra8(width: usize, height: usize) -> Vec<u8> {
     let rgb = create_rgb8(width, height);
     let mut bgra = Vec::with_capacity(width * height * 4);
-    for chunk in rgb.chunks_exact(3) {
+    for chunk in rgb.as_chunks::<3>().0 {
         bgra.push(chunk[2]);
         bgra.push(chunk[1]);
         bgra.push(chunk[0]);
@@ -79,7 +78,9 @@ fn create_bgra8(width: usize, height: usize) -> Vec<u8> {
 
 fn create_gray8(width: usize, height: usize) -> Vec<u8> {
     let rgb = create_rgb8(width, height);
-    rgb.chunks_exact(3)
+    rgb.as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| ((c[0] as u16 * 77 + c[1] as u16 * 150 + c[2] as u16 * 29) >> 8) as u8)
         .collect()
 }
@@ -351,8 +352,6 @@ fn bench_encode(suite: &mut Suite) {
     });
 
     // ── Trellis / auto_optimize (2k, 420, progressive) ────────────────
-
-    #[cfg(feature = "trellis")]
     suite.group("enc/2k/optimize", |g| {
         g.throughput(Throughput::Bytes((S2K.0 * S2K.1 * 3) as u64));
 

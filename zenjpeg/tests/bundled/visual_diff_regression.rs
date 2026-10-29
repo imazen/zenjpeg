@@ -5,14 +5,71 @@
 //! Uses zensim-regress to produce side-by-side comparison montages (Expected | Actual | Diff)
 //! saved to /mnt/v/output/zenjpeg/visual_diffs/. Each decode path is tested independently.
 //!
-//! Run: cargo test --release -p zenjpeg --test visual_diff_regression --features decoder -- --nocapture
+//! Run: cargo test --release -p zenjpeg --test visual_diff_regression -- --nocapture
 
 use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zensim_regress::diff_image::{create_comparison_montage_raw, generate_diff_image_raw};
+use zensim_regress::Bitmap;
+use zensim_regress::diff_image::{create_montage, generate_diff_image};
 
 const OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/visual_diffs";
+
+/// Build a `Bitmap` from raw packed RGBA bytes (panics on size mismatch —
+/// these are test-internal buffers we control).
+fn bitmap_from_rgba(rgba: &[u8], width: u32, height: u32) -> Bitmap {
+    Bitmap::from_rgba_slice(rgba, width, height).expect("rgba buffer matches w*h*4")
+}
+
+/// Shim preserving the old `create_comparison_montage_raw` signature on top of
+/// zensim-regress 0.4's `Bitmap` API: amplified diff panel + side-by-side
+/// montage `[expected | actual | diff]`.
+fn create_comparison_montage_raw(
+    ref_rgba: &[u8],
+    test_rgba: &[u8],
+    width: u32,
+    height: u32,
+    amplification: u8,
+    gap: u32,
+) -> Bitmap {
+    let expected = bitmap_from_rgba(ref_rgba, width, height);
+    let actual = bitmap_from_rgba(test_rgba, width, height);
+    let diff = generate_diff_image(&expected, &actual, amplification);
+    create_montage(&[&expected, &actual, &diff], gap)
+}
+
+/// Shim preserving the old `generate_diff_image_raw` signature on top of
+/// zensim-regress 0.4's `generate_diff_image`.
+fn generate_diff_image_raw(
+    ref_rgba: &[u8],
+    test_rgba: &[u8],
+    width: u32,
+    height: u32,
+    amplification: u8,
+) -> Bitmap {
+    let expected = bitmap_from_rgba(ref_rgba, width, height);
+    let actual = bitmap_from_rgba(test_rgba, width, height);
+    generate_diff_image(&expected, &actual, amplification)
+}
+
+/// Encode a `Bitmap` (packed RGBA8) as PNG bytes and write it to `path`.
+fn write_bitmap_png(bitmap: &Bitmap, path: &std::path::Path) {
+    let pixels: Vec<rgb::Rgba<u8>> = bitmap
+        .as_raw()
+        .chunks_exact(4)
+        .map(|c| rgb::Rgba::new(c[0], c[1], c[2], c[3]))
+        .collect();
+    let img = imgref::Img::new(pixels, bitmap.width() as usize, bitmap.height() as usize);
+    let png_bytes = zenpng::encode_rgba8(
+        img.as_ref(),
+        None,
+        &zenpng::EncodeConfig::default(),
+        &enough::Unstoppable,
+        &enough::Unstoppable,
+    )
+    .expect("encode montage PNG");
+    std::fs::write(path, png_bytes).expect("write montage PNG");
+}
 
 /// Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel) for zensim-regress.
 fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
@@ -205,14 +262,14 @@ fn make_noise_patches_image(width: usize, height: usize) -> Vec<u8> {
 
 /// Save a montage to disk. Creates the output dir if needed.
 /// Silently skips if the output dir can't be created (e.g., CI without /mnt/v/).
-fn save_montage(montage: &image::RgbaImage, name: &str) {
+fn save_montage(montage: &Bitmap, name: &str) {
     let dir = std::path::Path::new(OUTPUT_DIR);
     if std::fs::create_dir_all(dir).is_err() {
         println!("  Skipped save (output dir unavailable): {}", dir.display());
         return;
     }
     let path = dir.join(format!("{name}.png"));
-    montage.save(&path).expect("save montage");
+    write_bitmap_png(montage, &path);
     println!("  Saved: {}", path.display());
 }
 
@@ -334,9 +391,10 @@ fn run_visual_diff(
         let diff_img = generate_diff_image_raw(ref_rgba, &zen_rgba, width, height, amplification);
         let diff_dir = std::path::Path::new(OUTPUT_DIR);
         if diff_dir.exists() {
-            diff_img
-                .save(diff_dir.join(format!("{label}_{path_name}_diff.png")))
-                .expect("save diff");
+            write_bitmap_png(
+                &diff_img,
+                &diff_dir.join(format!("{label}_{path_name}_diff.png")),
+            );
         }
     }
 
@@ -569,8 +627,9 @@ fn test_visual_diff_corpus_photo() {
     }
 }
 
-/// Verify that IdctMethod::Libjpeg with box filter matches mozjpeg box within max=1.
-/// This confirms the remaining max=2-3 diff on the default box path is purely IDCT rounding.
+/// IdctMethod::Libjpeg + box filter is now byte-for-byte identical to mozjpeg
+/// box (max=0): the islow IDCT, box upsampling, and (since the turbo color
+/// converter) the YCbCr→RGB stage are all bit-exact with libjpeg-turbo.
 #[test]
 fn test_idct_method_libjpeg_matches_mozjpeg() {
     use zenjpeg::decode::{ChromaUpsampling, IdctMethod};
@@ -584,7 +643,7 @@ fn test_idct_method_libjpeg_matches_mozjpeg() {
             let pixels = make_stress_image(w, h);
             let jpeg = encode_420(&pixels, w as u32, h as u32, q);
 
-            // Decode with zenjpeg: libjpeg IDCT + box filter
+            // Decode with zenjpeg: libjpeg IDCT + box filter + turbo color.
             let decoder = Decoder::new()
                 .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
                 .idct_method(IdctMethod::Libjpeg);
@@ -602,9 +661,57 @@ fn test_idct_method_libjpeg_matches_mozjpeg() {
                 .unwrap_or(0);
 
             println!("  {w}x{h} Q{q}: Libjpeg+box vs mozjpeg-box max_diff={max_diff}");
-            assert!(
-                max_diff <= 1,
-                "{w}x{h} Q{q}: IdctMethod::Libjpeg + box should match mozjpeg within 1, got {max_diff}"
+            assert_eq!(
+                max_diff, 0,
+                "{w}x{h} Q{q}: IdctMethod::Libjpeg + box must equal mozjpeg byte-for-byte, got {max_diff}"
+            );
+        }
+    }
+}
+
+/// The headline result: IdctMethod::Libjpeg with the default Triangle (fancy)
+/// upsampling is byte-for-byte identical to mozjpeg's full RGB decode
+/// (islow IDCT + h2v2_fancy_upsample + table YCbCr→RGB). Every stage —
+/// IDCT, chroma upsampling (turbo bias), color conversion (turbo tables) —
+/// is now bit-exact, so the whole pipeline matches at max=0.
+#[test]
+fn test_idct_method_libjpeg_fancy_matches_mozjpeg_exact() {
+    use zenjpeg::decode::{ChromaUpsampling, IdctMethod};
+
+    let sizes = [(128, 128), (256, 256), (96, 80), (255, 255), (67, 45)];
+    let qualities = [50.0, 75.0, 85.0, 95.0];
+
+    println!("\n=== IdctMethod::Libjpeg + Triangle vs mozjpeg Fancy (expect max=0) ===");
+    for (w, h) in sizes {
+        for q in qualities {
+            let pixels = make_stress_image(w, h);
+            let jpeg = encode_420(&pixels, w as u32, h as u32, q);
+
+            let zen_rgb = Decoder::new()
+                .chroma_upsampling(ChromaUpsampling::Triangle)
+                .idct_method(IdctMethod::Libjpeg)
+                .decode(&jpeg, Unstoppable)
+                .expect("decode")
+                .into_pixels_u8()
+                .unwrap();
+
+            let (_, _, moz_rgb) = decode_mozjpeg(&jpeg);
+
+            let (max_diff, first) = zen_rgb.iter().zip(moz_rgb.iter()).enumerate().fold(
+                (0i32, None),
+                |(m, f), (i, (a, b))| {
+                    let d = (*a as i32 - *b as i32).abs();
+                    (m.max(d), if d != 0 && f.is_none() { Some(i) } else { f })
+                },
+            );
+
+            println!(
+                "  {w}x{h} Q{q}: Libjpeg+Triangle vs mozjpeg-fancy max_diff={max_diff} first={first:?}"
+            );
+            assert_eq!(
+                max_diff, 0,
+                "{w}x{h} Q{q}: Libjpeg+Triangle must equal mozjpeg fancy byte-for-byte \
+                 (first diff at byte {first:?})"
             );
         }
     }
@@ -657,18 +764,17 @@ fn test_idct_method_libjpeg_compat_matches_mozjpeg() {
 /// The waterhouse painting has large smooth sky/water gradients that are sensitive
 /// to decoder precision differences.
 #[test]
+#[ignore = "requires codec-corpus"]
 fn test_waterhouse_banding() {
     let corpus = zenjpeg_bench_utils::codec_corpus_dir();
     let Some(corpus) = corpus else {
-        println!("SKIP: codec-corpus not found");
-        return;
+        panic!("missing test prerequisite: codec-corpus not found");
     };
     let path = corpus.join("imageflow/test_inputs/waterhouse.jpg");
     let jpeg = match std::fs::read(&path) {
         Ok(d) => d,
         Err(e) => {
-            println!("SKIP: {}: {e}", path.display());
-            return;
+            panic!("missing test prerequisite: {}: {e}", path.display());
         }
     };
 
@@ -816,9 +922,10 @@ fn test_waterhouse_banding() {
         let diff_img = generate_diff_image_raw(ref_rgba, &zen_rgba, w, h, 10);
         let diff_dir = std::path::Path::new(OUTPUT_DIR);
         if diff_dir.exists() {
-            diff_img
-                .save(diff_dir.join(format!("waterhouse_{path_name}_diff.png")))
-                .expect("save diff");
+            write_bitmap_png(
+                &diff_img,
+                &diff_dir.join(format!("waterhouse_{path_name}_diff.png")),
+            );
         }
 
         // Assertions:
@@ -872,6 +979,119 @@ fn test_decode_path_consistency() {
                 max_diff, 0,
                 "{w}x{h} Q{q}: streaming and scanline paths differ (max_diff={max_diff})"
             );
+        }
+    }
+}
+
+/// Decode with mozjpeg to post-upsample YCbCr (fancy upsampling, no color
+/// conversion): `out_color_space = JCS_YCbCr` returns interleaved Y/Cb/Cr
+/// after libjpeg-turbo's islow IDCT and fancy upsampler — its internal
+/// planes, exactly.
+fn decode_mozjpeg_ycbcr(data: &[u8]) -> (u32, u32, Vec<u8>) {
+    use mozjpeg_sys::*;
+    use std::mem;
+    unsafe {
+        let mut err: jpeg_error_mgr = mem::zeroed();
+        jpeg_std_error(&mut err);
+        let mut ci: jpeg_decompress_struct = mem::zeroed();
+        ci.common.err = &mut err;
+        jpeg_create_decompress(&mut ci);
+        jpeg_mem_src(&mut ci, data.as_ptr(), data.len() as _);
+        assert_eq!(
+            jpeg_read_header(&mut ci, 1),
+            1,
+            "mozjpeg: read_header failed"
+        );
+        ci.out_color_space = J_COLOR_SPACE::JCS_YCbCr;
+        ci.do_fancy_upsampling = 1;
+        jpeg_start_decompress(&mut ci);
+        let w = ci.output_width;
+        let h = ci.output_height;
+        let stride = w as usize * ci.output_components as usize;
+        let mut out = vec![0u8; h as usize * stride];
+        while ci.output_scanline < h {
+            let off = ci.output_scanline as usize * stride;
+            let mut p = out[off..].as_mut_ptr();
+            jpeg_read_scanlines(&mut ci, &mut p, 1);
+        }
+        jpeg_finish_decompress(&mut ci);
+        jpeg_destroy_decompress(&mut ci);
+        (w, h, out)
+    }
+}
+
+/// zenjpeg's internal post-upsample Y/Cb/Cr planes under
+/// `IdctMethod::Libjpeg` are bit-identical to mozjpeg's.
+///
+/// zenjpeg has no YCbCr output, so the planes are pinned through the color
+/// converter: mozjpeg's post-upsample YCbCr (JCS_YCbCr — its actual
+/// runtime islow IDCT + SIMD fancy upsampler output) pushed through
+/// zenjpeg's exact 14-bit integer conversion formula must reproduce
+/// zenjpeg's decoded RGB byte-for-byte. A ±1 anywhere in zenjpeg's
+/// internal planes would shift predicted RGB at that pixel (Y moves all
+/// three channels pre-clamp; Cb/Cr move R/G/B through the turbo
+/// constants), so whole-image equality across patterns, sizes, qualities,
+/// and subsampling modes pins the planes themselves.
+#[test]
+fn test_libjpeg_idct_ycbcr_planes_match_mozjpeg() {
+    use zenjpeg::decode::IdctMethod;
+
+    // libjpeg-turbo 16-bit conversion (jdcolor.c) — the formula
+    // IdctMethod::Libjpeg now uses (turbo color converter). Pushing mozjpeg's
+    // planes through it must reproduce zenjpeg's decoded RGB byte-for-byte,
+    // which holds only if zenjpeg's planes equal mozjpeg's.
+    fn convert_turbo(ycc: &[u8]) -> Vec<u8> {
+        let mut rgb = vec![0u8; ycc.len()];
+        for (px, out) in ycc.chunks_exact(3).zip(rgb.chunks_exact_mut(3)) {
+            let y = px[0] as i32;
+            let cb = px[1] as i32 - 128;
+            let cr = px[2] as i32 - 128;
+            let ys = y * 65536 + 32768;
+            let r = (ys + cr * 91881) >> 16;
+            let g = (ys + cr * -46802 + cb * -22554) >> 16;
+            let b = (ys + cb * 116130) >> 16;
+            out[0] = r.clamp(0, 255) as u8;
+            out[1] = g.clamp(0, 255) as u8;
+            out[2] = b.clamp(0, 255) as u8;
+        }
+        rgb
+    }
+
+    let sizes = [(128usize, 128usize), (96, 80), (255, 255), (67, 45)];
+    let qualities = [50.0f32, 85.0, 95.0];
+
+    println!("\n=== YCbCr planes (via converter) vs mozjpeg JCS_YCbCr ===");
+    for (w, h) in sizes {
+        for q in qualities {
+            let pixels = make_stress_image(w, h);
+            for (sub, jpeg) in [
+                ("420", encode_420(&pixels, w as u32, h as u32, q)),
+                ("444", encode_444(&pixels, w as u32, h as u32, q)),
+            ] {
+                let (mw, mh, m_ycc) = decode_mozjpeg_ycbcr(&jpeg);
+                assert_eq!((mw as usize, mh as usize), (w, h));
+                let predicted = convert_turbo(&m_ycc);
+
+                let zen = Decoder::new()
+                    .idct_method(IdctMethod::Libjpeg)
+                    .decode(&jpeg, Unstoppable)
+                    .expect("zen decode")
+                    .into_pixels_u8()
+                    .unwrap();
+
+                let diffs = predicted
+                    .iter()
+                    .zip(zen.iter())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                let first = predicted.iter().zip(zen.iter()).position(|(a, b)| a != b);
+                println!("  {w}x{h} Q{q} {sub}: byte diffs={diffs} first={first:?}");
+                assert_eq!(
+                    diffs, 0,
+                    "{w}x{h} Q{q} {sub}: zenjpeg planes diverge from mozjpeg \
+                     (first diff at byte {first:?})"
+                );
+            }
         }
     }
 }

@@ -14,23 +14,20 @@
 //! The physical APP1 envelope with the `http://ns.adobe.com/xap/1.0/\0`
 //! namespace prefix is produced by [`create_xmp_app1_marker`].
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use thiserror::Error;
 
-use super::types::{
-    ContainerItem, ItemSemantic, generate_container_directory, parse_container_items,
-};
+use super::types::{ContainerItem, from_shared_item, to_shared_item};
 
 /// XMP namespace for HDR gain-map metadata.
-pub const HDRGM_NAMESPACE: &str = "http://ns.adobe.com/hdr-gain-map/1.0/";
+pub const HDRGM_NAMESPACE: &str = zenmeta::xmp::gainmap::HDRGM_NAMESPACE;
 
 /// XMP namespace for GContainer directory.
-pub const CONTAINER_NAMESPACE: &str = "http://ns.google.com/photos/1.0/container/";
+pub const CONTAINER_NAMESPACE: &str = zenmeta::xmp::gainmap::CONTAINER_NAMESPACE;
 
 /// XMP namespace for GContainer item.
-pub const ITEM_NAMESPACE: &str = "http://ns.google.com/photos/1.0/container/item/";
+pub const ITEM_NAMESPACE: &str = zenmeta::xmp::gainmap::ITEM_NAMESPACE;
 
 /// Upper bound on XMP packet length accepted by [`parse_xmp`]. Guards
 /// against CPU exhaustion on crafted inputs.
@@ -41,7 +38,7 @@ pub const ITEM_NAMESPACE: &str = "http://ns.google.com/photos/1.0/container/item
 /// 32 KB, but Extended XMP reassembly + base64-encoded depth-map
 /// payloads (GDepth / Android Dynamic Depth) can push into MB range,
 /// so a generous cap is appropriate.
-pub const MAX_XMP_LENGTH: usize = 16 * 1024 * 1024;
+pub const MAX_XMP_LENGTH: usize = zenmeta::xmp::gainmap::MAX_XMP_LENGTH;
 
 /// Errors from [`parse_xmp`].
 #[derive(Debug, Error)]
@@ -58,6 +55,9 @@ pub enum XmpError {
     /// XMP does not carry the `hdrgm` namespace — not Ultra HDR.
     #[error("XMP is not an Ultra HDR packet (no hdrgm:Version and no hdrgm:GainMapMax)")]
     NotUltraHdr,
+    /// Malformed, ambiguous or unsupported XML/RDF.
+    #[error("invalid gain-map XMP: {0}")]
+    Invalid(String),
 }
 
 /// Generate XMP for a 2-item Primary + GainMap Ultra HDR image.
@@ -90,11 +90,7 @@ pub enum XmpError {
 /// ```
 #[must_use]
 pub fn generate_xmp(metadata: &zencodec::GainMapParams, gainmap_length: usize) -> String {
-    let items = alloc::vec![
-        ContainerItem::primary("image/jpeg"),
-        ContainerItem::secondary(ItemSemantic::GainMap, "image/jpeg", gainmap_length),
-    ];
-    generate_xmp_with_items(metadata, &items)
+    zenmeta::xmp::gainmap::generate_xmp(metadata, gainmap_length)
 }
 
 /// Generate XMP for the primary JPEG: `Container:Directory` only.
@@ -106,32 +102,15 @@ pub fn generate_xmp(metadata: &zencodec::GainMapParams, gainmap_length: usize) -
 /// by Google Camera / Android.
 #[must_use]
 pub fn generate_primary_xmp(gainmap_length: usize) -> String {
-    let items = alloc::vec![
-        ContainerItem::primary("image/jpeg"),
-        ContainerItem::secondary(ItemSemantic::GainMap, "image/jpeg", gainmap_length),
-    ];
-    generate_primary_xmp_with_items(&items)
+    zenmeta::xmp::gainmap::generate_primary_xmp(gainmap_length)
 }
 
 /// Generate XMP for the primary JPEG with a custom item list (e.g. for
 /// depth-map containers alongside the gain map).
 #[must_use]
 pub fn generate_primary_xmp_with_items(items: &[ContainerItem]) -> String {
-    let container_dir = generate_container_directory(items);
-    format!(
-        r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description rdf:about=""
-        xmlns:hdrgm="{HDRGM_NAMESPACE}"
-        xmlns:Container="{CONTAINER_NAMESPACE}"
-        xmlns:Item="{ITEM_NAMESPACE}"
-        hdrgm:Version="1.0">
-{container_dir}
-    </rdf:Description>
-  </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>"#
+    zenmeta::xmp::gainmap::generate_primary_xmp_with_items(
+        &items.iter().map(to_shared_item).collect::<Vec<_>>(),
     )
 }
 
@@ -143,46 +122,7 @@ pub fn generate_primary_xmp_with_items(items: &[ContainerItem]) -> String {
 /// output.
 #[must_use]
 pub fn generate_gainmap_xmp(metadata: &zencodec::GainMapParams) -> String {
-    let ch = &metadata.channels;
-    let single = metadata.is_single_channel();
-
-    let gain_map_min = format_triple(&[ch[0].min, ch[1].min, ch[2].min], single);
-    let gain_map_max = format_triple(&[ch[0].max, ch[1].max, ch[2].max], single);
-    let gamma = format_triple(&[ch[0].gamma, ch[1].gamma, ch[2].gamma], single);
-    let offset_sdr = format_triple(
-        &[ch[0].base_offset, ch[1].base_offset, ch[2].base_offset],
-        single,
-    );
-    let offset_hdr = format_triple(
-        &[
-            ch[0].alternate_offset,
-            ch[1].alternate_offset,
-            ch[2].alternate_offset,
-        ],
-        single,
-    );
-    let hdr_capacity_min = metadata.base_hdr_headroom;
-    let hdr_capacity_max = metadata.alternate_hdr_headroom;
-
-    format!(
-        r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description rdf:about=""
-        xmlns:hdrgm="{HDRGM_NAMESPACE}"
-        hdrgm:Version="1.0"
-        hdrgm:GainMapMin="{gain_map_min}"
-        hdrgm:GainMapMax="{gain_map_max}"
-        hdrgm:Gamma="{gamma}"
-        hdrgm:OffsetSDR="{offset_sdr}"
-        hdrgm:OffsetHDR="{offset_hdr}"
-        hdrgm:HDRCapacityMin="{hdr_capacity_min:.6}"
-        hdrgm:HDRCapacityMax="{hdr_capacity_max:.6}"
-        hdrgm:BaseRenditionIsHDR="False"/>
-  </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>"#
-    )
+    zenmeta::xmp::gainmap::generate_gainmap_xmp(metadata)
 }
 
 /// Generate XMP with both numeric metadata and a custom container
@@ -193,57 +133,10 @@ pub fn generate_xmp_with_items(
     metadata: &zencodec::GainMapParams,
     items: &[ContainerItem],
 ) -> String {
-    let ch = &metadata.channels;
-    let single = metadata.is_single_channel();
-    let gain_map_min = format_triple(&[ch[0].min, ch[1].min, ch[2].min], single);
-    let gain_map_max = format_triple(&[ch[0].max, ch[1].max, ch[2].max], single);
-    let gamma = format_triple(&[ch[0].gamma, ch[1].gamma, ch[2].gamma], single);
-    let offset_sdr = format_triple(
-        &[ch[0].base_offset, ch[1].base_offset, ch[2].base_offset],
-        single,
-    );
-    let offset_hdr = format_triple(
-        &[
-            ch[0].alternate_offset,
-            ch[1].alternate_offset,
-            ch[2].alternate_offset,
-        ],
-        single,
-    );
-    let hdr_capacity_min = metadata.base_hdr_headroom;
-    let hdr_capacity_max = metadata.alternate_hdr_headroom;
-    let container_dir = generate_container_directory(items);
-    format!(
-        r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description rdf:about=""
-        xmlns:hdrgm="{HDRGM_NAMESPACE}"
-        xmlns:Container="{CONTAINER_NAMESPACE}"
-        xmlns:Item="{ITEM_NAMESPACE}"
-        hdrgm:Version="1.0"
-        hdrgm:GainMapMin="{gain_map_min}"
-        hdrgm:GainMapMax="{gain_map_max}"
-        hdrgm:Gamma="{gamma}"
-        hdrgm:OffsetSDR="{offset_sdr}"
-        hdrgm:OffsetHDR="{offset_hdr}"
-        hdrgm:HDRCapacityMin="{hdr_capacity_min:.6}"
-        hdrgm:HDRCapacityMax="{hdr_capacity_max:.6}"
-        hdrgm:BaseRenditionIsHDR="False">
-{container_dir}
-    </rdf:Description>
-  </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>"#
+    zenmeta::xmp::gainmap::generate_xmp_with_items(
+        metadata,
+        &items.iter().map(to_shared_item).collect::<Vec<_>>(),
     )
-}
-
-fn format_triple(values: &[f64; 3], single_channel: bool) -> String {
-    if single_channel {
-        format!("{:.6}", values[0])
-    } else {
-        format!("{:.6}, {:.6}, {:.6}", values[0], values[1], values[2])
-    }
 }
 
 /// Parse Ultra HDR XMP numeric metadata + optional `Item:Length` for
@@ -253,113 +146,21 @@ fn format_triple(values: &[f64; 3], single_channel: bool) -> String {
 /// `Container:Directory` (depth maps, confidence maps, vendor items),
 /// use [`parse_xmp_full`] instead.
 pub fn parse_xmp(xmp: &str) -> Result<(zencodec::GainMapParams, Option<usize>), XmpError> {
-    if xmp.len() > MAX_XMP_LENGTH {
-        return Err(XmpError::LengthLimit {
-            got: xmp.len(),
-            max: MAX_XMP_LENGTH,
-        });
-    }
-    if !xmp.contains("hdrgm:Version") && !xmp.contains("hdrgm:GainMapMax") {
-        return Err(XmpError::NotUltraHdr);
-    }
-
-    let mut metadata = zencodec::GainMapParams::default();
-    let mut gainmap_length = None;
-
-    if let Some(val) = extract_attribute(xmp, "hdrgm:GainMapMin") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].min = *v;
+    zenmeta::xmp::gainmap::parse_xmp(xmp).map_err(|error| match error {
+        zenmeta::xmp::gainmap::XmpError::LengthLimit { got, max } => {
+            XmpError::LengthLimit { got, max }
         }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:GainMapMax") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].max = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:Gamma") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].gamma = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:OffsetSDR") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].base_offset = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:OffsetHDR") {
-        let vals = parse_triple_f64(&val);
-        for (i, v) in vals.iter().enumerate() {
-            metadata.channels[i].alternate_offset = *v;
-        }
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:HDRCapacityMin")
-        && let Ok(v) = val.parse::<f64>()
-    {
-        metadata.base_hdr_headroom = v;
-    }
-    if let Some(val) = extract_attribute(xmp, "hdrgm:HDRCapacityMax")
-        && let Ok(v) = val.parse::<f64>()
-    {
-        metadata.alternate_hdr_headroom = v;
-    }
-    if let Some(val) = extract_attribute(xmp, "Item:Length")
-        && let Ok(len) = val.parse::<usize>()
-    {
-        gainmap_length = Some(len);
-    }
-    Ok((metadata, gainmap_length))
+        zenmeta::xmp::gainmap::XmpError::NotUltraHdr => XmpError::NotUltraHdr,
+        zenmeta::xmp::gainmap::XmpError::Invalid(message) => XmpError::Invalid(message),
+        other => XmpError::Invalid(other.to_string()),
+    })
 }
-
-/// Parse both numeric metadata (if present) and all
-/// `Container:Directory` items. Never errors — returns empty results
-/// when the input is not an Ultra HDR packet.
+/// Parse numeric parameters and container items. Invalid packets yield no
+/// metadata; use [`parse_xmp`] when a diagnostic error is required.
 #[must_use]
 pub fn parse_xmp_full(xmp: &str) -> (Option<zencodec::GainMapParams>, Vec<ContainerItem>) {
-    let metadata = if xmp.contains("hdrgm:Version") || xmp.contains("hdrgm:GainMapMax") {
-        parse_xmp(xmp).ok().map(|(m, _)| m)
-    } else {
-        None
-    };
-    let items = parse_container_items(xmp);
-    (metadata, items)
-}
-
-fn extract_attribute(xmp: &str, attr: &str) -> Option<String> {
-    let pattern = format!("{attr}=\"");
-    if let Some(start) = xmp.find(&pattern) {
-        let value_start = start + pattern.len();
-        if let Some(end) = xmp[value_start..].find('"') {
-            return Some(xmp[value_start..value_start + end].to_string());
-        }
-    }
-    let open_tag = format!("<{attr}>");
-    let close_tag = format!("</{attr}>");
-    if let Some(start) = xmp.find(&open_tag) {
-        let value_start = start + open_tag.len();
-        if let Some(end) = xmp[value_start..].find(&close_tag) {
-            return Some(xmp[value_start..value_start + end].trim().to_string());
-        }
-    }
-    None
-}
-
-/// Parse a comma-separated triple into exactly 3 f64 values. A single
-/// scalar is replicated to all three channels.
-fn parse_triple_f64(value: &str) -> [f64; 3] {
-    let parsed: Vec<f64> = value
-        .split(',')
-        .filter_map(|s| s.trim().parse::<f64>().ok())
-        .collect();
-    match parsed.len() {
-        0 => [0.0; 3],
-        1 => [parsed[0]; 3],
-        2 => [parsed[0], parsed[1], 0.0],
-        _ => [parsed[0], parsed[1], parsed[2]],
-    }
+    let (metadata, items) = zenmeta::xmp::gainmap::parse_xmp_full(xmp);
+    (metadata, items.into_iter().map(from_shared_item).collect())
 }
 
 /// Wrap an XMP packet in a JPEG APP1 marker with the standard
@@ -377,6 +178,7 @@ pub fn create_xmp_app1_marker(xmp: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::ItemSemantic;
     use super::*;
 
     fn test_metadata() -> zencodec::GainMapParams {
@@ -499,44 +301,111 @@ mod tests {
     #[test]
     fn parse_xmp_accepts_1_mib_input() {
         let mut big = String::with_capacity(1024 * 1024 + 100);
-        big.push_str("hdrgm:Version=\"1.0\" hdrgm:GainMapMax=\"2.0\" ");
+        big.push_str(&generate_gainmap_xmp(&test_metadata()));
         while big.len() <= 1024 * 1024 {
             big.push_str("                                   ");
         }
         assert!(parse_xmp(&big).is_ok(), "1 MiB XMP must not trip the cap");
     }
 
+    /// Regression test for issue #144: the gain-map XMP packet from
+    /// `seine_sdr_gainmap_srgb.jpg` (Adobe Camera Raw output), verbatim.
+    /// Scalars are attributes; GainMapMin/Max/Gamma are rdf:Seq
+    /// elements. The old parser zeroed all three element-form fields.
     #[test]
-    fn extract_attribute_finds_attribute_form() {
-        let xmp = r#"<rdf:Description hdrgm:Version="1.0" hdrgm:GainMapMax="2.0"/>"#;
-        assert_eq!(extract_attribute(xmp, "hdrgm:Version"), Some("1.0".into()));
-        assert_eq!(
-            extract_attribute(xmp, "hdrgm:GainMapMax"),
-            Some("2.0".into())
+    fn parse_xmp_rdf_seq_element_form_seine_fixture() {
+        let xmp = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"
+   hdrgm:Version="1.0"
+   hdrgm:BaseRenditionIsHDR="False"
+   hdrgm:OffsetSDR="0.015625"
+   hdrgm:OffsetHDR="0.015625"
+   hdrgm:HDRCapacityMin="0"
+   hdrgm:HDRCapacityMax="1.3">
+   <hdrgm:GainMapMin>
+    <rdf:Seq>
+     <rdf:li>-0.256907</rdf:li>
+     <rdf:li>-0.261365</rdf:li>
+     <rdf:li>-0.280284</rdf:li>
+    </rdf:Seq>
+   </hdrgm:GainMapMin>
+   <hdrgm:GainMapMax>
+    <rdf:Seq>
+     <rdf:li>1.277177</rdf:li>
+     <rdf:li>1.277203</rdf:li>
+     <rdf:li>1.277969</rdf:li>
+    </rdf:Seq>
+   </hdrgm:GainMapMax>
+   <hdrgm:Gamma>
+    <rdf:Seq>
+     <rdf:li>0.953784</rdf:li>
+     <rdf:li>0.941095</rdf:li>
+     <rdf:li>0.919422</rdf:li>
+    </rdf:Seq>
+   </hdrgm:Gamma>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#;
+        let (parsed, length) = parse_xmp(xmp).expect("seine gain-map XMP must parse");
+        assert_eq!(length, None);
+
+        let expect_min = [-0.256907, -0.261365, -0.280284];
+        let expect_max = [1.277177, 1.277203, 1.277969];
+        let expect_gamma = [0.953784, 0.941095, 0.919422];
+        for i in 0..3 {
+            assert!(
+                (parsed.channels[i].min - expect_min[i]).abs() < XMP_FLOAT_TOL,
+                "ch[{i}].min: {}",
+                parsed.channels[i].min
+            );
+            assert!(
+                (parsed.channels[i].max - expect_max[i]).abs() < XMP_FLOAT_TOL,
+                "ch[{i}].max: {}",
+                parsed.channels[i].max
+            );
+            assert!(
+                (parsed.channels[i].gamma - expect_gamma[i]).abs() < XMP_FLOAT_TOL,
+                "ch[{i}].gamma: {}",
+                parsed.channels[i].gamma
+            );
+            assert!((parsed.channels[i].base_offset - 0.015625).abs() < XMP_FLOAT_TOL);
+            assert!((parsed.channels[i].alternate_offset - 0.015625).abs() < XMP_FLOAT_TOL);
+        }
+        assert!((parsed.base_hdr_headroom - 0.0).abs() < XMP_FLOAT_TOL);
+        assert!((parsed.alternate_hdr_headroom - 1.3).abs() < XMP_FLOAT_TOL);
+        // The downstream gate that exposed #144: gamma=0 fails validate().
+        parsed.validate().expect("parsed params must validate");
+    }
+
+    #[test]
+    fn malformed_numbers_refuse_instead_of_changing_rendering() {
+        let xml = generate_gainmap_xmp(&test_metadata())
+            .replace("hdrgm:Gamma=\"1.000000\"", "hdrgm:Gamma=\"oops\"");
+        assert!(matches!(parse_xmp(&xml), Err(XmpError::Invalid(_))));
+    }
+
+    #[test]
+    fn namespace_alias_and_gainmap_item_identity() {
+        let items = alloc::vec![
+            ContainerItem::primary("image/jpeg"),
+            ContainerItem::secondary(ItemSemantic::DepthMap, "image/jpeg", 9),
+            ContainerItem::secondary(ItemSemantic::GainMap, "image/jpeg", 123)
+        ];
+        let xml = generate_xmp_with_items(&test_metadata(), &items)
+            .replace("hdrgm:", "gain:")
+            .replace("xmlns:hdrgm=", "xmlns:gain=");
+        assert_eq!(parse_xmp(&xml).unwrap().1, Some(123));
+        let fake = xml.replace(HDRGM_NAMESPACE, "urn:spoof");
+        assert!(matches!(parse_xmp(&fake), Err(XmpError::NotUltraHdr)));
+        let duplicate = xml.replace(
+            "gain:Version=\"1.0\"",
+            "gain:Version=\"1.0\" gain:Version=\"1.0\"",
         );
-        assert_eq!(extract_attribute(xmp, "hdrgm:Missing"), None);
-    }
-
-    #[test]
-    fn extract_attribute_finds_element_form() {
-        let xmp = "<hdrgm:Gamma>1.5</hdrgm:Gamma>";
-        assert_eq!(extract_attribute(xmp, "hdrgm:Gamma"), Some("1.5".into()));
-    }
-
-    #[test]
-    fn parse_triple_f64_single_scalar_replicates() {
-        assert_eq!(parse_triple_f64("1.5"), [1.5, 1.5, 1.5]);
-    }
-
-    #[test]
-    fn parse_triple_f64_three_values() {
-        assert_eq!(parse_triple_f64("1.0, 2.0, 3.0"), [1.0, 2.0, 3.0]);
-    }
-
-    #[test]
-    fn parse_triple_f64_empty_is_zeros() {
-        assert_eq!(parse_triple_f64(""), [0.0, 0.0, 0.0]);
-        assert_eq!(parse_triple_f64("not-a-number"), [0.0, 0.0, 0.0]);
+        assert!(parse_xmp(&duplicate).is_err());
     }
 
     #[test]
@@ -605,8 +474,8 @@ mod tests {
         )
             .prop_map(|(min, max, gamma, bo, ao)| {
                 let mut c = zencodec::GainMapChannel::default();
-                c.min = min;
-                c.max = max;
+                c.min = min.min(max);
+                c.max = min.max(max);
                 c.gamma = gamma;
                 c.base_offset = bo;
                 c.alternate_offset = ao;

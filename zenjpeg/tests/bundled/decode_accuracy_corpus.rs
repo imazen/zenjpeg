@@ -9,7 +9,7 @@
 //! - jpeg-decoder (pure Rust reference)
 //! - libjpeg-turbo via djpeg CLI (C reference)
 //!
-//! Run with: cargo test --release --features decoder -p zenjpeg --test decode_accuracy_corpus -- --nocapture --ignored
+//! Run with: cargo test --release -p zenjpeg --test decode_accuracy_corpus -- --nocapture --ignored
 
 use dssim_core::Dssim;
 use enough::Unstoppable;
@@ -101,7 +101,14 @@ fn is_arithmetic_jpeg(data: &[u8]) -> bool {
 /// Consistent across all platforms — no system djpeg version dependency.
 /// Returns None for arithmetic-coded and CMYK files (mozjpeg calls exit() on these).
 fn decode_mozjpeg(data: &[u8]) -> Option<DecodeResult> {
-    if is_arithmetic_jpeg(data) {
+    let info = zenjpeg::decoder::Decoder::new().read_info(data).ok()?;
+    // These files never reached this 8-bit-only FFI before native decoding
+    // support. The independent native_precision oracle covers their pixels;
+    // mozjpeg's default error handler terminates the whole test process.
+    if is_arithmetic_jpeg(data)
+        || info.precision != 8
+        || info.mode == zenjpeg::decoder::JpegMode::Lossless
+    {
         return None;
     }
     use mozjpeg_sys::*;

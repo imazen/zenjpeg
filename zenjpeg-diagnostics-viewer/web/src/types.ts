@@ -6,10 +6,8 @@ export interface BlockDiagnostics {
   coefPreQuant: Float32Array | number[];
   /** [i16; 64] in JPEG zigzag order. */
   coefLevels: Int16Array | number[];
-  /** Per-block AQ multiplier (1.0 = neutral, <1 = finer, >1 = coarser). */
-  aqMultiplier: number;
-  /** Entropy bits attributed to this block (0 if not yet captured). */
-  entropyBits: number;
+  /** Actual per-block AQ strength supplied to quantization. */
+  aqStrength: number;
 }
 
 export interface ComponentDiagnostics {
@@ -21,6 +19,7 @@ export interface ComponentDiagnostics {
   quantTableBase: Uint16Array | number[];
   /** Zero-bias offset table (natural row-major, length 64). */
   zeroBias: Float32Array | number[];
+  zeroBiasMul: Float32Array | number[];
   /** Per-block records, raster order (idx = row*cols + col). */
   blocks: BlockDiagnostics[];
 }
@@ -94,7 +93,6 @@ export interface EncodeOptions {
   hybridDcEnabled?: boolean;
   hybridAqExponent?: number;
   hybridAqThreshold?: number;
-  hybridQualityAdaptive?: boolean;
 
   // ── Custom quant tables (overrides the source-derived defaults) ───────
   customQuantTables?: CustomQuantTables | null;

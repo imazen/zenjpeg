@@ -35,7 +35,7 @@ use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout, XybSubsampl
 /// so DCT block boundaries don't smear adjacent grid samples together.
 fn build_grid_image(step: u32) -> (u32, u32, Vec<u8>, Vec<(u8, u8, u8)>) {
     assert!(step > 0 && step <= 256);
-    let n = (256 / step.max(1)) as u32; // samples per channel
+    let n = 256 / step.max(1); // samples per channel
     let total = n * n * n;
     let block = 8u32; // one 8×8 px block per sample so JPEG sees a uniform color
     let cols_per_row = 256u32; // wrap into a roughly square image

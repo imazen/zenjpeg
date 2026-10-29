@@ -9,6 +9,13 @@
 //! - Output: 256 code lengths, all <= 16 bits
 //! - Kraft inequality guaranteed
 
+// Dead-code analysis note: several items here are reachable only through
+// the `__test-utils` pub surface (benches, examples, debugging tools) or
+// through target-dependent SIMD dispatch tiers, so the default build
+// cannot see their consumers. Suppress dead-code noise for the default
+// build; keep the crate warning-clean so REAL warnings stay visible.
+#![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
+
 use crate::error::Result;
 use crate::huffman::optimize::OptimizedTable;
 
@@ -234,7 +241,7 @@ pub enum HuffmanAlgorithm {
 
     /// jpegli C++ algorithm (sorted two-pointer merge with retry).
     ///
-    /// This is the algorithm from Google's jpegli in the JPEG XL project.
+    /// This is the algorithm from the jpegli project (Bruse, Versari, Szabadka and Alakuijala).
     /// Uses sorted merge with sentinels. If tree exceeds depth limit, retries
     /// with boosted minimum frequencies.
     ///

@@ -11,7 +11,7 @@
 use anyhow::Result;
 use std::str::FromStr;
 
-use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, Strictness, TargetColorSpace};
+use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, TargetColorSpace};
 
 /// Quality target band as `MIN..MAX` (inclusive on both ends).
 ///
@@ -97,10 +97,35 @@ pub fn search_for_band<F>(
     initial_quality: Option<f32>,
     candidate_needs_cms: bool,
     attempts: u32,
-    mut encode_at_q: F,
+    encode_at_q: F,
 ) -> Result<SearchResult>
 where
     F: FnMut(f32) -> Result<Vec<u8>>,
+{
+    search_with(
+        band,
+        metric,
+        quality_range,
+        initial_quality,
+        attempts,
+        encode_at_q,
+        |jpeg| measure(jpeg, source_rgb, width, height, metric, candidate_needs_cms),
+    )
+}
+
+/// [`search_for_band`] with the measurement passed in.
+fn search_with<F, M>(
+    band: Band,
+    metric: Metric,
+    quality_range: (f32, f32),
+    initial_quality: Option<f32>,
+    attempts: u32,
+    mut encode_at_q: F,
+    mut measure_jpeg: M,
+) -> Result<SearchResult>
+where
+    F: FnMut(f32) -> Result<Vec<u8>>,
+    M: FnMut(&[u8]) -> Result<f32>,
 {
     if attempts == 0 {
         anyhow::bail!("--attempts must be ≥ 1");
@@ -112,25 +137,16 @@ where
     }
 
     let mut best: Option<SearchResult> = None;
-    let mut attempts_used = 0u32;
     let mut next_q = initial_quality.map(|q| q.clamp(lo, hi));
 
-    for _ in 0..attempts {
+    for attempts_used in 1..=attempts {
         // Use the seed on iteration 1 when provided; otherwise bisect current bounds.
         let q = next_q
             .take()
             .unwrap_or_else(|| ((lo + hi) / 2.0).clamp(0.0, 100.0));
 
         let jpeg = encode_at_q(q)?;
-        let measured = measure(
-            &jpeg,
-            source_rgb,
-            width,
-            height,
-            metric,
-            candidate_needs_cms,
-        )?;
-        attempts_used += 1;
+        let measured = measure_jpeg(&jpeg)?;
 
         let in_band = measured >= band.min && measured <= band.max;
         let candidate = SearchResult {
@@ -161,8 +177,10 @@ where
             }
         };
 
-        // Adjust bounds for next iteration.
-        let measured = best.as_ref().map(|b| b.metric).unwrap();
+        // Adjust bounds from this attempt's result: `q` is this attempt's
+        // quality, so the direction must come from its measurement too. (It
+        // came from the best-so-far, which may be an earlier attempt on the
+        // other side of the band, and then the bisection moved away from it.)
         let above_band = measured > band.max;
         let lower_q_needed = match metric {
             Metric::Ssim2 => above_band,     // too good → lower q
@@ -249,7 +267,7 @@ pub fn decode_to_srgb8(jpeg_bytes: &[u8], w: u32, h: u32, apply_cms: bool) -> Re
 
 /// Repack a packed RGB8 byte buffer as `ImgVec<[u8; 3]>` for the metric crates.
 fn pack_rgb8(pixels: &[u8], w: u32, h: u32) -> imgref::ImgVec<[u8; 3]> {
-    let triples: Vec<[u8; 3]> = pixels.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let triples: Vec<[u8; 3]> = pixels.as_chunks::<3>().0.to_vec();
     imgref::ImgVec::new(triples, w as usize, h as usize)
 }
 
@@ -269,11 +287,15 @@ fn compute_butteraugli(a: &[u8], b: &[u8], w: u32, h: u32) -> Result<f32> {
     use rgb::RGB8;
 
     let a_pix: Vec<RGB8> = a
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     let b_pix: Vec<RGB8> = b
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
     let a_img = ImgRef::new(&a_pix, w as usize, h as usize);
@@ -370,5 +392,38 @@ mod tests {
         let r = result.unwrap();
         assert!(r.attempts_used >= 1);
         assert!(r.attempts_used <= 3);
+    }
+
+    /// The bounds follow the attempt just measured, not the best so far.
+    /// SSIM2 jumps from 80 to 95 at q 70 (band 85..90, file size grows with
+    /// q): the seed q50 scores 80 and the next attempt, q75.5, scores 95,
+    /// equally far from the band with a larger file, so q50 stays the best.
+    /// The search must then go below 75.5; steering by the best's 80 sent it
+    /// above 76.5 instead.
+    #[test]
+    fn bounds_follow_the_current_attempt() {
+        let mut tried = Vec::new();
+        let result = search_with(
+            Band {
+                min: 85.0,
+                max: 90.0,
+            },
+            Metric::Ssim2,
+            (0.0, 100.0),
+            Some(50.0),
+            6,
+            |q| {
+                tried.push(q);
+                Ok(vec![0; q as usize])
+            },
+            |jpeg| Ok(if jpeg.len() < 70 { 80.0 } else { 95.0 }),
+        )
+        .unwrap();
+        assert!(!result.in_band);
+        assert_eq!(tried[..2], [50.0, 75.5]);
+        assert!(
+            tried[2..].iter().all(|&q| q < 75.5),
+            "after q75.5 scored above the band the search went above it: {tried:?}"
+        );
     }
 }

@@ -6,8 +6,12 @@ members = [
     "zenyuv",
     "zjpeg",
     "internal/jpegli-internals-sys",
-    "zenjpeg-diagnostics-viewer/wasm",
+    "internal/coz-loop",
 ]
+# `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
+# `cargo test` and every CI job (incl. --all-features) never compile its
+# dependency tree or run rustdoc. Regenerate via `just api-doc`.
+exclude = ["apidoc"]
 
 [workspace.package]
 version = "0.1.0"
@@ -31,11 +35,50 @@ bincode = "1.3"
 
 # Color management
 lcms2 = "6.0"
-moxcms = { version = "0.8.1", features = ["options"] }
+# zenjpeg's own moxcms usage resolves to 0.9.0 (verified 2026-07-23 via
+# `cargo tree -p zenjpeg` — moxcms is a direct child, not unified with any
+# older instance). The `image` crate that used to force-cap this whole
+# workspace at 0.8.1 is gone (see zenjpeg/Cargo.toml's dev-dependencies).
+#
+# UPDATE 2026-07-24: the 3-hop chain (zenpixels-convert -> ultrahdr-core ->
+# ultrahdr-rs) that used to force an isolated moxcms 0.8.1 instance is now
+# published for real, not just locally patched: zenpixels 0.2.16,
+# zenpixels-convert 0.2.16 (crates.io), ultrahdr-core 0.6.0 (crates.io,
+# see below). `cargo tree -i moxcms` inside ~/work/zen/ultrahdr now shows a
+# single unified moxcms 0.9.0 instance.
+#
+# One ISOLATED moxcms 0.8.1 instance remains here in zenjpeg specifically,
+# entirely contained within the ultrahdr-rs *dev*-dependency subtree (used
+# only by our own test suite as a black-box HDR comparison tool — dev-deps
+# never ship in the published zenjpeg crate). Root cause is now circular
+# rather than unpublished-sibling: ultrahdr-rs's own next release (0.4.1,
+# tagged + GitHub-released, see imazen/ultrahdr) requires zenjpeg 0.9.0
+# published on crates.io first (workspace pin `zenjpeg = { path =
+# "../zenjpeg/zenjpeg", version = "0.9.0" }`), and zenjpeg 0.9.0 itself is
+# pre-bumped but gated on explicit owner sign-off before `cargo publish`
+# (same zencodec-0.1.26-driven release batch as zenpng 0.2.0 — see
+# CHANGELOG.md's `[Unreleased]` section). So crates.io ultrahdr-rs stays at
+# 0.3.5 (hard-pinning moxcms = "0.8.1") until that publish happens. As
+# before: zenjpeg's own code never crosses a moxcms type across the
+# ultrahdr-rs boundary, so the isolated instance is harmless, not just
+# unfixed. Revisit by publishing zenjpeg 0.9.0 (unblocks ultrahdr-rs 0.4.1,
+# which then unblocks this).
+#
+# RESOLVED 2026-07-24: a second, unrelated isolated moxcms 0.7.11 instance
+# via `codec-eval` (our own crate at ~/work/codec-eval, a dev-dependency for
+# corpus comparison tests) is now gone for real. Root cause wasn't moxcms:
+# codec-eval's published 0.3.1/0.3.2 both required `fast-ssim2 = "^0.7.2"`,
+# and fast-ssim2 0.7.2 + 0.7.3 are BOTH YANKED with no 0.7.4 — codec-eval
+# >0.3.0 was unresolvable from crates.io at all, so this workspace stuck on
+# the last resolvable version, 0.3.0. Fixed by publishing codec-eval 0.3.3
+# (bumps fast-ssim2 to 0.8.0+ and widens its own moxcms range to cover
+# 0.9.0). `cargo update -p codec-eval@0.3.0` picked it up; only the
+# ultrahdr-rs 0.8.1 instance documented above remains.
+moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)
 png = "0.18"
-zenpng = { version = "0.1.1", default-features = false }
+zenpng = { version = ">=0.2.0, <0.4.0", default-features = false }
 zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
 # excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
@@ -43,16 +86,13 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # Quality metrics
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
-# Used by zenjpeg's Quality::Zq target-perceptual-quality closed loop and
-# by various dev-only test/measurement examples.
-zensim = { version = "0.2.6" }
+# Dev-only quality regression and measurement tooling; not a library dependency.
+zensim = { git = "https://github.com/imazen/zensimx", rev = "8557758809156baba7364bd8cfe32889a61da4e8" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
 yuv = { version = "0.8", features = ["professional_mode"] }
 zenyuv = { path = "zenyuv" }
-zenanalyze = { path = "../zenanalyze", version = "0.1" }
-
 # Testing
 approx = "0.5"
 proptest = "1.4"
@@ -74,10 +114,13 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 # Fast linear-sRGB conversion
 linear-srgb = "0.6.12"
 
-# Token-based safe SIMD intrinsics
-archmage = { version = "0.9.23", features = ["macros", "avx512", "testable_dispatch"] }
+# Token-based safe SIMD intrinsics. Never add `testable_dispatch` here: every
+# member inherits workspace dependency features as a normal dependency, so it
+# would reach every downstream build and turn each archmage `summon()` there
+# into a cache read. Tests get it as a dev-dependency, tier benches via `_dev`.
+archmage = { version = ">=0.9.30, <=0.9.31-beta.1", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
-magetypes = { version = "0.9.23", features = ["avx512"] }
+magetypes = { version = ">=0.9.30, <=0.9.31-beta.1", features = ["avx512"] }
 
 # Error tracing with location tracking
 whereat = "0.1.5"
@@ -88,9 +131,12 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { version = "0.1.20" }
-zenpixels = { version = "0.2.11", default-features = false, features = ["imgref"] }
-zenpixels-convert = { version = "0.2.11", default-features = false }
+# A version edge: each root resolves the zencodec 0.2 family through its own
+# patch table (dependency patches do not propagate). The 0.2 floor prevents
+# resolving this edge to the incompatible published 0.1 contract.
+zencodec = { version = ">=0.2.0, <0.3.0" }
+zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"] }
+zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
 garb = { version = "0.2.6", default-features = false }
 
 # Published crates
@@ -106,11 +152,11 @@ img-parts = "0.4"
 half = { version = "2.7.1", default-features = false }
 
 # Tone-mapping curves (Bt2446C default for encode_ultrahdr_luma).
-zentone = { version = "0.1", default-features = false }
+zentone = { version = ">=0.1.0, <0.3.0", default-features = false }
 
 # Our ultrahdr crates
-ultrahdr-rs = "0.3.5"
-ultrahdr-core = { version = "0.5", default-features = false }
+ultrahdr-rs = ">=0.3.5, <0.5"
+ultrahdr-core = { version = "0.6.0", default-features = false }
 
 # Resize pipeline. Constraint solver (FitMode) and EXIF-orientation bridge
 # both live in zenresize 0.3+. zenlayout is no longer used anywhere in this
@@ -131,6 +177,13 @@ opt-level = 2
 
 [profile.release]
 debug = true
+
+# Consumers build zenjpeg unoptimized in their own debug and test profiles;
+# `just stack-demand-check` runs tests/stack_demand.rs at that level.
+[profile.unoptimized]
+inherits = "dev"
+opt-level = 0
+debug = false
 
 [workspace.lints.rust]
 # unsafe_code is allowed - we have intentional unsafe for performance-critical
@@ -175,3 +228,27 @@ doc_overindented_list_items = "allow"  # Doc formatting preferences
 manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
+[patch.crates-io]
+# PNG strip compression requires this tested source; dependency patches do not propagate.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
+
+# Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+# The zencodec 0.2 family, all from one optional-control revision.
+# zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
+# patches resolve them for local builds; releases stay gated on publishing them.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+# Native PNG tests and metric dev-dependencies share the same core family.
+# Their formerly separate 0.1 core fails with the paired pixel representation.
+# zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and
+# crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1: every feature set would
+# resolve a second zencodec, and with `ultrahdr` the two GainMapParams collide
+# (E0308). This review revision of imazen/ultrahdr (branch
+# review/zencodec-0.2-family) takes the family through version edges too.
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7e9d296c9e037e626234c9f0e8673d48278f83f0" }

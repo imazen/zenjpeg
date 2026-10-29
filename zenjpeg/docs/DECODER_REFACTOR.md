@@ -39,7 +39,7 @@ Refactor the zenjpeg decoder to achieve zune-jpeg-level performance while mainta
 
 ## Benchmark Results (2026-01-22)
 
-Run with: `cargo bench -p zenjpeg --bench decode_compare --features decoder`
+Run with: `cargo bench -p zenjpeg --bench decode_compare`
 
 | Size | Mode | zune-jpeg | zenjpeg | Ratio |
 |------|------|-----------|-----------|-------|

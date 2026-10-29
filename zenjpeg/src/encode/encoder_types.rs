@@ -22,25 +22,6 @@ pub enum Quality {
     /// Approximate Butteraugli distance target.
     /// Range: 0.0+ (lower = better). <1.0 excellent, <3.0 good.
     ApproxButteraugli(f32),
-
-    /// Target perceptual quality in `zq` units (issue #113).
-    ///
-    /// `zq` is calibrated against zensim score so that the encoder lands
-    /// at roughly the same PERCEIVED quality regardless of content type.
-    /// Unlike `ApproxJpegli` (which is a fixed algorithmic knob), `Zq`
-    /// triggers a closed-loop encode: the encoder iterates per-block
-    /// quantization until the achieved zensim score is at or above
-    /// `target` (within the default budget).
-    ///
-    /// Range: ~30–100 useful, with 75–90 the typical web/CDN range.
-    /// Uses [`zq::ZqTarget::default()`] for everything except the target
-    /// value; for explicit budget/strictness control, use
-    /// [`Quality::ZqExplicit`].
-    Zq(f32),
-
-    /// Target perceptual quality with explicit iteration policy
-    /// (issue #113). See [`zq::ZqTarget`] for the per-knob semantics.
-    ZqExplicit(crate::encode::zq::ZqTarget),
 }
 
 impl Default for Quality {
@@ -70,10 +51,6 @@ impl From<i32> for Quality {
 impl Quality {
     /// Convert to internal quality value (0.0-100.0 scale).
     ///
-    /// For [`Quality::Zq`] / [`Quality::ZqExplicit`] this returns the
-    /// STARTING jpegli quality for the iteration loop's first pass, NOT
-    /// the eventual achieved quality. The closed-loop encoder adjusts
-    /// per-block AQ from this baseline.
     #[must_use]
     pub fn to_internal(&self) -> f32 {
         match self {
@@ -81,27 +58,6 @@ impl Quality {
             Quality::ApproxMozjpeg(q) => mozjpeg_to_internal(*q),
             Quality::ApproxSsim2(score) => ssim2_to_internal(*score),
             Quality::ApproxButteraugli(dist) => butteraugli_to_internal(*dist),
-            Quality::Zq(zq) => crate::encode::zq::zq_to_starting_jpegli_q(*zq),
-            Quality::ZqExplicit(t) => crate::encode::zq::zq_to_starting_jpegli_q(t.target),
-        }
-    }
-
-    /// Whether this quality variant triggers the closed-loop iteration
-    /// path (i.e. requires the decoder + zensim measurement on each
-    /// pass). Returns `false` for the existing one-shot variants.
-    #[must_use]
-    pub fn is_zq_target(&self) -> bool {
-        matches!(self, Quality::Zq(_) | Quality::ZqExplicit(_))
-    }
-
-    /// Resolve to a [`crate::encode::zq::ZqTarget`] when this is a
-    /// closed-loop variant. Returns `None` for the one-shot variants.
-    #[must_use]
-    pub fn zq_target(&self) -> Option<crate::encode::zq::ZqTarget> {
-        match self {
-            Quality::Zq(zq) => Some(crate::encode::zq::ZqTarget::new(*zq)),
-            Quality::ZqExplicit(t) => Some(*t),
-            _ => None,
         }
     }
 
@@ -288,12 +244,37 @@ pub enum ColorMode {
 
     /// Single-channel grayscale.
     Grayscale,
+
+    /// RGB stored without color transformation (issue #185).
+    ///
+    /// Channels pass through to JPEG components R, G, B verbatim (only
+    /// DCT quantization is lossy) — no RGB→YCbCr matrix, no chroma
+    /// subsampling (always 4:4:4). Signaled with component IDs
+    /// 'R','G','B' and an Adobe APP14 marker with transform=0, matching
+    /// libjpeg's `JCS_RGB`. For channel-packed data (e.g. microscopy
+    /// stains) where cross-channel bleed from a color transform is
+    /// unacceptable.
+    Rgb,
 }
 
 impl Default for ColorMode {
     fn default() -> Self {
         ColorMode::YCbCr {
             subsampling: ChromaSubsampling::None, // 4:4:4 - no subsampling
+        }
+    }
+}
+
+impl ColorMode {
+    /// Whether a JFIF APP0 may accompany this output. JFIF means YCbCr (or
+    /// gray) to every decoder: libjpeg-turbo's `default_decompress_parms` and
+    /// jpegli's `ProcessSOF` decode a three-component JFIF frame as YCbCr
+    /// whatever its APP14 or component IDs say, and libjpeg-turbo's
+    /// `jpeg_set_colorspace` writes JFIF only for gray and YCbCr.
+    pub(crate) fn allows_jfif(self) -> bool {
+        match self {
+            ColorMode::YCbCr { .. } | ColorMode::Grayscale => true,
+            ColorMode::Rgb | ColorMode::Xyb { .. } => false,
         }
     }
 }
@@ -593,10 +574,7 @@ mod tests {
     #[test]
     fn test_optimization_preset_all_variants() {
         let all: Vec<_> = OptimizationPreset::all().collect();
-        #[cfg(feature = "trellis")]
         assert_eq!(all.len(), 8);
-        #[cfg(not(feature = "trellis"))]
-        assert_eq!(all.len(), 2);
         // No duplicates
         let mut set = std::collections::HashSet::new();
         for p in &all {
@@ -609,8 +587,6 @@ mod tests {
         assert!(!OptimizationPreset::JpegliBaseline.is_progressive());
         assert!(OptimizationPreset::JpegliProgressive.is_progressive());
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_progressive_trellis() {
         assert!(!OptimizationPreset::MozjpegBaseline.is_progressive());
@@ -626,8 +602,6 @@ mod tests {
         assert!(!OptimizationPreset::JpegliBaseline.uses_trellis());
         assert!(!OptimizationPreset::JpegliProgressive.uses_trellis());
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_trellis() {
         assert!(OptimizationPreset::MozjpegBaseline.uses_trellis());
@@ -643,8 +617,6 @@ mod tests {
         assert!(OptimizationPreset::JpegliBaseline.uses_aq());
         assert!(OptimizationPreset::JpegliProgressive.uses_aq());
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_aq_trellis() {
         assert!(!OptimizationPreset::MozjpegBaseline.uses_aq());
@@ -662,8 +634,6 @@ mod tests {
             ScanStrategy::Default
         );
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_scan_strategy_trellis() {
         assert_eq!(
@@ -691,8 +661,6 @@ mod tests {
             QuantTableSource::Jpegli
         );
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_quant_table_source_trellis() {
         assert_eq!(
@@ -733,8 +701,6 @@ mod tests {
             "jpegli-baseline"
         );
     }
-
-    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_display_trellis() {
         assert_eq!(
@@ -895,47 +861,29 @@ pub enum OptimizationPreset {
     /// Baseline JPEG, optimized Huffman, trellis (full search). No jpegli AQ.
     /// 2 quant tables (shared chroma), Robidoux tables. No deringing.
     /// Matches C mozjpeg default profile with baseline output.
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     MozjpegBaseline,
 
     /// Progressive with mozjpeg scan script (freq split at 8/9, no chroma SA).
     /// Trellis (full search). No AQ. No deringing. 2 quant tables, Robidoux.
     /// Matches C mozjpeg default profile with progressive output.
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     MozjpegProgressive,
 
     /// Mozjpeg progressive + scan search (64 candidates). Trellis (full search).
     /// No AQ. Deringing enabled. 2 quant tables, Robidoux.
     /// Matches C mozjpeg `JCP_MAX_COMPRESSION` profile.
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     MozjpegMaxCompression,
 
     // === Hybrid lineage (zenjpeg-unique) ===
     /// Baseline JPEG with jpegli AQ + trellis (Adaptive speed) + deringing.
     /// 3 quant tables (separate chroma), jpegli perceptual tables.
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     HybridBaseline,
 
     /// Jpegli AQ + trellis (Adaptive) + deringing + jpegli scan script.
     /// 3 quant tables. Typically the best quality/size tradeoff.
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     HybridProgressive,
 
     /// AQ + trellis (full search) + deringing + scan search (64 candidates).
     /// 3 quant tables. Slowest, smallest files.
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     HybridMaxCompression,
 }
 
@@ -954,16 +902,10 @@ pub enum Effort {
 
     /// Balanced quality/speed: AQ + adaptive trellis + progressive.
     /// Maps to [`OptimizationPreset::HybridProgressive`].
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     Balanced,
 
     /// Maximum compression: thorough trellis + scan optimization.
     /// Maps to [`OptimizationPreset::HybridMaxCompression`].
-    ///
-    /// Requires the `trellis` feature.
-    #[cfg(feature = "trellis")]
     Max,
 }
 
@@ -973,16 +915,13 @@ impl Effort {
     pub const fn to_preset(self) -> OptimizationPreset {
         match self {
             Self::Fast => OptimizationPreset::JpegliBaseline,
-            #[cfg(feature = "trellis")]
             Self::Balanced => OptimizationPreset::HybridProgressive,
-            #[cfg(feature = "trellis")]
             Self::Max => OptimizationPreset::HybridMaxCompression,
         }
     }
 }
 
 /// All preset variants in a fixed array for iteration.
-#[cfg(feature = "trellis")]
 const ALL_PRESETS: [OptimizationPreset; 8] = [
     OptimizationPreset::JpegliBaseline,
     OptimizationPreset::JpegliProgressive,
@@ -992,13 +931,6 @@ const ALL_PRESETS: [OptimizationPreset; 8] = [
     OptimizationPreset::HybridBaseline,
     OptimizationPreset::HybridProgressive,
     OptimizationPreset::HybridMaxCompression,
-];
-
-/// All preset variants in a fixed array for iteration (without trellis).
-#[cfg(not(feature = "trellis"))]
-const ALL_PRESETS: [OptimizationPreset; 2] = [
-    OptimizationPreset::JpegliBaseline,
-    OptimizationPreset::JpegliProgressive,
 ];
 
 impl OptimizationPreset {
@@ -1014,17 +946,11 @@ impl OptimizationPreset {
         match self {
             Self::JpegliBaseline => false,
             Self::JpegliProgressive => true,
-            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline => false,
-            #[cfg(feature = "trellis")]
             Self::MozjpegProgressive => true,
-            #[cfg(feature = "trellis")]
             Self::MozjpegMaxCompression => true,
-            #[cfg(feature = "trellis")]
             Self::HybridBaseline => false,
-            #[cfg(feature = "trellis")]
             Self::HybridProgressive => true,
-            #[cfg(feature = "trellis")]
             Self::HybridMaxCompression => true,
         }
     }
@@ -1034,7 +960,6 @@ impl OptimizationPreset {
     pub const fn uses_trellis(self) -> bool {
         match self {
             Self::JpegliBaseline | Self::JpegliProgressive => false,
-            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline
             | Self::MozjpegProgressive
             | Self::MozjpegMaxCompression
@@ -1049,9 +974,7 @@ impl OptimizationPreset {
     pub const fn uses_aq(self) -> bool {
         match self {
             Self::JpegliBaseline | Self::JpegliProgressive => true,
-            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => false,
-            #[cfg(feature = "trellis")]
             Self::HybridBaseline | Self::HybridProgressive | Self::HybridMaxCompression => true,
         }
     }
@@ -1060,7 +983,6 @@ impl OptimizationPreset {
     #[must_use]
     pub const fn quant_table_source(self) -> QuantTableSource {
         match self {
-            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => {
                 QuantTableSource::MozjpegDefault
             }
@@ -1074,13 +996,9 @@ impl OptimizationPreset {
         match self {
             Self::JpegliBaseline => ScanStrategy::Default,
             Self::JpegliProgressive => ScanStrategy::Default,
-            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline | Self::HybridBaseline => ScanStrategy::Default,
-            #[cfg(feature = "trellis")]
             Self::HybridProgressive => ScanStrategy::Default,
-            #[cfg(feature = "trellis")]
             Self::MozjpegProgressive => ScanStrategy::Mozjpeg,
-            #[cfg(feature = "trellis")]
             Self::MozjpegMaxCompression | Self::HybridMaxCompression => ScanStrategy::Search,
         }
     }
@@ -1091,17 +1009,11 @@ impl OptimizationPreset {
         match self {
             Self::JpegliBaseline => "jpegli-baseline",
             Self::JpegliProgressive => "jpegli-progressive",
-            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline => "mozjpeg-baseline",
-            #[cfg(feature = "trellis")]
             Self::MozjpegProgressive => "mozjpeg-progressive",
-            #[cfg(feature = "trellis")]
             Self::MozjpegMaxCompression => "mozjpeg-max",
-            #[cfg(feature = "trellis")]
             Self::HybridBaseline => "hybrid-baseline",
-            #[cfg(feature = "trellis")]
             Self::HybridProgressive => "hybrid-progressive",
-            #[cfg(feature = "trellis")]
             Self::HybridMaxCompression => "hybrid-max",
         }
     }
@@ -1383,81 +1295,120 @@ pub enum QuantTableSource {
 
 /// Unified quantization table configuration.
 ///
-/// Bundles the table source, chroma table layout, and custom table overrides
-/// into a single type, preventing invalid combinations such as:
+/// Bundles the table family with the knobs that are live for that family —
+/// each knob exists only on the variant where it has an effect:
 ///
-/// - `MozjpegDefault` + separate chroma tables (mozjpeg always uses 2 tables)
-/// - Custom tables + a quant source (custom overrides everything)
+/// | Variant | Tables | Live knobs | `Quality` drives tables? |
+/// |---------|--------|------------|--------------------------|
+/// | `Jpegli` | 3 (Y, Cb, Cr) | `chroma_distance_scales` | yes (distance scaling) |
+/// | `JpegliSharedChroma` | 2 (Y, shared) | `chroma_distance_scales` | yes |
+/// | `MozjpegRobidoux` | 2 (Y, shared) | `chroma_quality` | yes (libjpeg quality scaling) |
+/// | `Custom` | user-defined | the tables themselves | only if `ScalingParams::Scaled` |
+/// | `PiecewiseV4` | 3 (Y, Cb, Cr) | — | yes (SA anchor interpolation) |
+/// | `GlassaLowBpp` | 2 (shared) | — | yes (anchor interpolation, q clamped 3–25) |
 ///
-/// # Variants
-///
-/// | Variant | Tables | Source | Notes |
-/// |---------|--------|--------|-------|
-/// | `Jpegli` | 3 (Y, Cb, Cr) | jpegli perceptual | Default, matches `jpegli_set_distance()` |
-/// | `JpegliSharedChroma` | 2 (Y, shared) | jpegli perceptual | Matches `jpeg_set_quality()` |
-/// | `MozjpegRobidoux` | 2 (Y, shared) | Robidoux psychovisual | Matches C mozjpeg default |
-/// | `Custom` | (user-defined) | user-defined | Full control via `EncodingTables` |
-#[derive(Clone, Debug, Default, PartialEq)]
+/// XYB color mode accepts only `Jpegli` and `Custom` — the 2-table
+/// shared-chroma layouts are YCbCr concepts with no defined meaning for
+/// X,Y,B channels and are rejected by `EncoderConfig::validate()`.
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum QuantTableConfig {
-    /// Jpegli perceptual defaults with 3 separate quantization tables (Y, Cb, Cr).
-    ///
-    /// Matches C++ jpegli's `jpegli_set_distance()` behavior. Each chroma
-    /// component gets its own optimized table for best quality.
-    #[default]
-    Jpegli,
+    /// Jpegli perceptual defaults with 3 separate quantization tables
+    /// (Y, Cb, Cr). Matches C++ jpegli's `jpegli_set_distance()` behavior.
+    Jpegli {
+        /// Per-channel multipliers on the butteraugli distance for the two
+        /// chroma-like channels, in ascending component order:
+        /// `[Cb, Cr]` in YCbCr mode, `[X, B]` in XYB mode (Y, the
+        /// luma-like channel, always keeps the base distance).
+        /// `[1.0, 1.0]` = same treatment as luma. Each clamped to
+        /// `[0.1, 5.0]` at resolution.
+        ///
+        /// `> 1.0` encodes that channel more aggressively (flat-chroma
+        /// images); `< 1.0` more carefully (sharp-chroma images). The two
+        /// entries are independent — optimizers can move Cb and Cr (or X
+        /// and B) separately. When the scales are non-neutral, zero-bias
+        /// follows each channel's own effective distance.
+        chroma_distance_scales: [f32; 2],
+    },
 
-    /// Jpegli perceptual defaults with 2 quantization tables (Y, shared chroma).
-    ///
-    /// Matches C++ jpegli's `jpeg_set_quality()` behavior. Cb and Cr share
-    /// the same table — produces slightly larger files than 3-table mode
-    /// but is compatible with encoders that use `jpeg_set_quality()`.
-    JpegliSharedChroma,
+    /// Jpegli perceptual defaults with 2 quantization tables (Y, shared
+    /// chroma using the Cr base matrix). Matches C++ jpegli's
+    /// `jpeg_set_quality()` behavior. YCbCr only.
+    JpegliSharedChroma {
+        /// Same semantics as [`Jpegli`](Self::Jpegli)'s field. The shared
+        /// chroma table is generated from the Cr base matrix using
+        /// `scales[1]`; `scales[0]` still shapes the Cb distance input
+        /// (relevant only to zero-bias when divergent).
+        chroma_distance_scales: [f32; 2],
+    },
 
-    /// Mozjpeg Robidoux psychovisual tables with 2 quantization tables.
-    ///
-    /// Uses Nicolas Robidoux's psychovisual tables scaled by libjpeg's
-    /// quality formula. Always 2 tables (shared chroma), matching C mozjpeg.
-    MozjpegRobidoux,
+    /// Mozjpeg Robidoux psychovisual tables scaled by libjpeg's quality
+    /// formula. Always 2 tables (shared chroma), matching C mozjpeg.
+    /// YCbCr only.
+    MozjpegRobidoux {
+        /// Optional independent chroma quality on the mozjpeg 1–100
+        /// scale (clamped at resolution). `None` scales chroma with the
+        /// luma quality — bit-identical to the historical behaviour.
+        chroma_quality: Option<u8>,
+    },
 
     /// User-provided custom encoding tables.
     ///
-    /// Overrides both quantization tables and zero-bias configuration.
-    /// Use `EncodingTables::default_ycbcr()` as a starting point for modifications.
+    /// The tables own the chroma policy via their per-component base
+    /// matrices. `Quality` drives them only when
+    /// `scaling == ScalingParams::Scaled`; `Exact` tables are used as-is
+    /// (quality then affects only gates like `auto_optimize`, not bytes).
     Custom(Box<super::tuning::EncodingTables>),
 
-    /// Glassa low-BPP optimized tables for extreme compression (Q3-Q25).
+    /// SA-piecewise v4 tables: 20 quality-anchored sets with linear
+    /// interpolation, trained by coefficient's piecewise SA optimizer on
+    /// CID22-512 (209 photos) with GPU butteraugli, jpegli encoder,
+    /// 4:2:0 chroma. Beats jpegli's parametric tables on 99/100 quality
+    /// levels — mean pareto +6.602 (training), +6.09 (41-image holdout).
     ///
-    /// SA-optimized tables that achieve +20 to +33 pareto gains at ultra-low
-    /// bitrates (0.15-0.50 BPP). Aggressively zeros high-frequency coefficients.
+    /// The anchor quality derives from the config's one `Quality` knob
+    /// (internal jpegli q). YCbCr only (anchors are YCbCr-space; rejected
+    /// for XYB in `validate()`). Trained on photographic content —
+    /// screenshots/illustrations may regress; retrain via
+    /// `coefficient`'s piecewise optimizer for other corpora.
     ///
-    /// # When to Use
+    /// Open avenues (deliberately not closed by this wiring): per-anchor
+    /// zero-bias SA (the v4 run held zero-bias at neutral), per-content
+    /// anchor sets, 4:4:4-trained anchors, trellis-interaction sweeps
+    /// before any future content-adaptive selection.
+    PiecewiseV4,
+
+    /// Glassa low-BPP optimized tables for extreme compression.
     ///
-    /// - Thumbnails (<100px)
-    /// - LQIP (low-quality image placeholders)
-    /// - Progressive loading placeholders
-    /// - Any use case where quality < Q30 is acceptable
-    ///
-    /// # When NOT to Use
-    ///
-    /// - Q30+: No benefit over mozjpeg defaults
-    /// - High quality: Use [`Jpegli`](Self::Jpegli) instead
-    ///
-    /// The inner `u8` is the quality level (3-25 recommended).
-    GlassaLowBpp(u8),
+    /// SA-optimized anchors achieving +20 to +33 pareto gains at
+    /// 0.15–0.50 BPP (thumbnails, LQIP, progressive placeholders).
+    /// The anchor quality derives from the config's `Quality`: internal
+    /// jpegli q, rounded and clamped to the trained 3–25 range. At Q30+
+    /// prefer [`Jpegli`](Self::Jpegli) or mozjpeg defaults.
+    GlassaLowBpp,
+}
+
+impl Default for QuantTableConfig {
+    /// Jpegli 3-table with neutral chroma scale — matches
+    /// `jpegli_set_distance()`.
+    fn default() -> Self {
+        Self::Jpegli {
+            chroma_distance_scales: [1.0, 1.0],
+        }
+    }
 }
 
 impl QuantTableConfig {
     /// Returns the internal `QuantTableSource` for this configuration.
-    ///
-    /// Custom and GlassaLowBpp tables return `Jpegli` (ignored when custom tables are present).
     #[must_use]
     pub const fn quant_source(&self) -> QuantTableSource {
         match self {
-            Self::Jpegli | Self::JpegliSharedChroma | Self::Custom(_) | Self::GlassaLowBpp(_) => {
-                QuantTableSource::Jpegli
-            }
-            Self::MozjpegRobidoux => QuantTableSource::MozjpegDefault,
+            Self::Jpegli { .. }
+            | Self::JpegliSharedChroma { .. }
+            | Self::Custom(_)
+            | Self::PiecewiseV4
+            | Self::GlassaLowBpp => QuantTableSource::Jpegli,
+            Self::MozjpegRobidoux { .. } => QuantTableSource::MozjpegDefault,
         }
     }
 
@@ -1465,22 +1416,45 @@ impl QuantTableConfig {
     #[must_use]
     pub const fn separate_chroma_tables(&self) -> bool {
         match self {
-            Self::Jpegli => true,
-            // Glassa uses shared chroma (mozjpeg-style 2 tables)
-            Self::JpegliSharedChroma | Self::MozjpegRobidoux | Self::GlassaLowBpp(_) => false,
+            Self::Jpegli { .. } | Self::PiecewiseV4 => true,
+            Self::JpegliSharedChroma { .. } | Self::MozjpegRobidoux { .. } | Self::GlassaLowBpp => {
+                false
+            }
             // Custom tables define their own layout; default to separate.
             Self::Custom(_) => true,
         }
     }
 
-    /// Returns the custom encoding tables, if any.
-    ///
-    /// For `GlassaLowBpp`, this generates tables on-demand via interpolation.
+    /// Jpegli family with one uniform chroma scale applied to both
+    /// chroma-like channels — the common case.
     #[must_use]
-    pub fn custom_tables(&self) -> Option<super::tuning::EncodingTables> {
+    pub const fn jpegli_chroma_scale(scale: f32) -> Self {
+        Self::Jpegli {
+            chroma_distance_scales: [scale, scale],
+        }
+    }
+
+    /// The per-channel chroma distance scales, when this family has them
+    /// (jpegli families only).
+    #[must_use]
+    pub fn chroma_distance_scales(&self) -> Option<[f32; 2]> {
         match self {
-            Self::Custom(t) => Some((**t).clone()),
-            Self::GlassaLowBpp(q) => Some(super::tables::glassa::tables_for_quality(*q)),
+            Self::Jpegli {
+                chroma_distance_scales,
+            }
+            | Self::JpegliSharedChroma {
+                chroma_distance_scales,
+            } => Some(*chroma_distance_scales),
+            _ => None,
+        }
+    }
+
+    /// The independent chroma quality, when this family has one
+    /// (`MozjpegRobidoux` only).
+    #[must_use]
+    pub fn chroma_quality(&self) -> Option<u8> {
+        match self {
+            Self::MozjpegRobidoux { chroma_quality } => *chroma_quality,
             _ => None,
         }
     }
@@ -1530,6 +1504,42 @@ pub enum ProgressiveScanMode {
     /// Closest parity with C mozjpeg's default progressive output.
     ProgressiveMozjpeg,
 
+    /// Smallest-output selection across the entropy stage.
+    ///
+    /// Quantized coefficients are computed once and the progressive
+    /// (jpegli script) candidate is serialized. If its output is at or
+    /// below 16 KiB — the byte domain where every observed sequential
+    /// win lives — the sequential candidates (+ tiny-file shared-table
+    /// variant when eligible and [`TinyFileMode`] is not `Off`) are
+    /// also serialized and the exact `min(bytes)` is emitted: a
+    /// **lossless rate decision** (identical pixels). Small progressive
+    /// output implies little entropy content, so the extra passes are
+    /// bounded cheap regardless of image dimensions.
+    ///
+    /// Above the byte gate the progressive stream is emitted directly
+    /// (one serialization): sweeps found zero sequential wins there.
+    /// Empirical bound with provenance, documented at the constant.
+    ///
+    /// Restart markers are suppressed in every candidate (they are
+    /// strictly additive bytes, and the progressive alternative cannot
+    /// restart-parallel-decode either, so nothing is traded away);
+    /// `force_restart_markers(true)` restores them — sequential
+    /// candidates then honor `restart_mcu_rows` like a plain Baseline
+    /// encode.
+    Smallest,
+
+    /// [`Smallest`](Self::Smallest) with the scan-script search as the
+    /// progressive candidate: the 64-candidate search picks the best
+    /// progressive structure (it always includes the default jpegli
+    /// script, so its winner is ≤ `Smallest`'s progressive candidate),
+    /// and the sequential (+ tiny) trials run under the same byte gate.
+    /// Strictly ≤ both [`Smallest`](Self::Smallest) and
+    /// [`ProgressiveSearch`](Self::ProgressiveSearch) at identical
+    /// pixels, for the search's extra trial-encode cost. The search is
+    /// skipped for XYB (existing emission rule); the sequential trials
+    /// still apply there.
+    SmallestSearch,
+
     /// Progressive JPEG with scan search optimization.
     ///
     /// Tests 64 candidate scan configurations (frequency splits, SA levels,
@@ -1551,9 +1561,9 @@ impl ProgressiveScanMode {
     #[must_use]
     pub const fn scan_strategy(self) -> ScanStrategy {
         match self {
-            Self::Baseline | Self::Progressive => ScanStrategy::Default,
+            Self::Baseline | Self::Progressive | Self::Smallest => ScanStrategy::Default,
             Self::ProgressiveMozjpeg => ScanStrategy::Mozjpeg,
-            Self::ProgressiveSearch => ScanStrategy::Search,
+            Self::ProgressiveSearch | Self::SmallestSearch => ScanStrategy::Search,
         }
     }
 }
@@ -1566,65 +1576,6 @@ impl From<bool> for ProgressiveScanMode {
         } else {
             ProgressiveScanMode::Baseline
         }
-    }
-}
-
-/// Expert configuration overlay for advanced encoding options.
-///
-/// Use with [`EncoderConfig::expert()`](super::encoder_config::EncoderConfig::expert) to customize quantization tables
-/// and trellis/hybrid rate-distortion optimization.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use zenjpeg::encode::{EncoderConfig, ExpertConfig, QuantTableConfig, ChromaSubsampling};
-///
-/// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-///     .expert(ExpertConfig::default()
-///         .tables(QuantTableConfig::MozjpegRobidoux));
-/// ```
-#[cfg(feature = "trellis")]
-#[derive(Clone, Debug, Default)]
-pub struct ExpertConfig {
-    /// Quantization table selection.
-    ///
-    /// Defaults to `QuantTableConfig::Jpegli`.
-    pub tables: Option<QuantTableConfig>,
-
-    /// Trellis quantization (standalone rate-distortion optimization).
-    ///
-    /// When set, enables mozjpeg-compatible trellis quantization.
-    /// Mutually exclusive with `hybrid` - if both set, `hybrid` takes priority.
-    pub trellis: Option<super::trellis::TrellisConfig>,
-
-    /// Hybrid AQ+trellis (adaptive quantization coupled with trellis).
-    ///
-    /// When set with `enabled: true`, combines jpegli's adaptive quantization
-    /// with trellis optimization. Takes priority over standalone `trellis`.
-    pub hybrid: Option<super::trellis::HybridConfig>,
-}
-
-#[cfg(feature = "trellis")]
-impl ExpertConfig {
-    /// Set quantization tables.
-    #[must_use]
-    pub fn tables(mut self, tables: QuantTableConfig) -> Self {
-        self.tables = Some(tables);
-        self
-    }
-
-    /// Set standalone trellis configuration.
-    #[must_use]
-    pub fn trellis(mut self, config: super::trellis::TrellisConfig) -> Self {
-        self.trellis = Some(config);
-        self
-    }
-
-    /// Set hybrid AQ+trellis configuration.
-    #[must_use]
-    pub fn hybrid(mut self, config: super::trellis::HybridConfig) -> Self {
-        self.hybrid = Some(config);
-        self
     }
 }
 

@@ -27,18 +27,18 @@
 use alloc::borrow::Cow;
 
 use super::DeblockMode;
+use super::color_model::ColorModel;
 use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
 use super::pool::PoolGuard;
-use crate::color::{
-    rgb_u8_to_xrgba_u8, ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8, ycbcr_to_rgb,
-    ycbcr_to_rgb_f32,
+use crate::color::planes::{
+    Layout8, PlaneMatrix, RowKernel, gray8_row, rgb_luma_f32, rgb_to_ycbcr_normalized, rgb8_row,
 };
+use crate::color::ycbcr_to_rgb_f32;
 use crate::deblock::BoundaryStrength;
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
-use crate::huffman::HuffmanDecodeTable;
+use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_COMPONENTS};
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
 
@@ -64,6 +64,8 @@ pub struct ScanlineInfo {
 /// from a buffer, since progressive encoding requires all scans to be
 /// processed before final pixels are available.
 pub struct ScanlineReader<'a> {
+    pub(super) stop: &'a dyn enough::Stop,
+    pub(super) progress: Option<&'a dyn how_far::Report>,
     // Raw JPEG data (unused in buffered mode).
     // `Cow::Borrowed` when created from a slice; `Cow::Owned` when the caller
     // donates a `Vec<u8>` so the reader can be `'static`.
@@ -77,6 +79,11 @@ pub struct ScanlineReader<'a> {
     // Buffered mode for progressive JPEGs
     // When Some, we serve from this buffer instead of decoding on-the-fly
     buffered_rgb: Option<Vec<u8>>,
+    precision: u8,
+    component_rows: Option<super::parser::component_rows::ComponentRows>,
+    component_ids: [u8; MAX_COMPONENTS],
+    predictive: Option<super::parser::predictive::PredictiveReader>,
+    buffered_native: Option<Vec<u16>>,
 
     // Strip processing (IDCT + upsampling)
     strip: StripProcessor,
@@ -92,8 +99,9 @@ pub struct ScanlineReader<'a> {
     quant_indices: [usize; 3], // Which quant table each component uses
 
     // Huffman tables (copied)
-    dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-    ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    // Only the streaming entropy route reads tables; the others hold none.
+    dc_tables: Option<super::parser::HuffmanTables>,
+    ac_tables: Option<super::parser::HuffmanTables>,
     table_mapping: [(usize, usize); 3], // (dc_table, ac_table) for each component
 
     // Entropy decoder state
@@ -110,10 +118,11 @@ pub struct ScanlineReader<'a> {
     /// Track previous coefficient count per component for smart zeroing
     prev_coeff_counts: [u8; 4],
 
-    // Info
-    is_xyb: bool,
-    /// True for Adobe RGB JPEGs (APP14 transform=0) - skip YCbCr→RGB conversion
-    is_rgb: bool,
+    // The frame's colour model (decided at SOF) and the plane conversion the
+    // strip readers apply (for buffered and wave readers, which hold decoded
+    // RGB, it is unused).
+    color_model: ColorModel,
+    planes: PlaneMatrix,
 
     // Coefficient-based mode for decode-time transforms.
     // When Some, we read from pre-decoded/transformed coefficients instead of entropy decoding.
@@ -183,6 +192,20 @@ pub struct ScanlineReader<'a> {
     deblock_has_prev: bool,
 }
 
+/// CMYK channel values in the JPEG sample range, without ICC conversion.
+/// Values retain JPEG's channel convention, including Adobe inversion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cmyk16 {
+    /// Cyan channel.
+    pub c: u16,
+    /// Magenta channel.
+    pub m: u16,
+    /// Yellow channel.
+    pub y: u16,
+    /// Black channel.
+    pub k: u16,
+}
+
 impl<'a> ScanlineReader<'a> {
     /// Creates a new scanline reader from parsed JPEG scan data.
     ///
@@ -193,6 +216,7 @@ impl<'a> ScanlineReader<'a> {
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
         deblock_mode: DeblockMode,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let data_cow = Cow::Borrowed(scan.data);
         Self::from_scan_data_cow(
@@ -202,6 +226,7 @@ impl<'a> ScanlineReader<'a> {
             idct_method,
             output_target,
             deblock_mode,
+            alloc_pref,
         )
     }
 
@@ -217,8 +242,10 @@ impl<'a> ScanlineReader<'a> {
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
         deblock_mode: DeblockMode,
+        alloc_pref: zencodec::AllocPreference,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
+            precision,
             data: _,
             width,
             height,
@@ -232,11 +259,12 @@ impl<'a> ScanlineReader<'a> {
             table_mapping,
             scan_data_start,
             restart_interval,
-            is_xyb,
-            is_rgb,
+            color_model,
+            shape: _,
+            interleaved: _,
         } = scan;
 
-        let strip = StripProcessor::new(
+        let mut strip = StripProcessor::new(
             width,
             num_components,
             h_samp,
@@ -244,7 +272,16 @@ impl<'a> ScanlineReader<'a> {
             chroma_upsampling,
             idct_method,
             output_target,
+            alloc_pref,
         )?;
+
+        strip.precision = precision;
+        if crate::decode::precision::is_12_bit(precision) {
+            strip.idct_method = super::IdctMethod::Libjpeg;
+            if width <= 4 && matches!(strip.subsampling, Subsampling::S422 | Subsampling::S420) {
+                strip.chroma_upsampling = super::ChromaUpsampling::NearestNeighbor;
+            }
+        }
 
         // Resolve deblock mode: Auto/AutoStreamable select Boundary4Tap in streaming.
         // (Knusperli requires coefficients, not available here — but Auto with Knusperli
@@ -286,11 +323,18 @@ impl<'a> ScanlineReader<'a> {
         };
 
         Ok(Self {
+            component_ids: frame_component_ids(&data_cow),
             data: data_cow,
             width,
             height,
             num_components,
             buffered_rgb: None,
+            precision,
+            stop: &enough::Unstoppable,
+            progress: None,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
             strip,
             current_row: 0,
             current_mcu_row: 0,
@@ -298,8 +342,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_row_decoded: false,
             quant_tables,
             quant_indices,
-            dc_tables,
-            ac_tables,
+            dc_tables: Some(dc_tables),
+            ac_tables: Some(ac_tables),
             table_mapping,
             scan_data_start,
             decoder_state: None,
@@ -308,9 +352,174 @@ impl<'a> ScanlineReader<'a> {
             next_restart_num: 0,
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
             prev_coeff_counts: [64; 4],
-            is_xyb,
-            is_rgb,
+            color_model,
+            planes: plane_matrix(color_model, idct_method)?,
             stored_coeffs: None,
+            next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
+            deblock_mode: effective_deblock,
+            deblock_strength,
+            deblock_prev_rows,
+            deblock_has_prev: false,
+        })
+    }
+
+    /// Creates a scanline reader backed by pre-decoded DCT coefficients — the
+    /// coefficient-centric buffered path (see docs/DECODER_UNIFICATION_PLAN.md,
+    /// issue #187).
+    ///
+    /// Progressive/arithmetic JPEGs can't stream (a scan refines coefficients
+    /// across the whole image), so their coefficients are decoded up front.
+    /// Unlike [`new_buffered`](Self::new_buffered) — which stores pre-converted
+    /// RGB and then re-derives YCbCr/gray *lossily* on demand — this stores the
+    /// coefficients and runs the SAME strip pipeline as streaming decode
+    /// (`decode_mcu_row_from_coefficients` → IDCT → upsample → the native
+    /// read paths). Every output format is produced natively, and the read
+    /// methods take their streaming branch instead of forking on `buffered_rgb`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_coefficients(
+        data: Cow<'a, [u8]>,
+        coeffs: super::DecodedCoefficients,
+        chroma_upsampling: super::ChromaUpsampling,
+        idct_method: super::IdctMethod,
+        output_target: super::OutputTarget,
+        deblock_mode: DeblockMode,
+        alloc_pref: zencodec::AllocPreference,
+        color_model: ColorModel,
+        precision: u8,
+    ) -> Result<Self> {
+        let width = coeffs.width;
+        let height = coeffs.height;
+        let num_components = coeffs.components.len() as u8;
+
+        let mut h_samp = [1u8; 3];
+        let mut v_samp = [1u8; 3];
+        let mut quant_indices = [0usize; 3];
+        for (i, c) in coeffs.components.iter().take(3).enumerate() {
+            h_samp[i] = c.h_samp;
+            v_samp[i] = c.v_samp;
+            quant_indices[i] = c.quant_table_idx as usize;
+        }
+
+        if num_components == 1 && crate::decode::precision::is_12_bit(precision) {
+            h_samp = [1; 3];
+            v_samp = [1; 3];
+        }
+        let mut quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4] = [None; 4];
+        for (i, slot) in quant_tables.iter_mut().enumerate() {
+            *slot = coeffs.quant_tables.get(i).copied().flatten();
+        }
+
+        let mut strip = StripProcessor::new(
+            width,
+            num_components,
+            h_samp,
+            v_samp,
+            chroma_upsampling,
+            idct_method,
+            output_target,
+            alloc_pref,
+        )?;
+
+        strip.precision = precision;
+        if crate::decode::precision::is_12_bit(precision) {
+            strip.idct_method = super::IdctMethod::Libjpeg;
+            if width <= 4 && matches!(strip.subsampling, Subsampling::S422 | Subsampling::S420) {
+                strip.chroma_upsampling = super::ChromaUpsampling::NearestNeighbor;
+            }
+        }
+
+        // Deblock setup — identical to the streaming constructor.
+        let effective_deblock = match deblock_mode {
+            DeblockMode::Auto | DeblockMode::AutoStreamable => DeblockMode::Boundary4Tap,
+            other => other,
+        };
+        let active = effective_deblock == DeblockMode::Boundary4Tap;
+        let deblock_strength = if active {
+            let mut strengths = [BoundaryStrength::from_dc_quant(1); 3];
+            for i in 0..num_components.min(3) as usize {
+                if let Some(ref qt) = quant_tables[quant_indices[i]] {
+                    strengths[i] = BoundaryStrength::from_dc_quant(qt[0]);
+                }
+            }
+            Some(strengths)
+        } else {
+            None
+        };
+        let deblock_prev_rows = if active {
+            let ys = strip.strip_stride;
+            let cs = strip.chroma_strip_stride;
+            let total = if num_components == 1 {
+                2 * ys
+            } else {
+                2 * ys + 2 * cs + 2 * cs
+            };
+            alloc::vec![0i16; total]
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self {
+            component_ids: frame_component_ids(&data),
+            data,
+            width,
+            height,
+            num_components,
+            buffered_rgb: None,
+            precision,
+            stop: &enough::Unstoppable,
+            progress: None,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
+            strip,
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables,
+            quant_indices,
+            dc_tables: None,
+            ac_tables: None,
+            table_mapping: [(0, 0); 3],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            color_model,
+            planes: plane_matrix(color_model, idct_method)?,
+            stored_coeffs: Some(coeffs),
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
@@ -359,69 +568,17 @@ impl<'a> ScanlineReader<'a> {
         num_components: u8,
         subsampling: Subsampling,
         pixels: Vec<u8>,
-        is_xyb: bool,
+        color_model: ColorModel,
     ) -> Self {
-        Self {
-            data: Cow::Borrowed(data),
+        Self::new_buffered_cow(
+            Cow::Borrowed(data),
             width,
             height,
             num_components,
-            buffered_rgb: Some(pixels),
-            strip: StripProcessor::new_dummy(subsampling),
-            current_row: 0,
-            current_mcu_row: 0,
-            row_in_mcu: 0,
-            mcu_row_decoded: false,
-            quant_tables: [None, None, None, None],
-            quant_indices: [0, 0, 0],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
-            table_mapping: [(0, 0), (0, 0), (0, 0)],
-            scan_data_start: 0,
-            decoder_state: None,
-            restart_interval: 0,
-            mcu_count: 0,
-            next_restart_num: 0,
-            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
-            prev_coeff_counts: [64; 4],
-            is_xyb,
-            is_rgb: false,
-            stored_coeffs: None,
-            next_mcu_preloaded: false,
-            crop: None,
-            crop_skip_done: false,
-            #[cfg(feature = "parallel")]
-            wave_state: None,
-            #[cfg(feature = "parallel")]
-            wave_buf: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_first_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_row_count: 0,
-            #[cfg(feature = "parallel")]
-            wave_next_seg: 0,
-            #[cfg(feature = "parallel")]
-            wave_y: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_cb: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_cr: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_planar_first_luma_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_luma_rows: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_first_chroma_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_chroma_rows: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_next_seg: 0,
-            pool_guard: None,
-            deblock_mode: DeblockMode::Off,
-            deblock_strength: None,
-            deblock_prev_rows: Vec::new(),
-            deblock_has_prev: false,
-        }
+            subsampling,
+            pixels,
+            color_model,
+        )
     }
 
     /// Like [`new_buffered`](Self::new_buffered), but accepts a `Cow` for the
@@ -433,14 +590,21 @@ impl<'a> ScanlineReader<'a> {
         num_components: u8,
         subsampling: Subsampling,
         pixels: Vec<u8>,
-        is_xyb: bool,
+        color_model: ColorModel,
     ) -> Self {
         Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
             num_components,
             buffered_rgb: Some(pixels),
+            precision: 8,
+            stop: &enough::Unstoppable,
+            progress: None,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
             strip: StripProcessor::new_dummy(subsampling),
             current_row: 0,
             current_mcu_row: 0,
@@ -448,8 +612,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_row_decoded: false,
             quant_tables: [None, None, None, None],
             quant_indices: [0, 0, 0],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
+            dc_tables: None,
+            ac_tables: None,
             table_mapping: [(0, 0), (0, 0), (0, 0)],
             scan_data_start: 0,
             decoder_state: None,
@@ -458,8 +622,8 @@ impl<'a> ScanlineReader<'a> {
             next_restart_num: 0,
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
             prev_coeff_counts: [64; 4],
-            is_xyb,
-            is_rgb: false,
+            color_model,
+            planes: PlaneMatrix::Identity,
             stored_coeffs: None,
             next_mcu_preloaded: false,
             crop: None,
@@ -498,132 +662,200 @@ impl<'a> ScanlineReader<'a> {
         }
     }
 
-    /// Creates a scanline reader from pre-decoded, possibly transformed coefficients.
-    ///
-    /// Used for decode-time orientation correction: coefficients are fully decoded
-    /// and transformed in DCT space, then this reader streams pixels from them
-    /// one MCU row at a time (IDCT + color convert on the fly).
-    ///
-    /// Memory: coefficients (~4MB for 4K) + 1 MCU row of pixels (~50KB).
-    pub(crate) fn from_coefficients(
-        coefficients: super::DecodedCoefficients,
-        chroma_upsampling: super::ChromaUpsampling,
-        idct_method: super::IdctMethod,
-        output_target: super::OutputTarget,
-    ) -> Result<Self> {
-        let width = coefficients.width;
-        let height = coefficients.height;
-        let num_components = coefficients.components.len() as u8;
-
-        // Extract sampling factors from coefficient data
-        let h_samp = if num_components == 1 {
-            [coefficients.components[0].h_samp, 1, 1]
-        } else {
-            [
-                coefficients.components[0].h_samp,
-                coefficients.components[1].h_samp,
-                coefficients.components[2].h_samp,
-            ]
-        };
-        let v_samp = if num_components == 1 {
-            [coefficients.components[0].v_samp, 1, 1]
-        } else {
-            [
-                coefficients.components[0].v_samp,
-                coefficients.components[1].v_samp,
-                coefficients.components[2].v_samp,
-            ]
-        };
-
-        // Extract quant table indices
-        let quant_indices = if num_components == 1 {
-            [coefficients.components[0].quant_table_idx as usize, 0, 0]
-        } else {
-            [
-                coefficients.components[0].quant_table_idx as usize,
-                coefficients.components[1].quant_table_idx as usize,
-                coefficients.components[2].quant_table_idx as usize,
-            ]
-        };
-
-        // Build quant tables array (up to 4 slots)
-        let mut quant_tables = [None; 4];
-        for (i, qt) in coefficients.quant_tables.iter().enumerate() {
-            if i < 4 {
-                quant_tables[i] = *qt;
-            }
-        }
-
-        let strip = StripProcessor::new(
-            width,
-            num_components,
-            h_samp,
-            v_samp,
-            chroma_upsampling,
-            idct_method,
-            output_target,
-        )?;
-
-        Ok(Self {
-            data: Cow::Borrowed(&[]), // No raw data needed
+    pub(super) fn from_predictive(
+        data: Cow<'a, [u8]>,
+        width: u32,
+        height: u32,
+        channels: u8,
+        precision: u8,
+        predictive: super::parser::predictive::PredictiveReader,
+        model: ColorModel,
+        ids: [u8; MAX_COMPONENTS],
+    ) -> Self {
+        let mut reader = Self::new_buffered_cow(
+            data,
             width,
             height,
-            num_components,
-            buffered_rgb: None,
-            strip,
-            current_row: 0,
-            current_mcu_row: 0,
-            row_in_mcu: 0,
-            mcu_row_decoded: false,
-            quant_tables,
-            quant_indices,
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
-            table_mapping: [(0, 0), (0, 0), (0, 0)],
-            scan_data_start: 0,
-            decoder_state: None,
-            restart_interval: 0,
-            mcu_count: 0,
-            next_restart_num: 0,
-            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
-            prev_coeff_counts: [64; 4],
-            is_xyb: false,
-            is_rgb: false,
-            stored_coeffs: Some(coefficients),
-            next_mcu_preloaded: false,
-            crop: None,
-            crop_skip_done: false,
-            #[cfg(feature = "parallel")]
-            wave_state: None,
-            #[cfg(feature = "parallel")]
-            wave_buf: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_first_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_row_count: 0,
-            #[cfg(feature = "parallel")]
-            wave_next_seg: 0,
-            #[cfg(feature = "parallel")]
-            wave_y: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_cb: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_cr: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_planar_first_luma_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_luma_rows: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_first_chroma_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_chroma_rows: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_next_seg: 0,
-            pool_guard: None,
-            deblock_mode: DeblockMode::Off,
-            deblock_strength: None,
-            deblock_prev_rows: Vec::new(),
-            deblock_has_prev: false,
+            channels,
+            Subsampling::S444,
+            Vec::new(),
+            model,
+        );
+        reader.buffered_rgb = None;
+        reader.precision = precision;
+        reader.predictive = Some(predictive);
+        reader.component_ids = ids;
+        reader
+    }
+
+    pub(super) fn from_native_result(
+        data: Cow<'a, [u8]>,
+        result: super::DecodeResult,
+    ) -> Result<Self> {
+        let precision = result.sample_precision();
+        let channels = result.format().num_channels() as u8;
+        let mut reader = Self::new_buffered_cow(
+            data,
+            result.width(),
+            result.height(),
+            channels,
+            Subsampling::S444,
+            Vec::new(),
+            if result.format() == crate::types::PixelFormat::Cmyk {
+                ColorModel::Cmyk
+            } else if channels == 1 {
+                ColorModel::Gray
+            } else {
+                ColorModel::Rgb
+            },
+        );
+        let super::OwnedDecodedPixels::U16(samples) = result.into_pixels() else {
+            return Err(Error::internal("expected native samples"));
+        };
+        reader.buffered_rgb = None;
+        reader.buffered_native = Some(samples);
+        reader.precision = precision;
+        Ok(reader)
+    }
+
+    /// Sample precision declared by the JPEG frame, before output conversion.
+    pub fn sample_precision(&self) -> u8 {
+        self.precision
+    }
+
+    pub(super) fn replace_data(&mut self, data: Vec<u8>) {
+        self.data = Cow::Owned(data);
+    }
+
+    pub(super) fn from_component_rows(
+        data: Cow<'a, [u8]>,
+        parser: &super::parser::JpegParser<'_>,
+        source: super::parser::component_rows::ComponentRows,
+    ) -> Self {
+        let mut reader = Self::new_buffered_cow(
+            data,
+            parser.width,
+            parser.height,
+            parser.num_components,
+            Subsampling::S444,
+            Vec::new(),
+            parser.color_model,
+        );
+        reader.buffered_rgb = None;
+        reader.precision = parser.precision;
+        reader.component_ids = core::array::from_fn(|i| parser.components[i].id);
+        reader.component_rows = Some(source);
+        reader
+    }
+
+    /// Component identifiers in frame order. Raw component pixels use this order.
+    pub fn component_ids(&self) -> &[u8] {
+        &self.component_ids[..self.num_components as usize]
+    }
+
+    /// Read full-resolution components in frame order, without color conversion.
+    /// `N` must equal the frame component count. Stride is in N-channel pixels.
+    /// Samples retain source precision and transfer function; DCT components are
+    /// upsampled using the configured filter. No ICC conversion is performed.
+    pub fn read_rows_components16<const N: usize>(
+        &mut self,
+        mut output: ImgRefMut<'_, [u16; N]>,
+    ) -> Result<usize> {
+        let width = self.width() as usize;
+        if N != self.num_components as usize {
+            return Err(Error::unsupported_feature(
+                "component pixel channel count does not match frame",
+            ));
+        }
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        if self.buffered_rgb.is_some() || self.buffered_native.is_some() || self.is_wave_only() {
+            return Err(Error::unsupported_feature(
+                "reader holds converted pixels, not source components",
+            ));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let max = ((1u32 << self.precision) - 1) as i32;
+        let buf = output.buf_mut();
+        self.read_component_rows_with(rows, true, |i, row| {
+            for x in 0..width {
+                buf[i * stride + x] = row.components16(x, max);
+            }
+        })
+    }
+
+    /// Read CMYK samples, preserving the source range and JPEG inversion convention.
+    /// YCCK is converted to CMYK with the libjpeg matrix; no ICC conversion is done.
+    /// Stride is measured in CMYK pixels.
+    pub fn read_rows_cmyk16(&mut self, mut output: ImgRefMut<'_, Cmyk16>) -> Result<usize> {
+        if !matches!(self.color_model, ColorModel::Cmyk | ColorModel::Ycck)
+            || (self.predictive.is_none()
+                && self.component_rows.is_none()
+                && self.buffered_native.is_none())
+        {
+            return Err(Error::unsupported_feature(
+                "CMYK16 requires native CMYK/YCCK components",
+            ));
+        }
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let precision = self.precision;
+        let max = ((1u32 << precision) - 1) as u16;
+        let buf = output.buf_mut();
+        self.read_component_rows_with(rows, true, |i, row| {
+            let RowSrc::Native(p, 4, model) = row else {
+                unreachable!()
+            };
+            for x in 0..width {
+                let p = &p[x * 4..x * 4 + 4];
+                let [c, m, y] = if model == ColorModel::Ycck {
+                    native_ycbcr([p[0], p[1], p[2]], precision).map(|v| max - v)
+                } else {
+                    [p[0], p[1], p[2]]
+                };
+                buf[i * stride + x] = Cmyk16 { c, m, y, k: p[3] };
+            }
+        })
+    }
+
+    /// Read RGB in the frame's native integer range (0–4095 for 12-bit JPEG).
+    /// Retains source primaries and transfer function. Stride is in RGB pixels.
+    pub fn read_rows_rgb16(&mut self, mut output: ImgRefMut<'_, rgb::RGB<u16>>) -> Result<usize> {
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        let (rows, stride) = (output.height(), output.stride());
+        let (precision, matrix) = (self.precision, self.planes);
+        let buf = output.buf_mut();
+        self.read_rows_with(rows, |i, row| {
+            for x in 0..width {
+                let [r, g, b] = row.rgb16(x, precision, matrix);
+                buf[i * stride + x] = rgb::RGB::new(r, g, b);
+            }
+        })
+    }
+
+    /// Read gray/luma samples in the frame's native integer range.
+    /// Gray and YCbCr retain their gray/Y channel; RGB uses BT.601 luma.
+    /// Stride is in single-channel u16 samples.
+    pub fn read_rows_gray16(&mut self, mut output: ImgRefMut<'_, u16>) -> Result<usize> {
+        let width = self.width() as usize;
+        if output.width() < width {
+            return Err(Error::invalid_buffer_size(width, output.width()));
+        }
+        self.check_plane_read("read_rows_gray16 needs the luma plane (use num_threads(1))")?;
+        let (rows, stride) = (output.height(), output.stride());
+        let (precision, matrix) = (self.precision, self.planes);
+        let buf = output.buf_mut();
+        self.read_rows_with(rows, |i, row| {
+            for x in 0..width {
+                buf[i * stride + x] = row.gray16(x, precision, matrix);
+            }
         })
     }
 
@@ -632,14 +864,6 @@ impl<'a> ScanlineReader<'a> {
     /// Must be called before reading any rows.
     pub(crate) fn set_crop(&mut self, crop: ResolvedCrop) {
         self.crop = Some(crop);
-    }
-
-    /// Replace the raw JPEG data storage.
-    ///
-    /// Used to swap in `Cow::Owned` data after constructing the reader with
-    /// a temporary borrow, enabling the reader to own its input data.
-    pub(crate) fn replace_data(&mut self, data: Cow<'a, [u8]>) {
-        self.data = data;
     }
 
     /// Creates a scanline reader in wave-parallel mode.
@@ -655,71 +879,7 @@ impl<'a> ScanlineReader<'a> {
         data: &'a [u8],
         wave_state: super::fused_parallel::WaveParallelState,
     ) -> Self {
-        let width = wave_state.width as u32;
-        let height = wave_state.height as u32;
-
-        // Pre-allocate wave buffer for wave_size segments
-        let rgb_row_bytes = wave_state.width * 3;
-        let seg_rgb_bytes = wave_state.pixel_rows_per_seg * rgb_row_bytes;
-        let wave_buf_size = wave_state.wave_size * seg_rgb_bytes;
-        let wave_buf = vec![0u8; wave_buf_size];
-
-        Self {
-            data: Cow::Borrowed(data),
-            width,
-            height,
-            num_components: 3,
-            buffered_rgb: None,
-            strip: StripProcessor::new_dummy(Subsampling::S420),
-            current_row: 0,
-            current_mcu_row: 0,
-            row_in_mcu: 0,
-            mcu_row_decoded: false,
-            quant_tables: [None, None, None, None],
-            quant_indices: [0, 0, 0],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
-            table_mapping: [(0, 0), (0, 0), (0, 0)],
-            scan_data_start: 0,
-            decoder_state: None,
-            restart_interval: 0,
-            mcu_count: 0,
-            next_restart_num: 0,
-            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
-            prev_coeff_counts: [64; 4],
-            is_xyb: false,
-            is_rgb: false,
-            stored_coeffs: None,
-            next_mcu_preloaded: false,
-            crop: None,
-            crop_skip_done: false,
-            wave_state: Some(wave_state),
-            wave_buf,
-            wave_first_row: 0,
-            wave_row_count: 0,
-            wave_next_seg: 0,
-            #[cfg(feature = "parallel")]
-            wave_y: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_cb: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_cr: Vec::new(),
-            #[cfg(feature = "parallel")]
-            wave_planar_first_luma_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_luma_rows: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_first_chroma_row: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_chroma_rows: 0,
-            #[cfg(feature = "parallel")]
-            wave_planar_next_seg: 0,
-            pool_guard: None,
-            deblock_mode: DeblockMode::Off,
-            deblock_strength: None,
-            deblock_prev_rows: Vec::new(),
-            deblock_has_prev: false,
-        }
+        Self::new_wave_parallel_cow(Cow::Borrowed(data), wave_state)
     }
 
     /// Like [`new_wave_parallel`](Self::new_wave_parallel), but accepts a `Cow`
@@ -738,20 +898,27 @@ impl<'a> ScanlineReader<'a> {
         let wave_buf = vec![0u8; wave_buf_size];
 
         Self {
+            component_ids: frame_component_ids(&data),
             data,
             width,
             height,
             num_components: 3,
             buffered_rgb: None,
-            strip: StripProcessor::new_dummy(Subsampling::S420),
+            precision: 8,
+            stop: &enough::Unstoppable,
+            progress: None,
+            predictive: None,
+            component_rows: None,
+            buffered_native: None,
+            strip: StripProcessor::new_dummy(wave_state.subsampling()),
             current_row: 0,
             current_mcu_row: 0,
             row_in_mcu: 0,
             mcu_row_decoded: false,
             quant_tables: [None, None, None, None],
             quant_indices: [0, 0, 0],
-            dc_tables: [None, None, None, None],
-            ac_tables: [None, None, None, None],
+            dc_tables: None,
+            ac_tables: None,
             table_mapping: [(0, 0), (0, 0), (0, 0)],
             scan_data_start: 0,
             decoder_state: None,
@@ -760,8 +927,8 @@ impl<'a> ScanlineReader<'a> {
             next_restart_num: 0,
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
             prev_coeff_counts: [64; 4],
-            is_xyb: false,
-            is_rgb: false,
+            color_model: wave_state.color_model,
+            planes: PlaneMatrix::Identity,
             stored_coeffs: None,
             next_mcu_preloaded: false,
             crop: None,
@@ -827,12 +994,8 @@ impl<'a> ScanlineReader<'a> {
                 width: self.width(),
                 height: self.height(),
             },
-            color_space: if self.num_components == 1 {
-                ColorSpace::Grayscale
-            } else {
-                ColorSpace::YCbCr
-            },
-            is_xyb: self.is_xyb,
+            color_space: self.color_model.color_space(),
+            is_xyb: self.color_model == ColorModel::Xyb,
             subsampling: self.strip.subsampling,
         }
     }
@@ -1039,10 +1202,10 @@ impl<'a> ScanlineReader<'a> {
         // Set up Huffman tables
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }
@@ -1055,6 +1218,7 @@ impl<'a> ScanlineReader<'a> {
         let mcu_cols = self.strip.mcu_cols();
 
         while self.current_mcu_row < skip_target {
+            self.stop.check()?;
             // Decode one MCU row (entropy only, no IDCT)
             for _mcu_x in 0..mcu_cols {
                 // Check for restart marker
@@ -1063,7 +1227,8 @@ impl<'a> ScanlineReader<'a> {
                     && self.mcu_count % self.restart_interval as u32 == 0
                 {
                     decoder.align_to_byte();
-                    decoder.read_restart_marker(self.next_restart_num)?;
+                    // A cut at the boundary: the blocks below decode `Truncated`.
+                    let _ = decoder.read_restart_marker_tolerant(self.next_restart_num)?;
                     self.next_restart_num = (self.next_restart_num + 1) & 7;
                     decoder.reset_dc();
                     self.prev_coeff_counts = [64; 4];
@@ -1160,6 +1325,7 @@ impl<'a> ScanlineReader<'a> {
     }
 
     fn decode_mcu_row(&mut self) -> Result<()> {
+        self.stop.check()?;
         if self.mcu_row_decoded {
             return Ok(());
         }
@@ -1177,10 +1343,10 @@ impl<'a> ScanlineReader<'a> {
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
 
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }
@@ -1202,7 +1368,9 @@ impl<'a> ScanlineReader<'a> {
                 && self.mcu_count % self.restart_interval as u32 == 0
             {
                 decoder.align_to_byte();
-                decoder.read_restart_marker(self.next_restart_num)?;
+                // A cut at the boundary: the blocks below decode `Truncated`
+                // and are emitted as zero blocks.
+                let _ = decoder.read_restart_marker_tolerant(self.next_restart_num)?;
                 self.next_restart_num = (self.next_restart_num + 1) & 7;
                 decoder.reset_dc();
                 self.prev_coeff_counts = [64; 4];
@@ -1229,8 +1397,12 @@ impl<'a> ScanlineReader<'a> {
                         )? {
                             ScanRead::Value(c) => c,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
+                                // Emit the documented zero block. `continue`
+                                // skipped the IDCT and served whatever the
+                                // previous MCU row had left in the strip (#92).
                                 self.prev_coeff_counts[comp_idx] = 64;
-                                continue;
+                                self.coeffs_buf = [0i16; 64];
+                                1
                             }
                         };
                         self.prev_coeff_counts[comp_idx] =
@@ -1460,6 +1632,12 @@ impl<'a> ScanlineReader<'a> {
             self.current_mcu_row,
         );
 
+        // Apply boundary 4-tap deblock BEFORE upsampling so each component
+        // is filtered at native resolution (matching the streaming path).
+        if self.deblock_mode == DeblockMode::Boundary4Tap {
+            self.apply_boundary_deblock();
+        }
+
         // Upsample chroma if needed
         self.strip.upsample_chroma();
         self.mcu_row_decoded = true;
@@ -1507,17 +1685,20 @@ impl<'a> ScanlineReader<'a> {
 
                     let x_offset = mcu_x * h_blocks * 8 + h * 8;
 
-                    if coeff_count <= 1 {
-                        // DC-only: all pixels same value
-                        let dc = block[0] as i32 * quant[0] as i32;
-                        let val = ((dc + 1024) >> 11).clamp(0, 255) as i16;
-                        for px in 0..8 {
-                            if x_offset + px < next_row.len() {
-                                next_row[x_offset + px] = val;
-                            }
-                        }
-                    } else {
-                        // Full IDCT into temp, copy row 0
+                    {
+                        // Always route through the real IDCT — it has its own
+                        // DC-only fast path (`idct_int_dc_only`), so a
+                        // hand-rolled shortcut here buys nothing and can only
+                        // drift from the strip's own reconstruction. It did:
+                        // this used to special-case `coeff_count <= 1` as
+                        // `((dc * quant[0]) + 1024) >> 11`, but a DC-only IDCT
+                        // is `(dc + 4 + 1024) >> 3` — wrong shift (11 vs 3) and
+                        // no rounding term, so neutral chroma (dequantized
+                        // DC ~ 0) peeked as 0 instead of 128. Smooth chroma
+                        // quantizes to DC-only constantly, so every real photo
+                        // hit it (waterhouse.jpg: 76/255 on the last row of
+                        // every MCU row) while high-frequency synthetic test
+                        // images never did.
                         let mut temp_coeffs = [0i16; 64];
                         temp_coeffs.copy_from_slice(block);
                         let mut dequant_buf = [0i32; 64];
@@ -1528,22 +1709,30 @@ impl<'a> ScanlineReader<'a> {
                             coeff_count,
                         );
                         let mut temp_pixels = [0i16; 64];
-                        match self.strip.idct_method {
-                            super::IdctMethod::Libjpeg => {
-                                super::idct_int::idct_int_tiered_libjpeg(
-                                    &mut dequant_buf,
-                                    &mut temp_pixels,
-                                    8,
-                                    coeff_count,
-                                );
-                            }
-                            super::IdctMethod::Jpegli => {
-                                super::idct_int::idct_int_tiered(
-                                    &mut dequant_buf,
-                                    &mut temp_pixels,
-                                    8,
-                                    coeff_count,
-                                );
+                        if crate::decode::precision::is_12_bit(self.precision) {
+                            super::idct_int::idct_libjpeg_precision::<12>(
+                                &dequant_buf,
+                                &mut temp_pixels,
+                                8,
+                            );
+                        } else {
+                            match self.strip.idct_method {
+                                super::IdctMethod::Libjpeg => {
+                                    super::idct_int::idct_int_tiered_libjpeg(
+                                        &mut dequant_buf,
+                                        &mut temp_pixels,
+                                        8,
+                                        coeff_count,
+                                    );
+                                }
+                                super::IdctMethod::Jpegli => {
+                                    super::idct_int::idct_int_tiered(
+                                        &mut dequant_buf,
+                                        &mut temp_pixels,
+                                        8,
+                                        coeff_count,
+                                    );
+                                }
                             }
                         }
                         for px in 0..8 {
@@ -1556,6 +1745,7 @@ impl<'a> ScanlineReader<'a> {
             }
         }
 
+        self.strip.truncate_next_row_padding(self.width as usize);
         self.strip.has_next_context = true;
     }
 
@@ -1624,17 +1814,26 @@ impl<'a> ScanlineReader<'a> {
         // Save/restore state so we can call decode_mcu_row_streaming
         self.decode_mcu_row_streaming()?;
 
-        // 3. Now cb_strip[0] has the first chroma row of the next MCU.
-        //    prev_cb_row still has the last chroma row of the previous MCU.
-        //    Compute the corrected bottom chroma.
-        self.strip.compute_deferred_bottom();
-
-        // 4. Edge-replicate padding before upsampling (needed for last MCU row)
+        // 3. Edge-replicate the next MCU row's padding first: the corrected
+        //    bottom row below interpolates against its first chroma row, and
+        //    that row's horizontal padding must not reach the last column.
         self.strip.truncate_chroma_padding(
             self.width as usize,
             self.height as usize,
             self.current_mcu_row,
         );
+
+        // Apply boundary 4-tap deblock on the preloaded next MCU row BEFORE
+        // computing the deferred bottom chroma or upsampling the next MCU row,
+        // because advance_mcu_row will mark this preloaded row as already decoded.
+        if self.deblock_mode == DeblockMode::Boundary4Tap {
+            self.apply_boundary_deblock();
+        }
+
+        // 4. Now cb_strip[0] has the first chroma row of the next MCU.
+        //    prev_cb_row still has the last chroma row of the previous MCU.
+        //    Compute the corrected bottom chroma.
+        self.strip.compute_deferred_bottom();
 
         // 5. Upsample the next MCU row (top boundary fixup uses prev_cb_row)
         self.strip.upsample_chroma();
@@ -1658,10 +1857,10 @@ impl<'a> ScanlineReader<'a> {
 
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }
@@ -1679,7 +1878,9 @@ impl<'a> ScanlineReader<'a> {
                 && self.mcu_count % self.restart_interval as u32 == 0
             {
                 decoder.align_to_byte();
-                decoder.read_restart_marker(self.next_restart_num)?;
+                // A cut at the boundary: the blocks below decode `Truncated`
+                // and are emitted as zero blocks.
+                let _ = decoder.read_restart_marker_tolerant(self.next_restart_num)?;
                 self.next_restart_num = (self.next_restart_num + 1) & 7;
                 decoder.reset_dc();
                 self.prev_coeff_counts = [64; 4];
@@ -1702,8 +1903,12 @@ impl<'a> ScanlineReader<'a> {
                         )? {
                             ScanRead::Value(c) => c,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
+                                // Emit the documented zero block. `continue`
+                                // skipped the IDCT and served whatever the
+                                // previous MCU row had left in the strip (#92).
                                 self.prev_coeff_counts[comp_idx] = 64;
-                                continue;
+                                self.coeffs_buf = [0i16; 64];
+                                1
                             }
                         };
                         self.prev_coeff_counts[comp_idx] =
@@ -1742,148 +1947,747 @@ impl<'a> ScanlineReader<'a> {
         }
     }
 
-    /// Read rows into an RGB8 buffer.
+    /// Shared geometry + bounds check for the buffered (progressive) serve
+    /// path. Every interleaved-format `read_rows_*` method that serves from
+    /// `buffered_rgb` computed the same source-row stride and validated the
+    /// same buffer-size bound before its format-specific copy loop; this is
+    /// the single copy. Returns `(bpp, src_row_bytes, crop_y)`.
     ///
-    /// Returns the number of rows actually written (may be less than requested
-    /// if end of image is reached).
-    pub fn read_rows_rgb8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
-        let max_rows = output.height();
+    /// `#[inline]` and progressive-only, so it lowers to the same code the
+    /// open-coded prologue did and never touches the streaming hot path.
+    #[inline]
+    fn buffered_geometry(
+        &self,
+        buffer_len: usize,
+        out_height: usize,
+    ) -> Result<(usize, usize, usize)> {
+        let bpp = if self.num_components == 1 { 1 } else { 3 };
+        let src_row_bytes = self.width as usize * bpp;
+        let crop_y = self.crop.map_or(0, |c| c.y as usize);
+        if (crop_y + out_height) * src_row_bytes > buffer_len {
+            return Err(Error::internal(
+                "buffered RGB data too small for image dimensions",
+            ));
+        }
+        Ok((bpp, src_row_bytes, crop_y))
+    }
+
+    /// Drive one `read_rows_*` call: for each of up to `max_rows` output
+    /// rows, hand `emit(i, row)` that row's source, already cropped to the
+    /// output columns. Every read method is this loop plus one conversion,
+    /// so the reader modes (streaming, coefficient, buffered, wave) serve
+    /// every method the same way.
+    fn read_rows_with(
+        &mut self,
+        max_rows: usize,
+        emit: impl FnMut(usize, RowSrc<'_>),
+    ) -> Result<usize> {
+        self.read_component_rows_with(max_rows, false, emit)
+    }
+
+    fn read_component_rows_with(
+        &mut self,
+        max_rows: usize,
+        raw: bool,
+        mut emit: impl FnMut(usize, RowSrc<'_>),
+    ) -> Result<usize> {
+        self.stop.check()?;
+        if !raw && self.color_model == ColorModel::Unknown {
+            return Err(Error::unsupported_feature(
+                "unknown component color space: use read_rows_components16",
+            ));
+        }
         let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
         let out_height = self.height() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let crop_y = self.crop.map_or(0, |c| c.y as usize);
+        let cols = crop_x..crop_x + out_width;
+        let mut n = 0;
 
-        if output.width() < out_width * 3 {
-            return Err(Error::internal("output buffer too narrow for RGB8"));
-        }
-
-        // Wave-parallel mode: serve from wave buffer, decoding on demand.
-        // Only when wave_buf is allocated (WaveOnly mode, box filter).
-        // WaveState mode (fancy) uses wave only for planar i16, not RGB.
-        #[cfg(feature = "parallel")]
-        if self.wave_state.is_some() && !self.wave_buf.is_empty() {
-            return self.read_rows_rgb8_wave(output);
-        }
-
-        // Buffered mode: serve from pre-decoded buffer (progressive JPEGs)
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
+        if let Some(samples) = &self.buffered_native {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
+                let start = ((crop_y + self.current_row) * self.width as usize + crop_x) * channels;
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &samples[start..start + out_width * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
+            return Ok(n);
+        }
 
-            while rows_written < max_rows && self.current_row < out_height {
+        if let Some(source) = &mut self.component_rows {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
+                while source.current_row <= crop_y + self.current_row {
+                    source.next_row(&self.data, self.stop)?;
+                }
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &source.row[crop_x * channels..(crop_x + out_width) * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
+            }
+            return Ok(n);
+        }
+
+        if let Some(predictive) = &mut self.predictive {
+            let channels = self.num_components as usize;
+            while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
+                let source_y = crop_y + self.current_row;
+                while predictive.current_row() <= source_y {
+                    predictive.next_row(&self.data, self.stop)?;
+                }
+                emit(
+                    n,
+                    RowSrc::Native(
+                        &predictive.row[crop_x * channels..(crop_x + out_width) * channels],
+                        channels,
+                        self.color_model,
+                    ),
+                );
+                n += 1;
+                self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
+            }
+            return Ok(n);
+        }
+
+        // Wave-parallel reader: decoded RGB rows, one wave of restart
+        // segments at a time.
+        #[cfg(feature = "parallel")]
+        if self.is_wave_only() {
+            let row_bytes = self.width as usize * 3;
+            while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
                 let image_row = crop_y + self.current_row;
-                let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                if bpp == 3 {
-                    let src_start = image_row * src_row_bytes + crop_x * 3;
-                    out_row[..out_width * 3]
-                        .copy_from_slice(&buffer[src_start..src_start + out_width * 3]);
-                } else {
-                    // Grayscale buffer → expand to RGB
-                    let src_start = image_row * src_row_bytes + crop_x;
-                    for px in 0..out_width {
-                        let v = buffer[src_start + px];
-                        out_row[px * 3] = v;
-                        out_row[px * 3 + 1] = v;
-                        out_row[px * 3 + 2] = v;
+                while image_row >= self.wave_first_row + self.wave_row_count {
+                    let next = self.wave_next_seg;
+                    self.decode_next_wave()?;
+                    if self.wave_next_seg == next {
+                        return Err(Error::internal("wave decode ended before the last row"));
                     }
                 }
-
-                rows_written += 1;
+                let off = (image_row - self.wave_first_row) * row_bytes + crop_x * 3;
+                emit(n, RowSrc::Rgb8(&self.wave_buf[off..off + out_width * 3]));
+                n += 1;
                 self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
             }
-
-            return Ok(rows_written);
+            return Ok(n);
         }
 
-        // Streaming mode: decode on-the-fly
+        // Buffered reader: the whole image, decoded up front.
+        if let Some(buffer) = &self.buffered_rgb {
+            let (bpp, row_bytes, _) = self.buffered_geometry(buffer.len(), out_height)?;
+            while n < max_rows && self.current_row < out_height {
+                self.stop.check()?;
+                let off = (crop_y + self.current_row) * row_bytes + crop_x * bpp;
+                let src = &buffer[off..off + out_width * bpp];
+                emit(
+                    n,
+                    if bpp == 1 {
+                        RowSrc::Gray8(src)
+                    } else {
+                        RowSrc::Rgb8(src)
+                    },
+                );
+                n += 1;
+                self.current_row += 1;
+                if let Some(progress) = self.progress {
+                    progress.advance(1);
+                }
+            }
+            return Ok(n);
+        }
+
+        // Streaming and coefficient readers: one strip (MCU row) of planes.
         self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let is_grayscale = self.num_components == 1;
-        // Full image width for strip access
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
+        let strip_cols = (self.width as usize).min(self.strip.strip_width);
+        while n < max_rows && self.current_row < out_height {
+            self.stop.check()?;
             self.ensure_row_ready()?;
-
-            let strip_cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-            if is_grayscale {
-                let y = self.strip.y_row(self.row_in_mcu, strip_cols);
-                for px in 0..out_width {
-                    let v = y[crop_x + px].clamp(0, 255) as u8;
-                    out_row[px * 3] = v;
-                    out_row[px * 3 + 1] = v;
-                    out_row[px * 3 + 2] = v;
-                }
-            } else if self.is_rgb {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-                for px in 0..out_width {
-                    out_row[px * 3] = y[crop_x + px].clamp(0, 255) as u8;
-                    out_row[px * 3 + 1] = cb[crop_x + px].clamp(0, 255) as u8;
-                    out_row[px * 3 + 2] = cr[crop_x + px].clamp(0, 255) as u8;
-                }
+            let row = if self.num_components == 1 {
+                RowSrc::Planes(
+                    &self.strip.y_row(self.row_in_mcu, strip_cols)[cols.clone()],
+                    &[],
+                    &[],
+                )
             } else {
                 let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-                ycbcr_planes_i16_to_rgb_u8(
-                    &y[crop_x..crop_x + out_width],
-                    &cb[crop_x..crop_x + out_width],
-                    &cr[crop_x..crop_x + out_width],
-                    out_row,
-                );
-            }
-
-            rows_written += 1;
+                RowSrc::Planes(&y[cols.clone()], &cb[cols.clone()], &cr[cols.clone()])
+            };
+            emit(n, row);
+            n += 1;
             self.current_row += 1;
+            if let Some(progress) = self.progress {
+                progress.advance(1);
+            }
             self.row_in_mcu += 1;
-
             if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
-
-        Ok(rows_written)
+        Ok(n)
     }
 
-    /// Wave-parallel: serve rows from wave buffer, triggering decode on demand.
-    #[cfg(feature = "parallel")]
-    fn read_rows_rgb8_wave(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let out_height = self.height() as usize;
-        let rgb_row_bytes = self.width as usize * 3;
-
-        let mut rows_written = 0;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            // If current_row is beyond our wave buffer, decode next wave
-            if self.current_row >= self.wave_first_row + self.wave_row_count {
-                self.decode_next_wave()?;
-            }
-
-            // Copy row from wave buffer to output
-            let row_in_wave = self.current_row - self.wave_first_row;
-            let src_start = row_in_wave * rgb_row_bytes;
-            let src_end = src_start + out_width * 3;
-
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-            out_row[..out_width * 3].copy_from_slice(&self.wave_buf[src_start..src_end]);
-
-            rows_written += 1;
-            self.current_row += 1;
+    /// Whether this is a wave-parallel reader serving decoded RGB rows.
+    #[inline]
+    fn is_wave_only(&self) -> bool {
+        #[cfg(feature = "parallel")]
+        {
+            self.wave_state.is_some() && !self.wave_buf.is_empty()
         }
+        #[cfg(not(feature = "parallel"))]
+        {
+            false
+        }
+    }
 
-        Ok(rows_written)
+    /// Reads whose YCbCr meaning is the Y/Cb/Cr planes (gray, YCbCr): the
+    /// wave-parallel reader holds only RGB rows, so it cannot serve them for
+    /// a YCbCr frame (for an RGB frame they are defined from the RGB values).
+    fn check_plane_read(&self, what: &'static str) -> Result<()> {
+        if self.is_wave_only() && self.color_model == ColorModel::YCbCr {
+            return Err(Error::unsupported_feature(what));
+        }
+        Ok(())
+    }
+
+    /// 8-bit interleaved reads: the frame's row kernel for strip rows, a
+    /// relayout of decoded RGB / gray rows otherwise.
+    fn read_rows_u8(&mut self, mut output: ImgRefMut<'_, u8>, layout: Layout8) -> Result<usize> {
+        let row_bytes = self.width() as usize * layout.bytes_per_pixel();
+        if output.width() < row_bytes {
+            return Err(Error::invalid_buffer_size(row_bytes, output.width()));
+        }
+        if layout == Layout8::Gray {
+            self.check_plane_read(
+                "read_rows_gray8 needs the luma plane, which the wave-parallel reader \
+                 does not keep for YCbCr frames (use num_threads(1))",
+            )?;
+        }
+        let planes = self.planes;
+        let kernel = RowKernel::new(self.planes, layout);
+        let (max_rows, stride) = (output.height(), output.stride());
+        // Rows are addressed through the flat buffer, so the last row only
+        // needs `row_bytes`, not a full stride.
+        let buf = output.buf_mut();
+        let precision = self.precision;
+        self.read_rows_with(max_rows, |i, row| {
+            let out = &mut buf[i * stride..i * stride + row_bytes];
+            match row {
+                RowSrc::Native(..) => row.write_native_u8(precision, planes, layout, out),
+                RowSrc::Planes(..) if precision != 8 => {
+                    row.write_native_u8(precision, planes, layout, out)
+                }
+                RowSrc::Planes(c0, c1, c2) => kernel.row(c0, c1, c2, out),
+                RowSrc::Rgb8(rgb) => rgb8_row(rgb, layout, out),
+                RowSrc::Gray8(gray) => gray8_row(gray, layout, out),
+            }
+        })
+    }
+
+    /// Read rows into an RGB8 buffer (3 bytes per pixel).
+    ///
+    /// Returns the number of rows actually written (may be less than requested
+    /// if end of image is reached).
+    pub fn read_rows_rgb8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_u8(output, Layout8::Rgb)
+    }
+
+    /// Read rows into an RGBX8 buffer (RGB with padding byte, X=255).
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_rgbx8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_u8(output, Layout8::Rgbx)
+    }
+
+    /// Read rows into a BGR8 buffer (3 bytes per pixel, B-G-R order).
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_bgr8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_u8(output, Layout8::Bgr)
+    }
+
+    /// Read rows into an RGBA8 buffer (4 bytes per pixel, R-G-B-A order, A=255).
+    ///
+    /// Identical layout to `read_rows_rgbx8` — the fourth byte is always 255.
+    /// Returns the number of rows actually written.
+    #[inline]
+    pub fn read_rows_rgba8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_rgbx8(output)
+    }
+
+    /// Read rows into a BGRA8 buffer (4 bytes per pixel, B-G-R-A=255).
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_bgra8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_u8(output, Layout8::Bgrx)
+    }
+
+    /// Read rows into a BGRX8 buffer (4 bytes per pixel, B-G-R-X=255).
+    ///
+    /// Identical to `read_rows_bgra8` — the pad byte is always 255.
+    /// Returns the number of rows actually written.
+    #[inline]
+    pub fn read_rows_bgrx8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_bgra8(output)
+    }
+
+    /// Read rows into a grayscale u8 buffer.
+    ///
+    /// Grayscale frames return their samples, YCbCr frames their Y plane, and
+    /// RGB frames the BT.601 luma of the decoded R, G, B (libjpeg-turbo's
+    /// `rgb_gray_convert`). Readers that hold decoded RGB (sampling shapes the strip does not serve, CMYK, XYB,
+    /// orientation and deblock fallbacks) also take
+    /// the luma of the RGB.
+    ///
+    /// On a wave-parallel reader of a YCbCr frame (`parallel`, nearest-neighbour
+    /// 4:2:2 / 4:2:0, MCU-row restart markers, >= 1024 MCUs; see
+    /// [`Decoder::scanline_reader`](crate::decoder::Decoder::scanline_reader))
+    /// this returns [`UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature):
+    /// that reader holds RGB rows, not the planes. Use `num_threads(1)`.
+    ///
+    /// Returns the number of rows actually written (may be less than requested
+    /// if end of image is reached).
+    pub fn read_rows_gray8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_u8(output, Layout8::Gray)
+    }
+
+    /// Read rows into a linear f32 RGBA buffer.
+    ///
+    /// Output is in linear light (not sRGB gamma), alpha 1.0. Integer samples
+    /// (gray and RGB frames, decoded RGB rows) are linearized through the
+    /// exact 8-bit sRGB table; YCbCr frames convert to RGB in f32 first.
+    ///
+    /// On a wave-parallel reader of a YCbCr frame (`parallel`, nearest-neighbour
+    /// 4:2:2 / 4:2:0, MCU-row restart markers, >= 1024 MCUs; see
+    /// [`Decoder::scanline_reader`](crate::decoder::Decoder::scanline_reader))
+    /// this returns [`UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature):
+    /// that reader holds RGB rows, not the planes. Use `num_threads(1)`.
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_rgba_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
+        let row_len = self.width() as usize * 4;
+        if output.width() < row_len {
+            return Err(Error::invalid_buffer_size(row_len, output.width()));
+        }
+        // YCbCr frames convert their planes in f32; the wave-only reader holds
+        // 8-bit RGB rows, so it would answer differently from num_threads(1).
+        self.check_plane_read(
+            "read_rows_rgba_f32 converts YCbCr planes in f32, which the wave-parallel \
+             reader does not keep (use num_threads(1))",
+        )?;
+        let planes = self.planes;
+        let (max_rows, stride) = (output.height(), output.stride());
+        let buf = output.buf_mut();
+        let precision = self.precision;
+        self.read_rows_with(max_rows, |i, row| {
+            let out = &mut buf[i * stride..i * stride + row_len];
+            let mut put = |px: usize, r: f32, g: f32, b: f32| {
+                out[px * 4..px * 4 + 4].copy_from_slice(&[r, g, b, 1.0]);
+            };
+            match row {
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        put(x, r, g, b);
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        put(x, r, g, b);
+                    }
+                }
+                RowSrc::Planes(c0, c1, c2) => match planes {
+                    PlaneMatrix::YCbCr { .. } => {
+                        for (px, ((&y, &cb), &cr)) in c0.iter().zip(c1).zip(c2).enumerate() {
+                            let (r, g, b) = ycbcr_to_rgb_f32(y as f32, cb as f32, cr as f32);
+                            put(
+                                px,
+                                srgb_to_linear_f32(r / 255.0),
+                                srgb_to_linear_f32(g / 255.0),
+                                srgb_to_linear_f32(b / 255.0),
+                            );
+                        }
+                    }
+                    PlaneMatrix::Identity => {
+                        for (px, ((&r, &g), &b)) in c0.iter().zip(c1).zip(c2).enumerate() {
+                            put(px, lin_i16(r), lin_i16(g), lin_i16(b));
+                        }
+                    }
+                    PlaneMatrix::Gray => {
+                        for (px, &v) in c0.iter().enumerate() {
+                            let l = lin_i16(v);
+                            put(px, l, l, l);
+                        }
+                    }
+                },
+                RowSrc::Rgb8(rgb) => {
+                    for (px, p) in rgb.as_chunks::<3>().0.iter().enumerate() {
+                        put(
+                            px,
+                            srgb_to_linear(p[0]),
+                            srgb_to_linear(p[1]),
+                            srgb_to_linear(p[2]),
+                        );
+                    }
+                }
+                RowSrc::Gray8(gray) => {
+                    for (px, &v) in gray.iter().enumerate() {
+                        let l = srgb_to_linear(v);
+                        put(px, l, l, l);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Read rows into separate YCbCr f32 planes (upsampled to full resolution).
+    ///
+    /// Each plane receives normalized values in range \[0, 1\] for Y, \[-0.5, 0.5\] for Cb/Cr
+    /// (with an f32 [`OutputTarget`](crate::decoder::OutputTarget), gray and YCbCr frames' samples
+    /// come from the unclamped IDCT and ringing can leave those ranges).
+    /// Chroma values are upsampled to full resolution for subsampled images
+    /// (all three planes have the same dimensions).
+    /// Returns the number of rows actually written: at most `max_rows`, and at
+    /// most as many rows as the shortest plane holds at `stride` (its last row
+    /// needs only the image width). With `max_rows > 0`, a plane shorter than
+    /// one row is an [`InvalidBufferSize`](crate::decoder::ErrorKind::InvalidBufferSize)
+    /// error and a `stride` below the width a
+    /// [`StrideTooSmall`](crate::decoder::ErrorKind::StrideTooSmall) error, whether
+    /// or not rows are left.
+    ///
+    /// YCbCr frames return their planes. RGB frames, and readers that hold
+    /// decoded RGB (sampling shapes the strip does not serve, CMYK, XYB,
+    /// orientation and deblock fallbacks), convert R, G, B with the BT.601 matrix; for the
+    /// latter that is a re-derivation from rounded RGB.
+    ///
+    /// On a wave-parallel reader of a YCbCr frame (`parallel`, nearest-neighbour
+    /// 4:2:2 / 4:2:0, MCU-row restart markers, >= 1024 MCUs; see
+    /// [`Decoder::scanline_reader`](crate::decoder::Decoder::scanline_reader))
+    /// this returns [`UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature):
+    /// that reader holds RGB rows, not the planes. Use `num_threads(1)`.
+    ///
+    /// For native-resolution chroma output (no upsampling), use
+    /// [`read_rows_ycbcr_native_i16()`](Self::read_rows_ycbcr_native_i16) instead.
+    pub fn read_rows_ycbcr_f32(
+        &mut self,
+        y_plane: &mut [f32],
+        cb_plane: &mut [f32],
+        cr_plane: &mut [f32],
+        stride: usize,
+        max_rows: usize,
+    ) -> Result<usize> {
+        let out_width = self.width() as usize;
+        if stride < out_width {
+            return Err(Error::stride_too_small(self.width(), stride));
+        }
+        // Rows the three planes can hold (the last row needs only `out_width`).
+        // The arguments are checked before the reader's state, so a plane
+        // shorter than one row is refused even when no rows are left.
+        let shortest = y_plane.len().min(cb_plane.len()).min(cr_plane.len());
+        let capacity = shortest
+            .checked_sub(out_width)
+            .map_or(0, |rest| rest / stride + 1);
+        if max_rows > 0 && capacity == 0 {
+            return Err(Error::invalid_buffer_size(out_width, shortest));
+        }
+        let max_rows = max_rows.min(capacity);
+        self.check_plane_read(
+            "read_rows_ycbcr_f32 needs the Y/Cb/Cr planes, which the wave-parallel reader \
+             does not keep for YCbCr frames (use num_threads(1))",
+        )?;
+        let planes = self.planes;
+        let precision = self.precision;
+        self.read_rows_with(max_rows, |i, row| {
+            let o = i * stride;
+            let (y, cb, cr) = (
+                &mut y_plane[o..o + out_width],
+                &mut cb_plane[o..o + out_width],
+                &mut cr_plane[o..o + out_width],
+            );
+            let mut put = |px: usize, (vy, vcb, vcr): (f32, f32, f32)| {
+                (y[px], cb[px], cr[px]) = (vy, vcb, vcr);
+            };
+            match row {
+                RowSrc::Native(p, n, ColorModel::Gray | ColorModel::YCbCr) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    let center = (1u32 << (precision - 1)) as f32;
+                    for x in 0..row.len() {
+                        put(
+                            x,
+                            (
+                                p[x * n] as f32 / max,
+                                if n == 1 {
+                                    0.0
+                                } else {
+                                    (p[x * n + 1] as f32 - center) / max
+                                },
+                                if n == 1 {
+                                    0.0
+                                } else {
+                                    (p[x * n + 2] as f32 - center) / max
+                                },
+                            ),
+                        );
+                    }
+                }
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row.rgb16(x, precision, planes).map(|v| v as f32 / max);
+                        let yy = 0.299 * r + 0.587 * g + 0.114 * b;
+                        put(x, (yy, (b - yy) / 1.772, (r - yy) / 1.402));
+                    }
+                }
+                RowSrc::Planes(c0, c1, c2) if precision != 8 && planes != PlaneMatrix::Identity => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    let center = (1u32 << (precision - 1)) as f32;
+                    for x in 0..c0.len() {
+                        put(
+                            x,
+                            (
+                                c0[x] as f32 / max,
+                                if planes == PlaneMatrix::Gray {
+                                    0.0
+                                } else {
+                                    (c1[x] as f32 - center) / max
+                                },
+                                if planes == PlaneMatrix::Gray {
+                                    0.0
+                                } else {
+                                    (c2[x] as f32 - center) / max
+                                },
+                            ),
+                        );
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for x in 0..row.len() {
+                        let [r, g, b] = row.rgb16(x, precision, planes).map(|v| v as f32 / max);
+                        let yy = 0.299 * r + 0.587 * g + 0.114 * b;
+                        put(x, (yy, (b - yy) / 1.772, (r - yy) / 1.402));
+                    }
+                }
+                RowSrc::Planes(c0, c1, c2) => match planes {
+                    PlaneMatrix::YCbCr { .. } => {
+                        for (px, ((&a, &b), &c)) in c0.iter().zip(c1).zip(c2).enumerate() {
+                            put(
+                                px,
+                                (
+                                    a as f32 / 255.0,
+                                    (b as f32 - 128.0) / 255.0,
+                                    (c as f32 - 128.0) / 255.0,
+                                ),
+                            );
+                        }
+                    }
+                    PlaneMatrix::Identity => {
+                        for (px, ((&r, &g), &b)) in c0.iter().zip(c1).zip(c2).enumerate() {
+                            put(px, rgb_to_ycbcr_normalized(u8c(r), u8c(g), u8c(b)));
+                        }
+                    }
+                    PlaneMatrix::Gray => {
+                        for (px, &v) in c0.iter().enumerate() {
+                            put(px, (v as f32 / 255.0, 0.0, 0.0));
+                        }
+                    }
+                },
+                RowSrc::Rgb8(rgb) => {
+                    for (px, p) in rgb.as_chunks::<3>().0.iter().enumerate() {
+                        put(px, rgb_to_ycbcr_normalized(p[0], p[1], p[2]));
+                    }
+                }
+                RowSrc::Gray8(gray) => {
+                    for (px, &v) in gray.iter().enumerate() {
+                        put(px, (v as f32 / 255.0, 0.0, 0.0));
+                    }
+                }
+            }
+        })
+    }
+
+    /// Read rows into a grayscale f32 buffer, normalized to [0, 1].
+    ///
+    /// Grayscale frames return their samples, YCbCr frames their Y plane, RGB
+    /// frames (and readers holding decoded RGB) the BT.601 luma of R, G, B.
+    /// With an f32 [`OutputTarget`](crate::decoder::OutputTarget) the gray and
+    /// Y samples come from the unclamped IDCT, so ringing can leave [0, 1].
+    ///
+    /// On a wave-parallel reader of a YCbCr frame (`parallel`, nearest-neighbour
+    /// 4:2:2 / 4:2:0, MCU-row restart markers, >= 1024 MCUs; see
+    /// [`Decoder::scanline_reader`](crate::decoder::Decoder::scanline_reader))
+    /// this returns [`UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature):
+    /// that reader holds RGB rows, not the planes. Use `num_threads(1)`.
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_gray_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
+        let out_width = self.width() as usize;
+        if output.width() < out_width {
+            return Err(Error::invalid_buffer_size(out_width, output.width()));
+        }
+        self.check_plane_read(
+            "read_rows_gray_f32 needs the luma plane, which the wave-parallel reader \
+             does not keep for YCbCr frames (use num_threads(1))",
+        )?;
+        let planes = self.planes;
+        let (max_rows, stride) = (output.height(), output.stride());
+        let buf = output.buf_mut();
+        let precision = self.precision;
+        self.read_rows_with(max_rows, |i, row| {
+            let out = &mut buf[i * stride..i * stride + out_width];
+            match row {
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        *o = row.gray16(x, precision, planes) as f32 / max;
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        *o = row.gray16(x, precision, planes) as f32 / max;
+                    }
+                }
+                RowSrc::Planes(c0, c1, c2) if planes == PlaneMatrix::Identity => {
+                    for (o, ((&r, &g), &b)) in out.iter_mut().zip(c0.iter().zip(c1).zip(c2)) {
+                        *o = rgb_luma_f32(u8c(r), u8c(g), u8c(b));
+                    }
+                }
+                RowSrc::Planes(c0, _, _) => {
+                    for (o, &v) in out.iter_mut().zip(c0) {
+                        *o = v as f32 / 255.0;
+                    }
+                }
+                RowSrc::Rgb8(rgb) => {
+                    for (o, p) in out.iter_mut().zip(rgb.as_chunks::<3>().0.iter()) {
+                        *o = rgb_luma_f32(p[0], p[1], p[2]);
+                    }
+                }
+                RowSrc::Gray8(gray) => {
+                    for (o, &v) in out.iter_mut().zip(gray) {
+                        *o = v as f32 / 255.0;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Read rows into a linear f32 grayscale buffer, range [0, 1].
+    ///
+    /// Grayscale and YCbCr frames linearize their gray / Y samples; RGB
+    /// frames (and readers holding decoded RGB) linearize R, G, B and then
+    /// take the BT.601 weighted sum. Samples go through the exact 8-bit sRGB
+    /// table, so every reader mode returns the same bits.
+    ///
+    /// On a wave-parallel reader of a YCbCr frame (`parallel`, nearest-neighbour
+    /// 4:2:2 / 4:2:0, MCU-row restart markers, >= 1024 MCUs; see
+    /// [`Decoder::scanline_reader`](crate::decoder::Decoder::scanline_reader))
+    /// this returns [`UnsupportedFeature`](crate::decoder::ErrorKind::UnsupportedFeature):
+    /// that reader holds RGB rows, not the planes. Use `num_threads(1)`.
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_gray_linear_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
+        let out_width = self.width() as usize;
+        if output.width() < out_width {
+            return Err(Error::invalid_buffer_size(out_width, output.width()));
+        }
+        self.check_plane_read(
+            "read_rows_gray_linear_f32 needs the luma plane, which the wave-parallel \
+             reader does not keep for YCbCr frames (use num_threads(1))",
+        )?;
+        let planes = self.planes;
+        let (max_rows, stride) = (output.height(), output.stride());
+        let buf = output.buf_mut();
+        let weighted = |r: f32, g: f32, b: f32| 0.299 * r + 0.587 * g + 0.114 * b;
+        let precision = self.precision;
+        self.read_rows_with(max_rows, |i, row| {
+            let out = &mut buf[i * stride..i * stride + out_width];
+            match row {
+                RowSrc::Native(..) => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        *o = weighted(r, g, b);
+                    }
+                }
+                RowSrc::Planes(y, _, _) if precision != 8 && planes != PlaneMatrix::Identity => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (dst, &sample) in out.iter_mut().zip(y) {
+                        *dst = srgb_to_linear_f32(sample as f32 / max);
+                    }
+                }
+                RowSrc::Planes(..) if precision != 8 => {
+                    let max = ((1u32 << precision) - 1) as f32;
+                    for (x, o) in out.iter_mut().enumerate() {
+                        let [r, g, b] = row
+                            .rgb16(x, precision, planes)
+                            .map(|v| srgb_to_linear_f32(v as f32 / max));
+                        *o = weighted(r, g, b);
+                    }
+                }
+                RowSrc::Planes(c0, c1, c2) if planes == PlaneMatrix::Identity => {
+                    for (o, ((&r, &g), &b)) in out.iter_mut().zip(c0.iter().zip(c1).zip(c2)) {
+                        *o = weighted(lin_i16(r), lin_i16(g), lin_i16(b));
+                    }
+                }
+                RowSrc::Planes(c0, _, _) => {
+                    for (o, &v) in out.iter_mut().zip(c0) {
+                        *o = lin_i16(v);
+                    }
+                }
+                RowSrc::Rgb8(rgb) => {
+                    for (o, p) in out.iter_mut().zip(rgb.as_chunks::<3>().0.iter()) {
+                        *o = weighted(
+                            srgb_to_linear(p[0]),
+                            srgb_to_linear(p[1]),
+                            srgb_to_linear(p[2]),
+                        );
+                    }
+                }
+                RowSrc::Gray8(gray) => {
+                    for (o, &v) in out.iter_mut().zip(gray) {
+                        *o = srgb_to_linear(v);
+                    }
+                }
+            }
+        })
     }
 
     /// Decode the next wave of segments into the wave buffer.
@@ -1900,8 +2704,13 @@ impl<'a> ScanlineReader<'a> {
         let wave_count = seg_end - seg_start;
         let _ = wave_count;
 
-        let row_count =
-            state.decode_wave_box(&self.data, seg_start, seg_end, &mut self.wave_buf)?;
+        let row_count = state.decode_wave_box(
+            &self.data,
+            seg_start,
+            seg_end,
+            &mut self.wave_buf,
+            self.stop,
+        )?;
 
         self.wave_first_row = seg_start * state.pixel_rows_per_seg;
         self.wave_row_count = row_count;
@@ -1955,6 +2764,7 @@ impl<'a> ScanlineReader<'a> {
         let mut total_chroma_rows = 0usize;
 
         for _ in 0..max_mcu_rows {
+            self.stop.check()?;
             if self.current_mcu_row >= total_mcu_rows {
                 break;
             }
@@ -2004,6 +2814,9 @@ impl<'a> ScanlineReader<'a> {
             total_luma_rows += luma_rows_this;
             total_chroma_rows += chroma_rows_this;
             self.current_row += luma_rows_this;
+            if let Some(progress) = self.progress {
+                progress.advance(luma_rows_this as u64);
+            }
             self.current_mcu_row += 1;
         }
 
@@ -2031,6 +2844,7 @@ impl<'a> ScanlineReader<'a> {
             &mut self.wave_y,
             &mut self.wave_cb,
             &mut self.wave_cr,
+            self.stop,
         )?;
 
         self.wave_planar_first_luma_row = seg_start * luma_rows_per_seg;
@@ -2039,543 +2853,6 @@ impl<'a> ScanlineReader<'a> {
         self.wave_planar_chroma_rows = chroma_rows;
         self.wave_planar_next_seg = seg_end;
         Ok(())
-    }
-
-    /// Read rows into an RGBX8 buffer (RGB with padding byte, X=255).
-    ///
-    /// Returns the number of rows actually written.
-    pub fn read_rows_rgbx8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
-        self.read_rows_xrgb_4bpp(output, false)
-    }
-
-    /// Read rows into a BGR8 buffer (3 bytes per pixel, B-G-R order).
-    ///
-    /// Returns the number of rows actually written.
-    pub fn read_rows_bgr8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-
-        if output.width() < out_width * 3 {
-            return Err(Error::internal("output buffer too narrow for BGR8"));
-        }
-
-        // Buffered mode: serve from pre-decoded RGB buffer with R/B swap
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
-
-            while rows_written < max_rows && self.current_row < out_height {
-                let image_row = crop_y + self.current_row;
-                let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                if bpp == 3 {
-                    let src_offset = image_row * src_row_bytes + crop_x * 3;
-                    for x in 0..out_width {
-                        out_row[x * 3] = buffer[src_offset + x * 3 + 2]; // B
-                        out_row[x * 3 + 1] = buffer[src_offset + x * 3 + 1]; // G
-                        out_row[x * 3 + 2] = buffer[src_offset + x * 3]; // R
-                    }
-                } else {
-                    // Grayscale buffer → expand to BGR
-                    let src_offset = image_row * src_row_bytes + crop_x;
-                    for x in 0..out_width {
-                        let v = buffer[src_offset + x];
-                        out_row[x * 3] = v;
-                        out_row[x * 3 + 1] = v;
-                        out_row[x * 3 + 2] = v;
-                    }
-                }
-
-                rows_written += 1;
-                self.current_row += 1;
-            }
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: decode on-the-fly, fused YCbCr→BGR
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let is_grayscale = self.num_components == 1;
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let strip_cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-            if is_grayscale {
-                let y = self.strip.y_row(self.row_in_mcu, strip_cols);
-                for px in 0..out_width {
-                    let v = y[crop_x + px].clamp(0, 255) as u8;
-                    out_row[px * 3] = v;
-                    out_row[px * 3 + 1] = v;
-                    out_row[px * 3 + 2] = v;
-                }
-            } else if self.is_rgb {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-                for px in 0..out_width {
-                    out_row[px * 3] = cr[crop_x + px].clamp(0, 255) as u8; // B
-                    out_row[px * 3 + 1] = cb[crop_x + px].clamp(0, 255) as u8; // G
-                    out_row[px * 3 + 2] = y[crop_x + px].clamp(0, 255) as u8; // R
-                }
-            } else {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-                for px in 0..out_width {
-                    let (r, g, b) = ycbcr_to_rgb(
-                        y[crop_x + px].clamp(0, 255) as u8,
-                        cb[crop_x + px].clamp(0, 255) as u8,
-                        cr[crop_x + px].clamp(0, 255) as u8,
-                    );
-                    out_row[px * 3] = b;
-                    out_row[px * 3 + 1] = g;
-                    out_row[px * 3 + 2] = r;
-                }
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
-    }
-
-    /// Read rows into an RGBA8 buffer (4 bytes per pixel, R-G-B-A order, A=255).
-    ///
-    /// Identical layout to `read_rows_rgbx8` — the fourth byte is always 255.
-    /// Returns the number of rows actually written.
-    #[inline]
-    pub fn read_rows_rgba8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
-        self.read_rows_rgbx8(output)
-    }
-
-    /// Read rows into a BGRA8 buffer (4 bytes per pixel, B-G-R-A=255).
-    ///
-    /// Returns the number of rows actually written.
-    pub fn read_rows_bgra8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
-        self.read_rows_xrgb_4bpp(output, true)
-    }
-
-    /// Read rows into a BGRX8 buffer (4 bytes per pixel, B-G-R-X=255).
-    ///
-    /// Identical to `read_rows_bgra8` — the pad byte is always 255.
-    /// Returns the number of rows actually written.
-    #[inline]
-    pub fn read_rows_bgrx8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
-        self.read_rows_bgra8(output)
-    }
-
-    /// Internal: fused 4-bpp output with optional R/B swap.
-    ///
-    /// When `swap_rb` is true, writes B-G-R-255 (BGRA/BGRX).
-    /// When false, writes R-G-B-255 (RGBA/RGBX).
-    fn read_rows_xrgb_4bpp(
-        &mut self,
-        mut output: ImgRefMut<'_, u8>,
-        swap_rb: bool,
-    ) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-        let out_stride = output.stride();
-
-        if output.width() < out_width * 4 {
-            return Err(Error::internal("output buffer too narrow for 4bpp"));
-        }
-
-        // Buffered mode: serve from pre-decoded RGB buffer
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
-
-            // Access the underlying buffer directly instead of using
-            // output.rows_mut() which requires stride * height bytes.
-            // The caller may provide the tighter (height-1)*stride + row_bytes
-            // bound (e.g., SIMD-aligned bitmaps where the last row's stride
-            // padding extends past the allocation).
-            let out_buf = output.buf_mut();
-            let out_row_bytes = out_width * 4;
-
-            while rows_written < max_rows && self.current_row < out_height {
-                let image_row = crop_y + self.current_row;
-                let row_off = rows_written * out_stride;
-                let out_row = &mut out_buf[row_off..row_off + out_row_bytes];
-
-                if bpp == 1 {
-                    // Grayscale buffer → expand to 4bpp
-                    let src_offset = image_row * src_row_bytes + crop_x;
-                    for x in 0..out_width {
-                        let v = buffer[src_offset + x];
-                        out_row[x * 4] = v;
-                        out_row[x * 4 + 1] = v;
-                        out_row[x * 4 + 2] = v;
-                        out_row[x * 4 + 3] = 255;
-                    }
-                } else {
-                    // Fused SIMD RGB8 → (R/B/G)BA with A=255.
-                    let src_offset = image_row * src_row_bytes + crop_x * 3;
-                    rgb_u8_to_xrgba_u8(
-                        &buffer[src_offset..src_offset + out_width * 3],
-                        &mut out_row[..out_width * 4],
-                        swap_rb,
-                    );
-                }
-
-                rows_written += 1;
-                self.current_row += 1;
-            }
-
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: fused decode → 4bpp output
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let is_grayscale = self.num_components == 1;
-        let full_width = self.width as usize;
-        let out_buf_stream = output.buf_mut();
-        let out_row_bytes_stream = out_width * 4;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let strip_cols = full_width.min(self.strip.strip_width);
-            let row_off = rows_written * out_stride;
-            let out_row = &mut out_buf_stream[row_off..row_off + out_row_bytes_stream];
-
-            if is_grayscale {
-                let y_row = self.strip.y_row(self.row_in_mcu, strip_cols);
-                for x in 0..out_width {
-                    let v = y_row[crop_x + x].clamp(0, 255) as u8;
-                    out_row[x * 4] = v;
-                    out_row[x * 4 + 1] = v;
-                    out_row[x * 4 + 2] = v;
-                    out_row[x * 4 + 3] = 255;
-                }
-            } else {
-                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-                if self.is_rgb {
-                    // Source is untransformed RGB planes — straight copy + alpha.
-                    for x in 0..out_width {
-                        let sx = crop_x + x;
-                        let r = y_row[sx].clamp(0, 255) as u8;
-                        let g = cb_row[sx].clamp(0, 255) as u8;
-                        let b = cr_row[sx].clamp(0, 255) as u8;
-                        if swap_rb {
-                            out_row[x * 4] = b;
-                            out_row[x * 4 + 1] = g;
-                            out_row[x * 4 + 2] = r;
-                        } else {
-                            out_row[x * 4] = r;
-                            out_row[x * 4 + 1] = g;
-                            out_row[x * 4 + 2] = b;
-                        }
-                        out_row[x * 4 + 3] = 255;
-                    }
-                } else {
-                    // Fused SIMD YCbCr→4bpp with alpha=255.
-                    ycbcr_planes_i16_to_xrgba_u8(
-                        &y_row[crop_x..crop_x + out_width],
-                        &cb_row[crop_x..crop_x + out_width],
-                        &cr_row[crop_x..crop_x + out_width],
-                        &mut out_row[..out_width * 4],
-                        swap_rb,
-                    );
-                }
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
-    }
-
-    /// Read rows into a linear f32 RGBA buffer.
-    ///
-    /// Output is in linear light (not sRGB gamma).
-    /// Returns the number of rows actually written.
-    pub fn read_rows_rgba_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-
-        if output.width() < out_width * 4 {
-            return Err(Error::internal("output buffer too narrow for RGBA f32"));
-        }
-
-        // Buffered mode: serve from pre-decoded RGB buffer, convert to linear f32
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let bpp = if self.num_components == 1 { 1 } else { 3 };
-            let src_row_bytes = img_width * bpp;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            // Bounds check: ensure buffer is large enough for all rows we might read
-            let max_image_row = crop_y + out_height;
-            if max_image_row * src_row_bytes > buffer.len() {
-                return Err(Error::internal(
-                    "buffered RGB data too small for image dimensions",
-                ));
-            }
-
-            while rows_written < max_rows && self.current_row < out_height {
-                let image_row = crop_y + self.current_row;
-                let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                if bpp == 3 {
-                    let src_offset = image_row * src_row_bytes + crop_x * 3;
-                    for x in 0..out_width {
-                        out_row[x * 4] = srgb_to_linear(buffer[src_offset + x * 3]);
-                        out_row[x * 4 + 1] = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
-                        out_row[x * 4 + 2] = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
-                        out_row[x * 4 + 3] = 1.0;
-                    }
-                } else {
-                    // Grayscale buffer → expand to RGBA f32
-                    let src_offset = image_row * src_row_bytes + crop_x;
-                    for x in 0..out_width {
-                        let v = srgb_to_linear(buffer[src_offset + x]);
-                        out_row[x * 4] = v;
-                        out_row[x * 4 + 1] = v;
-                        out_row[x * 4 + 2] = v;
-                        out_row[x * 4 + 3] = 1.0;
-                    }
-                }
-
-                rows_written += 1;
-                self.current_row += 1;
-            }
-
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: decode on-the-fly
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let is_grayscale = self.num_components == 1;
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let strip_cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-            if is_grayscale {
-                let y_row = self.strip.y_row(self.row_in_mcu, strip_cols);
-                for x in 0..out_width {
-                    let v = y_row[crop_x + x].clamp(0, 255) as f32 / 255.0;
-                    let linear = srgb_to_linear_f32(v);
-                    out_row[x * 4] = linear;
-                    out_row[x * 4 + 1] = linear;
-                    out_row[x * 4 + 2] = linear;
-                    out_row[x * 4 + 3] = 1.0;
-                }
-            } else {
-                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-
-                for x in 0..out_width {
-                    let sx = crop_x + x;
-                    let (r, g, b) = if self.is_rgb {
-                        (
-                            y_row[sx] as f32 / 255.0,
-                            cb_row[sx] as f32 / 255.0,
-                            cr_row[sx] as f32 / 255.0,
-                        )
-                    } else {
-                        let (rf, gf, bf) = ycbcr_to_rgb_f32(
-                            y_row[sx] as f32,
-                            cb_row[sx] as f32,
-                            cr_row[sx] as f32,
-                        );
-                        (rf / 255.0, gf / 255.0, bf / 255.0)
-                    };
-
-                    out_row[x * 4] = srgb_to_linear_f32(r);
-                    out_row[x * 4 + 1] = srgb_to_linear_f32(g);
-                    out_row[x * 4 + 2] = srgb_to_linear_f32(b);
-                    out_row[x * 4 + 3] = 1.0;
-                }
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
-    }
-
-    /// Read rows into separate YCbCr f32 planes (upsampled to full resolution).
-    ///
-    /// Each plane receives normalized values in range \[0, 1\] for Y, \[-0.5, 0.5\] for Cb/Cr.
-    /// Chroma values are upsampled to full resolution for subsampled images
-    /// (all three planes have the same dimensions).
-    /// Returns the number of rows actually written.
-    ///
-    /// For native-resolution chroma output (no upsampling), use
-    /// [`read_rows_ycbcr_native_i16()`](Self::read_rows_ycbcr_native_i16) instead.
-    ///
-    /// Note: For progressive JPEGs (buffered mode), this converts from RGB back to YCbCr
-    /// using BT.601 coefficients, which may introduce small rounding differences.
-    pub fn read_rows_ycbcr_f32(
-        &mut self,
-        y_plane: &mut [f32],
-        cb_plane: &mut [f32],
-        cr_plane: &mut [f32],
-        stride: usize,
-        max_rows: usize,
-    ) -> Result<usize> {
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-
-        if stride < out_width {
-            return Err(Error::internal("stride too small for image width"));
-        }
-
-        // Buffered mode: convert RGB back to YCbCr
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            if self.num_components == 1 {
-                // Grayscale: Y only, Cb/Cr are zero
-                let max_image_row = crop_y + out_height;
-                if max_image_row * img_width > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_offset = image_row * img_width + crop_x;
-                    let out_offset = rows_written * stride;
-
-                    for x in 0..out_width {
-                        y_plane[out_offset + x] = buffer[src_offset + x] as f32 / 255.0;
-                        cb_plane[out_offset + x] = 0.0;
-                        cr_plane[out_offset + x] = 0.0;
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            } else {
-                // Color: convert RGB to YCbCr using BT.601
-                let src_row_bytes = img_width * 3;
-                let max_image_row = crop_y + out_height;
-                if max_image_row * src_row_bytes > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_start = image_row * src_row_bytes + crop_x * 3;
-                    let out_offset = rows_written * stride;
-
-                    for x in 0..out_width {
-                        let r = buffer[src_start + x * 3] as f32;
-                        let g = buffer[src_start + x * 3 + 1] as f32;
-                        let b = buffer[src_start + x * 3 + 2] as f32;
-
-                        // BT.601 RGB to YCbCr (normalized output)
-                        // Y  =  0.299*R + 0.587*G + 0.114*B
-                        // Cb = -0.169*R - 0.331*G + 0.500*B
-                        // Cr =  0.500*R - 0.419*G - 0.081*B
-                        y_plane[out_offset + x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-                        cb_plane[out_offset + x] = (-0.169 * r - 0.331 * g + 0.500 * b) / 255.0;
-                        cr_plane[out_offset + x] = (0.500 * r - 0.419 * g - 0.081 * b) / 255.0;
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            }
-
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: decode on-the-fly
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let is_grayscale = self.num_components == 1;
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let cols = full_width.min(self.strip.strip_width);
-            let out_offset = rows_written * stride;
-
-            if is_grayscale {
-                let y_slice = self.strip.y_row(self.row_in_mcu, cols);
-                for x in 0..out_width {
-                    y_plane[out_offset + x] = y_slice[crop_x + x] as f32 / 255.0;
-                    cb_plane[out_offset + x] = 0.0;
-                    cr_plane[out_offset + x] = 0.0;
-                }
-            } else {
-                let (y_slice, cb_slice, cr_slice) = self.strip.row_planes(self.row_in_mcu, cols);
-                for x in 0..out_width {
-                    y_plane[out_offset + x] = y_slice[crop_x + x] as f32 / 255.0;
-                    cb_plane[out_offset + x] = (cb_slice[crop_x + x] as f32 - 128.0) / 255.0;
-                    cr_plane[out_offset + x] = (cr_slice[crop_x + x] as f32 - 128.0) / 255.0;
-                }
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
     }
 
     /// Read planar i16 Y/Cb/Cr at native chroma resolution (no upsampling, no color conversion).
@@ -2606,8 +2883,40 @@ impl<'a> ScanlineReader<'a> {
         c_stride: usize,
         max_mcu_rows: usize,
     ) -> Result<(usize, usize)> {
+        self.stop.check()?;
+        match self.color_model {
+            ColorModel::Rgb => {
+                return Err(Error::unsupported_feature(
+                    "read_rows_ycbcr_native_i16: this JPEG stores RGB components, so it has no \
+                     native YCbCr planes (use read_rows_ycbcr_f32 or an RGB read)",
+                ));
+            }
+            ColorModel::Xyb => {
+                return Err(Error::unsupported_feature(
+                    "read_rows_ycbcr_native_i16: this JPEG stores XYB components, so it has no \
+                     native YCbCr planes (use an RGB read)",
+                ));
+            }
+            ColorModel::Cmyk | ColorModel::Ycck | ColorModel::Unknown => {
+                return Err(Error::unsupported_feature(
+                    "read_rows_ycbcr_native_i16: this JPEG has no three YCbCr planes",
+                ));
+            }
+            ColorModel::Gray | ColorModel::YCbCr => {}
+        }
+        if self.buffered_rgb.is_some()
+            || self.predictive.is_some()
+            || self.buffered_native.is_some()
+            || self.component_rows.is_some()
+        {
+            return Err(Error::unsupported_feature(
+                "read_rows_ycbcr_native_i16: this reader holds decoded pixels, not planes \
+                 (progressive grayscale, a sampling shape the strip reader does not serve, \
+                 or a transform/deblock fallback)",
+            ));
+        }
         if self.crop.is_some() {
-            return Err(Error::internal(
+            return Err(Error::unsupported_feature(
                 "read_rows_ycbcr_native_i16 does not support crop",
             ));
         }
@@ -2619,33 +2928,6 @@ impl<'a> ScanlineReader<'a> {
         }
 
         self.read_rows_planar_i16_seq(y, y_stride, cb, cr, c_stride, max_mcu_rows)
-    }
-
-    /// Deprecated alias for [`read_rows_ycbcr_f32()`](Self::read_rows_ycbcr_f32).
-    #[deprecated(since = "0.5.0", note = "renamed to read_rows_ycbcr_f32")]
-    pub fn read_rows_ycbcr_planes(
-        &mut self,
-        y_plane: &mut [f32],
-        cb_plane: &mut [f32],
-        cr_plane: &mut [f32],
-        stride: usize,
-        max_rows: usize,
-    ) -> Result<usize> {
-        self.read_rows_ycbcr_f32(y_plane, cb_plane, cr_plane, stride, max_rows)
-    }
-
-    /// Deprecated alias for [`read_rows_ycbcr_native_i16()`](Self::read_rows_ycbcr_native_i16).
-    #[deprecated(since = "0.5.0", note = "renamed to read_rows_ycbcr_native_i16")]
-    pub fn read_rows_planar_i16(
-        &mut self,
-        y: &mut [i16],
-        y_stride: usize,
-        cb: &mut [i16],
-        cr: &mut [i16],
-        c_stride: usize,
-        max_mcu_rows: usize,
-    ) -> Result<(usize, usize)> {
-        self.read_rows_ycbcr_native_i16(y, y_stride, cb, cr, c_stride, max_mcu_rows)
     }
 
     /// Sequential implementation of `read_rows_ycbcr_native_i16`.
@@ -2670,6 +2952,7 @@ impl<'a> ScanlineReader<'a> {
         let mut total_chroma_rows = 0usize;
 
         for _ in 0..max_mcu_rows {
+            self.stop.check()?;
             if self.current_mcu_row >= total_mcu_rows {
                 break;
             }
@@ -2719,321 +3002,13 @@ impl<'a> ScanlineReader<'a> {
 
             // Advance to next MCU row
             self.current_row += luma_rows_this;
+            if let Some(progress) = self.progress {
+                progress.advance(luma_rows_this as u64);
+            }
             self.advance_mcu_row();
         }
 
         Ok((total_luma_rows, total_chroma_rows))
-    }
-
-    /// Read rows into a grayscale u8 buffer.
-    ///
-    /// This method is optimized for grayscale JPEGs (1 component).
-    /// For color JPEGs, it extracts the Y (luminance) channel.
-    ///
-    /// Returns the number of rows actually written (may be less than requested
-    /// if end of image is reached).
-    pub fn read_rows_gray8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-
-        if output.width() < out_width {
-            return Err(Error::internal("output buffer too narrow for grayscale"));
-        }
-
-        // Buffered mode: serve from pre-decoded buffer
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            if self.num_components == 1 {
-                // Grayscale buffer (1 byte per pixel)
-                let max_image_row = crop_y + out_height;
-                if max_image_row * img_width > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_offset = image_row * img_width + crop_x;
-                    let out_row = output.rows_mut().nth(rows_written).unwrap();
-                    out_row[..out_width]
-                        .copy_from_slice(&buffer[src_offset..src_offset + out_width]);
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            } else {
-                // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
-                let src_row_bytes = img_width * 3;
-                let max_image_row = crop_y + out_height;
-                if max_image_row * src_row_bytes > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_start = image_row * src_row_bytes + crop_x * 3;
-                    let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                    for x in 0..out_width {
-                        let r = buffer[src_start + x * 3] as u32;
-                        let g = buffer[src_start + x * 3 + 1] as u32;
-                        let b = buffer[src_start + x * 3 + 2] as u32;
-                        // BT.601: Y = 0.299*R + 0.587*G + 0.114*B (scaled by 1000)
-                        out_row[x] = ((299 * r + 587 * g + 114 * b) / 1000) as u8;
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            }
-
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: decode on-the-fly
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-            let y_slice = self.strip.y_row(self.row_in_mcu, cols);
-
-            for x in 0..out_width {
-                out_row[x] = y_slice[crop_x + x].clamp(0, 255) as u8;
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
-    }
-
-    /// Read rows into a grayscale f32 buffer.
-    ///
-    /// Output is normalized to [0, 1] range.
-    /// For grayscale JPEGs, this extracts the Y channel directly.
-    /// For color JPEGs, it extracts the Y (luminance) channel.
-    ///
-    /// Returns the number of rows actually written.
-    pub fn read_rows_gray_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-
-        if output.width() < out_width {
-            return Err(Error::internal(
-                "output buffer too narrow for grayscale f32",
-            ));
-        }
-
-        // Buffered mode: serve from pre-decoded buffer
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            if self.num_components == 1 {
-                // Grayscale buffer (1 byte per pixel)
-                let max_image_row = crop_y + out_height;
-                if max_image_row * img_width > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_offset = image_row * img_width + crop_x;
-                    let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                    for x in 0..out_width {
-                        out_row[x] = buffer[src_offset + x] as f32 / 255.0;
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            } else {
-                // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
-                let src_row_bytes = img_width * 3;
-                let max_image_row = crop_y + out_height;
-                if max_image_row * src_row_bytes > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_start = image_row * src_row_bytes + crop_x * 3;
-                    let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                    for x in 0..out_width {
-                        let r = buffer[src_start + x * 3] as f32;
-                        let g = buffer[src_start + x * 3 + 1] as f32;
-                        let b = buffer[src_start + x * 3 + 2] as f32;
-                        // BT.601: Y = 0.299*R + 0.587*G + 0.114*B
-                        out_row[x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            }
-
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: decode on-the-fly
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-            let y_slice = self.strip.y_row(self.row_in_mcu, cols);
-
-            for x in 0..out_width {
-                // i16 values already level-shifted to [0, 255] by integer IDCT
-                out_row[x] = y_slice[crop_x + x] as f32 / 255.0;
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
-    }
-
-    /// Read rows into a linear f32 grayscale buffer.
-    ///
-    /// Output is in linear light (not sRGB gamma), range [0, 1].
-    /// This applies the sRGB to linear conversion to each pixel.
-    ///
-    /// Returns the number of rows actually written.
-    pub fn read_rows_gray_linear_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
-        let max_rows = output.height();
-        let out_width = self.width() as usize;
-        let crop_x = self.crop.map_or(0, |c| c.x as usize);
-        let out_height = self.height() as usize;
-
-        if output.width() < out_width {
-            return Err(Error::internal(
-                "output buffer too narrow for linear grayscale f32",
-            ));
-        }
-
-        // Buffered mode: serve from pre-decoded buffer with linearization
-        if let Some(ref buffer) = self.buffered_rgb {
-            let mut rows_written = 0;
-            let img_width = self.width as usize;
-            let crop_y = self.crop.map_or(0, |c| c.y as usize);
-
-            if self.num_components == 1 {
-                // Grayscale buffer (1 byte per pixel)
-                let max_image_row = crop_y + out_height;
-                if max_image_row * img_width > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_offset = image_row * img_width + crop_x;
-                    let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                    for x in 0..out_width {
-                        out_row[x] = srgb_to_linear(buffer[src_offset + x]);
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            } else {
-                // Color buffer (RGB8): convert to linear grayscale
-                let src_row_bytes = img_width * 3;
-                let max_image_row = crop_y + out_height;
-                if max_image_row * src_row_bytes > buffer.len() {
-                    return Err(Error::internal(
-                        "buffered RGB data too small for image dimensions",
-                    ));
-                }
-                while rows_written < max_rows && self.current_row < out_height {
-                    let image_row = crop_y + self.current_row;
-                    let src_start = image_row * src_row_bytes + crop_x * 3;
-                    let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-                    for x in 0..out_width {
-                        // Linearize each channel first, then compute luminance
-                        let r = srgb_to_linear(buffer[src_start + x * 3]);
-                        let g = srgb_to_linear(buffer[src_start + x * 3 + 1]);
-                        let b = srgb_to_linear(buffer[src_start + x * 3 + 2]);
-                        // BT.601 in linear space
-                        out_row[x] = 0.299 * r + 0.587 * g + 0.114 * b;
-                    }
-
-                    rows_written += 1;
-                    self.current_row += 1;
-                }
-            }
-
-            return Ok(rows_written);
-        }
-
-        // Streaming mode: decode on-the-fly
-        self.ensure_crop_initialized()?;
-        let mut rows_written = 0;
-        let full_width = self.width as usize;
-
-        while rows_written < max_rows && self.current_row < out_height {
-            self.ensure_row_ready()?;
-
-            let cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
-
-            let y_slice = self.strip.y_row(self.row_in_mcu, cols);
-
-            for x in 0..out_width {
-                // i16 values already level-shifted to [0, 255] by integer IDCT;
-                // normalize to [0, 1] then apply sRGB→linear in f32 domain
-                out_row[x] = srgb_to_linear_f32(y_slice[crop_x + x] as f32 / 255.0);
-            }
-
-            rows_written += 1;
-            self.current_row += 1;
-            self.row_in_mcu += 1;
-
-            if self.row_in_mcu >= self.strip.mcu_height {
-                self.advance_mcu_row();
-            }
-        }
-
-        Ok(rows_written)
     }
 }
 
@@ -3041,6 +3016,139 @@ impl<'a> ScanlineReader<'a> {
 #[inline]
 fn srgb_to_linear(srgb: u8) -> f32 {
     linear_srgb::default::srgb_u8_to_linear(srgb)
+}
+
+/// The plane conversion a strip reader applies for `model`. Models without
+/// one (XYB, CMYK, YCCK) never reach a strip reader (`PathPlan::strip`); a
+/// caller that sends one is a bug, reported rather than converted wrongly.
+fn plane_matrix(model: ColorModel, idct_method: super::IdctMethod) -> Result<PlaneMatrix> {
+    model.plane_matrix(idct_method).ok_or_else(|| {
+        Error::internal("strip reader built for a colour model without a row kernel")
+    })
+}
+
+/// Clamp an IDCT sample to 8 bits.
+#[inline(always)]
+fn u8c(v: i16) -> u8 {
+    v.clamp(0, 255) as u8
+}
+
+/// Linearize an integer IDCT sample through the exact 8-bit table.
+#[inline(always)]
+fn lin_i16(v: i16) -> f32 {
+    srgb_to_linear(u8c(v))
+}
+
+/// One output row's source data, cropped to the output columns.
+#[derive(Clone, Copy)]
+enum RowSrc<'r> {
+    Native(&'r [u16], usize, ColorModel),
+    /// Decoded RGB, three bytes per pixel (buffered and wave readers).
+    Rgb8(&'r [u8]),
+    /// Decoded gray, one byte per pixel (buffered reader of a grayscale frame).
+    Gray8(&'r [u8]),
+    /// Strip planes (streaming and coefficient readers). `c1`/`c2` are empty
+    /// for grayscale; their meaning is the reader's [`PlaneMatrix`].
+    Planes(&'r [i16], &'r [i16], &'r [i16]),
+}
+
+impl RowSrc<'_> {
+    fn components16<const N: usize>(self, x: usize, max: i32) -> [u16; N] {
+        core::array::from_fn(|c| match self {
+            Self::Native(p, n, _) => p[x * n + c],
+            Self::Planes(y, cb, cr) => ([y, cb, cr][c][x] as i32).clamp(0, max) as u16,
+            _ => unreachable!("converted rows cannot supply source components"),
+        })
+    }
+
+    fn len(self) -> usize {
+        match self {
+            Self::Native(p, c, _) => p.len() / c,
+            Self::Planes(y, _, _) => y.len(),
+            Self::Rgb8(p) => p.len() / 3,
+            Self::Gray8(p) => p.len(),
+        }
+    }
+    fn rgb16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> [u16; 3] {
+        match self {
+            Self::Native(p, 1, _) => [p[x]; 3],
+            Self::Native(p, c, model) => {
+                let p = &p[x * c..(x + 1) * c];
+                let max = (1u32 << precision) - 1;
+                match model {
+                    ColorModel::YCbCr => native_ycbcr([p[0], p[1], p[2]], precision),
+                    ColorModel::Cmyk | ColorModel::Ycck => {
+                        let cmy = if model == ColorModel::Ycck {
+                            native_ycbcr([p[0], p[1], p[2]], precision).map(|v| max as u16 - v)
+                        } else {
+                            [p[0], p[1], p[2]]
+                        };
+                        cmy.map(|v| ((v as u32 * p[3] as u32 + max / 2) / max) as u16)
+                    }
+                    _ => [p[0], p[1], p[2]],
+                }
+            }
+            Self::Gray8(p) => [p[x] as u16; 3],
+            Self::Rgb8(p) => [p[x * 3] as u16, p[x * 3 + 1] as u16, p[x * 3 + 2] as u16],
+            Self::Planes(y, cb, cr) => {
+                if precision == 8 {
+                    let mut pixel = [0u8; 3];
+                    RowKernel::new(matrix, Layout8::Rgb).row(
+                        &y[x..x + 1],
+                        if cb.is_empty() { &[] } else { &cb[x..x + 1] },
+                        if cr.is_empty() { &[] } else { &cr[x..x + 1] },
+                        &mut pixel,
+                    );
+                    return pixel.map(u16::from);
+                }
+                let max = (1i64 << precision) - 1;
+                let clamp = |v: i64| v.clamp(0, max) as u16;
+                match matrix {
+                    PlaneMatrix::Gray => [clamp(y[x] as i64); 3],
+                    PlaneMatrix::Identity => {
+                        [clamp(y[x] as i64), clamp(cb[x] as i64), clamp(cr[x] as i64)]
+                    }
+                    PlaneMatrix::YCbCr { .. } => native_ycbcr(
+                        [clamp(y[x] as i64), clamp(cb[x] as i64), clamp(cr[x] as i64)],
+                        precision,
+                    ),
+                }
+            }
+        }
+    }
+    fn write_native_u8(self, precision: u8, matrix: PlaneMatrix, layout: Layout8, out: &mut [u8]) {
+        let max = (1u32 << precision) - 1;
+        let scale = |v: u16| ((v as u32 * 255 + max / 2) / max) as u8;
+        for (x, dst) in out.chunks_exact_mut(layout.bytes_per_pixel()).enumerate() {
+            if layout == Layout8::Gray {
+                dst[0] = scale(self.gray16(x, precision, matrix));
+            } else {
+                let [r, g, b] = self.rgb16(x, precision, matrix).map(scale);
+                let pixel = if matches!(layout, Layout8::Bgr | Layout8::Bgrx) {
+                    [b, g, r]
+                } else {
+                    [r, g, b]
+                };
+                dst[..3].copy_from_slice(&pixel);
+                if dst.len() == 4 {
+                    dst[3] = 255;
+                }
+            }
+        }
+    }
+
+    fn gray16(self, x: usize, precision: u8, matrix: PlaneMatrix) -> u16 {
+        if let Self::Native(p, n, ColorModel::Gray | ColorModel::YCbCr) = self {
+            return p[x * n];
+        }
+        if let Self::Planes(y, _, _) = self
+            && matrix != PlaneMatrix::Identity
+        {
+            return (y[x] as i64).clamp(0, (1i64 << precision) - 1) as u16;
+        }
+        let [r, g, b] = self.rgb16(x, precision, matrix).map(u64::from);
+        ((19595 * r + 38470 * g + 7471 * b + 32768) >> 16) as u16
+    }
 }
 
 /// Convert sRGB f32 (0.0-1.0) to linear f32.
@@ -3207,9 +3315,50 @@ fn filter_inter_mcu_horizontal_i16(
     }
 }
 
+fn native_ycbcr(p: [u16; 3], precision: u8) -> [u16; 3] {
+    let max = (1i64 << precision) - 1;
+    let [y, b, r] = p.map(i64::from);
+    let (b, r) = (b - (1 << (precision - 1)), r - (1 << (precision - 1)));
+    [
+        y + ((91881 * r + 32768) >> 16),
+        y + ((-22554 * b - 46802 * r + 32768) >> 16),
+        y + ((116130 * b + 32768) >> 16),
+    ]
+    .map(|v| v.clamp(0, max) as u16)
+}
+
+fn frame_component_ids(data: &[u8]) -> [u8; MAX_COMPONENTS] {
+    use crate::container::marker::{self, MarkerKind};
+    let mut ids = [0; MAX_COMPONENTS];
+    if let Some(frame) = marker::iter(data).find(|s| matches!(s.kind, MarkerKind::Sof(_)))
+        && let Some(components) = frame.payload.get(6..)
+    {
+        for (id, c) in ids.iter_mut().zip(components.as_chunks::<3>().0.iter()) {
+            *id = c[0];
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converted_row_lengths_and_gray_rgb() {
+        let gray = RowSrc::Gray8(&[17, 29]);
+        assert_eq!(gray.len(), 2);
+        assert_eq!(gray.rgb16(1, 8, PlaneMatrix::Identity), [29; 3]);
+        let rgb = RowSrc::Rgb8(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(rgb.len(), 2);
+        assert_eq!(rgb.rgb16(1, 8, PlaneMatrix::Identity), [4, 5, 6]);
+    }
+
+    #[test]
+    #[should_panic(expected = "converted rows cannot supply source components")]
+    fn converted_rows_cannot_be_mislabeled_as_native() {
+        RowSrc::Rgb8(&[1, 2, 3]).components16::<3>(0, 255);
+    }
 
     #[test]
     fn test_filter_strip_vertical_i16() {
@@ -4904,5 +5053,40 @@ mod tests {
                 "Non-MCU-aligned crop differs from reference at {perm}"
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod native_reader_guards {
+    use super::*;
+    #[test]
+    fn component_id_probe_refuses_short_frame_payload() {
+        assert_eq!(
+            frame_component_ids(&[255, 216, 255, 193, 0, 2, 255, 217]),
+            [0; MAX_COMPONENTS]
+        );
+    }
+    #[test]
+    fn cmyk_row_invariant_is_checked() {
+        let result = super::super::DecodeResult::new_u16(
+            1,
+            1,
+            crate::types::PixelFormat::Cmyk,
+            12,
+            vec![0; 4],
+            None,
+            Vec::new(),
+        );
+        let mut reader = ScanlineReader::from_native_result(Cow::Borrowed(&[]), result).unwrap();
+        // A broken internal channel invariant must fail rather than indexing
+        // a three-channel pixel as CMYK. Public construction always sets four.
+        reader.num_components = 3;
+        let mut pixel = [Cmyk16::default()];
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reader.read_rows_cmyk16(imgref::ImgRefMut::new(&mut pixel, 1, 1))
+            }))
+            .is_err()
+        );
     }
 }

@@ -48,8 +48,7 @@ fn decode_with_zune(data: &[u8]) -> (Vec<u8>, usize, usize) {
 fn test_decode_im_q85_444() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_444.jpg");
     if !path.exists() {
-        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
-        return;
+        panic!("missing test prerequisite: test file not found - set JPEGLI_TESTDATA");
     }
 
     let jpeg_data = std::fs::read(path).expect("read file");
@@ -82,8 +81,7 @@ fn test_decode_444_non_interleaved() {
     let path = zenjpeg::test_utils::get_testdata_dir()
         .join("jxl/flower/flower_small.q85_444_non_interleaved.jpg");
     if !path.exists() {
-        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
-        return;
+        panic!("missing test prerequisite: test file not found - set JPEGLI_TESTDATA");
     }
 
     let jpeg_data = std::fs::read(path).expect("read file");
@@ -112,8 +110,7 @@ fn test_decode_444_non_interleaved() {
 fn test_decode_420_mcu_interleaved() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_420.jpg");
     if !path.exists() {
-        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
-        return;
+        panic!("missing test prerequisite: test file not found - set JPEGLI_TESTDATA");
     }
 
     let jpeg_data = std::fs::read(path).expect("read file");
@@ -148,8 +145,7 @@ fn test_decode_grayscale() {
     let path =
         zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_gray.jpg");
     if !path.exists() {
-        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
-        return;
+        panic!("missing test prerequisite: test file not found - set JPEGLI_TESTDATA");
     }
 
     let jpeg_data = std::fs::read(path).expect("read file");

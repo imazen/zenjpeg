@@ -105,7 +105,6 @@ const hybridBaseLambda2In = $<HTMLInputElement>("#hybrid-base-lambda2");
 const hybridDcIn = $<HTMLInputElement>("#hybrid-dc");
 const hybridAqExpIn = $<HTMLInputElement>("#hybrid-aq-exp");
 const hybridAqThresholdIn = $<HTMLInputElement>("#hybrid-aq-threshold");
-const hybridQAdaptIn = $<HTMLInputElement>("#hybrid-q-adapt");
 // Curve controls
 const curveQscaleIn = $<HTMLInputElement>("#curve-qscale");
 const curveQscaleOut = $<HTMLOutputElement>("#curve-qscale-out");
@@ -136,12 +135,15 @@ interface ComponentEqState {
 interface BaseSnapshot {
   /** Per-component f32 base tables (length 64, natural row-major). */
   tables: [Float32Array, Float32Array, Float32Array];
+  biasOffsets: [Float32Array, Float32Array, Float32Array];
+  biasMultipliers: [Float32Array, Float32Array, Float32Array];
   /** Encode opts the snapshot was captured under. Stale if any of
    *  these change. */
   quality: number;
   colorPath: string;
   subsampling: string;
   xybSubsampling: string;
+  chromaDistanceScale: number;
 }
 
 interface ZeroBiasState {
@@ -207,16 +209,10 @@ let activeTab = "quality";
 interface ImageManifestEntry {
   id: string;
   label: string;
-  /** Local cached relative URL when prebuild ran. The build-time
-   *  fetch-images.ts script applies an 8× lanczos3 wash to entries
-   *  flagged wasJpeg, writes the result as a PNG named `<sha>-w8.png`,
-   *  and points this URL at the washed copy. The browser does NO
-   *  resampling at any point — pixels are taken straight from this
-   *  URL into the encoder. */
+  /** Optional same-origin cached source and remote fallback. */
   localUrl: string | null;
-  /** Direct R2 URL (raw blob — only used as a fallback when the
-   *  local cache is missing AND CORS happens to be configured). */
   remoteUrl: string;
+  scale: number;
 }
 let imageManifest: ImageManifestEntry[] = [];
 
@@ -407,7 +403,8 @@ function invalidateBaseSnapshotIfStale(): boolean {
     baseSnapshot.quality === parseInt(qualityIn.value, 10) &&
     baseSnapshot.colorPath === colorPathSel.value &&
     baseSnapshot.subsampling === subSel.value &&
-    baseSnapshot.xybSubsampling === xybSubSel.value;
+    baseSnapshot.xybSubsampling === xybSubSel.value &&
+    baseSnapshot.chromaDistanceScale === Number(chromaDistIn.value);
   if (!optsMatch) {
     baseSnapshot = null;
     return true;
@@ -426,6 +423,8 @@ function captureBaseSnapshot(diag: Diagnostics): void {
     new Float32Array(64),
     new Float32Array(64),
   ];
+  const biasOffsets = [new Float32Array(64), new Float32Array(64), new Float32Array(64)] as BaseSnapshot["biasOffsets"];
+  const biasMultipliers = [new Float32Array(64), new Float32Array(64), new Float32Array(64)] as BaseSnapshot["biasMultipliers"];
   for (let cidx = 0; cidx < 3; cidx++) {
     const comp = diag.components[cidx];
     const t = tables[cidx]!;
@@ -434,14 +433,21 @@ function captureBaseSnapshot(diag: Diagnostics): void {
       continue;
     }
     const base = comp.quantTableBase as Uint16Array | number[];
-    for (let i = 0; i < 64; i++) t[i] = base[i]! as number;
+    for (let i = 0; i < 64; i++) {
+      t[i] = base[i]! as number;
+      biasOffsets[cidx]![i] = comp.zeroBias[i]! as number;
+      biasMultipliers[cidx]![i] = comp.zeroBiasMul[i]! as number;
+    }
   }
   baseSnapshot = {
     tables,
+    biasOffsets,
+    biasMultipliers,
     quality: parseInt(qualityIn.value, 10),
     colorPath: colorPathSel.value,
     subsampling: subSel.value,
     xybSubsampling: xybSubSel.value,
+    chromaDistanceScale: Number(chromaDistIn.value),
   };
 }
 
@@ -497,7 +503,6 @@ function buildCustomQuantTables(): CustomQuantTables | null {
         break;
       }
     }
-    if (anyDiff) break;
   }
   // Zero-bias deviations from defaults also count as "user has edits".
   const zbDirty =
@@ -505,34 +510,14 @@ function buildCustomQuantTables(): CustomQuantTables | null {
     zeroBias.offsetDc.some((d) => Math.abs(d) > 1e-4) ||
     zeroBias.offsetAc.some((d) => Math.abs(d) > 1e-4);
   if (!anyDiff && !zbDirty) return null;
-  // Build zero-bias multiplier tables: each component has 64 cells; the
-  // global mul applies to all of them. Default zero_bias_mul values
-  // come from the encoder's per-mode defaults — we don't have those on
-  // the JS side, so we approximate as 1.0×globalMul, leaving the
-  // encoder to apply the rest of its baseline shape. (For finer
-  // control we'd need to surface zero_bias_mul defaults via diagnostics.)
-  const zbMul = (cidx: number): number[] | undefined => {
-    const m = zeroBias.globalMul[cidx]!;
-    if (Math.abs(m - 1.0) < 1e-3) return undefined;
-    return new Array<number>(64).fill(m);
-  };
+  // Preserve the resolved encoder defaults while applying the user's edits.
+  const zbMul = (cidx: number): number[] =>
+    Array.from(baseSnapshot!.biasMultipliers[cidx]!, (v) => v * zeroBias.globalMul[cidx]!);
   return {
-    y: tables[0]!,
-    cb: tables[1]!,
-    cr: tables[2]!,
-    yZeroBiasMul: zbMul(0),
-    cbZeroBiasMul: zbMul(1),
-    crZeroBiasMul: zbMul(2),
-    zeroBiasOffsetDc: [
-      zeroBias.offsetDc[0]!,
-      zeroBias.offsetDc[1]!,
-      zeroBias.offsetDc[2]!,
-    ],
-    zeroBiasOffsetAc: [
-      zeroBias.offsetAc[0]!,
-      zeroBias.offsetAc[1]!,
-      zeroBias.offsetAc[2]!,
-    ],
+    y: tables[0]!, cb: tables[1]!, cr: tables[2]!,
+    yZeroBiasMul: zbMul(0), cbZeroBiasMul: zbMul(1), crZeroBiasMul: zbMul(2),
+    zeroBiasOffsetDc: [0, 1, 2].map((i) => baseSnapshot!.biasOffsets[i]![0]! + zeroBias.offsetDc[i]!) as [number, number, number],
+    zeroBiasOffsetAc: [0, 1, 2].map((i) => baseSnapshot!.biasOffsets[i]![1]! + zeroBias.offsetAc[i]!) as [number, number, number],
   };
 }
 
@@ -556,13 +541,12 @@ function currentOptions(): EncodeOptions {
     trellisLambdaLogScale2: parseFloat(trellisLambda2In.value) || 16.5,
     trellisSpeedMode: trellisSpeedSel.value as TrellisSpeed,
     trellisDeltaDcWeight: parseFloat(trellisDeltaDcIn.value) || 0,
-    hybridAqLambdaScale: parseFloat(hybridAqLambdaIn.value) || 2,
+    hybridAqLambdaScale: Number(hybridAqLambdaIn.value),
     hybridBaseLambdaScale1: parseFloat(hybridBaseLambda1In.value) || 14.75,
     hybridBaseLambdaScale2: parseFloat(hybridBaseLambda2In.value) || 16.5,
     hybridDcEnabled: hybridDcIn.checked,
     hybridAqExponent: parseFloat(hybridAqExpIn.value) || 1,
     hybridAqThreshold: parseFloat(hybridAqThresholdIn.value) || 0,
-    hybridQualityAdaptive: hybridQAdaptIn.checked,
   };
   const custom = buildCustomQuantTables();
   if (custom) opts.customQuantTables = custom;
@@ -605,12 +589,12 @@ function utilizationField(
   for (const block of comp.blocks) {
     const c = block.coefPreQuant;
     for (let i = 0; i < 64; i++) {
-      const qv = q[i]!;
-      if (qv <= 0) continue;
-      const ratio = Math.abs((c[i]! as number)) / qv;
+      const qv = Math.max(1, Math.min(32767, Math.round(q[i]!)));
+      const ratio = 8 * Math.abs(c[i]! as number) / qv;
       accum[i]! += ratio;
       totalCoef++;
-      if (ratio < 0.5) zeroCoef++;
+      const threshold = (comp.zeroBias[i]! as number) + (comp.zeroBiasMul[i]! as number) * block.aqStrength;
+      if (ratio < threshold || ratio < 0.5) zeroCoef++;
     }
   }
   const field = new Float32Array(64);
@@ -821,10 +805,10 @@ function componentLabel(colorPath: string, idx: number): string {
 
 // ─── AQ field rendering ───────────────────────────────────────────
 function renderAqField(diag: Diagnostics): void {
-  // AQ multiplier is always written to component 0 (Y in YCbCr,
+  // AQ strength is always written to component 0 (Y in YCbCr,
   // X in XYB); the *source* channel for AQ analysis is c1 (Y-XYB)
   // in XYB mode and c0 (Y) in YCbCr mode. Both produce per-block
-  // multipliers we display here.
+  // strengths we display here.
   const yComp = diag.components[0];
   if (!yComp) {
     aqMinEl.textContent = "—";
@@ -839,7 +823,7 @@ function renderAqField(diag: Diagnostics): void {
   let mx = -Infinity;
   let sum = 0;
   for (let i = 0; i < yComp.blocks.length; i++) {
-    const v = yComp.blocks[i]!.aqMultiplier;
+    const v = yComp.blocks[i]!.aqStrength;
     data[i] = v;
     if (v < mn) mn = v;
     if (v > mx) mx = v;
@@ -1238,6 +1222,7 @@ async function runEncode(): Promise<void> {
   cancelBtn.disabled = false;
   status.textContent = "Encoding…";
   document.body.dataset.encodePhase = "start";
+  document.body.dataset.encodeState = "running";
   setEncodingIndicator(
     true,
     `req#${reqId} · ${currentImage.width}×${currentImage.height} · q=${qualityIn.value} · ${getMode()}`,
@@ -1247,13 +1232,24 @@ async function runEncode(): Promise<void> {
     const packed = rgbaToPackedRgb(currentImage.rgba);
     const opts = currentOptions();
     document.body.dataset.encodePhase = "calling-wasm";
-    const result = await workerEncode(
+    let result = await workerEncode(
       packed,
       currentImage.width,
       currentImage.height,
       opts,
       reqId,
     );
+    if (reqId !== latestReqId) return;
+    // A changed quality or sampling mode needs a fresh default-table
+    // snapshot before the existing EQ edits can be reapplied.
+    if (!opts.customQuantTables) {
+      captureBaseSnapshot(result.diagnostics);
+      const custom = buildCustomQuantTables();
+      if (custom) {
+        opts.customQuantTables = custom;
+        result = await workerEncode(rgbaToPackedRgb(currentImage.rgba), currentImage.width, currentImage.height, opts, reqId);
+      }
+    }
     document.body.dataset.encodePhase = "wasm-returned";
     if (reqId !== latestReqId) {
       // Stale result — drop.
@@ -1357,7 +1353,7 @@ function refreshRdPanel(): void {
 // ─── Image loading ────────────────────────────────────────────────
 async function loadFile(file: File): Promise<void> {
   const url = URL.createObjectURL(file);
-  // No browser-side wash for uploads either. If the user uploads a
+  // Uploads retain their original dimensions. If the user uploads a
   // JPEG / WebP / AVIF, the diagnostics will reflect "encoder + prior
   // codec artifacts" not "encoder alone" — that's the user's
   // responsibility. We surface a warning so it's not a silent footgun.
@@ -1406,30 +1402,30 @@ async function fetchAsImage(url: string): Promise<HTMLImageElement> {
   }
 }
 
-/** Decode an HTMLImageElement to RGBA pixels at native dimensions.
- *  No browser-side resampling — the wash (8× lanczos3) is performed
- *  at build time by scripts/fetch-images.ts using sharp, so by the
- *  time we get here the image bytes are already the cleaned source. */
+/** Decode uploaded images at native size and scale optional large demo sources. */
 function decodeImageToCanvas(
   img: HTMLImageElement,
+  scale = 1,
 ): { width: number; height: number; rgba: Uint8ClampedArray } {
-  const w = img.naturalWidth;
-  const h = img.naturalHeight;
+  const w = Math.max(1, Math.floor(img.naturalWidth / scale));
+  const h = Math.max(1, Math.floor(img.naturalHeight / scale));
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
   const cx = c.getContext("2d");
   if (!cx) throw new Error("canvas 2d unavailable");
-  cx.imageSmoothingEnabled = false;
-  cx.drawImage(img, 0, 0);
+  cx.imageSmoothingEnabled = scale !== 1;
+  cx.imageSmoothingQuality = "high";
+  cx.drawImage(img, 0, 0, w, h);
   const data = cx.getImageData(0, 0, w, h);
+  // JPEG drops alpha. Display and score the same RGB values sent to the encoder.
+  for (let i = 3; i < data.data.length; i += 4) data.data[i] = 255;
   return { width: w, height: h, rgba: data.data };
 }
 
 async function loadEntry(entry: ImageManifestEntry): Promise<void> {
   let img: HTMLImageElement | null = null;
-  // Try the local cached path first (works on any deploy that ran the
-  // prebuild fetch — `npm run build` triggers it). The absolute R2 URL
+  // Try the local cached path first (populated by `npm run fetch-images`). The absolute R2 URL
   // is the fallback but it WILL hit CORS unless either (a) the bucket
   // has CORS configured (Access-Control-Allow-Origin) or (b) the page
   // is being viewed at the same origin as the bucket. So we annotate
@@ -1449,8 +1445,7 @@ async function loadEntry(entry: ImageManifestEntry): Promise<void> {
       if (!isLocal && msg.toLowerCase().includes("fetch")) {
         lastErr = new Error(
           `R2 fetch blocked (likely CORS): ${url} → ${msg}. ` +
-            `Fix: rebuild via \`npm run build\` so the prebuild hook ` +
-            `bakes images into dist/images/, or configure CORS on the ` +
+            `Run \`npm run fetch-images\` and rebuild, or configure CORS on the ` +
             `codec-corpus bucket.`,
         );
       }
@@ -1458,7 +1453,7 @@ async function loadEntry(entry: ImageManifestEntry): Promise<void> {
     }
   }
   if (!img) throw lastErr ?? new Error("no image source available");
-  const decoded = decodeImageToCanvas(img);
+  const decoded = decodeImageToCanvas(img, entry.scale);
   currentImage = {
     width: decoded.width,
     height: decoded.height,
@@ -1469,27 +1464,19 @@ async function loadEntry(entry: ImageManifestEntry): Promise<void> {
 }
 
 function loadImageManifest(): void {
-  // Bundled list always populates the dropdown. The "real" runtime
-  // manifest (./images/manifest.json) carries the post-wash URLs +
-  // dimensions when the prebuild has run; we prefer those. The
-  // bundled list is the fallback when the manifest is empty.
+  // The bundled list populates the dropdown; source caching is optional.
   const base = (bundled.defaultBase ?? FALLBACK_BASE).replace(/\/+$/, "");
   imageManifest = [];
   for (const entry of bundled.images) {
     const urls = entryToUrls(entry, base);
     if (!urls) continue;
-    // For wasJpeg entries, the served local URL is `<sha>-w8.png`
-    // (the post-wash PNG written by the prebuild). The raw blob URL
-    // stays on R2 — there's no point falling back to the un-washed
-    // remote when the wash exists locally.
-    const localUrl = entry.wasJpeg && entry.sha256
-      ? `./images/${entry.sha256.toLowerCase()}-w8.png`
-      : urls.localUrl;
+    const localUrl = urls.localUrl;
     imageManifest.push({
       id: entry.id,
       label: entry.label,
       localUrl,
       remoteUrl: urls.remoteUrl,
+      scale: entry.wasJpeg ? 8 : 1,
     });
     const opt = document.createElement("option");
     opt.value = entry.id;
@@ -1531,7 +1518,7 @@ function refreshQuantBanner(): void {
       msg = `Trellis (${cp}). Lambda RD picks per-coefficient quant levels; the table acts as an upper bound. Edits to the table still constrain the search space.`;
       break;
     case "hybrid":
-      msg = `Hybrid (${cp}). AQ-aware lambda RD. The table sets the AQ multiplier base; trellis picks final levels per block, modulated by per-block AQ.`;
+      msg = `Hybrid (${cp}). AQ-aware lambda RD. Trellis picks final levels per block, modulated by per-block AQ strength.`;
       break;
   }
   el.textContent = msg;
@@ -1616,6 +1603,8 @@ function wireControls(): void {
     invalidateBaseSnapshotIfStale();
     scheduleAutoEncode();
   });
+  chromaDistIn.addEventListener("input", invalidateBaseSnapshotIfStale);
+  chromaDistIn.addEventListener("change", invalidateBaseSnapshotIfStale);
   // Subsampling changes the encoder's default tables AND determines
   // whether sharp-yuv is meaningful. Refresh ignored-annotations.
   for (const el of [subSel, xybSubSel]) {
@@ -1647,7 +1636,6 @@ function wireControls(): void {
     hybridDcIn,
     hybridAqExpIn,
     hybridAqThresholdIn,
-    hybridQAdaptIn,
   ]) {
     el.addEventListener("change", scheduleAutoEncode);
     el.addEventListener("input", scheduleAutoEncode);

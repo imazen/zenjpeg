@@ -1,18 +1,26 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, review/zenmeta-integration]
   pull_request:
-    branches: [main]
+    branches: [main, decode-12bit-lossless]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # `github.head_ref` is set ONLY on pull_request events. On a push it is
+  # empty, so the group fell through to `github.run_id` — unique per run,
+  # so pushes never collided and nothing was ever cancelled. `github.ref`
+  # is set on both event types (`refs/heads/main` on push,
+  # `refs/pull/N/merge` on a PR), so PR behaviour is unchanged while
+  # consecutive pushes to a branch now supersede each other.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   CI: true
+  CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
 
 jobs:
   test:
@@ -25,7 +33,6 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-          - macos-26-intel
           - windows-latest
           - windows-11-arm
     steps:
@@ -41,7 +48,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -51,14 +57,12 @@ jobs:
             -e '/"internal\/jpegli-internals-sys"/d' \
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # Remove zenresize workspace dep (needs zenblend/zennode chain)
-          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # Remove non-CI deps from zenjpeg
+          # Remove non-CI deps from zenjpeg. zenresize (the `layout` feature)
+          # stays: it is a crates.io dependency, and this job runs the
+          # layout tests.
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
-            -e 's/^layout = .*/layout = []/' \
             -e 's/^zennode = .*/zennode = []/' \
             -e 's/, features = \["cjpegli-ffi"\]//' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
@@ -66,17 +70,75 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Prefetch metadata corpora before parallel tests
+        run: cargo run -p zenjpeg --example metadata_corpus_prefetch
+
       - name: Test (defaults)
         run: cargo test -p zenjpeg --release --lib --tests
 
-      - name: Test (all user features)
-        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec" --lib --tests
+      - name: Build pinned native-precision JPEG oracle
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          bash scripts/build-native-oracle.sh "$HOME/tmp/zenjpeg-oracle"
+          echo "ZENJPEG_TURBO_BIN=$HOME/tmp/zenjpeg-oracle/build" >> "$GITHUB_ENV"
 
-      - name: Test (no defaults, decoder only)
-        run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
+      - name: Native-precision sample equality with libjpeg-turbo
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --release --test native_precision -- --ignored --test-threads=1
+
+      - name: Ten-component reference parity
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          export ZENJPEG_TURBO_SOURCE="$HOME/tmp/zenjpeg-oracle/libjpeg-turbo-3.2.0"
+          export ZENJPEG_COMPONENT_ORACLE_DIR="$HOME/tmp/zenjpeg-component-reference"
+          python3 scripts/build-component-oracle.py
+          ZENJPEG_TURBO_BIN="$ZENJPEG_COMPONENT_ORACLE_DIR/build" cargo test -p zenjpeg --release --test multicomponent -- --ignored ten_component_oracle_matrix
+
+      - name: Deferred analysis dependencies stay out of release builds
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 scripts/check-analysis-dependencies.py
+
+      - name: Test (all user features)
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+      - name: Shared contracts without inventory
+        run: cargo test -p zenjpeg --features zencodec,metadata-rewrite --test shared_contracts
+      # Consumers build zenjpeg unoptimized in their debug/test profiles and
+      # decode on 2 MiB threads; reader construction must fit 1 MiB there.
+      - name: Decoder stack demand (unoptimized)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --profile unoptimized --features zencodec,controlled-decode --test stack_demand
+
+
+      - name: Install lossless metadata oracles
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libjpeg-turbo-progs libimage-exiftool-perl
+
+      - name: Check lossless pixels and secondary metadata with independent readers
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ZENJPEG_ORACLE_TOOLS: "1"
+        run: cargo test -p zenjpeg --release --features ultrahdr --test lossless_oracle -- --test-threads=1
+
+      - name: Inventory disabled through configured jobs
+        run: cargo test -p zenjpeg --release --features zencodec --test inventory_feature
+
+      - name: Test (explicit extended JPEG, no other defaults)
+        run: cargo test -p zenjpeg --release --no-default-features --features extended-jpeg --lib --tests
+
+      - name: Test (core JPEG without extended capability)
+        run: cargo test -p zenjpeg --release --no-default-features --test extended_jpeg_feature
 
       - name: Test (__expert + all user features)
-        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
+        run: cargo test -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,boundary-rd,__expert" --lib --tests
+      # `recompress` is opt-in, so no other step runs its tests; a stale
+      # fixture went unnoticed until a workspace-wide run (the 16-bit DQT
+      # source stopped needing 16-bit tables after 544a1c48).
+      - name: Test (recompress)
+        run: |
+          cargo test -p zenjpeg --release --features recompress-expert --test recompress_api
+          cargo test -p zenjpeg --release --features recompress-expert --lib recompress::
 
 
   i686:
@@ -96,7 +158,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -120,18 +181,14 @@ jobs:
         with:
           key: cross-i686
 
+      - name: Prefetch metadata corpora before parallel tests
+        run: cargo run -p zenjpeg --example metadata_corpus_prefetch
+
       - name: Test (i686)
-        # Skip two tests that require sparse-cloning the full image-rs/image
-        # repo. codec-corpus bundles its own test corpora (so zune/fuzz tests
-        # work) but image-rs/tests/images is fetched from the separate
-        # image-rs/image repo, which the cross container's constrained network
-        # times out on. Unrelated to 32-bit correctness.
-        run: |
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests -- \
-            --skip codec_corpus_conformance::test_image_rs_general \
-            --skip codec_corpus_conformance::test_image_rs_progressive
-        env:
-          CODEC_CORPUS_CACHE: /tmp/codec-corpus
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
+
+      - name: Metadata and inventory (i686)
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata,metadata-rewrite,controlled-decode --test controlled_decode --test grayscale_geometry --test inventory_feature --test extended_metadata --test fuzz_regression --test metadata_rewrite
 
   wasm32:
     name: Build (wasm32-wasip1)
@@ -151,7 +208,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -176,17 +232,17 @@ jobs:
           key: wasm32-wasip1
 
       - name: Build (scalar)
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features decoder
+        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features
 
       - name: Build (SIMD128)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features decoder
+        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features
 
       - name: Build wasm_bench example (SIMD128)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features --features decoder
+        run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features
 
   cpp-parity:
     name: C++ Parity (${{ matrix.os }})
@@ -220,8 +276,18 @@ jobs:
             brew install jpeg-turbo
             echo "$(brew --prefix jpeg-turbo)/bin" >> "$GITHUB_PATH"
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            choco install libjpeg-turbo --yes --no-progress
-            echo "C:\\libjpeg-turbo64\\bin" >> "$GITHUB_PATH"
+            # choco's community feed 503s intermittently; retry, then FAIL
+            # LOUDLY if djpeg still isn't installed — a silent miss surfaces
+            # later as baffling "program not found" test failures.
+            for i in 1 2 3; do
+              if choco install libjpeg-turbo --yes --no-progress --allow-empty-checksums \
+                  && test -x "/c/libjpeg-turbo64/bin/djpeg.exe"; then
+                break
+              fi
+              echo "choco attempt $i failed; retrying in 20s" && sleep 20
+            done
+            test -x "/c/libjpeg-turbo64/bin/djpeg.exe" || { echo "::error::libjpeg-turbo install failed (djpeg missing)"; exit 1; }
+            printf '%s\n' 'C:\libjpeg-turbo64\bin' >> "$GITHUB_PATH"
           fi
           cmake --version
           djpeg -version || djpeg --version || echo "djpeg not in PATH yet (will be available after PATH update)"
@@ -233,7 +299,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps (keep jpegli-internals-sys)
         shell: bash
@@ -289,10 +354,10 @@ jobs:
           cmake --build build --target cjpegli djpegli --config Release --parallel
 
       - name: Build (includes C++ jpegli compilation)
-        run: cargo build -p zenjpeg --release --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
+        run: cargo build -p zenjpeg --release --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
 
       - name: Test (all features + C++ FFI parity)
-        run: cargo test -p zenjpeg --release --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
+        run: cargo test -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
 
       - name: Upload failing JPEGs
         if: failure()
@@ -320,7 +385,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -343,13 +407,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy -p zenjpeg --lib --tests --benches --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" -- -D warnings
 
       - name: Clippy (default features)
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
 
-      - name: Clippy (__expert + boundary-rd + trellis)
-        run: cargo clippy -p zenjpeg --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
+      # Lib-only, default features: test builds feature-unify __test-utils
+      # through zenjpeg-bench-utils (making internal modules pub and
+      # exempting them from dead-code analysis), so this is the only
+      # configuration where dead-code detection actually fires. Kept
+      # warning-clean since the 2026-07-13 review sweep (was 286 warnings).
+      - name: Clippy (lib only, true default config)
+        run: cargo clippy -p zenjpeg --lib -- -D warnings
+
+      # Build-only check of the examples (#199): no test job builds them
+      # (`--lib --tests`), so an example could rot against API changes with
+      # nothing turning red. Examples gated on features this job cannot
+      # enable (__ffi-tests, recompress-expert, ...) are skipped
+      # by their `required-features`.
+      - name: Check examples (all user features)
+        run: cargo check -p zenjpeg --examples --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,__test-utils"
+
+      - name: Check examples (default features)
+        run: cargo check -p zenjpeg --examples
+
+      - name: Clippy (__expert + boundary-rd)
+        run: cargo clippy -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,boundary-rd,__expert" -- -D warnings
+
+      # `recompress` is opt-in (`default = []`), so no other job compiles the
+      # module; lint it on its own (#143). Deliberately WITHOUT
+      # `recompress-expert`: the expert re-export would mask dead code in the
+      # plain-`recompress` configuration, which is the one users get.
+      - name: Clippy (recompress)
+        run: cargo clippy -p zenjpeg --lib --tests --features recompress -- -D warnings
+
 
   fmt:
     name: Format
@@ -369,7 +460,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -390,6 +480,42 @@ jobs:
       - name: Format check
         run: cargo fmt -p zenjpeg -p zenjpeg-bench-utils -- --check
 
+  public-api:
+    name: Public API surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+
+      # No manifest stripping here: apidoc/ is its own standalone workspace
+      # that builds zenjpeg as a path dependency with its REAL manifest —
+      # stripping (blanking the layout feature) made rustdoc --all-features
+      # fail on the zenresize import and desynced the surface from the
+      # committed snapshots.
+      #
+      # Fails when docs/public-api/ snapshots don't match the current
+      # public surface — API growth must be a reviewed, committed change
+      # (regenerate with `just api-doc`).
+      #
+      # The rustdoc-JSON nightly is PINNED (keep in sync with the
+      # justfile): an unpinned tracking nightly churns cross-crate path
+      # rendering — the 2026-07 core::io re-homing turned
+      # `std::io::Write` into `core::io::write::Write` and broke this
+      # gate with zero repo changes. Bump the pin deliberately, in the
+      # same commit as a `just api-doc` regen.
+      - name: Public API snapshots current
+        run: ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN=nightly-2026-07-13 cargo test --manifest-path apidoc/Cargo.toml
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
@@ -407,7 +533,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -449,7 +574,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash

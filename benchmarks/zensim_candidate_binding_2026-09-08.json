@@ -1,0 +1,796 @@
+{
+  "status": "candidate binding and AQ repairs validated; no model or spatial RD qualification",
+  "inputs": {
+    "binary": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/bin/zq_rd_probe-3645399638d7",
+    "binary_sha256": "3645399638d7e811c5b962e588dd81c60b493db32e4dc5ce19268857f9c5ffc6",
+    "model": "/home/lilith/work/zen/zensim/zensim/weights/d_sdr_add156_id100_negrich_dial_byid_2026-09-06.bin",
+    "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+    "source": {
+      "path": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "origin": "2010",
+      "family": "origin:2010",
+      "split": "train",
+      "content_class": "photo"
+    },
+    "source_manifest_sha256": "4f7ee719520d2e71a672ddc5b83aba9aa24960c0684c8361d306aea119c03a71",
+    "registration_sha256": "1e2a648de5e2d3bd72b92bcc1d7650fd081942ddee550556486242515968b46e",
+    "working_revision": "f2b5db983a52feb03972a4c6a575a304788847a6",
+    "formula_revision": 1,
+    "seed_q": 80,
+    "subsampling": "444",
+    "baseline_corrections": 0,
+    "clawback_corrections": 2,
+    "clawback_target_rule": "baseline scalar score minus 5",
+    "zenanalyze_sibling_revision": "b102fa5f3480f0c3911fa85a8a6ad23c64936f18"
+  },
+  "controls": {
+    "neutral_scalar_baseline_byte_pixel_parity": true,
+    "all_active_passes_maps_scales_pixels_repeat_exact": true,
+    "current_maps_change_after_changed_pixels": true,
+    "all_partial_edge_blocks_controlled": 832,
+    "terminal_decodes_and_scores": 5,
+    "full_encodes": 13,
+    "selected_active_bytes_change": -69,
+    "rejection_controls": 10
+  },
+  "negative_controls": [
+    {
+      "case": "missing_seed",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "nan_seed",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "out_of_range_seed",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "bad_mode",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "profile_alias",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "alpha_input",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "legacy_peak_bound",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "wrong_formula",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "unsupported_map",
+      "result": "PASS",
+      "code": 1
+    },
+    {
+      "case": "nan_target",
+      "result": "PASS",
+      "code": 1
+    }
+  ],
+  "arms": {
+    "baseline": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 0,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "3645399638d7e811c5b962e588dd81c60b493db32e4dc5ce19268857f9c5ffc6",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 1,
+      "height": 256,
+      "loop_seconds": 0.006406859,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "scalar",
+      "target": 100.0,
+      "target_met": false,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.001185766,
+      "total_seconds": 0.007592625,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        }
+      ],
+      "independent_judges": {
+        "ssim2": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/baseline-trace/pass-0.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          }
+        ],
+        "butteraugli": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/baseline-trace/pass-0.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          }
+        ]
+      }
+    },
+    "scalar": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 2,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "3645399638d7e811c5b962e588dd81c60b493db32e4dc5ce19268857f9c5ffc6",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.008586669,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "scalar",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.001087355,
+      "total_seconds": 0.009674024,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "2",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        }
+      ],
+      "independent_judges": {
+        "ssim2": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/scalar-trace/pass-0.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/scalar-trace/pass-1.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/scalar-trace/pass-2.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          }
+        ],
+        "butteraugli": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/scalar-trace/pass-0.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/scalar-trace/pass-1.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/scalar-trace/pass-2.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          }
+        ]
+      }
+    },
+    "neutral": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 2,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "3645399638d7e811c5b962e588dd81c60b493db32e4dc5ce19268857f9c5ffc6",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.013313771,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "neutral",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.001030715,
+      "total_seconds": 0.014344486,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "2",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        }
+      ],
+      "independent_judges": {
+        "ssim2": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/neutral-trace/pass-0.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/neutral-trace/pass-1.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/neutral-trace/pass-2.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          }
+        ],
+        "butteraugli": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/neutral-trace/pass-0.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/neutral-trace/pass-1.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/neutral-trace/pass-2.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          }
+        ]
+      }
+    },
+    "active": {
+      "achieved": 77.31475067138672,
+      "bytes": 16795,
+      "correction_budget": 2,
+      "decoded_sha256": "1a1c82308bb5c35843f00f9657208c146d5646907743e6397c2316b1a64deab6",
+      "driver_sha256": "3645399638d7e811c5b962e588dd81c60b493db32e4dc5ce19268857f9c5ffc6",
+      "encoded_sha256": "a924e8cd0b37889774c602820e6b1f36ff4e8d66f2fcc04d5f69f97995df6bf0",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.011540224,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "active",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.31475106723055,
+      "terminal_seconds": 0.000948594,
+      "total_seconds": 0.012488818,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "77.373352051",
+          "bytes": "16833",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "208",
+          "aq_strengths_changed": "186"
+        },
+        {
+          "pass": "2",
+          "score": "77.314750671",
+          "bytes": "16795",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "217",
+          "aq_strengths_changed": "195"
+        }
+      ],
+      "independent_judges": {
+        "ssim2": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-trace/pass-0.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-trace/pass-1.png",
+            "bytes": "16833",
+            "ssim2": "74.865485"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-trace/pass-2.png",
+            "bytes": "16795",
+            "ssim2": "74.804280"
+          }
+        ],
+        "butteraugli": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-trace/pass-0.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-trace/pass-1.png",
+            "bytes": "16833",
+            "butteraugli_max": "2.104283",
+            "butteraugli_pnorm3": "1.136353"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-trace/pass-2.png",
+            "bytes": "16795",
+            "butteraugli_max": "2.104277",
+            "butteraugli_pnorm3": "1.139087"
+          }
+        ]
+      }
+    },
+    "active-repeat": {
+      "achieved": 77.31475067138672,
+      "bytes": 16795,
+      "correction_budget": 2,
+      "decoded_sha256": "1a1c82308bb5c35843f00f9657208c146d5646907743e6397c2316b1a64deab6",
+      "driver_sha256": "3645399638d7e811c5b962e588dd81c60b493db32e4dc5ce19268857f9c5ffc6",
+      "encoded_sha256": "a924e8cd0b37889774c602820e6b1f36ff4e8d66f2fcc04d5f69f97995df6bf0",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.010631839,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "active",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.31475106723055,
+      "terminal_seconds": 0.000804184,
+      "total_seconds": 0.011436023,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "77.373352051",
+          "bytes": "16833",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "208",
+          "aq_strengths_changed": "186"
+        },
+        {
+          "pass": "2",
+          "score": "77.314750671",
+          "bytes": "16795",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "832",
+          "non_neutral_scales_consumed": "217",
+          "aq_strengths_changed": "195"
+        }
+      ],
+      "independent_judges": {
+        "ssim2": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-repeat-trace/pass-0.png",
+            "bytes": "16864",
+            "ssim2": "74.922542"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-repeat-trace/pass-1.png",
+            "bytes": "16833",
+            "ssim2": "74.865485"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-repeat-trace/pass-2.png",
+            "bytes": "16795",
+            "ssim2": "74.804280"
+          }
+        ],
+        "butteraugli": [
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-repeat-trace/pass-0.png",
+            "bytes": "16864",
+            "butteraugli_max": "2.104290",
+            "butteraugli_pnorm3": "1.133673"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-repeat-trace/pass-1.png",
+            "bytes": "16833",
+            "butteraugli_max": "2.104283",
+            "butteraugli_pnorm3": "1.136353"
+          },
+          {
+            "dist_path": "/mnt/v/output/zensim/jpeg-candidate-binding-2026-09-08/final/active-repeat-trace/pass-2.png",
+            "bytes": "16795",
+            "butteraugli_max": "2.104277",
+            "butteraugli_pnorm3": "1.139087"
+          }
+        ]
+      }
+    }
+  },
+  "initial_faulty_control": {
+    "baseline": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 0,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "250081e990ad763d49f3bfbd71f9125bb2ecf1eff3bef8731d9976b0fb95923d",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 1,
+      "height": 256,
+      "loop_seconds": 0.007205403,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "scalar",
+      "target": 100.0,
+      "target_met": false,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.001351266,
+      "total_seconds": 0.008556669,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        }
+      ]
+    },
+    "scalar": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 2,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "250081e990ad763d49f3bfbd71f9125bb2ecf1eff3bef8731d9976b0fb95923d",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.008743379,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "scalar",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.001154355,
+      "total_seconds": 0.009897734,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "80.305641174",
+          "bytes": "18737",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "756"
+        },
+        {
+          "pass": "2",
+          "score": "80.305641174",
+          "bytes": "18737",
+          "map_evaluations": "0",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "756"
+        }
+      ]
+    },
+    "neutral": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 2,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "250081e990ad763d49f3bfbd71f9125bb2ecf1eff3bef8731d9976b0fb95923d",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.014542615,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "neutral",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.001048714,
+      "total_seconds": 0.015591329000000001,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "80.305641174",
+          "bytes": "18737",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "756"
+        },
+        {
+          "pass": "2",
+          "score": "80.305641174",
+          "bytes": "18737",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "756"
+        }
+      ]
+    },
+    "active": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 2,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "250081e990ad763d49f3bfbd71f9125bb2ecf1eff3bef8731d9976b0fb95923d",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.012528575,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "active",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.000897474,
+      "total_seconds": 0.013426049,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "80.303466797",
+          "bytes": "18739",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "203",
+          "aq_strengths_changed": "763"
+        },
+        {
+          "pass": "2",
+          "score": "80.303550720",
+          "bytes": "18743",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "280",
+          "aq_strengths_changed": "763"
+        }
+      ]
+    },
+    "active-repeat": {
+      "achieved": 77.43878936767578,
+      "bytes": 16864,
+      "correction_budget": 2,
+      "decoded_sha256": "07fed3048aedede33eaf273e4c4308f7afb0db5a497e583fa7fe24c81f4b8ae6",
+      "driver_sha256": "250081e990ad763d49f3bfbd71f9125bb2ecf1eff3bef8731d9976b0fb95923d",
+      "encoded_sha256": "986585d37c05509f7ec192ca9d3956e671cdd210914e6e218dee76a6c34dcc8c",
+      "formula_revision": "1",
+      "full_encodes": 3,
+      "height": 256,
+      "loop_seconds": 0.010617608,
+      "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+      "scope": "fixed-seed native binding screen; no targeting or spatial qualification",
+      "seed_q": "80",
+      "source": "/mnt/v/output/imazen-26-variants/cleanpicker-ladder11@2026-08-23/o_2010.png.scale205x256.png",
+      "source_sha256": "fd167d5beaffed69734990ec1e38296beffce21ffde3dd5698a0600ebbe66865",
+      "spatial_mode": "active",
+      "target": 72.43878936767578,
+      "target_met": true,
+      "terminal_score": 77.43878845461941,
+      "terminal_seconds": 0.000929854,
+      "total_seconds": 0.011547462000000001,
+      "width": 205,
+      "trace": [
+        {
+          "pass": "0",
+          "score": "77.438789368",
+          "bytes": "16864",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "0",
+          "non_neutral_scales_consumed": "0",
+          "aq_strengths_changed": "0"
+        },
+        {
+          "pass": "1",
+          "score": "80.303466797",
+          "bytes": "18739",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "203",
+          "aq_strengths_changed": "763"
+        },
+        {
+          "pass": "2",
+          "score": "80.303550720",
+          "bytes": "18743",
+          "map_evaluations": "1",
+          "aq_blocks_visited": "806",
+          "non_neutral_scales_consumed": "280",
+          "aq_strengths_changed": "763"
+        }
+      ]
+    }
+  },
+  "checks": {
+    "zq_tests_before": 18,
+    "zq_tests_after_named": 18,
+    "zq_tests_after_research_feature": 18,
+    "aq_regression_tests": 22,
+    "exact_example_clippy": "PASS",
+    "default_clippy": "PASS",
+    "release_build": "PASS",
+    "api_snapshot_check": "PASS; only excluded-feature header changed",
+    "scoped_rustfmt": "PASS",
+    "negative_controls": 10
+  },
+  "judges": {
+    "binary_sha256": "6cb4744c0f1baa178c46c307db3f7a40c679dba2bf3d1ecb083a9d21f1e8cb6f",
+    "pairs": 13,
+    "pair_identity_and_finiteness": "PASS",
+    "scope": "same fixed q; no matched-quality claim"
+  },
+  "cost": {
+    "complete_encodes": 13,
+    "ordinary_decode_and_score_comparisons": 13,
+    "map_evaluations_within_those_comparisons": 9,
+    "non_neutral_maps_consumed": 4,
+    "additional_terminal_decodes_and_scores": 5,
+    "independent_judge_comparisons": 26,
+    "scope": "final screen only; prototype/repaired runs and negative controls additional; trace I/O included in loop time, no broad performance claim; memory not separately benchmarked"
+  },
+  "evidence_sha256": {
+    "final/INPUTS.json": "edac34e17753d514b2962f28c88accde02d2c9b655793664eafa08c85ef09557",
+    "final/COMMANDS.json": "e722df43229ae5cf3aef612f1aa3e54764dde7b724fc911d4203b63343618113",
+    "final/judge_pairs.tsv": "e4804606c92a75d9d66e16aa5f1bb38961821a1fb5a7681f1cb24841330650b0",
+    "final/judge_ssim2.tsv": "f0320d074dad12102e0fb1626ee0a989395bdbd77f5275a382f83dc85407b63a",
+    "final/judge_butteraugli.tsv": "204199f628feb4c6d461f3e731fa34a677b5883ed564e2e995dc92187767831b",
+    "NEGATIVE_CONTROLS.json": "260bfc3d0b535c9c020121bfeeed06ed3dab14b57c1a0010fe252baf0e9202d4",
+    "INTEGRITY_CHECKS.json": "90c8682bf53337faade15336ac23668e51ceb32038ce41eaf8c5f5e7c168a612"
+  }
+}

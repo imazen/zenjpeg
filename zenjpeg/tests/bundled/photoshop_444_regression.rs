@@ -11,13 +11,9 @@ const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/testdata/");
 
 fn load_test_file() -> Vec<u8> {
     let path = format!("{TESTDATA}photoshop-444-scrubbed.jpg");
-    match std::fs::read(&path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Skipping: {path} not found");
-            Vec::new()
-        }
-    }
+    std::fs::read(&path).unwrap_or_else(|_| {
+        panic!("missing test prerequisite: {path} not found (asset is not committed)")
+    })
 }
 
 /// Compute max and mean absolute pixel difference between two RGB buffers.
@@ -86,6 +82,7 @@ fn decode_zune(data: &[u8]) -> (Vec<u8>, u16, u16) {
 /// Issue #2 repro: buffered decode should match jpeg-decoder within ±1.
 /// Currently fails with max_diff=128.
 #[test]
+#[ignore = "requires tests/testdata/photoshop-444-scrubbed.jpg (asset not committed)"]
 fn photoshop_444_buffered_vs_reference() {
     let data = load_test_file();
     if data.is_empty() {
@@ -118,6 +115,7 @@ fn photoshop_444_buffered_vs_reference() {
 
 /// Scanline decode should match jpeg-decoder within ±3 (known working).
 #[test]
+#[ignore = "requires tests/testdata/photoshop-444-scrubbed.jpg (asset not committed)"]
 fn photoshop_444_scanline_vs_reference() {
     let data = load_test_file();
     if data.is_empty() {
@@ -140,6 +138,7 @@ fn photoshop_444_scanline_vs_reference() {
 
 /// Cross-check: buffered and scanline should produce similar output.
 #[test]
+#[ignore = "requires tests/testdata/photoshop-444-scrubbed.jpg (asset not committed)"]
 fn photoshop_444_buffered_vs_scanline() {
     let data = load_test_file();
     if data.is_empty() {
@@ -164,6 +163,7 @@ fn photoshop_444_buffered_vs_scanline() {
 
 /// Verify zune-jpeg also matches jpeg-decoder (sanity check on the reference).
 #[test]
+#[ignore = "requires tests/testdata/photoshop-444-scrubbed.jpg (asset not committed)"]
 fn photoshop_444_zune_vs_reference() {
     let data = load_test_file();
     if data.is_empty() {

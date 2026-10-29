@@ -31,7 +31,7 @@ export default defineConfig({
     // outside CI this avoids the build cost on every test invocation.
     command: "npx vite build && npx vite preview --port 3173 --strictPort",
     url: "http://localhost:3173",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });

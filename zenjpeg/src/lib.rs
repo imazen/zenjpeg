@@ -100,21 +100,57 @@
 //!
 //! ## Decoder API
 //!
-//! The decoder is in prerelease. Enable with `features = ["decoder"]`.
+//! The decoder is in prerelease (always compiled; the API will have
+//! breaking changes).
 //!
-//! ```rust,ignore
-//! #[cfg(feature = "decoder")]
-//! use zenjpeg::decoder::{Decoder, DecodedImage};
+//! ```rust
+//! use zenjpeg::decoder::Decoder;
+//! use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
 //!
-//! let image = Decoder::new().decode(&jpeg_data)?;
-//! let pixels: &[u8] = image.pixels();
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! // (Make a tiny JPEG to decode.)
+//! let pixels = [128u8; 16 * 16 * 3];
+//! let mut enc = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
+//!     .encode_from_bytes(16, 16, PixelLayout::Rgb8Srgb)?;
+//! enc.push_packed(&pixels, Unstoppable)?;
+//! let jpeg_data: Vec<u8> = enc.finish()?;
+//!
+//! // Decode with DoS limits + a stop token. `Unstoppable` never cancels;
+//! // pass any `&impl zenjpeg::encoder::Stop` for user-initiated cancellation.
+//! let decoded = Decoder::new()
+//!     .max_pixels(120_000_000) // reject decompression bombs
+//!     .decode(&jpeg_data, Unstoppable)?;
+//!
+//! let (width, height) = decoded.dimensions();
+//! let rgb: &[u8] = decoded.pixels_u8().expect("u8 output (default OutputTarget::Srgb8)");
+//! assert_eq!((width, height), (16, 16));
+//! assert_eq!(rgb.len(), 16 * 16 * 3);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Decode failures carry a [`decoder::ErrorKind`] you can `match` to classify
+//! them (e.g. for HTTP status mapping in a server):
+//!
+//! ```rust
+//! use zenjpeg::decoder::{Decoder, ErrorKind};
+//! use zenjpeg::encoder::Unstoppable;
+//!
+//! let not_a_jpeg = [0u8; 8];
+//! if let Err(e) = Decoder::new().decode(&not_a_jpeg, Unstoppable) {
+//!     match e.kind() {
+//!         ErrorKind::ImageTooLarge { .. } => { /* 413 Payload Too Large */ }
+//!         ErrorKind::AllocationFailed { .. } => { /* 500 Internal Server Error */ }
+//!         _ => { /* 400 Bad Request — corrupt / unsupported input */ }
+//!     }
+//! }
 //! ```
 //!
 //! ## Feature Flags
 //!
 //! | Feature | Default | Description | When to Use |
 //! |---------|---------|-------------|-------------|
-//! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
+//! | `decoder` | — | Deprecated no-op (the decoder is always compiled) | Kept so `zenjpeg/decoder` doesn't break downstream |
 //! | `std` | — | Legacy (std is always required) | Kept so `zenjpeg/std` doesn't break downstream |
 //! | `moxcms` | ❌ No | ICC color management via moxcms (pure Rust) | Color-managed decode pipelines |
 //! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
@@ -126,19 +162,13 @@
 //!
 //! ```toml
 //! # Decode + encode (most common)
-//! zenjpeg = { version = "0.6", features = ["decoder"] }
-//!
-//! # Encode only (default)
-//! zenjpeg = "0.6"
+//! zenjpeg = "0.8"
 //!
 //! # High-performance server
-//! zenjpeg = { version = "0.6", features = ["decoder", "parallel"] }
-//!
-//! # Minimal (encode only, no CMS)
-//! zenjpeg = { version = "0.6", default-features = false }
+//! zenjpeg = { version = "0.8", features = ["parallel"] }
 //!
 //! # UltraHDR support
-//! zenjpeg = { version = "0.6", features = ["decoder", "ultrahdr"] }
+//! zenjpeg = { version = "0.8", features = ["ultrahdr"] }
 //! ```
 //!
 //! ## Capabilities
@@ -190,6 +220,7 @@ pub mod heuristics;
 ///
 /// Identifies which encoder produced a JPEG, estimates its quality level,
 /// and extracts structural metadata from header-only parsing (~500 bytes).
+#[cfg(feature = "metadata")]
 pub mod detect;
 
 /// JPEG decoder - public API.
@@ -197,56 +228,7 @@ pub mod detect;
 /// Contains: `Decoder`, `DecodeResult`, `Error`, `Result`, etc.
 ///
 /// **Note:** The decoder is in prerelease and the API will have breaking changes.
-/// Enable with the `decoder` feature flag:
-///
-/// ```toml
-/// [dependencies]
-/// zenjpeg = { version = "0.6", features = ["decoder"] }
-/// ```
-#[cfg(feature = "decoder")]
 pub mod decoder;
-
-/// Decoder module is behind a feature flag.
-///
-/// Enable the decoder with:
-/// ```toml
-/// [dependencies]
-/// zenjpeg = { version = "0.6", features = ["decoder"] }
-/// ```
-///
-/// See the [decoder module documentation](decoder/index.html) for usage examples.
-#[cfg(not(feature = "decoder"))]
-pub mod decoder {
-    /// The decoder module requires the `decoder` feature flag.
-    ///
-    /// # How to enable
-    ///
-    /// Add to your `Cargo.toml`:
-    /// ```toml
-    /// [dependencies]
-    /// zenjpeg = { version = "0.6", features = ["decoder"] }
-    /// ```
-    ///
-    /// # What you'll get
-    ///
-    /// - `Decoder` - Main decoder configuration and execution
-    /// - `DecodeResult` - Unified decode output (u8 or f32)
-    /// - `ScanlineReader` - Streaming row-by-row decoding
-    /// - `UltraHdrReader` - HDR gain map decoding
-    /// - `JpegInfo` - Header metadata extraction
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use zenjpeg::decoder::Decoder;
-    /// use enough::Unstoppable;
-    ///
-    /// let result = Decoder::new().decode(&jpeg_data, Unstoppable)?;
-    /// let pixels = result.pixels_u8().expect("u8 output");
-    /// ```
-    #[doc(hidden)]
-    pub struct DecoderRequiresFeatureFlag;
-}
 
 /// UltraHDR support - HDR gain map encoding and decoding.
 ///
@@ -275,18 +257,16 @@ pub mod container;
 // Internal Implementation Modules
 // ============================================================================
 
-// Internal encoder implementation (exposed via test-utils for benchmarks
-// or `__diagnostics` for the unstable encode-diagnostics surface used by
-// the visualizer).
-#[cfg(any(feature = "__test-utils", feature = "__diagnostics"))]
+// Internal encoder implementation (exposed via test-utils for benchmarks)
+#[cfg(feature = "__test-utils")]
 pub mod encode;
-#[cfg(not(any(feature = "__test-utils", feature = "__diagnostics")))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod encode;
 
 // Internal decoder implementation
-#[cfg(all(feature = "decoder", feature = "__test-utils"))]
+#[cfg(feature = "__test-utils")]
 pub mod decode;
-#[cfg(all(feature = "decoder", not(feature = "__test-utils")))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod decode;
 
 // Internal shared error type (encoder/decoder have their own public errors)
@@ -331,12 +311,10 @@ pub(crate) mod types;
 #[cfg(feature = "__test-utils")]
 pub mod test_utils;
 
-// Post-decode deblocking filters (requires decoder for coefficient access)
-#[cfg(feature = "decoder")]
+// Post-decode deblocking filters
 pub mod deblock;
 
-// Lossless JPEG transforms (requires decoder for coefficient access)
-#[cfg(feature = "decoder")]
+// Lossless JPEG transforms
 pub mod lossless;
 
 // Layout pipeline: lossless transforms + lossy decode→resize→encode
@@ -346,20 +324,14 @@ pub mod layout;
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
-// Image content analysis for `EncoderConfig::adaptive`.
-//
-// Internal by default — the analyzer output and tier helpers are
-// pub(crate); the public surface is the `EncoderConfig::adaptive`
-// constructor in `encode::adaptive`.
-//
-// Exposed as `pub` via `__test-utils` so coefficient's parity
-// harness can drive `analyze::analyze_rgb8` directly. Don't rely on
-// this surface from a normal consumer.
-#[cfg(feature = "__test-utils")]
-#[doc(hidden)]
-pub mod analyze;
-#[cfg(not(feature = "__test-utils"))]
-pub(crate) mod analyze;
+// JPEG→JPEG recompression to a target perceptual (zensim Profile A)
+// quality with no size regression. Moved in from the standalone
+// `zenjpeg-recompress` crate (2026-05-29); reaches the codec's
+// `pub(crate)` internals directly. Behind the `recompress` feature so
+// base builds are unaffected. Measured IQA refinement is deferred.
+#[cfg(feature = "recompress")]
+pub mod recompress;
+pub mod target_quality;
 
 // zencodec trait implementations
 #[cfg(feature = "zencodec")]
@@ -382,3 +354,6 @@ pub use codec::{
 // zennode pipeline node definitions (EncodeJpeg, DecodeJpeg)
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
+
+#[cfg(feature = "metadata-rewrite")]
+pub mod metadata;

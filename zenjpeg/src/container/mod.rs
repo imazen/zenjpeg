@@ -35,21 +35,32 @@
 //! `benchmarks/container_scan_2026-04-20.{csv,md}`.
 
 pub mod marker;
+pub mod metadata;
 pub mod mpf;
 pub mod probe;
 pub mod types;
+#[cfg(feature = "metadata")]
 pub mod xmp;
 
 pub use marker::{MarkerIter, MarkerKind, MarkerSpan, find_jpeg_boundaries, iter, primary_bounds};
 pub use mpf::{MpfError, create_mpf_header, create_mpf_header_typed, parse_mpf, parse_mpf_segment};
 pub use probe::{ContainerProbe, GainMapPresence, ProbeSof, Wants, is_ultrahdr, probe};
-pub use types::{
-    ContainerItem, ItemSemantic, MpImageType, MpfEntry, generate_container_directory,
-    parse_container_items,
-};
+#[cfg(feature = "metadata")]
+pub use types::generate_container_directory;
+pub use types::{ContainerItem, ItemSemantic, MpImageType, MpfEntry, parse_container_items};
+#[cfg(feature = "metadata")]
 pub use xmp::{
     CONTAINER_NAMESPACE, HDRGM_NAMESPACE, ITEM_NAMESPACE, MAX_XMP_LENGTH, XmpError,
     create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp,
     generate_primary_xmp_with_items, generate_xmp, generate_xmp_with_items, parse_xmp,
     parse_xmp_full,
 };
+
+#[cfg(feature = "metadata")]
+mod gainmap;
+#[cfg(feature = "metadata")]
+pub(crate) use gainmap::iso21496_from_gainmap_jpeg;
+#[cfg(feature = "ultrahdr")]
+pub(crate) use gainmap::iso21496_record;
+
+pub(crate) mod chunks;

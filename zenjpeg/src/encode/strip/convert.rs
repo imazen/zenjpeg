@@ -13,6 +13,62 @@ use crate::types::{PixelFormat, Subsampling};
 
 use super::StripProcessor;
 
+/// Mutable view of a strip plane with an EXPLICIT row stride.
+///
+/// The #186 class of bug is "code assumed the wrong stride for a buffer
+/// whose layout depends on color mode". Passing one of these instead of a
+/// bare `&mut [f32]` forces the stride decision to the call site, where
+/// the buffer-layout table (strip/mod.rs) is in view.
+pub(super) struct PlaneStripMut<'a> {
+    pub(super) data: &'a mut [f32],
+    /// Row stride in elements (padded or packed — caller decides, per the
+    /// buffer-layout invariant table).
+    pub(super) stride: usize,
+}
+
+impl<'a> PlaneStripMut<'a> {
+    pub(super) fn new(data: &'a mut [f32], stride: usize) -> Self {
+        debug_assert!(stride > 0);
+        Self { data, stride }
+    }
+
+    /// Replicate row `src_row` over rows `dst_rows` (vertical padding).
+    pub(super) fn replicate_row_down(&mut self, src_row: usize, dst_rows: core::ops::Range<usize>) {
+        let stride = self.stride;
+        let src = src_row * stride;
+        debug_assert!(src + stride <= self.data.len(), "source row out of bounds");
+        for row in dst_rows {
+            let dst = row * stride;
+            debug_assert!(dst + stride <= self.data.len(), "dest row out of bounds");
+            self.data.copy_within(src..src + stride, dst);
+        }
+    }
+
+    /// Replicate the last valid column (`valid_width - 1`) across this row's
+    /// padding columns (`valid_width..stride`) — the horizontal edge-pad used
+    /// throughout strip conversion. No-op when `valid_width >= stride`.
+    ///
+    /// Routing every horizontal pad through this one method keeps the stride
+    /// (padded vs packed) an explicit call-site decision, which is exactly the
+    /// distinction the #186 class of bug got wrong. `#[inline]` so it lowers to
+    /// the same code as the hand-written `for x in valid_width..stride` loop it
+    /// replaces.
+    #[inline]
+    pub(super) fn pad_row_right(&mut self, row: usize, valid_width: usize) {
+        let stride = self.stride;
+        if valid_width >= stride {
+            return;
+        }
+        debug_assert!(valid_width >= 1, "need a valid column to replicate");
+        let start = row * stride;
+        debug_assert!(start + stride <= self.data.len(), "row out of bounds");
+        let edge = self.data[start + valid_width - 1];
+        for x in valid_width..stride {
+            self.data[start + x] = edge;
+        }
+    }
+}
+
 impl StripProcessor {
     /// Copies YCbCr f32 data to strip buffers with level shift.
     ///
@@ -52,12 +108,7 @@ impl StripProcessor {
             }
 
             // Edge-pad Y row
-            if width < padded_width {
-                let edge_val = self.y_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[dst_start + x] = edge_val;
-                }
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // Copy Cb/Cr with level shift (no padding, full resolution)
@@ -113,12 +164,7 @@ impl StripProcessor {
                 self.y_strip[dst_start + x] = y_row[src_start + x] + 128.0;
             }
 
-            if width < padded_width {
-                let edge_val = self.y_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[dst_start + x] = edge_val;
-                }
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // Copy Cb/Cr directly to downsampled buffers with level shift
@@ -213,12 +259,7 @@ impl StripProcessor {
                         self.y_strip[dst_start + x] = rgb_strip[src_start + x] as f32;
                     }
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[dst_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[dst_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::Cmyk => {
@@ -252,12 +293,7 @@ impl StripProcessor {
                             .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
                     }
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[y_row_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[y_row_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::Bgra | PixelFormat::Bgrx => {
@@ -303,12 +339,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[dst_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[dst_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
@@ -362,12 +393,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[y_row_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[y_row_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::GrayF32 => {
@@ -398,12 +424,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[dst_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[dst_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
             PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
@@ -458,12 +479,7 @@ impl StripProcessor {
                     }
 
                     // Edge-pad Y row
-                    if width < padded_width {
-                        let edge_val = self.y_strip[y_row_start + width - 1];
-                        for x in width..padded_width {
-                            self.y_strip[y_row_start + x] = edge_val;
-                        }
-                    }
+                    PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
                 }
             }
         }
@@ -717,12 +733,7 @@ impl StripProcessor {
             }
 
             // Edge-pad X (y_strip) row
-            if width < padded_width {
-                let edge_val = self.y_strip[y_row_start + width - 1];
-                for x in width..padded_width {
-                    self.y_strip[y_row_start + x] = edge_val;
-                }
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // For XYB mode, we handle the components differently:
@@ -757,6 +768,21 @@ impl StripProcessor {
         // Rearrange and pad cr_down (B channel) using XYB-specific function
         self.pad_b_down_strip(b_height, b_width);
 
+        // Vertically pad the B plane for partial bottom strips (issue
+        // #186): rows b_height..b_strip_height would otherwise keep the
+        // previous strip's stale rows, which the bottom B blocks then DCT
+        // over. pad_b_down_strip has already rearranged rows 0..b_height
+        // to padded layout, so replicate full padded rows.
+        let b_target = self.layout.b_strip_height;
+        if b_height > 0 && b_height < b_target {
+            let padded_b_width = self.layout.padded_b_width;
+            let src = (b_height - 1) * padded_b_width;
+            for row in b_height..b_target {
+                let dst = row * padded_b_width;
+                self.cr_down.copy_within(src..src + padded_b_width, dst);
+            }
+        }
+
         // For Y component (cb_strip): rearrange to padded layout directly
         // We'll use cb_strip as the source for DCT in XYB mode
         if padded_width > width {
@@ -766,11 +792,60 @@ impl StripProcessor {
                 for x in (0..width).rev() {
                     self.cb_strip[dst_start + x] = self.cb_strip[src_start + x];
                 }
-                let edge_val = self.cb_strip[dst_start + width - 1];
-                for x in width..padded_width {
-                    self.cb_strip[dst_start + x] = edge_val;
-                }
+                PlaneStripMut::new(&mut self.cb_strip, padded_width).pad_row_right(row, width);
             }
+        }
+
+        Ok(())
+    }
+
+    /// Deinterleaves RGB input verbatim into the three strip buffers for
+    /// RGB passthrough mode (issue #185).
+    ///
+    /// No color transform: R→y_strip, G→cb_strip, B→cr_strip, all at
+    /// **padded** stride with right-edge replication (the same layout the
+    /// XYB converter leaves its planes in), so AQ can read the G plane and
+    /// the DCT stage extracts all three planes with `padded_width` directly.
+    /// Values are the raw 0..255 samples as f32 — the DCT applies the
+    /// level shift, exactly as in the YCbCr path.
+    pub(super) fn convert_strip_to_rgb_passthrough(
+        &mut self,
+        rgb_strip: &[u8],
+        strip_height: usize,
+    ) -> Result<()> {
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
+        let bpp = self.pixel_format.bytes_per_pixel();
+
+        // Channel order within each pixel: (r, g, b) byte offsets.
+        let (r_off, g_off, b_off) = match self.pixel_format {
+            PixelFormat::Rgb | PixelFormat::Rgba => (0usize, 1usize, 2usize),
+            PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => (2, 1, 0),
+            _ => {
+                return Err(crate::error::Error::unsupported_feature(
+                    "RGB passthrough mode requires an 8-bit RGB-family pixel format",
+                ));
+            }
+        };
+
+        for row in 0..strip_height {
+            let dst_start = row * padded_width;
+            let row_byte_start = row * width * bpp;
+
+            for x in 0..width {
+                let src = row_byte_start + x * bpp;
+                self.y_strip[dst_start + x] = rgb_strip[src + r_off] as f32;
+                self.cb_strip[dst_start + x] = rgb_strip[src + g_off] as f32;
+                self.cr_strip[dst_start + x] = rgb_strip[src + b_off] as f32;
+            }
+
+            // Right-edge replicate each plane to the padded width. Three
+            // separate typed pads instead of one fused loop — the loop only
+            // covers the ≤7 padding columns, so the cost is identical, and
+            // each plane's stride stays an explicit decision.
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
+            PlaneStripMut::new(&mut self.cb_strip, padded_width).pad_row_right(row, width);
+            PlaneStripMut::new(&mut self.cr_strip, padded_width).pad_row_right(row, width);
         }
 
         Ok(())
@@ -783,11 +858,10 @@ impl StripProcessor {
     pub(super) fn convert_strip_gamma_aware(
         &mut self,
         rgb_strip: &[u8],
-        strip_y: usize,
+        _strip_y: usize,
         strip_height: usize,
     ) -> Result<()> {
         let width = self.layout.width;
-        let bpp = self.pixel_format.bytes_per_pixel();
         let use_iterative = self.chroma_downsampling == DownsamplingMethod::GammaAwareIterative;
 
         if self.layout.subsampling == Subsampling::S444 {
@@ -800,47 +874,18 @@ impl StripProcessor {
         let num_pixels = strip_height * width;
         let c_size = c_width * c_strip_height;
 
-        match self.layout.subsampling {
-            Subsampling::S420 => {
-                crate::encode::chroma::gamma_aware_strip_420(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_down[..c_size],
-                    &mut self.cr_down[..c_size],
-                    width,
-                    strip_height,
-                    strip_y,
-                    self.layout.height,
-                    bpp,
-                    use_iterative,
-                );
-            }
-            Subsampling::S422 => {
-                crate::encode::chroma::gamma_aware_strip_422(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_down[..c_size],
-                    &mut self.cr_down[..c_size],
-                    width,
-                    strip_height,
-                    bpp,
-                    use_iterative,
-                );
-            }
-            Subsampling::S440 => {
-                crate::encode::chroma::gamma_aware_strip_440(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_down[..c_size],
-                    &mut self.cr_down[..c_size],
-                    width,
-                    strip_height,
-                    bpp,
-                    use_iterative,
-                );
-            }
-            Subsampling::S444 => unreachable!(), // early return above
-        }
+        crate::encode::chroma::gamma_aware_strip(
+            rgb_strip,
+            width,
+            strip_height,
+            width,
+            self.pixel_format,
+            self.layout.subsampling,
+            use_iterative,
+            &mut self.y_strip[..num_pixels],
+            &mut self.cb_down[..c_size],
+            &mut self.cr_down[..c_size],
+        )?;
 
         // Rearrange Y strip from packed to padded layout
         self.rearrange_y_strip_only(strip_height);
@@ -869,10 +914,7 @@ impl StripProcessor {
                 self.y_strip[dst_start + x] = self.y_strip[src_start + x];
             }
 
-            let edge_val = self.y_strip[dst_start + width - 1];
-            for x in width..padded_width {
-                self.y_strip[dst_start + x] = edge_val;
-            }
+            PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
     }
 
@@ -890,24 +932,48 @@ impl StripProcessor {
 
         // Get last valid row index
         let last_row = actual_height - 1;
-        let src_start = last_row * padded_width;
 
-        // Replicate to all remaining rows
-        for row in actual_height..target_height {
-            let dst_start = row * padded_width;
-            self.y_strip
-                .copy_within(src_start..src_start + padded_width, dst_start);
-        }
+        // Y/X/R plane is ALWAYS in padded layout after conversion.
+        PlaneStripMut::new(&mut self.y_strip, padded_width)
+            .replicate_row_down(last_row, actual_height..target_height);
 
         if is_color {
-            // For cb_strip/cr_strip (if they're in padded layout)
-            // Note: these are still in packed layout at this point
-            let width = self.layout.width;
-            let last_src = last_row * width;
-            for row in actual_height..target_height {
-                let dst = row * width;
-                self.cb_strip.copy_within(last_src..last_src + width, dst);
-                self.cr_strip.copy_within(last_src..last_src + width, dst);
+            // Invariant (issue #186): the stride used below MUST match the
+            // layout each buffer is in at this stage — see the buffer-layout
+            // table in strip/mod.rs. cb/cr are PADDED under RGB and XYB
+            // (rearranged by their converters), PACKED under standard YCbCr.
+            // `PlaneStripMut` forces that decision to be explicit here.
+            debug_assert!(
+                self.cb_strip.len() >= target_height * padded_width
+                    && self.cr_strip.len() >= target_height * padded_width,
+                "cb/cr strip buffers smaller than padded strip"
+            );
+            if self.use_rgb {
+                // RGB passthrough: the converter leaves all three planes in
+                // padded layout, so replicate full padded rows.
+                PlaneStripMut::new(&mut self.cb_strip, padded_width)
+                    .replicate_row_down(last_row, actual_height..target_height);
+                PlaneStripMut::new(&mut self.cr_strip, padded_width)
+                    .replicate_row_down(last_row, actual_height..target_height);
+            } else if self.layout.use_xyb {
+                // XYB (issue #186): convert_strip_to_xyb has already
+                // rearranged cb_strip (the perceptual-Y plane) to PADDED
+                // layout, so replicate full padded rows — the old packed
+                // `width`-stride replication landed at shifted offsets,
+                // corrupting the tail of the last real row and filling the
+                // pad rows with phase-shifted data. cr_strip is post-convert
+                // scratch under XYB (B already lives in cr_down, vertically
+                // padded inside the converter) — nothing to pad.
+                PlaneStripMut::new(&mut self.cb_strip, padded_width)
+                    .replicate_row_down(last_row, actual_height..target_height);
+            } else {
+                // Standard YCbCr: cb/cr are still in PACKED layout here
+                // (downsample_chroma_strip consumes them later).
+                let width = self.layout.width;
+                PlaneStripMut::new(&mut self.cb_strip, width)
+                    .replicate_row_down(last_row, actual_height..target_height);
+                PlaneStripMut::new(&mut self.cr_strip, width)
+                    .replicate_row_down(last_row, actual_height..target_height);
             }
         }
     }
@@ -930,12 +996,8 @@ impl StripProcessor {
                 self.cr_down[dst_start + x] = self.cr_down[src_start + x];
             }
 
-            let cb_edge = self.cb_down[dst_start + c_width - 1];
-            let cr_edge = self.cr_down[dst_start + c_width - 1];
-            for x in c_width..padded_c_width {
-                self.cb_down[dst_start + x] = cb_edge;
-                self.cr_down[dst_start + x] = cr_edge;
-            }
+            PlaneStripMut::new(&mut self.cb_down, padded_c_width).pad_row_right(row, c_width);
+            PlaneStripMut::new(&mut self.cr_down, padded_c_width).pad_row_right(row, c_width);
         }
     }
 
@@ -959,10 +1021,7 @@ impl StripProcessor {
                 self.cr_down[dst_start + x] = self.cr_down[src_start + x];
             }
 
-            let edge = self.cr_down[dst_start + b_width - 1];
-            for x in b_width..padded_b_width {
-                self.cr_down[dst_start + x] = edge;
-            }
+            PlaneStripMut::new(&mut self.cr_down, padded_b_width).pad_row_right(row, b_width);
         }
     }
 

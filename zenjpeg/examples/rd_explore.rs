@@ -8,7 +8,7 @@
 //! - cpp:          cjpegli -q Q
 //! - zen_default:  EncoderConfig::ycbcr(Q) + sharp_yuv + deringing (current shipping RD)
 //! - zen_auto:     + auto_optimize(true) (enables hybrid trellis λ=14.5)
-//! - zen_auto_dc:  + auto_optimize with dc_enabled=true (via hybrid_config)
+//! - zen_auto_dc:  + auto_optimize with dc_enabled=true (via .trellis())
 //! - zen_xyb:      EncoderConfig::xyb(Q) + sharp_yuv + deringing
 //!
 //! Emits CSV rows: image,category,Q,config,bytes,ssim2,butter
@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use zenjpeg::encode::trellis::HybridConfig;
+use zenjpeg::encode::trellis::TrellisConfig;
 use zenjpeg::encode::tuning::EncodingTables;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
@@ -40,9 +40,10 @@ fn cjpegli_path() -> PathBuf {
 }
 
 fn load_rgb(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
-    let img = image::open(path).ok()?.to_rgb8();
-    let (w, h) = img.dimensions();
-    Some((w, h, img.into_raw()))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let (buf, w, h) = img.into_contiguous_buf();
+    let bytes: Vec<u8> = buf.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((w as u32, h as u32, bytes))
 }
 
 fn write_ppm(path: &Path, w: u32, h: u32, rgb: &[u8]) {
@@ -91,19 +92,18 @@ fn zen_auto(rgb: &[u8], w: u32, h: u32, q: u8) -> Vec<u8> {
 }
 
 fn zen_auto_dc(rgb: &[u8], w: u32, h: u32, q: u8) -> Vec<u8> {
-    // Mirror auto_optimize: hybrid λ=14.5 + progressive, but enable DC trellis.
+    // Mirror auto_optimize: trellis λ=14.5 + progressive, but enable DC trellis.
     let distance = Quality::from(q).to_distance();
-    let should_use_hybrid = distance < 5.0;
+    let should_use_trellis = distance < 5.0;
     let mut cfg = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
         .progressive(true)
         .deringing(true)
         .sharp_yuv(true);
-    if should_use_hybrid {
-        cfg = cfg.hybrid_config(HybridConfig {
-            enabled: true,
-            base_lambda_scale1: 14.5,
+    if should_use_trellis {
+        cfg = cfg.trellis(TrellisConfig {
+            lambda_log_scale1: 14.5,
             dc_enabled: true,
-            ..HybridConfig::default()
+            ..TrellisConfig::default()
         });
     }
     let mut e = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
@@ -244,10 +244,10 @@ fn list_pngs(dir: &Path, limit: usize) -> Vec<PathBuf> {
 
 fn main() {
     let args = parse_args();
-    if let Some(parent) = args.out.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = fs::create_dir_all(parent);
-        }
+    if let Some(parent) = args.out.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = fs::create_dir_all(parent);
     }
 
     let mut writer = fs::File::create(&args.out).expect("create csv");

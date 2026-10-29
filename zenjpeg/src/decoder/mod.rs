@@ -36,12 +36,12 @@
 //!
 //! // Set resource limits (DoS protection)
 //! let decoder = Decoder::new()
-//!     .max_pixels(100_000_000)      // 100 megapixels max
+//!     .max_pixels(120_000_000)      // 120 megapixels max (admits common ~108 MP camera photos)
 //!     .max_memory(512_000_000);     // 512 MB max allocation
 //!
 //! // Or use Limits struct
 //! let limits = Limits {
-//!     max_pixels: Some(100_000_000),
+//!     max_pixels: Some(120_000_000),
 //!     max_memory: Some(512_000_000),
 //!     max_output: None,
 //! };
@@ -58,13 +58,18 @@
 pub type DecodeError = crate::error::Error;
 // Keep legacy aliases for backward compatibility
 pub use crate::error::{Error, Result};
+// `ErrorKind` is the inner kind returned by [`Error::kind()`]. Re-exported here
+// so downstream callers (e.g. servers classifying decode failures into
+// 400/413/500) can name and `match` the variants. `#[non_exhaustive]`, so
+// adding variants later stays non-breaking.
+pub use crate::error::ErrorKind;
 
 // === Main decoder types ===
 pub use crate::decode::{
-    ChromaUpsampling, CropRegion, DeblockMode, DecodeConfig, DecodeInfo, DecodePool, DecodeRequest,
-    DecodeResult, DecodeWarning, DecodedCoefficients, DecodedImage, DecodedImageF32, DecodedYCbCr,
-    Decoder, GainMapHandling, GainMapResult, IdctMethod, JpegInfo, OutputTarget, RowSlice,
-    RowSliceF32, ScanlineInfo, ScanlineReader, Strictness,
+    ChromaUpsampling, Cmyk16, CropRegion, DeblockMode, DecodeConfig, DecodeInfo, DecodePool,
+    DecodeRequest, DecodeResult, DecodeWarning, DecodedCoefficients, DecodedImage, DecodedImageF32,
+    DecodedYCbCr, Decoder, GainMapHandling, GainMapResult, IdctMethod, JpegInfo, OutputTarget,
+    RowSlice, RowSliceF32, ScanlineInfo, ScanlineReader, Strictness,
 };
 
 // === Metadata preservation types ===
@@ -86,5 +91,8 @@ pub use crate::encode::encoder_types::PixelLayout;
 
 // === ICC profile support ===
 pub use crate::color::icc::TargetColorSpace;
-#[cfg(feature = "moxcms")]
+// `extract_icc_profile` only scans APP2 `ICC_PROFILE` markers and returns the raw
+// bytes — it does no color management, so it is NOT gated behind `moxcms`. Gating
+// it forced consumers that just need the source profile (e.g. transcoders) to pull
+// the whole CMS.
 pub use crate::color::icc::extract_icc_profile;

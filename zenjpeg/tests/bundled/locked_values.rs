@@ -41,7 +41,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 /// The CSV bytes are unchanged from a4f5dc4e; only the constant is corrected
 /// to actually hash the committed CSV.
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "ccfd6df6db0791f74a3f4fe4f9c0a13c84b5885b25fa9d858ef166b06fd3954a";
+const VALUES_FILE_HASH: &str = "091a9b061ece3af287f0f9e4f4468b84378ce147e1f471f1cd70879e1fe5e7c8";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
@@ -203,6 +203,21 @@ fn hash_jpeg(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Every stream this file hashes must also DECODE. A hash lock alone blesses
+/// whatever bytes the encoder produced: the 2026-08-26 fixed-table audit found
+/// every baseline `huffman=fixed` row here had locked an UNDECODABLE stream
+/// (corpus Huffman tables missing legal symbols encoded them as zero bits).
+fn assert_decodes(jpeg: &[u8], width: u32, height: u32, ctx: &str) {
+    let decoded = zenjpeg::decoder::Decoder::new()
+        .decode(jpeg, enough::Unstoppable)
+        .unwrap_or_else(|e| panic!("{ctx}: locked stream does not decode: {e}"));
+    assert_eq!(
+        (decoded.width, decoded.height),
+        (width, height),
+        "{ctx}: decoded dimensions"
+    );
+}
+
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -270,6 +285,15 @@ fn test_encoder_outputs() {
 
         let actual_hash = hash_jpeg(&jpeg);
         let actual_size = jpeg.len();
+        assert_decodes(
+            &jpeg,
+            width,
+            height,
+            &format!(
+                "{}_{}_{}_q{}",
+                key.mode, key.subsampling, key.huffman, key.quality
+            ),
+        );
 
         if actual_hash != expected_val.hash {
             failures.push(format!(
@@ -351,6 +375,13 @@ fn regenerate_values() {
                         *quality,
                     );
 
+                    // NEVER lock a hash of bytes that do not decode.
+                    assert_decodes(
+                        &jpeg,
+                        width,
+                        height,
+                        &format!("{mode}_{subsamp}_{huffman_name}_q{quality}"),
+                    );
                     let hash = hash_jpeg(&jpeg);
                     let size = jpeg.len();
 

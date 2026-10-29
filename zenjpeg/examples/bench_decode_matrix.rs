@@ -19,18 +19,18 @@
 //! cargo run --release --features parallel,decoder --example bench_decode_matrix
 //! ```
 
-#[cfg(not(all(feature = "parallel", feature = "decoder")))]
+#[cfg(not(feature = "parallel"))]
 fn main() {
     eprintln!("ERROR: Run with --features parallel,decoder");
     eprintln!("  cargo run --release --features parallel,decoder --example bench_decode_matrix");
 }
 
-#[cfg(all(feature = "parallel", feature = "decoder"))]
+#[cfg(feature = "parallel")]
 fn main() {
     bench::run();
 }
 
-#[cfg(all(feature = "parallel", feature = "decoder"))]
+#[cfg(feature = "parallel")]
 mod bench {
     use enough::Unstoppable;
     use std::collections::HashMap;

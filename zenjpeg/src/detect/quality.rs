@@ -32,6 +32,16 @@ pub enum QualityScale {
     MozjpegQuality,
     /// Butteraugli distance (lower = better, 1.0 ≈ visually lossless).
     ButteraugliDistance,
+    /// Windows GDI+ / System.Drawing quality 1-100.
+    ///
+    /// Same formula family as [`QualityScale::IjgQuality`] but offset:
+    /// GDI+ quality `q` produces the IJG table at index `q - 1`
+    /// (except multiples of 25, which produce the table at `q`).
+    /// WIC's integer-percent `ImageQuality` produces the table at `q`
+    /// directly (except 53 and 59 → `q - 1`); the two front-ends are
+    /// indistinguishable from headers, and reported values follow the
+    /// GDI+ convention (subtract 1 for the WIC interpretation).
+    WindowsQuality,
 }
 
 /// Confidence level for quality estimates.
@@ -51,6 +61,8 @@ pub(crate) fn estimate_quality(scan: &ScanResult, encoder: &EncoderFamily) -> Qu
         }
 
         EncoderFamily::Mozjpeg => estimate_mozjpeg_quality(scan),
+
+        EncoderFamily::WindowsImaging => estimate_windows_quality(scan),
 
         EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => estimate_jpegli_quality(scan),
 
@@ -138,6 +150,86 @@ fn estimate_ijg_quality_approximate(scan: &ScanResult) -> QualityEstimate {
     };
 
     find_closest_ijg_quality(luma)
+}
+
+/// Estimate Windows (GDI+/WIC) quality from the IJG table index.
+///
+/// Windows emits byte-exact IJG tables at an internal index `k`. The
+/// two quality front-ends map onto `k` differently (both verified on
+/// real q=1..=100 sweeps, zero exceptions; same engine — headers are
+/// byte-identical at equal `k`, only entropy data differs):
+///
+/// - GDI+/System.Drawing integer quality: `k = q - 1`, except `k = q`
+///   when `q` is a multiple of 25 (the qualities where `q/100` is
+///   exactly representable in binary floating point).
+/// - WIC integer-percent `ImageQuality`: `k = q`, except `q ∈ {53,
+///   59}` give `k = q - 1` (where `(int)((float)(q/100.0) * 100.0f)`
+///   truncates low). Arbitrary float `ImageQuality` reaches any `k`.
+///
+/// The two interpretations are indistinguishable from headers, so the
+/// reported value follows the GDI+ convention (the dominant creator
+/// path); the WIC interpretation of a report is generally `value - 1`:
+///
+/// - `k ∈ {25, 50, 75}`: GDI+ `q = k` and `q = k + 1` collide; report
+///   the round-number `k`.
+/// - `k ∈ {24, 49, 74, 99}`: unreachable from GDI+ integer quality;
+///   report `k` (exactly the WIC integer quality that produces it).
+/// - otherwise: report `k + 1`.
+fn estimate_windows_quality(scan: &ScanResult) -> QualityEstimate {
+    let luma = match &scan.dqt_tables[0] {
+        Some(t) => &t.values,
+        None => {
+            return QualityEstimate {
+                value: 75.0,
+                scale: QualityScale::WindowsQuality,
+                confidence: Confidence::Approximate,
+            };
+        }
+    };
+    let chroma = scan.dqt_tables[1].as_ref().map(|t| &t.values);
+
+    // Exact match against IJG tables at every index
+    for k in 1..=100u8 {
+        if *luma != generate_ijg_table(k, false) {
+            continue;
+        }
+        if let Some(chroma_vals) = chroma
+            && *chroma_vals != generate_ijg_table(k, true)
+        {
+            continue;
+        }
+        let (value, confidence) = windows_quality_from_ijg_index(k);
+        return QualityEstimate {
+            value,
+            scale: QualityScale::WindowsQuality,
+            confidence,
+        };
+    }
+
+    // No exact match (shouldn't happen — the fingerprint requires an
+    // IJG table match before classifying WindowsImaging): closest by SSE.
+    let mut best_k = 75u8;
+    let mut best_sse = u64::MAX;
+    for k in 1..=100u8 {
+        let sse = compute_sse(luma, &generate_ijg_table(k, false));
+        if sse < best_sse {
+            best_sse = sse;
+            best_k = k;
+        }
+    }
+    QualityEstimate {
+        value: windows_quality_from_ijg_index(best_k).0,
+        scale: QualityScale::WindowsQuality,
+        confidence: Confidence::Approximate,
+    }
+}
+
+/// Map a matched IJG table index `k` back to the Windows user quality.
+fn windows_quality_from_ijg_index(k: u8) -> (f32, Confidence) {
+    match k {
+        24 | 25 | 49 | 50 | 74 | 75 | 99 | 100 => (k as f32, Confidence::Exact),
+        _ => ((k + 1) as f32, Confidence::Exact),
+    }
 }
 
 /// Estimate mozjpeg quality by matching Robidoux tables.
@@ -309,6 +401,93 @@ mod tests {
     }
 
     #[test]
+    fn test_windows_quality_full_index_sweep() {
+        // Every IJG table index k=1..=100 maps to a Windows quality:
+        // k+1 normally (GDI+ convention); k for the GDI+ collision /
+        // unreachable indices {24, 25, 49, 50, 74, 75, 99, 100} (k is
+        // the exact WIC integer quality there, and the round-number
+        // GDI+ input at multiples of 25).
+        for k in 1..=100u8 {
+            let luma = generate_ijg_table(k, false);
+            let chroma = generate_ijg_table(k, true);
+            let scan = mock_scan_two_tables(&luma, &chroma);
+            let est = estimate_windows_quality(&scan);
+
+            let want_value = match k {
+                24 | 25 | 49 | 50 | 74 | 75 | 99 | 100 => k as f32,
+                _ => (k + 1) as f32,
+            };
+            assert_eq!(est.scale, QualityScale::WindowsQuality, "k={k}");
+            assert_eq!(
+                est.value, want_value,
+                "k={k}: expected Windows quality {want_value}, got {}",
+                est.value
+            );
+            assert_eq!(est.confidence, Confidence::Exact, "k={k}");
+        }
+    }
+
+    #[test]
+    fn test_windows_quality_wic_forward_map_roundtrip() {
+        // WIC integer-percent map (verified on the q=1..=100
+        // builder=wic z.zr.io sweeps, all three subsampling modes):
+        // k = q except q ∈ {53, 59} → k = q - 1. The estimator reports
+        // the GDI+ convention, so a WIC encode at q comes back as q+1
+        // except at the special indices.
+        for q in 1..=100u32 {
+            let k = match q {
+                53 | 59 => q - 1,
+                other => other,
+            } as u8;
+            let luma = generate_ijg_table(k, false);
+            let chroma = generate_ijg_table(k, true);
+            let scan = mock_scan_two_tables(&luma, &chroma);
+            let est = estimate_windows_quality(&scan);
+
+            let want = match k {
+                24 | 25 | 49 | 50 | 74 | 75 | 99 | 100 => k as f32,
+                _ => (k + 1) as f32,
+            };
+            assert_eq!(
+                est.value, want,
+                "WIC q={q} (k={k}): expected estimate {want}, got {}",
+                est.value
+            );
+        }
+    }
+
+    #[test]
+    fn test_windows_quality_gdiplus_forward_map_roundtrip() {
+        // Forward map (verified on the q=1..=100 z.zr.io sweep,
+        // 2026-06-09): GDI+ quality q emits the IJG table at
+        // k = q - 1, except k = q when q % 25 == 0. Round-tripping
+        // through the estimator must recover q exactly for every
+        // quality except the table-identical collisions q ∈ {26, 51,
+        // 76} (reported as 25/50/75) and q ∈ {1, 2} (both produce the
+        // all-255 k=1 table, reported as 2).
+        for q in 1..=100u32 {
+            let k = if q % 25 == 0 { q } else { q - 1 }.max(1) as u8;
+            let luma = generate_ijg_table(k, false);
+            let chroma = generate_ijg_table(k, true);
+            let scan = mock_scan_two_tables(&luma, &chroma);
+            let est = estimate_windows_quality(&scan);
+
+            let want = match q {
+                1 => 2.0,
+                26 => 25.0,
+                51 => 50.0,
+                76 => 75.0,
+                other => other as f32,
+            };
+            assert_eq!(
+                est.value, want,
+                "GDI+ q={q} (k={k}): expected estimate {want}, got {}",
+                est.value
+            );
+        }
+    }
+
+    #[test]
     fn test_approximate_for_non_ijg_table() {
         // Create a table that doesn't match any IJG quality exactly
         let mut table = generate_ijg_table(75, false);
@@ -343,6 +522,7 @@ mod tests {
             total_ac_symbols: 0,
             dht_count: 0,
             has_jfif: false,
+            jfif_density: None,
             has_icc_profile: false,
             has_adobe: false,
             has_photoshop_iptc: false,

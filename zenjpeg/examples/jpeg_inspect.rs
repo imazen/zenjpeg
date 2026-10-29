@@ -12,6 +12,7 @@
 //!   --huffman       Dump Huffman table details
 //!   --quant         Dump quantization tables
 //!   --scans         Analyze scan structure (progressive)
+//!   --detect        Identify encoder family and estimate quality
 //!   --validate      Test decoding with multiple decoders
 //!   --compare <f2>  Compare with another JPEG
 //!   --all           Show everything (includes validation)
@@ -667,6 +668,33 @@ fn compare_jpegs(path1: &str, path2: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Run encoder detection and print the result.
+fn print_detect(data: &[u8]) {
+    use zenjpeg::detect::{QualityScale, probe};
+
+    println!("\n=== Encoder Detection ===");
+    match probe(data) {
+        Ok(p) => {
+            println!("Encoder:    {:?}", p.encoder);
+            let scale = match p.quality.scale {
+                QualityScale::IjgQuality => "IJG quality",
+                QualityScale::MozjpegQuality => "mozjpeg quality",
+                QualityScale::ButteraugliDistance => "butteraugli distance",
+                QualityScale::WindowsQuality => "Windows (GDI+/WIC) quality",
+                _ => "unknown scale",
+            };
+            println!(
+                "Quality:    {:.2} ({scale}, {:?})",
+                p.quality.value, p.quality.confidence
+            );
+            println!("Mode:       {:?}", p.mode);
+            println!("Subsample:  {:?}", p.subsampling);
+            println!("Scans:      {}", p.scan_count);
+        }
+        Err(e) => println!("probe failed: {e}"),
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -674,6 +702,7 @@ fn main() {
     let mut show_huffman = false;
     let mut show_quant = false;
     let mut show_scans = false;
+    let mut show_detect = false;
     let mut show_validate = false;
     let mut show_all = false;
     let mut compare_file: Option<String> = None;
@@ -686,6 +715,7 @@ fn main() {
             "--huffman" => show_huffman = true,
             "--quant" => show_quant = true,
             "--scans" => show_scans = true,
+            "--detect" => show_detect = true,
             "--validate" => show_validate = true,
             "--all" => show_all = true,
             "--compare" => {
@@ -710,6 +740,7 @@ fn main() {
             eprintln!("  --huffman   Dump Huffman tables");
             eprintln!("  --quant     Dump quantization tables");
             eprintln!("  --scans     Analyze progressive scans");
+            eprintln!("  --detect    Identify encoder family + quality");
             eprintln!("  --validate  Test with multiple decoders");
             eprintln!("  --compare   Compare with another JPEG");
             eprintln!("  --all       Show everything (includes validation)");
@@ -755,9 +786,18 @@ fn main() {
     };
 
     // Default: show summary
-    if !show_markers && !show_huffman && !show_quant && !show_scans && !show_validate && !show_all {
+    if !show_markers
+        && !show_huffman
+        && !show_quant
+        && !show_scans
+        && !show_detect
+        && !show_validate
+        && !show_all
+    {
         print_summary(&analysis, &jpeg_path);
-        println!("\nUse --markers, --huffman, --quant, --scans, --validate, or --all for details");
+        println!(
+            "\nUse --markers, --huffman, --quant, --scans, --detect, --validate, or --all for details"
+        );
         return;
     }
 
@@ -777,6 +817,10 @@ fn main() {
 
     if show_all || show_scans {
         print_scans(&analysis);
+    }
+
+    if show_all || show_detect {
+        print_detect(&data);
     }
 
     if show_all || show_validate {

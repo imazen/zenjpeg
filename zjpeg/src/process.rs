@@ -35,6 +35,30 @@ use crate::{
     SubsamplingArg, TrellisArg,
 };
 
+/// `$segments` (an `EncoderSegments`, a type zenjpeg does not export by
+/// name) with [`Carried`]'s replacements applied.
+macro_rules! apply_carried {
+    ($carried:expr, $segments:expr) => {{
+        let carried: &Carried = $carried;
+        let mut segments = $segments;
+        if let Some(exif) = &carried.exif
+            && segments
+                .segments()
+                .iter()
+                .any(|s| s.segment_type == SegmentType::Exif)
+        {
+            segments = segments.set_exif(exif.clone());
+        }
+        if let Some(images) = &carried.secondaries {
+            segments = segments.clear_mpf_images();
+            for (data, ty) in images {
+                segments = segments.add_mpf_image(data.clone(), *ty);
+            }
+        }
+        segments
+    }};
+}
+
 /// Which pipeline to use for a given file.
 enum PipelineKind {
     /// Orient-only or flip/rotate → lossless DCT-domain transform.
@@ -115,10 +139,16 @@ pub fn run(args: ProcessArgs) -> Result<()> {
         summary.write_csv(csv_path)?;
     }
 
+    let mut failed = 0usize;
     for r in &summary.results {
         if let Some(ref err) = r.error {
             eprintln!("error: {}: {err}", r.path.display());
+            failed += 1;
         }
+    }
+    // A failed file is a failed run: scripts check the exit status.
+    if failed > 0 {
+        anyhow::bail!("{failed} of {} file(s) failed", summary.results.len());
     }
 
     Ok(())
@@ -173,6 +203,30 @@ fn process_inner(
         PipelineKind::Restructure => run_restructure(&data, path, args, output_config, is_single),
         PipelineKind::Lossy => run_lossy(&data, path, args, output_config, is_single),
     }
+}
+
+/// What `--strip` (and `--apply-icc`, which replaces the profile) removes.
+fn strip_mask(args: &ProcessArgs) -> crate::strip::StripMask {
+    let (exif, icc, xmp, gain_maps) = args.strip_mask();
+    crate::strip::StripMask {
+        exif,
+        icc: icc || args.apply_icc.is_some(),
+        xmp,
+        gain_maps,
+    }
+}
+
+/// Apply `--strip` to a pipeline's output, the same way on every pipeline.
+fn apply_strip(output: Vec<u8>, mask: crate::strip::StripMask, path: &Path) -> Result<Vec<u8>> {
+    if mask.is_empty() {
+        return Ok(output);
+    }
+    let (stripped, notes) =
+        crate::strip::strip(&output, mask).with_context(|| format!("'{}'", path.display()))?;
+    for note in notes {
+        eprintln!("{}: {note}", path.display());
+    }
+    Ok(stripped)
 }
 
 // ============================================================================
@@ -264,6 +318,7 @@ fn run_lossless(
         lossless::transform(data, &config, enough::Unstoppable)
             .map_err(|e| anyhow::anyhow!("transform failed: {e}"))?
     };
+    let output = apply_strip(output, strip_mask(args), path)?;
 
     let output_size = output.len() as u64;
     let input_size = data.len() as u64;
@@ -330,6 +385,7 @@ fn run_restructure(
 
     let output = lossless::restructure(data, &config, enough::Unstoppable)
         .map_err(|e| anyhow::anyhow!("restructure failed: {e}"))?;
+    let output = apply_strip(output, strip_mask(args), path)?;
 
     let output_size = output.len() as u64;
     let input_size = data.len() as u64;
@@ -367,10 +423,7 @@ fn run_lossy(
     // Step 2: Determine quality and subsampling
     let (quality, subsampling) = determine_encode_params(args, &probe)?;
 
-    // Step 3: Build layout pipeline if spatial operations requested
-    let layout_result = build_layout(args, probe.dimensions.width, probe.dimensions.height)?;
-
-    // Step 4: Decode
+    // Step 3: Decode
     let need_deblock = args.deblock != DeblockArg::Off;
     // XYB wants linear-f32 input end-to-end (sRGB → linear conversion happens
     // in the decoder rather than the encoder). The RgbF32Linear input path to
@@ -383,8 +436,18 @@ fn run_lossy(
         decoder.output_target = OutputTarget::LinearF32;
     }
     decoder.correct_color = args.apply_icc.map(|t| convert_icc_target(t));
-    if args.orient == OrientArg::Auto {
-        decoder = decoder.auto_orient(true);
+    // `DecodeConfig` auto-orients by default: `--orient keep` must say so.
+    // The decoder applies the EXIF orientation first, then the user's
+    // `--rotate` / `--flip`.
+    let auto_orient = args.orient == OrientArg::Auto;
+    decoder = decoder.auto_orient(auto_orient);
+    let user_transform = if args.rotate.is_some() || args.flip.is_some() {
+        determine_lossless_transform(args)?
+    } else {
+        LosslessTransform::None
+    };
+    if user_transform != LosslessTransform::None {
+        decoder = decoder.transform(user_transform);
     }
     if let Some(s) = args.strictness {
         decoder.strictness = match s {
@@ -402,10 +465,26 @@ fn run_lossy(
     let mut width = result.width();
     let mut height = result.height();
 
-    // Step 5: Extract metadata
+    // Step 4: Extract metadata
     let extras = result.take_extras();
 
-    // Step 6: Apply layout (crop, resize, pad)
+    // Step 5: Layout (crop, resize, pad) in the decoded image's own
+    // coordinates, which are upright when orientation was applied.
+    let layout_result = build_layout(args, width, height)?;
+
+    // Step 6: What the output carries that depends on the geometry: the EXIF
+    // orientation tag (reset once applied) and the secondary images (gain
+    // maps, thumbnails), which get the primary's transform and crop.
+    let carried = carry_geometry(
+        args,
+        extras.as_ref(),
+        auto_orient,
+        user_transform,
+        (width, height),
+        layout_result.as_ref(),
+    )?;
+
+    // Step 7: Apply layout (crop, resize, pad)
     let (output_jpeg, output_size) = if decode_to_f32 {
         let mut pixels_f32 = result
             .into_pixels_f32()
@@ -482,7 +561,8 @@ fn run_lossy(
                 args.attempts,
                 |q| {
                     let q_typed = Quality::ApproxJpegli(q);
-                    let config = build_encoder_config(args, q_typed, subsampling, extras_ref);
+                    let config =
+                        build_encoder_config(args, q_typed, subsampling, extras_ref, &carried);
                     let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
                     config
                         .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
@@ -508,7 +588,7 @@ fn run_lossy(
             }
             result.jpeg
         } else {
-            let config = build_encoder_config(args, quality, subsampling, &extras);
+            let config = build_encoder_config(args, quality, subsampling, &extras, &carried);
             let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
             config
                 .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
@@ -578,7 +658,8 @@ fn run_lossy(
                 args.attempts,
                 |q| {
                     let q_typed = Quality::ApproxJpegli(q);
-                    let config = build_encoder_config(args, q_typed, subsampling, extras_ref);
+                    let config =
+                        build_encoder_config(args, q_typed, subsampling, extras_ref, &carried);
                     config
                         .encode_bytes(&pixels_u8, width, height, PixelLayout::Rgb8Srgb)
                         .map_err(|e| anyhow::anyhow!("encode failed at Q{q:.1}: {e}"))
@@ -603,7 +684,7 @@ fn run_lossy(
             }
             result.jpeg
         } else {
-            let config = build_encoder_config(args, quality, subsampling, &extras);
+            let config = build_encoder_config(args, quality, subsampling, &extras, &carried);
             config
                 .encode_bytes(&pixels_u8, width, height, PixelLayout::Rgb8Srgb)
                 .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
@@ -612,6 +693,12 @@ fn run_lossy(
         (jpeg, size)
     };
 
+    let output_jpeg = apply_strip(output_jpeg, strip_mask(args), path)?;
+    let output_size = if strip_mask(args).is_empty() {
+        output_size
+    } else {
+        output_jpeg.len() as u64
+    };
     let input_size = data.len() as u64;
 
     if args.skip_if_larger && output_size >= input_size {
@@ -1079,6 +1166,7 @@ fn build_encoder_config(
     quality: Quality,
     subsampling: ChromaSubsampling,
     extras: &Option<zenjpeg::decoder::DecodedExtras>,
+    carried: &Carried,
 ) -> EncoderConfig {
     let mut config = if args.xyb {
         EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
@@ -1102,10 +1190,10 @@ fn build_encoder_config(
         match args.trellis {
             TrellisArg::Off => {}
             TrellisArg::On => {
-                #[cfg(feature = "trellis")]
-                {
-                    config = config.trellis(true);
-                }
+                // Was cfg-gated on a `trellis` feature zjpeg never declared,
+                // making `--trellis on` a silent no-op; trellis is always
+                // compiled in zenjpeg now.
+                config = config.trellis(zenjpeg::encoder::TrellisConfig::default());
             }
             TrellisArg::Hybrid => {
                 config = config.auto_optimize(true);
@@ -1116,8 +1204,17 @@ fn build_encoder_config(
     // Quant tables override preset's table selection
     if let Some(qt) = args.quant {
         config = config.quant_table_config(match qt {
-            crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli,
-            crate::QuantTablesArg::Mozjpeg => QuantTableConfig::MozjpegRobidoux,
+            // Neutral field values preserve the historical CLI behaviour:
+            // `[1.0, 1.0]` treats both chroma channels like luma, and
+            // `None` scales chroma with the luma quality. The CLI exposes
+            // table *count* via `--chroma-tables` (separate_chroma_tables
+            // below); per-channel chroma scaling is an optimizer-only knob.
+            crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 1.0],
+            },
+            crate::QuantTablesArg::Mozjpeg => QuantTableConfig::MozjpegRobidoux {
+                chroma_quality: None,
+            },
         });
     }
 
@@ -1144,73 +1241,203 @@ fn build_encoder_config(
     let apply_icc_strips_icc = args.apply_icc.is_some();
 
     if let Some(extras) = extras {
-        let (mut strip_exif, mut strip_icc, mut strip_xmp, strip_gainmaps) = args.strip_mask();
+        let (strip_exif, mut strip_icc, strip_xmp, strip_gainmaps) = args.strip_mask();
         if apply_icc_strips_icc {
             strip_icc = true;
         }
 
         if strip_exif && strip_icc && strip_xmp && strip_gainmaps {
             // Strip everything — no segments added.
-        } else if strip_gainmaps {
-            // Keep non-MPF metadata but rebuild from scratch to drop MPF/gain-map segments.
-            if !strip_icc && let Some(icc) = extras.icc_profile() {
-                config = config.add_segment(0xE2, build_icc_segment(icc));
-            }
-            if !strip_exif && let Some(exif) = extras.exif() {
-                config = config.add_segment(0xE1, build_exif_segment(exif));
-            }
-            if !strip_xmp && let Some(xmp) = extras.xmp() {
-                config = config.add_segment(0xE1, build_xmp_segment(xmp));
-            }
-        } else if strip_exif || strip_icc || strip_xmp {
-            let segments = extras.to_encoder_segments_filtered(|seg| {
-                if strip_exif && seg.segment_type == SegmentType::Exif {
-                    return false;
-                }
-                if strip_icc && seg.segment_type == SegmentType::Icc {
-                    return false;
-                }
-                if strip_xmp
-                    && (seg.segment_type == SegmentType::Xmp
-                        || seg.segment_type == SegmentType::XmpExtended)
-                {
-                    return false;
-                }
-                true
-            });
+        } else if strip_exif || strip_icc || strip_xmp || strip_gainmaps {
+            // The gain map goes with the output pass (`apply_strip`), which
+            // also removes its MPF index, ISO 21496-1 records and XMP.
+            let segments = apply_carried!(
+                carried,
+                extras.to_encoder_segments_filtered(|seg| {
+                    if strip_exif && seg.segment_type == SegmentType::Exif {
+                        return false;
+                    }
+                    if strip_icc && seg.segment_type == SegmentType::Icc {
+                        return false;
+                    }
+                    if strip_xmp
+                        && (seg.segment_type == SegmentType::Xmp
+                            || seg.segment_type == SegmentType::XmpExtended)
+                    {
+                        return false;
+                    }
+                    true
+                })
+            );
             config = config.with_segments(segments);
         } else {
-            config = config.with_segments(extras.to_encoder_segments());
+            config = config.with_segments(apply_carried!(carried, extras.to_encoder_segments()));
         }
     }
 
     config
 }
 
-fn build_icc_segment(icc: &[u8]) -> Vec<u8> {
-    let header = b"ICC_PROFILE\0";
-    let mut seg = Vec::with_capacity(header.len() + 2 + icc.len());
-    seg.extend_from_slice(header);
-    seg.push(1);
-    seg.push(1);
-    seg.extend_from_slice(icc);
-    seg
+// ============================================================================
+// Geometry-bound metadata
+// ============================================================================
+
+/// Quality for a secondary image (gain map, thumbnail) re-encoded after the
+/// primary's transform or crop. A gain map is smooth and small; 90 keeps its
+/// error well under the primary's at the qualities this tool writes.
+const SECONDARY_QUALITY: f32 = 90.0;
+
+/// Replacements for the metadata the lossy pipeline's geometry changes.
+#[derive(Default)]
+struct Carried {
+    /// The EXIF payload with its orientation reset to 1.
+    exif: Option<Vec<u8>>,
+    /// The secondary images after the primary's transform and crop.
+    secondaries: Option<Vec<(Vec<u8>, zenjpeg::decoder::MpfImageType)>>,
 }
 
-fn build_exif_segment(exif: &[u8]) -> Vec<u8> {
-    let header = b"Exif\0\0";
-    let mut seg = Vec::with_capacity(header.len() + exif.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(exif);
-    seg
+/// Work out [`Carried`] for a decode that applied `auto_orient` and then
+/// `user_transform`, producing a `decoded` (width, height) image that the
+/// layout then crops and resizes.
+///
+/// - EXIF: once the EXIF orientation is applied to the pixels the tag says 1
+///   (left as it was, viewers rotate the result a second time).
+/// - Secondary images are bound to the primary's geometry: each is decoded
+///   with the same total transform and the same crop, scaled to its size, and
+///   re-encoded with its own metadata. A resize needs nothing (a gain map
+///   spans the whole image at any resolution). Padding is refused: it would
+///   need a neutral gain added around the map.
+fn carry_geometry(
+    args: &ProcessArgs,
+    extras: Option<&zenjpeg::decoder::DecodedExtras>,
+    auto_orient: bool,
+    user_transform: LosslessTransform,
+    decoded: (u32, u32),
+    layout: Option<&LayoutResult>,
+) -> Result<Carried> {
+    let Some(extras) = extras else {
+        return Ok(Carried::default());
+    };
+    let exif_orientation = extras
+        .exif()
+        .and_then(crate::orient::exif_orientation)
+        .filter(|_| auto_orient)
+        .unwrap_or(1);
+    let mut carried = Carried::default();
+    if exif_orientation != 1
+        && let Some(exif) = extras.exif()
+    {
+        let mut exif = exif.to_vec();
+        if crate::orient::set_exif_orientation(&mut exif, 1) {
+            carried.exif = Some(exif);
+        }
+    }
+
+    let total = zenresize::Orientation::from_exif(exif_orientation)
+        .unwrap_or_default()
+        .then(crate::orient::orientation_of(user_transform));
+    let crop = layout.and_then(|l| l.source_crop);
+    let padded = layout.is_some_and(|l| l.padding.is_some());
+    let (_, _, _, strip_gainmaps) = args.strip_mask();
+    let secondaries = extras.secondary_images();
+    if secondaries.is_empty() || strip_gainmaps || (total.is_identity() && crop.is_none()) {
+        if padded && !secondaries.is_empty() && !strip_gainmaps {
+            anyhow::bail!(
+                "--pad would leave the gain map (or other secondary image) misaligned with the \
+                 padded image; add --strip gainmaps"
+            );
+        }
+        return Ok(carried);
+    }
+    if padded {
+        anyhow::bail!(
+            "--pad would leave the gain map (or other secondary image) misaligned with the \
+             padded image; add --strip gainmaps"
+        );
+    }
+    let transform = crate::orient::transform_of(total);
+    let mut images = Vec::with_capacity(secondaries.len());
+    for img in secondaries {
+        images.push((
+            transform_secondary(&img.data, transform, crop, decoded)
+                .with_context(|| format!("MPF secondary image #{}", img.mpf_index))?,
+            img.image_type,
+        ));
+    }
+    carried.secondaries = Some(images);
+    Ok(carried)
 }
 
-fn build_xmp_segment(xmp: &str) -> Vec<u8> {
-    let header = b"http://ns.adobe.com/xap/1.0/\0";
-    let mut seg = Vec::with_capacity(header.len() + xmp.len());
-    seg.extend_from_slice(header);
-    seg.extend_from_slice(xmp.as_bytes());
-    seg
+/// `jpeg` (a gain map or thumbnail) with `transform` applied and `crop` (in
+/// the primary's `primary` = (width, height) coordinates after the transform)
+/// scaled to its own size, rounded outward to whole pixels.
+fn transform_secondary(
+    jpeg: &[u8],
+    transform: LosslessTransform,
+    crop: Option<CropRect>,
+    primary: (u32, u32),
+) -> Result<Vec<u8>> {
+    use zenjpeg::decoder::{CropRegion, PixelFormat};
+    let info = DecodeConfig::new()
+        .read_info(jpeg)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (sw, sh) = (info.dimensions.width, info.dimensions.height);
+    let (w, h) = if transform.swaps_dimensions() {
+        (sh, sw)
+    } else {
+        (sw, sh)
+    };
+    let gray = info.num_components == 1;
+    let mut decoder = DecodeConfig::new()
+        .preserve(PreserveConfig::all())
+        .auto_orient(false)
+        .output_format(if gray {
+            PixelFormat::Gray
+        } else {
+            PixelFormat::Rgb
+        });
+    if transform != LosslessTransform::None {
+        decoder = decoder.transform(transform);
+    }
+    if let Some(c) = crop {
+        let scale = |v: u32, to: u32, from: u32| u64::from(v) * u64::from(to) / u64::from(from);
+        let scale_up =
+            |v: u32, to: u32, from: u32| (u64::from(v) * u64::from(to)).div_ceil(u64::from(from));
+        let x0 = scale(c.x, w, primary.0) as u32;
+        let y0 = scale(c.y, h, primary.1) as u32;
+        let x1 = (scale_up(c.x + c.w, w, primary.0) as u32).clamp(x0 + 1, w);
+        let y1 = (scale_up(c.y + c.h, h, primary.1) as u32).clamp(y0 + 1, h);
+        decoder = decoder.crop(CropRegion::pixels(x0, y0, x1 - x0, y1 - y0));
+    }
+    let mut decoded = decoder
+        .decode(jpeg, enough::Unstoppable)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (ow, oh) = (decoded.width(), decoded.height());
+    let segments = decoded
+        .take_extras()
+        .map(|e| e.to_encoder_segments().clear_mpf_images())
+        .unwrap_or_default();
+    let pixels = decoded
+        .pixels_u8()
+        .context("expected u8 secondary decode")?;
+    let config = if gray {
+        EncoderConfig::grayscale(SECONDARY_QUALITY)
+    } else {
+        EncoderConfig::ycbcr(SECONDARY_QUALITY, ChromaSubsampling::None)
+    };
+    config
+        .with_segments(segments)
+        .encode_bytes(
+            pixels,
+            ow,
+            oh,
+            if gray {
+                PixelLayout::Gray8Srgb
+            } else {
+                PixelLayout::Rgb8Srgb
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 // ============================================================================

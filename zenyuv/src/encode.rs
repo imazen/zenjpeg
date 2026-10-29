@@ -277,7 +277,8 @@ pub(crate) fn rgb_to_yuv444_scalar_tail(
 /// Scalar fallback for 4:2:0 columns/rows not covered by SIMD blocks.
 /// Replicates the exact AVX2 sequence: avg_epu8 vertical, maddubs horizontal,
 /// pmaddwd at PREC+1, shift by PREC+1. Arch-independent — called from both
-/// the AVX2 and WASM SIMD128 kernels.
+/// the AVX2 and WASM SIMD128 kernels (NEON has its own tail handling).
+#[cfg(any(target_arch = "x86_64", target_arch = "wasm32"))]
 pub(crate) fn rgb_to_yuv420_scalar_tail(
     rgb: &[u8],
     y_out: &mut [u8],
