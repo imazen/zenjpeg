@@ -1,0 +1,73 @@
+name: Encoder diagnostics
+
+on:
+  push:
+    branches: [main, diagnostics]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Capture (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p zenjpeg --features __diagnostics,boundary-rd,parallel --test diagnostics_capture
+
+  capture-i686:
+    runs-on: ubuntu-latest
+    env:
+      CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: diagnostics-i686
+      - run: mkdir -p "$CODEC_CORPUS_CACHE"
+      - run: cargo fetch --locked --target i686-unknown-linux-gnu
+      - run: cross test --locked -p zenjpeg --target i686-unknown-linux-gnu --features __diagnostics,boundary-rd,parallel --test diagnostics_capture
+
+  viewer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: zenjpeg-diagnostics-viewer/web/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zenjpeg-diagnostics-viewer/wasm -> target
+      - run: cargo install wasm-pack --version 0.15.0 --locked
+      - name: Build WASM bindings
+        working-directory: zenjpeg-diagnostics-viewer/wasm
+        run: wasm-pack build --release --target web --out-dir ../web/wasm-pkg
+      - name: Install and check the viewer
+        working-directory: zenjpeg-diagnostics-viewer/web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npx playwright install --with-deps chromium --only-shell
+          npm run test:e2e
+      - uses: actions/upload-artifact@v7
+        with:
+          name: diagnostics-viewer
+          path: zenjpeg-diagnostics-viewer/web/dist
+          if-no-files-found: error
