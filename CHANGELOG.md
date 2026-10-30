@@ -7,6 +7,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- Organize diagnostics settings around quantization mode, color path and sampling, showing only applicable tuning controls (`c03b5029`).
 - Make the diagnostics viewer responsive, with floating settings and quantization cell editors (`d692d3db`).
 
 ### Added
