@@ -37,6 +37,14 @@ fn assert_retained(bytes: &[u8], expected: &Metadata) {
         expected.icc_profile.as_deref()
     );
     let jpeg = img_parts::jpeg::Jpeg::from_bytes(bytes.to_vec().into()).unwrap();
+    if let Some(xmp) = expected.xmp.as_deref() {
+        const XMP_APP1_PREFIX: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+        let payloads: Vec<&[u8]> = jpeg
+            .segments_by_marker(0xe1)
+            .filter_map(|segment| segment.contents().strip_prefix(XMP_APP1_PREFIX))
+            .collect();
+        assert_eq!(payloads, [xmp], "independent XMP APP1 payload");
+    }
     assert_eq!(jpeg.exif().as_deref(), expected.exif.as_deref());
     assert_eq!(
         jpeg.icc_profile().as_deref(),
@@ -45,7 +53,13 @@ fn assert_retained(bytes: &[u8], expected: &Metadata) {
     let mut oracle = jpeg_decoder::Decoder::new(Cursor::new(bytes));
     assert_eq!(oracle.decode().unwrap().len(), 16 * 17 * 3);
 }
+fn independent_samples(bytes: &[u8]) -> Vec<u8> {
+    jpeg_decoder::Decoder::new(Cursor::new(bytes))
+        .decode()
+        .unwrap()
+}
 #[test]
+#[allow(deprecated)] // Compare to the established legacy Verbatim route.
 fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
     let data: Vec<u8> = (0..16 * 17 * 3).map(|i| (i * 71) as u8).collect();
     let record = record();
@@ -62,8 +76,26 @@ fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
                 .try_with_metadata_policy(record.clone(), MetadataPolicy::PreserveExact)
                 .unwrap()
         };
+        let legacy = config
+            .clone()
+            .job()
+            .with_metadata_policy(record.clone(), MetadataPolicy::PreserveExact)
+            .with_policy(
+                zencodec::encode::EncodePolicy::none()
+                    .with_color(zencodec::ColorEmitPolicy::Verbatim),
+            )
+            .encoder()
+            .unwrap()
+            .encode(pixels(&data))
+            .unwrap();
+        let expected_samples = independent_samples(legacy.data());
         let direct = job().encoder().unwrap().encode(pixels(&data)).unwrap();
         assert_retained(direct.data(), &expected);
+        assert_eq!(
+            independent_samples(direct.data()),
+            expected_samples,
+            "checked one-shot vs legacy Verbatim"
+        );
         let mut encoder = job().encoder().unwrap();
         let px = pixels(&data);
         encoder.begin(16, 17, px.descriptor()).unwrap();
@@ -72,6 +104,11 @@ fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
         }
         let streamed = encoder.finish().unwrap();
         assert_retained(streamed.data(), &expected);
+        assert_eq!(
+            independent_samples(streamed.data()),
+            expected_samples,
+            "checked rows vs legacy Verbatim"
+        );
         let registry = zencodec::CodecSet::new().with_send_encoder(config.clone());
         let mut dyn_job = registry.encode_job(zencodec::ImageFormat::Jpeg).unwrap();
         dyn_job
@@ -83,6 +120,11 @@ fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
             .encode(pixels(&data))
             .unwrap();
         assert_retained(output.data(), &expected);
+        assert_eq!(
+            independent_samples(output.data()),
+            expected_samples,
+            "checked dyn vs legacy Verbatim"
+        );
     }
 }
 #[test]
@@ -367,12 +409,33 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
             .try_with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
             .unwrap()
     };
+    let legacy = JpegEncoderConfig::new()
+        .with_huffman(false)
+        .job()
+        .with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
+        .with_policy(EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim))
+        .encoder()
+        .unwrap()
+        .encode(px())
+        .unwrap();
+    let expected_samples = independent_samples(legacy.data());
     let direct = job().encoder().unwrap().encode(px()).unwrap();
     assert_retained(direct.data(), &expected);
+    assert_eq!(
+        independent_samples(direct.data()),
+        expected_samples,
+        "sRGB checked one-shot vs legacy Verbatim"
+    );
     let mut encoder = job().encoder().unwrap();
     encoder.begin(16, 17, PixelDescriptor::RGB8_SRGB).unwrap();
     encoder.push_rows(px()).unwrap();
-    assert_retained(encoder.finish().unwrap().data(), &expected);
+    let streamed = encoder.finish().unwrap();
+    assert_retained(streamed.data(), &expected);
+    assert_eq!(
+        independent_samples(streamed.data()),
+        expected_samples,
+        "sRGB checked rows vs legacy Verbatim"
+    );
     let drop_icc = ColorEmitPolicy::Custom(ColorEmitFields::new(
         IccRetention::Drop,
         CicpEmission::WhereValidCarrier,
