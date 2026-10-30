@@ -7,6 +7,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- Show the diagnostics viewer’s actual resolved encoder plan and expose the codec auto optimizer (`72432fbe`).
 - Report buffered JPEG scan work and output rows in separate Pulse phases when planning is supported; unplanned and native paths retain their documented reporting limits (`a5ea723b`).
 - Enforce checked JPEG metadata retention through later configuration, refusing unsupported or conflicting carriers before output (`c53cc3b2`).
 
