@@ -5,6 +5,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Changed
+
+- Make the diagnostics viewer responsive, with floating settings and quantization cell editors (`d692d3db`).
+
 ### Added
 
 - Add opt-in, unstable per-block encoder diagnostics (`d07a8710`) and a WASM viewer (`0d98644d`) for AQ, quantization tables, and interactive comparison.
