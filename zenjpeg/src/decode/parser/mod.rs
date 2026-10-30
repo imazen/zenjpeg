@@ -905,6 +905,14 @@ impl<'a> JpegParser<'a> {
     ///
     /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode(&mut self, stop: &impl Stop) -> Result<()> {
+        self.decode_with_progress(stop, None)
+    }
+
+    pub(super) fn decode_with_progress(
+        &mut self,
+        stop: &impl Stop,
+        progress: Option<&dyn how_far::Report>,
+    ) -> Result<()> {
         // First read header. The colour markers start empty again, so the
         // SOF decision on this pass sees exactly the markers before SOF.
         self.position = 2; // Skip SOI
@@ -961,9 +969,34 @@ impl<'a> JpegParser<'a> {
 
             match marker {
                 MARKER_SOS => {
-                    match self.parse_scan(stop) {
+                    // Row reports and scan reports are disjoint: a scan gets a
+                    // single batch only when its implementation emitted no rows.
+                    let reported = core::sync::atomic::AtomicBool::new(false);
+                    struct ScanReport<'a> {
+                        sink: &'a dyn how_far::Report,
+                        reported: &'a core::sync::atomic::AtomicBool,
+                    }
+                    impl how_far::Report for ScanReport<'_> {
+                        fn advance(&self, n: u64) {
+                            self.reported
+                                .store(true, core::sync::atomic::Ordering::Relaxed);
+                            self.sink.advance(n);
+                        }
+                    }
+                    let wrapped = progress.map(|sink| ScanReport {
+                        sink,
+                        reported: &reported,
+                    });
+                    match self.parse_scan(stop, wrapped.as_ref().map(|p| p as &dyn how_far::Report))
+                    {
                         Ok(()) => {
                             scans_decoded += 1;
+                            if !reported.load(core::sync::atomic::Ordering::Relaxed)
+                                && let Some(progress) = progress
+                            {
+                                progress.advance(1);
+                                stop.check()?;
+                            }
                             if scans_decoded >= MAX_SCANS as u32 {
                                 return Err(Error::too_many_scans(
                                     scans_decoded as usize,

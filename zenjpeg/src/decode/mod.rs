@@ -132,7 +132,7 @@ use crate::types::{Component, Subsampling};
 // `zenjpeg::encoder` for the token they need to call a *decoder* (issue #168).
 pub use enough::{Stop, Unstoppable};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::foundation::consts::MAX_COMPONENTS;
 use imgref::ImgRefMut;
 
@@ -1277,8 +1277,8 @@ impl DecodeConfig {
         // factors up to 2 for YCbCr / RGB (`PathPlan::strip`); everything else
         // decodes to pixels up front. Grayscale progressive also stays on
         // pixels: its gray buffer already serves every read natively.
-        let mode = if !plan.strip()
-            && !(is_grayscale && crate::decode::precision::is_12_bit(parser.precision))
+        let mode = if !(plan.strip()
+            || is_grayscale && crate::decode::precision::is_12_bit(parser.precision))
         {
             ScanlineMode::Pixels
         } else if !needs_coefficients {
@@ -2136,9 +2136,14 @@ impl DecodeConfig {
         self.decode_dyn(data, &stop)
     }
 
-    /// Decode with cancellation and progress in completed output rows.
-    /// Native-precision decoding reports rows as they complete; buffered paths
-    /// report their completed rows after decoding. Never finishes the caller's pulse.
+    /// Decode with cancellation and progress.
+    /// When planning is supported, scan work is reported as completed batches
+    /// with an unknown total, followed by completed output rows. A batch is a
+    /// completed MCU or component-block row, or a completed scan, not an output row.
+    /// Native-precision and orientation routes use the original pulse without
+    /// splitting, because their internal scan work is not instrumented. Native
+    /// decoding reports reader rows; buffered output rows are reported after conversion. If planning is unsupported,
+    /// only output-row reports are forwarded. Never finishes the caller's pulse.
     /// `None` adds no per-call control, matching [`Self::decode`] with `Unstoppable`.
     pub fn decode_with_pulse(
         &self,
@@ -2149,7 +2154,86 @@ impl DecodeConfig {
             Some(pulse) => pulse,
             None => &Unstoppable,
         };
-        self.decode_reporting(data, stop, pulse.map(|pulse| pulse as &dyn how_far::Report))
+        let Some(pulse) = pulse.filter(|pulse| pulse.may_report()) else {
+            return self.decode_reporting(data, stop, None, None, None, None);
+        };
+        // Native and orientation paths perform internal work before row delivery.
+        // Keep that work unpartitioned until its own scan instrumentation exists.
+        let native_frame = crate::container::marker::iter(data)
+            .find_map(|span| {
+                if let crate::container::marker::MarkerKind::Sof(n) = span.kind {
+                    Some(
+                        n == 3
+                            || span.payload.first() != Some(&8)
+                            || span.payload.get(5).is_some_and(|n| *n == 2 || *n > 4),
+                    )
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+        if native_frame
+            || self.output_target == OutputTarget::Native16
+            || self.compute_effective_transform_from_data(data)
+                != crate::lossless::LosslessTransform::None
+        {
+            return self.decode_reporting(data, stop, Some(pulse), None, None, Some(pulse));
+        }
+        let phases = [
+            how_far::PhaseSpec::new("scan work", 1, how_far::Total::Unknown).units("batches"),
+            how_far::PhaseSpec::new("output rows", 1, how_far::Total::Unknown).units("rows"),
+        ];
+        let mut children = match pulse.split(how_far::Execution::Sequence, &phases) {
+            Ok(children) if children.len() == 2 => children,
+            Ok(children) => {
+                for child in children {
+                    if let Err(error) = child.finish(how_far::Outcome::NotRun) {
+                        pulse.record_issue(error);
+                    }
+                }
+                pulse.record_issue(how_far::PlanError::Unsupported);
+                return self.decode_reporting(data, stop, Some(pulse), None, None, Some(pulse));
+            }
+            Err(error) => {
+                pulse.record_issue(error);
+                return self.decode_reporting(data, stop, Some(pulse), None, None, Some(pulse));
+            }
+        };
+        let output = children.pop().expect("two phases");
+        let mut scan = children.pop();
+        let output_started = core::cell::Cell::new(false);
+        let result = self.decode_reporting(
+            data,
+            stop,
+            Some(&output),
+            Some(&mut scan),
+            Some(&output_started),
+            Some(pulse),
+        );
+        let outcome =
+            how_far::Outcome::from_result(&result, |e| matches!(e.kind(), ErrorKind::Cancelled(_)));
+        if let Some(scan) = scan
+            && let Err(error) = scan.finish(how_far::Outcome::NotRun)
+        {
+            pulse.record_issue(error);
+        }
+        let output_outcome = if output_started.get() {
+            outcome
+        } else {
+            how_far::Outcome::NotRun
+        };
+        if let Err(error) = output.finish(output_outcome) {
+            pulse.record_issue(error);
+        }
+        // A completion callback may request a stop. Do not poll again after
+        // an error: a one-shot native error or interruption must win.
+        match result {
+            Ok(value) => {
+                stop.check()?;
+                Ok(value)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Non-generic body of [`decode`](Self::decode).
@@ -2163,7 +2247,7 @@ impl DecodeConfig {
     /// noise. `&dyn Stop: Stop` (via `enough`'s blanket `&T` impl), so the
     /// parser-level `&impl Stop` helpers instantiate for `&dyn Stop` only.
     pub(crate) fn decode_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodeResult> {
-        self.decode_reporting(data, stop, None)
+        self.decode_reporting(data, stop, None, None, None, None)
     }
 
     fn decode_reporting(
@@ -2171,6 +2255,9 @@ impl DecodeConfig {
         data: &[u8],
         stop: &dyn Stop,
         progress: Option<&dyn how_far::Report>,
+        mut scan_phase: Option<&mut Option<how_far::Child<'_>>>,
+        output_started: Option<&core::cell::Cell<bool>>,
+        observer: Option<&dyn how_far::Pulse>,
     ) -> Result<DecodeResult> {
         stop.check()?;
         // Track whether we force-preserved EXIF just for auto_orient
@@ -2203,9 +2290,21 @@ impl DecodeConfig {
         // remain available through the lossless re-encode pipeline
         // (`lossless::transform`), where they avoid generation loss.
         if effective_transform != crate::lossless::LosslessTransform::None {
+            if let Some(scan) = scan_phase.as_mut().and_then(|phase| phase.take()) {
+                if let Err(error) = scan.finish(how_far::Outcome::Skipped)
+                    && let Some(observer) = observer
+                {
+                    observer.record_issue(error);
+                }
+                stop.check()?;
+            }
+            if let Some(started) = output_started {
+                started.set(true);
+            }
             let result = self.decode_upright_then_orient(data, effective_transform, stop)?;
             if let Some(progress) = progress {
                 progress.advance(u64::from(result.height()));
+                stop.check()?;
             }
             return Ok(result);
         }
@@ -2231,7 +2330,22 @@ impl DecodeConfig {
         }
         if native_frame || self.output_target == OutputTarget::Native16 {
             parser.read_header_with_stop(stop)?;
-            return self.decode_native(data, &mut parser, stop, progress, forced_exif);
+            if let Some(scan) = scan_phase.as_mut().and_then(|phase| phase.take()) {
+                if let Err(error) = scan.finish(how_far::Outcome::Skipped)
+                    && let Some(observer) = observer
+                {
+                    observer.record_issue(error);
+                }
+                stop.check()?;
+            }
+            if let Some(started) = output_started {
+                started.set(true);
+            }
+            let result = self.decode_native(data, &mut parser, stop, progress, forced_exif)?;
+            if progress.is_some() {
+                stop.check()?;
+            }
+            return Ok(result);
         }
 
         // Streaming decode produces RGB u8 directly — disable it when the output
@@ -2279,7 +2393,30 @@ impl DecodeConfig {
         if self.force_f32_idct {
             parser.force_f32_idct = true;
         }
-        parser.decode(&stop)?;
+        let scan_result = parser.decode_with_progress(
+            &stop,
+            scan_phase
+                .as_ref()
+                .and_then(|phase| phase.as_ref())
+                .map(|phase| phase as &dyn how_far::Report),
+        );
+        if let Some(scan) = scan_phase.as_mut().and_then(|phase| phase.take()) {
+            let outcome = how_far::Outcome::from_result(&scan_result, |e| {
+                matches!(e.kind(), ErrorKind::Cancelled(_))
+            });
+            if let Err(error) = scan.finish(outcome)
+                && let Some(observer) = observer
+            {
+                observer.record_issue(error);
+            }
+        }
+        scan_result?;
+        if scan_phase.is_some() {
+            stop.check()?;
+        }
+        if let Some(started) = output_started {
+            started.set(true);
+        }
 
         let (visible_w, visible_h) = (parser.width, parser.height);
 
@@ -2522,6 +2659,7 @@ impl DecodeConfig {
         result.set_gain_map(gain_map_result);
         if let Some(progress) = progress {
             progress.advance(u64::from(result.height()));
+            stop.check()?;
         }
         Ok(result)
     }

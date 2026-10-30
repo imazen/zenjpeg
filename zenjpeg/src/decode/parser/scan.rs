@@ -28,7 +28,11 @@ impl<'a> JpegParser<'a> {
     /// Parse and decode a scan (SOS marker + entropy-coded data).
     ///
     /// The `stop` parameter allows cancellation of long-running decodes.
-    pub(super) fn parse_scan(&mut self, stop: &impl Stop) -> Result<()> {
+    pub(super) fn parse_scan(
+        &mut self,
+        stop: &impl Stop,
+        progress: Option<&dyn how_far::Report>,
+    ) -> Result<()> {
         let length = self.read_u16()?;
         let num_components = self.read_u8()?;
 
@@ -196,10 +200,11 @@ impl<'a> JpegParser<'a> {
                         && self.streaming_rgb.is_none()
                     {
                         // Use streaming decode for all baseline subsampling modes
-                        let rgb = self.decode_baseline_streaming(&scan_components, stop)?;
+                        let rgb =
+                            self.decode_baseline_streaming(&scan_components, stop, progress)?;
                         self.streaming_rgb = Some(rgb);
                     } else {
-                        self.decode_scan(&scan_components, stop)?;
+                        self.decode_scan(&scan_components, stop, progress)?;
                     }
                 }
             }
@@ -215,6 +220,7 @@ impl<'a> JpegParser<'a> {
         &mut self,
         scan_components: &[(usize, u8, u8)],
         stop: &impl Stop,
+        progress: Option<&dyn how_far::Report>,
     ) -> Result<()> {
         // DNL mode (height=0 in SOF) requires dynamic buffer growth during decode,
         // which is not yet implemented. For now, we need height before decoding.
@@ -435,6 +441,10 @@ impl<'a> JpegParser<'a> {
 
                     mcu_count += 1;
                 }
+                if let Some(progress) = progress {
+                    progress.advance(1);
+                    stop.check()?;
+                }
             }
 
             total_data_units = (grid.comp_blocks_v * grid.comp_blocks_h) as u32;
@@ -635,6 +645,10 @@ impl<'a> JpegParser<'a> {
 
                     mcu_count += 1;
                 }
+                if let Some(progress) = progress {
+                    progress.advance(1);
+                    stop.check()?;
+                }
             }
 
             total_data_units = (mcu_rows * mcu_cols) as u32;
@@ -736,6 +750,7 @@ impl<'a> JpegParser<'a> {
         &mut self,
         scan_components: &[(usize, u8, u8)],
         stop: &impl Stop,
+        progress: Option<&dyn how_far::Report>,
     ) -> Result<Vec<u8>> {
         // DNL mode not supported for streaming decode
         if self.height == 0 {
@@ -1024,6 +1039,10 @@ impl<'a> JpegParser<'a> {
                     &mut rgb[o..o + row_bytes],
                 );
             }
+            if let Some(progress) = progress {
+                progress.advance(1);
+                stop.check()?;
+            }
         }
 
         // Extract warning flags (decoder borrows self tables)
@@ -1064,6 +1083,7 @@ impl<'a> JpegParser<'a> {
         &mut self,
         scan_components: &[(usize, u8, u8)],
         stop: &impl Stop,
+        progress: Option<&dyn how_far::Report>,
     ) -> Result<Vec<u8>> {
         if self.height == 0 {
             return Err(Error::unsupported_feature(
@@ -1076,7 +1096,7 @@ impl<'a> JpegParser<'a> {
 
         // Delegate to 4:4:4 path (already optimized)
         if !geom.is_grayscale && geom.max_h_samp == 1 && geom.max_v_samp == 1 {
-            return self.decode_baseline_streaming_rgb(scan_components, stop);
+            return self.decode_baseline_streaming_rgb(scan_components, stop, progress);
         }
 
         // ---- Phase 2: validation ----
@@ -1177,6 +1197,7 @@ impl<'a> JpegParser<'a> {
                 c_data_offset,
                 downsampled_w,
                 stop,
+                progress,
             )?;
         } else {
             baseline_streaming::run_simple_loop(
@@ -1189,6 +1210,7 @@ impl<'a> JpegParser<'a> {
                 use_fused_box,
                 c_data_offset,
                 stop,
+                progress,
             )?;
         }
 

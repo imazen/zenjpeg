@@ -135,7 +135,7 @@ almost-enough = { version = "0.4", features = ["std"] }
 # patch table (dependency patches do not propagate). The 0.2 floor prevents
 # resolving this edge to the incompatible published 0.1 contract.
 zencodec = { version = ">=0.2.0, <0.3.0" }
-zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"] }
+zenpixels = { version = ">=0.3.1, <0.4.0", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
 garb = { version = "0.2.6", default-features = false }
 
@@ -239,11 +239,11 @@ zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7
 # The zencodec 0.2 family, all from one optional-control revision.
 # zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
 # patches resolve them for local builds; releases stay gated on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
 # Native PNG tests and metric dev-dependencies share the same core family.
 # Their formerly separate 0.1 core fails with the paired pixel representation.
 # zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and

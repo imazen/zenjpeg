@@ -899,6 +899,7 @@ pub(super) fn run_fancy_h2v2_loop(
     c_data_offset: usize,
     downsampled_w: usize,
     stop: &impl enough::Stop,
+    progress: Option<&dyn how_far::Report>,
 ) -> Result<()> {
     let mcu_rows = geom.mcu_rows;
     let mcu_cols = geom.mcu_cols;
@@ -1051,6 +1052,10 @@ pub(super) fn run_fancy_h2v2_loop(
         core::mem::swap(&mut bufs.y_strip_a, &mut bufs.y_strip_b);
         core::mem::swap(&mut bufs.cb_a, &mut bufs.cb_b);
         core::mem::swap(&mut bufs.cr_a, &mut bufs.cr_b);
+        if let Some(progress) = progress {
+            progress.advance(1);
+            stop.check()?;
+        }
     }
 
     // Flush last pending MCU row (below context = edge replicate)
@@ -1193,6 +1198,7 @@ pub(super) fn run_simple_loop(
     use_fused_box: bool,
     c_data_offset: usize,
     stop: &impl enough::Stop,
+    progress: Option<&dyn how_far::Report>,
 ) -> Result<()> {
     let mcu_rows = geom.mcu_rows;
     let mcu_cols = geom.mcu_cols;
@@ -1356,6 +1362,10 @@ pub(super) fn run_simple_loop(
                     kernel,
                 );
             }
+        }
+        if let Some(progress) = progress {
+            progress.advance(1);
+            stop.check()?;
         }
     }
     Ok(())
