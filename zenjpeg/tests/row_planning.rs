@@ -430,6 +430,7 @@ fn rows_contradicting_the_header_refuse_before_encoding() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn invalid_input_limits_canvas_and_metadata_refuse_during_planning() {
     let config = JpegEncoderConfig::new();
     let plan = |job: zenjpeg::JpegEncodeJob, width, height| {

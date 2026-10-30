@@ -66,7 +66,7 @@ fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb, info.width, info.height))
 }
 
-fn median(v: &mut Vec<u128>) -> u128 {
+fn median(v: &mut [u128]) -> u128 {
     v.sort_unstable();
     if v.is_empty() {
         return 0;

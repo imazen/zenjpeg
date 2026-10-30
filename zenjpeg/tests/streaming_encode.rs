@@ -48,6 +48,7 @@ fn meta() -> Metadata {
     Metadata::none().with_exif(&exif[..]).with_xmp(&xmp[..])
 }
 
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn one_shot(cfg: &E, px: &[u8], w: u32, h: u32, ch: usize, m: &Metadata) -> Vec<u8> {
     let s = PixelSlice::new(px, w, h, w as usize * ch, desc(ch)).unwrap();
     cfg.clone()
@@ -63,6 +64,7 @@ fn one_shot(cfg: &E, px: &[u8], w: u32, h: u32, ch: usize, m: &Metadata) -> Vec<
 /// `begin`, push in strips of `strip` rows, drain after each. Returns the
 /// timing, the file, and the bytes pending after `begin` and after each
 /// pushed row count.
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn streamed(
     cfg: &E,
     px: &[u8],
@@ -143,6 +145,7 @@ fn fixed_tables_stream_byte_identical_to_one_shot() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn metadata_is_in_the_header_pending_at_begin() {
     let cfg = fixed(ChromaSubsampling::Quarter);
     let mut enc = cfg

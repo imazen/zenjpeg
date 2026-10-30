@@ -7,6 +7,9 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- Report buffered JPEG scan work and output rows in separate Pulse phases when planning is supported; unplanned and native paths retain their documented reporting limits (`a5ea723b`).
+- Enforce checked JPEG metadata retention through later configuration, refusing unsupported or conflicting carriers before output (`c53cc3b2`).
+
 - Consolidate diagnostics settings, expose codec defaults, and add configurable quality sweeps with Butteraugli (`182c8a27`).
 - Organize diagnostics settings around quantization mode, color path and sampling, showing only applicable tuning controls (`c03b5029`).
 - Make the diagnostics viewer responsive, with floating settings and quantization cell editors (`d692d3db`).

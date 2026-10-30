@@ -122,6 +122,7 @@ mod bench {
     }
 
     /// Allocate a 32-byte aligned buffer
+    #[cfg(target_arch = "x86_64")]
     fn alloc_aligned(size: usize) -> Vec<u8> {
         // Round up to 32 bytes
         let aligned = (size + 31) & !31;

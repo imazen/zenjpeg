@@ -871,3 +871,11 @@ diagnostics-check:
 
 diagnostics-i686:
     cross test --locked -p zenjpeg --target i686-unknown-linux-gnu --features __diagnostics,boundary-rd,parallel --test diagnostics_capture
+
+# Native Pulse work accounting, interruption, and existing cancellation contracts.
+pulse-progress-check:
+    timeout --kill-after=15s 10m cargo test --locked -p zenjpeg --features inventory,parallel --test pulse_progress --test decode_cancellation --test native_hardening
+
+# Focused Pulse phase and cancellation qualification on the frozen graph.
+pulse-progress-focused-check:
+    timeout --kill-after=15s 10m cargo test --locked -p zenjpeg --features inventory,parallel --test pulse_progress --test decode_cancellation

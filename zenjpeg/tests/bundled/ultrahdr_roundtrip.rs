@@ -1297,6 +1297,7 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
 
 #[cfg(all(feature = "zencodec", feature = "inventory"))]
 #[test]
+#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn codec_hdr_policy_agrees_with_inventory() {
     use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
     use zencodec::inventory::{Disposition, PartKind};
@@ -1381,6 +1382,7 @@ fn codec_hdr_color_conversion_follows_gainmap_application() {
 
 #[cfg(all(feature = "zencodec", feature = "inventory"))]
 #[test]
+#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn codec_hdr_obeys_progressive_policy() {
     use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
     use zencodec::inventory::{Disposition, PartKind};

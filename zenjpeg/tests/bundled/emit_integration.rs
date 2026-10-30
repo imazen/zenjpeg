@@ -26,6 +26,7 @@ fn rgb_4x4() -> Vec<u8> {
     v
 }
 
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn encode_with_meta(meta: Metadata) -> Vec<u8> {
     let pixels = rgb_4x4();
     let slice =
@@ -103,6 +104,7 @@ fn emit_cicp_only_display_p3_synthesizes_icc() {
 /// an RGB profile over gray pixels would recolor them (the resolver's
 /// grayscale terminal state).
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn emit_gray_cicp_only_synthesizes_nothing() {
     let pixels: Vec<u8> = (0..16u8).map(|i| i * 16).collect();
     let slice =
@@ -140,6 +142,7 @@ fn emit_cicp_pq_synthesizes_icc() {
 /// expressed as an ICC at all. That is an encode ERROR, not a silent skip —
 /// refusing beats shipping an untagged file that decoders assume is sRGB.
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn emit_cicp_offgrid_unsynthesizable_is_an_encode_error() {
     let pixels = rgb_4x4();
     let slice =

@@ -101,6 +101,9 @@ wide = { workspace = true }
 zenyuv = { workspace = true }
 # Oracle for the color-emit synthesized-ICC test (bundled DISPLAY_P3_V4 const).
 zenpixels-convert = { workspace = true }
+# Bounded progress diagnostics in integration tests only.
+how-far-along = { version = "0.1.0", default-features = false, features = ["std"] }
+how-far-really = "0.1.0"
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
 how-far = { version = "0.1.0", default-features = false }
@@ -118,7 +121,7 @@ tempfile = "3"
 # The root patch table keeps the conformance harness on the same shared
 # contract as the codec. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
-zencodec-testkit = ">=0.1.0, <0.3.0"
+zencodec-testkit = ">=0.2.0, <0.3.0"
 zencodec-io = { version = "0.1.0", features = ["std"] }
 
 

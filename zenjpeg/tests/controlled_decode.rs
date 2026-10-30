@@ -224,6 +224,7 @@ fn unavailable_profiles_and_policy_refusal_have_no_sink_effects() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn late_orientation_is_bound_before_adoption_and_matches_direct_decode() {
     let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
     exif.set_orientation(Orientation::Rotate90);

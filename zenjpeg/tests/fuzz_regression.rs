@@ -605,6 +605,7 @@ fn run_container_xmp(data: &[u8]) {
 /// `fuzz_inventory`: the structural inventory under every job configuration
 /// that changes it must cover the input exactly and validate.
 #[cfg(feature = "inventory")]
+#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn run_inventory(data: &[u8]) {
     use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
     let mut permissive = zenjpeg::JpegDecoderConfig::new();

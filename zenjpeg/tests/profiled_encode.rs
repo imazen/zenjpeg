@@ -17,6 +17,7 @@ fn descriptor(base: PixelDescriptor, profile: &[u8]) -> PixelDescriptor {
     base.with_primaries(p).with_transfer(t)
 }
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
     for base in [
         PixelDescriptor::RGB8_SRGB,
@@ -189,6 +190,7 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
     use zencodec::{CodecSet, ColorEmitPolicy, ImageFormat, UnsupportedOperation};
     let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
@@ -249,6 +251,7 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn profile_descriptor_admission_checks_each_interpretation_guard() {
     let known = descriptor(PixelDescriptor::RGB8_SRGB, ADOBE_RGB);
     let unknown = known

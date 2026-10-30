@@ -609,6 +609,7 @@ fn everything_fixture_passes_check_inventory() {
 /// `check_all` would run), baseline and progressive, with embedded EXIF and
 /// XMP coming back as metadata.
 #[test]
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn encoder_output_passes_check_inventory() {
     use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
     use zencodec::{Metadata, MetadataPolicy};

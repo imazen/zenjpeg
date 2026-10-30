@@ -54,6 +54,7 @@ mod api_tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Exercises the legacy metadata setter.
     fn encoding_with_metadata() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
@@ -232,6 +233,7 @@ mod api_tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Exercises the legacy metadata setter.
     fn exif_crosses_the_zencodec_boundary_as_tiff_and_round_trips() {
         let (source, tiff) = jpeg_with_exif();
         assert_eq!(exif_headers(&source), 1);
