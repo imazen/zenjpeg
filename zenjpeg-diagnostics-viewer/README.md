@@ -4,7 +4,10 @@ Explore an encode with a source/encoded/difference triptych, per-block AQ
 strengths, and per-component quantization tables. The frequency sliders update
 the utilization estimate locally; when auto-encode is enabled, they also
 schedule a new encode. A reference quality sweep and two perceptual scores are
-shown for comparison. The zoom inspector opens by clicking an image.
+shown for comparison. Open **Edit settings** to adjust options while viewing the images. In **Quant
+tables**, choose a component and click a cell to edit it in a popover. Use the
+arrow keys to move between settings tabs and Escape to close a popover. The zoom
+inspector opens by clicking an image or pressing Enter when it is focused.
 
 The viewer uses `__diagnostics`, an unstable feature intended for small images.
 It keeps every captured block in memory. Pre-quantization coefficients are in

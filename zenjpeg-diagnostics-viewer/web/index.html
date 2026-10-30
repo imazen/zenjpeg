@@ -7,12 +7,12 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body class="min-h-screen text-text">
-    <header class="px-6 py-3 border-b border-line flex items-baseline gap-6">
+    <header class="app-header px-6 py-3 border-b border-line flex items-baseline gap-6">
       <h1 class="text-base font-semibold m-0">zenjpeg diagnostics viewer</h1>
       <p class="m-0 text-xs text-muted font-mono" id="status" data-testid="status">
         Initializing…
       </p>
-      <div class="ml-auto flex items-center gap-3">
+      <div class="header-actions ml-auto flex items-center gap-3">
         <label class="flex items-center gap-2 text-xs text-muted">
           <input
             type="checkbox"
@@ -43,7 +43,7 @@
     </header>
 
     <!-- Image source bar -->
-    <section class="px-6 py-2 border-b border-line bg-panel flex flex-wrap gap-4 items-center text-sm">
+    <section class="source-bar px-6 py-2 border-b border-line bg-panel flex flex-wrap gap-4 items-center text-sm">
       <label class="flex items-center gap-2 text-muted">
         <span class="text-xs uppercase tracking-wider">Image (alpha ignored)</span>
         <select id="image-pick" data-testid="image-pick" class="min-w-[280px]">
@@ -128,7 +128,7 @@
 
     <!-- Image triptych — click any canvas to open the zoom inspector -->
     <section
-      class="px-6 py-4 grid grid-cols-3 gap-4 border-b border-line"
+      class="comparison-grid px-6 py-4 grid grid-cols-3 gap-4 border-b border-line"
       aria-label="Source / encoded / delta"
     >
       <figure class="m-0 flex flex-col">
@@ -141,6 +141,7 @@
           data-testid="source-canvas"
           class="w-full h-auto bg-black border border-line rounded cursor-zoom-in"
           data-zoom-source="source"
+          tabindex="0" role="button" aria-label="Zoom source image"
         ></canvas>
       </figure>
       <figure class="m-0 flex flex-col">
@@ -153,6 +154,7 @@
           data-testid="encoded-canvas"
           class="w-full h-auto bg-black border border-line rounded cursor-zoom-in"
           data-zoom-source="encoded"
+          tabindex="0" role="button" aria-label="Zoom encoded image"
         ></canvas>
       </figure>
       <figure class="m-0 flex flex-col">
@@ -165,6 +167,7 @@
           data-testid="delta-canvas"
           class="w-full h-auto bg-black border border-line rounded cursor-zoom-in"
           data-zoom-source="delta"
+          tabindex="0" role="button" aria-label="Zoom difference image"
         ></canvas>
       </figure>
     </section>
@@ -212,7 +215,7 @@
         <h2 class="text-sm m-0 mb-2 text-accent font-semibold">
           AQ strength per Y/X block
         </h2>
-        <div class="flex gap-3 items-start">
+        <div class="aq-content flex gap-3 items-start">
           <canvas
             id="aq-canvas"
             data-testid="aq-canvas"
@@ -262,7 +265,21 @@
       </div>
     </section>
 
-    <!-- Controls panel (tabs) -->
+    <button id="controls-toggle" class="controls-toggle" type="button"
+      popovertarget="controls-popover" aria-controls="controls-popover"
+      aria-expanded="false" data-testid="controls-toggle">
+      <span aria-hidden="true">⚙</span> Edit settings
+    </button>
+
+    <!-- A non-modal panel keeps the images visible while settings are edited. -->
+    <aside id="controls-popover" class="controls-popover" popover="manual"
+      aria-label="Encoder settings" data-testid="controls-popover">
+      <div class="controls-header">
+        <div><strong>Encoder settings</strong><p>Adjust the image and quantization tables</p></div>
+        <button id="controls-close" class="panel-close" type="button"
+          popovertarget="controls-popover" popovertargetaction="hide"
+          aria-label="Close settings" data-testid="controls-close">×</button>
+      </div>
     <nav
       class="tabs flex gap-1 px-6 bg-bg border-b border-line overflow-x-auto"
       role="tablist"
@@ -638,15 +655,10 @@
         data-testid="panel-quant"
         hidden
       >
-        <div class="flex flex-col gap-1">
+        <div class="quant-intro flex flex-col gap-1">
           <p class="text-xs text-muted m-0">
-            Per-component quantization tables. Edited values are rounded to
-            integer JPEG table entries without additional quality scaling
-            (<code>ScalingParams::Exact</code>). The 8-band sliders
-            (h_eq, v_eq) drive a separable multiplier; curve presets
-            jump to common shapes; click any cell to edit the float
-            directly. Values are sent as
-            <code>customQuantTables</code>.
+            Select a component, then click a table cell to edit its value.
+            Values are rounded to JPEG's integer table entries.
           </p>
           <p
             class="text-xs m-0"
@@ -654,7 +666,83 @@
             data-testid="quant-mode-banner"
           ></p>
         </div>
-        <div class="flex flex-wrap gap-x-6 gap-y-3 items-end">
+        <div class="component-picker" role="group" aria-label="Quantization component">
+          <span>Component</span>
+          <button type="button" data-component-pick="0" data-testid="component-pick-0" aria-pressed="true">Y</button>
+          <button type="button" data-component-pick="1" data-testid="component-pick-1" aria-pressed="false">Cb</button>
+          <button type="button" data-component-pick="2" data-testid="component-pick-2" aria-pressed="false">Cr</button>
+        </div>
+
+        <!-- Per-component editors -->
+        <div class="component-grid flex flex-col gap-4">
+          <article
+            class="component bg-panel-2 border border-line rounded p-3"
+            data-component="0"
+            id="component-0"
+          >
+            <header class="flex items-baseline gap-3 mb-2">
+              <h2 class="text-sm m-0 text-accent font-semibold">
+                Component 0 (Y/X)
+              </h2>
+              <p
+                class="m-0 text-xs text-muted font-mono"
+                data-testid="comp-0-grid-info"
+              ></p>
+            </header>
+            <div
+              class="component-layout grid gap-6 items-start"
+            >
+              <div class="grid grid-cols-[auto_auto] gap-1 items-center">
+                <h3 class="col-span-2 text-xs m-0 text-text font-semibold">
+                  Quant table (base × h_eq × v_eq, click to edit)
+                </h3>
+                <div class="quant-grid" data-testid="comp-0-quant-grid"></div>
+                <div class="flex flex-col items-center gap-1">
+                  <span class="text-[11px] text-muted font-mono">v_eq</span>
+                  <div class="eq-sliders vertical" data-testid="comp-0-v-eq"></div>
+                </div>
+                <div class="flex items-center gap-1 col-start-1">
+                  <span class="text-[11px] text-muted font-mono">h_eq</span>
+                  <div class="eq-sliders horizontal" data-testid="comp-0-h-eq"></div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="comp-0-reset-eq"
+                  class="col-start-1 mt-1 px-2 py-1 text-[11px] rounded border border-line bg-panel hover:bg-bg justify-self-start"
+                >
+                  Reset EQ
+                </button>
+              </div>
+              <div>
+                <h3 class="text-xs m-0 mb-1 text-text font-semibold">
+                  Coefficient utilization
+                </h3>
+                <canvas
+                  data-testid="comp-0-utilization"
+                  class="block w-[200px] h-[200px] bg-black rounded"
+                ></canvas>
+                <p class="m-0 mt-1 text-xs text-muted">
+                  Mean 8 × |coef_pre_quant| / rounded quant per coefficient
+                  position (natural order; DC top-left).
+                </p>
+              </div>
+              <div>
+                <h3 class="text-xs m-0 mb-1 text-text font-semibold">
+                  Estimated zero coefficients
+                </h3>
+                <p class="m-0 text-sm font-mono">
+                  <span data-testid="comp-0-zero-rate">--</span>%
+                  <span class="text-muted">of coefficients are estimated as zero</span>
+                </p>
+                <p class="m-0 mt-2 text-xs text-muted">
+                  Estimate using the adjusted table, captured AQ strength and zero bias.
+                  Trellis and later DC refinement can change the final levels.
+                </p>
+              </div>
+            </div>
+          </article>
+        </div>
+        <div class="quant-curve-controls flex flex-wrap gap-x-6 gap-y-3 items-end">
           <label class="ctrl flex flex-col gap-1 text-xs text-muted">
             <span class="uppercase tracking-wider text-[10px]">
               Q-scale (uniform) <output id="curve-qscale-out">1.00</output>
@@ -719,7 +807,7 @@
         <!-- Zero-bias controls (separate from quant tables — these are
              the per-frequency dead-zone parameters and the per-component
              DC/AC offsets that control rounding behavior near zero). -->
-        <details class="border border-line rounded p-3 bg-panel-2" open>
+        <details class="quant-zero-bias border border-line rounded p-3 bg-panel-2">
           <summary class="text-xs font-semibold text-accent cursor-pointer">
             Zero-bias (dead-zone) parameters
           </summary>
@@ -728,7 +816,7 @@
             <code>offset[k] + zero_bias_mul[k] · AQ_strength</code>.
             DC and AC offsets adjust that threshold.
           </p>
-          <div class="grid grid-cols-3 gap-3">
+          <div class="zero-bias-grid grid grid-cols-3 gap-3">
             <div class="flex flex-col gap-2">
               <span class="text-[10px] uppercase tracking-wider text-muted">Y / X</span>
               <label class="text-xs text-muted flex flex-col gap-1">
@@ -874,77 +962,6 @@
             Reset zero-bias to defaults
           </button>
         </details>
-
-        <!-- Per-component editors -->
-        <div class="component-grid flex flex-col gap-4">
-          <article
-            class="component bg-panel-2 border border-line rounded p-3"
-            data-component="0"
-            id="component-0"
-          >
-            <header class="flex items-baseline gap-3 mb-2">
-              <h2 class="text-sm m-0 text-accent font-semibold">
-                Component 0 (Y/X)
-              </h2>
-              <p
-                class="m-0 text-xs text-muted font-mono"
-                data-testid="comp-0-grid-info"
-              ></p>
-            </header>
-            <div
-              class="grid gap-6 items-start"
-              style="grid-template-columns: minmax(280px, 1fr) minmax(220px, 1fr) minmax(200px, 1fr)"
-            >
-              <div class="grid grid-cols-[auto_auto] gap-1 items-center">
-                <h3 class="col-span-2 text-xs m-0 text-text font-semibold">
-                  Quant table (base × h_eq × v_eq, click to edit)
-                </h3>
-                <div class="quant-grid" data-testid="comp-0-quant-grid"></div>
-                <div class="flex flex-col items-center gap-1">
-                  <span class="text-[11px] text-muted font-mono">v_eq</span>
-                  <div class="eq-sliders vertical" data-testid="comp-0-v-eq"></div>
-                </div>
-                <div class="flex items-center gap-1 col-start-1">
-                  <span class="text-[11px] text-muted font-mono">h_eq</span>
-                  <div class="eq-sliders horizontal" data-testid="comp-0-h-eq"></div>
-                </div>
-                <button
-                  type="button"
-                  data-testid="comp-0-reset-eq"
-                  class="col-start-1 mt-1 px-2 py-1 text-[11px] rounded border border-line bg-panel hover:bg-bg justify-self-start"
-                >
-                  Reset EQ
-                </button>
-              </div>
-              <div>
-                <h3 class="text-xs m-0 mb-1 text-text font-semibold">
-                  Coefficient utilization
-                </h3>
-                <canvas
-                  data-testid="comp-0-utilization"
-                  class="block w-[200px] h-[200px] bg-black rounded"
-                ></canvas>
-                <p class="m-0 mt-1 text-xs text-muted">
-                  Mean 8 × |coef_pre_quant| / rounded quant per coefficient
-                  position (natural order; DC top-left).
-                </p>
-              </div>
-              <div>
-                <h3 class="text-xs m-0 mb-1 text-text font-semibold">
-                  Estimated zero coefficients
-                </h3>
-                <p class="m-0 text-sm font-mono">
-                  <span data-testid="comp-0-zero-rate">--</span>%
-                  <span class="text-muted">of coefficients are estimated as zero</span>
-                </p>
-                <p class="m-0 mt-2 text-xs text-muted">
-                  Estimate using the adjusted table, captured AQ strength and zero bias.
-                  Trellis and later DC refinement can change the final levels.
-                </p>
-              </div>
-            </div>
-          </article>
-        </div>
       </article>
 
       <article
@@ -982,6 +999,25 @@
         </label>
       </article>
     </section>
+      <div id="quant-cell-editor" class="cell-editor" popover="auto"
+        role="dialog" aria-labelledby="cell-editor-title" data-testid="cell-editor">
+        <form id="cell-editor-form">
+          <div class="cell-editor-heading">
+            <strong id="cell-editor-title">Edit quantization value</strong>
+            <button type="button" id="cell-editor-close" class="panel-close"
+              aria-label="Cancel editing" data-testid="cell-editor-close">×</button>
+          </div>
+          <p id="cell-editor-description"></p>
+          <label for="cell-editor-value">Effective value</label>
+          <input id="cell-editor-value" data-testid="cell-editor-value" type="number"
+            min="1" step="any" required inputmode="decimal" />
+          <p class="cell-editor-help">The encoder rounds this to a JPEG table entry.</p>
+          <div class="cell-editor-actions">
+            <button type="submit" data-testid="cell-editor-apply">Apply</button>
+          </div>
+        </form>
+      </div>
+    </aside>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

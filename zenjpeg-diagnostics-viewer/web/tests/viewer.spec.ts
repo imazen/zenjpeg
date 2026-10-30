@@ -33,6 +33,8 @@ test.beforeEach(async ({ page }) => {
     )
     .toBe("done");
   await page.locator('[data-testid="auto-encode-toggle"]').uncheck();
+  await page.locator('[data-testid="controls-toggle"]').click();
+  await expect(page.locator('[data-testid="controls-popover"]')).toBeVisible();
 });
 
 test("page loads, triptych populated, diagnostics non-empty", async ({ page }) => {
@@ -251,3 +253,107 @@ test("upload and zoom inspector respond to interaction", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-testid="zoom-modal"]')).toBeHidden();
 });
+
+
+test("settings and cells can be edited without a browser prompt", async ({ page }) => {
+  await page.locator('[data-testid="tab-quant"]').click();
+  await page.locator('[data-testid="component-pick-1"]').click();
+  await expect(page.locator('[data-component="1"]')).toBeVisible();
+  await expect(page.locator('[data-component="0"]')).toBeHidden();
+  const cell = page.locator('[data-testid="comp-1-cell-0"]');
+  await cell.click();
+  const editor = page.locator('[data-testid="cell-editor"]');
+  await expect(editor).toBeVisible();
+  const input = page.locator('[data-testid="cell-editor-value"]');
+  await expect(input).toBeFocused();
+  await input.fill("42");
+  await page.locator('[data-testid="cell-editor-apply"]').click();
+  await expect(editor).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().customQuantTables?.cb[0])).toBe(42);
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.components[1]?.quantTableBase[0])).toBe(42);
+  await expect(page.locator('[data-component="1"]')).toBeVisible();
+});
+
+test("settings support keyboard navigation and escape", async ({ page }) => {
+  const qualityTab = page.locator('[data-testid="tab-quality"]');
+  await qualityTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator('[data-testid="tab-aq"]')).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="controls-popover"]')).toBeHidden();
+  await expect(page.locator('[data-testid="controls-toggle"]')).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="controls-popover"]')).toBeVisible();
+});
+
+test("an encode preserves the focused slider and an open cell editor", async ({ page }) => {
+  await page.locator('[data-testid="tab-quant"]').click();
+  const slider = page.locator('[data-testid="comp-0-h-eq-0"]');
+  await slider.focus();
+  await slider.evaluate((el) => {
+    const input = el as HTMLInputElement;
+    input.value = "1.5";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.body.dataset["encodeState"] = "waiting";
+    document.querySelector<HTMLButtonElement>('[data-testid="encode-button"]')!.click();
+  });
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await expect(slider).toBeFocused();
+  await page.locator('[data-testid="comp-0-cell-0"]').click();
+  const input = page.locator('[data-testid="cell-editor-value"]');
+  await input.fill("37");
+  await page.evaluate(() => {
+    document.body.dataset["encodeState"] = "waiting";
+    document.querySelector<HTMLButtonElement>('[data-testid="encode-button"]')!.click();
+  });
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await expect(input).toBeVisible();
+  await expect(input).toHaveValue("37");
+  await page.locator('[data-testid="cell-editor-apply"]').click();
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().customQuantTables?.y[0])).toBe(37);
+});
+
+test("keyboard zoom restores the settings panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const canvas = page.locator('[data-testid="source-canvas"]');
+  await canvas.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="zoom-modal"]')).toBeVisible();
+  await expect(page.locator('[data-testid="controls-popover"]')).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="zoom-modal"]')).toBeHidden();
+  await expect(page.locator('[data-testid="controls-popover"]')).toBeVisible();
+  await expect(canvas).toBeFocused();
+});
+
+for (const [width, height] of [[320, 700], [390, 844], [768, 1024], [1440, 900], [844, 390]]) {
+  test(`responsive controls remain usable at ${width}×${height}`, async ({ page }) => {
+    await page.setViewportSize({ width: width!, height: height! });
+    await page.locator('[data-testid="tab-quant"]').click();
+    await page.locator('[data-testid="component-pick-2"]').click();
+    const cell = page.locator('[data-testid="comp-2-cell-0"]');
+    await cell.scrollIntoViewIfNeeded();
+    await cell.click();
+    const editor = page.locator('[data-testid="cell-editor"]');
+    await expect(editor).toBeVisible();
+    const bounds = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>('#controls-popover')!.getBoundingClientRect();
+      const popup = document.querySelector<HTMLElement>('#quant-cell-editor')!.getBoundingClientRect();
+      const content = document.querySelector<HTMLElement>("#tab-panels")!;
+      return { viewport: innerWidth, scroll: document.documentElement.scrollWidth, contentWidth: content.clientWidth, contentScroll: content.scrollWidth, panel: { left: panel.left, right: panel.right, top: panel.top, bottom: panel.bottom }, popup: { left: popup.left, right: popup.right, top: popup.top, bottom: popup.bottom }, height: innerHeight };
+    });
+    expect(bounds.scroll).toBeLessThanOrEqual(bounds.viewport);
+    expect(bounds.contentScroll).toBeLessThanOrEqual(bounds.contentWidth);
+    for (const rect of [bounds.panel, bounds.popup]) {
+      expect(rect.left).toBeGreaterThanOrEqual(0);
+      expect(rect.right).toBeLessThanOrEqual(bounds.viewport);
+      expect(rect.top).toBeGreaterThanOrEqual(0);
+      expect(rect.bottom).toBeLessThanOrEqual(bounds.height);
+    }
+    await page.keyboard.press("Escape");
+    await expect(editor).toBeHidden();
+    await expect(page.locator('[data-testid="controls-popover"]')).toBeVisible();
+  });
+}

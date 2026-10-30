@@ -186,6 +186,7 @@ let currentImage: ImageState = synthetic();
 let currentDiagnostics: Diagnostics | null = null;
 let lastEncode: LastEncode | null = null;
 const eqStates = new Map<number, ComponentEqState>();
+let activeComponent = 0;
 let baseSnapshot: BaseSnapshot | null = null;
 // Cached ImageData per pane for the zoom inspector. Updated on each
 // successful encode (in runEncode). Lets the zoom modal redraw at
@@ -605,8 +606,32 @@ function utilizationField(
   return { field, zeroRate: totalCoef > 0 ? (zeroCoef / totalCoef) * 100 : 0 };
 }
 
+type CellEdit = {
+  componentIdx: number;
+  cellIdx: number;
+  baseVal: number;
+  onChange: () => void;
+  anchor: HTMLButtonElement;
+};
+let cellEdit: CellEdit | null = null;
+let deferredCellGrid: number | null = null;
+
+function positionCellEditor(): void {
+  const editor = $<HTMLElement>("#quant-cell-editor");
+  if (!cellEdit || !editor.matches(":popover-open")) return;
+  if (!cellEdit.anchor.isConnected) { editor.hidePopover(); return; }
+  const anchor = cellEdit.anchor.getBoundingClientRect();
+  const rect = editor.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - rect.width - 8));
+  const below = anchor.bottom + 8;
+  const top = below + rect.height <= window.innerHeight - 8
+    ? below : Math.max(8, anchor.top - rect.height - 8);
+  editor.style.left = `${left}px`;
+  editor.style.top = `${top}px`;
+}
+
 function bindCellEditor(
-  cell: HTMLElement,
+  cell: HTMLButtonElement,
   componentIdx: number,
   cellIdx: number,
   baseVal: number,
@@ -614,28 +639,53 @@ function bindCellEditor(
   onChange: () => void,
 ): void {
   cell.addEventListener("click", () => {
+    const editor = $<HTMLElement>("#quant-cell-editor");
+    if (editor.matches(":popover-open")) editor.hidePopover();
+    cellEdit = { componentIdx, cellIdx, baseVal, onChange, anchor: cell };
+    $<HTMLElement>("#cell-editor-title").textContent = `Component ${componentIdx}, frequency (${cellIdx % 8}, ${Math.floor(cellIdx / 8)})`;
+    $<HTMLElement>("#cell-editor-description").textContent = `Base ${baseVal.toFixed(2)} · current ${effVal.toFixed(2)}`;
+    const input = $<HTMLInputElement>("#cell-editor-value");
+    input.value = effVal.toFixed(3);
+    editor.showPopover();
+    positionCellEditor();
+    input.focus();
+    input.select();
+  });
+}
+
+function wireCellEditor(): void {
+  const editor = $<HTMLElement>("#quant-cell-editor");
+  const input = $<HTMLInputElement>("#cell-editor-value");
+  editor.addEventListener("toggle", () => {
+    if (editor.matches(":popover-open")) return;
+    const deferred = deferredCellGrid;
+    deferredCellGrid = null;
+    cellEdit = null;
+    if (deferred !== null && currentDiagnostics) renderComponent(deferred, currentDiagnostics);
+  });
+  $<HTMLButtonElement>("#cell-editor-close").addEventListener("click", () => {
+    editor.hidePopover();
+    cellEdit?.anchor.focus();
+  });
+  $<HTMLFormElement>("#cell-editor-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!cellEdit || !input.reportValidity()) return;
+    const parsed = Number(input.value);
+    if (!Number.isFinite(parsed) || parsed < 1) return;
+    const { componentIdx, cellIdx, baseVal, onChange } = cellEdit;
     const eq = eqStateFor(componentIdx);
-    const input = window.prompt(
-      `Cell (${cellIdx % 8},${Math.floor(cellIdx / 8)}) — base=${baseVal}, ` +
-        `current effective=${effVal.toFixed(2)}. Enter new f32 effective:`,
-      effVal.toFixed(3),
-    );
-    if (input === null) return;
-    const parsed = parseFloat(input);
-    if (!Number.isFinite(parsed) || parsed < 1) {
-      status.textContent = `Invalid value (must be ≥ 1): ${input}`;
-      return;
-    }
     const hv = (eq.hEq[cellIdx % 8]! * eq.vEq[Math.floor(cellIdx / 8)]!) || 1;
     const mult = parsed / (baseVal * hv);
-    if (Math.abs(mult - 1) < 1e-4) {
-      eq.cellOverrides.delete(cellIdx);
-    } else {
-      eq.cellOverrides.set(cellIdx, mult);
-    }
+    if (Math.abs(mult - 1) < 1e-4) eq.cellOverrides.delete(cellIdx);
+    else eq.cellOverrides.set(cellIdx, mult);
+    editor.hidePopover();
     onChange();
+    deferredCellGrid = null;
+    document.querySelector<HTMLButtonElement>(`[data-testid="comp-${componentIdx}-cell-${cellIdx}"]`)?.focus();
     scheduleAutoEncode();
   });
+  $<HTMLElement>("#tab-panels").addEventListener("scroll", positionCellEditor);
+  window.addEventListener("resize", positionCellEditor);
 }
 
 function buildQuantGrid(
@@ -650,23 +700,18 @@ function buildQuantGrid(
   const baseSnap = baseSnapshot?.tables[componentIdx] ?? null;
   for (let v = 0; v < 8; v++) {
     for (let u = 0; u < 8; u++) {
-      const cell = document.createElement("div");
+      const cell = document.createElement("button");
+      cell.type = "button";
       const idx = v * 8 + u;
+      cell.dataset.testid = `comp-${componentIdx}-cell-${idx}`;
       const val = eff[idx]!;
-      // Show actual f32 precision: 3 sig figs for small values,
-      // 2 decimals up to 99.99, 1 decimal up to 999.9, then integer.
-      // The encoder consumes these as f32 so show what we'll send.
-      const formatted =
-        val < 10
-          ? val.toFixed(2)
-          : val < 100
-          ? val.toFixed(2)
-          : val < 1000
-          ? val.toFixed(1)
-          : Math.round(val).toString();
+      // Keep each value readable in the compact grid; the editor shows full precision.
+      const formatted = val >= 1000 ? `${(val / 1000).toFixed(1)}k`
+        : val >= 100 ? Math.round(val).toString() : val.toFixed(1);
       cell.textContent = formatted;
       const baseVal = baseSnap ? baseSnap[idx]! : ((comp.quantTableBase as Uint16Array | number[])[idx]! as number);
-      cell.title = `(${u},${v}) base=${baseVal.toFixed(2)} → effective=${val.toFixed(3)} (f32, click to edit)`;
+      cell.title = `(${u},${v}) base=${baseVal.toFixed(2)} → effective=${val.toFixed(3)} (click to edit)`;
+      cell.setAttribute("aria-label", `Component ${componentIdx}, horizontal frequency ${u}, vertical frequency ${v}, value ${val.toFixed(2)}. Edit value`);
       if (eq.cellOverrides.has(idx) || Math.abs(val - baseVal) > 1e-3) {
         cell.style.color = "var(--color-accent)";
         cell.style.fontWeight = "600";
@@ -684,37 +729,30 @@ function buildEqSliders(
   eq: ComponentEqState,
   onChange: () => void,
 ): void {
-  hEl.replaceChildren();
-  vEl.replaceChildren();
   for (let i = 0; i < 8; i++) {
-    const h = document.createElement("input");
-    h.type = "range";
-    h.min = "0.5";
-    h.max = "2";
-    h.step = "0.05";
-    h.value = String(eq.hEq[i]!);
-    h.dataset.testid = `comp-${componentIdx}-h-eq-${i}`;
-    h.title = `h_eq[${i}]`;
-    h.addEventListener("input", () => {
-      eq.hEq[i] = parseFloat(h.value);
-      onChange();
-      scheduleAutoEncode();
-    });
-    hEl.appendChild(h);
-    const vv = document.createElement("input");
-    vv.type = "range";
-    vv.min = "0.5";
-    vv.max = "2";
-    vv.step = "0.05";
-    vv.value = String(eq.vEq[i]!);
-    vv.dataset.testid = `comp-${componentIdx}-v-eq-${i}`;
-    vv.title = `v_eq[${i}]`;
-    vv.addEventListener("input", () => {
-      eq.vEq[i] = parseFloat(vv.value);
-      onChange();
-      scheduleAutoEncode();
-    });
-    vEl.appendChild(vv);
+    for (const [container, axis, values] of [
+      [hEl, "h", eq.hEq], [vEl, "v", eq.vEq],
+    ] as const) {
+      const id = `comp-${componentIdx}-${axis}-eq-${i}`;
+      let slider = container.querySelector<HTMLInputElement>(`[data-testid="${id}"]`);
+      if (!slider) {
+        slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = "0.5";
+        slider.max = "2";
+        slider.step = "0.05";
+        slider.dataset.testid = id;
+        slider.setAttribute("aria-label", `Component ${componentIdx} ${axis === "h" ? "horizontal" : "vertical"} frequency ${i}`);
+        container.appendChild(slider);
+      }
+      if (document.activeElement !== slider) slider.value = String(values[i]!);
+      slider.title = `${axis}_eq[${i}]`;
+      slider.oninput = () => {
+        values[i] = Number(slider!.value);
+        onChange();
+        scheduleAutoEncode();
+      };
+    }
   }
 }
 
@@ -743,6 +781,7 @@ function renderComponent(componentIdx: number, diag: Diagnostics): void {
     }
   }
 
+  article.hidden = componentIdx !== activeComponent;
   const gridInfo = article.querySelector<HTMLParagraphElement>(
     `[data-testid="comp-${componentIdx}-grid-info"]`,
   )!;
@@ -770,7 +809,11 @@ function renderComponent(componentIdx: number, diag: Diagnostics): void {
   )!;
 
   const refresh = () => {
-    buildQuantGrid(quantGridEl, comp, componentIdx, eq, refresh);
+    if (cellEdit?.componentIdx === componentIdx && $<HTMLElement>("#quant-cell-editor").matches(":popover-open")) {
+      deferredCellGrid = componentIdx;
+    } else {
+      buildQuantGrid(quantGridEl, comp, componentIdx, eq, refresh);
+    }
     const q = effectiveQuant(comp, eq, componentIdx);
     const { field, zeroRate } = utilizationField(comp, q);
     drawHeatmap(utilCanvas, field, { cols: 8, rows: 8, pixelSize: 25 });
@@ -778,9 +821,7 @@ function renderComponent(componentIdx: number, diag: Diagnostics): void {
   };
 
   buildEqSliders(componentIdx, hEqEl, vEqEl, eq, refresh);
-  const freshReset = compResetBtn.cloneNode(true) as HTMLButtonElement;
-  compResetBtn.replaceWith(freshReset);
-  freshReset.addEventListener("click", () => {
+  compResetBtn.onclick = () => {
     eq.hEq.fill(1);
     eq.vEq.fill(1);
     eq.cellOverrides.clear();
@@ -793,8 +834,25 @@ function renderComponent(componentIdx: number, diag: Diagnostics): void {
       });
     refresh();
     scheduleAutoEncode();
-  });
+  };
   refresh();
+}
+
+function selectComponent(index: number): void {
+  const count = currentDiagnostics?.components.length ?? 0;
+  const next = Math.max(0, Math.min(index, Math.max(0, count - 1)));
+  const editor = $<HTMLElement>("#quant-cell-editor");
+  if (next !== activeComponent && editor.matches(":popover-open")) editor.hidePopover();
+  activeComponent = next;
+  compRoot.querySelectorAll<HTMLElement>("[data-component]").forEach((article) => {
+    article.hidden = Number(article.dataset.component) !== activeComponent;
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-component-pick]").forEach((button) => {
+    const i = Number(button.dataset.componentPick);
+    button.hidden = i >= count;
+    button.setAttribute("aria-pressed", String(i === activeComponent));
+    button.textContent = componentLabel(currentDiagnostics?.colorPath ?? "YCbCr", i);
+  });
 }
 
 function componentLabel(colorPath: string, idx: number): string {
@@ -1294,11 +1352,12 @@ async function runEncode(): Promise<void> {
     compRoot
       .querySelectorAll<HTMLElement>("[data-component]")
       .forEach((el) => {
-        if (el.dataset.component !== "0") el.remove();
+        if (Number(el.dataset.component) >= result.diagnostics.components.length) el.remove();
       });
     for (let i = 0; i < result.diagnostics.components.length; i++) {
       renderComponent(i, result.diagnostics);
     }
+    selectComponent(activeComponent);
 
     const ssim2Score = ssim2(sourceImageData, decoded);
     const zensimScore = zensim(sourceImageData, decoded);
@@ -1488,10 +1547,12 @@ function loadImageManifest(): void {
 
 // ─── Tabs + ignored annotations ───────────────────────────────────
 function setActiveTab(name: string): void {
+  if (activeTab !== name) $<HTMLElement>("#tab-panels").scrollTop = 0;
   activeTab = name;
   document.querySelectorAll<HTMLElement>(".tab").forEach((t) => {
     const sel = t.dataset.tab === name;
     t.setAttribute("aria-selected", String(sel));
+    t.tabIndex = sel ? 0 : -1;
   });
   document.querySelectorAll<HTMLElement>(".tab-panel").forEach((p) => {
     const sel = p.dataset.tab === name;
@@ -1511,11 +1572,11 @@ function refreshQuantBanner(): void {
   switch (mode) {
     case "baseline":
       msg = aq
-        ? `Adaptive Quantization (${cp}). Final per-block quant = table[k] × aq_multiplier_block.`
+        ? `Adaptive Quantization (${cp}). AQ adjusts each block’s zero-bias threshold.`
         : `${cp} with AQ disabled. Final per-block quant = table[k]. The AQ checkbox is off.`;
       break;
     case "trellis":
-      msg = `Trellis (${cp}). Lambda RD picks per-coefficient quant levels; the table acts as an upper bound. Edits to the table still constrain the search space.`;
+      msg = `Trellis (${cp}). Rate-distortion search chooses coefficient levels using the table.`;
       break;
     case "hybrid":
       msg = `Hybrid (${cp}). AQ-aware lambda RD. Trellis picks final levels per block, modulated by per-block AQ strength.`;
@@ -1585,6 +1646,52 @@ function applyCurveControls(): void {
 }
 
 // ─── Wiring ────────────────────────────────────────────────────────
+let restoreControlsAfterZoom = false;
+let zoomOrigin: HTMLElement | null = null;
+
+function wireControlsPanel(): void {
+  const panel = $<HTMLElement>("#controls-popover");
+  const toggle = $<HTMLButtonElement>("#controls-toggle");
+  const editor = $<HTMLElement>("#quant-cell-editor");
+  panel.addEventListener("toggle", () => {
+    const open = panel.matches(":popover-open");
+    toggle.setAttribute("aria-expanded", String(open));
+    document.body.classList.toggle("controls-open", open);
+  });
+  $<HTMLButtonElement>("#controls-close").addEventListener("click", () => {
+    queueMicrotask(() => toggle.focus());
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || zoomState.open || editor.matches(":popover-open")) return;
+    if (panel.matches(":popover-open")) {
+      event.preventDefault();
+      panel.hidePopover();
+      toggle.focus();
+    }
+  });
+  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]'));
+  for (const tab of tabs) {
+    tab.addEventListener("keydown", (event) => {
+      const current = tabs.indexOf(tab);
+      let next = current;
+      if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
+      else if (event.key === "ArrowLeft") next = (current + tabs.length - 1) % tabs.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      const selected = tabs[next]!;
+      setActiveTab(selected.dataset.tab!);
+      selected.focus();
+    });
+  }
+  setActiveTab(activeTab);
+  document.querySelectorAll<HTMLButtonElement>("[data-component-pick]").forEach((button) => {
+    button.addEventListener("click", () => selectComponent(Number(button.dataset.componentPick)));
+  });
+  wireCellEditor();
+}
+
 function wireControls(): void {
   qualityIn.addEventListener("input", () => {
     qualityOut.textContent = qualityIn.value;
@@ -1832,15 +1939,15 @@ function $zoomCanvas(name: "source" | "encoded" | "delta"): HTMLCanvasElement {
 
 function openZoomFromClick(
   src: "source" | "encoded" | "delta",
-  ev: MouseEvent,
+  ev: MouseEvent | KeyboardEvent,
 ): void {
   const data = zoomImageData[src];
   if (!data) return;
   // Translate the click into source-pixel coordinates.
   const target = ev.currentTarget as HTMLCanvasElement;
   const rect = target.getBoundingClientRect();
-  const sx = ((ev.clientX - rect.left) / rect.width) * target.width;
-  const sy = ((ev.clientY - rect.top) / rect.height) * target.height;
+  const sx = ev instanceof MouseEvent ? ((ev.clientX - rect.left) / rect.width) * target.width : target.width / 2;
+  const sy = ev instanceof MouseEvent ? ((ev.clientY - rect.top) / rect.height) * target.height : target.height / 2;
   // Each pane may have its own dimensions (encoded/delta could differ
   // from source in pathological cases) but for our pipeline they're
   // always equal. Use the source pane as the canonical coordinate space.
@@ -1851,9 +1958,14 @@ function openZoomFromClick(
   zoomState.centerY = refY;
   zoomState.scale = 4;
   zoomState.open = true;
+  zoomOrigin = target;
+  const panel = $<HTMLElement>("#controls-popover");
+  restoreControlsAfterZoom = panel.matches(":popover-open");
+  if (restoreControlsAfterZoom) panel.hidePopover();
   const modal = $<HTMLElement>("#zoom-modal");
   modal.hidden = false;
   document.body.style.overflow = "hidden";
+  $<HTMLButtonElement>("#zoom-close").focus();
   // Two RAFs because the modal needs a layout pass before the
   // canvases have non-zero clientWidth/Height.
   requestAnimationFrame(() => requestAnimationFrame(drawZoomFrame));
@@ -1864,6 +1976,12 @@ function closeZoom(): void {
   zoomState.panning = false;
   $<HTMLElement>("#zoom-modal").hidden = true;
   document.body.style.overflow = "";
+  if (restoreControlsAfterZoom) {
+    $<HTMLElement>("#controls-popover").showPopover();
+    restoreControlsAfterZoom = false;
+  }
+  zoomOrigin?.focus();
+  zoomOrigin = null;
 }
 
 function drawZoomPane(
@@ -1954,6 +2072,12 @@ function wireZoomInspector(): void {
     );
     if (!triptych) continue;
     triptych.addEventListener("click", (ev) => openZoomFromClick(which, ev));
+    triptych.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        openZoomFromClick(which, ev);
+      }
+    });
   }
 
   const modal = $<HTMLElement>("#zoom-modal");
@@ -2077,6 +2201,7 @@ function wireZoomInspector(): void {
   imageInfoEl.textContent = "64 × 64 (synthetic)";
   try {
     wireControls();
+    wireControlsPanel();
     wireZoomInspector();
     document.body.dataset.bootstrap = "controls-wired";
   } catch (err) {
