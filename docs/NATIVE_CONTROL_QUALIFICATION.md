@@ -47,6 +47,16 @@ samples with jpeg-decoder against an identical-config legacy Verbatim encode
 for the exercised Adobe RGB and sRGB one-shot and row paths. The unchanged
 progress, cancellation and hardening tests were not rerun on `7579c288`.
 
+With zencodec pinned to `61fb96f1`, source `67d5c27b` passed the checked
+metadata test 13/13 after a package clean. Its later all-target strict Clippy
+failed on an example lint; subsequent attempts exposed additional legacy-policy
+warnings. Rebased source `faa3d261` passed strict Clippy for all zenjpeg targets
+with `inventory,parallel` on the same aarch64 host. Its native library, test
+assertions and lock retain the 67d content; the intervening changes are scoped
+legacy deprecation allowances and two example lint repairs. The final Clippy
+wrapper reported peak RSS 0.83 GiB. This final run did not rerun the tests, and
+the earlier seed and progress results remain scoped to their named snapshots.
+
 This evidence does not cover every JPEG mode or platform. Progressive scan
 progress is currently per completed scan, not within one long scan. Native
 precision and the separate scanline reader need more interruption and reporting
