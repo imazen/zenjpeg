@@ -592,3 +592,6 @@ canvas[role="button"]:focus-visible {
   .controls-popover .segmented-control span { padding: 5px 9px; }
   .controls-popover .settings-details { padding: 6px 10px; }
 }
+
+.resolved-plan { flex: 1 1 100%; border-left: 2px solid var(--color-accent); padding-left: 8px; font-size: 12px; line-height: 1.4; color: var(--color-muted); }
+.resolved-plan strong { color: var(--color-text); display: block; }

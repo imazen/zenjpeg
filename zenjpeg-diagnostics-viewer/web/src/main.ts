@@ -19,6 +19,7 @@
 
 import init, {
   codecDefaults,
+  resolveEncodePlan,
   computeSsimulacra2,
   computeZensim,
 } from "../wasm-pkg/zenjpeg_diagnostics_wasm.js";
@@ -1188,6 +1189,7 @@ let debounceTimer: number | null = null;
 const DEBOUNCE_MS = 250;
 
 function scheduleAutoEncode(): void {
+  renderResolvedPlan();
   if (!autoEncodeIn.checked) return;
   if (debounceTimer !== null) window.clearTimeout(debounceTimer);
   debounceTimer = window.setTimeout(() => {
@@ -1274,6 +1276,7 @@ async function runEncode(): Promise<void> {
     }
 
     currentDiagnostics = result.diagnostics;
+    renderResolvedPlan();
     const scan = scanChoice();
     if (scan === "restart") {
       $<HTMLElement>("#scan-resolved").textContent = `Codec plan: restart interval ${result.diagnostics.restartIntervalMcus} MCUs; small images may contain no restart markers. Browser encoding is single-threaded.`;
@@ -1503,6 +1506,9 @@ function refreshQuantBanner(): void {
   const cp = resolvedColor() === "xyb" ? "XYB" : "YCbCr";
   let msg = "";
   switch (mode) {
+    case "auto":
+      msg = `Automatic optimizer (${cp}); inspect the encoder plan for its resolved trellis choice.`;
+      break;
     case "baseline":
       msg = aq
         ? `Adaptive Quantization (${cp}). AQ adjusts each block’s zero-bias threshold.`
@@ -1525,6 +1531,7 @@ function applyIgnoredAnnotations(): void {
     $<HTMLElement>(`#${name}-settings`).hidden = mode !== name;
   }
   const descriptions: Record<EncodeMode, string> = {
+    auto: "The codec decides whether to use trellis from quality and color; your scan choice stays in effect.",
     baseline: "Standard quantization; AQ can be switched on or off below.",
     trellis: "Trellis optimizes coefficient levels with a fixed rate–distortion tradeoff. Expand Trellis tuning for its settings.",
     hybrid: "Hybrid uses trellis with AQ-coupled rate–distortion settings. Expand Hybrid tuning for its settings.",
@@ -1606,11 +1613,30 @@ function wireControlsPanel(): void {
   wireCellEditor();
 }
 
+interface ViewerPlan {
+  quality: number; distances: number[]; color: string; sampling: string; scan: string;
+  optimizedHuffman: boolean; aqEnabled: boolean; trellis: boolean; quantMax: number[];
+  qualityDrivesTables: boolean; restartIntervalMcus: number;
+}
+let currentPlan: ViewerPlan | null = null;
+function renderResolvedPlan(): void {
+  try {
+    currentPlan = resolveEncodePlan(currentImage.width, currentImage.height, currentOptions()) as ViewerPlan;
+    const p = currentPlan;
+    const tableStatus = p.qualityDrivesTables ? `table maxima ${p.quantMax.join("/")}` : `custom exact tables (max ${p.quantMax.join("/")})`;
+    const waitingForBase = !baseSnapshot && [...eqStates.values()].some(e => e.hEq.some(v => v !== 1) || e.vEq.some(v => v !== 1) || e.cellOverrides.size > 0);
+    $<HTMLElement>("#resolved-plan-text").textContent = `Q${p.quality.toFixed(0)} · ${p.color} ${p.sampling} · ${p.scan} · trellis ${p.trellis ? "on" : "off"} · Huffman ${p.optimizedHuffman ? "optimized" : "fixed"} · distance ${p.distances.map(d => d.toFixed(2)).join("/")} · ${tableStatus} · restart ${p.restartIntervalMcus} MCUs${waitingForBase ? " · table edits await a fresh encode" : ""}`;
+  } catch (e) {
+    currentPlan = null;
+    $<HTMLElement>("#resolved-plan-text").textContent = `Unable to resolve: ${(e as Error).message}`;
+  }
+}
+
 function syncResolvedChoices(): void {
   const samplingLabels: Record<string, string> = { none: "4:4:4", halfHorizontal: "4:2:2", quarter: "4:2:0", halfVertical: "4:4:0" };
   const xybLabels: Record<string, string> = { full: "full", bQuarter: "B quarter" };
   $<HTMLElement>("#color-resolved").textContent = colorPathSel.value === "auto" ? `Codec default: ${defaults.colorPath === "ycbcr" ? "YCbCr" : "XYB"}` : "";
-  $<HTMLElement>("#sampling-resolved").textContent = subSel.value === "auto" ? `Codec default: ${samplingLabels[defaults.subsampling]}` : "";
+  $<HTMLElement>("#sampling-resolved").textContent = subSel.value === "auto" ? `Codec default: ${samplingLabels[defaults.subsampling]}; the codec does not choose sampling from quality.` : "";
   $<HTMLElement>("#xyb-sampling-resolved").textContent = xybSubSel.value === "auto" ? `Codec default: ${xybLabels[defaults.xybSubsampling]}` : "";
   const scan = scanChoice();
   const desc = scan === "auto" ? `Codec default: ${defaults.progressive ? "progressive" : "sequential"}.` : scan === "restart" ? "Codec-default restart interval; markers permit parallel decoding where supported. Browser encoding is single-threaded." : scan === "sequential" ? "Sequential scans without restart markers." : "Progressive scans use optimized Huffman tables.";
@@ -1658,6 +1684,7 @@ function wireControls(): void {
   });
   progressiveIn.addEventListener("change", syncHuffmanChoice);
   syncHuffmanChoice();
+  renderResolvedPlan();
   qualityIn.addEventListener("input", () => {
     qualityOut.textContent = qualityIn.value;
     invalidateBaseSnapshotIfStale();
@@ -2190,6 +2217,7 @@ declare global {
       getEqStates: () => Map<number, ComponentEqState>;
       getCurrentOptions: () => EncodeOptions;
       getCurve: () => ParetoQueue | null;
+      getPlan: () => ViewerPlan | null;
     };
   }
 }
@@ -2201,4 +2229,5 @@ window.__zenjpegDiagnostics = {
   getEqStates: () => eqStates,
   getCurrentOptions: () => currentOptions(),
   getCurve: () => paretoQueues.get(currentImage.key) ?? null,
+  getPlan: () => currentPlan,
 };

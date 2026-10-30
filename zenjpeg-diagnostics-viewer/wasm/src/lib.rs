@@ -159,7 +159,7 @@ pub struct EncodeOptions {
     pub restart_mcu_rows: Option<u16>,
 
     // ── Mode picker ─────────────────────────────────────────────────
-    /// "baseline" | "trellis" | "hybrid".
+    /// "auto" | "baseline" | "trellis" | "hybrid".
     #[serde(default = "default_mode")]
     pub mode: String,
 
@@ -367,42 +367,7 @@ pub fn codec_defaults() -> Result<JsValue, JsValue> {
     .map_err(|e| JsValue::from_str(&format!("serialize defaults: {e}")))
 }
 
-/// Encode an RGB or RGBA pixel buffer and return the resulting JPEG
-/// bytes plus a per-block diagnostics record.
-///
-/// `pixels` must be packed `[r, g, b]` triples (length = `width *
-/// height * 3`) — RGBA input should be flattened by the caller before
-/// passing in.
-///
-/// `options` is a JS object matching `EncodeOptions` (all fields
-/// optional; defaults documented inline). Pass `null` / `undefined`
-/// for defaults.
-#[wasm_bindgen(js_name = encodeWithDiagnostics)]
-pub fn encode_with_diagnostics(
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    options: JsValue,
-) -> Result<JsValue, JsValue> {
-    let opts: EncodeOptions = if options.is_null() || options.is_undefined() {
-        EncodeOptions::default()
-    } else {
-        serde_wasm_bindgen::from_value(options)
-            .map_err(|e| JsValue::from_str(&format!("invalid options: {e}")))?
-    };
-
-    let expected = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|n| n.checked_mul(3))
-        .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
-    if pixels.len() != expected {
-        return Err(JsValue::from_str(&format!(
-            "pixels length mismatch: expected {expected} ({width}*{height}*3), \
-             got {}",
-            pixels.len()
-        )));
-    }
-
+fn build_config(opts: &EncodeOptions) -> Result<EncoderConfig, JsValue> {
     let default_color = ColorMode::default();
     let color_path = if opts.color_path == "auto" {
         match default_color {
@@ -460,6 +425,13 @@ pub fn encode_with_diagnostics(
         ProgressiveScanMode::Progressive
     } else {
         ProgressiveScanMode::Baseline
+    };
+    // The automatic optimizer sets defaults first; explicit viewer scan
+    // selection is applied afterwards so it retains precedence.
+    let config = if opts.mode == "auto" {
+        config.auto_optimize(true)
+    } else {
+        config
     };
     let mut config = config
         .aq_enabled(opts.aq_enabled)
@@ -528,7 +500,7 @@ pub fn encode_with_diagnostics(
         config = config.quant_table_config(QuantTableConfig::Custom(Box::new(t)));
     }
 
-    // Mode picker: hybrid > trellis > baseline.
+    // The automatic optimizer above is distinct from the explicit modes.
     match opts.mode.as_str() {
         "hybrid" => {
             let h = TrellisConfig {
@@ -563,6 +535,120 @@ pub fn encode_with_diagnostics(
         // "baseline" or unknown — no trellis/hybrid wiring.
         _ => {}
     }
+
+    Ok(config)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPlan {
+    quality: f32,
+    distances: [f32; 3],
+    color: String,
+    sampling: String,
+    scan: String,
+    optimized_huffman: bool,
+    aq_enabled: bool,
+    trellis: bool,
+    quant_max: [u16; 3],
+    quality_drives_tables: bool,
+    restart_interval_mcus: u16,
+}
+
+fn describe_plan(config: &EncoderConfig, width: u32, height: u32) -> ViewerPlan {
+    let plan = config.resolve_plan(width, height);
+    let (color, sampling) = match plan.color_mode {
+        ColorMode::YCbCr { subsampling } => (
+            "YCbCr",
+            match subsampling {
+                ChromaSubsampling::None => "4:4:4",
+                ChromaSubsampling::HalfHorizontal => "4:2:2",
+                ChromaSubsampling::Quarter => "4:2:0",
+                ChromaSubsampling::HalfVertical => "4:4:0",
+                _ => "unsupported",
+            },
+        ),
+        ColorMode::Xyb { subsampling } => (
+            "XYB",
+            match subsampling {
+                XybSubsampling::Full => "full",
+                XybSubsampling::BQuarter => "B quarter",
+                _ => "unsupported",
+            },
+        ),
+        _ => ("other", "unsupported"),
+    };
+    ViewerPlan {
+        quality: plan.internal_quality,
+        distances: plan.distances,
+        color: color.into(),
+        sampling: sampling.into(),
+        scan: if plan.scan_mode.is_progressive() {
+            "progressive"
+        } else {
+            "sequential"
+        }
+        .into(),
+        optimized_huffman: plan.optimized_huffman,
+        aq_enabled: plan.aq_enabled,
+        trellis: plan.trellis.is_some_and(|t| t.enabled),
+        quant_max: plan.quant_max,
+        quality_drives_tables: plan.quality_drives_tables,
+        restart_interval_mcus: plan.restart_interval_mcus,
+    }
+}
+
+/// Resolve exactly the same configuration that the viewer will encode.
+#[wasm_bindgen(js_name = resolveEncodePlan)]
+pub fn resolve_encode_plan(width: u32, height: u32, options: JsValue) -> Result<JsValue, JsValue> {
+    let opts: EncodeOptions = if options.is_null() || options.is_undefined() {
+        EncodeOptions::default()
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| JsValue::from_str(&format!("invalid options: {e}")))?
+    };
+    let config = build_config(&opts)?;
+    serde_wasm_bindgen::to_value(&describe_plan(&config, width, height))
+        .map_err(|e| JsValue::from_str(&format!("serialize plan: {e}")))
+}
+
+/// Encode an RGB or RGBA pixel buffer and return the resulting JPEG
+/// bytes plus a per-block diagnostics record.
+///
+/// `pixels` must be packed `[r, g, b]` triples (length = `width *
+/// height * 3`) — RGBA input should be flattened by the caller before
+/// passing in.
+///
+/// `options` is a JS object matching `EncodeOptions` (all fields
+/// optional; defaults documented inline). Pass `null` / `undefined`
+/// for defaults.
+#[wasm_bindgen(js_name = encodeWithDiagnostics)]
+pub fn encode_with_diagnostics(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let opts: EncodeOptions = if options.is_null() || options.is_undefined() {
+        EncodeOptions::default()
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| JsValue::from_str(&format!("invalid options: {e}")))?
+    };
+
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
+    if pixels.len() != expected {
+        return Err(JsValue::from_str(&format!(
+            "pixels length mismatch: expected {expected} ({width}*{height}*3), \
+             got {}",
+            pixels.len()
+        )));
+    }
+
+    let config = build_config(&opts)?;
 
     let restart_interval = config.resolve_plan(width, height).restart_interval_mcus;
     let request = config.request();

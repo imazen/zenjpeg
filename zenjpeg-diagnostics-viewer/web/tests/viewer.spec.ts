@@ -393,6 +393,40 @@ test("auto defaults and restart choices resolve to codec output", async ({ page 
   expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().restartMcuRows)).toBe(0);
 });
 
+test("codec plan follows quality and matches the encoded sampling", async ({ page }) => {
+  await page.locator('label:has([data-testid="mode-auto"])').click();
+  const sampleAt = async (quality: number) => {
+    await page.locator('[data-testid="quality-slider"]').evaluate((el, value) => {
+      const input = el as HTMLInputElement; input.value = String(value); input.dispatchEvent(new Event("input", {bubbles: true}));
+    }, quality);
+    await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getPlan()?.quality)).toBe(quality);
+    await page.evaluate(() => {document.body.dataset["encodeState"] = "waiting"});
+    await page.locator('[data-testid="encode-button"]').click();
+    await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+    return await page.evaluate(() => ({plan: window.__zenjpegDiagnostics.getPlan()!, diag: window.__zenjpegDiagnostics.getCurrent()!}));
+  };
+  const low = await sampleAt(20);
+  const high = await sampleAt(85);
+  expect(low.plan.sampling).toBe("4:4:4");
+  expect(high.plan.sampling).toBe("4:4:4");
+  expect(low.diag.samplingFactors).toEqual([[1,1],[1,1],[1,1]]);
+  expect(high.diag.samplingFactors).toEqual([[1,1],[1,1],[1,1]]);
+  expect(low.plan.trellis).toBe(false);
+  expect(high.plan.trellis).toBe(true);
+  expect(low.plan.distances[0]).toBeGreaterThan(high.plan.distances[0]!);
+  expect(low.plan.quantMax).not.toEqual(high.plan.quantMax);
+  for (const sample of [low, high]) {
+    expect(sample.plan.quantMax).toEqual(sample.diag.components.map(c => Math.max(...c.quantTableBase)));
+  }
+  await page.locator('label:has(input[name="sub-choice"][value="quarter"])').click();
+  const selected = await sampleAt(20);
+  expect(selected.plan.sampling).toBe("4:2:0");
+  expect(selected.diag.samplingFactors).toEqual([[2,2],[1,1],[1,1]]);
+  await page.locator('label:has(input[name="scan"][value="sequential"])').click();
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getPlan()?.scan)).toBe("sequential");
+  await expect(page.locator('[data-testid="resolved-plan"]')).toContainText("Q20");
+});
+
 test("a regenerated curve freezes custom settings and varies its quality-derived tables", async ({ page }) => {
   await page.locator('label:has(input[name="sub-choice"][value="quarter"])').click();
   await page.locator('[data-testid="quality-slider"]').evaluate(el => {

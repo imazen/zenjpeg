@@ -31,8 +31,8 @@ default = ["console_error_panic_hook"]
 # Match the paired pre-release dependencies used by the parent workspace.
 [patch.crates-io]
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "ec07e8d5639d82703ec6fe6c735e187a55df4eb2" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "61fb96f1c8c89d4c8d2210eed8679372d66f8aa7" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "61fb96f1c8c89d4c8d2210eed8679372d66f8aa7" }
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7e9d296c9e037e626234c9f0e8673d48278f83f0" }
 
 [package.metadata.wasm-pack.profile.release]

@@ -288,13 +288,15 @@
       >
         <fieldset class="mode-picker" data-testid="mode-radio-group">
           <legend>Quantization mode</legend>
-          <div class="segmented-control">
+          <div class="segmented-control compact-wrap">
+            <label><input type="radio" name="mode" value="auto" data-testid="mode-auto" /><span>Auto optimize</span></label>
             <label><input type="radio" name="mode" value="baseline" checked data-testid="mode-baseline" /><span>Standard</span></label>
             <label><input type="radio" name="mode" value="trellis" data-testid="mode-trellis" /><span>Trellis</span></label>
             <label><input type="radio" name="mode" value="hybrid" data-testid="mode-hybrid" /><span>Hybrid</span></label>
           </div>
           <p id="mode-description" class="choice-description" data-testid="mode-description"></p>
         </fieldset>
+        <div class="resolved-plan" aria-live="polite" data-testid="resolved-plan"><strong>Encoder plan</strong><span id="resolved-plan-text">Resolving…</span></div>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted min-w-[180px]">
           <span class="uppercase tracking-wider text-[10px]">Quality</span>
           <span class="flex items-center gap-2">
@@ -546,7 +548,7 @@
           <span class="huffman-note" id="huffman-note" data-testid="huffman-note">Progressive scans always use optimized Huffman tables. Switch to sequential scans to choose.</span>
         </label>
         </div></details>
-        <p class="settings-defaults">Auto uses codec defaults; it does not analyze the image. The codec also automatically considers shared Huffman tables for eligible small images. Presets and automatic optimization are not exposed here.</p>
+        <p class="settings-defaults">Auto color and sampling use fixed codec defaults. The codec requires explicit subsampling and does not select it from quality. Auto optimize follows the codec’s quality-dependent trellis policy; full optimization presets are not exposed here.</p>
       </article>
 
 

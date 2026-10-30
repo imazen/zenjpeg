@@ -7,12 +7,16 @@ edit it in a popover. The frequency sliders update the utilization estimate
 and, with auto-encode enabled, schedule a new encode.
 
 Auto color, sampling and scan choices use the codec's defaults; they do not
-inspect the image. XYB uses its own default B sampling. The sequential + RST
+inspect the image. The native encoder requires a sampling choice and does not
+change it with quality. The visible encoder plan comes from the same resolved
+configuration used for the encode and shows quality, distance, tables, sampling,
+scan, Huffman and trellis choices. Auto optimize calls the codec's quality- and
+color-dependent optimizer; explicit scan selections still take precedence. XYB uses its own default B sampling. The sequential + RST
 choice uses the codec's default restart spacing, which can yield no markers for
 a small image. Restart markers may permit parallel decoding; the browser encoder
 is single-threaded. Progressive scans require optimized Huffman tables.
 Standard, fixed-lambda Trellis and AQ-coupled Hybrid are explicit viewer modes;
-the encoder's full preset and automatic-optimization interface is not exposed.
+the encoder's full preset interface is not exposed.
 
 **Regenerate from current settings** freezes the selected configuration and
 sweeps quality 1–100. Edited quant-table multipliers and zero-bias adjustments

@@ -52,7 +52,7 @@ export interface CustomQuantTables {
 }
 
 /** "baseline" | "trellis" | "hybrid". */
-export type EncodeMode = "baseline" | "trellis" | "hybrid";
+export type EncodeMode = "auto" | "baseline" | "trellis" | "hybrid";
 
 /** "thorough" | "balanced" | "fast". */
 export type TrellisSpeed = "thorough" | "balanced" | "fast";
