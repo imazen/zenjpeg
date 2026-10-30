@@ -412,6 +412,7 @@ fn scan_disposition(i: &Inventory) -> D {
 /// Finding 7: the job's policy, inner strictness and dimension limits
 /// decide whether the decode fails, and the inventory follows them.
 #[test]
+#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn job_policy_strictness_and_limits_are_followed() {
     use zencodec::decode::DecodePolicy;
     let orig = load(TESTORIG);
@@ -784,6 +785,7 @@ fn sef_trailer_does_not_swallow_the_gain_map() {
 /// JPEG): entry 1 is the gain map, nested in the APP15; entry 2 is not.
 #[cfg(feature = "ultrahdr")]
 #[test]
+#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn the_first_extracted_undefined_entry_is_the_gain_map() {
     let orig = load(UHDR);
     let eoi = primary_eoi_end(&orig);
@@ -1211,6 +1213,7 @@ const LEVELS: [&str; 4] = ["balanced", "strict", "lenient", "permissive"];
 
 /// A job at a decoder strictness level (Strict through the decode policy,
 /// the others through the inner config).
+#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn level_job(level: &str) -> JpegDecodeJob {
     let inner = |f: fn(zenjpeg::decode::DecodeConfig) -> zenjpeg::decode::DecodeConfig| {
         let mut cfg = JpegDecoderConfig::new();
