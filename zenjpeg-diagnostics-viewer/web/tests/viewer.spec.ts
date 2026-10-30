@@ -222,7 +222,7 @@ test("table edit is encoded and survives a quality change", async ({ page }) => 
   expect(edited?.cr).toHaveLength(64);
   const actual = await page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.components[0]?.quantTableBase[0]);
   expect(actual).toBe(Math.round(edited!.y[0]!));
-  await page.locator('[data-testid="tab-quality"]').click();
+  await page.locator('[data-testid="tab-aq"]').click();
   await page.locator('[data-testid="quality-slider"]').evaluate((el) => {
     const input = el as HTMLInputElement;
     input.value = "65";
@@ -277,15 +277,71 @@ test("settings and cells can be edited without a browser prompt", async ({ page 
 });
 
 test("settings support keyboard navigation and escape", async ({ page }) => {
-  const qualityTab = page.locator('[data-testid="tab-quality"]');
-  await qualityTab.focus();
+  const modeTab = page.locator('[data-testid="tab-aq"]');
+  await modeTab.focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.locator('[data-testid="tab-aq"]')).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-testid="tab-quality"]')).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator('[data-testid="tab-quant"]')).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-testid="controls-popover"]')).toBeHidden();
   await expect(page.locator('[data-testid="controls-toggle"]')).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator('[data-testid="controls-popover"]')).toBeVisible();
+});
+
+test("mode and color decisions reveal the settings that apply", async ({ page }) => {
+  await expect(page.locator('[data-testid="tab-aq"]')).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-testid="mode-baseline"]')).toBeChecked();
+  await expect(page.locator('[data-testid="aq-checkbox"]')).toBeChecked();
+  await expect(page.locator('[data-testid="subsampling-select"]')).toHaveValue("none");
+  await expect(page.locator('[data-testid="tab-trellis"]')).toBeHidden();
+  await expect(page.locator('[data-testid="tab-hybrid"]')).toBeHidden();
+  await page.locator('[data-testid="subsampling-select"]').selectOption("quarter");
+  await page.locator('[data-testid="tab-quality"]').click();
+  await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeVisible();
+  await page.locator('[data-testid="tab-aq"]').click();
+  await page.locator('label:has([data-testid="mode-trellis"])').click();
+  await expect(page.locator('[data-testid="tab-trellis"]')).toBeVisible();
+  await expect(page.locator('[data-testid="tab-hybrid"]')).toBeHidden();
+  await page.locator('[data-testid="tab-trellis"]').click();
+  await expect(page.locator('[data-testid="trellis-delta-dc"]')).toBeHidden();
+  await page.locator('[data-testid="trellis-dc-checkbox"]').check();
+  await expect(page.locator('[data-testid="trellis-delta-dc"]')).toBeVisible();
+  await page.locator('[data-testid="trellis-lambda1"]').fill("0");
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.samplingFactors)).toEqual([[2, 2], [1, 1], [1, 1]]);
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().trellisLambdaLogScale1)).toBe(0);
+  await page.locator('[data-testid="tab-aq"]').click();
+  await page.locator('label:has([data-testid="mode-hybrid"])').click();
+  await expect(page.locator('[data-testid="tab-trellis"]')).toBeHidden();
+  await expect(page.locator('[data-testid="tab-hybrid"]')).toBeVisible();
+  await page.locator('[data-testid="aq-checkbox"]').uncheck();
+  await page.locator('[data-testid="tab-hybrid"]').click();
+  await expect(page.locator('#hybrid-aq-note')).toBeVisible();
+  await page.locator('[data-testid="hybrid-aq-exp"]').fill("0");
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().hybridAqExponent)).toBe(0);
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getLastEncode()?.mode)).toBe("hybrid");
+  await page.locator('[data-testid="tab-aq"]').click();
+  await page.locator('label:has([data-testid="mode-trellis"])').click();
+  await page.locator('[data-testid="tab-trellis"]').click();
+  await expect(page.locator('[data-testid="trellis-lambda1"]')).toHaveValue("0");
+});
+
+test("color choices expose the corresponding sampling controls", async ({ page }) => {
+  await page.locator('[data-testid="subsampling-select"]').selectOption("halfHorizontal");
+  await page.locator('[data-testid="color-path-select"]').selectOption("xyb");
+  await expect(page.locator('[data-testid="subsampling-select"]')).toBeHidden();
+  await expect(page.locator('[data-testid="xyb-subsampling-select"]')).toBeVisible();
+  await page.locator('[data-testid="tab-quality"]').click();
+  await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeHidden();
+  await page.locator('[data-testid="tab-aq"]').click();
+  await page.locator('[data-testid="color-path-select"]').selectOption("ycbcr");
+  await expect(page.locator('[data-testid="subsampling-select"]')).toHaveValue("halfHorizontal");
+  await page.locator('[data-testid="subsampling-select"]').selectOption("none");
+  await page.locator('[data-testid="tab-quality"]').click();
+  await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeHidden();
 });
 
 test("an encode preserves the focused slider and an open cell editor", async ({ page }) => {

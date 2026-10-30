@@ -275,7 +275,7 @@
     <aside id="controls-popover" class="controls-popover" popover="manual"
       aria-label="Encoder settings" data-testid="controls-popover">
       <div class="controls-header">
-        <div><strong>Encoder settings</strong><p>Adjust the image and quantization tables</p></div>
+        <div><strong>Encoder settings</strong><p>Choose a mode, then adjust its settings</p></div>
         <button id="controls-close" class="panel-close" type="button"
           popovertarget="controls-popover" popovertargetaction="hide"
           aria-label="Close settings" data-testid="controls-close">×</button>
@@ -289,27 +289,28 @@
         role="tab"
         type="button"
         class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="quality"
+        data-tab="aq"
         aria-selected="true"
-        data-testid="tab-quality"
+        data-testid="tab-aq"
       >
-        Quality &amp; Chroma
+        Mode &amp; image
       </button>
       <button
         role="tab"
         type="button"
         class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="aq"
+        data-tab="quality"
         aria-selected="false"
-        data-testid="tab-aq"
+        data-testid="tab-quality"
       >
-        AQ &amp; Mode
+        Image options
       </button>
       <button
         role="tab"
         type="button"
         class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
         data-tab="trellis"
+        hidden
         aria-selected="false"
         data-testid="tab-trellis"
       >
@@ -320,6 +321,7 @@
         type="button"
         class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
         data-tab="hybrid"
+        hidden
         aria-selected="false"
         data-testid="tab-hybrid"
       >
@@ -351,9 +353,74 @@
       <article
         class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
         data-tab="quality"
-        aria-hidden="false"
+        aria-hidden="true"
         data-testid="panel-quality"
+        hidden
       >
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">
+            Sharp YUV
+          </span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="sharp-yuv" data-testid="sharp-yuv-checkbox" />
+            <span class="text-text">Gamma-aware downsample</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Pre-blur σ (px)</span>
+          <input
+            type="number"
+            id="pre-blur"
+            min="0"
+            max="3"
+            step="0.05"
+            value="0"
+            data-testid="pre-blur"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Chroma distance scale</span>
+          <input
+            type="number"
+            id="chroma-dist-scale"
+            min="0.1"
+            max="5"
+            step="0.05"
+            value="1"
+            data-testid="chroma-dist-scale"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Progressive scan</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="progressive"
+              data-testid="progressive-checkbox"
+              checked
+            />
+            <span class="text-text">Multi-pass scans (smaller files at high q)</span>
+          </span>
+        </label>
+      </article>
+
+      <article
+        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
+        data-tab="aq"
+        aria-hidden="false"
+        data-testid="panel-aq"
+      >
+        <fieldset class="mode-picker" data-testid="mode-radio-group">
+          <legend>Quantization mode</legend>
+          <div class="segmented-control">
+            <label><input type="radio" name="mode" value="baseline" checked data-testid="mode-baseline" /><span>Standard</span></label>
+            <label><input type="radio" name="mode" value="trellis" data-testid="mode-trellis" /><span>Trellis</span></label>
+            <label><input type="radio" name="mode" value="hybrid" data-testid="mode-hybrid" /><span>Hybrid</span></label>
+          </div>
+          <p id="mode-description" class="choice-description" data-testid="mode-description"></p>
+        </fieldset>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted min-w-[180px]">
           <span class="uppercase tracking-wider text-[10px]">Quality</span>
           <span class="flex items-center gap-2">
@@ -382,7 +449,7 @@
           data-controls-for="ycbcr"
           id="subsampling-label"
         >
-          <span class="uppercase tracking-wider text-[10px]">Subsampling</span>
+          <span class="uppercase tracking-wider text-[10px]">YCbCr chroma subsampling</span>
           <select id="subsampling" data-testid="subsampling-select">
             <option value="none" selected>4:4:4 (none)</option>
             <option value="halfHorizontal">4:2:2 (half horizontal)</option>
@@ -403,63 +470,6 @@
           </select>
         </label>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">
-            Sharp YUV
-            <span class="ignored-note ml-2" data-when="sharp-yuv-ignored"></span>
-          </span>
-          <span class="flex items-center gap-2">
-            <input type="checkbox" id="sharp-yuv" data-testid="sharp-yuv-checkbox" />
-            <span class="text-text">Gamma-aware downsample</span>
-          </span>
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Pre-blur σ (px)</span>
-          <input
-            type="number"
-            id="pre-blur"
-            min="0"
-            max="3"
-            step="0.05"
-            value="0"
-            data-testid="pre-blur"
-            class="w-24"
-          />
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Chroma distance scale</span>
-          <input
-            type="number"
-            id="chroma-dist-scale"
-            min="0.1"
-            max="10"
-            step="0.05"
-            value="1"
-            data-testid="chroma-dist-scale"
-            class="w-24"
-          />
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Progressive scan</span>
-          <span class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="progressive"
-              data-testid="progressive-checkbox"
-              checked
-            />
-            <span class="text-text">Multi-pass scans (smaller files at high q)</span>
-          </span>
-        </label>
-      </article>
-
-      <article
-        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
-        data-tab="aq"
-        aria-hidden="true"
-        data-testid="panel-aq"
-        hidden
-      >
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">Adaptive quantization</span>
           <span class="flex items-center gap-2">
             <input type="checkbox" id="aq-enabled" checked data-testid="aq-checkbox" />
@@ -473,27 +483,7 @@
             <span class="text-text">Enable</span>
           </span>
         </label>
-        <fieldset
-          class="border border-line rounded px-3 py-2 flex flex-col gap-1 m-0"
-          data-testid="mode-radio-group"
-        >
-          <legend class="px-1 text-[10px] uppercase tracking-wider text-muted">
-            Encoder mode
-          </legend>
-          <label class="flex items-center gap-2 text-xs text-text">
-            <input type="radio" name="mode" value="baseline" checked data-testid="mode-baseline" />
-            Adaptive Quantization
-            <span class="text-muted text-[10px]">(per-block AQ strength; no trellis RD)</span>
-          </label>
-          <label class="flex items-center gap-2 text-xs text-text">
-            <input type="radio" name="mode" value="trellis" data-testid="mode-trellis" />
-            Trellis <span class="text-muted text-[10px]">(explicit RD optimization)</span>
-          </label>
-          <label class="flex items-center gap-2 text-xs text-text">
-            <input type="radio" name="mode" value="hybrid" data-testid="mode-hybrid" />
-            Hybrid <span class="text-muted text-[10px]">(AQ-aware trellis)</span>
-          </label>
-        </fieldset>
+        <p class="settings-defaults" data-testid="settings-defaults">Viewer defaults: Standard with AQ, YCbCr 4:4:4, quality 85 and progressive scans. Tables are generated until edited. Encoder presets and automatic optimization are not exposed here.</p>
       </article>
 
       <article
@@ -503,10 +493,6 @@
         data-testid="panel-trellis"
         hidden
       >
-        <p class="ignored-note basis-full" data-when="trellis-ignored">
-          Trellis applies only when <strong>Mode = Trellis</strong>.
-          Pick it on the AQ &amp; Mode tab.
-        </p>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">DC trellis</span>
           <span class="flex items-center gap-2">
@@ -548,7 +534,7 @@
             <option value="fast">Fast (level 8)</option>
           </select>
         </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted" id="trellis-delta-dc-control" hidden>
           <span class="uppercase tracking-wider text-[10px]">ΔDC weight</span>
           <input
             type="number"
@@ -570,10 +556,7 @@
         data-testid="panel-hybrid"
         hidden
       >
-        <p class="ignored-note basis-full" data-when="hybrid-ignored">
-          Hybrid applies only when <strong>Mode = Hybrid</strong>.
-          Pick it on the AQ &amp; Mode tab.
-        </p>
+        <p class="choice-description basis-full" id="hybrid-aq-note" hidden>AQ is off, so block AQ strengths are zero and coupling has no spatial variation.</p>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">AQ → λ scale</span>
           <input

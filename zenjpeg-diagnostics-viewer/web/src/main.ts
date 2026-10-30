@@ -205,7 +205,7 @@ const zeroBias: ZeroBiasState = {
 };
 const paretoCache = new Map<string, ParetoPoint[]>();
 const paretoQueues = new Map<string, ParetoQueue>();
-let activeTab = "quality";
+let activeTab = "aq";
 
 interface ImageManifestEntry {
   id: string;
@@ -522,6 +522,10 @@ function buildCustomQuantTables(): CustomQuantTables | null {
   };
 }
 
+function numberOr(input: HTMLInputElement, fallback: number): number {
+  return Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : fallback;
+}
+
 function currentOptions(): EncodeOptions {
   const opts: EncodeOptions = {
     quality: parseInt(qualityIn.value, 10),
@@ -538,15 +542,15 @@ function currentOptions(): EncodeOptions {
     restartMcuRows: parseInt(restartMcuRowsIn.value, 10) || 0,
     mode: getMode(),
     trellisDcEnabled: trellisDcIn.checked,
-    trellisLambdaLogScale1: parseFloat(trellisLambda1In.value) || 14.75,
-    trellisLambdaLogScale2: parseFloat(trellisLambda2In.value) || 16.5,
+    trellisLambdaLogScale1: numberOr(trellisLambda1In, 14.75),
+    trellisLambdaLogScale2: numberOr(trellisLambda2In, 16.5),
     trellisSpeedMode: trellisSpeedSel.value as TrellisSpeed,
     trellisDeltaDcWeight: parseFloat(trellisDeltaDcIn.value) || 0,
     hybridAqLambdaScale: Number(hybridAqLambdaIn.value),
-    hybridBaseLambdaScale1: parseFloat(hybridBaseLambda1In.value) || 14.75,
-    hybridBaseLambdaScale2: parseFloat(hybridBaseLambda2In.value) || 16.5,
+    hybridBaseLambdaScale1: numberOr(hybridBaseLambda1In, 14.75),
+    hybridBaseLambdaScale2: numberOr(hybridBaseLambda2In, 16.5),
     hybridDcEnabled: hybridDcIn.checked,
-    hybridAqExponent: parseFloat(hybridAqExpIn.value) || 1,
+    hybridAqExponent: numberOr(hybridAqExpIn, 1),
     hybridAqThreshold: parseFloat(hybridAqThresholdIn.value) || 0,
   };
   const custom = buildCustomQuantTables();
@@ -1579,7 +1583,7 @@ function refreshQuantBanner(): void {
       msg = `Trellis (${cp}). Rate-distortion search chooses coefficient levels using the table.`;
       break;
     case "hybrid":
-      msg = `Hybrid (${cp}). AQ-aware lambda RD. Trellis picks final levels per block, modulated by per-block AQ strength.`;
+      msg = aq ? `Hybrid (${cp}). Trellis uses the table and per-block AQ strength.` : `Hybrid (${cp}) with AQ off: block AQ strengths are zero.`;
       break;
   }
   el.textContent = msg;
@@ -1588,39 +1592,23 @@ function refreshQuantBanner(): void {
 
 function applyIgnoredAnnotations(): void {
   const mode = getMode();
-  const cp = colorPathSel.value;
-  const sub = subSel.value;
-
-  const trellisPanel = document.querySelector<HTMLElement>('.tab-panel[data-tab="trellis"]');
-  if (trellisPanel) {
-    const disabled = mode !== "trellis";
-    trellisPanel
-      .querySelectorAll<HTMLElement>(".ctrl")
-      .forEach((c) => (c.dataset.disabled = String(disabled)));
-    const note = trellisPanel.querySelector<HTMLElement>('[data-when="trellis-ignored"]');
-    if (note) note.style.display = disabled ? "" : "none";
+  for (const name of ["trellis", "hybrid"]) {
+    const tab = document.querySelector<HTMLButtonElement>(`.tab[data-tab="${name}"]`)!;
+    tab.hidden = mode !== name;
   }
-  const hybridPanel = document.querySelector<HTMLElement>('.tab-panel[data-tab="hybrid"]');
-  if (hybridPanel) {
-    const disabled = mode !== "hybrid";
-    hybridPanel
-      .querySelectorAll<HTMLElement>(".ctrl")
-      .forEach((c) => (c.dataset.disabled = String(disabled)));
-    const note = hybridPanel.querySelector<HTMLElement>('[data-when="hybrid-ignored"]');
-    if (note) note.style.display = disabled ? "" : "none";
+  if ((activeTab === "trellis" || activeTab === "hybrid") && activeTab !== mode) {
+    setActiveTab("aq");
   }
+  const descriptions: Record<EncodeMode, string> = {
+    baseline: "Standard quantization; AQ can be switched on or off below.",
+    trellis: "Trellis optimizes coefficient levels with a fixed rate–distortion tradeoff. Open Trellis for its settings.",
+    hybrid: "Hybrid uses trellis with AQ-coupled rate–distortion settings. Open Hybrid for its settings.",
+  };
+  $<HTMLElement>("#mode-description").textContent = descriptions[mode];
+  $<HTMLElement>("#hybrid-aq-note").hidden = aqIn.checked;
+  $<HTMLElement>("#trellis-delta-dc-control").hidden = !trellisDcIn.checked;
   const sharpCtrl = sharpYuvIn.closest<HTMLElement>(".ctrl");
-  if (sharpCtrl) {
-    const disabled = cp === "xyb" || sub === "none";
-    sharpCtrl.dataset.disabled = String(disabled);
-    const note = sharpCtrl.querySelector<HTMLElement>('[data-when="sharp-yuv-ignored"]');
-    if (note)
-      note.textContent = disabled
-        ? cp === "xyb"
-          ? "(ignored — XYB)"
-          : "(ignored — 4:4:4)"
-        : "";
-  }
+  if (sharpCtrl) sharpCtrl.hidden = colorPathSel.value === "xyb" || subSel.value === "none";
 }
 
 function syncCurveOutputs(): void {
@@ -1669,9 +1657,10 @@ function wireControlsPanel(): void {
       toggle.focus();
     }
   });
-  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]'));
-  for (const tab of tabs) {
+  const allTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]'));
+  for (const tab of allTabs) {
     tab.addEventListener("keydown", (event) => {
+      const tabs = allTabs.filter((item) => !item.hidden);
       const current = tabs.indexOf(tab);
       let next = current;
       if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
@@ -1747,6 +1736,7 @@ function wireControls(): void {
     el.addEventListener("change", scheduleAutoEncode);
     el.addEventListener("input", scheduleAutoEncode);
   }
+  for (const input of [aqIn, trellisDcIn]) input.addEventListener("change", applyIgnoredAnnotations);
   document.querySelectorAll<HTMLInputElement>('input[name="mode"]').forEach((r) => {
     r.addEventListener("change", () => {
       applyIgnoredAnnotations();
