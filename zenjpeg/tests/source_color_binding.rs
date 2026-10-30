@@ -170,6 +170,7 @@ fn checked(pixels: PixelSlice<'_>, policy: Option<EncodePolicy>) -> Result<Vec<u
         .map_err(|error| format!("{error:?}"))
 }
 
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn with_metadata(meta: Metadata, pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
     quality()
         .job()

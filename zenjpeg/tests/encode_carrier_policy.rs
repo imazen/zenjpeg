@@ -23,6 +23,7 @@ use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 const W: u32 = 16;
 const H: u32 = 8;
 
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn job(meta: &Metadata) -> JpegEncodeJob {
     JpegEncoderConfig::new()
         .job()

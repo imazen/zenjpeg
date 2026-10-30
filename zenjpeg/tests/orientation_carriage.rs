@@ -19,6 +19,7 @@ use zenpixels::{PixelDescriptor, PixelSlice};
 const W: u32 = 24;
 const H: u32 = 16;
 
+#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn encode(meta: Metadata, policy: Option<EncodePolicy>) -> Result<Vec<u8>, At<CodecError>> {
     let data: Vec<u8> = (0..W * H * 3).map(|i| (i * 13 % 251) as u8).collect();
     let pixels = PixelSlice::new(&data, W, H, W as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
