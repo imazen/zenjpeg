@@ -239,11 +239,11 @@ zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7
 # The zencodec 0.2 family, all from one optional-control revision.
 # zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
 # patches resolve them for local builds; releases stay gated on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "0a95851e769464c309917a98a15455ade5f2066e" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "5493eaaad039a3f6e07f1cc37082f8e7c067caee" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "5493eaaad039a3f6e07f1cc37082f8e7c067caee" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "5493eaaad039a3f6e07f1cc37082f8e7c067caee" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "5493eaaad039a3f6e07f1cc37082f8e7c067caee" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "5493eaaad039a3f6e07f1cc37082f8e7c067caee" }
 # Native PNG tests and metric dev-dependencies share the same core family.
 # Their formerly separate 0.1 core fails with the paired pixel representation.
 # zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and

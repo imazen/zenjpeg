@@ -535,6 +535,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
             config: self,
             pulse: None,
             metadata: None,
+            metadata_requirement: None,
             limits: ResourceLimits::none(),
             policy: None,
             legacy_policy: false,
@@ -554,6 +555,9 @@ pub struct JpegEncodeJob {
     config: JpegEncoderConfig,
     pulse: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
+    /// Policy-filtered record accepted by the checked setter. A later legacy
+    /// setter may change metadata, but cannot erase this obligation.
+    metadata_requirement: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
     /// `policy` came from the deprecated best-effort `with_policy`
@@ -577,6 +581,81 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     fn with_metadata(mut self, meta: Metadata) -> Self {
         self.metadata = Some(meta);
         self
+    }
+
+    fn try_set_metadata_policy(
+        &mut self,
+        meta: Metadata,
+        policy: zencodec::MetadataPolicy,
+    ) -> Result<(), zencodec::encode::BoxedError> {
+        // Native extra segments can carry stale EXIF, XMP or ICC independently
+        // of this job. Refuse checked replacement until they can be reconciled.
+        if self.config.effective_config().segments.is_some() {
+            return Err(alloc::boxed::Box::new(
+                UnsupportedOperation::MetadataRetention,
+            ));
+        }
+        #[allow(deprecated)]
+        let retained = meta.filtered(&policy);
+        // JPEG does not have exact carriers for these typed values. ICC is not
+        // a substitute for retaining the actual CICP/HDR record.
+        if retained.cicp.is_some()
+            || retained.content_light_level.is_some()
+            || retained.mastering_display.is_some()
+            || retained.diffuse_white.is_some()
+        {
+            return Err(alloc::boxed::Box::new(
+                UnsupportedOperation::MetadataRetention,
+            ));
+        }
+        // Empty blobs are skipped by the marker writer. Restrict XMP to the
+        // standard single-marker path, which preserves its UTF-8 bytes exactly;
+        // extended XMP is not yet qualified as byte-exact. ICC chunk counters
+        // are one byte, so at most 255 chunks can be represented.
+        if retained
+            .icc_profile
+            .as_ref()
+            .is_some_and(|icc| icc.is_empty() || icc.len() > 255 * 65_519)
+            || retained.xmp.as_ref().is_some_and(|xmp| {
+                xmp.is_empty() || xmp.len() > 65_502 || core::str::from_utf8(xmp).is_err()
+            })
+            || retained.exif.as_ref().is_some_and(|exif| {
+                exif.is_empty() || exif.len() > 65_527 || exif.starts_with(b"Exif\0\0")
+            })
+        {
+            return Err(alloc::boxed::Box::new(
+                UnsupportedOperation::MetadataRetention,
+            ));
+        }
+        if let Some(exif) = &retained.exif {
+            let Some(parsed) = zencodec::exif::Exif::parse(exif) else {
+                return Err(alloc::boxed::Box::new(
+                    UnsupportedOperation::MetadataRetention,
+                ));
+            };
+            // The JPEG writer does not insert a missing orientation tag into
+            // an existing raw EXIF blob. Never accept an unrepresentable field.
+            if retained.orientation != zencodec::Orientation::Identity
+                && parsed.orientation() != Some(retained.orientation)
+            {
+                return Err(alloc::boxed::Box::new(
+                    UnsupportedOperation::MetadataRetention,
+                ));
+            }
+        }
+        // PreserveExact must not turn an unparseable retained EXIF blob into
+        // an empty record through the filtering helper.
+        if policy == zencodec::MetadataPolicy::PreserveExact
+            && meta.exif.is_some()
+            && retained.exif.is_none()
+        {
+            return Err(alloc::boxed::Box::new(
+                UnsupportedOperation::MetadataRetention,
+            ));
+        }
+        self.metadata = Some(retained.clone());
+        self.metadata_requirement = Some(retained);
+        Ok(())
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
@@ -638,6 +717,14 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     }
 
     fn encoder(self) -> Result<JpegEncoder, Self::Error> {
+        if let Some(required) = &self.metadata_requirement
+            && self.metadata.as_ref() != Some(required)
+        {
+            return Err(Error::encode_policy_rejected(
+                "a later metadata setter conflicts with checked retention",
+            )
+            .into());
+        }
         #[allow(unused_mut)]
         let mut cfg = self.config.effective_config();
 
@@ -661,6 +748,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             effective_config: cfg,
             pulse: self.pulse,
             metadata: self.metadata,
+            metadata_requirement: self.metadata_requirement,
             limits: self.limits,
             policy: self.policy,
             legacy_policy: self.legacy_policy,
@@ -693,6 +781,8 @@ pub struct JpegEncoder {
     /// `Stop`; nothing reports progress through it yet.
     pulse: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
+    /// Checked carrier obligations survive into every encode entry point.
+    metadata_requirement: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
     /// `policy` came from the deprecated best-effort `with_policy`.
@@ -1267,9 +1357,53 @@ impl JpegEncoder {
             ColorBinding::Stored(StoredColor::Icc(icc)) => (Some(icc), None),
             ColorBinding::Stored(StoredColor::Cicp(cicp)) => (None, Some(*cicp)),
         };
+        if let Some(required) = &self.metadata_requirement {
+            if (required.exif.is_some() || required.orientation != zencodec::Orientation::Identity)
+                && !policy.resolve_exif(true)
+            {
+                return Err(Error::encode_policy_rejected(
+                    "the policy discards required EXIF",
+                ));
+            }
+            if required.xmp.is_some() && !policy.resolve_xmp(true) {
+                return Err(Error::encode_policy_rejected(
+                    "the policy discards required XMP",
+                ));
+            }
+            if let Some(required_icc) = &required.icc_profile {
+                if !policy.resolve_icc(true)
+                    || icc.map(|p| p.as_ref()) != Some(required_icc.as_ref())
+                {
+                    return Err(Error::encode_policy_rejected(
+                        "the chosen color carrier is not the required ICC",
+                    ));
+                }
+                if matches!(
+                    config.color_mode,
+                    crate::encode::encoder_types::ColorMode::Xyb { .. }
+                ) {
+                    return Err(Error::encode_policy_rejected(
+                        "XYB cannot retain the supplied ICC verbatim",
+                    ));
+                }
+            }
+        }
+        let mut wrote_required_icc = false;
         let mut wrote_icc = false;
         if policy.resolve_icc(true) && (icc.is_some() || cicp.is_some()) {
-            let color_policy = policy.resolve_color(zencodec::ColorEmitPolicy::Balanced);
+            // Checked ICC retention is exact even for redundant sRGB. Only
+            // supply Verbatim as the default: an explicit conflicting color
+            // policy remains authoritative and is rejected below if it drops it.
+            let default_color = if self
+                .metadata_requirement
+                .as_ref()
+                .is_some_and(|required| required.icc_profile.is_some())
+            {
+                zencodec::ColorEmitPolicy::Verbatim
+            } else {
+                zencodec::ColorEmitPolicy::Balanced
+            };
+            let color_policy = policy.resolve_color(default_color);
             // The channel count lets the resolver suppress ICC synthesis for
             // grayscale, where an RGB profile would recolor the image.
             let mut src =
@@ -1286,6 +1420,11 @@ impl JpegEncoder {
                     if let Some(icc) = icc {
                         req = req.icc_profile(icc);
                         wrote_icc = true;
+                        wrote_required_icc = self
+                            .metadata_requirement
+                            .as_ref()
+                            .and_then(|required| required.icc_profile.as_ref())
+                            .is_some_and(|required| required.as_ref() == icc.as_ref());
                     }
                 }
                 zencodec::IccDisposition::SynthesizeFrom(cicp) => {
@@ -1331,6 +1470,16 @@ impl JpegEncoder {
                     }
                 }
             }
+        }
+        if self
+            .metadata_requirement
+            .as_ref()
+            .is_some_and(|required| required.icc_profile.is_some())
+            && !wrote_required_icc
+        {
+            return Err(Error::encode_policy_rejected(
+                "the encoder cannot retain the required ICC verbatim",
+            ));
         }
         // JPEG's only colour carrier is the ICC profile. A plan or policy that
         // writes none for a description other than the sRGB default would
