@@ -423,11 +423,12 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "libm",
  "spin",
  "whereat",
  "zenpixels",
@@ -479,7 +480,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
 dependencies = [
  "roxmltree",
  "zencodec",
@@ -488,8 +489,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=f23ac7535be1144a22d0dc6b71f866a08b151f34#f23ac7535be1144a22d0dc6b71f866a08b151f34"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -499,8 +500,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=f23ac7535be1144a22d0dc6b71f866a08b151f34#f23ac7535be1144a22d0dc6b71f866a08b151f34"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -545,9 +546,14 @@ dependencies = [
 [[patch.unused]]
 name = "zencodec-coroutine"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
 
 [[patch.unused]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
+
+[[patch.unused]]
+name = "zencodec-testkit"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
