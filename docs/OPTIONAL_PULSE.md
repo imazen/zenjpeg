@@ -66,3 +66,6 @@ call; the policy or assertions were not silently changed. The final wrapper
 reports `rc0 7s; peak-RSS 0.58GiB; min-avail 14766MiB; peak-load 0.50`.
 The resolved fuzz lock is committed. No fuzz campaign or new performance claim
 is implied by compiling its targets.
+
+For the checked JPEG metadata contract and the newer native progress evidence,
+see [Native control qualification](NATIVE_CONTROL_QUALIFICATION.md).
