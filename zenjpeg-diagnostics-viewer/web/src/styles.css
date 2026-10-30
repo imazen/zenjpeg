@@ -574,3 +574,21 @@ canvas[role="button"]:focus-visible {
 .choice-description[hidden] { display: none; }
 
 .huffman-note { max-width: 290px; font-size: 12px; line-height: 1.4; }
+
+.controls-popover fieldset[hidden], .controls-popover details[hidden], .controls-popover input[hidden], .controls-popover select[hidden] { display: none; }
+.compact-wrap { flex-wrap: wrap; width: fit-content; }
+.settings-details { flex: 1 1 100%; border: 1px solid var(--color-line); border-radius: 6px; padding: 8px 10px; background: var(--color-panel-2); }
+.settings-details summary { color: var(--color-accent); cursor: pointer; font-size: 12px; font-weight: 600; }
+.settings-detail-grid { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 12px; }
+
+.rd-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+.rd-controls label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 12px; }
+.rd-controls button { padding: 5px 9px; color: var(--color-text); background: var(--color-panel-2); border: 1px solid var(--color-line); border-radius: 5px; font-size: 12px; }
+
+@media (max-width: 640px) {
+  .controls-popover .tab-panel[data-tab="aq"] { gap: 7px; padding: 12px; }
+  .controls-popover .mode-picker legend { margin-bottom: 3px; }
+  .controls-popover .mode-picker .choice-description { margin-top: 3px; }
+  .controls-popover .segmented-control span { padding: 5px 9px; }
+  .controls-popover .settings-details { padding: 6px 10px; }
+}

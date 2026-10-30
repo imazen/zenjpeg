@@ -18,6 +18,7 @@
 // shipping the source pixels into the worker just for scoring.
 
 import init, {
+  codecDefaults,
   computeSsimulacra2,
   computeZensim,
 } from "../wasm-pkg/zenjpeg_diagnostics_wasm.js";
@@ -63,6 +64,7 @@ const mMode = $<HTMLElement>("#m-mode");
 const mModeDetail = $<HTMLElement>("#m-mode-detail");
 const mSsim2 = $<HTMLElement>("#m-ssim2");
 const mZensim = $<HTMLElement>("#m-zensim");
+const mButter = $<HTMLElement>("#m-butter");
 const mPareto = $<HTMLElement>("#m-pareto");
 const mTime = $<HTMLElement>("#m-time");
 // Canvases
@@ -82,8 +84,8 @@ const qualityOut = $<HTMLOutputElement>("#quality-out");
 const colorPathSel = $<HTMLSelectElement>("#color-path");
 const subSel = $<HTMLSelectElement>("#subsampling");
 const xybSubSel = $<HTMLSelectElement>("#xyb-subsampling");
-const subLabel = $<HTMLLabelElement>("#subsampling-label");
-const xybLabel = $<HTMLLabelElement>("#xyb-subsampling-label");
+const subLabel = $<HTMLFieldSetElement>("#subsampling-label");
+const xybLabel = $<HTMLFieldSetElement>("#xyb-subsampling-label");
 const aqIn = $<HTMLInputElement>("#aq-enabled");
 const deringingIn = $<HTMLInputElement>("#deringing");
 const sharpYuvIn = $<HTMLInputElement>("#sharp-yuv");
@@ -170,12 +172,19 @@ interface ParetoQueue {
   total: number;
   /** Set true when the queue is exhausted. */
   complete: boolean;
+  metric: CurveMetric;
+  options: EncodeOptions;
+  eq: Array<{ hEq: number[]; vEq: number[]; overrides: Array<[number, number]> }>;
+  bias: ZeroBiasState;
+  custom: boolean;
+  error: string | null;
 }
 
 interface LastEncode {
   bytes: number;
   ssim2: number;
   zensim: number;
+  butteraugli: number | null;
   durationMs: number;
   mode: EncodeMode;
   width: number;
@@ -203,9 +212,14 @@ const zeroBias: ZeroBiasState = {
   offsetDc: [0.0, 0.0, 0.0],
   offsetAc: [0.0, 0.0, 0.0],
 };
-const paretoCache = new Map<string, ParetoPoint[]>();
+type CurveMetric = "ssim2" | "zensim" | "butteraugli";
 const paretoQueues = new Map<string, ParetoQueue>();
 let activeTab = "aq";
+interface CodecDefaults { colorPath: "ycbcr" | "xyb"; subsampling: string; xybSubsampling: string; progressive: boolean; optimizeHuffman: boolean; aqEnabled: boolean; deringing: boolean }
+let defaults: CodecDefaults;
+const scanChoice = () => document.querySelector<HTMLInputElement>('input[name="scan"]:checked')?.value ?? "auto";
+const resolvedColor = () => colorPathSel.value === "auto" ? defaults.colorPath : colorPathSel.value;
+const resolvedSubsampling = () => subSel.value === "auto" ? defaults.subsampling : subSel.value;
 
 interface ImageManifestEntry {
   id: string;
@@ -282,9 +296,13 @@ const pendingResolvers = new Map<
     reject: (e: Error) => void;
   }
 >();
+const pendingScores = new Map<number, { resolve: (score: number) => void; reject: (error: Error) => void }>();
 worker.addEventListener("message", (ev: MessageEvent) => {
-  const m = ev.data as EncodeResultMsg | ErrorMsg | ReadyMsg;
-  if (m.kind === "result") {
+  const m = ev.data as EncodeResultMsg | ErrorMsg | ReadyMsg | { kind: "score-result"; reqId: number; score: number };
+  if (m.kind === "score-result") {
+    pendingScores.get(m.reqId)?.resolve(m.score);
+    pendingScores.delete(m.reqId);
+  } else if (m.kind === "result") {
     const slot = pendingResolvers.get(m.reqId);
     pendingResolvers.delete(m.reqId);
     if (slot)
@@ -297,6 +315,8 @@ worker.addEventListener("message", (ev: MessageEvent) => {
     const slot = pendingResolvers.get(m.reqId);
     pendingResolvers.delete(m.reqId);
     if (slot) slot.reject(new Error(m.message));
+    pendingScores.get(m.reqId)?.reject(new Error(m.message));
+    pendingScores.delete(m.reqId);
   }
 });
 
@@ -529,7 +549,7 @@ function numberOr(input: HTMLInputElement, fallback: number): number {
 function currentOptions(): EncodeOptions {
   const opts: EncodeOptions = {
     quality: parseInt(qualityIn.value, 10),
-    colorPath: colorPathSel.value as "ycbcr" | "xyb",
+    colorPath: colorPathSel.value as EncodeOptions["colorPath"],
     subsampling: subSel.value as EncodeOptions["subsampling"],
     xybSubsampling: xybSubSel.value as EncodeOptions["xybSubsampling"],
     aqEnabled: aqIn.checked,
@@ -539,7 +559,7 @@ function currentOptions(): EncodeOptions {
     sharpYuv: sharpYuvIn.checked,
     preBlur: parseFloat(preBlurIn.value) || 0,
     chromaDistanceScale: parseFloat(chromaDistIn.value) || 1,
-    restartMcuRows: parseInt(restartMcuRowsIn.value, 10) || 0,
+    ...(scanChoice() === "sequential" ? { restartMcuRows: 0 } : {}),
     mode: getMode(),
     trellisDcEnabled: trellisDcIn.checked,
     trellisLambdaLogScale1: numberOr(trellisLambda1In, 14.75),
@@ -974,249 +994,155 @@ function zensim(src: ImageData, dec: ImageData): number {
   }
 }
 
-// ─── Pareto baseline ──────────────────────────────────────────────
-// 100-point integer sweep (q=1..100) computed *progressively*. Running
-// all 100 encodes back-to-back would block the worker queue and starve
-// user-driven encodes for several seconds. Instead we drive the queue
-// from runEncode's `finally` hook: every time the user encode settles,
-// we kick off ONE pareto step in the worker. That naturally yields
-// priority to user encodes — pareto fills in during idle time.
-//
-// As each point lands the RD canvas is repainted with the current set,
-// so the curve grows in front of the user. The full 1..100 sweep
-// resolves over ~tens of seconds for a 1 MP image.
+// ─── Quality–size sweep ───────────────────────────────────────────
+const PARETO_QS = Array.from({ length: 100 }, (_, i) => i + 1);
+const metricSelect = $<HTMLSelectElement>("#rd-metric");
+const metric = () => metricSelect.value as CurveMetric;
+const metricLabel = (m: CurveMetric) => m === "ssim2" ? "SSIMULACRA 2" : m === "zensim" ? "zensim" : "Butteraugli distance";
+const betterSign = (m: CurveMetric) => m === "butteraugli" ? -1 : 1;
 
-const PARETO_QS = Array.from({ length: 100 }, (_, i) => i + 1); // 1..100
-
-function buildParetoFromPoints(raw: ParetoPoint[]): ParetoPoint[] {
-  const sorted = raw.slice().sort((a, b) => a.bytes - b.bytes);
-  const pareto: ParetoPoint[] = [];
-  let bestScore = -Infinity;
-  for (const p of sorted) {
-    if (p.score >= bestScore) {
-      pareto.push(p);
-      bestScore = p.score;
-    }
-  }
-  return pareto;
+function createCurveQueue(): ParetoQueue {
+  const options = structuredClone(currentOptions());
+  delete options.customQuantTables;
+  const eq = Array.from({ length: 3 }, (_, i) => {
+    const state = eqStateFor(i);
+    return { hEq: [...state.hEq], vEq: [...state.vEq], overrides: [...state.cellOverrides.entries()] };
+  });
+  const bias = structuredClone(zeroBias);
+  const custom = eq.some((e) => e.hEq.some((x) => x !== 1) || e.vEq.some((x) => x !== 1) || e.overrides.length > 0)
+    || bias.globalMul.some((x) => x !== 1) || bias.offsetDc.some((x) => x !== 0) || bias.offsetAc.some((x) => x !== 0);
+  return { qs: PARETO_QS.slice(), points: [], total: PARETO_QS.length, complete: false,
+    metric: metric(), options, eq, bias, custom, error: null };
 }
-
 function ensureParetoQueue(image: ImageState): ParetoQueue {
-  const existing = paretoQueues.get(image.key);
-  if (existing) return existing;
-  const cached = paretoCache.get(image.key);
-  if (cached) {
-    const q: ParetoQueue = {
-      qs: [],
-      points: cached.slice(),
-      total: cached.length,
-      complete: true,
-    };
-    paretoQueues.set(image.key, q);
-    return q;
-  }
-  const q: ParetoQueue = {
-    qs: PARETO_QS.slice(),
-    points: [],
-    total: PARETO_QS.length,
-    complete: false,
-  };
-  paretoQueues.set(image.key, q);
-  return q;
+  let queue = paretoQueues.get(image.key);
+  if (!queue) { queue = createCurveQueue(); paretoQueues.set(image.key, queue); }
+  return queue;
 }
-
-let paretoStepInflight = false;
-
-async function stepPareto(): Promise<void> {
-  // Single-step worker: only one pareto encode in flight at a time,
-  // and only while no user encode is pending. Recurses after each step.
-  if (paretoStepInflight) return;
-  if (inflightReqId !== 0) return;
-  const image = currentImage;
-  const queue = ensureParetoQueue(image);
-  if (queue.complete) return;
-  if (queue.qs.length === 0) {
-    queue.complete = true;
-    paretoCache.set(image.key, buildParetoFromPoints(queue.points));
-    return;
+function curveCustomTables(diag: Diagnostics, queue: ParetoQueue): CustomQuantTables {
+  const quant = (i: number): number[] => {
+    const comp = diag.components[i]!;
+    const state = queue.eq[i]!;
+    const overrides = new Map(state.overrides);
+    return Array.from(comp.quantTableBase, (base, k) => Math.max(1,
+      base * state.hEq[k % 8]! * state.vEq[Math.floor(k / 8)]! * (overrides.get(k) ?? 1)));
+  };
+  const mul = (i: number) => Array.from(diag.components[i]!.zeroBiasMul, (value) => value * queue.bias.globalMul[i]!);
+  const offset = (k: number, values: number[]) => [0, 1, 2].map((i) => diag.components[i]!.zeroBias[k]! + values[i]!) as [number, number, number];
+  return { y: quant(0), cb: quant(1), cr: quant(2), yZeroBiasMul: mul(0), cbZeroBiasMul: mul(1), crZeroBiasMul: mul(2),
+    zeroBiasOffsetDc: offset(0, queue.bias.offsetDc), zeroBiasOffsetAc: offset(1, queue.bias.offsetAc) };
+}
+function scoreMetric(m: CurveMetric, source: ImageData, decoded: ImageData): Promise<number> {
+  const reqId = nextReqId++;
+  const src = rgbaToPackedRgb(source.data), dst = rgbaToPackedRgb(decoded.data);
+  return new Promise((resolve, reject) => {
+    pendingScores.set(reqId, { resolve, reject });
+    worker.postMessage({ kind: "score", reqId, metric: m, source: src, decoded: dst, width: source.width, height: source.height }, [src.buffer, dst.buffer]);
+  });
+}
+async function refreshCurrentButter(): Promise<void> {
+  const previous = lastEncode, source = zoomImageData.source, decoded = zoomImageData.encoded;
+  if (!previous || !source || !decoded || previous.butteraugli !== null) return;
+  try {
+    const score = await scoreMetric("butteraugli", source, decoded);
+    if (lastEncode === previous) { previous.butteraugli = score; updateReadout(); refreshRdPanel(); }
+  } catch (e) {
+    if (lastEncode === previous) $<HTMLElement>("#rd-progress").textContent = `Butteraugli unavailable: ${(e as Error).message}`;
   }
+}
+function currentLastEncodePoint(): { bytes: number; score: number } | null {
+  if (!lastEncode) return null;
+  const score = metric() === "ssim2" ? lastEncode.ssim2 : metric() === "zensim" ? lastEncode.zensim : lastEncode.butteraugli;
+  return score === null || !Number.isFinite(score) ? null : { bytes: lastEncode.bytes, score };
+}
+function curveEnvelope(points: ParetoPoint[], m: CurveMetric): ParetoPoint[] {
+  const result: ParetoPoint[] = []; let best = -Infinity;
+  for (const p of points.slice().sort((a, b) => a.bytes - b.bytes)) {
+    const value = betterSign(m) * p.score;
+    if (value >= best) { result.push(p); best = value; }
+  }
+  return result;
+}
+let paretoStepInflight = false;
+async function stepPareto(): Promise<void> {
+  if (paretoStepInflight || inflightReqId !== 0) return;
+  const image = currentImage; const queue = ensureParetoQueue(image);
+  if (queue.complete) return;
+  if (!queue.qs.length) { queue.complete = true; refreshRdPanel(); return; }
   paretoStepInflight = true;
   const q = queue.qs.shift()!;
   try {
-    const reqId = nextReqId++;
-    const packed = rgbaToPackedRgb(image.rgba);
-    const opts: EncodeOptions = {
-      quality: q,
-      colorPath: "ycbcr",
-      subsampling: "quarter",
-      aqEnabled: true,
-      deringing: true,
-      optimizeHuffman: true,
-      mode: "baseline",
-    };
-    const r = await workerEncode(packed, image.width, image.height, opts, reqId);
-    if (image.key !== currentImage.key) {
-      // Image changed during the step — drop result.
-      return;
+    const opts: EncodeOptions = { ...queue.options, quality: q };
+    let result = await workerEncode(rgbaToPackedRgb(image.rgba), image.width, image.height, opts, nextReqId++);
+    if (queue.custom) {
+      opts.customQuantTables = curveCustomTables(result.diagnostics, queue);
+      result = await workerEncode(rgbaToPackedRgb(image.rgba), image.width, image.height, opts, nextReqId++);
     }
-    const decoded = await decodeJpeg(r.bytes);
-    const srcImageData = new ImageData(image.rgba.slice(), image.width, image.height);
-    const score = ssim2(srcImageData, decoded);
-    queue.points.push({ bytes: r.bytes.byteLength, score, q });
-    // Repaint with the current filled-in subset.
-    drawRdCanvas(buildParetoFromPoints(queue.points), currentLastEncodePoint());
-    updateParetoDelta();
+    if (image.key !== currentImage.key || paretoQueues.get(image.key) !== queue) return;
+    const decoded = await decodeJpeg(result.bytes);
+    const source = new ImageData(image.rgba.slice(), image.width, image.height);
+    const score = await scoreMetric(queue.metric, source, decoded);
+    if (image.key !== currentImage.key || paretoQueues.get(image.key) !== queue) return;
+    if (!Number.isFinite(score)) throw new Error("metric returned a non-finite value");
+    queue.points.push({ bytes: result.bytes.byteLength, score, q });
+    refreshRdPanel();
   } catch (e) {
-    console.warn(`pareto q=${q} failed:`, e);
+    queue.error = (e as Error).message;
+    queue.complete = true;
+    if (paretoQueues.get(image.key) === queue) refreshRdPanel();
   } finally {
     paretoStepInflight = false;
-    // If the user isn't encoding, immediately schedule the next pareto
-    // step on the next microtask (yields to runEncode if it's queued).
-    if (inflightReqId === 0 && !queue.complete) {
-      queueMicrotask(() => void stepPareto());
-    }
+    if (inflightReqId === 0) queueMicrotask(() => void stepPareto());
   }
 }
-
-function currentLastEncodePoint(): { bytes: number; score: number } | null {
-  return lastEncode ? { bytes: lastEncode.bytes, score: lastEncode.ssim2 } : null;
+function regenerateCurve(): void {
+  paretoQueues.set(currentImage.key, createCurveQueue());
+  mPareto.textContent = "—";
+  refreshRdPanel();
+  if (!paretoStepInflight && inflightReqId === 0) queueMicrotask(() => void stepPareto());
 }
-
 function updateParetoDelta(): void {
-  const queue = paretoQueues.get(currentImage.key);
-  const cur = currentLastEncodePoint();
-  if (!cur) return;
-  // Use the currently-filled subset to compute Δ-pareto. Refines as
-  // more points arrive.
-  const points =
-    queue && queue.points.length >= 2
-      ? buildParetoFromPoints(queue.points)
-      : paretoCache.get(currentImage.key) ?? [];
-  if (points.length < 2) return;
-  const d = paretoDelta(points, cur);
+  const queue = paretoQueues.get(currentImage.key); const cur = currentLastEncodePoint();
+  if (!queue || !cur || queue.points.length < 2 || queue.error) { mPareto.textContent = "—"; return; }
+  const points = curveEnvelope(queue.points, queue.metric);
+  if (points.length < 2 || cur.bytes < points[0]!.bytes || cur.bytes > points[points.length - 1]!.bytes) { mPareto.textContent = "—"; return; }
+  const d = betterSign(queue.metric) * paretoDelta(points, cur);
   mPareto.textContent = (d >= 0 ? "+" : "") + d.toFixed(2);
-  mPareto.parentElement?.setAttribute(
-    "data-tone",
-    d >= 0 ? "good" : d > -3 ? "warn" : "bad",
-  );
+  mPareto.parentElement?.setAttribute("data-tone", d >= 0 ? "good" : d > -3 ? "warn" : "bad");
 }
-
-function drawRdCanvas(
-  pareto: ParetoPoint[],
-  current: { bytes: number; score: number } | null,
-): void {
-  const queue = paretoQueues.get(currentImage.key);
-  const filled = queue ? queue.points.length : pareto.length;
-  const total = queue ? queue.total : pareto.length;
-  const ctx = rdCanvas.getContext("2d");
-  if (!ctx) return;
-  const W = rdCanvas.width;
-  const H = rdCanvas.height;
-  ctx.fillStyle = "#0e1117";
-  ctx.fillRect(0, 0, W, H);
-  if (pareto.length === 0) {
-    ctx.fillStyle = "#8b949e";
-    ctx.font = "13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillText(
-      filled === 0
-        ? "Computing reference RD curve in the background…"
-        : `Building reference RD: ${filled}/${total}`,
-      20,
-      H / 2,
-    );
-    return;
+function drawRdCanvas(points: ParetoPoint[], current: { bytes: number; score: number } | null): void {
+  const queue = paretoQueues.get(currentImage.key); const ctx = rdCanvas.getContext("2d"); if (!ctx) return;
+  rdCanvas.setAttribute("aria-label", `Quality sweep: bytes on a logarithmic x-axis; ${metricLabel(queue?.metric ?? metric())} on the y-axis. White line is the sweep, blue point is the current encode.`);
+  const W = rdCanvas.width, H = rdCanvas.height; ctx.fillStyle = "#0e1117"; ctx.fillRect(0, 0, W, H);
+  const progress = $<HTMLElement>("#rd-progress");
+  progress.textContent = queue?.error ? `Curve stopped: ${queue.error}` : `Quality sweep: ${queue?.points.length ?? 0}/${queue?.total ?? 100} encodes${queue?.custom ? " · custom tables and zero bias" : ""}`;
+  if (!points.length) { ctx.fillStyle = "#8b949e"; ctx.font = "13px sans-serif"; ctx.fillText(queue?.error ? "Metric unavailable" : "Computing quality sweep…", 70, H / 2); return; }
+  const bs = points.map(p => p.bytes), scores = points.map(p => p.score);
+  if (current) { bs.push(current.bytes); scores.push(current.score); }
+  const minB = Math.max(1, Math.min(...bs) * 0.9), maxB = Math.max(minB * 1.01, Math.max(...bs) * 1.1);
+  const lo = Math.min(...scores), hi = Math.max(...scores), margin = Math.max((hi - lo) * .08, .1);
+  const minS = lo - margin, maxS = hi + margin;
+  const L=70, R=20, T=24, B=42;
+  const xFor = (b: number) => L + (Math.log(b/minB)/Math.log(maxB/minB)) * (W-L-R);
+  const yFor = (v: number) => T + (1-(v-minS)/(maxS-minS))*(H-T-B);
+  ctx.font = "11px ui-monospace, monospace"; ctx.fillStyle="#aab4c0"; ctx.strokeStyle="#30363d"; ctx.lineWidth=1;
+  for (let i=0;i<=4;i++) {
+    const x=L+(W-L-R)*i/4, y=T+(H-T-B)*i/4, value=maxS-(maxS-minS)*i/4;
+    ctx.beginPath(); ctx.moveTo(x,T); ctx.lineTo(x,H-B); ctx.moveTo(L,y); ctx.lineTo(W-R,y); ctx.stroke();
+    ctx.textAlign="center"; ctx.fillText(formatBytes(minB*Math.pow(maxB/minB,i/4)),x,H-B+15);
+    ctx.textAlign="right"; ctx.fillText(value.toFixed(1),L-6,y+4);
   }
-  const allBytes = pareto.map((p) => p.bytes);
-  const allScores = pareto.map((p) => p.score);
-  if (current) {
-    allBytes.push(current.bytes);
-    allScores.push(current.score);
-  }
-  const minB = Math.min(...allBytes) * 0.9;
-  const maxB = Math.max(...allBytes) * 1.1;
-  const minS = Math.min(...allScores) - 2;
-  const maxS = Math.max(...allScores) + 2;
-  const padL = 50;
-  const padR = 12;
-  const padT = 12;
-  const padB = 32;
-  const xFor = (b: number) =>
-    padL +
-    ((Math.log10(b) - Math.log10(minB)) / (Math.log10(maxB) - Math.log10(minB))) *
-      (W - padL - padR);
-  const yFor = (s: number) => padT + (1 - (s - minS) / (maxS - minS)) * (H - padT - padB);
-  ctx.strokeStyle = "#30363d";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(padL, padT);
-  ctx.lineTo(padL, H - padB);
-  ctx.lineTo(W - padR, H - padB);
-  ctx.stroke();
-  ctx.fillStyle = "#8b949e";
-  ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
-  ctx.fillText("bytes (log)", W - 80, H - 10);
-  ctx.save();
-  ctx.translate(14, padT + 60);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("ssimulacra2", 0, 0);
-  ctx.restore();
-  ctx.strokeStyle = "#c9d1d9";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  for (let i = 0; i < pareto.length; i++) {
-    const p = pareto[i]!;
-    const x = xFor(p.bytes);
-    const y = yFor(p.score);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.fillStyle = "#c9d1d9";
-  for (const p of pareto) {
-    ctx.beginPath();
-    ctx.arc(xFor(p.bytes), yFor(p.score), 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (current) {
-    ctx.fillStyle = "#58a6ff";
-    ctx.beginPath();
-    ctx.arc(xFor(current.bytes), yFor(current.score), 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
-  // Progress label (top-right).
-  const isComplete = queue?.complete === true;
-  ctx.fillStyle = isComplete ? "#56d364" : "#f0883e";
-  ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
-  const progressText = isComplete
-    ? `ref RD ${filled}/${total} ✓`
-    : `ref RD ${filled}/${total}`;
-  const tw = ctx.measureText(progressText).width;
-  ctx.fillText(progressText, W - padR - tw, padT + 12);
+  ctx.textAlign="left"; ctx.fillText(`${metricLabel(queue?.metric ?? metric())} (${metric() === "butteraugli" ? "lower" : "higher"} is better)`, L, 15);
+  ctx.textAlign="right"; ctx.fillText("bytes (log scale)",W-R,H-5);
+  ctx.strokeStyle="#c9d1d9"; ctx.lineWidth=2; ctx.beginPath();
+  points.slice().sort((a,b)=>a.q-b.q).forEach((p,i)=>{ if(i===0) ctx.moveTo(xFor(p.bytes),yFor(p.score)); else ctx.lineTo(xFor(p.bytes),yFor(p.score)); }); ctx.stroke();
+  ctx.fillStyle="#c9d1d9"; for (const p of points) {ctx.beginPath();ctx.arc(xFor(p.bytes),yFor(p.score),2,0,Math.PI*2);ctx.fill();}
+  if (current) {ctx.fillStyle="#58a6ff";ctx.beginPath();ctx.arc(xFor(current.bytes),yFor(current.score),5,0,Math.PI*2);ctx.fill();}
 }
-
-function paretoDelta(
-  pareto: ParetoPoint[],
-  cur: { bytes: number; score: number },
-): number {
-  if (pareto.length < 2) return 0;
-  const lb = Math.log10(cur.bytes);
-  let prev = pareto[0]!;
-  for (let i = 1; i < pareto.length; i++) {
-    const p = pareto[i]!;
-    const a = Math.log10(prev.bytes);
-    const b = Math.log10(p.bytes);
-    if (lb >= a && lb <= b) {
-      const t = (lb - a) / Math.max(1e-9, b - a);
-      const interp = prev.score + (p.score - prev.score) * t;
-      return cur.score - interp;
-    }
-    prev = p;
-  }
-  if (lb < Math.log10(pareto[0]!.bytes)) return cur.score - pareto[0]!.score;
-  return cur.score - pareto[pareto.length - 1]!.score;
+function paretoDelta(points: ParetoPoint[], cur: { bytes: number; score: number }): number {
+  const lb=Math.log(cur.bytes);
+  for(let i=1;i<points.length;i++){const a=points[i-1]!,b=points[i]!;const x=Math.log(a.bytes),y=Math.log(b.bytes);if(lb<=y){const t=(lb-x)/Math.max(1e-9,y-x);return cur.score-(a.score+(b.score-a.score)*t);}}
+  return cur.score-points[points.length-1]!.score;
 }
 
 // ─── Big-readout updater ──────────────────────────────────────────
@@ -1228,6 +1154,7 @@ function updateReadout(): void {
     mModeDetail.textContent = "—";
     mSsim2.textContent = "—";
     mZensim.textContent = "—";
+    mButter.textContent = "—";
     mPareto.textContent = "—";
     mTime.textContent = "—";
     return;
@@ -1240,6 +1167,7 @@ function updateReadout(): void {
   mSsim2.textContent = lastEncode.ssim2.toFixed(2);
   mSsim2.parentElement?.setAttribute("data-tone", scoreTone(lastEncode.ssim2));
   mZensim.textContent = lastEncode.zensim.toFixed(2);
+  mButter.textContent = lastEncode.butteraugli === null ? "—" : lastEncode.butteraugli.toFixed(3);
   mZensim.parentElement?.setAttribute("data-tone", scoreTone(lastEncode.zensim));
   mTime.textContent = lastEncode.durationMs.toFixed(0);
 }
@@ -1346,6 +1274,10 @@ async function runEncode(): Promise<void> {
     }
 
     currentDiagnostics = result.diagnostics;
+    const scan = scanChoice();
+    if (scan === "restart") {
+      $<HTMLElement>("#scan-resolved").textContent = `Codec plan: restart interval ${result.diagnostics.restartIntervalMcus} MCUs; small images may contain no restart markers. Browser encoding is single-threaded.`;
+    }
     // If this encode ran without custom tables, the diagnostics' base
     // tables are the encoder's source-derived defaults — capture them
     // so subsequent edits are multipliers on a stable base.
@@ -1369,6 +1301,7 @@ async function runEncode(): Promise<void> {
       bytes: result.bytes.byteLength,
       ssim2: ssim2Score,
       zensim: zensimScore,
+      butteraugli: null,
       durationMs: result.durationMs,
       mode: opts.mode ?? "baseline",
       width: currentImage.width,
@@ -1377,6 +1310,7 @@ async function runEncode(): Promise<void> {
 
     // Pareto delta — refresh asynchronously.
     void refreshRdPanel();
+    if (metric() === "butteraugli") void refreshCurrentButter();
 
     updateReadout();
     const customMark = opts.customQuantTables ? " · custom Q" : "";
@@ -1403,13 +1337,8 @@ async function runEncode(): Promise<void> {
 }
 
 function refreshRdPanel(): void {
-  // Draw whatever pareto data is currently available — full from cache
-  // if the sweep is complete, partial from the active queue otherwise.
   const queue = ensureParetoQueue(currentImage);
-  const points = queue.complete
-    ? paretoCache.get(currentImage.key) ?? buildParetoFromPoints(queue.points)
-    : buildParetoFromPoints(queue.points);
-  drawRdCanvas(points, currentLastEncodePoint());
+  drawRdCanvas(queue.points, currentLastEncodePoint());
   updateParetoDelta();
 }
 
@@ -1571,7 +1500,7 @@ function refreshQuantBanner(): void {
   if (!el) return;
   const mode = getMode();
   const aq = aqIn.checked;
-  const cp = colorPathSel.value === "xyb" ? "XYB" : "YCbCr";
+  const cp = resolvedColor() === "xyb" ? "XYB" : "YCbCr";
   let msg = "";
   switch (mode) {
     case "baseline":
@@ -1593,22 +1522,18 @@ function refreshQuantBanner(): void {
 function applyIgnoredAnnotations(): void {
   const mode = getMode();
   for (const name of ["trellis", "hybrid"]) {
-    const tab = document.querySelector<HTMLButtonElement>(`.tab[data-tab="${name}"]`)!;
-    tab.hidden = mode !== name;
-  }
-  if ((activeTab === "trellis" || activeTab === "hybrid") && activeTab !== mode) {
-    setActiveTab("aq");
+    $<HTMLElement>(`#${name}-settings`).hidden = mode !== name;
   }
   const descriptions: Record<EncodeMode, string> = {
     baseline: "Standard quantization; AQ can be switched on or off below.",
-    trellis: "Trellis optimizes coefficient levels with a fixed rate–distortion tradeoff. Open Trellis for its settings.",
-    hybrid: "Hybrid uses trellis with AQ-coupled rate–distortion settings. Open Hybrid for its settings.",
+    trellis: "Trellis optimizes coefficient levels with a fixed rate–distortion tradeoff. Expand Trellis tuning for its settings.",
+    hybrid: "Hybrid uses trellis with AQ-coupled rate–distortion settings. Expand Hybrid tuning for its settings.",
   };
   $<HTMLElement>("#mode-description").textContent = descriptions[mode];
   $<HTMLElement>("#hybrid-aq-note").hidden = aqIn.checked;
   $<HTMLElement>("#trellis-delta-dc-control").hidden = !trellisDcIn.checked;
   const sharpCtrl = sharpYuvIn.closest<HTMLElement>(".ctrl");
-  if (sharpCtrl) sharpCtrl.hidden = colorPathSel.value === "xyb" || subSel.value === "none";
+  if (sharpCtrl) sharpCtrl.hidden = resolvedColor() === "xyb" || resolvedSubsampling() === "none";
 }
 
 function syncCurveOutputs(): void {
@@ -1681,6 +1606,40 @@ function wireControlsPanel(): void {
   wireCellEditor();
 }
 
+function syncResolvedChoices(): void {
+  const samplingLabels: Record<string, string> = { none: "4:4:4", halfHorizontal: "4:2:2", quarter: "4:2:0", halfVertical: "4:4:0" };
+  const xybLabels: Record<string, string> = { full: "full", bQuarter: "B quarter" };
+  $<HTMLElement>("#color-resolved").textContent = colorPathSel.value === "auto" ? `Codec default: ${defaults.colorPath === "ycbcr" ? "YCbCr" : "XYB"}` : "";
+  $<HTMLElement>("#sampling-resolved").textContent = subSel.value === "auto" ? `Codec default: ${samplingLabels[defaults.subsampling]}` : "";
+  $<HTMLElement>("#xyb-sampling-resolved").textContent = xybSubSel.value === "auto" ? `Codec default: ${xybLabels[defaults.xybSubsampling]}` : "";
+  const scan = scanChoice();
+  const desc = scan === "auto" ? `Codec default: ${defaults.progressive ? "progressive" : "sequential"}.` : scan === "restart" ? "Codec-default restart interval; markers permit parallel decoding where supported. Browser encoding is single-threaded." : scan === "sequential" ? "Sequential scans without restart markers." : "Progressive scans use optimized Huffman tables.";
+  $<HTMLElement>("#scan-resolved").textContent = desc;
+  for (const [name, select] of [["color-choice", colorPathSel], ["sub-choice", subSel], ["xyb-sub-choice", xybSubSel]] as const) {
+    const radio = document.querySelector<HTMLInputElement>(`input[name="${name}"][value="${select.value}"]`);
+    if (radio) radio.checked = true;
+  }
+}
+
+function wireChoices(): void {
+  for (const [name, select] of [["color-choice", colorPathSel], ["sub-choice", subSel], ["xyb-sub-choice", xybSubSel]] as const) {
+    document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`).forEach((radio) => radio.addEventListener("change", () => {
+      select.value = radio.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }));
+  }
+  document.querySelectorAll<HTMLInputElement>('input[name="scan"]').forEach((radio) => radio.addEventListener("change", () => {
+    progressiveIn.checked = scanChoice() === "auto" ? defaults.progressive : scanChoice() === "progressive";
+    syncHuffmanChoice(); syncResolvedChoices(); scheduleAutoEncode();
+  }));
+  progressiveIn.checked = defaults.progressive;
+  optimizeHuffmanIn.checked = defaults.optimizeHuffman;
+  sequentialHuffmanPreference = defaults.optimizeHuffman;
+  aqIn.checked = defaults.aqEnabled;
+  deringingIn.checked = defaults.deringing;
+  syncResolvedChoices();
+}
+
 let sequentialHuffmanPreference = optimizeHuffmanIn.checked;
 function syncHuffmanChoice(): void {
   const progressive = progressiveIn.checked;
@@ -1692,6 +1651,8 @@ function syncHuffmanChoice(): void {
 }
 
 function wireControls(): void {
+  $<HTMLButtonElement>("#rd-regenerate").addEventListener("click", regenerateCurve);
+  metricSelect.addEventListener("change", () => { regenerateCurve(); if (metric() === "butteraugli") void refreshCurrentButter(); });
   optimizeHuffmanIn.addEventListener("change", () => {
     if (!progressiveIn.checked) sequentialHuffmanPreference = optimizeHuffmanIn.checked;
   });
@@ -1703,7 +1664,7 @@ function wireControls(): void {
     scheduleAutoEncode();
   });
   colorPathSel.addEventListener("change", () => {
-    if (colorPathSel.value === "xyb") {
+    if (resolvedColor() === "xyb") {
       subLabel.hidden = true;
       xybLabel.hidden = false;
     } else {
@@ -1711,6 +1672,7 @@ function wireControls(): void {
       xybLabel.hidden = true;
     }
     applyIgnoredAnnotations();
+    syncResolvedChoices();
     invalidateBaseSnapshotIfStale();
     scheduleAutoEncode();
   });
@@ -1722,6 +1684,7 @@ function wireControls(): void {
     el.addEventListener("change", () => {
       invalidateBaseSnapshotIfStale();
       applyIgnoredAnnotations();
+      syncResolvedChoices();
     });
   }
   // Encoder option inputs that should trigger auto-encode.
@@ -1774,7 +1737,6 @@ function wireControls(): void {
   resetBtn.addEventListener("click", () => {
     currentImage = synthetic();
     eqStates.clear();
-    paretoCache.delete(currentImage.key);
     paretoQueues.delete(currentImage.key);
     imagePickSel.value = "__synthetic__";
     imageInfoEl.textContent = "64 × 64 (synthetic)";
@@ -1790,7 +1752,6 @@ function wireControls(): void {
       status.textContent = `Failed to load file: ${(e as Error).message}`;
       return;
     }
-    paretoCache.delete(currentImage.key);
     paretoQueues.delete(currentImage.key);
     imagePickSel.value = "__synthetic__";
     void runEncode();
@@ -1813,7 +1774,6 @@ function wireControls(): void {
         return;
       }
     }
-    paretoCache.delete(currentImage.key);
     paretoQueues.delete(currentImage.key);
     void runEncode();
   });
@@ -2192,6 +2152,7 @@ function wireZoomInspector(): void {
     // since worker-side scoring is deferred until after we decode the
     // JPEG on this thread anyway).
     await init();
+    defaults = codecDefaults() as CodecDefaults;
     document.body.dataset.bootstrap = "main-wasm-init-ok";
   } catch (err) {
     document.body.dataset.bootstrap = "main-wasm-init-failed";
@@ -2205,6 +2166,7 @@ function wireZoomInspector(): void {
   loadImageManifest();
   imageInfoEl.textContent = "64 × 64 (synthetic)";
   try {
+    wireChoices();
     wireControls();
     wireControlsPanel();
     wireZoomInspector();
@@ -2227,6 +2189,7 @@ declare global {
       setActiveTab: (name: string) => void;
       getEqStates: () => Map<number, ComponentEqState>;
       getCurrentOptions: () => EncodeOptions;
+      getCurve: () => ParetoQueue | null;
     };
   }
 }
@@ -2237,4 +2200,5 @@ window.__zenjpegDiagnostics = {
   setActiveTab,
   getEqStates: () => eqStates,
   getCurrentOptions: () => currentOptions(),
+  getCurve: () => paretoQueues.get(currentImage.key) ?? null,
 };

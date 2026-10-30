@@ -1,22 +1,30 @@
 # Encoder diagnostics viewer
 
-Explore an encode with a source/encoded/difference triptych, per-block AQ
-strengths, and per-component quantization tables. The frequency sliders update
-the utilization estimate locally; when auto-encode is enabled, they also
-schedule a new encode. A reference quality sweep and two perceptual scores are
-shown for comparison. Open **Edit settings** to adjust options while viewing the images. The first
-panel selects Standard, fixed-lambda Trellis, or AQ-coupled Hybrid, and exposes
-quality, color path, and its sampling choices. Mode-specific settings appear
-only for the chosen mode. AQ is a separate switch; with AQ off, Hybrid receives
-zero block AQ strengths. The viewer starts at quality 85, YCbCr 4:4:4, Standard
-mode with AQ and progressive scans; it uses encoder-generated tables until
-they are edited. These are the viewer’s explicit controls, not the encoder’s
-complete optimization preset or automatic-optimization interface. Progressive
-scans always use optimized Huffman tables; under sequential scans, the viewer
-lets you choose between optimized and fixed tables. In **Quant
-tables**, choose a component and click a cell to edit it in a popover. Use the
-arrow keys to move between settings tabs and Escape to close a popover. The zoom
-inspector opens by clicking an image or pressing Enter when it is focused.
+Explore an encode with source/encoded/difference views, AQ strengths, and
+per-component quantization tables. **Edit settings** opens the encoder controls;
+**Quant tables & zero bias** opens the per-component editor. Select a cell to
+edit it in a popover. The frequency sliders update the utilization estimate
+and, with auto-encode enabled, schedule a new encode.
+
+Auto color, sampling and scan choices use the codec's defaults; they do not
+inspect the image. XYB uses its own default B sampling. The sequential + RST
+choice uses the codec's default restart spacing, which can yield no markers for
+a small image. Restart markers may permit parallel decoding; the browser encoder
+is single-threaded. Progressive scans require optimized Huffman tables.
+Standard, fixed-lambda Trellis and AQ-coupled Hybrid are explicit viewer modes;
+the encoder's full preset and automatic-optimization interface is not exposed.
+
+**Regenerate from current settings** freezes the selected configuration and
+sweeps quality 1–100. Edited quant-table multipliers and zero-bias adjustments
+are reapplied to freshly generated tables at each quality. Choose SSIMULACRA 2,
+zensim, or Butteraugli max-norm distance (lower is better; images must be at
+least 8×8). Scores assume sRGB pixels. The white curve is a single-configuration
+sweep, not a multi-configuration Pareto frontier; the blue point is the latest
+encode. The displayed delta uses the sweep's sampled envelope and is omitted
+outside its measured byte range.
+
+Use arrow keys to move between settings tabs and Escape to close a popover.
+The zoom inspector opens by clicking an image or pressing Enter when it is focused.
 
 The viewer uses `__diagnostics`, an unstable feature intended for small images.
 It keeps every captured block in memory. Pre-quantization coefficients are in

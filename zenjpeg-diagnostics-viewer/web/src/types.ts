@@ -31,6 +31,7 @@ export interface Diagnostics {
   colorPath: string;
   /** Per-component (h_samp, v_samp). */
   samplingFactors: Array<[number, number]>;
+  restartIntervalMcus: number;
   components: ComponentDiagnostics[];
 }
 
@@ -60,9 +61,9 @@ export interface EncodeOptions {
   // ── Always-applied basics ─────────────────────────────────────────────
   /** jpegli quality, 0-100. */
   quality?: number;
-  colorPath?: "ycbcr" | "xyb";
-  subsampling?: "none" | "halfHorizontal" | "quarter" | "halfVertical";
-  xybSubsampling?: "full" | "bQuarter";
+  colorPath?: "auto" | "ycbcr" | "xyb";
+  subsampling?: "auto" | "none" | "halfHorizontal" | "quarter" | "halfVertical";
+  xybSubsampling?: "auto" | "full" | "bQuarter";
   aqEnabled?: boolean;
   deringing?: boolean;
   optimizeHuffman?: boolean;

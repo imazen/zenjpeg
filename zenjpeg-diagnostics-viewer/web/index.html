@@ -114,10 +114,14 @@
         <span class="value" id="m-zensim">—</span>
         <span class="unit">100 = identical</span>
       </div>
+      <div class="metric-readout" data-testid="metric-butteraugli">
+        <span class="label">Butteraugli</span><span class="value" id="m-butter">—</span>
+        <span class="unit">distance · lower is better</span>
+      </div>
       <div class="metric-readout" data-testid="metric-pareto">
         <span class="label">Δ vs reference</span>
         <span class="value" id="m-pareto">—</span>
-        <span class="unit">+ above ref curve · − below</span>
+        <span class="unit" id="m-pareto-unit">+ better than reference · − worse</span>
       </div>
       <div class="metric-readout" data-testid="metric-time">
         <span class="label">Encode</span>
@@ -242,26 +246,14 @@
         </p>
       </div>
       <div class="bg-panel border border-line rounded p-3">
-        <h2 class="text-sm m-0 mb-2 text-accent font-semibold">
-          Reference RD curve
-        </h2>
-        <canvas
-          id="rd-canvas"
-          data-testid="rd-canvas"
-          width="640"
-          height="280"
-          class="bg-black rounded w-full h-auto"
-        ></canvas>
-        <p class="m-0 mt-2 text-xs text-muted">
-          White polyline = reference encode (default tables, AQ on,
-          4:2:0, q=1..100). Blue dot = current encode.
-          <strong>This is a single-config q-sweep, not a true
-          rate-distortion pareto envelope</strong> — a real pareto
-          would also vary subsampling, mode, and other knobs to find
-          the upper-left frontier. The Δ vs reference number says how
-          far the current encode lands above (positive) or below
-          (negative) the reference at its byte count.
-        </p>
+        <div class="rd-controls">
+          <h2 class="text-sm m-0 text-accent font-semibold">Quality–size curve</h2>
+          <label>Metric <select id="rd-metric" data-testid="rd-metric"><option value="ssim2">SSIMULACRA 2</option><option value="zensim">zensim</option><option value="butteraugli">Butteraugli (max distance)</option></select></label>
+          <button id="rd-regenerate" type="button" data-testid="rd-regenerate">Regenerate from current settings</button>
+        </div>
+        <canvas id="rd-canvas" data-testid="rd-canvas" width="640" height="280" class="bg-black rounded w-full h-auto"></canvas>
+        <p id="rd-legend" class="m-0 mt-2 text-xs text-muted" data-testid="rd-legend">White: quality sweep · Blue: current encode. The sweep freezes the selected settings and varies quality 1–100; this is not a multi-configuration Pareto frontier. Δ uses the best sampled score at a given size and is unavailable outside the sampled range.</p>
+        <p id="rd-progress" class="m-0 mt-2 text-xs text-muted" data-testid="rd-progress"></p>
       </div>
     </section>
 
@@ -280,146 +272,13 @@
           popovertarget="controls-popover" popovertargetaction="hide"
           aria-label="Close settings" data-testid="controls-close">×</button>
       </div>
-    <nav
-      class="tabs flex gap-1 px-6 bg-bg border-b border-line overflow-x-auto"
-      role="tablist"
-      aria-label="Encoder controls"
-    >
-      <button
-        role="tab"
-        type="button"
-        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="aq"
-        aria-selected="true"
-        data-testid="tab-aq"
-      >
-        Mode &amp; image
-      </button>
-      <button
-        role="tab"
-        type="button"
-        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="quality"
-        aria-selected="false"
-        data-testid="tab-quality"
-      >
-        Image options
-      </button>
-      <button
-        role="tab"
-        type="button"
-        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="trellis"
-        hidden
-        aria-selected="false"
-        data-testid="tab-trellis"
-      >
-        Trellis
-      </button>
-      <button
-        role="tab"
-        type="button"
-        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="hybrid"
-        hidden
-        aria-selected="false"
-        data-testid="tab-hybrid"
-      >
-        Hybrid
-      </button>
-      <button
-        role="tab"
-        type="button"
-        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="quant"
-        aria-selected="false"
-        data-testid="tab-quant"
-      >
-        Quant tables
-      </button>
-      <button
-        role="tab"
-        type="button"
-        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
-        data-tab="misc"
-        aria-selected="false"
-        data-testid="tab-misc"
-      >
-        Misc
-      </button>
+    <nav class="tabs flex gap-1 px-6 bg-bg border-b border-line" role="tablist" aria-label="Encoder controls">
+      <button role="tab" type="button" class="tab text-xs font-medium px-4 py-2.5" data-tab="aq" aria-selected="true" data-testid="tab-aq">Encoder settings</button>
+      <button role="tab" type="button" class="tab text-xs font-medium px-4 py-2.5" data-tab="quant" aria-selected="false" data-testid="tab-quant">Quant tables &amp; zero bias</button>
     </nav>
 
     <section class="bg-panel border-b border-line" id="tab-panels">
-      <article
-        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
-        data-tab="quality"
-        aria-hidden="true"
-        data-testid="panel-quality"
-        hidden
-      >
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">
-            Sharp YUV
-          </span>
-          <span class="flex items-center gap-2">
-            <input type="checkbox" id="sharp-yuv" data-testid="sharp-yuv-checkbox" />
-            <span class="text-text">Gamma-aware downsample</span>
-          </span>
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Pre-blur σ (px)</span>
-          <input
-            type="number"
-            id="pre-blur"
-            min="0"
-            max="3"
-            step="0.05"
-            value="0"
-            data-testid="pre-blur"
-            class="w-24"
-          />
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Chroma distance scale</span>
-          <input
-            type="number"
-            id="chroma-dist-scale"
-            min="0.1"
-            max="5"
-            step="0.05"
-            value="1"
-            data-testid="chroma-dist-scale"
-            class="w-24"
-          />
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Progressive scan</span>
-          <span class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="progressive"
-              data-testid="progressive-checkbox"
-              checked
-            />
-            <span class="text-text">Progressive (uncheck for sequential)</span>
-          </span>
-        </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Optimize Huffman tables</span>
-          <span class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="optimize-huffman"
-              checked
-              disabled
-              aria-describedby="huffman-note"
-              data-testid="optimize-huffman-checkbox"
-            />
-            <span class="text-text">Enable</span>
-          </span>
-          <span class="huffman-note" id="huffman-note" data-testid="huffman-note">Progressive scans always use optimized Huffman tables. Switch to sequential scans to choose.</span>
-        </label>
-      </article>
+
 
       <article
         class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
@@ -452,38 +311,44 @@
             <output id="quality-out" data-testid="quality-out" class="w-8 text-right text-text">85</output>
           </span>
         </label>
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Color path</span>
-          <select id="color-path" data-testid="color-path-select">
-            <option value="ycbcr" selected>YCbCr</option>
-            <option value="xyb">XYB</option>
-          </select>
-        </label>
-        <label
-          class="ctrl flex flex-col gap-1 text-xs text-muted"
-          data-controls-for="ycbcr"
-          id="subsampling-label"
-        >
-          <span class="uppercase tracking-wider text-[10px]">YCbCr chroma subsampling</span>
-          <select id="subsampling" data-testid="subsampling-select">
-            <option value="none" selected>4:4:4 (none)</option>
-            <option value="halfHorizontal">4:2:2 (half horizontal)</option>
-            <option value="quarter">4:2:0 (quarter)</option>
-            <option value="halfVertical">4:4:0 (half vertical)</option>
-          </select>
-        </label>
-        <label
-          class="ctrl flex flex-col gap-1 text-xs text-muted"
-          data-controls-for="xyb"
-          id="xyb-subsampling-label"
-          hidden
-        >
-          <span class="uppercase tracking-wider text-[10px]">XYB B chroma</span>
-          <select id="xyb-subsampling" data-testid="xyb-subsampling-select">
-            <option value="full" selected>Full</option>
-            <option value="bQuarter">B Quarter</option>
-          </select>
-        </label>
+        <fieldset class="mode-picker" data-testid="color-options"><legend>Color path</legend>
+          <div class="segmented-control compact-wrap">
+            <label><input type="radio" name="color-choice" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="color-choice" value="ycbcr" /><span>YCbCr</span></label>
+            <label><input type="radio" name="color-choice" value="xyb" /><span>XYB</span></label>
+          </div><p class="choice-description" id="color-resolved" data-testid="color-resolved"></p>
+          <select id="color-path" data-testid="color-path-select" hidden><option value="auto" selected>Auto</option><option value="ycbcr">YCbCr</option><option value="xyb">XYB</option></select>
+        </fieldset>
+        <fieldset class="mode-picker" id="subsampling-label" data-testid="subsampling-options"><legend>YCbCr chroma subsampling</legend>
+          <div class="segmented-control compact-wrap">
+            <label><input type="radio" name="sub-choice" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="sub-choice" value="none" /><span>4:4:4</span></label>
+            <label><input type="radio" name="sub-choice" value="halfHorizontal" /><span>4:2:2</span></label>
+            <label><input type="radio" name="sub-choice" value="quarter" /><span>4:2:0</span></label>
+            <label><input type="radio" name="sub-choice" value="halfVertical" /><span>4:4:0</span></label>
+          </div><p class="choice-description" id="sampling-resolved" data-testid="sampling-resolved"></p>
+          <select id="subsampling" data-testid="subsampling-select" hidden><option value="auto" selected>Auto</option><option value="none">4:4:4</option><option value="halfHorizontal">4:2:2</option><option value="quarter">4:2:0</option><option value="halfVertical">4:4:0</option></select>
+        </fieldset>
+        <fieldset class="mode-picker" id="xyb-subsampling-label" data-testid="xyb-subsampling-options" hidden><legend>XYB B sampling</legend>
+          <div class="segmented-control compact-wrap">
+            <label><input type="radio" name="xyb-sub-choice" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="xyb-sub-choice" value="full" /><span>Full</span></label>
+            <label><input type="radio" name="xyb-sub-choice" value="bQuarter" /><span>B quarter</span></label>
+          </div><p class="choice-description" id="xyb-sampling-resolved" data-testid="xyb-sampling-resolved"></p>
+          <select id="xyb-subsampling" data-testid="xyb-subsampling-select" hidden><option value="auto" selected>Auto</option><option value="full">Full</option><option value="bQuarter">B quarter</option></select>
+        </fieldset>
+        <fieldset class="mode-picker" data-testid="scan-group">
+          <legend>JPEG scans</legend>
+          <div class="segmented-control compact-wrap">
+            <label><input type="radio" name="scan" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="scan" value="progressive" /><span>Progressive</span></label>
+            <label><input type="radio" name="scan" value="sequential" /><span>Sequential</span></label>
+            <label><input type="radio" name="scan" value="restart" aria-label="Sequential with restart markers" /><span>Seq + RST</span></label>
+          </div>
+          <p class="choice-description" id="scan-resolved" data-testid="scan-resolved"></p>
+        </fieldset>
+        <input type="checkbox" id="progressive" data-testid="progressive-checkbox" hidden checked />
+        <input type="number" id="restart-mcu-rows" value="0" hidden />
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">Adaptive quantization</span>
           <span class="flex items-center gap-2">
@@ -498,16 +363,7 @@
             <span class="text-text">Enable</span>
           </span>
         </label>
-        <p class="settings-defaults" data-testid="settings-defaults">Viewer defaults: Standard with AQ, YCbCr 4:4:4, quality 85 and progressive scans. Tables are generated until edited. Encoder presets and automatic optimization are not exposed here.</p>
-      </article>
-
-      <article
-        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
-        data-tab="trellis"
-        aria-hidden="true"
-        data-testid="panel-trellis"
-        hidden
-      >
+        <details class="settings-details" id="trellis-settings" hidden><summary>Trellis tuning</summary><div class="settings-detail-grid">
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">DC trellis</span>
           <span class="flex items-center gap-2">
@@ -562,15 +418,8 @@
             class="w-24"
           />
         </label>
-      </article>
-
-      <article
-        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
-        data-tab="hybrid"
-        aria-hidden="true"
-        data-testid="panel-hybrid"
-        hidden
-      >
+        </div></details>
+        <details class="settings-details" id="hybrid-settings" hidden><summary>Hybrid tuning</summary><div class="settings-detail-grid">
         <p class="choice-description basis-full" id="hybrid-aq-note" hidden>AQ is off, so block AQ strengths are zero and coupling has no spatial variation.</p>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">AQ → λ scale</span>
@@ -644,7 +493,65 @@
             class="w-24"
           />
         </label>
+        </div></details>
+        <details class="settings-details"><summary>More encoder settings</summary><div class="settings-detail-grid">
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">
+            Sharp YUV
+          </span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="sharp-yuv" data-testid="sharp-yuv-checkbox" />
+            <span class="text-text">Gamma-aware downsample</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Pre-blur σ (px)</span>
+          <input
+            type="number"
+            id="pre-blur"
+            min="0"
+            max="3"
+            step="0.05"
+            value="0"
+            data-testid="pre-blur"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Chroma distance scale</span>
+          <input
+            type="number"
+            id="chroma-dist-scale"
+            min="0.1"
+            max="5"
+            step="0.05"
+            value="1"
+            data-testid="chroma-dist-scale"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Optimize Huffman tables</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="optimize-huffman"
+              checked
+              disabled
+              aria-describedby="huffman-note"
+              data-testid="optimize-huffman-checkbox"
+            />
+            <span class="text-text">Enable</span>
+          </span>
+          <span class="huffman-note" id="huffman-note" data-testid="huffman-note">Progressive scans always use optimized Huffman tables. Switch to sequential scans to choose.</span>
+        </label>
+        </div></details>
+        <p class="settings-defaults">Auto uses codec defaults; it does not analyze the image. The codec also automatically considers shared Huffman tables for eligible small images. Presets and automatic optimization are not exposed here.</p>
       </article>
+
+
+
+
 
       <article
         class="tab-panel flex flex-col gap-3 px-6 py-4"
@@ -962,28 +869,7 @@
         </details>
       </article>
 
-      <article
-        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
-        data-tab="misc"
-        aria-hidden="true"
-        data-testid="panel-misc"
-        hidden
-      >
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Restart MCU rows</span>
-          <input
-            type="number"
-            id="restart-mcu-rows"
-            min="0"
-            max="65535"
-            step="1"
-            value="0"
-            data-testid="restart-mcu-rows"
-            class="w-24"
-          />
-          <span class="text-[10px] text-muted">0 disables restart markers</span>
-        </label>
-      </article>
+
     </section>
       <div id="quant-cell-editor" class="cell-editor" popover="auto"
         role="dialog" aria-labelledby="cell-editor-title" data-testid="cell-editor">

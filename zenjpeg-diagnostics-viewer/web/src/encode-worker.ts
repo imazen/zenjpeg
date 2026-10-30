@@ -25,6 +25,7 @@
 // don't match — see main.ts for the discard logic.
 
 import init, {
+  computeButteraugli,
   computeSsimulacra2,
   computeZensim,
   encodeWithDiagnostics,
@@ -105,8 +106,18 @@ async function decodeJpegInWorker(
 }
 
 self.addEventListener("message", async (ev: MessageEvent) => {
-  const data = ev.data as EncodeReq;
-  if (!data || data.kind !== "encode") return;
+  const data = ev.data as EncodeReq | { kind: "score"; reqId: number; metric: "ssim2" | "zensim" | "butteraugli"; source: Uint8Array; decoded: Uint8Array; width: number; height: number };
+  if (!data) return;
+  if (data.kind === "score") {
+    try {
+      await ensureInit();
+      const fn = data.metric === "butteraugli" ? computeButteraugli : data.metric === "zensim" ? computeZensim : computeSsimulacra2;
+      const score = fn(data.source, data.decoded, data.width, data.height);
+      (self as unknown as Worker).postMessage({ kind: "score-result", reqId: data.reqId, score });
+    } catch (e) { postError(data.reqId, (e as Error)?.message ?? String(e)); }
+    return;
+  }
+  if (data.kind !== "encode") return;
   const { reqId, pixels, width, height, options, sourceRgb, scoreMetrics } = data;
   const t0 = performance.now();
   try {

@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 zenjpeg = { path = "../../zenjpeg", default-features = false, features = ["__diagnostics"] }
+butteraugli = { version = "0.9.3", default-features = false }
 fast-ssim2 = { version = "0.8.0", default-features = false }
 zensim = { version = "0.2.7", default-features = false }
 wasm-bindgen = "0.2"

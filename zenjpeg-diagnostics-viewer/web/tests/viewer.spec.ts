@@ -112,7 +112,7 @@ test("dragging an h_eq slider re-renders the utilization heatmap", async ({
 test("changing color path to XYB re-encodes and updates components", async ({
   page,
 }) => {
-  await page.locator('[data-testid="color-path-select"]').selectOption("xyb");
+  await page.locator('label:has(input[name="color-choice"][value="xyb"])').click();
   // Subsampling label hides; XYB B label shows.
   await expect(page.locator("#subsampling-label")).toBeHidden();
   await expect(page.locator("#xyb-subsampling-label")).toBeVisible();
@@ -123,7 +123,7 @@ test("changing color path to XYB re-encodes and updates components", async ({
       return d?.colorPath;
     });
   }, { timeout: 60_000 }).toBe("XYB");
-  await page.locator('[data-testid="xyb-subsampling-select"]').selectOption("bQuarter");
+  await page.locator('label:has(input[name="xyb-sub-choice"][value="bQuarter"])').click();
   await page.locator('[data-testid="encode-button"]').click();
   await expect.poll(async () => page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.samplingFactors)).toEqual([[2, 2], [2, 2], [1, 1]]);
 });
@@ -131,7 +131,7 @@ test("changing color path to XYB re-encodes and updates components", async ({
 test("subsampling 4:2:0 produces half-resolution chroma block grids", async ({
   page,
 }) => {
-  await page.locator('[data-testid="subsampling-select"]').selectOption("quarter");
+  await page.locator('label:has(input[name="sub-choice"][value="quarter"])').click();
   await page.locator('[data-testid="encode-button"]').click();
   await expect.poll(async () => {
     return await page.evaluate(() => {
@@ -280,8 +280,6 @@ test("settings support keyboard navigation and escape", async ({ page }) => {
   const modeTab = page.locator('[data-testid="tab-aq"]');
   await modeTab.focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.locator('[data-testid="tab-quality"]')).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("ArrowRight");
   await expect(page.locator('[data-testid="tab-quant"]')).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-testid="controls-popover"]')).toBeHidden();
@@ -291,7 +289,7 @@ test("settings support keyboard navigation and escape", async ({ page }) => {
 });
 
 test("Huffman controls show the effective strategy and preserve sequential preference", async ({ page }) => {
-  await page.locator('[data-testid="tab-quality"]').click();
+  await page.locator('.settings-details summary').filter({ hasText: "More encoder settings" }).click();
   const huffman = page.locator('[data-testid="optimize-huffman-checkbox"]');
   const progressive = page.locator('[data-testid="progressive-checkbox"]');
   const note = page.locator('[data-testid="huffman-note"]');
@@ -300,7 +298,7 @@ test("Huffman controls show the effective strategy and preserve sequential prefe
   await expect(huffman).toBeDisabled();
   await expect(note).toContainText("Progressive scans always use optimized");
   expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().optimizeHuffman)).toBe(true);
-  await progressive.uncheck();
+  await page.locator('label:has(input[name="scan"][value="sequential"])').click();
   await expect(huffman).toBeEnabled();
   await huffman.uncheck();
   const encode = async () => {
@@ -318,11 +316,11 @@ test("Huffman controls show the effective strategy and preserve sequential prefe
   expect(optimized.size).not.toBe(fixed.size);
   expect(optimized.pixels).toEqual(fixed.pixels);
   await huffman.uncheck();
-  await progressive.check();
+  await page.locator('label:has(input[name="scan"][value="progressive"])').click();
   await expect(huffman).toBeChecked();
   await expect(huffman).toBeDisabled();
   expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().optimizeHuffman)).toBe(true);
-  await progressive.uncheck();
+  await page.locator('label:has(input[name="scan"][value="sequential"])').click();
   await expect(huffman).toBeEnabled();
   await expect(huffman).not.toBeChecked();
 });
@@ -331,17 +329,18 @@ test("mode and color decisions reveal the settings that apply", async ({ page })
   await expect(page.locator('[data-testid="tab-aq"]')).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('[data-testid="mode-baseline"]')).toBeChecked();
   await expect(page.locator('[data-testid="aq-checkbox"]')).toBeChecked();
-  await expect(page.locator('[data-testid="subsampling-select"]')).toHaveValue("none");
-  await expect(page.locator('[data-testid="tab-trellis"]')).toBeHidden();
-  await expect(page.locator('[data-testid="tab-hybrid"]')).toBeHidden();
-  await page.locator('[data-testid="subsampling-select"]').selectOption("quarter");
-  await page.locator('[data-testid="tab-quality"]').click();
+  await expect(page.locator('[data-testid="color-resolved"]')).toContainText("YCbCr");
+  await expect(page.locator('[data-testid="sampling-resolved"]')).toContainText("4:4:4");
+  await expect(page.locator('[data-testid="scan-resolved"]')).toContainText("progressive");
+  await expect(page.locator('#trellis-settings')).toBeHidden();
+  await expect(page.locator('#hybrid-settings')).toBeHidden();
+  await page.locator('label:has(input[name="sub-choice"][value="quarter"])').click();
+  await page.locator('.settings-details summary').filter({hasText:"More encoder settings"}).click();
   await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeVisible();
-  await page.locator('[data-testid="tab-aq"]').click();
   await page.locator('label:has([data-testid="mode-trellis"])').click();
-  await expect(page.locator('[data-testid="tab-trellis"]')).toBeVisible();
-  await expect(page.locator('[data-testid="tab-hybrid"]')).toBeHidden();
-  await page.locator('[data-testid="tab-trellis"]').click();
+  await expect(page.locator('#trellis-settings')).toBeVisible();
+  await expect(page.locator('#hybrid-settings')).toBeHidden();
+  await page.locator('#trellis-settings summary').click();
   await expect(page.locator('[data-testid="trellis-delta-dc"]')).toBeHidden();
   await page.locator('[data-testid="trellis-dc-checkbox"]').check();
   await expect(page.locator('[data-testid="trellis-delta-dc"]')).toBeVisible();
@@ -349,36 +348,104 @@ test("mode and color decisions reveal the settings that apply", async ({ page })
   await page.locator('[data-testid="encode-button"]').click();
   await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.samplingFactors)).toEqual([[2, 2], [1, 1], [1, 1]]);
   expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().trellisLambdaLogScale1)).toBe(0);
-  await page.locator('[data-testid="tab-aq"]').click();
   await page.locator('label:has([data-testid="mode-hybrid"])').click();
-  await expect(page.locator('[data-testid="tab-trellis"]')).toBeHidden();
-  await expect(page.locator('[data-testid="tab-hybrid"]')).toBeVisible();
+  await expect(page.locator('#trellis-settings')).toBeHidden();
+  await expect(page.locator('#hybrid-settings')).toBeVisible();
   await page.locator('[data-testid="aq-checkbox"]').uncheck();
-  await page.locator('[data-testid="tab-hybrid"]').click();
+  await page.locator('#hybrid-settings summary').click();
   await expect(page.locator('#hybrid-aq-note')).toBeVisible();
   await page.locator('[data-testid="hybrid-aq-exp"]').fill("0");
   expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().hybridAqExponent)).toBe(0);
   await page.locator('[data-testid="encode-button"]').click();
   await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getLastEncode()?.mode)).toBe("hybrid");
-  await page.locator('[data-testid="tab-aq"]').click();
   await page.locator('label:has([data-testid="mode-trellis"])').click();
-  await page.locator('[data-testid="tab-trellis"]').click();
   await expect(page.locator('[data-testid="trellis-lambda1"]')).toHaveValue("0");
 });
 
 test("color choices expose the corresponding sampling controls", async ({ page }) => {
-  await page.locator('[data-testid="subsampling-select"]').selectOption("halfHorizontal");
-  await page.locator('[data-testid="color-path-select"]').selectOption("xyb");
-  await expect(page.locator('[data-testid="subsampling-select"]')).toBeHidden();
-  await expect(page.locator('[data-testid="xyb-subsampling-select"]')).toBeVisible();
-  await page.locator('[data-testid="tab-quality"]').click();
+  await page.locator('label:has(input[name="sub-choice"][value="halfHorizontal"])').click();
+  await page.locator('label:has(input[name="color-choice"][value="xyb"])').click();
+  await expect(page.locator('[data-testid="subsampling-options"]')).toBeHidden();
+  await expect(page.locator('[data-testid="xyb-subsampling-options"]')).toBeVisible();
+  await expect(page.locator('[data-testid="xyb-sampling-resolved"]')).toContainText("B quarter");
+  await page.locator('.settings-details summary').filter({hasText:"More encoder settings"}).click();
   await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeHidden();
+  await page.locator('label:has(input[name="color-choice"][value="ycbcr"])').click();
+  await expect(page.locator('input[name="sub-choice"][value="halfHorizontal"]')).toBeChecked();
+  await page.locator('label:has(input[name="sub-choice"][value="none"])').click();
+  await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeHidden();
+});
+
+test("auto defaults and restart choices resolve to codec output", async ({ page }) => {
+  await expect(page.locator('input[name="color-choice"][value="auto"]')).toBeChecked();
+  await expect(page.locator('input[name="sub-choice"][value="auto"]')).toBeChecked();
+  await expect(page.locator('input[name="scan"][value="auto"]')).toBeChecked();
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()?.samplingFactors)).toEqual([[1, 1], [1, 1], [1, 1]]);
+  await page.locator('label:has(input[name="scan"][value="restart"])').click();
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().restartMcuRows)).toBeUndefined();
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().progressive)).toBe(false);
+  await page.evaluate(() => {document.body.dataset["encodeState"] = "waiting"});
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  const interval = await page.evaluate(() => window.__zenjpegDiagnostics.getCurrent()!.restartIntervalMcus);
+  await expect(page.locator('[data-testid="scan-resolved"]')).toContainText(`restart interval ${interval} MCUs`);
+  await page.locator('label:has(input[name="scan"][value="sequential"])').click();
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().restartMcuRows)).toBe(0);
+});
+
+test("a regenerated curve freezes custom settings and varies its quality-derived tables", async ({ page }) => {
+  await page.locator('label:has(input[name="sub-choice"][value="quarter"])').click();
+  await page.locator('[data-testid="quality-slider"]').evaluate(el => {
+    const input = el as HTMLInputElement; input.value = "3"; input.dispatchEvent(new Event("input", {bubbles:true}));
+  });
+  await page.evaluate(() => {document.body.dataset["encodeState"] = "waiting"});
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await page.locator('[data-testid="tab-quant"]').click();
+  await page.locator('[data-testid="comp-0-h-eq-0"]').evaluate(el => {
+    const input = el as HTMLInputElement; input.value = "2"; input.dispatchEvent(new Event("input", {bubbles:true}));
+  });
+  await page.locator('.quant-zero-bias summary').click();
+  await page.locator('#zb-dc-0').fill("0.3");
+  await page.evaluate(() => {document.body.dataset["encodeState"] = "waiting"});
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  const currentSize = await page.evaluate(() => window.__zenjpegDiagnostics.getLastEncode()!.bytes);
+  await page.locator('[data-testid="controls-close"]').click();
+  await page.locator('[data-testid="rd-regenerate"]').click();
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurve()?.points.some(p => p.q === 3)), {timeout:30000}).toBe(true);
+  const curve = await page.evaluate(() => window.__zenjpegDiagnostics.getCurve()!);
+  expect(curve.options.subsampling).toBe("quarter");
+  expect(curve.custom).toBe(true);
+  expect(curve.eq[0]!.hEq[0]).toBe(2);
+  expect(curve.bias.offsetDc[0]).toBeCloseTo(0.3);
+  expect(curve.points.find(p => p.q === 3)?.bytes).toBe(currentSize);
+  await expect(page.locator('[data-testid="rd-canvas"]')).toHaveAttribute("aria-label", /bytes.*SSIMULACRA 2/);
+  await page.locator('[data-testid="controls-toggle"]').click();
   await page.locator('[data-testid="tab-aq"]').click();
-  await page.locator('[data-testid="color-path-select"]').selectOption("ycbcr");
-  await expect(page.locator('[data-testid="subsampling-select"]')).toHaveValue("halfHorizontal");
-  await page.locator('[data-testid="subsampling-select"]').selectOption("none");
-  await page.locator('[data-testid="tab-quality"]').click();
-  await expect(page.locator('[data-testid="sharp-yuv-checkbox"]')).toBeHidden();
+  await page.locator('label:has(input[name="sub-choice"][value="none"])').click();
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurve()!.options.subsampling)).toBe("quarter");
+});
+
+test("Butteraugli is selectable and matches the curve at the same settings", async ({ page }) => {
+  await page.locator('[data-testid="quality-slider"]').evaluate(el => {
+    const input = el as HTMLInputElement; input.value = "3"; input.dispatchEvent(new Event("input", {bubbles:true}));
+  });
+  await page.evaluate(() => {document.body.dataset["encodeState"] = "waiting"});
+  await page.locator('[data-testid="encode-button"]').click();
+  await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+  await page.locator('[data-testid="controls-close"]').click();
+  await page.locator('[data-testid="rd-metric"]').selectOption("butteraugli");
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getCurve()?.points.some(p => p.q === 3)), {timeout:30000}).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__zenjpegDiagnostics.getLastEncode()?.butteraugli)).not.toBeNull();
+  const {curve, current} = await page.evaluate(() => ({curve: window.__zenjpegDiagnostics.getCurve()!, current: window.__zenjpegDiagnostics.getLastEncode()!}));
+  expect(curve.metric).toBe("butteraugli");
+  expect(curve.points[0]!.score).toBeGreaterThanOrEqual(0);
+  expect(curve.points.find(p => p.q === 3)?.bytes).toBe(current.bytes);
+  expect(curve.points.find(p => p.q === 3)!.score).toBeCloseTo(current.butteraugli!, 5);
+  await expect(page.locator('[data-testid="rd-canvas"]')).toHaveAttribute("aria-label", /Butteraugli distance/);
+  await expect(page.locator('[data-testid="rd-legend"]')).toContainText("White");
+  await expect(page.locator('#m-butter')).not.toHaveText("—");
 });
 
 test("an encode preserves the focused slider and an open cell editor", async ({ page }) => {

@@ -20,7 +20,7 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use zenjpeg::encoder::diagnostics as diag_src;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
+use zenjpeg::encoder::{ChromaSubsampling, ColorMode, EncoderConfig, PixelLayout, XybSubsampling};
 
 /// Per-block diagnostic record, JS-friendly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +61,7 @@ pub struct Diagnostics {
     pub height: u32,
     pub color_path: String,
     pub sampling_factors: Vec<(u8, u8)>,
+    pub restart_interval_mcus: u16,
     pub components: Vec<ComponentDiagnostics>,
 }
 
@@ -70,6 +71,7 @@ fn to_js_diagnostics(src: diag_src::EncodeDiagnostics) -> Diagnostics {
         height: src.height,
         color_path: src.color_path.into(),
         sampling_factors: src.sampling_factors,
+        restart_interval_mcus: 0,
         components: src
             .components
             .into_iter()
@@ -106,11 +108,11 @@ fn to_js_diagnostics(src: diag_src::EncodeDiagnostics) -> Diagnostics {
 ///   pre_blur, chroma_distance_scale, and any custom-table override.
 /// - `"trellis"`: standalone trellis with the explicit `trellis*`
 ///   sub-config. Plays nicely with AQ.
-/// - `"hybrid"`: AQ-aware hybrid trellis (auto_optimize), reads the
+/// - `"hybrid"`: AQ-coupled trellis, reads the
 ///   `hybrid*` sub-config. Always overrides standalone trellis.
 ///
-/// Knobs not relevant to the chosen mode are silently ignored — the
-/// JS side greys them out with a red "ignored: <reason>" note.
+/// Knobs not relevant to the chosen mode do not affect the encode; the
+/// viewer exposes only controls for the active mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncodeOptions {
@@ -149,12 +151,12 @@ pub struct EncodeOptions {
     #[serde(default)]
     pub pre_blur: f32,
     /// Multiplicative scale on chroma's perceptual distance budget.
-    /// 1.0 = default. >1 spends more bits on chroma; <1 less.
+    /// 1.0 = default. Larger values increase chroma distance.
     #[serde(default = "default_one")]
     pub chroma_distance_scale: f32,
-    /// Restart-marker cadence in MCU rows. 0 disables restart markers.
+    /// Restart-marker cadence in MCU rows. None uses the codec default; 0 disables.
     #[serde(default)]
-    pub restart_mcu_rows: u16,
+    pub restart_mcu_rows: Option<u16>,
 
     // ── Mode picker ─────────────────────────────────────────────────
     /// "baseline" | "trellis" | "hybrid".
@@ -249,7 +251,7 @@ impl Default for EncodeOptions {
             sharp_yuv: false,
             pre_blur: 0.0,
             chroma_distance_scale: 1.0,
-            restart_mcu_rows: 0,
+            restart_mcu_rows: None,
             mode: default_mode(),
             trellis_dc_enabled: false,
             trellis_lambda_log_scale1: default_trellis_lambda1(),
@@ -314,6 +316,57 @@ pub fn init() {
     console_error_panic_hook::set_once();
 }
 
+/// Defaults resolved from the encoder's own types and constructor.
+#[wasm_bindgen(js_name = codecDefaults)]
+pub fn codec_defaults() -> Result<JsValue, JsValue> {
+    let (color, sampling) = match ColorMode::default() {
+        ColorMode::YCbCr { subsampling } => (
+            "ycbcr",
+            match subsampling {
+                ChromaSubsampling::None => "none",
+                ChromaSubsampling::HalfHorizontal => "halfHorizontal",
+                ChromaSubsampling::Quarter => "quarter",
+                ChromaSubsampling::HalfVertical => "halfVertical",
+                _ => return Err(JsValue::from_str("unsupported default YCbCr sampling")),
+            },
+        ),
+        _ => return Err(JsValue::from_str("unsupported default color mode")),
+    };
+    let xyb_sampling = match XybSubsampling::default() {
+        XybSubsampling::Full => "full",
+        XybSubsampling::BQuarter => "bQuarter",
+        _ => return Err(JsValue::from_str("unsupported default XYB sampling")),
+    };
+    let config = EncoderConfig::ycbcr(
+        85,
+        match ColorMode::default() {
+            ColorMode::YCbCr { subsampling } => subsampling,
+            _ => return Err(JsValue::from_str("unsupported default color mode")),
+        },
+    );
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Defaults<'a> {
+        color_path: &'a str,
+        subsampling: &'a str,
+        xyb_subsampling: &'a str,
+        progressive: bool,
+        optimize_huffman: bool,
+        aq_enabled: bool,
+        deringing: bool,
+    }
+    serde_wasm_bindgen::to_value(&Defaults {
+        color_path: color,
+        subsampling: sampling,
+        xyb_subsampling: xyb_sampling,
+        progressive: config.is_progressive(),
+        optimize_huffman: config.is_optimize_huffman(),
+        aq_enabled: config.is_aq_enabled(),
+        deringing: config.resolve_plan(64, 64).deringing,
+    })
+    .map_err(|e| JsValue::from_str(&format!("serialize defaults: {e}")))
+}
+
 /// Encode an RGB or RGBA pixel buffer and return the resulting JPEG
 /// bytes plus a per-block diagnostics record.
 ///
@@ -350,9 +403,23 @@ pub fn encode_with_diagnostics(
         )));
     }
 
-    let config = match opts.color_path.as_str() {
+    let default_color = ColorMode::default();
+    let color_path = if opts.color_path == "auto" {
+        match default_color {
+            ColorMode::YCbCr { .. } => "ycbcr",
+            ColorMode::Xyb { .. } => "xyb",
+            _ => return Err(JsValue::from_str("unsupported codec default color mode")),
+        }
+    } else {
+        opts.color_path.as_str()
+    };
+    let config = match color_path {
         "ycbcr" => {
             let sub = match opts.subsampling.as_str() {
+                "auto" => match default_color {
+                    ColorMode::YCbCr { subsampling } => subsampling,
+                    _ => return Err(JsValue::from_str("codec has no default YCbCr subsampling")),
+                },
                 "none" | "s444" | "4:4:4" => ChromaSubsampling::None,
                 "halfHorizontal" | "s422" | "4:2:2" => ChromaSubsampling::HalfHorizontal,
                 "quarter" | "s420" | "4:2:0" => ChromaSubsampling::Quarter,
@@ -365,6 +432,7 @@ pub fn encode_with_diagnostics(
         }
         "xyb" => {
             let xyb_sub = match opts.xyb_subsampling.as_str() {
+                "auto" => XybSubsampling::default(),
                 "full" => XybSubsampling::Full,
                 "bQuarter" | "b_quarter" => XybSubsampling::BQuarter,
                 other => {
@@ -402,8 +470,10 @@ pub fn encode_with_diagnostics(
         .pre_blur(opts.pre_blur)
         .quant_table_config(QuantTableConfig::jpegli_chroma_scale(
             opts.chroma_distance_scale,
-        ))
-        .restart_mcu_rows(opts.restart_mcu_rows);
+        ));
+    if let Some(rows) = opts.restart_mcu_rows {
+        config = config.restart_mcu_rows(rows);
+    }
 
     // Custom quant tables override `quant_table_config` entirely.
     // PerComponent uses generic c0/c1/c2 fields (Y/Cb/Cr in YCbCr mode).
@@ -416,7 +486,7 @@ pub fn encode_with_diagnostics(
     // 0.5" edit on the JS side would compound, exploding to
     // unreasonable values.
     if let Some(tables) = opts.custom_quant_tables.as_ref() {
-        let is_xyb = matches!(opts.color_path.as_str(), "xyb");
+        let is_xyb = color_path == "xyb";
         let mut t = if is_xyb {
             EncodingTables::default_xyb()
         } else {
@@ -431,20 +501,20 @@ pub fn encode_with_diagnostics(
         if tables.cr.len() == 64 {
             t.quant.c2.copy_from_slice(&tables.cr);
         }
-        if let Some(v) = tables.y_zero_bias_mul.as_ref() {
-            if v.len() == 64 {
-                t.zero_bias_mul.c0.copy_from_slice(v);
-            }
+        if let Some(v) = tables.y_zero_bias_mul.as_ref()
+            && v.len() == 64
+        {
+            t.zero_bias_mul.c0.copy_from_slice(v);
         }
-        if let Some(v) = tables.cb_zero_bias_mul.as_ref() {
-            if v.len() == 64 {
-                t.zero_bias_mul.c1.copy_from_slice(v);
-            }
+        if let Some(v) = tables.cb_zero_bias_mul.as_ref()
+            && v.len() == 64
+        {
+            t.zero_bias_mul.c1.copy_from_slice(v);
         }
-        if let Some(v) = tables.cr_zero_bias_mul.as_ref() {
-            if v.len() == 64 {
-                t.zero_bias_mul.c2.copy_from_slice(v);
-            }
+        if let Some(v) = tables.cr_zero_bias_mul.as_ref()
+            && v.len() == 64
+        {
+            t.zero_bias_mul.c2.copy_from_slice(v);
         }
         if let Some(dc) = tables.zero_bias_offset_dc {
             t.zero_bias_offset_dc = dc;
@@ -494,6 +564,7 @@ pub fn encode_with_diagnostics(
         _ => {}
     }
 
+    let restart_interval = config.resolve_plan(width, height).restart_interval_mcus;
     let request = config.request();
     let mut encoder = request
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -513,7 +584,9 @@ pub fn encode_with_diagnostics(
 
     let js_bytes = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
     js_bytes.copy_from(&bytes);
-    let js_diag = serde_wasm_bindgen::to_value(&to_js_diagnostics(diag))
+    let mut diagnostic_result = to_js_diagnostics(diag);
+    diagnostic_result.restart_interval_mcus = restart_interval;
+    let js_diag = serde_wasm_bindgen::to_value(&diagnostic_result)
         .map_err(|e| JsValue::from_str(&format!("serialize diagnostics: {e}")))?;
     let out = js_sys::Object::new();
     js_sys::Reflect::set(&out, &JsValue::from_str("bytes"), &js_bytes)
@@ -561,6 +634,55 @@ pub fn compute_ssimulacra2_rgb(
     let lin_dst = rgb_bytes_to_linear(distorted, width as usize, height as usize);
     fast_ssim2::compute_ssimulacra2(lin_src, lin_dst)
         .map_err(|e| JsValue::from_str(&format!("ssimulacra2: {e}")))
+}
+
+/// Butteraugli max-norm distance for sRGB RGB8 buffers (lower is better).
+#[wasm_bindgen(js_name = computeButteraugli)]
+pub fn compute_butteraugli_rgb(
+    source: &[u8],
+    distorted: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<f64, JsValue> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
+    if source.len() != expected || distorted.len() != expected {
+        return Err(JsValue::from_str(
+            "RGB buffer length does not match image dimensions",
+        ));
+    }
+    if width < 8 || height < 8 {
+        return Err(JsValue::from_str(
+            "Butteraugli requires images of at least 8×8 pixels",
+        ));
+    }
+    let pack = |bytes: &[u8]| -> Result<Vec<butteraugli::RGB8>, JsValue> {
+        let mut pixels = Vec::new();
+        pixels
+            .try_reserve_exact(bytes.len() / 3)
+            .map_err(|_| JsValue::from_str("could not allocate Butteraugli pixels"))?;
+        pixels.extend(
+            bytes
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|p| butteraugli::RGB8::new(p[0], p[1], p[2])),
+        );
+        Ok(pixels)
+    };
+    let original = pack(source)?;
+    let decoded = pack(distorted)?;
+    let original = butteraugli::Img::new(original, width as usize, height as usize);
+    let decoded = butteraugli::Img::new(decoded, width as usize, height as usize);
+    butteraugli::butteraugli(
+        original.as_ref(),
+        decoded.as_ref(),
+        &butteraugli::ButteraugliParams::default(),
+    )
+    .map(|result| result.score)
+    .map_err(|e| JsValue::from_str(&format!("butteraugli: {e}")))
 }
 
 /// Compute zensim score between two sRGB-encoded RGB byte buffers.
@@ -629,6 +751,19 @@ fn rgb_bytes_to_linear(rgb: &[u8], w: usize, h: usize) -> fast_ssim2::LinearRgbI
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn butteraugli_identical_and_distorted_inputs() {
+        let source = synthetic(32, 32);
+        let identical = compute_butteraugli_rgb(&source, &source, 32, 32).unwrap();
+        let mut distorted = source.clone();
+        for pixel in distorted.chunks_exact_mut(3) {
+            pixel[0] = pixel[0].saturating_add(30);
+        }
+        let changed = compute_butteraugli_rgb(&source, &distorted, 32, 32).unwrap();
+        assert!(identical.abs() < 0.0001, "identical distance {identical}");
+        assert!(changed > identical, "distorted distance {changed}");
+    }
 
     fn synthetic(w: u32, h: u32) -> Vec<u8> {
         let mut buf = Vec::with_capacity((w * h * 3) as usize);
