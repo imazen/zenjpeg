@@ -16,6 +16,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
+
 - Controlled decoding now returns final owned details through `take_details`,
   preserving configured metadata, native extras and embedded MPF image bytes
   without a second pixel decode. Details remain unavailable before success.
