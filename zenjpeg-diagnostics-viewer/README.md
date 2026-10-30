@@ -11,7 +11,9 @@ only for the chosen mode. AQ is a separate switch; with AQ off, Hybrid receives
 zero block AQ strengths. The viewer starts at quality 85, YCbCr 4:4:4, Standard
 mode with AQ and progressive scans; it uses encoder-generated tables until
 they are edited. These are the viewer’s explicit controls, not the encoder’s
-complete optimization preset or automatic-optimization interface. In **Quant
+complete optimization preset or automatic-optimization interface. Progressive
+scans always use optimized Huffman tables; under sequential scans, the viewer
+lets you choose between optimized and fixed tables. In **Quant
 tables**, choose a component and click a cell to edit it in a popover. Use the
 arrow keys to move between settings tabs and Escape to close a popover. The zoom
 inspector opens by clicking an image or pressing Enter when it is focused.

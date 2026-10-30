@@ -572,3 +572,5 @@ canvas[role="button"]:focus-visible {
 .choice-description, .settings-defaults { margin: 7px 0 0; color: var(--color-muted); font-size: 12px; line-height: 1.4; }
 .settings-defaults { flex-basis: 100%; }
 .choice-description[hidden] { display: none; }
+
+.huffman-note { max-width: 290px; font-size: 12px; line-height: 1.4; }

@@ -290,6 +290,43 @@ test("settings support keyboard navigation and escape", async ({ page }) => {
   await expect(page.locator('[data-testid="controls-popover"]')).toBeVisible();
 });
 
+test("Huffman controls show the effective strategy and preserve sequential preference", async ({ page }) => {
+  await page.locator('[data-testid="tab-quality"]').click();
+  const huffman = page.locator('[data-testid="optimize-huffman-checkbox"]');
+  const progressive = page.locator('[data-testid="progressive-checkbox"]');
+  const note = page.locator('[data-testid="huffman-note"]');
+  await expect(progressive).toBeChecked();
+  await expect(huffman).toBeChecked();
+  await expect(huffman).toBeDisabled();
+  await expect(note).toContainText("Progressive scans always use optimized");
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().optimizeHuffman)).toBe(true);
+  await progressive.uncheck();
+  await expect(huffman).toBeEnabled();
+  await huffman.uncheck();
+  const encode = async () => {
+    await page.evaluate(() => { document.body.dataset["encodeState"] = "waiting"; });
+    await page.locator('[data-testid="encode-button"]').click();
+    await expect.poll(() => page.evaluate(() => document.body.dataset["encodeState"])).toBe("done");
+    return page.evaluate(() => ({
+      size: window.__zenjpegDiagnostics.getLastEncode()!.bytes,
+      pixels: Array.from(document.querySelector<HTMLCanvasElement>('[data-testid="encoded-canvas"]')!.getContext("2d")!.getImageData(0, 0, 64, 64).data),
+    }));
+  };
+  const fixed = await encode();
+  await huffman.check();
+  const optimized = await encode();
+  expect(optimized.size).not.toBe(fixed.size);
+  expect(optimized.pixels).toEqual(fixed.pixels);
+  await huffman.uncheck();
+  await progressive.check();
+  await expect(huffman).toBeChecked();
+  await expect(huffman).toBeDisabled();
+  expect(await page.evaluate(() => window.__zenjpegDiagnostics.getCurrentOptions().optimizeHuffman)).toBe(true);
+  await progressive.uncheck();
+  await expect(huffman).toBeEnabled();
+  await expect(huffman).not.toBeChecked();
+});
+
 test("mode and color decisions reveal the settings that apply", async ({ page }) => {
   await expect(page.locator('[data-testid="tab-aq"]')).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('[data-testid="mode-baseline"]')).toBeChecked();

@@ -401,8 +401,23 @@
               data-testid="progressive-checkbox"
               checked
             />
-            <span class="text-text">Multi-pass scans (smaller files at high q)</span>
+            <span class="text-text">Progressive (uncheck for sequential)</span>
           </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Optimize Huffman tables</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="optimize-huffman"
+              checked
+              disabled
+              aria-describedby="huffman-note"
+              data-testid="optimize-huffman-checkbox"
+            />
+            <span class="text-text">Enable</span>
+          </span>
+          <span class="huffman-note" id="huffman-note" data-testid="huffman-note">Progressive scans always use optimized Huffman tables. Switch to sequential scans to choose.</span>
         </label>
       </article>
 
@@ -954,18 +969,6 @@
         data-testid="panel-misc"
         hidden
       >
-        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
-          <span class="uppercase tracking-wider text-[10px]">Optimize Huffman tables</span>
-          <span class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="optimize-huffman"
-              checked
-              data-testid="optimize-huffman-checkbox"
-            />
-            <span class="text-text">Enable</span>
-          </span>
-        </label>
         <label class="ctrl flex flex-col gap-1 text-xs text-muted">
           <span class="uppercase tracking-wider text-[10px]">Restart MCU rows</span>
           <input

@@ -1681,7 +1681,22 @@ function wireControlsPanel(): void {
   wireCellEditor();
 }
 
+let sequentialHuffmanPreference = optimizeHuffmanIn.checked;
+function syncHuffmanChoice(): void {
+  const progressive = progressiveIn.checked;
+  optimizeHuffmanIn.disabled = progressive;
+  optimizeHuffmanIn.checked = progressive || sequentialHuffmanPreference;
+  $<HTMLElement>("#huffman-note").textContent = progressive
+    ? "Progressive scans always use optimized Huffman tables. Switch to sequential scans to choose."
+    : "Optimized tables change the encoded size, not the decoded pixels.";
+}
+
 function wireControls(): void {
+  optimizeHuffmanIn.addEventListener("change", () => {
+    if (!progressiveIn.checked) sequentialHuffmanPreference = optimizeHuffmanIn.checked;
+  });
+  progressiveIn.addEventListener("change", syncHuffmanChoice);
+  syncHuffmanChoice();
   qualityIn.addEventListener("input", () => {
     qualityOut.textContent = qualityIn.value;
     invalidateBaseSnapshotIfStale();
