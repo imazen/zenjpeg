@@ -13,11 +13,11 @@
 #   pub types (struct/enum/trait/alias)       305
 #   pub consts/statics                        314
 #   free functions                            366
-#   inherent methods                         1200
-#   struct fields                             791
+#   inherent methods                         1208
+#   struct fields                             792
 #   enum variants                             498
 #   re-exports                                 18
-#   trait roster entries (type × trait)       652
+#   trait roster entries (type × trait)       658
 #   auto-trait-complete types                 130
 #   auto-trait exceptions                       8
 #
@@ -26,10 +26,10 @@
 #   alloc                             1
 #   color                           110
 #   container                        31
-#   decode                          455
+#   decode                          456
 #   decoder                          55
-#   detect                           40
-#   encode                         1454
+#   detect                           46
+#   encode                         1456
 #   encoder                         164
 #   entropy                         100
 #   foundation                      352
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3393 lines)
+## items (3402 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -654,6 +654,12 @@ pub fn detect::content::classify_from_luma_coefficients(&[i16], usize) -> (detec
 pub fn detect::content::classify_from_probe(&detect::JpegProbe) -> detect::content::ContentType
 pub fn detect::content::estimate_blocking_severity(&detect::JpegProbe) -> f32
 pub fn detect::content::recommend_deblock(&detect::JpegProbe, detect::content::ContentType, f32) -> detect::content::DeblockRecommendation
+pub fn detect::record::ColorFront::assert_fields_are_eq(&self)
+pub fn detect::record::DialScale::assert_fields_are_eq(&self)
+pub fn detect::record::EncodeFlags::assert_fields_are_eq(&self)
+pub fn detect::record::EncoderId::assert_fields_are_eq(&self)
+pub fn detect::record::SubsamplingCode::assert_fields_are_eq(&self)
+pub fn detect::record::TableSource::assert_fields_are_eq(&self)
 pub fn encode::HuffmanSymbolFrequencies::add(&mut self, &encode::HuffmanSymbolFrequencies)
 pub fn encode::HuffmanSymbolFrequencies::clone(&self) -> encode::HuffmanSymbolFrequencies
 pub fn encode::HuffmanSymbolFrequencies::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -770,6 +776,7 @@ pub fn encode::encoder_config::EncoderConfig::encode_from_bytes(&self, u32, u32,
 pub fn encode::encoder_config::EncoderConfig::encode_from_rgb<P: encode::byte_encoders::Pixel>(&self, u32, u32) -> encoder::Result<encode::byte_encoders::RgbEncoder<P>>
 pub fn encode::encoder_config::EncoderConfig::encode_from_ycbcr_planar(&self, u32, u32) -> encoder::Result<encode::byte_encoders::YCbCrPlanarEncoder>
 pub fn encode::encoder_config::EncoderConfig::encode_into<P: encode::byte_encoders::Pixel>(&self, &[P], u32, u32, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encode::encoder_config::EncoderConfig::encode_record(self, bool) -> Self
 pub fn encode::encoder_config::EncoderConfig::estimate_memory(&self, u32, u32) -> usize
 pub fn encode::encoder_config::EncoderConfig::estimate_memory_ceiling(&self, u32, u32) -> usize
 pub fn encode::encoder_config::EncoderConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -800,6 +807,7 @@ pub fn encode::encoder_config::EncoderConfig::progressive(self, impl core::conve
 pub fn encode::encoder_config::EncoderConfig::quality(self, impl core::convert::Into<encode::encoder_types::Quality>) -> Self
 pub fn encode::encoder_config::EncoderConfig::quant_source(self, encode::encoder_types::QuantTableSource) -> Self
 pub fn encode::encoder_config::EncoderConfig::quant_table_config(self, encode::encoder_types::QuantTableConfig) -> Self
+pub fn encode::encoder_config::EncoderConfig::record_history(self, alloc::vec::Vec<detect::record::EncodeEntry>) -> Self
 pub fn encode::encoder_config::EncoderConfig::request(&self) -> encode::request::EncodeRequest<'_>
 pub fn encode::encoder_config::EncoderConfig::resolve_plan(&self, u32, u32) -> encode::plan::EncodePlan
 pub fn encode::encoder_config::EncoderConfig::restart_mcu_rows(self, u16) -> Self
@@ -2348,6 +2356,7 @@ pub decode::JpegProbe::encoder: detect::EncoderFamily
 pub decode::JpegProbe::mode: types::JpegMode
 pub decode::JpegProbe::num_components: u8
 pub decode::JpegProbe::quality: detect::QualityEstimate
+pub decode::JpegProbe::record: core::option::Option<detect::record::EncodeRecord>
 pub decode::JpegProbe::scan_count: u16
 pub decode::JpegProbe::subsampling: types::Subsampling
 pub decode::MpfDirectory::images: alloc::vec::Vec<decoder::MpfEntry>
@@ -3440,7 +3449,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (219 types)
+## trait impls (225 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3502,6 +3511,12 @@ detect::QualityScale: TrivialClone
 detect::content::ContentType: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 detect::content::DeblockAction: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 detect::content::DeblockRecommendation: Clone, Copy, Debug, TrivialClone
+detect::record::ColorFront: TrivialClone
+detect::record::DialScale: TrivialClone
+detect::record::EncodeFlags: TrivialClone
+detect::record::EncoderId: TrivialClone
+detect::record::SubsamplingCode: TrivialClone
+detect::record::TableSource: TrivialClone
 encode::HuffmanSymbolFrequencies: Clone, Debug
 encode::bdrd_trace::BdrdBlockEntry: Clone, Copy, Debug, TrivialClone
 encode::bdrd_trace::BoundaryRdTrace: Debug, Default
