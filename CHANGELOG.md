@@ -17,6 +17,15 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- Encoder parameter record (#189): every encode writes an APP10 `ZENJ` segment
+  carrying the quality dial on its native scale, quant-table family, AQ /
+  trellis / deringing / scan flags, pre-blur and a CRC-32 of the DQT tables, as
+  an append-only chain across generations; `detect::probe` returns it as
+  `JpegProbe::record` (`detect::EncodeRecord`, `verified` when the newest entry
+  matches the file's tables). `EncoderConfig::encode_record(false)` disables it;
+  `EncoderConfig::record_history` carries a source chain forward, which all three
+  `recompress` strategies do. Field choice is measured, not enumerated: zensr
+  `benchmarks/zenjpeg_knobs_2026-10-30.md`.
 - Add opt-in, unstable per-block encoder diagnostics (`d07a8710`) and a WASM viewer (`0d98644d`) for AQ, quantization tables, and interactive comparison.
 
 ### Fixed
@@ -76,6 +85,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   crates.io, so releases stay gated on publishing them.
 
 ### QUEUED BREAKING CHANGES
+
+- `detect::JpegProbe` gained the public field `record`; struct-literal constructors outside the crate must add it (#189).
 
 - Native `Decoder::decode_with_pulse` and `Decoder::scanline_reader_with_pulse`
   accept `Option<&dyn how_far::Pulse>`; `None` adds no per-call control.

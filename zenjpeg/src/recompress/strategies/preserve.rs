@@ -105,12 +105,54 @@ pub fn run_preserve(
         aq_mask: prepared.aq_mask,
         preserved_segments: prepared.preserved_segments,
     };
-    let bytes = emit_preserved_placed(
+    let mut bytes = emit_preserved_placed(
         &prepared.coeffs,
         prepared.subsampling,
         &cfg,
         &prepared.preserved_positions,
     )?;
+    // Encode record (zenjpeg#189): the source's chain (its own stale
+    // record was dropped with the unknown APPn) plus this generation.
+    // Coefficient-domain requantization has no dial on an encoder scale,
+    // so the entry carries the zensim-A target and `Custom` tables; the
+    // CRC is of the tables just written.
+    {
+        use crate::detect::record::{
+            ColorFront, DialScale, EncodeEntry, EncodeFlags, EncoderId, SubsamplingCode,
+            TableSource, crate_version, history_of, insert_record,
+        };
+        let mut entries = history_of(jpeg_bytes);
+        let subsampling = match analysis.subsampling {
+            crate::types::Subsampling::S444 => SubsamplingCode::Full,
+            crate::types::Subsampling::S420 => SubsamplingCode::Quarter,
+            crate::types::Subsampling::S422 => SubsamplingCode::HalfHorizontal,
+            crate::types::Subsampling::S440 => SubsamplingCode::HalfVertical,
+        };
+        let mut flags = 0u8;
+        if cfg.aq_mask.is_some() {
+            flags |= EncodeFlags::AQ;
+        }
+        if matches!(analysis.mode, crate::types::JpegMode::Progressive) {
+            flags |= EncodeFlags::PROGRESSIVE;
+        }
+        entries.push(EncodeEntry {
+            encoder: EncoderId::Zenjpeg,
+            version: crate_version(),
+            quality_scale: DialScale::ZensimA,
+            quality: params.target_zensim_a,
+            table_source: TableSource::Custom,
+            color_front: if analysis.num_components == 1 {
+                ColorFront::Grayscale
+            } else {
+                ColorFront::YCbCr
+            },
+            subsampling,
+            flags: EncodeFlags(flags),
+            pre_blur: 0.0,
+            dqt_crc32: 0,
+        });
+        insert_record(&mut bytes, entries);
+    }
 
     // Validate the emitted bytes round-trip through zenjpeg's decoder.
     // If they don't, the emitter hit an edge case — return an error so

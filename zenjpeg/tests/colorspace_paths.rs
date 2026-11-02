@@ -2684,7 +2684,10 @@ fn app_positions_all(jpeg: &[u8]) -> Vec<(u8, Vec<u8>, u8)> {
         if matches!(m, 0xC0..=0xC2) && pos == 0 {
             pos = 1;
         }
-        if (0xE0..=0xEF).contains(&m) {
+        // The APP10 `ZENJ` encode record is rewritten by every generation
+        // (new entry, new DQT CRC), so it is not a stray marker to retain.
+        let is_record = m == 0xEA && jpeg[p + 4..p + len].starts_with(b"ZENJ\0");
+        if (0xE0..=0xEF).contains(&m) && !is_record {
             out.push((m, jpeg[p + 4..p + len].to_vec(), pos));
         }
         if m == 0xDA {
