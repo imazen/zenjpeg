@@ -327,6 +327,57 @@ impl DecodedYCbCr {
     pub fn cr_to_jpeg_range(&self) -> Vec<f32> {
         self.cr.iter().map(|&v| v + 128.0).collect()
     }
+
+    /// Borrows the three planes as [`zenpixels::plane`] views, without copying.
+    ///
+    /// The layout is Luma, Cb, Cr at 4:4:4 (chroma is already upsampled), each
+    /// plane `width × height` with a stride of `width`. The encodings describe
+    /// the centered values this type holds (`stored = nominal * scale + offset`):
+    /// Y is `scale = 255, offset = -128` (nominal 0..1 → -128..127) and Cb/Cr are
+    /// `scale = 255, offset = 0` (nominal -0.5..0.5 → -127.5..127.5). After
+    /// [`shift_to_jpeg_range()`](Self::shift_to_jpeg_range) these encodings no
+    /// longer describe the samples.
+    ///
+    /// # Errors
+    ///
+    /// [`zenpixels::plane::PlaneError`] when a plane `Vec` is shorter than
+    /// `width × height` (the fields are public and may have been changed).
+    pub fn planes(
+        &self,
+    ) -> core::result::Result<
+        (
+            zenpixels::plane::PlanarLayout,
+            [zenpixels::plane::AnyPlane<'_>; 3],
+        ),
+        zenpixels::plane::PlaneError,
+    > {
+        use zenpixels::plane::{
+            AnyPlane, FloatEncoding, PlanarLayout, PlaneEncoding, PlaneRef, PlaneRole, PlaneSpec,
+        };
+        use zenpixels::sample::{ChromaSiting, ChromaSubsampling};
+
+        let (w, h) = (self.width as usize, self.height as usize);
+        let y = PlaneRef::new(self.y.as_slice(), w, h, w)?;
+        let cb = PlaneRef::new(self.cb.as_slice(), w, h, w)?;
+        let cr = PlaneRef::new(self.cr.as_slice(), w, h, w)?;
+
+        let luma = FloatEncoding::new(255.0, -128.0).expect("finite, nonzero scale");
+        let chroma = FloatEncoding::new(255.0, 0.0).expect("finite, nonzero scale");
+        let layout = PlanarLayout::new(
+            alloc::vec![
+                PlaneSpec::new(PlaneRole::Luma, PlaneEncoding::Float(luma)),
+                PlaneSpec::new(PlaneRole::Cb, PlaneEncoding::Float(chroma)),
+                PlaneSpec::new(PlaneRole::Cr, PlaneEncoding::Float(chroma)),
+            ],
+            ChromaSubsampling::Yuv444,
+            ChromaSiting::Center,
+        )
+        .expect("Y, Cb, Cr at 4:4:4 is a valid layout");
+        Ok((
+            layout,
+            [AnyPlane::F32(y), AnyPlane::F32(cb), AnyPlane::F32(cr)],
+        ))
+    }
 }
 
 /// DCT coefficients for a single component.
