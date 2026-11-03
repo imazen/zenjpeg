@@ -522,7 +522,11 @@ impl PixelLayout {
 
 /// Planar YCbCr data for a strip of rows.
 ///
-/// Each plane has its own stride. All planes are f32.
+/// Each plane has its own stride. All planes are f32. Y runs 0.0..255.0
+/// and Cb/Cr are centered, -128.0..127.0 (in zenpixels terms: Y is
+/// `FloatEncoding` `scale = 255, offset = 0`; Cb/Cr `scale = 255, offset = 0`).
+/// Note this differs from [`DecodedYCbCr`](crate::decoder::DecodedYCbCr),
+/// whose Y is also centered.
 #[derive(Clone, Copy, Debug)]
 pub struct YCbCrPlanes<'a> {
     pub y: &'a [f32],
@@ -531,6 +535,30 @@ pub struct YCbCrPlanes<'a> {
     pub cb_stride: usize,
     pub cr: &'a [f32],
     pub cr_stride: usize,
+}
+
+impl<'a> YCbCrPlanes<'a> {
+    /// Borrows three [`zenpixels::plane::PlaneRef`] views, without copying.
+    ///
+    /// No values are converted or checked: the planes must already hold Y in
+    /// 0.0..255.0 and centered Cb/Cr in -128.0..127.0 (see the type docs).
+    /// Planes from [`DecodedYCbCr::planes`](crate::decoder::DecodedYCbCr::planes)
+    /// have a centered Y and need +128 on Y first.
+    #[must_use]
+    pub fn from_planes(
+        y: zenpixels::plane::PlaneRef<'a, f32>,
+        cb: zenpixels::plane::PlaneRef<'a, f32>,
+        cr: zenpixels::plane::PlaneRef<'a, f32>,
+    ) -> Self {
+        Self {
+            y_stride: y.stride(),
+            cb_stride: cb.stride(),
+            cr_stride: cr.stride(),
+            y: y.into_strided_samples(),
+            cb: cb.into_strided_samples(),
+            cr: cr.into_strided_samples(),
+        }
+    }
 }
 
 #[cfg(test)]

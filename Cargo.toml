@@ -233,9 +233,11 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
 
-# Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+# Unpublished ICC recognition fix for the existing Ultra HDR corpus profile,
+# plus the `zenpixels::plane` views (branch feat/plane-types, descends from
+# f23ac75). Temporary: swap for the published release before landing.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "5bf81d640752793454802d7a94346c3c1e97c81e" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "5bf81d640752793454802d7a94346c3c1e97c81e" }
 # The zencodec 0.2 family, all from one optional-control revision.
 # zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
 # patches resolve them for local builds; releases stay gated on publishing them.
