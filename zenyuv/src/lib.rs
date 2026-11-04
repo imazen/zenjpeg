@@ -71,6 +71,13 @@ pub use types::{Matrix, Range};
 
 // ── Shared utilities ───────────────────────────────────────────────────────
 
+#[cfg(test)]
+#[inline(always)]
+fn clamp_round(v: f32) -> u8 {
+    let r = v.round() as i32;
+    r.clamp(0, 255) as u8
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
