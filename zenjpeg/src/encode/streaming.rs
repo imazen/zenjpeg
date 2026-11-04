@@ -31,7 +31,7 @@
 //! ```
 
 use crate::encode::config::ComputedConfig;
-use crate::encode::encoder_types::HuffmanStrategy;
+use crate::encode::encoder_types::{HuffmanStrategy, YCbCrPlanes};
 use crate::encode::strip::StripProcessor;
 use crate::error::{Error, Result};
 use crate::foundation::consts::DCT_BLOCK_SIZE;
@@ -868,20 +868,18 @@ impl StreamingEncoder {
     /// subsampling mode. Skips the internal chroma downsampling step.
     ///
     /// # Arguments
-    /// * `y` - Y plane data (width × num_rows floats)
-    /// * `cb` - Cb plane data (chroma_width × chroma_rows floats)
-    /// * `cr` - Cr plane data (chroma_width × chroma_rows floats)
+    /// * `planes` - Y (width × num_rows) and Cb/Cr (chroma_width × chroma_rows),
+    ///   each at its own stride, in samples. Padding is never read, and the
+    ///   last row of a plane needs only its samples.
     /// * `num_rows` - Number of Y rows in this strip
     ///
     /// # Chroma Dimensions
     /// - 4:4:4: cb/cr at full width × full height
     /// - 4:2:2: cb/cr at width/2 × full height
     /// - 4:2:0: cb/cr at width/2 × height/2
-    pub(crate) fn push_ycbcr_strip_f32_subsampled(
+    pub(crate) fn push_ycbcr_strip_f32_subsampled<'a>(
         &mut self,
-        y: &[f32],
-        cb: &[f32],
-        cr: &[f32],
+        planes: &YCbCrPlanes<'a>,
         num_rows: usize,
     ) -> Result<()> {
         // Can't mix RGB and YCbCr input
@@ -902,10 +900,14 @@ impl StreamingEncoder {
         // Clamp to remaining rows
         let actual_rows = num_rows.min(self.height - self.current_y);
 
-        // Validate Y plane size
-        let expected_y_size = self.width * actual_rows;
-        if y.len() < expected_y_size {
-            return Err(Error::invalid_buffer_size(expected_y_size, y.len()));
+        // Validate Y plane size. The last row needs only its samples.
+        let span = |rows: usize, stride: usize, width: usize| match rows {
+            0 => 0,
+            rows => (rows - 1) * stride + width,
+        };
+        let expected_y_size = span(actual_rows, planes.y_stride, self.width);
+        if planes.y.len() < expected_y_size {
+            return Err(Error::invalid_buffer_size(expected_y_size, planes.y.len()));
         }
 
         // Get subsampling info for chroma slicing
@@ -929,20 +931,27 @@ impl StreamingEncoder {
                 .min(actual_rows - y_processed)
                 .min(remaining);
 
-            let y_start = y_processed * self.width;
-            let y_end = y_start + strip_rows * self.width;
+            let y_start = y_processed * planes.y_stride;
+            let y_end = y_start + span(strip_rows, planes.y_stride, self.width);
 
             // Calculate chroma rows for this strip
             let chroma_rows = (strip_rows + chroma_h_factor - 1) / chroma_h_factor;
-            let c_start = chroma_processed * chroma_width;
-            let c_end = c_start + chroma_rows * chroma_width;
+            let chroma_slice = |plane: &'a [f32], stride: usize| -> &'a [f32] {
+                let start = chroma_processed * stride;
+                let end = start + span(chroma_rows, stride, chroma_width);
+                &plane[start.min(plane.len())..end.min(plane.len())]
+            };
 
-            self.processor.process_strip_ycbcr_f32_subsampled(
-                &y[y_start..y_end],
-                &cb[c_start..c_end.min(cb.len())],
-                &cr[c_start..c_end.min(cr.len())],
-                self.current_y,
-            )?;
+            let strip = YCbCrPlanes {
+                y: &planes.y[y_start..y_end],
+                y_stride: planes.y_stride,
+                cb: chroma_slice(planes.cb, planes.cb_stride),
+                cb_stride: planes.cb_stride,
+                cr: chroma_slice(planes.cr, planes.cr_stride),
+                cr_stride: planes.cr_stride,
+            };
+            self.processor
+                .process_strip_ycbcr_f32_subsampled(&strip, self.current_y)?;
 
             self.current_y += strip_rows;
             y_processed += strip_rows;
