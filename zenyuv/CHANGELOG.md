@@ -15,7 +15,10 @@ bytes as tight planes, in every SIMD tier.
 - `YuvContext::try_encode_*` are removed: those semantics are now the `encode_*` methods.
 - `sharp::rgb_to_yuv420_sharp`, `rgb_to_yuv420_sharp_f32`, `refine_chroma_420_u8` and `refine_y_420_u8` take views; the first three take the workspace. `rgb_to_yuv420_sharp_with_workspace` and `refine_chroma_420_u8_with_workspace` are removed.
 - `YuvError` gains `StrideTooSmall` and `WrongDimensions`. It stays `#[non_exhaustive]`.
-- Crate-private: the decode functions take views and the `_with` and default-matrix forms are gone, including under `_dev`.
+- Decode is no longer built outside tests, and `avx2_decode`, which nothing called, is gone. It was only
+  public under `_dev`. No zen crate called it, and its SIMD and scalar paths disagree on tail rounding in
+  4:4:4 and 4:0:0 (8,903, 76 and 64 differing cases over 16.8M searched triples). Encode tests keep it as
+  their round-trip inverse.
 
 ### Fixed
 - No longer enables archmage's `testable_dispatch` for consumers through the

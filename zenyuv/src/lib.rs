@@ -40,13 +40,12 @@
 // ── Modules ────────────────────────────────────────────────────────────────
 
 pub mod context;
-/// Public under `_dev` so `benches/kernel_tiers.rs` can measure the decode
-/// kernels per-tier. Not public API, not semver-covered.
-#[cfg(feature = "_dev")]
-pub mod decode;
-#[cfg(not(feature = "_dev"))]
-#[allow(dead_code)]
+// Decode exists only as the inverse that encode tests round-trip through. No zen crate
+// called it, and its SIMD and scalar paths disagree on tail rounding, so it isn't built
+// outside tests.
+#[cfg(test)]
 mod decode;
+#[cfg(test)]
 mod decode_generic;
 mod encode;
 mod encode_generic;
@@ -54,8 +53,6 @@ mod error;
 pub mod sharp;
 pub(crate) mod types;
 
-#[cfg(target_arch = "x86_64")]
-mod avx2_decode;
 #[cfg(target_arch = "x86_64")]
 mod avx2_encode;
 
@@ -73,12 +70,6 @@ pub use sharp::SharpYuvConfig;
 pub use types::{Matrix, Range};
 
 // ── Shared utilities ───────────────────────────────────────────────────────
-
-#[inline(always)]
-fn clamp_round(v: f32) -> u8 {
-    let r = v.round() as i32;
-    r.clamp(0, 255) as u8
-}
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
