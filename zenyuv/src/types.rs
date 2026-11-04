@@ -507,7 +507,7 @@ pub(crate) struct Strides {
 
 impl Strides {
     /// Tightly packed planes, chroma `cw` samples wide.
-    #[inline]
+    #[cfg(test)]
     pub(crate) fn tight(width: usize, cw: usize) -> Self {
         Self {
             rgb: width * 3,
@@ -544,6 +544,7 @@ pub(crate) fn check_plane(
         });
     }
     let span = match height {
+        _ if width == 0 => 0,
         0 => 0,
         h => (h - 1)
             .checked_mul(stride)
@@ -572,4 +573,21 @@ pub(crate) fn assert_plane(
     if let Err(e) = check_plane(buffer, len, got, stride, needed) {
         panic!("{e}");
     }
+}
+
+/// A packed RGB view's pixel dimensions. Its width counts samples, three per
+/// pixel, and its stride is in samples too, so a row pitch need not be a whole
+/// number of pixels.
+pub(crate) fn rgb_pixel_dims(
+    sample_width: usize,
+    height: usize,
+) -> Result<(usize, usize), crate::YuvError> {
+    if sample_width % 3 != 0 {
+        return Err(crate::YuvError::WrongDimensions {
+            buffer: "rgb",
+            needed: (sample_width - sample_width % 3, height),
+            got: (sample_width, height),
+        });
+    }
+    Ok((sample_width / 3, height))
 }

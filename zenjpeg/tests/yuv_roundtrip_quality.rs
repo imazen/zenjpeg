@@ -144,7 +144,13 @@ fn encode_zenyuv_box(rgb: &[u8], w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u
     let mut cb = vec![0u8; cw * ch];
     let mut cr = vec![0u8; cw * ch];
     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-    ctx.encode_420_u8(rgb, &mut y, &mut cb, &mut cr, w, h);
+    ctx.encode_420_u8(
+        imgref::ImgRef::new(rgb, w * 3, h),
+        imgref::ImgRefMut::new(&mut y[..], w, h),
+        imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+        imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+    )
+    .unwrap();
     (y, cb, cr)
 }
 
@@ -159,7 +165,14 @@ fn encode_zenyuv_sharp(rgb: &[u8], w: usize, h: usize, iters: u32) -> (Vec<u8>, 
         max_iterations: iters,
         ..Default::default()
     };
-    ctx.encode_sharp_420_u8(rgb, &mut y, &mut cb, &mut cr, w, h, &config);
+    ctx.encode_sharp_420_u8(
+        imgref::ImgRef::new(rgb, w * 3, h),
+        imgref::ImgRefMut::new(&mut y[..], w, h),
+        imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+        imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+        &config,
+    )
+    .unwrap();
     (y, cb, cr)
 }
 

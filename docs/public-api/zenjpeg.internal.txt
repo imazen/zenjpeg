@@ -1113,7 +1113,7 @@ pub fn encode::strip::StripProcessor::fmt(&self, &mut core::fmt::Formatter<'_>) 
 pub fn encode::strip::StripProcessor::is_xyb(&self) -> bool
 pub fn encode::strip::StripProcessor::process_strip(&mut self, &[u8], usize) -> encoder::Result<usize>
 pub fn encode::strip::StripProcessor::process_strip_ycbcr_f32(&mut self, &[f32], &[f32], &[f32], usize) -> encoder::Result<usize>
-pub fn encode::strip::StripProcessor::process_strip_ycbcr_f32_subsampled(&mut self, &[f32], &[f32], &[f32], usize) -> encoder::Result<usize>
+pub fn encode::strip::StripProcessor::process_strip_ycbcr_f32_subsampled(&mut self, &encode::encoder_types::YCbCrPlanes<'_>, usize) -> encoder::Result<usize>
 pub fn encode::strip::StripProcessor::set_deringing(&mut self, bool)
 pub fn encode::strip::StripProcessor::set_trellis(&mut self, encode::trellis::compat::TrellisConfig)
 pub fn encode::strip::StripProcessor::simd_token(&self) -> core::option::Option<archmage::tokens::generated::x86::Desktop64>

@@ -17,7 +17,7 @@ fn plane(w: usize, h: usize, stride: usize, offset: f32) -> Vec<f32> {
 }
 
 fn bench(suite: &mut Suite) {
-    for (w, h) in [(64usize, 64usize), (1024, 1024), (4096, 2304)] {
+    for (w, h) in [(64usize, 64usize), (1024, 1024)] {
         let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
         suite.compare(format!("push_subsampled_420_{w}x{h}"), |g| {
             g.throughput(Throughput::Bytes((w * h * 3 / 2 * 4) as u64));

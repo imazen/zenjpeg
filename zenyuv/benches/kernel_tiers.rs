@@ -74,7 +74,13 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_444_u8(rgb, &mut y, &mut u, &mut v, W, H);
+                    ctx.encode_444_u8(
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                        imgref::ImgRefMut::new(&mut u[..], W, H),
+                        imgref::ImgRefMut::new(&mut v[..], W, H),
+                    )
+                    .unwrap();
                     (y, u, v)
                 })
             });
@@ -90,7 +96,13 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_420_u8(rgb, &mut y, &mut u, &mut v, W, H);
+                    ctx.encode_420_u8(
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                        imgref::ImgRefMut::new(&mut u[..], W / 2, H / 2),
+                        imgref::ImgRefMut::new(&mut v[..], W / 2, H / 2),
+                    )
+                    .unwrap();
                     (y, u, v)
                 })
             });
@@ -106,7 +118,11 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |mut y| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_420_y_only_u8(rgb, &mut y, W, H);
+                    ctx.encode_420_y_only_u8(
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                    )
+                    .unwrap();
                     y
                 })
             });
@@ -123,14 +139,13 @@ fn bench(suite: &mut Suite) {
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
                     ctx.encode_sharp_420_u8(
-                        rgb,
-                        &mut y,
-                        &mut u,
-                        &mut v,
-                        W,
-                        H,
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                        imgref::ImgRefMut::new(&mut u[..], W / 2, H / 2),
+                        imgref::ImgRefMut::new(&mut v[..], W / 2, H / 2),
                         &SharpYuvConfig::default(),
-                    );
+                    )
+                    .unwrap();
                     (y, u, v)
                 })
             });
@@ -185,10 +200,24 @@ fn bench(suite: &mut Suite) {
             };
         }
         dec!("yuv444_to_rgb", |o: &mut Vec<u8>| {
-            zenyuv::decode::yuv444_to_rgb(yp, cp, cp, o, W, H)
+            zenyuv::decode::yuv444_to_rgb(
+                imgref::ImgRef::new(yp, W, H),
+                imgref::ImgRef::new(cp, W, H),
+                imgref::ImgRef::new(cp, W, H),
+                imgref::ImgRefMut::new(&mut o[..], W * 3, H),
+                Range::Full,
+                Matrix::Bt601,
+            )
         });
         dec!("yuv420_to_rgb", |o: &mut Vec<u8>| {
-            zenyuv::decode::yuv420_to_rgb(yp, cp, cp, o, W, H)
+            zenyuv::decode::yuv420_to_rgb(
+                imgref::ImgRef::new(yp, W, H),
+                imgref::ImgRef::new(cp, W / 2, H / 2),
+                imgref::ImgRef::new(cp, W / 2, H / 2),
+                imgref::ImgRefMut::new(&mut o[..], W * 3, H),
+                Range::Full,
+                Matrix::Bt601,
+            )
         });
     }
 

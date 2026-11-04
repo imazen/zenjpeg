@@ -10,7 +10,9 @@
 
 extern crate alloc;
 
-use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range, Strides, assert_plane};
+use crate::types::{
+    ForwardCoeffs, InverseCoeffs, Matrix, Range, Strides, assert_plane, rgb_pixel_dims,
+};
 
 /// Configuration for Sharp YUV chroma optimization.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,108 +42,6 @@ impl Default for SharpYuvConfig {
             refine_y: true,
         }
     }
-}
-
-/// Like `rgb_to_yuv420_sharp` but takes a pre-allocated workspace. Use via
-/// `YuvContext::encode_sharp_420_*` for automatic workspace management.
-pub fn rgb_to_yuv420_sharp_with_workspace(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-    assert!(ws.chroma_width() >= cw);
-
-    crate::encode::rgb_to_yuv444_y_only(rgb, y, width, height, range, matrix);
-
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-
-    sharp_iterate_rows_u8(
-        rgb,
-        y,
-        cb,
-        cr,
-        width,
-        height,
-        cw,
-        ch,
-        Strides::tight(width, cw),
-        &fwd,
-        &inv,
-        config,
-        ws,
-    );
-}
-
-/// f32 output: Y via fast SIMD (u8→f32 widen), Cb/Cr directly from iteration f32.
-///
-/// Y still goes through the SIMD u8 kernel (AVX2 pmaddwd) because that's faster
-/// than scalar f32 per-pixel. The u8 Y is widened to f32 for the caller's output
-/// AND used by the iteration SoA. Cb/Cr skip u8 entirely — written from the
-/// iteration workspace as f32.
-pub fn rgb_to_yuv420_sharp_f32(
-    rgb: &[u8],
-    y_f32: &mut [f32],
-    cb_f32: &mut [f32],
-    cr_f32: &mut [f32],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y_f32.len() >= n);
-    assert!(cb_f32.len() >= cw * ch);
-    assert!(cr_f32.len() >= cw * ch);
-    assert!(ws.chroma_width() >= cw);
-
-    // Y via fast SIMD → u8 temp, then widen to f32 for caller.
-    // This is faster than scalar f32 Y despite the u8→f32 step, because
-    // the AVX2 pmaddwd kernel processes 32 pixels/iter vs 1 pixel/iter scalar.
-    let mut y_u8 = alloc::vec![0u8; n];
-    crate::encode::rgb_to_yuv444_y_only(rgb, &mut y_u8, width, height, range, matrix);
-    for i in 0..n {
-        y_f32[i] = y_u8[i] as f32;
-    }
-
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-
-    // Cb/Cr: iteration produces f32 directly. SoA reads Y from u8 (via workspace).
-    sharp_iterate_rows_f32_hybrid(
-        rgb,
-        &y_u8,
-        cb_f32,
-        cr_f32,
-        width,
-        height,
-        cw,
-        ch,
-        Strides::tight(width, cw),
-        &fwd,
-        &inv,
-        config,
-        ws,
-    );
 }
 
 /// Convert gamma-encoded RGB f32 to Y/Cb/Cr f32 without eight-bit rounding.
@@ -248,154 +148,6 @@ pub fn rgb_f32_to_yuv420_sharp(
     }
 }
 
-/// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
-///
-/// Y is computed at full resolution via the fast SIMD path. Cb/Cr are computed
-/// per 2×2 block using iterative refinement that minimizes reconstruction error
-/// in gamma-encoded RGB space.
-///
-/// `luts` controls the gamma transfer (sRGB or libwebp). `range` and `matrix`
-/// control the YCbCr color space. `config` tunes the iteration.
-pub fn rgb_to_yuv420_sharp(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-
-    // Compute Y at full resolution via fast SIMD path.
-    crate::encode::rgb_to_yuv444_y_only(rgb, y, width, height, range, matrix);
-
-    // Per-row SoA workspace. Caller can pre-allocate via SharpYuvWorkspace
-    // and pass it across strip calls to avoid per-call allocation.
-    let mut workspace = SharpYuvWorkspace::new(cw);
-    sharp_iterate_rows_u8(
-        rgb,
-        y,
-        cb,
-        cr,
-        width,
-        height,
-        cw,
-        ch,
-        Strides::tight(width, cw),
-        &fwd,
-        &inv,
-        config,
-        &mut workspace,
-    );
-}
-
-/// Refine pre-computed Cb/Cr using Sharp YUV iteration.
-///
-/// Unlike `rgb_to_yuv420_sharp`, this does NOT compute initial Cb/Cr from the
-/// forward matrix. Instead, it takes the caller's pre-computed Cb/Cr as the
-/// starting point and runs Newton-step refinement to minimize reconstruction
-/// error in sRGB space.
-///
-/// Use this when the initial chroma was computed with a different averaging
-/// model (e.g., gamma-corrected averaging) but the reconstruction should
-/// still use the standard BT.601/BT.709 inverse matrix.
-///
-/// Y must be at full resolution (`width * height`). Cb/Cr must be at chroma
-/// resolution (`ceil(width/2) * ceil(height/2)`).
-pub fn refine_chroma_420_u8(
-    rgb: &[u8],
-    y: &[u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
-    let inv = InverseCoeffs::new(matrix, range);
-    let fwd = ForwardCoeffs::new(matrix, range);
-
-    let mut ws = SharpYuvWorkspace::new(cw);
-    refine_iterate_rows_u8(
-        rgb,
-        y,
-        cb,
-        cr,
-        width,
-        height,
-        cw,
-        ch,
-        Strides::tight(width, cw),
-        &fwd,
-        &inv,
-        config,
-        &mut ws,
-    );
-}
-
-/// Like `refine_chroma_420_u8` but takes a pre-allocated workspace.
-pub fn refine_chroma_420_u8_with_workspace(
-    rgb: &[u8],
-    y: &[u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-    assert!(ws.chroma_width() >= cw);
-
-    let inv = InverseCoeffs::new(matrix, range);
-    let fwd = ForwardCoeffs::new(matrix, range);
-
-    refine_iterate_rows_u8(
-        rgb,
-        y,
-        cb,
-        cr,
-        width,
-        height,
-        cw,
-        ch,
-        Strides::tight(width, cw),
-        &fwd,
-        &inv,
-        config,
-        ws,
-    );
-}
-
 /// Refine Y plane to compensate for luma error from chroma subsampling.
 ///
 /// After Cb/Cr are refined, the reconstruction `inv(Y, upsample(Cb), upsample(Cr))`
@@ -412,28 +164,56 @@ pub fn refine_chroma_420_u8_with_workspace(
 /// Returns the total absolute luma error (sum of |adjustments|) for convergence
 /// checking.
 pub fn refine_y_420_u8(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &[u8],
-    cr: &[u8],
-    width: usize,
-    height: usize,
+    rgb: imgref::ImgRef<'_, u8>,
+    mut y: imgref::ImgRefMut<'_, u8>,
+    cb: imgref::ImgRef<'_, u8>,
+    cr: imgref::ImgRef<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) -> u64 {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
-
-    let strides = Strides::tight(width, cw);
-    refine_y_rows(rgb, y, cb, cr, width, height, strides, &fwd, &inv, range)
+    refine_y_rows(
+        rgb,
+        y.buf_mut(),
+        cb.buf(),
+        cr.buf(),
+        width,
+        height,
+        strides,
+        &fwd,
+        &inv,
+        range,
+    )
 }
 
 /// Inner loop: refine Y row by row.
@@ -523,17 +303,25 @@ fn refine_y_rows(
 
 /// The byte view and geometry of a checked strided RGB input.
 #[track_caller]
-fn checked_rgb_input<'a>(rgb: imgref::ImgRef<'a, [u8; 3]>) -> (&'a [u8], usize, usize, usize) {
-    let (w, h, stride) = (rgb.width(), rgb.height(), rgb.stride());
-    assert!(w > 0 && h > 0);
-    assert_plane("rgb", rgb.buf().len(), (w, h), stride, (w, h));
-    let bytes: &'a [u8] = (*rgb.buf()).as_flattened();
-    (bytes, w, h, stride * 3)
+fn checked_rgb_input<'a>(rgb: imgref::ImgRef<'a, u8>) -> (&'a [u8], usize, usize, usize) {
+    let dims = (rgb.width(), rgb.height());
+    let stride = rgb.stride();
+    assert!(dims.0 > 0 && dims.1 > 0);
+    assert_plane("rgb", rgb.buf().len(), dims, stride, dims);
+    let (width, height) = rgb_pixel_dims(dims.0, dims.1).unwrap_or_else(|e| panic!("{e}"));
+    (*rgb.buf(), width, height, stride)
 }
 
-/// [`rgb_to_yuv420_sharp_with_workspace`] at each plane's own stride, in samples
-/// (pixels for `rgb`). The same bytes as the tight form: padding is neither read
-/// nor written, and the last row of a plane needs none.
+/// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
+///
+/// Y is computed at full resolution via the fast SIMD path. Cb/Cr are computed per
+/// 2×2 block using iterative refinement that minimizes reconstruction error in
+/// gamma-encoded RGB space. `range` and `matrix` control the YCbCr color space;
+/// `config` tunes the iteration. Reuse `ws` across strips to avoid reallocating it.
+///
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row of a plane needs none. `rgb`'s width and stride count
+/// samples, three per pixel, so a row pitch need not be a whole number of pixels.
 ///
 /// # Panics
 ///
@@ -541,8 +329,8 @@ fn checked_rgb_input<'a>(rgb: imgref::ImgRef<'a, [u8; 3]>) -> (&'a [u8], usize, 
 /// undersized workspace. Y has `rgb`'s dimensions; Cb/Cr are
 /// `ceil(width/2)` by `ceil(height/2)`.
 #[allow(clippy::too_many_arguments)]
-pub fn rgb_to_yuv420_sharp_strided(
-    rgb: imgref::ImgRef<'_, [u8; 3]>,
+pub fn rgb_to_yuv420_sharp(
+    rgb: imgref::ImgRef<'_, u8>,
     mut y: imgref::ImgRefMut<'_, u8>,
     mut cb: imgref::ImgRefMut<'_, u8>,
     mut cr: imgref::ImgRefMut<'_, u8>,
@@ -582,7 +370,7 @@ pub fn rgb_to_yuv420_sharp_strided(
         cr: cr.stride(),
     };
     let y: &mut [u8] = y.buf_mut();
-    crate::encode::rgb_to_yuv444_y_only_strided(
+    crate::encode::rgb_to_yuv444_y_only(
         rgb,
         y,
         width,
@@ -611,15 +399,16 @@ pub fn rgb_to_yuv420_sharp_strided(
     );
 }
 
-/// [`rgb_to_yuv420_sharp_f32`] at each plane's own stride; the rules of
-/// [`rgb_to_yuv420_sharp_strided`] apply.
+/// f32 output: Y via the fast SIMD u8 kernel, widened, because that is faster than
+/// scalar f32 per pixel; Cb/Cr directly from the iteration workspace, with no u8
+/// narrowing. The rules of [`rgb_to_yuv420_sharp`] apply.
 ///
 /// # Panics
 ///
-/// As [`rgb_to_yuv420_sharp_strided`].
+/// As [`rgb_to_yuv420_sharp`].
 #[allow(clippy::too_many_arguments)]
-pub fn rgb_to_yuv420_sharp_f32_strided(
-    rgb: imgref::ImgRef<'_, [u8; 3]>,
+pub fn rgb_to_yuv420_sharp_f32(
+    rgb: imgref::ImgRef<'_, u8>,
     mut y: imgref::ImgRefMut<'_, f32>,
     mut cb: imgref::ImgRefMut<'_, f32>,
     mut cr: imgref::ImgRefMut<'_, f32>,
@@ -661,7 +450,7 @@ pub fn rgb_to_yuv420_sharp_f32_strided(
 
     // The same u8 intermediate as the tight form; this one is tight too.
     let mut y_u8 = alloc::vec![0u8; width * height];
-    crate::encode::rgb_to_yuv444_y_only_strided(
+    crate::encode::rgb_to_yuv444_y_only(
         rgb, &mut y_u8, width, height, rgb_stride, width, range, matrix,
     );
     for (out, row) in y.rows_mut().zip(y_u8.chunks_exact(width)) {
@@ -689,15 +478,21 @@ pub fn rgb_to_yuv420_sharp_f32_strided(
     );
 }
 
-/// [`refine_chroma_420_u8_with_workspace`] at each plane's own stride; the rules
-/// of [`rgb_to_yuv420_sharp_strided`] apply.
+/// Refine pre-computed Cb/Cr using Sharp YUV iteration.
+///
+/// Unlike [`rgb_to_yuv420_sharp`], this does NOT compute initial Cb/Cr from the
+/// forward matrix: it starts from the caller's Cb/Cr and runs Newton-step refinement
+/// to minimize reconstruction error in sRGB space. Use this when the initial chroma
+/// came from a different averaging model (e.g., gamma-corrected averaging) but the
+/// reconstruction still uses the standard inverse matrix. The rules of
+/// [`rgb_to_yuv420_sharp`] apply.
 ///
 /// # Panics
 ///
-/// As [`rgb_to_yuv420_sharp_strided`].
+/// As [`rgb_to_yuv420_sharp`].
 #[allow(clippy::too_many_arguments)]
-pub fn refine_chroma_420_strided(
-    rgb: imgref::ImgRef<'_, [u8; 3]>,
+pub fn refine_chroma_420_u8(
+    rgb: imgref::ImgRef<'_, u8>,
     y: imgref::ImgRef<'_, u8>,
     mut cb: imgref::ImgRefMut<'_, u8>,
     mut cr: imgref::ImgRefMut<'_, u8>,
@@ -753,65 +548,6 @@ pub fn refine_chroma_420_strided(
         config,
         ws,
     );
-}
-
-/// [`refine_y_420_u8`] at each plane's own stride; the rules of
-/// [`rgb_to_yuv420_sharp_strided`] apply. Returns the same total as the tight form.
-///
-/// # Panics
-///
-/// For zero dimensions or a plane that does not fit its dimensions.
-pub fn refine_y_420_strided(
-    rgb: imgref::ImgRef<'_, [u8; 3]>,
-    mut y: imgref::ImgRefMut<'_, u8>,
-    cb: imgref::ImgRef<'_, u8>,
-    cr: imgref::ImgRef<'_, u8>,
-    range: Range,
-    matrix: Matrix,
-) -> u64 {
-    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
-    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
-    assert_plane(
-        "y",
-        y.buf().len(),
-        (y.width(), y.height()),
-        y.stride(),
-        (width, height),
-    );
-    assert_plane(
-        "cb",
-        cb.buf().len(),
-        (cb.width(), cb.height()),
-        cb.stride(),
-        (cw, ch),
-    );
-    assert_plane(
-        "cr",
-        cr.buf().len(),
-        (cr.width(), cr.height()),
-        cr.stride(),
-        (cw, ch),
-    );
-    let strides = Strides {
-        rgb: rgb_stride,
-        y: y.stride(),
-        cb: cb.stride(),
-        cr: cr.stride(),
-    };
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-    refine_y_rows(
-        rgb,
-        y.buf_mut(),
-        cb.buf(),
-        cr.buf(),
-        width,
-        height,
-        strides,
-        &fwd,
-        &inv,
-        range,
-    )
 }
 
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to

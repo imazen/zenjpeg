@@ -3,44 +3,8 @@
 //! Each function dispatches to the best available SIMD kernel at runtime:
 //! AVX2 > NEON > WASM SIMD128 > generic (magetypes f32x8).
 
-use crate::types::{InverseCoeffs, Matrix, Range, Strides, assert_plane};
+use crate::types::{InverseCoeffs, Matrix, Range, Strides, assert_plane, rgb_pixel_dims};
 use archmage::prelude::*;
-
-/// Convert 4:4:4 Y/Cb/Cr planes to packed 24-bit RGB.
-///
-/// Uses BT.601 full-range by default. All planes must be `width * height`.
-/// Output `rgb` must be at least `width * height * 3` bytes.
-pub fn yuv444_to_rgb(y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], width: usize, height: usize) {
-    yuv444_to_rgb_with(y, cb, cr, rgb, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert 4:4:4 Y/Cb/Cr planes to packed 24-bit RGB with specified range and matrix.
-pub fn yuv444_to_rgb_with(
-    y: &[u8],
-    cb: &[u8],
-    cr: &[u8],
-    rgb: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    assert!(y.len() >= n);
-    assert!(cb.len() >= n);
-    assert!(cr.len() >= n);
-    assert!(rgb.len() >= n * 3);
-
-    let coeffs = InverseCoeffs::new(matrix, range);
-
-    // Note: AVX2 decode via mulhrs_epi16 has i16 overflow for y_coeff >= 1.0
-    // (full-range: 32768, limited: 38142). Using generic f32 path for now.
-    // TODO: AVX2 decode with i32 arithmetic (pmaddwd) to avoid overflow.
-
-    incant!(crate::decode_generic::yuv444_to_rgb_generic(
-        y, cb, cr, rgb, n, &coeffs
-    ));
-}
 
 /// A plane's samples and stride, checked: padding between rows is never read,
 /// and the last row needs none.
@@ -57,33 +21,30 @@ fn checked_plane<'a>(
     (buf, stride)
 }
 
-/// The packed output's bytes, dimensions and byte stride, checked.
+/// The packed output's samples, pixel dimensions and stride, checked.
 #[track_caller]
-fn checked_rgb<'a>(
-    rgb: &'a mut imgref::ImgRefMut<'_, [u8; 3]>,
-) -> (&'a mut [u8], usize, usize, usize) {
-    let (width, height, stride) = (rgb.width(), rgb.height(), rgb.stride());
-    assert_plane(
-        "rgb",
-        rgb.buf().len(),
-        (width, height),
-        stride,
-        (width, height),
-    );
-    (rgb.buf_mut().as_flattened_mut(), width, height, stride * 3)
+fn checked_rgb<'a>(rgb: &'a mut imgref::ImgRefMut<'_, u8>) -> (&'a mut [u8], usize, usize, usize) {
+    let dims = (rgb.width(), rgb.height());
+    let stride = rgb.stride();
+    assert_plane("rgb", rgb.buf().len(), dims, stride, dims);
+    let (width, height) = rgb_pixel_dims(dims.0, dims.1).unwrap_or_else(|e| panic!("{e}"));
+    (&mut **rgb.buf_mut(), width, height, stride)
 }
 
-/// [`yuv444_to_rgb_with`] at each plane's own stride, in samples (pixels for
-/// `rgb`). Byte-identical to the tight form; padding is neither read nor written.
+/// Convert 4:4:4 Y/Cb/Cr planes to packed 24-bit RGB.
+///
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row needs none. `rgb`'s width and stride count samples,
+/// three per pixel.
 ///
 /// # Panics
 ///
 /// If a plane's dimensions or storage do not fit `rgb`'s dimensions.
-pub fn yuv444_to_rgb_strided(
+pub fn yuv444_to_rgb(
     y: imgref::ImgRef<'_, u8>,
     cb: imgref::ImgRef<'_, u8>,
     cr: imgref::ImgRef<'_, u8>,
-    mut rgb: imgref::ImgRefMut<'_, [u8; 3]>,
+    mut rgb: imgref::ImgRefMut<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) {
@@ -91,6 +52,9 @@ pub fn yuv444_to_rgb_strided(
     let (y, ys) = checked_plane("y", y, width, height);
     let (cb, cbs) = checked_plane("cb", cb, width, height);
     let (cr, crs) = checked_plane("cr", cr, width, height);
+    if width == 0 || height == 0 {
+        return;
+    }
     let coeffs = InverseCoeffs::new(matrix, range);
     if ys == width && cbs == width && crs == width && rgb_stride == width * 3 {
         let n = width * height;
@@ -139,49 +103,18 @@ pub fn yuv444_to_rgb_strided(
 
 /// Convert 4:2:0 Y/Cb/Cr planes to packed 24-bit RGB (nearest-neighbor chroma upsampling).
 ///
-/// Uses BT.601 full-range by default. Y is `width * height`;
-/// Cb/Cr are `ceil(width/2) * ceil(height/2)`.
-pub fn yuv420_to_rgb(y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], width: usize, height: usize) {
-    yuv420_to_rgb_with(y, cb, cr, rgb, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert 4:2:0 Y/Cb/Cr planes to packed 24-bit RGB with specified range and matrix.
-pub fn yuv420_to_rgb_with(
-    y: &[u8],
-    cb: &[u8],
-    cr: &[u8],
-    rgb: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-    assert!(rgb.len() >= n * 3);
-
-    let coeffs = InverseCoeffs::new(matrix, range);
-    let strides = Strides::tight(width, width.div_ceil(2));
-    incant!(crate::decode_generic::yuv420_to_rgb_generic(
-        y, cb, cr, rgb, width, height, strides, &coeffs
-    ));
-}
-
-/// [`yuv420_to_rgb_with`] at each plane's own stride; the rules of
-/// [`yuv444_to_rgb_strided`] apply.
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row needs none. `rgb`'s width and stride count samples,
+/// three per pixel.
 ///
 /// # Panics
 ///
 /// If a plane's dimensions or storage do not fit `rgb`'s dimensions.
-pub fn yuv420_to_rgb_strided(
+pub fn yuv420_to_rgb(
     y: imgref::ImgRef<'_, u8>,
     cb: imgref::ImgRef<'_, u8>,
     cr: imgref::ImgRef<'_, u8>,
-    mut rgb: imgref::ImgRefMut<'_, [u8; 3]>,
+    mut rgb: imgref::ImgRefMut<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) {
@@ -196,62 +129,29 @@ pub fn yuv420_to_rgb_strided(
         cb: cbs,
         cr: crs,
     };
+    if width == 0 || height == 0 {
+        return;
+    }
     let coeffs = InverseCoeffs::new(matrix, range);
     incant!(crate::decode_generic::yuv420_to_rgb_generic(
         y, cb, cr, out, width, height, strides, &coeffs
     ));
 }
 
-/// Convert 4:2:0 Y/Cb/Cr planes to packed 24-bit RGB with bilinear chroma upsampling.
-pub fn yuv420_to_rgb_bilinear(
-    y: &[u8],
-    cb: &[u8],
-    cr: &[u8],
-    rgb: &mut [u8],
-    width: usize,
-    height: usize,
-) {
-    yuv420_to_rgb_bilinear_with(y, cb, cr, rgb, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert 4:2:0 Y/Cb/Cr planes to packed 24-bit RGB with bilinear chroma upsampling
-/// and specified range and matrix.
-pub fn yuv420_to_rgb_bilinear_with(
-    y: &[u8],
-    cb: &[u8],
-    cr: &[u8],
-    rgb: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-    assert!(rgb.len() >= n * 3);
-
-    let coeffs = InverseCoeffs::new(matrix, range);
-    let strides = Strides::tight(width, width.div_ceil(2));
-    incant!(crate::decode_generic::yuv420_to_rgb_bilinear_generic(
-        y, cb, cr, rgb, width, height, strides, &coeffs
-    ));
-}
-
-/// [`yuv420_to_rgb_bilinear_with`] at each plane's own stride; the rules of
-/// [`yuv444_to_rgb_strided`] apply.
+/// Convert 4:2:0 Y/Cb/Cr planes to packed 24-bit RGB (bilinear chroma upsampling).
+///
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row needs none. `rgb`'s width and stride count samples,
+/// three per pixel.
 ///
 /// # Panics
 ///
 /// If a plane's dimensions or storage do not fit `rgb`'s dimensions.
-pub fn yuv420_to_rgb_bilinear_strided(
+pub fn yuv420_to_rgb_bilinear(
     y: imgref::ImgRef<'_, u8>,
     cb: imgref::ImgRef<'_, u8>,
     cr: imgref::ImgRef<'_, u8>,
-    mut rgb: imgref::ImgRefMut<'_, [u8; 3]>,
+    mut rgb: imgref::ImgRefMut<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) {
@@ -266,6 +166,9 @@ pub fn yuv420_to_rgb_bilinear_strided(
         cb: cbs,
         cr: crs,
     };
+    if width == 0 || height == 0 {
+        return;
+    }
     let coeffs = InverseCoeffs::new(matrix, range);
     incant!(crate::decode_generic::yuv420_to_rgb_bilinear_generic(
         y, cb, cr, out, width, height, strides, &coeffs
@@ -273,46 +176,19 @@ pub fn yuv420_to_rgb_bilinear_strided(
 }
 
 /// Convert 4:2:2 Y/Cb/Cr planes to packed 24-bit RGB.
-pub fn yuv422_to_rgb(y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], width: usize, height: usize) {
-    yuv422_to_rgb_with(y, cb, cr, rgb, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert 4:2:2 Y/Cb/Cr planes to packed 24-bit RGB with specified range and matrix.
-pub fn yuv422_to_rgb_with(
-    y: &[u8],
-    cb: &[u8],
-    cr: &[u8],
-    rgb: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * height);
-    assert!(cr.len() >= cw * height);
-    assert!(rgb.len() >= n * 3);
-
-    let coeffs = InverseCoeffs::new(matrix, range);
-    let strides = Strides::tight(width, width.div_ceil(2));
-    incant!(crate::decode_generic::yuv422_to_rgb_generic(
-        y, cb, cr, rgb, width, height, strides, &coeffs
-    ));
-}
-
-/// [`yuv422_to_rgb_with`] at each plane's own stride; the rules of
-/// [`yuv444_to_rgb_strided`] apply.
+///
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row needs none. `rgb`'s width and stride count samples,
+/// three per pixel.
 ///
 /// # Panics
 ///
 /// If a plane's dimensions or storage do not fit `rgb`'s dimensions.
-pub fn yuv422_to_rgb_strided(
+pub fn yuv422_to_rgb(
     y: imgref::ImgRef<'_, u8>,
     cb: imgref::ImgRef<'_, u8>,
     cr: imgref::ImgRef<'_, u8>,
-    mut rgb: imgref::ImgRefMut<'_, [u8; 3]>,
+    mut rgb: imgref::ImgRefMut<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) {
@@ -327,50 +203,35 @@ pub fn yuv422_to_rgb_strided(
         cb: cbs,
         cr: crs,
     };
+    if width == 0 || height == 0 {
+        return;
+    }
     let coeffs = InverseCoeffs::new(matrix, range);
     incant!(crate::decode_generic::yuv422_to_rgb_generic(
         y, cb, cr, out, width, height, strides, &coeffs
     ));
 }
 
-/// Convert grayscale (4:0:0) Y plane to packed 24-bit RGB.
-pub fn yuv400_to_rgb(y: &[u8], rgb: &mut [u8], width: usize, height: usize) {
-    yuv400_to_rgb_with(y, rgb, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert grayscale (4:0:0) Y plane to packed 24-bit RGB with specified range and matrix.
-pub fn yuv400_to_rgb_with(
-    y: &[u8],
-    rgb: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    assert!(y.len() >= n);
-    assert!(rgb.len() >= n * 3);
-
-    let coeffs = InverseCoeffs::new(matrix, range);
-    incant!(crate::decode_generic::yuv400_to_rgb_generic(
-        y, rgb, n, &coeffs
-    ));
-}
-
-/// [`yuv400_to_rgb_with`] at each plane's own stride; the rules of
-/// [`yuv444_to_rgb_strided`] apply.
+/// Convert a Y plane to packed gray RGB.
+///
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row needs none. `rgb`'s width and stride count samples,
+/// three per pixel.
 ///
 /// # Panics
 ///
-/// If the plane's dimensions or storage do not fit `rgb`'s dimensions.
-pub fn yuv400_to_rgb_strided(
+/// If a plane's dimensions or storage do not fit `rgb`'s dimensions.
+pub fn yuv400_to_rgb(
     y: imgref::ImgRef<'_, u8>,
-    mut rgb: imgref::ImgRefMut<'_, [u8; 3]>,
+    mut rgb: imgref::ImgRefMut<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) {
     let (out, width, height, rgb_stride) = checked_rgb(&mut rgb);
     let (y, ys) = checked_plane("y", y, width, height);
+    if width == 0 || height == 0 {
+        return;
+    }
     let coeffs = InverseCoeffs::new(matrix, range);
     if ys == width && rgb_stride == width * 3 {
         let n = width * height;

@@ -21,6 +21,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- `YCbCrPlanarEncoder::push_subsampled` reads strided planes in place instead of allocating three copies per call; output is byte-identical to tightly packed planes (`cc5e3d73`). A stride below the width on `push_subsampled` or `push` is now `StrideTooSmall` rather than overlapped rows (`cc5e3d73`, `04f507e9`).
+
 - Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
 
 - Controlled decoding now returns final owned details through `take_details`,

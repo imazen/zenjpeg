@@ -2,22 +2,27 @@
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+One strided form per operation; the tight forms and their fallible twins are gone.
+Planes are `imgref` views at their own strides, in samples. `rgb` is a `u8` view whose
+width and stride count samples, three per pixel, so a row pitch need not be a whole
+number of pixels. A tight plane is `ImgRef::new(plane, width, height)`. Padding is
+neither read nor written and the last row of a plane needs none; output is the same
+bytes as tight planes, in every SIMD tier.
+
+- `YuvContext::encode_420_u8`, `encode_420_y_only_u8`, `encode_444_u8`, `encode_420_f32`, `encode_sharp_420_u8` and `encode_sharp_420_f32` take views and return `Result<(), YuvError>`. They refuse a plane that does not fit, a size that overflows and an image over the pixel limit, writing nothing on refusal, and allocate context-owned scratch fallibly. The limit defaults to `DEFAULT_MAX_PIXELS` (120 MP) and is set with `YuvContext::with_max_pixels` (zenjpeg #156, items 1 and 2).
+- `YuvContext::try_encode_*` are removed: those semantics are now the `encode_*` methods.
+- `sharp::rgb_to_yuv420_sharp`, `rgb_to_yuv420_sharp_f32`, `refine_chroma_420_u8` and `refine_y_420_u8` take views; the first three take the workspace. `rgb_to_yuv420_sharp_with_workspace` and `refine_chroma_420_u8_with_workspace` are removed.
+- `YuvError` gains `StrideTooSmall` and `WrongDimensions`. It stays `#[non_exhaustive]`.
+- Crate-private: the decode functions take views and the `_with` and default-matrix forms are gone, including under `_dev`.
+
 ### Fixed
 - No longer enables archmage's `testable_dispatch` for consumers through the
   workspace dependency, which turned each archmage `summon()` in downstream
   builds into a cache read. The `kernel_tiers` bench still gets it from `_dev`.
 
 ### Added
-
-- `YuvContext::try_encode_420_u8`, `try_encode_420_y_only_u8`,
-  `try_encode_444_u8`, `try_encode_420_f32`, `try_encode_sharp_420_u8` and
-  `try_encode_sharp_420_f32`. They return `Result<(), YuvError>` where the
-  infallible methods panic. They refuse a short buffer, a size that overflows
-  and an image over the pixel limit, and they write nothing on refusal. Scratch
-  owned by the context is allocated fallibly, and valid input gives the same
-  bytes as the infallible method. `YuvError` is `#[non_exhaustive]`. The limit
-  defaults to `DEFAULT_MAX_PIXELS` (120 MP) and is set with
-  `YuvContext::with_max_pixels` (zenjpeg #156, items 1 and 2).
 
 - `sharp::rgb_f32_to_yuv420_sharp`: typed, strided gamma-encoded RGB f32 input
   and Y/Cb/Cr f32 output, using caller-provided planes and the existing Sharp

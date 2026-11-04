@@ -8,48 +8,11 @@ extern crate alloc;
 use crate::types::{ForwardCoeffs, Matrix, Range, Strides};
 use archmage::prelude::*;
 
-/// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes at full resolution (4:4:4).
-///
-/// Uses BT.601 full-range by default. `rgb` must be `width * height * 3` bytes.
-/// The three output planes must each be at least `width * height` bytes.
-pub fn rgb_to_yuv444(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-) {
-    rgb_to_yuv444_with(rgb, y, cb, cr, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes at full resolution (4:4:4)
-/// with the specified range and matrix.
-pub fn rgb_to_yuv444_with(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= n);
-    assert!(cr.len() >= n);
-
-    let coeffs = ForwardCoeffs::new(matrix, range);
-    rgb_to_yuv444_run(rgb, y, cb, cr, n, &coeffs);
-}
-
-/// [`rgb_to_yuv444_with`] at each plane's own stride. The dimensions are
-/// checked by the caller: `rgb` spans `(height - 1) * strides.rgb + width * 3`
-/// bytes and each plane `(height - 1) * stride + width` samples. Tight planes
-/// take the one-run fast path.
-pub(crate) fn rgb_to_yuv444_strided(
+/// Convert packed RGB to three Y/Cb/Cr planes at full resolution (4:4:4), each at
+/// its own stride. The dimensions are checked by the caller: `rgb` spans `(height -
+/// 1) * strides.rgb + width * 3` bytes and each plane `(height - 1) * stride +
+/// width` samples. Tight planes take a one-run fast path.
+pub(crate) fn rgb_to_yuv444(
     rgb: &[u8],
     y: &mut [u8],
     cb: &mut [u8],
@@ -119,58 +82,11 @@ fn rgb_to_yuv444_run(
     ));
 }
 
-/// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes with 4:2:0 subsampling.
-///
-/// Uses BT.601 full-range by default. Y is full-resolution (`width * height`);
-/// Cb/Cr are `ceil(width/2) * ceil(height/2)`.
-pub fn rgb_to_yuv420(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-) {
-    rgb_to_yuv420_with(rgb, y, cb, cr, width, height, Range::Full, Matrix::Bt601);
-}
-
-/// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes with 4:2:0 subsampling,
-/// with the specified range and matrix.
-pub fn rgb_to_yuv420_with(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
-    rgb_to_yuv420_strided(
-        rgb,
-        y,
-        cb,
-        cr,
-        width,
-        height,
-        Strides::tight(width, cw),
-        range,
-        matrix,
-    );
-}
-
-/// [`rgb_to_yuv420_with`] at each plane's own stride. The dimensions are
-/// checked by the caller: `rgb` spans `(height - 1) * strides.rgb + width * 3`
-/// bytes, each plane `(rows - 1) * stride + plane_width` samples.
-pub(crate) fn rgb_to_yuv420_strided(
+/// Convert packed RGB to three Y/Cb/Cr planes with 4:2:0 subsampling, each at its
+/// own stride. The dimensions are checked by the caller: `rgb` spans `(height - 1)
+/// * strides.rgb + width * 3` bytes, each plane `(rows - 1) * stride + plane_width`
+/// samples.
+pub(crate) fn rgb_to_yuv420(
     rgb: &[u8],
     y: &mut [u8],
     cb: &mut [u8],
@@ -204,29 +120,13 @@ pub(crate) fn rgb_to_yuv420_strided(
     ));
 }
 
-/// Compute only the Y plane for a 4:2:0 encode. Skips chroma computation
-/// entirely — useful when the caller will replace chroma with a custom
-/// downsampling (e.g., gamma-corrected averaging).
+/// Compute only the Y plane for a 4:2:0 encode at its own strides, `rgb_stride` in
+/// bytes and `y_stride` in samples. Skips chroma entirely, for a caller replacing
+/// it with a custom downsampling (e.g., gamma-corrected averaging). The dimensions
+/// are checked by the caller.
 ///
-/// Called via [`crate::YuvContext::encode_420_y_only_u8`] — the public surface.
-pub(crate) fn rgb_to_yuv420_y_only_with(
-    rgb: &[u8],
-    y: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-
-    rgb_to_yuv420_y_only_strided(rgb, y, width, height, width * 3, width, range, matrix);
-}
-
-/// [`rgb_to_yuv420_y_only_with`] at its own strides: `rgb_stride` in bytes,
-/// `y_stride` in samples. The dimensions are checked by the caller.
-pub(crate) fn rgb_to_yuv420_y_only_strided(
+/// Called via [`crate::YuvContext::encode_420_y_only_u8`], the public surface.
+pub(crate) fn rgb_to_yuv420_y_only(
     rgb: &[u8],
     y: &mut [u8],
     width: usize,
@@ -282,56 +182,10 @@ pub(crate) fn rgb_to_y_scalar_tail(
     }
 }
 
-/// Compute Y plane only (no Cb/Cr) at full resolution. Used by Sharp YUV
-/// which computes chroma separately via iterative optimization.
+/// The Y plane of a 4:4:4 encode at its own strides, `rgb_stride` in bytes and
+/// `y_stride` in samples, through the full 4:4:4 kernel with Cb/Cr discarded. The
+/// dimensions are checked by the caller. Tight planes take a one-run fast path.
 pub(crate) fn rgb_to_yuv444_y_only(
-    rgb: &[u8],
-    y: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-) {
-    let n = width * height;
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-
-    let coeffs = ForwardCoeffs::new(matrix, range);
-
-    // Use the full 4:4:4 encode path but discard Cb/Cr.
-    // TODO: write a Y-only AVX2 kernel to avoid computing Cb/Cr.
-    let mut cb_discard = alloc::vec![0u8; n];
-    let mut cr_discard = alloc::vec![0u8; n];
-
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        let done = crate::avx2_encode::rgb_to_yuv444_avx2(
-            token,
-            rgb,
-            y,
-            &mut cb_discard,
-            &mut cr_discard,
-            n,
-            &coeffs,
-        );
-        if done < n {
-            rgb_to_yuv444_scalar_tail(rgb, y, &mut cb_discard, &mut cr_discard, done, n, &coeffs);
-        }
-        return;
-    }
-    incant!(crate::encode_generic::rgb_to_yuv444_generic(
-        rgb,
-        y,
-        &mut cb_discard,
-        &mut cr_discard,
-        n,
-        &coeffs
-    ));
-}
-
-/// [`rgb_to_yuv444_y_only`] at its own strides: `rgb_stride` in bytes, `y_stride`
-/// in samples. The dimensions are checked by the caller.
-pub(crate) fn rgb_to_yuv444_y_only_strided(
     rgb: &[u8],
     y: &mut [u8],
     width: usize,
@@ -342,7 +196,13 @@ pub(crate) fn rgb_to_yuv444_y_only_strided(
     matrix: Matrix,
 ) {
     let coeffs = ForwardCoeffs::new(matrix, range);
-    // Same kernel and discarded chroma as the tight path, one row at a time.
+    if rgb_stride == width * 3 && y_stride == width {
+        let n = width * height;
+        let mut cb_discard = alloc::vec![0u8; n];
+        let mut cr_discard = alloc::vec![0u8; n];
+        rgb_to_yuv444_run(rgb, y, &mut cb_discard, &mut cr_discard, n, &coeffs);
+        return;
+    }
     let mut cb_discard = alloc::vec![0u8; width];
     let mut cr_discard = alloc::vec![0u8; width];
     for row in 0..height {
