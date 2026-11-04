@@ -111,7 +111,7 @@ impl ColorModel {
         match self {
             Self::Gray => Some(PlaneMatrix::Gray),
             Self::YCbCr => Some(PlaneMatrix::YCbCr {
-                turbo: idct_method == IdctMethod::Libjpeg,
+                turbo: idct_method.is_libjpeg_exact(),
             }),
             Self::Rgb => Some(PlaneMatrix::Identity),
             _ => None,

@@ -309,9 +309,14 @@ impl DecodeConfig {
     ///   cost of a systematic +0.002..+0.004 rounding bias and reference-exactness.
     ///   Despite the name this is the stb/zune kernel, *not* what C++ jpegli uses
     ///   (jpegli decodes with a float IDCT — zenjpeg's f32 path).
+    /// - [`IdctMethod::LibjpegFast`]: libjpeg-turbo's fast-integer IDCT
+    ///   (`JDCT_IFAST`) with its x86-64 SSE2 kernel's arithmetic, so the decode
+    ///   is byte-exact with `djpeg -dct fast` and TensorFlow's `INTEGER_FAST`
+    ///   decode.
     ///
     /// Applies regardless of upsampling mode. 1-component (grayscale) sources
-    /// always use `Libjpeg` regardless of this setting (#154).
+    /// never use `Jpegli` (#154): they decode with `Libjpeg`, or with
+    /// `LibjpegFast` when that is requested.
     #[must_use]
     pub fn idct_method(mut self, method: IdctMethod) -> Self {
         self.idct_method = Some(method);

@@ -13,8 +13,11 @@ use super::CompInfo;
 /// IDCT one block into a strip buffer at the given offset.
 ///
 /// Handles DC-only fast path (coeff_count <= 1) and general tiered IDCT.
-/// The `idct_fn` parameter selects between standard and libjpeg-compat IDCT.
+/// The `idct_fn` parameter selects between standard and libjpeg-compat IDCT;
+/// `fast_integer` (`IdctMethod::LibjpegFast`) sends every block through the
+/// fused JDCT_IFAST kernel instead.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn idct_block_into(
     coeffs: &[i16; DCT_BLOCK_SIZE],
     coeff_count: u8,
@@ -23,8 +26,19 @@ pub(super) fn idct_block_into(
     dst_offset: usize,
     strip_width: usize,
     idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    fast_integer: bool,
     dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
+    if fast_integer {
+        crate::decode::idct_int::idct_int_ifast_zigzag(
+            coeffs,
+            coeff_count,
+            &crate::decode::idct_int::ifast_multipliers(quant),
+            &mut strip[dst_offset..],
+            strip_width,
+        );
+        return;
+    }
     if coeff_count <= 1 {
         // Dequantize just the DC coefficient and let `idct_fn` pick its own
         // DC-only variant — the Libjpeg lane replicates turbo's NASM wrap
@@ -61,6 +75,7 @@ pub(super) fn idct_comp_mcu_row(
     strip: &mut [i16],
     strip_width: usize,
     idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    fast_integer: bool,
     dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     for iy in 0..info.v_samp {
@@ -86,6 +101,7 @@ pub(super) fn idct_comp_mcu_row(
                 dst_offset,
                 strip_width,
                 idct_fn,
+                fast_integer,
                 dequant_buf,
             );
         }
@@ -110,6 +126,7 @@ pub(super) fn idct_chroma_into_ext(
     c_strip_height: usize,
     chroma_height_total: usize,
     idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    fast_integer: bool,
     dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     let data_offset = c_strip_width; // skip context row 0
@@ -137,6 +154,7 @@ pub(super) fn idct_chroma_into_ext(
                 dst_offset,
                 c_strip_width,
                 idct_fn,
+                fast_integer,
                 dequant_buf,
             );
         }

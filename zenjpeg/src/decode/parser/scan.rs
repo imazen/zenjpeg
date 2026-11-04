@@ -948,7 +948,17 @@ impl<'a> JpegParser<'a> {
 
                     // IDCT directly to strip buffer
                     let dst_offset = mcu_x * 8;
-                    if coeff_count <= 1 {
+                    if self.idct_method == super::super::IdctMethod::LibjpegFast {
+                        // JDCT_IFAST: one fused dequantize + IDCT for every block
+                        // (the kernel's DC-only shortcut gives the same lanes as
+                        // its butterflies).
+                        super::super::idct_int::idct_int_ifast(
+                            &coeffs,
+                            &super::super::idct_int::ifast_multipliers(quant),
+                            &mut strip[dst_offset..],
+                            strip_width,
+                        );
+                    } else if coeff_count <= 1 {
                         let dc = coeffs[0] as i32 * quant[0] as i32;
                         #[cfg(target_arch = "x86_64")]
                         let is_turbo_v3 = self.idct_method == super::super::IdctMethod::Libjpeg
@@ -994,6 +1004,9 @@ impl<'a> JpegParser<'a> {
                                         strip_width,
                                     );
                                 }
+                                super::super::IdctMethod::LibjpegFast => {
+                                    unreachable!("handled above")
+                                }
                             }
                             handled = true;
                         }
@@ -1015,6 +1028,9 @@ impl<'a> JpegParser<'a> {
                                         strip_width,
                                         coeff_count,
                                     );
+                                }
+                                super::super::IdctMethod::LibjpegFast => {
+                                    unreachable!("handled above")
                                 }
                             }
                         }
@@ -1181,7 +1197,8 @@ impl<'a> JpegParser<'a> {
             #[cfg(target_arch = "x86_64")]
             idct_v3: archmage::X64V3Token::summon(),
             kernel,
-            turbo_color: self.idct_method == super::super::IdctMethod::Libjpeg,
+            turbo_color: self.idct_method.is_libjpeg_exact(),
+            fast_integer: self.idct_method == super::super::IdctMethod::LibjpegFast,
         };
 
         if bufs.need_fancy {

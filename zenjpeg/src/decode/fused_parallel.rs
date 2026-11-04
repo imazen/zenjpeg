@@ -504,6 +504,9 @@ impl<'a> JpegParser<'a> {
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: LibjpegFast blocks take the fused JDCT_IFAST kernel
+            // at every block site below.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
 
         // Build thread-safe Huffman tables
@@ -738,18 +741,33 @@ impl<'a> JpegParser<'a> {
                                 _ => &mut cr_strip,
                             };
 
-                            if count <= 1 {
-                                dequant_buf[0] =
-                                    coeffs_buf[0] as i32 * quant_tables[*comp_idx][0] as i32;
-                            } else {
-                                dequantize_unzigzag_i32_into_partial(
+                            if idct_method == IdctMethod::LibjpegFast {
+                                super::idct_int::idct_int_ifast_zigzag(
                                     &coeffs_buf,
-                                    quant_tables[*comp_idx],
+                                    count,
+                                    &super::idct_int::ifast_multipliers(quant_tables[*comp_idx]),
+                                    &mut strip[base_px..],
+                                    strip_width,
+                                );
+                            } else {
+                                if count <= 1 {
+                                    dequant_buf[0] =
+                                        coeffs_buf[0] as i32 * quant_tables[*comp_idx][0] as i32;
+                                } else {
+                                    dequantize_unzigzag_i32_into_partial(
+                                        &coeffs_buf,
+                                        quant_tables[*comp_idx],
+                                        &mut dequant_buf,
+                                        count,
+                                    );
+                                }
+                                idct_fn(
                                     &mut dequant_buf,
+                                    &mut strip[base_px..],
+                                    strip_width,
                                     count,
                                 );
                             }
-                            idct_fn(&mut dequant_buf, &mut strip[base_px..], strip_width, count);
                         }
                     }
 
@@ -838,6 +856,9 @@ impl<'a> JpegParser<'a> {
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: LibjpegFast blocks take the fused JDCT_IFAST kernel
+            // at every block site below.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
@@ -1063,23 +1084,35 @@ impl<'a> JpegParser<'a> {
                                     let block_py = v * 8;
                                     let strip_off = block_py * strip_stride + block_px;
 
-                                    if count <= 1 {
-                                        dequant_buf[0] = coeffs_buf[0] as i32
-                                            * quant_tables[*comp_idx][0] as i32;
-                                    } else {
-                                        dequantize_unzigzag_i32_into_partial(
+                                    if idct_method == IdctMethod::LibjpegFast {
+                                        super::idct_int::idct_int_ifast_zigzag(
                                             &coeffs_buf,
-                                            quant_tables[*comp_idx],
+                                            count,
+                                            &super::idct_int::ifast_multipliers(
+                                                quant_tables[*comp_idx],
+                                            ),
+                                            &mut strip[strip_off..],
+                                            strip_stride,
+                                        );
+                                    } else {
+                                        if count <= 1 {
+                                            dequant_buf[0] = coeffs_buf[0] as i32
+                                                * quant_tables[*comp_idx][0] as i32;
+                                        } else {
+                                            dequantize_unzigzag_i32_into_partial(
+                                                &coeffs_buf,
+                                                quant_tables[*comp_idx],
+                                                &mut dequant_buf,
+                                                count,
+                                            );
+                                        }
+                                        idct_fn(
                                             &mut dequant_buf,
+                                            &mut strip[strip_off..],
+                                            strip_stride,
                                             count,
                                         );
                                     }
-                                    idct_fn(
-                                        &mut dequant_buf,
-                                        &mut strip[strip_off..],
-                                        strip_stride,
-                                        count,
-                                    );
                                 }
                             }
                         }
@@ -1169,6 +1202,9 @@ impl<'a> JpegParser<'a> {
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: LibjpegFast blocks take the fused JDCT_IFAST kernel
+            // at every block site below.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
 
         // Select h2v1 upsample function (strided: real widths, padded strides).
@@ -1296,7 +1332,7 @@ impl<'a> JpegParser<'a> {
                             if rgb_off + y_cols_this * 3 > rgb_chunk.len() {
                                 break;
                             }
-                            if idct_method == IdctMethod::Libjpeg {
+                            if idct_method.is_libjpeg_exact() {
                                 crate::color::ycbcr::fused_h2v1_fancy_ycbcr_row_avx2::<true>(
                                     token,
                                     &y_strip[y_off..y_off + y_cols_this],
@@ -1473,23 +1509,35 @@ impl<'a> JpegParser<'a> {
                                     let block_py = v * 8;
                                     let strip_off = block_py * strip_stride + block_px;
 
-                                    if count <= 1 {
-                                        dequant_buf[0] = coeffs_buf[0] as i32
-                                            * quant_tables[*comp_idx][0] as i32;
-                                    } else {
-                                        dequantize_unzigzag_i32_into_partial(
+                                    if idct_method == IdctMethod::LibjpegFast {
+                                        super::idct_int::idct_int_ifast_zigzag(
                                             &coeffs_buf,
-                                            quant_tables[*comp_idx],
+                                            count,
+                                            &super::idct_int::ifast_multipliers(
+                                                quant_tables[*comp_idx],
+                                            ),
+                                            &mut strip[strip_off..],
+                                            strip_stride,
+                                        );
+                                    } else {
+                                        if count <= 1 {
+                                            dequant_buf[0] = coeffs_buf[0] as i32
+                                                * quant_tables[*comp_idx][0] as i32;
+                                        } else {
+                                            dequantize_unzigzag_i32_into_partial(
+                                                &coeffs_buf,
+                                                quant_tables[*comp_idx],
+                                                &mut dequant_buf,
+                                                count,
+                                            );
+                                        }
+                                        idct_fn(
                                             &mut dequant_buf,
+                                            &mut strip[strip_off..],
+                                            strip_stride,
                                             count,
                                         );
                                     }
-                                    idct_fn(
-                                        &mut dequant_buf,
-                                        &mut strip[strip_off..],
-                                        strip_stride,
-                                        count,
-                                    );
                                 }
                             }
                         }
@@ -1589,14 +1637,18 @@ impl<'a> JpegParser<'a> {
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: LibjpegFast blocks take the fused JDCT_IFAST kernel
+            // at every block site below.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
 
         // Only Triangle reaches this path (NearestNeighbor uses box path).
-        // IdctMethod::Libjpeg => turbo's fixed h2v2 rounding bias (H2v2Bias).
+        // IdctMethod::Libjpeg / LibjpegFast => turbo's fixed h2v2 rounding bias (H2v2Bias).
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
-        let upsample_fn: UpsampleFn = match idct_method {
-            IdctMethod::Libjpeg => super::upsample::upsample_h2v2_i16_libjpeg_turbo,
-            _ => upsample_h2v2_i16_libjpeg,
+        let upsample_fn: UpsampleFn = if idct_method.is_libjpeg_exact() {
+            super::upsample::upsample_h2v2_i16_libjpeg_turbo
+        } else {
+            upsample_h2v2_i16_libjpeg
         };
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
@@ -1806,7 +1858,7 @@ impl<'a> JpegParser<'a> {
                                 width,
                                 pixel_row_start,
                                 pixel_rows_this,
-                                idct_method == IdctMethod::Libjpeg,
+                                idct_method.is_libjpeg_exact(),
                                 swap_rb,
                                 cs_cb,
                                 cs_cr,
@@ -1968,23 +2020,35 @@ impl<'a> JpegParser<'a> {
                                             let block_py = v * 8;
                                             let strip_off = block_py * y_strip_width + block_px;
 
-                                            if count <= 1 {
-                                                dequant_buf[0] = coeffs_buf[0] as i32
-                                                    * quant_tables[*comp_idx][0] as i32;
-                                            } else {
-                                                dequantize_unzigzag_i32_into_partial(
+                                            if idct_method == IdctMethod::LibjpegFast {
+                                                super::idct_int::idct_int_ifast_zigzag(
                                                     &coeffs_buf,
-                                                    quant_tables[*comp_idx],
+                                                    count,
+                                                    &super::idct_int::ifast_multipliers(
+                                                        quant_tables[*comp_idx],
+                                                    ),
+                                                    &mut y_strip_b[strip_off..],
+                                                    y_strip_width,
+                                                );
+                                            } else {
+                                                if count <= 1 {
+                                                    dequant_buf[0] = coeffs_buf[0] as i32
+                                                        * quant_tables[*comp_idx][0] as i32;
+                                                } else {
+                                                    dequantize_unzigzag_i32_into_partial(
+                                                        &coeffs_buf,
+                                                        quant_tables[*comp_idx],
+                                                        &mut dequant_buf,
+                                                        count,
+                                                    );
+                                                }
+                                                idct_fn(
                                                     &mut dequant_buf,
+                                                    &mut y_strip_b[strip_off..],
+                                                    y_strip_width,
                                                     count,
                                                 );
                                             }
-                                            idct_fn(
-                                                &mut dequant_buf,
-                                                &mut y_strip_b[strip_off..],
-                                                y_strip_width,
-                                                count,
-                                            );
                                         } else {
                                             // Chroma block → ext_cb_b or ext_cr_b data region
                                             // Data region starts at row 1 (row 0 is above context)
@@ -1999,23 +2063,35 @@ impl<'a> JpegParser<'a> {
                                             let strip_off =
                                                 data_offset + block_py * c_strip_width + block_px;
 
-                                            if count <= 1 {
-                                                dequant_buf[0] = coeffs_buf[0] as i32
-                                                    * quant_tables[*comp_idx][0] as i32;
-                                            } else {
-                                                dequantize_unzigzag_i32_into_partial(
+                                            if idct_method == IdctMethod::LibjpegFast {
+                                                super::idct_int::idct_int_ifast_zigzag(
                                                     &coeffs_buf,
-                                                    quant_tables[*comp_idx],
+                                                    count,
+                                                    &super::idct_int::ifast_multipliers(
+                                                        quant_tables[*comp_idx],
+                                                    ),
+                                                    &mut ext[strip_off..],
+                                                    c_strip_width,
+                                                );
+                                            } else {
+                                                if count <= 1 {
+                                                    dequant_buf[0] = coeffs_buf[0] as i32
+                                                        * quant_tables[*comp_idx][0] as i32;
+                                                } else {
+                                                    dequantize_unzigzag_i32_into_partial(
+                                                        &coeffs_buf,
+                                                        quant_tables[*comp_idx],
+                                                        &mut dequant_buf,
+                                                        count,
+                                                    );
+                                                }
+                                                idct_fn(
                                                     &mut dequant_buf,
+                                                    &mut ext[strip_off..],
+                                                    c_strip_width,
                                                     count,
                                                 );
                                             }
-                                            idct_fn(
-                                                &mut dequant_buf,
-                                                &mut ext[strip_off..],
-                                                c_strip_width,
-                                                count,
-                                            );
                                         }
                                     }
                                 }
@@ -2528,6 +2604,9 @@ impl WaveParallelState {
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: LibjpegFast blocks take the fused JDCT_IFAST kernel
+            // at every block site below.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
 
         // Split wave buffer into per-segment chunks
@@ -2685,23 +2764,35 @@ impl WaveParallelState {
                                 let block_py = v * 8;
                                 let strip_off = block_py * strip_stride + block_px;
 
-                                if count <= 1 {
-                                    dequant_buf[0] = coeffs_buf[0] as i32
-                                        * self.quant_tables[*comp_idx][0] as i32;
-                                } else {
-                                    dequantize_unzigzag_i32_into_partial(
+                                if self.idct_method == IdctMethod::LibjpegFast {
+                                    super::idct_int::idct_int_ifast_zigzag(
                                         &coeffs_buf,
-                                        &self.quant_tables[*comp_idx],
+                                        count,
+                                        &super::idct_int::ifast_multipliers(
+                                            &self.quant_tables[*comp_idx],
+                                        ),
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                    );
+                                } else {
+                                    if count <= 1 {
+                                        dequant_buf[0] = coeffs_buf[0] as i32
+                                            * self.quant_tables[*comp_idx][0] as i32;
+                                    } else {
+                                        dequantize_unzigzag_i32_into_partial(
+                                            &coeffs_buf,
+                                            &self.quant_tables[*comp_idx],
+                                            &mut dequant_buf,
+                                            count,
+                                        );
+                                    }
+                                    idct_fn(
                                         &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
                                         count,
                                     );
                                 }
-                                idct_fn(
-                                    &mut dequant_buf,
-                                    &mut strip[strip_off..],
-                                    strip_stride,
-                                    count,
-                                );
                             }
                         }
                     }
@@ -2802,6 +2893,9 @@ impl WaveParallelState {
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: LibjpegFast blocks take the fused JDCT_IFAST kernel
+            // at every block site below.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
 
         // Split output buffers into per-segment chunks
@@ -3015,23 +3109,35 @@ impl WaveParallelState {
                                 let block_py = v * 8;
                                 let strip_off = block_py * strip_stride + block_px;
 
-                                if count <= 1 {
-                                    dequant_buf[0] = coeffs_buf[0] as i32
-                                        * self.quant_tables[*comp_idx][0] as i32;
-                                } else {
-                                    dequantize_unzigzag_i32_into_partial(
+                                if self.idct_method == IdctMethod::LibjpegFast {
+                                    super::idct_int::idct_int_ifast_zigzag(
                                         &coeffs_buf,
-                                        &self.quant_tables[*comp_idx],
+                                        count,
+                                        &super::idct_int::ifast_multipliers(
+                                            &self.quant_tables[*comp_idx],
+                                        ),
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                    );
+                                } else {
+                                    if count <= 1 {
+                                        dequant_buf[0] = coeffs_buf[0] as i32
+                                            * self.quant_tables[*comp_idx][0] as i32;
+                                    } else {
+                                        dequantize_unzigzag_i32_into_partial(
+                                            &coeffs_buf,
+                                            &self.quant_tables[*comp_idx],
+                                            &mut dequant_buf,
+                                            count,
+                                        );
+                                    }
+                                    idct_fn(
                                         &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
                                         count,
                                     );
                                 }
-                                idct_fn(
-                                    &mut dequant_buf,
-                                    &mut strip[strip_off..],
-                                    strip_stride,
-                                    count,
-                                );
                             }
                         }
                     }
