@@ -1235,6 +1235,13 @@ impl YCbCrPlanarEncoder {
             return Err(Error::too_many_rows(self.height, new_total as u32));
         }
 
+        // A stride below the width would overlap rows.
+        for stride in [planes.y_stride, planes.cb_stride, planes.cr_stride] {
+            if stride < width {
+                return Err(Error::stride_too_small(width as u32, stride));
+            }
+        }
+
         let mut src_row = 0;
         while src_row < rows {
             stop.check()?;
@@ -2248,6 +2255,45 @@ mod tests {
             let e = try_push(bad).unwrap_err();
             assert!(
                 matches!(e.kind(), ErrorKind::InvalidBufferSize { .. }),
+                "{e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_push_rejects_a_stride_below_the_width() {
+        use crate::error::ErrorKind;
+        let (w, h) = (16usize, 16usize);
+        let plane = ycbcr_plane(w, h, 0);
+        let good = crate::encode::YCbCrPlanes {
+            y: &plane,
+            y_stride: w,
+            cb: &plane,
+            cb_stride: w,
+            cr: &plane,
+            cr_stride: w,
+        };
+        for bad in [
+            crate::encode::YCbCrPlanes {
+                y_stride: w - 1,
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cb_stride: w - 1,
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cr_stride: w - 1,
+                ..good
+            },
+        ] {
+            let e = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
+                .encode_from_ycbcr_planar(w as u32, h as u32)
+                .unwrap()
+                .push(&bad, h, Unstoppable)
+                .unwrap_err();
+            assert!(
+                matches!(e.kind(), ErrorKind::StrideTooSmall { .. }),
                 "{e:?}"
             );
         }
