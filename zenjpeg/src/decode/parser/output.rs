@@ -131,6 +131,12 @@ fn idct_block_i16_into_plane(
     match idct_method {
         super::super::IdctMethod::Libjpeg => idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8),
         super::super::IdctMethod::Jpegli => idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8),
+        super::super::IdctMethod::LibjpegFast => super::super::idct_int::idct_int_ifast(
+            natural_coeffs,
+            &super::super::idct_int::ifast_multipliers(quant),
+            &mut pixels_i16,
+            8,
+        ),
     }
 
     if cols_to_copy == DCT_SIZE {

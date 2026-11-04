@@ -2544,6 +2544,398 @@ pub fn idct_int_tiered_libjpeg_unclamped(
     }
 }
 
+// ---------------------------------------------------------------------------
+// libjpeg-turbo's fast-integer IDCT (JDCT_IFAST), selected by
+// `IdctMethod::LibjpegFast`.
+//
+// The kernel is `jsimd_idct_ifast_sse2` (simd/x86_64/jidctfst-sse2.asm) lane
+// for lane, which is what every x86-64 libjpeg-turbo build runs for
+// JDCT_IFAST (TensorFlow's `decode_jpeg(dct_method="INTEGER_FAST")` included):
+// 16-bit lanes throughout — `pmullw` dequantization, wrapping adds, each
+// multiply as `pmulhw` of the operand pre-shifted left by
+// PRE_MULTIPLY_SCALE_BITS (2) with the constant shifted left by CONST_SHIFT (6),
+// -2.613 z10 computed as -1.613 z10 - z10 ("To avoid overflow" in the source),
+// pass-1 results kept in 16 bits, and the output descaled by `psraw 5`,
+// saturated to a signed byte (`packsswb`) and offset by 128. The C kernel
+// (jidctfst.c) differs only where a 16-bit intermediate overflows: it wraps
+// through its 10-bit range-limit table where the SIMD kernel saturates (30 of
+// 20,309 CIQA images, zensimx 2026-11-03). The asm's all-zero-AC shortcut
+// yields the same lanes as its butterflies and is not special-cased here.
+// ---------------------------------------------------------------------------
+
+/// jddctmgr.c's AAN scale factors, 14-bit, natural order.
+const IFAST_AANSCALES: [i32; 64] = [
+    16384, 22725, 21407, 19266, 16384, 12873, 8867, 4520, //
+    22725, 31521, 29692, 26722, 22725, 17855, 12299, 6270, //
+    21407, 29692, 27969, 25172, 21407, 16819, 11585, 5906, //
+    19266, 26722, 25172, 22654, 19266, 15137, 10426, 5315, //
+    16384, 22725, 21407, 19266, 16384, 12873, 8867, 4520, //
+    12873, 17855, 16819, 15137, 12873, 10114, 6967, 3552, //
+    8867, 12299, 11585, 10426, 8867, 6967, 4799, 2446, //
+    4520, 6270, 5906, 5315, 4520, 3552, 2446, 1247,
+];
+
+/// libjpeg-turbo's fast-integer multiplier table for a natural-order
+/// quantization table: `DESCALE(quantval * aanscale, CONST_BITS - IFAST_SCALE_BITS)`
+/// (14 - 2 = 12 bits, rounded), held as 16 bits like `IFAST_MULT_TYPE` in the
+/// SIMD builds.
+pub(crate) fn ifast_multipliers(quant: &[u16; 64]) -> [i16; 64] {
+    core::array::from_fn(|i| ((quant[i] as i32 * IFAST_AANSCALES[i] + (1 << 11)) >> 12) as i16)
+}
+
+// FIX(x) at CONST_BITS 8, shifted left by CONST_SHIFT 6 (jidctfst-sse2.asm).
+const IFAST_PW_F1414: i16 = 362 << 6;
+const IFAST_PW_F1847: i16 = 473 << 6;
+const IFAST_PW_MF1613: i16 = -((669 - 256) << 6);
+const IFAST_PW_F1082: i16 = 277 << 6;
+
+/// `pmulhw`: the high 16 bits of the signed 16x16-bit product.
+#[inline(always)]
+fn pmulhw(a: i16, c: i16) -> i16 {
+    ((a as i32 * c as i32) >> 16) as i16
+}
+
+/// One 8-point AAN pass of jidctfst-sse2.asm in wrapping 16-bit lanes; the
+/// same code serves the columns (pass 1, the dequantized coefficients) and the
+/// rows (pass 2, the transposed pass-1 output).
+#[inline(always)]
+fn ifast_pass_w16(x: [i16; 8]) -> [i16; 8] {
+    let tmp10 = x[0].wrapping_add(x[4]);
+    let tmp11 = x[0].wrapping_sub(x[4]);
+    let tmp13 = x[2].wrapping_add(x[6]);
+    let tmp12 = pmulhw(x[2].wrapping_sub(x[6]).wrapping_shl(2), IFAST_PW_F1414).wrapping_sub(tmp13);
+    let tmp0 = tmp10.wrapping_add(tmp13);
+    let tmp3 = tmp10.wrapping_sub(tmp13);
+    let tmp1 = tmp11.wrapping_add(tmp12);
+    let tmp2 = tmp11.wrapping_sub(tmp12);
+    let z12 = x[1].wrapping_sub(x[7]);
+    let z10 = x[5].wrapping_sub(x[3]);
+    let z11 = x[1].wrapping_add(x[7]);
+    let z13 = x[5].wrapping_add(x[3]);
+    let (z12s, z10s) = (z12.wrapping_shl(2), z10.wrapping_shl(2));
+    let tmp7 = z11.wrapping_add(z13);
+    let tmp11 = pmulhw(z11.wrapping_sub(z13).wrapping_shl(2), IFAST_PW_F1414);
+    let z5 = pmulhw(z10s.wrapping_add(z12s), IFAST_PW_F1847);
+    let tmp12 = pmulhw(z10s, IFAST_PW_MF1613)
+        .wrapping_sub(z10)
+        .wrapping_add(z5);
+    let tmp10 = pmulhw(z12s, IFAST_PW_F1082).wrapping_sub(z5);
+    let tmp6 = tmp12.wrapping_sub(tmp7);
+    let tmp5 = tmp11.wrapping_sub(tmp6);
+    let tmp4 = tmp10.wrapping_add(tmp5);
+    [
+        tmp0.wrapping_add(tmp7),
+        tmp1.wrapping_add(tmp6),
+        tmp2.wrapping_add(tmp5),
+        tmp3.wrapping_sub(tmp4),
+        tmp3.wrapping_add(tmp4),
+        tmp2.wrapping_sub(tmp5),
+        tmp1.wrapping_sub(tmp6),
+        tmp0.wrapping_sub(tmp7),
+    ]
+}
+
+/// JDCT_IFAST on one block of natural-order coefficients with its multiplier
+/// table ([`ifast_multipliers`]), written as 8 rows of 8 samples in `0..=255`
+/// at `out[row * stride..]`. Every block, DC-only ones included, takes this
+/// one path.
+pub(crate) fn idct_int_ifast(coeffs: &[i16; 64], mult: &[i16; 64], out: &mut [i16], stride: usize) {
+    let min_len = stride * 7 + 8;
+    assert!(out.len() >= min_len);
+    let out = &mut out[..min_len];
+    let mut ws = [[0i16; 8]; 8];
+    for col in 0..8 {
+        let c = ifast_pass_w16(core::array::from_fn(|r| {
+            coeffs[r * 8 + col].wrapping_mul(mult[r * 8 + col])
+        }));
+        for r in 0..8 {
+            ws[r][col] = c[r];
+        }
+    }
+    for (r, row) in ws.iter().enumerate() {
+        let v = ifast_pass_w16(*row);
+        let o = &mut out[r * stride..r * stride + 8];
+        for k in 0..8 {
+            o[k] = (v[k] >> 5).clamp(-128, 127) + 128;
+        }
+    }
+}
+
+/// [`idct_int_ifast`] from zigzag-order coefficients (the order the entropy
+/// decoder delivers on the strip paths), reading only the first `coeff_count`
+/// positions as `dequantize_unzigzag_i32_into_partial` does.
+pub(crate) fn idct_int_ifast_zigzag(
+    coeffs_zz: &[i16; 64],
+    coeff_count: u8,
+    mult: &[i16; 64],
+    out: &mut [i16],
+    stride: usize,
+) {
+    use crate::foundation::consts::JPEG_NATURAL_ORDER;
+    let mut natural = [0i16; 64];
+    for z in 0..(coeff_count as usize).min(64) {
+        natural[(JPEG_NATURAL_ORDER[z] & 63) as usize] = coeffs_zz[z];
+    }
+    idct_int_ifast(&natural, mult, out, stride);
+}
+
+#[cfg(test)]
+mod ifast_tests {
+    use super::*;
+
+    /// jidctfst.c's arithmetic (DCTELEM = short, MULTIPLY in JLONG, the
+    /// wrapping 10-bit range-limit table) for one block: the C reference the
+    /// SIMD kernel must agree with wherever no 16-bit intermediate overflows.
+    fn idct_ifast_c(coeffs: &[i16; 64], mult: &[i16; 64]) -> [u8; 64] {
+        fn mul(v: i32, c: i64) -> i16 {
+            ((v as i64 * c) >> 8) as i16
+        }
+        fn range_limit(x: i32) -> u8 {
+            let i = (x & 1023) as u32;
+            if i < 128 {
+                (i + 128) as u8
+            } else if i < 512 {
+                255
+            } else if i < 896 {
+                0
+            } else {
+                (i - 896) as u8
+            }
+        }
+        let (f1082, f1414, f1847, f2613) = (277i64, 362i64, 473i64, 669i64);
+        let mut ws = [0i32; 64];
+        for col in 0..8 {
+            if (1..8).all(|r| coeffs[r * 8 + col] == 0) {
+                let dc = coeffs[col] as i32 * mult[col] as i32;
+                for r in 0..8 {
+                    ws[r * 8 + col] = dc;
+                }
+                continue;
+            }
+            let t = |r: usize| (coeffs[r * 8 + col] as i32 * mult[r * 8 + col] as i32) as i16;
+            let (t0, t1, t2, t3) = (t(0), t(2), t(4), t(6));
+            let tmp10 = (t0 as i32 + t2 as i32) as i16;
+            let tmp11 = (t0 as i32 - t2 as i32) as i16;
+            let tmp13 = (t1 as i32 + t3 as i32) as i16;
+            let tmp12 = (mul(t1 as i32 - t3 as i32, f1414) as i32 - tmp13 as i32) as i16;
+            let (e0, e3) = (
+                (tmp10 as i32 + tmp13 as i32) as i16,
+                (tmp10 as i32 - tmp13 as i32) as i16,
+            );
+            let (e1, e2) = (
+                (tmp11 as i32 + tmp12 as i32) as i16,
+                (tmp11 as i32 - tmp12 as i32) as i16,
+            );
+            let (t4, t5, t6, t7) = (t(1), t(3), t(5), t(7));
+            let z13 = (t6 as i32 + t5 as i32) as i16;
+            let z10 = (t6 as i32 - t5 as i32) as i16;
+            let z11 = (t4 as i32 + t7 as i32) as i16;
+            let z12 = (t4 as i32 - t7 as i32) as i16;
+            let o7 = (z11 as i32 + z13 as i32) as i16;
+            let o11 = mul(z11 as i32 - z13 as i32, f1414);
+            let z5 = mul(z10 as i32 + z12 as i32, f1847);
+            let o10 = (mul(z12 as i32, f1082) as i32 - z5 as i32) as i16;
+            let o12 = (mul(z10 as i32, -f2613) as i32 + z5 as i32) as i16;
+            let o6 = (o12 as i32 - o7 as i32) as i16;
+            let o5 = (o11 as i32 - o6 as i32) as i16;
+            let o4 = (o10 as i32 + o5 as i32) as i16;
+            ws[col] = e0 as i32 + o7 as i32;
+            ws[56 + col] = e0 as i32 - o7 as i32;
+            ws[8 + col] = e1 as i32 + o6 as i32;
+            ws[48 + col] = e1 as i32 - o6 as i32;
+            ws[16 + col] = e2 as i32 + o5 as i32;
+            ws[40 + col] = e2 as i32 - o5 as i32;
+            ws[32 + col] = e3 as i32 + o4 as i32;
+            ws[24 + col] = e3 as i32 - o4 as i32;
+        }
+        let mut out = [0u8; 64];
+        for row in 0..8 {
+            let w = &ws[row * 8..row * 8 + 8];
+            if w[1..].iter().all(|&v| v == 0) {
+                out[row * 8..row * 8 + 8].fill(range_limit(w[0] >> 5));
+                continue;
+            }
+            let s = |k: usize| w[k] as i16 as i32;
+            let tmp10 = (s(0) + s(4)) as i16;
+            let tmp11 = (s(0) - s(4)) as i16;
+            let tmp13 = (s(2) + s(6)) as i16;
+            let tmp12 = (mul(s(2) - s(6), f1414) as i32 - tmp13 as i32) as i16;
+            let (e0, e3) = (
+                (tmp10 as i32 + tmp13 as i32) as i16,
+                (tmp10 as i32 - tmp13 as i32) as i16,
+            );
+            let (e1, e2) = (
+                (tmp11 as i32 + tmp12 as i32) as i16,
+                (tmp11 as i32 - tmp12 as i32) as i16,
+            );
+            let z13 = (s(5) + s(3)) as i16;
+            let z10 = (s(5) - s(3)) as i16;
+            let z11 = (s(1) + s(7)) as i16;
+            let z12 = (s(1) - s(7)) as i16;
+            let o7 = (z11 as i32 + z13 as i32) as i16;
+            let o11 = mul(z11 as i32 - z13 as i32, f1414);
+            let z5 = mul(z10 as i32 + z12 as i32, f1847);
+            let o10 = (mul(z12 as i32, f1082) as i32 - z5 as i32) as i16;
+            let o12 = (mul(z10 as i32, -f2613) as i32 + z5 as i32) as i16;
+            let o6 = (o12 as i32 - o7 as i32) as i16;
+            let o5 = (o11 as i32 - o6 as i32) as i16;
+            let o4 = (o10 as i32 + o5 as i32) as i16;
+            let o = &mut out[row * 8..row * 8 + 8];
+            o[0] = range_limit((e0 as i32 + o7 as i32) >> 5);
+            o[7] = range_limit((e0 as i32 - o7 as i32) >> 5);
+            o[1] = range_limit((e1 as i32 + o6 as i32) >> 5);
+            o[6] = range_limit((e1 as i32 - o6 as i32) >> 5);
+            o[2] = range_limit((e2 as i32 + o5 as i32) >> 5);
+            o[5] = range_limit((e2 as i32 - o5 as i32) >> 5);
+            o[4] = range_limit((e3 as i32 + o4 as i32) >> 5);
+            o[3] = range_limit((e3 as i32 - o4 as i32) >> 5);
+        }
+        out
+    }
+
+    fn lcg(state: &mut u64) -> u32 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (*state >> 33) as u32
+    }
+
+    #[test]
+    fn multipliers_follow_jddctmgr() {
+        let q = [1u16; 64];
+        let m = ifast_multipliers(&q);
+        // quantval 1: round(aanscale / 4096): 16384 -> 4, 22725 -> 6 (5.55), 1247 -> 0 (0.30).
+        assert_eq!((m[0], m[1], m[63]), (4, 6, 0));
+        let q = [255u16; 64];
+        assert_eq!(ifast_multipliers(&q)[0], 1020);
+    }
+
+    #[test]
+    fn dc_only_block_is_the_descaled_dc() {
+        let q: [u16; 64] = core::array::from_fn(|i| 1 + (i as u16 % 17));
+        let m = ifast_multipliers(&q);
+        for dc in [-1024i16, -300, -1, 0, 1, 77, 1016] {
+            let mut coeffs = [0i16; 64];
+            coeffs[0] = dc;
+            let mut out = [0i16; 64];
+            idct_int_ifast(&coeffs, &m, &mut out, 8);
+            let want = (dc.wrapping_mul(m[0]) >> 5).clamp(-128, 127) + 128;
+            assert!(out.iter().all(|&v| v == want), "dc {dc}: {out:?}");
+        }
+    }
+
+    /// The JPEG forward DCT (f64) of an 8x8 sample block, quantized by `q`:
+    /// coefficients with the magnitudes real images produce.
+    fn quantized_block(samples: &[u8; 64], q: &[u16; 64]) -> [i16; 64] {
+        use core::f64::consts::{FRAC_1_SQRT_2, PI};
+        let mut out = [0i16; 64];
+        for v in 0..8 {
+            for u in 0..8 {
+                let cu = if u == 0 { FRAC_1_SQRT_2 } else { 1.0 };
+                let cv = if v == 0 { FRAC_1_SQRT_2 } else { 1.0 };
+                let mut sum = 0.0;
+                for y in 0..8 {
+                    for x in 0..8 {
+                        let s = samples[y * 8 + x] as f64 - 128.0;
+                        sum += s
+                            * (((2 * x + 1) * u) as f64 * PI / 16.0).cos()
+                            * (((2 * y + 1) * v) as f64 * PI / 16.0).cos();
+                    }
+                }
+                out[v * 8 + u] = (0.25 * cu * cv * sum / q[v * 8 + u] as f64).round() as i16;
+            }
+        }
+        out
+    }
+
+    /// Sample blocks of the kinds real images hold: gradients, sinusoids,
+    /// noise, hard edges and saturated checkerboards.
+    fn sample_block(state: &mut u64) -> [u8; 64] {
+        let kind = lcg(state) % 5;
+        let (a, b, c) = (lcg(state) % 256, lcg(state) % 256, 1 + lcg(state) % 7);
+        core::array::from_fn(|i| {
+            let (x, y) = ((i % 8) as i64, (i / 8) as i64);
+            let v: i64 = match kind {
+                0 => a as i64 + (b as i64 - a as i64) * (x + y) / 14,
+                1 => {
+                    128 + ((x as f64 * c as f64 * 0.6).sin() * (y as f64 * 0.9).cos() * 120.0)
+                        as i64
+                }
+                2 => (lcg(state) % 256) as i64,
+                3 => {
+                    if x < c as i64 {
+                        a as i64
+                    } else {
+                        b as i64
+                    }
+                }
+                _ => {
+                    if (x + y) % 2 == 0 {
+                        255
+                    } else {
+                        0
+                    }
+                }
+            };
+            v.clamp(0, 255) as u8
+        })
+    }
+
+    #[test]
+    fn matches_the_c_kernel_on_image_blocks() {
+        // On blocks real images produce no 16-bit intermediate overflows, so
+        // jidctfst.c and jidctfst-sse2.asm agree; this pins the butterfly
+        // transcription against the C arithmetic on 3,000 such blocks across
+        // six quantization tables (flat 1..16 and a quality-50 luma table).
+        let luma50: [u16; 64] = [
+            16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57,
+            69, 56, 14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55,
+            64, 81, 104, 113, 92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100,
+            103, 99,
+        ];
+        let tables: [[u16; 64]; 6] = [[1; 64], [2; 64], [4; 64], [8; 64], [16; 64], luma50];
+        let mut state = 20261103u64;
+        for q in &tables {
+            let m = ifast_multipliers(q);
+            for _ in 0..500 {
+                let coeffs = quantized_block(&sample_block(&mut state), q);
+                let mut out = [0i16; 64];
+                idct_int_ifast(&coeffs, &m, &mut out, 8);
+                let c = idct_ifast_c(&coeffs, &m);
+                for k in 0..64 {
+                    assert_eq!(
+                        out[k], c[k] as i16,
+                        "q[0] {} block {coeffs:?} differs at {k}",
+                        q[0]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zigzag_entry_matches_natural_entry() {
+        use crate::foundation::consts::JPEG_NATURAL_ORDER;
+        let q: [u16; 64] = core::array::from_fn(|i| 1 + (i as u16 % 29));
+        let m = ifast_multipliers(&q);
+        let mut state = 7u64;
+        for count in [1u8, 2, 5, 17, 40, 64] {
+            let mut zz = [0i16; 64];
+            for k in 0..count as usize {
+                zz[k] = (lcg(&mut state) % 101) as i16 - 50;
+            }
+            let mut natural = [0i16; 64];
+            for z in 0..count as usize {
+                natural[(JPEG_NATURAL_ORDER[z] & 63) as usize] = zz[z];
+            }
+            let (mut a, mut b) = ([0i16; 64], [0i16; 64]);
+            idct_int_ifast(&natural, &m, &mut a, 8);
+            idct_int_ifast_zigzag(&zz, count, &m, &mut b, 8);
+            assert_eq!(a, b, "count {count}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

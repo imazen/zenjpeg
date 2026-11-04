@@ -415,12 +415,20 @@ impl StripProcessor {
         // Gray-normalized in `new` (`IdctMethod::for_components`, #154).
         let method = self.idct_method;
 
+        if method == IdctMethod::LibjpegFast {
+            // JDCT_IFAST: one fused dequantize + IDCT for every block and output
+            // target (libjpeg-turbo has no unclamped fast-integer kernel).
+            let mult = super::idct_int::ifast_multipliers(quant);
+            super::idct_int::idct_int_ifast_zigzag(coeffs, coeff_count, &mult, strip, stride);
+            return;
+        }
         if coeff_count <= 1 {
             self.dequant_buf[0] = coeffs[0] as i32 * quant[0] as i32;
         } else {
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
         }
         match (unclamped, method) {
+            (_, IdctMethod::LibjpegFast) => unreachable!("handled above"),
             (false, IdctMethod::Libjpeg) => {
                 idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
             }
@@ -669,12 +677,14 @@ impl StripProcessor {
             // IdctMethod::Libjpeg selects turbo's fixed rounding bias so the
             // whole decode is libjpeg-turbo-exact (see H2v2Bias).
             ChromaUpsampling::Triangle => match self.idct_method {
-                super::IdctMethod::Libjpeg
+                super::IdctMethod::Libjpeg | super::IdctMethod::LibjpegFast
                     if crate::decode::precision::is_12_bit(self.precision) =>
                 {
                     super::upsample::upsample_h2v2_12bit
                 }
-                super::IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_strided_turbo,
+                super::IdctMethod::Libjpeg | super::IdctMethod::LibjpegFast => {
+                    upsample_h2v2_i16_libjpeg_strided_turbo
+                }
                 _ => upsample_h2v2_i16_libjpeg_strided,
             },
             ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,

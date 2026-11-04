@@ -56,6 +56,9 @@ pub(super) struct FastIntegerPlan<'p> {
     comp_infos: Vec<CompInfo>,
     quant: [&'p [u16; DCT_BLOCK_SIZE]; 3],
     idct_fn: IdctFn,
+    /// `IdctMethod::LibjpegFast`: every block goes through the fused JDCT_IFAST
+    /// kernel (`output_helpers::idct_block_into`) instead of `idct_fn`.
+    fast_integer: bool,
     /// Chroma upsampler for the subsampled layouts; `None` for 4:4:4 and for
     /// nearest-neighbour 4:2:0, which converts with [`RowKernel::row_h2`]
     /// straight from the half-width chroma rows.
@@ -124,13 +127,17 @@ impl<'a> JpegParser<'a> {
         let idct_fn: IdctFn = match self.idct_method {
             IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
             IdctMethod::Jpegli => idct_int_tiered,
+            // Never called: `fast_integer` routes every block to the fused
+            // JDCT_IFAST kernel in `idct_block_into`.
+            IdctMethod::LibjpegFast => idct_int_tiered_libjpeg,
         };
         let triangle = chroma_upsampling == ChromaUpsampling::Triangle;
         let upsample: Option<UpsampleFn> = match chroma {
-            ChromaLayout::H2V2 if triangle => Some(match self.idct_method {
-                // IdctMethod::Libjpeg => turbo's fixed h2v2 rounding bias.
-                IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_turbo,
-                IdctMethod::Jpegli => upsample_h2v2_i16_libjpeg,
+            // IdctMethod::Libjpeg / LibjpegFast => turbo's fixed h2v2 rounding bias.
+            ChromaLayout::H2V2 if triangle => Some(if self.idct_method.is_libjpeg_exact() {
+                upsample_h2v2_i16_libjpeg_turbo
+            } else {
+                upsample_h2v2_i16_libjpeg
             }),
             ChromaLayout::H2V2 => None,
             ChromaLayout::H2V1 if triangle => Some(upsample_h2v1_i16_libjpeg),
@@ -158,6 +165,7 @@ impl<'a> JpegParser<'a> {
             comp_infos,
             quant,
             idct_fn,
+            fast_integer: self.idct_method == IdctMethod::LibjpegFast,
             upsample,
         }))
     }
@@ -242,6 +250,7 @@ impl<'a> JpegParser<'a> {
                     strip,
                     strip_width,
                     p.idct_fn,
+                    p.fast_integer,
                     &mut dequant,
                 );
             }
@@ -334,6 +343,7 @@ impl<'a> JpegParser<'a> {
                     c_strip_height,
                     chroma_height_total,
                     p.idct_fn,
+                    p.fast_integer,
                     &mut chroma_dequant,
                 );
             }
@@ -379,6 +389,7 @@ impl<'a> JpegParser<'a> {
                 &mut y_strip,
                 y_strip_width,
                 p.idct_fn,
+                p.fast_integer,
                 &mut dequant,
             );
 
@@ -422,7 +433,7 @@ impl<'a> JpegParser<'a> {
                             p.width,
                             y0 - start * p.mcu_height,
                             rows,
-                            self.idct_method == IdctMethod::Libjpeg,
+                            self.idct_method.is_libjpeg_exact(),
                             p.kernel.fused_ycbcr() == Some(true),
                             &mut cs_cb,
                             &mut cs_cr,
