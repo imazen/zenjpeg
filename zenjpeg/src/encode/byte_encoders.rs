@@ -2261,6 +2261,40 @@ mod tests {
     }
 
     #[test]
+    fn test_push_subsampled_of_no_rows_changes_nothing() {
+        let (w, h) = (33usize, 27usize);
+        let sub = ChromaSubsampling::Quarter;
+        let (cw, ch) = chroma_dims(sub, w, h);
+        let (y, cb, cr) = (
+            ycbcr_plane(w, h, 0),
+            ycbcr_plane(cw, ch, 1),
+            ycbcr_plane(cw, ch, 2),
+        );
+        let planes = crate::encode::YCbCrPlanes {
+            y: &y,
+            y_stride: w,
+            cb: &cb,
+            cb_stride: cw,
+            cr: &cr,
+            cr_stride: cw,
+        };
+        let empty = crate::encode::YCbCrPlanes {
+            y: &[],
+            y_stride: w,
+            cb: &[],
+            cb_stride: cw,
+            cr: &[],
+            cr_stride: cw,
+        };
+        let mut encoder = EncoderConfig::ycbcr(85, sub)
+            .encode_from_ycbcr_planar(w as u32, h as u32)
+            .unwrap();
+        encoder.push_subsampled(&empty, 0, Unstoppable).unwrap();
+        encoder.push_subsampled(&planes, h, Unstoppable).unwrap();
+        assert!(encoder.finish().unwrap() == encode_subsampled(sub, (w, h), &planes, h));
+    }
+
+    #[test]
     fn test_push_rejects_a_stride_below_the_width() {
         use crate::error::ErrorKind;
         let (w, h) = (16usize, 16usize);

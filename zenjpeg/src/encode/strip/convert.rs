@@ -139,9 +139,8 @@ impl StripProcessor {
         let chroma_height = self.layout.c_strip_height_for(strip_height);
 
         // Validate input sizes. The last row needs only its samples.
-        let needed = |rows: usize, stride: usize, row_width: usize| match rows {
-            0 => 0,
-            rows => (rows - 1) * stride + row_width,
+        let needed = |rows: usize, stride: usize, row_width: usize| {
+            rows.saturating_sub(1) * stride + row_width
         };
         let is_gray = self.pixel_format.is_grayscale();
         if planes.y.len() < needed(strip_height, planes.y_stride, width) {

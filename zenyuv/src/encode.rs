@@ -9,9 +9,9 @@ use crate::types::{ForwardCoeffs, Matrix, Range, Strides};
 use archmage::prelude::*;
 
 /// Convert packed RGB to three Y/Cb/Cr planes at full resolution (4:4:4), each at
-/// its own stride. The dimensions are checked by the caller: `rgb` spans `(height -
-/// 1) * strides.rgb + width * 3` bytes and each plane `(height - 1) * stride +
-/// width` samples. Tight planes take a one-run fast path.
+/// its own stride. The dimensions are checked by the caller: `rgb` spans
+/// `(height - 1) * strides.rgb + width * 3` bytes and each plane
+/// `(height - 1) * stride + width` samples. Tight planes take a one-run fast path.
 pub(crate) fn rgb_to_yuv444(
     rgb: &[u8],
     y: &mut [u8],
@@ -83,9 +83,9 @@ fn rgb_to_yuv444_run(
 }
 
 /// Convert packed RGB to three Y/Cb/Cr planes with 4:2:0 subsampling, each at its
-/// own stride. The dimensions are checked by the caller: `rgb` spans `(height - 1)
-/// * strides.rgb + width * 3` bytes, each plane `(rows - 1) * stride + plane_width`
-/// samples.
+/// own stride. The dimensions are checked by the caller: `rgb` spans
+/// `(height - 1) * strides.rgb + width * 3` bytes, each plane
+/// `(rows - 1) * stride + plane_width` samples.
 pub(crate) fn rgb_to_yuv420(
     rgb: &[u8],
     y: &mut [u8],

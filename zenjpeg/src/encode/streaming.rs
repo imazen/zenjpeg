@@ -900,15 +900,8 @@ impl StreamingEncoder {
         // Clamp to remaining rows
         let actual_rows = num_rows.min(self.height - self.current_y);
 
-        // Validate Y plane size. The last row needs only its samples.
-        let span = |rows: usize, stride: usize, width: usize| match rows {
-            0 => 0,
-            rows => (rows - 1) * stride + width,
-        };
-        let expected_y_size = span(actual_rows, planes.y_stride, self.width);
-        if planes.y.len() < expected_y_size {
-            return Err(Error::invalid_buffer_size(expected_y_size, planes.y.len()));
-        }
+        // `push_subsampled` validated each plane. The last row needs only its samples.
+        let span = |rows: usize, stride: usize, width: usize| (rows - 1) * stride + width;
 
         // Get subsampling info for chroma slicing
         let subsampling = self.processor.subsampling();
