@@ -74,6 +74,12 @@ pub(crate) use decode::{
 };
 #[allow(unused_imports)]
 #[allow(dead_code)]
+pub(crate) use decode::{
+    yuv400_to_rgb_strided, yuv420_to_rgb_bilinear_strided, yuv420_to_rgb_strided,
+    yuv422_to_rgb_strided, yuv444_to_rgb_strided,
+};
+#[allow(unused_imports)]
+#[allow(dead_code)]
 pub(crate) use encode::{rgb_to_yuv420, rgb_to_yuv420_with, rgb_to_yuv444, rgb_to_yuv444_with};
 
 // ── Shared utilities ───────────────────────────────────────────────────────
@@ -90,6 +96,9 @@ fn clamp_round(v: f32) -> u8 {
 extern crate alloc;
 #[cfg(test)]
 extern crate std;
+
+#[cfg(test)]
+mod strided_tests;
 
 #[cfg(test)]
 mod tests {

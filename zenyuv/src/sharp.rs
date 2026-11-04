@@ -10,7 +10,7 @@
 
 extern crate alloc;
 
-use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
+use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range, Strides, assert_plane};
 
 /// Configuration for Sharp YUV chroma optimization.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -71,7 +71,19 @@ pub fn rgb_to_yuv420_sharp_with_workspace(
     let inv = InverseCoeffs::new(matrix, range);
 
     sharp_iterate_rows_u8(
-        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
+        rgb,
+        y,
+        cb,
+        cr,
+        width,
+        height,
+        cw,
+        ch,
+        Strides::tight(width, cw),
+        &fwd,
+        &inv,
+        config,
+        ws,
     );
 }
 
@@ -116,7 +128,19 @@ pub fn rgb_to_yuv420_sharp_f32(
 
     // Cb/Cr: iteration produces f32 directly. SoA reads Y from u8 (via workspace).
     sharp_iterate_rows_f32_hybrid(
-        rgb, &y_u8, cb_f32, cr_f32, width, height, cw, ch, &fwd, &inv, config, ws,
+        rgb,
+        &y_u8,
+        cb_f32,
+        cr_f32,
+        width,
+        height,
+        cw,
+        ch,
+        Strides::tight(width, cw),
+        &fwd,
+        &inv,
+        config,
+        ws,
     );
 }
 
@@ -269,6 +293,7 @@ pub fn rgb_to_yuv420_sharp(
         height,
         cw,
         ch,
+        Strides::tight(width, cw),
         &fwd,
         &inv,
         config,
@@ -313,7 +338,19 @@ pub fn refine_chroma_420_u8(
 
     let mut ws = SharpYuvWorkspace::new(cw);
     refine_iterate_rows_u8(
-        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, &mut ws,
+        rgb,
+        y,
+        cb,
+        cr,
+        width,
+        height,
+        cw,
+        ch,
+        Strides::tight(width, cw),
+        &fwd,
+        &inv,
+        config,
+        &mut ws,
     );
 }
 
@@ -343,7 +380,19 @@ pub fn refine_chroma_420_u8_with_workspace(
     let fwd = ForwardCoeffs::new(matrix, range);
 
     refine_iterate_rows_u8(
-        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
+        rgb,
+        y,
+        cb,
+        cr,
+        width,
+        height,
+        cw,
+        ch,
+        Strides::tight(width, cw),
+        &fwd,
+        &inv,
+        config,
+        ws,
     );
 }
 
@@ -383,7 +432,8 @@ pub fn refine_y_420_u8(
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
 
-    refine_y_rows(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, range)
+    let strides = Strides::tight(width, cw);
+    refine_y_rows(rgb, y, cb, cr, width, height, strides, &fwd, &inv, range)
 }
 
 /// Inner loop: refine Y row by row.
@@ -394,8 +444,7 @@ fn refine_y_rows(
     cr: &[u8],
     width: usize,
     height: usize,
-    cw: usize,
-    _ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     range: Range,
@@ -429,16 +478,15 @@ fn refine_y_rows(
 
         for col in 0..width {
             let cx = col / 2; // chroma column (nearest-neighbor horizontal)
-            let chroma_idx = cy * cw + cx;
 
             // Upsampled chroma (nearest-neighbor from 4:2:0 grid).
-            let cb_val = cb[chroma_idx] as f32;
-            let cr_val = cr[chroma_idx] as f32;
+            let cb_val = cb[cy * strides.cb + cx] as f32;
+            let cr_val = cr[cy * strides.cr + cx] as f32;
             let cb_c = cb_val - uv_center;
             let cr_c = cr_val - uv_center;
 
             // Current Y value.
-            let pixel_idx = row * width + col;
+            let pixel_idx = row * strides.y + col;
             let y_cur = y[pixel_idx] as f32;
 
             // Reconstruct RGB from current YCbCr.
@@ -451,7 +499,7 @@ fn refine_y_rows(
             let rec_luma = yr * rec_r + yg * rec_g + yb * rec_b + y_bias;
 
             // Original RGB.
-            let rgb_idx = pixel_idx * 3;
+            let rgb_idx = row * strides.rgb + col * 3;
             let orig_r = rgb[rgb_idx] as f32;
             let orig_g = rgb[rgb_idx + 1] as f32;
             let orig_b = rgb[rgb_idx + 2] as f32;
@@ -471,6 +519,299 @@ fn refine_y_rows(
     }
 
     total_diff
+}
+
+/// The byte view and geometry of a checked strided RGB input.
+#[track_caller]
+fn checked_rgb_input<'a>(rgb: imgref::ImgRef<'a, [u8; 3]>) -> (&'a [u8], usize, usize, usize) {
+    let (w, h, stride) = (rgb.width(), rgb.height(), rgb.stride());
+    assert!(w > 0 && h > 0);
+    assert_plane("rgb", rgb.buf().len(), (w, h), stride, (w, h));
+    let bytes: &'a [u8] = (*rgb.buf()).as_flattened();
+    (bytes, w, h, stride * 3)
+}
+
+/// [`rgb_to_yuv420_sharp_with_workspace`] at each plane's own stride, in samples
+/// (pixels for `rgb`). The same bytes as the tight form: padding is neither read
+/// nor written, and the last row of a plane needs none.
+///
+/// # Panics
+///
+/// For zero dimensions, a plane that does not fit its dimensions, or an
+/// undersized workspace. Y has `rgb`'s dimensions; Cb/Cr are
+/// `ceil(width/2)` by `ceil(height/2)`.
+#[allow(clippy::too_many_arguments)]
+pub fn rgb_to_yuv420_sharp_strided(
+    rgb: imgref::ImgRef<'_, [u8; 3]>,
+    mut y: imgref::ImgRefMut<'_, u8>,
+    mut cb: imgref::ImgRefMut<'_, u8>,
+    mut cr: imgref::ImgRefMut<'_, u8>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    assert!(ws.chroma_width() >= cw);
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+    let y: &mut [u8] = y.buf_mut();
+    crate::encode::rgb_to_yuv444_y_only_strided(
+        rgb,
+        y,
+        width,
+        height,
+        strides.rgb,
+        strides.y,
+        range,
+        matrix,
+    );
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+    sharp_iterate_rows_u8(
+        rgb,
+        y,
+        cb.buf_mut(),
+        cr.buf_mut(),
+        width,
+        height,
+        cw,
+        ch,
+        strides,
+        &fwd,
+        &inv,
+        config,
+        ws,
+    );
+}
+
+/// [`rgb_to_yuv420_sharp_f32`] at each plane's own stride; the rules of
+/// [`rgb_to_yuv420_sharp_strided`] apply.
+///
+/// # Panics
+///
+/// As [`rgb_to_yuv420_sharp_strided`].
+#[allow(clippy::too_many_arguments)]
+pub fn rgb_to_yuv420_sharp_f32_strided(
+    rgb: imgref::ImgRef<'_, [u8; 3]>,
+    mut y: imgref::ImgRefMut<'_, f32>,
+    mut cb: imgref::ImgRefMut<'_, f32>,
+    mut cr: imgref::ImgRefMut<'_, f32>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    assert!(ws.chroma_width() >= cw);
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: width,
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+
+    // The same u8 intermediate as the tight form; this one is tight too.
+    let mut y_u8 = alloc::vec![0u8; width * height];
+    crate::encode::rgb_to_yuv444_y_only_strided(
+        rgb, &mut y_u8, width, height, rgb_stride, width, range, matrix,
+    );
+    for (out, row) in y.rows_mut().zip(y_u8.chunks_exact(width)) {
+        for (d, &s) in out.iter_mut().zip(row) {
+            *d = f32::from(s);
+        }
+    }
+
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+    sharp_iterate_rows_f32_hybrid(
+        rgb,
+        &y_u8,
+        cb.buf_mut(),
+        cr.buf_mut(),
+        width,
+        height,
+        cw,
+        ch,
+        strides,
+        &fwd,
+        &inv,
+        config,
+        ws,
+    );
+}
+
+/// [`refine_chroma_420_u8_with_workspace`] at each plane's own stride; the rules
+/// of [`rgb_to_yuv420_sharp_strided`] apply.
+///
+/// # Panics
+///
+/// As [`rgb_to_yuv420_sharp_strided`].
+#[allow(clippy::too_many_arguments)]
+pub fn refine_chroma_420_strided(
+    rgb: imgref::ImgRef<'_, [u8; 3]>,
+    y: imgref::ImgRef<'_, u8>,
+    mut cb: imgref::ImgRefMut<'_, u8>,
+    mut cr: imgref::ImgRefMut<'_, u8>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    assert!(ws.chroma_width() >= cw);
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+    let inv = InverseCoeffs::new(matrix, range);
+    let fwd = ForwardCoeffs::new(matrix, range);
+    refine_iterate_rows_u8(
+        rgb,
+        y.buf(),
+        cb.buf_mut(),
+        cr.buf_mut(),
+        width,
+        height,
+        cw,
+        ch,
+        strides,
+        &fwd,
+        &inv,
+        config,
+        ws,
+    );
+}
+
+/// [`refine_y_420_u8`] at each plane's own stride; the rules of
+/// [`rgb_to_yuv420_sharp_strided`] apply. Returns the same total as the tight form.
+///
+/// # Panics
+///
+/// For zero dimensions or a plane that does not fit its dimensions.
+pub fn refine_y_420_strided(
+    rgb: imgref::ImgRef<'_, [u8; 3]>,
+    mut y: imgref::ImgRefMut<'_, u8>,
+    cb: imgref::ImgRef<'_, u8>,
+    cr: imgref::ImgRef<'_, u8>,
+    range: Range,
+    matrix: Matrix,
+) -> u64 {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+    refine_y_rows(
+        rgb,
+        y.buf_mut(),
+        cb.buf(),
+        cr.buf(),
+        width,
+        height,
+        strides,
+        &fwd,
+        &inv,
+        range,
+    )
 }
 
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to
@@ -569,6 +910,7 @@ fn refine_iterate_rows_u8(
     height: usize,
     cw: usize,
     ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     config: &SharpYuvConfig,
@@ -586,6 +928,8 @@ fn refine_iterate_rows_u8(
             row_bot,
             width,
             cw,
+            strides.rgb,
+            strides.y,
             &mut ws.y0s,
             &mut ws.y1s,
             &mut ws.y2s,
@@ -604,10 +948,10 @@ fn refine_iterate_rows_u8(
             &mut ws.ob3,
         );
         // Load caller's pre-computed Cb/Cr as f32 initial values.
-        let row_off = cy_idx * cw;
+        let (cb_off, cr_off) = (cy_idx * strides.cb, cy_idx * strides.cr);
         for cx_idx in 0..cw {
-            ws.cb_f[cx_idx] = cb[row_off + cx_idx] as f32;
-            ws.cr_f[cx_idx] = cr[row_off + cx_idx] as f32;
+            ws.cb_f[cx_idx] = cb[cb_off + cx_idx] as f32;
+            ws.cr_f[cx_idx] = cr[cr_off + cx_idx] as f32;
         }
         sharp_iterate_all_blocks(
             &ws.y0s[..cw],
@@ -634,8 +978,8 @@ fn refine_iterate_rows_u8(
             config.convergence_threshold,
         );
         for cx_idx in 0..cw {
-            cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
-            cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
+            cb[cb_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
+            cr[cr_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
     }
 }
@@ -650,6 +994,7 @@ fn sharp_iterate_rows_u8(
     height: usize,
     cw: usize,
     ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     config: &SharpYuvConfig,
@@ -665,6 +1010,8 @@ fn sharp_iterate_rows_u8(
             row_bot,
             width,
             cw,
+            strides.rgb,
+            strides.y,
             &mut ws.y0s,
             &mut ws.y1s,
             &mut ws.y2s,
@@ -709,10 +1056,10 @@ fn sharp_iterate_rows_u8(
             config.max_iterations,
             config.convergence_threshold,
         );
-        let row_off = cy_idx * cw;
+        let (cb_off, cr_off) = (cy_idx * strides.cb, cy_idx * strides.cr);
         for cx_idx in 0..cw {
-            cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
-            cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
+            cb[cb_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
+            cr[cr_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
     }
 }
@@ -727,6 +1074,7 @@ fn sharp_iterate_rows_f32_hybrid(
     height: usize,
     cw: usize,
     ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     config: &SharpYuvConfig,
@@ -742,6 +1090,8 @@ fn sharp_iterate_rows_f32_hybrid(
             row_bot,
             width,
             cw,
+            strides.rgb,
+            width,
             &mut ws.y0s,
             &mut ws.y1s,
             &mut ws.y2s,
@@ -787,9 +1137,9 @@ fn sharp_iterate_rows_f32_hybrid(
             config.convergence_threshold,
         );
         // Write Cb/Cr as f32 directly — no u8 narrowing.
-        let row_off = cy_idx * cw;
-        cb_f32[row_off..row_off + cw].copy_from_slice(&ws.cb_f[..cw]);
-        cr_f32[row_off..row_off + cw].copy_from_slice(&ws.cr_f[..cw]);
+        let (cb_off, cr_off) = (cy_idx * strides.cb, cy_idx * strides.cr);
+        cb_f32[cb_off..cb_off + cw].copy_from_slice(&ws.cb_f[..cw]);
+        cr_f32[cr_off..cr_off + cw].copy_from_slice(&ws.cr_f[..cw]);
     }
 }
 
@@ -808,6 +1158,8 @@ fn extract_soa_row(
     row_bot: usize,
     width: usize,
     cw: usize,
+    rgb_stride: usize,
+    y_stride: usize,
     y0s: &mut [f32],
     y1s: &mut [f32],
     y2s: &mut [f32],
@@ -831,10 +1183,10 @@ fn extract_soa_row(
     // Pre-slice the two Y rows and two RGB rows as contiguous spans.
     // This eliminates per-pixel index arithmetic and lets LLVM see
     // contiguous memory access patterns.
-    let y_top = &y_plane[row_top * width..row_top * width + width];
-    let y_bot = &y_plane[row_bot * width..row_bot * width + width];
-    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
-    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
+    let y_top = &y_plane[row_top * y_stride..row_top * y_stride + width];
+    let y_bot = &y_plane[row_bot * y_stride..row_bot * y_stride + width];
+    let rgb_top = &rgb[row_top * rgb_stride..row_top * rgb_stride + width * 3];
+    let rgb_bot = &rgb[row_bot * rgb_stride..row_bot * rgb_stride + width * 3];
 
     // Bulk: all blocks where x+1 < width (no edge clamping needed).
     // For width=1024, bulk_cw=512 (all blocks). For width=1023, bulk_cw=511.
@@ -885,6 +1237,8 @@ fn extract_soa_row_no_chroma(
     row_bot: usize,
     width: usize,
     cw: usize,
+    rgb_stride: usize,
+    y_stride: usize,
     y0s: &mut [f32],
     y1s: &mut [f32],
     y2s: &mut [f32],
@@ -902,10 +1256,10 @@ fn extract_soa_row_no_chroma(
     og3: &mut [f32],
     ob3: &mut [f32],
 ) {
-    let y_top = &y_plane[row_top * width..row_top * width + width];
-    let y_bot = &y_plane[row_bot * width..row_bot * width + width];
-    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
-    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
+    let y_top = &y_plane[row_top * y_stride..row_top * y_stride + width];
+    let y_bot = &y_plane[row_bot * y_stride..row_bot * y_stride + width];
+    let rgb_top = &rgb[row_top * rgb_stride..row_top * rgb_stride + width * 3];
+    let rgb_bot = &rgb[row_bot * rgb_stride..row_bot * rgb_stride + width * 3];
 
     let bulk_cw = width / 2;
 

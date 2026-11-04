@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 use crate::YuvError;
 use crate::sharp::{SharpYuvConfig, SharpYuvWorkspace};
-use crate::types::{Matrix, Range};
+use crate::types::{Matrix, Range, Strides, check_plane};
 
 /// The pixel limit (`width × height`) the `try_*` entry points enforce
 /// unless [`YuvContext::with_max_pixels`] sets another: 120 MP, above
@@ -413,6 +413,191 @@ impl YuvContext {
         Ok(())
     }
 
+    // ── Strided entry points ────────────────────────────────────────────
+    //
+    // Every plane is a view with its own stride, in samples (pixels for
+    // `rgb`). The output is the same bytes as the tight form: padding is
+    // neither read nor written, and the last row of a plane needs none.
+    // Geometry that does not fit is an error, and nothing is written.
+
+    /// [`Self::try_encode_420_u8`] at each plane's own stride.
+    pub fn try_encode_420_strided(
+        &mut self,
+        rgb: imgref::ImgRef<'_, [u8; 3]>,
+        mut y: imgref::ImgRefMut<'_, u8>,
+        mut cb: imgref::ImgRefMut<'_, u8>,
+        mut cr: imgref::ImgRefMut<'_, u8>,
+    ) -> Result<(), YuvError> {
+        let (width, height) = (rgb.width(), rgb.height());
+        self.dims(width, height, Chroma::Half)?;
+        let strides = strided_geometry(rgb, &y, Some((&cb, &cr)), Chroma::Half)?;
+        crate::encode::rgb_to_yuv420_strided(
+            (*rgb.buf()).as_flattened(),
+            y.buf_mut(),
+            cb.buf_mut(),
+            cr.buf_mut(),
+            width,
+            height,
+            strides,
+            self.range,
+            self.matrix,
+        );
+        Ok(())
+    }
+
+    /// [`Self::try_encode_420_y_only_u8`] at each plane's own stride.
+    pub fn try_encode_420_y_only_strided(
+        &mut self,
+        rgb: imgref::ImgRef<'_, [u8; 3]>,
+        mut y: imgref::ImgRefMut<'_, u8>,
+    ) -> Result<(), YuvError> {
+        let (width, height) = (rgb.width(), rgb.height());
+        self.dims(width, height, Chroma::Half)?;
+        let strides = strided_geometry::<u8>(rgb, &y, None, Chroma::Half)?;
+        crate::encode::rgb_to_yuv420_y_only_strided(
+            (*rgb.buf()).as_flattened(),
+            y.buf_mut(),
+            width,
+            height,
+            strides.rgb,
+            strides.y,
+            self.range,
+            self.matrix,
+        );
+        Ok(())
+    }
+
+    /// [`Self::try_encode_444_u8`] at each plane's own stride.
+    pub fn try_encode_444_strided(
+        &mut self,
+        rgb: imgref::ImgRef<'_, [u8; 3]>,
+        mut y: imgref::ImgRefMut<'_, u8>,
+        mut cb: imgref::ImgRefMut<'_, u8>,
+        mut cr: imgref::ImgRefMut<'_, u8>,
+    ) -> Result<(), YuvError> {
+        let (width, height) = (rgb.width(), rgb.height());
+        self.dims(width, height, Chroma::Full)?;
+        let strides = strided_geometry(rgb, &y, Some((&cb, &cr)), Chroma::Full)?;
+        crate::encode::rgb_to_yuv444_strided(
+            (*rgb.buf()).as_flattened(),
+            y.buf_mut(),
+            cb.buf_mut(),
+            cr.buf_mut(),
+            width,
+            height,
+            strides,
+            self.range,
+            self.matrix,
+        );
+        Ok(())
+    }
+
+    /// [`Self::try_encode_420_f32`] at each plane's own stride. Goes through
+    /// the context's tight u8 temps, like the tight form.
+    pub fn try_encode_420_f32_strided(
+        &mut self,
+        rgb: imgref::ImgRef<'_, [u8; 3]>,
+        mut y: imgref::ImgRefMut<'_, f32>,
+        mut cb: imgref::ImgRefMut<'_, f32>,
+        mut cr: imgref::ImgRefMut<'_, f32>,
+    ) -> Result<(), YuvError> {
+        let (width, height) = (rgb.width(), rgb.height());
+        let d = self.dims(width, height, Chroma::Half)?;
+        let strides = strided_geometry(rgb, &y, Some((&cb, &cr)), Chroma::Half)?;
+        self.try_reserve_f32_temps(d.pixels, d.chroma)?;
+        let (range, matrix) = (self.range, self.matrix);
+        let cw = width.div_ceil(2);
+        let temps = self.ensure_f32_temps(d.pixels, d.chroma);
+        crate::encode::rgb_to_yuv420_strided(
+            (*rgb.buf()).as_flattened(),
+            &mut temps.y[..d.pixels],
+            &mut temps.cb[..d.chroma],
+            &mut temps.cr[..d.chroma],
+            width,
+            height,
+            Strides {
+                rgb: strides.rgb,
+                y: width,
+                cb: cw,
+                cr: cw,
+            },
+            range,
+            matrix,
+        );
+        u8_rows_to_f32(&temps.y[..d.pixels], width, &mut y);
+        u8_rows_to_f32(&temps.cb[..d.chroma], cw, &mut cb);
+        u8_rows_to_f32(&temps.cr[..d.chroma], cw, &mut cr);
+        Ok(())
+    }
+
+    /// [`Self::try_encode_sharp_420_u8`] at each plane's own stride.
+    ///
+    /// The sharp kernel still makes a per-call scratch allocation of two
+    /// bytes per image row width, for chroma it discards.
+    pub fn try_encode_sharp_420_strided(
+        &mut self,
+        rgb: imgref::ImgRef<'_, [u8; 3]>,
+        y: imgref::ImgRefMut<'_, u8>,
+        cb: imgref::ImgRefMut<'_, u8>,
+        cr: imgref::ImgRefMut<'_, u8>,
+        config: &SharpYuvConfig,
+    ) -> Result<(), YuvError> {
+        let (width, height) = (rgb.width(), rgb.height());
+        self.dims(width, height, Chroma::Half)?;
+        strided_geometry(rgb, &y, Some((&cb, &cr)), Chroma::Half)?;
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        let cw = width.div_ceil(2);
+        self.try_reserve_sharp_ws(cw)?;
+        self.ensure_sharp_ws(cw);
+        crate::sharp::rgb_to_yuv420_sharp_strided(
+            rgb,
+            y,
+            cb,
+            cr,
+            self.range,
+            self.matrix,
+            config,
+            self.sharp_ws.as_mut().unwrap(),
+        );
+        Ok(())
+    }
+
+    /// [`Self::try_encode_sharp_420_f32`] at each plane's own stride.
+    ///
+    /// The sharp kernel still makes a per-call scratch allocation of one
+    /// byte per pixel, bounded by the pixel limit.
+    pub fn try_encode_sharp_420_f32_strided(
+        &mut self,
+        rgb: imgref::ImgRef<'_, [u8; 3]>,
+        y: imgref::ImgRefMut<'_, f32>,
+        cb: imgref::ImgRefMut<'_, f32>,
+        cr: imgref::ImgRefMut<'_, f32>,
+        config: &SharpYuvConfig,
+    ) -> Result<(), YuvError> {
+        let (width, height) = (rgb.width(), rgb.height());
+        self.dims(width, height, Chroma::Half)?;
+        strided_geometry(rgb, &y, Some((&cb, &cr)), Chroma::Half)?;
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        let cw = width.div_ceil(2);
+        self.try_reserve_sharp_ws(cw)?;
+        self.ensure_sharp_ws(cw);
+        crate::sharp::rgb_to_yuv420_sharp_f32_strided(
+            rgb,
+            y,
+            cb,
+            cr,
+            self.range,
+            self.matrix,
+            config,
+            self.sharp_ws.as_mut().unwrap(),
+        );
+        Ok(())
+    }
+
     /// Pixel and plane sizes for `width × height`, within the pixel limit.
     fn dims(&self, width: usize, height: usize, chroma: Chroma) -> Result<Dims, YuvError> {
         let pixels = (width as u64)
@@ -506,6 +691,53 @@ impl YuvContext {
             }));
         }
         self.f32_temps.as_mut().unwrap()
+    }
+}
+
+/// Check a strided image's planes against `rgb`'s dimensions; their strides,
+/// `rgb`'s in bytes. A plane left out comes back with stride 0.
+fn strided_geometry<T>(
+    rgb: imgref::ImgRef<'_, [u8; 3]>,
+    y: &imgref::ImgRefMut<'_, T>,
+    chroma: Option<(&imgref::ImgRefMut<'_, T>, &imgref::ImgRefMut<'_, T>)>,
+    subsampling: Chroma,
+) -> Result<Strides, YuvError> {
+    let (width, height) = (rgb.width(), rgb.height());
+    let dims = |p: &imgref::ImgRefMut<'_, T>| (p.width(), p.height());
+    check_plane(
+        "rgb",
+        rgb.buf().len(),
+        (width, height),
+        rgb.stride(),
+        (width, height),
+    )?;
+    check_plane("y", y.buf().len(), dims(y), y.stride(), (width, height))?;
+    let mut strides = Strides {
+        rgb: rgb.stride().checked_mul(3).ok_or(YuvError::Overflow)?,
+        y: y.stride(),
+        cb: 0,
+        cr: 0,
+    };
+    if let Some((cb, cr)) = chroma {
+        let needed = match subsampling {
+            Chroma::Full => (width, height),
+            Chroma::Half => (width.div_ceil(2), height.div_ceil(2)),
+        };
+        check_plane("cb", cb.buf().len(), dims(cb), cb.stride(), needed)?;
+        check_plane("cr", cr.buf().len(), dims(cr), cr.stride(), needed)?;
+        strides.cb = cb.stride();
+        strides.cr = cr.stride();
+    }
+    Ok(strides)
+}
+
+/// Widen tight u8 rows of `src`, `width` samples each, into `dst`'s rows.
+fn u8_rows_to_f32(src: &[u8], width: usize, dst: &mut imgref::ImgRefMut<'_, f32>) {
+    if width == 0 {
+        return;
+    }
+    for (row, out) in src.chunks_exact(width).zip(dst.rows_mut()) {
+        u8_to_f32(row, out);
     }
 }
 

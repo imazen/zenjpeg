@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-use crate::types::{ForwardCoeffs, Matrix, Range};
+use crate::types::{ForwardCoeffs, Matrix, Range, Strides};
 use archmage::prelude::*;
 
 /// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes at full resolution (4:4:4).
@@ -42,36 +42,80 @@ pub fn rgb_to_yuv444_with(
     assert!(cr.len() >= n);
 
     let coeffs = ForwardCoeffs::new(matrix, range);
+    rgb_to_yuv444_run(rgb, y, cb, cr, n, &coeffs);
+}
 
+/// [`rgb_to_yuv444_with`] at each plane's own stride. The dimensions are
+/// checked by the caller: `rgb` spans `(height - 1) * strides.rgb + width * 3`
+/// bytes and each plane `(height - 1) * stride + width` samples. Tight planes
+/// take the one-run fast path.
+pub(crate) fn rgb_to_yuv444_strided(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    width: usize,
+    height: usize,
+    strides: Strides,
+    range: Range,
+    matrix: Matrix,
+) {
+    let coeffs = ForwardCoeffs::new(matrix, range);
+    if strides.rgb == width * 3 && strides.y == width && strides.cb == width && strides.cr == width
+    {
+        rgb_to_yuv444_run(rgb, y, cb, cr, width * height, &coeffs);
+        return;
+    }
+    for row in 0..height {
+        rgb_to_yuv444_run(
+            &rgb[row * strides.rgb..],
+            &mut y[row * strides.y..],
+            &mut cb[row * strides.cb..],
+            &mut cr[row * strides.cr..],
+            width,
+            &coeffs,
+        );
+    }
+}
+
+/// One contiguous run of `n` pixels through the best available kernel.
+fn rgb_to_yuv444_run(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    n: usize,
+    coeffs: &ForwardCoeffs,
+) {
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = archmage::X64V3Token::summon() {
-        let done = crate::avx2_encode::rgb_to_yuv444_avx2(token, rgb, y, cb, cr, n, &coeffs);
+        let done = crate::avx2_encode::rgb_to_yuv444_avx2(token, rgb, y, cb, cr, n, coeffs);
         if done < n {
-            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, &coeffs);
+            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, coeffs);
         }
         return;
     }
 
     #[cfg(target_arch = "aarch64")]
     if let Some(token) = archmage::NeonToken::summon() {
-        let done = crate::neon_encode::rgb_to_yuv444_neon(token, rgb, y, cb, cr, n, &coeffs);
+        let done = crate::neon_encode::rgb_to_yuv444_neon(token, rgb, y, cb, cr, n, coeffs);
         if done < n {
-            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, &coeffs);
+            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, coeffs);
         }
         return;
     }
 
     #[cfg(target_arch = "wasm32")]
     if let Some(token) = archmage::Wasm128Token::summon() {
-        let done = crate::wasm_encode::rgb_to_yuv444_wasm(token, rgb, y, cb, cr, n, &coeffs);
+        let done = crate::wasm_encode::rgb_to_yuv444_wasm(token, rgb, y, cb, cr, n, coeffs);
         if done < n {
-            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, &coeffs);
+            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, coeffs);
         }
         return;
     }
 
     incant!(crate::encode_generic::rgb_to_yuv444_generic(
-        rgb, y, cb, cr, n, &coeffs
+        rgb, y, cb, cr, n, coeffs
     ));
 }
 
@@ -110,22 +154,53 @@ pub fn rgb_to_yuv420_with(
     assert!(cb.len() >= cw * ch);
     assert!(cr.len() >= cw * ch);
 
+    rgb_to_yuv420_strided(
+        rgb,
+        y,
+        cb,
+        cr,
+        width,
+        height,
+        Strides::tight(width, cw),
+        range,
+        matrix,
+    );
+}
+
+/// [`rgb_to_yuv420_with`] at each plane's own stride. The dimensions are
+/// checked by the caller: `rgb` spans `(height - 1) * strides.rgb + width * 3`
+/// bytes, each plane `(rows - 1) * stride + plane_width` samples.
+pub(crate) fn rgb_to_yuv420_strided(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    width: usize,
+    height: usize,
+    strides: Strides,
+    range: Range,
+    matrix: Matrix,
+) {
     let coeffs = ForwardCoeffs::new(matrix, range);
 
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = archmage::X64V3Token::summon() {
-        crate::avx2_encode::rgb_to_yuv420_avx2(token, rgb, y, cb, cr, width, height, cw, &coeffs);
+        crate::avx2_encode::rgb_to_yuv420_avx2(
+            token, rgb, y, cb, cr, width, height, strides, &coeffs,
+        );
         return;
     }
 
     #[cfg(target_arch = "wasm32")]
     if let Some(token) = archmage::Wasm128Token::summon() {
-        crate::wasm_encode::rgb_to_yuv420_wasm(token, rgb, y, cb, cr, width, height, cw, &coeffs);
+        crate::wasm_encode::rgb_to_yuv420_wasm(
+            token, rgb, y, cb, cr, width, height, strides, &coeffs,
+        );
         return;
     }
 
     incant!(crate::encode_generic::rgb_to_yuv420_generic(
-        rgb, y, cb, cr, width, height, &coeffs
+        rgb, y, cb, cr, width, height, strides, &coeffs
     ));
 }
 
@@ -146,17 +221,34 @@ pub(crate) fn rgb_to_yuv420_y_only_with(
     assert!(rgb.len() >= n * 3);
     assert!(y.len() >= n);
 
+    rgb_to_yuv420_y_only_strided(rgb, y, width, height, width * 3, width, range, matrix);
+}
+
+/// [`rgb_to_yuv420_y_only_with`] at its own strides: `rgb_stride` in bytes,
+/// `y_stride` in samples. The dimensions are checked by the caller.
+pub(crate) fn rgb_to_yuv420_y_only_strided(
+    rgb: &[u8],
+    y: &mut [u8],
+    width: usize,
+    height: usize,
+    rgb_stride: usize,
+    y_stride: usize,
+    range: Range,
+    matrix: Matrix,
+) {
     let coeffs = ForwardCoeffs::new(matrix, range);
 
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = archmage::X64V3Token::summon() {
-        crate::avx2_encode::rgb_to_yuv420_y_only_avx2(token, rgb, y, width, height, &coeffs);
+        crate::avx2_encode::rgb_to_yuv420_y_only_avx2(
+            token, rgb, y, width, height, rgb_stride, y_stride, &coeffs,
+        );
         return;
     }
 
     // Fallback: pure scalar Y. Covers NEON, WASM SIMD, and scalar targets.
     // (AVX2 Y-only kernel above already handles its scalar tail internally.)
-    rgb_to_y_scalar_tail(rgb, y, width, height, 0, &coeffs);
+    rgb_to_y_scalar_tail(rgb, y, width, height, 0, rgb_stride, y_stride, &coeffs);
 }
 
 /// Y-only scalar tail: writes Y values for columns `[simd_cols..width)` across
@@ -169,17 +261,18 @@ pub(crate) fn rgb_to_y_scalar_tail(
     width: usize,
     height: usize,
     simd_cols: usize,
+    row_stride: usize,
+    y_stride: usize,
     coeffs: &ForwardCoeffs,
 ) {
     use crate::types::PREC;
-    let row_stride = width * 3;
     for row in 0..height {
         for col in simd_cols..width {
             let p = row * row_stride + col * 3;
             let r = rgb[p] as i32;
             let g = rgb[p + 1] as i32;
             let b = rgb[p + 2] as i32;
-            y_out[row * width + col] = ((r * coeffs.yr as i32
+            y_out[row * y_stride + col] = ((r * coeffs.yr as i32
                 + g * coeffs.yg as i32
                 + b * coeffs.yb as i32
                 + coeffs.y_bias)
@@ -236,6 +329,34 @@ pub(crate) fn rgb_to_yuv444_y_only(
     ));
 }
 
+/// [`rgb_to_yuv444_y_only`] at its own strides: `rgb_stride` in bytes, `y_stride`
+/// in samples. The dimensions are checked by the caller.
+pub(crate) fn rgb_to_yuv444_y_only_strided(
+    rgb: &[u8],
+    y: &mut [u8],
+    width: usize,
+    height: usize,
+    rgb_stride: usize,
+    y_stride: usize,
+    range: Range,
+    matrix: Matrix,
+) {
+    let coeffs = ForwardCoeffs::new(matrix, range);
+    // Same kernel and discarded chroma as the tight path, one row at a time.
+    let mut cb_discard = alloc::vec![0u8; width];
+    let mut cr_discard = alloc::vec![0u8; width];
+    for row in 0..height {
+        rgb_to_yuv444_run(
+            &rgb[row * rgb_stride..],
+            &mut y[row * y_stride..],
+            &mut cb_discard,
+            &mut cr_discard,
+            width,
+            &coeffs,
+        );
+    }
+}
+
 /// Scalar tail for 4:4:4 encode (pixels not covered by SIMD blocks).
 /// Uses the same 15-bit fixed-point integer math as the SIMD kernels
 /// so all dispatch tiers produce identical output.
@@ -286,12 +407,12 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
     cr_out: &mut [u8],
     width: usize,
     height: usize,
-    cw: usize,
     simd_cols: usize,
+    strides: Strides,
     coeffs: &ForwardCoeffs,
 ) {
     use crate::types::PREC;
-    let row_stride = width * 3;
+    let row_stride = strides.rgb;
 
     // Y for columns simd_cols..width (all rows).
     for row in 0..height {
@@ -300,7 +421,7 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let r = rgb[p] as i32;
             let g = rgb[p + 1] as i32;
             let b = rgb[p + 2] as i32;
-            y_out[row * width + col] = ((r * coeffs.yr as i32
+            y_out[row * strides.y + col] = ((r * coeffs.yr as i32
                 + g * coeffs.yg as i32
                 + b * coeffs.yb as i32
                 + coeffs.y_bias)
@@ -332,13 +453,13 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let r_ps = r_v0 + r_v1;
             let g_ps = g_v0 + g_v1;
             let b_ps = b_v0 + b_v1;
-            cb_out[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
+            cb_out[cy * strides.cb + cx] = ((r_ps * coeffs.cb_r as i32
                 + g_ps * coeffs.cb_g as i32
                 + b_ps * coeffs.cb_b as i32
                 + coeffs.uv_bias_420)
                 >> (PREC + 1))
                 .clamp(0, 255) as u8;
-            cr_out[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
+            cr_out[cy * strides.cr + cx] = ((r_ps * coeffs.cr_r as i32
                 + g_ps * coeffs.cr_g as i32
                 + b_ps * coeffs.cr_b as i32
                 + coeffs.uv_bias_420)
@@ -359,7 +480,7 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let r = rgb[p] as i32;
             let g = rgb[p + 1] as i32;
             let b = rgb[p + 2] as i32;
-            y_out[last_row * width + col] = ((r * coeffs.yr as i32
+            y_out[last_row * strides.y + col] = ((r * coeffs.yr as i32
                 + g * coeffs.yg as i32
                 + b * coeffs.yb as i32
                 + coeffs.y_bias)
@@ -375,13 +496,13 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let r_ps = rgb[i00] as i32 + rgb[i01] as i32;
             let g_ps = rgb[i00 + 1] as i32 + rgb[i01 + 1] as i32;
             let b_ps = rgb[i00 + 2] as i32 + rgb[i01 + 2] as i32;
-            cb_out[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
+            cb_out[cy * strides.cb + cx] = ((r_ps * coeffs.cb_r as i32
                 + g_ps * coeffs.cb_g as i32
                 + b_ps * coeffs.cb_b as i32
                 + coeffs.uv_bias_420)
                 >> (PREC + 1))
                 .clamp(0, 255) as u8;
-            cr_out[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
+            cr_out[cy * strides.cr + cx] = ((r_ps * coeffs.cr_r as i32
                 + g_ps * coeffs.cr_g as i32
                 + b_ps * coeffs.cr_b as i32
                 + coeffs.uv_bias_420)
