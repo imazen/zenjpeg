@@ -17,7 +17,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
-- `IdctMethod::LibjpegFast`: libjpeg-turbo's fast-integer IDCT (`JDCT_IFAST`) as its x86-64 SSE2 kernel computes it, with the turbo upsampling biases and colour tables; byte-exact with mozjpeg-sys `JDCT_IFAST` on every u8 decode path (`tests/libjpeg_fast_idct_parity.rs`, `__ffi-tests`), the decode TensorFlow's `decode_jpeg(dct_method="INTEGER_FAST")` produces.
+- `IdctMethod::LibjpegFast`: libjpeg-turbo's fast-integer IDCT (`JDCT_IFAST`) as its x86-64 SSE2 kernel computes it, with the turbo upsampling biases and colour tables; byte-exact with mozjpeg-sys `JDCT_IFAST` on every u8 decode path (`tests/libjpeg_fast_idct_parity.rs`, `__ffi-tests`), the decode TensorFlow's `decode_jpeg(dct_method="INTEGER_FAST")` produces (#256).
 - Add opt-in, unstable per-block encoder diagnostics (`d07a8710`) and a WASM viewer (`0d98644d`) for AQ, quantization tables, and interactive comparison.
 
 ### Fixed
