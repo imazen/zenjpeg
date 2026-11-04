@@ -138,22 +138,11 @@ impl StripProcessor {
         let chroma_width = self.layout.c_width;
         let chroma_height = self.layout.c_strip_height_for(strip_height);
 
-        // Validate input sizes. The last row needs only its samples.
-        let needed = |rows: usize, stride: usize, row_width: usize| {
-            rows.saturating_sub(1) * stride + row_width
-        };
-        let is_gray = self.pixel_format.is_grayscale();
-        if planes.y.len() < needed(strip_height, planes.y_stride, width) {
+        // `push_subsampled` validated each plane for its rows. A push that stops inside
+        // a strip reaches here with fewer rows than the strip needs. The last row needs
+        // only its samples.
+        if planes.y.len() < strip_height.saturating_sub(1) * planes.y_stride + width {
             return Err(crate::error::Error::internal("Y plane too small for strip"));
-        }
-
-        if !is_gray
-            && (planes.cb.len() < needed(chroma_height, planes.cb_stride, chroma_width)
-                || planes.cr.len() < needed(chroma_height, planes.cr_stride, chroma_width))
-        {
-            return Err(crate::error::Error::internal(
-                "Cb/Cr planes too small for subsampled strip",
-            ));
         }
 
         // Copy Y with level shift and padded stride
@@ -169,14 +158,12 @@ impl StripProcessor {
         }
 
         // Copy Cb/Cr directly to downsampled buffers with level shift
-        if !is_gray {
-            for row in 0..chroma_height {
-                let dst = row * chroma_width;
-                let (cb_src, cr_src) = (row * planes.cb_stride, row * planes.cr_stride);
-                for x in 0..chroma_width {
-                    self.cb_down[dst + x] = planes.cb[cb_src + x] + 128.0;
-                    self.cr_down[dst + x] = planes.cr[cr_src + x] + 128.0;
-                }
+        for row in 0..chroma_height {
+            let dst = row * chroma_width;
+            let (cb_src, cr_src) = (row * planes.cb_stride, row * planes.cr_stride);
+            for x in 0..chroma_width {
+                self.cb_down[dst + x] = planes.cb[cb_src + x] + 128.0;
+                self.cr_down[dst + x] = planes.cr[cr_src + x] + 128.0;
             }
         }
 

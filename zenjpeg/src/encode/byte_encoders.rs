@@ -2261,6 +2261,32 @@ mod tests {
     }
 
     #[test]
+    fn test_push_subsampled_stopping_inside_a_strip_is_refused() {
+        let (w, h) = (33usize, 27usize);
+        let sub = ChromaSubsampling::Quarter;
+        let (cw, ch) = chroma_dims(sub, w, h);
+        let (y, cb, cr) = (
+            ycbcr_plane(w, h, 0),
+            ycbcr_plane(cw, ch, 1),
+            ycbcr_plane(cw, ch, 2),
+        );
+        let planes = crate::encode::YCbCrPlanes {
+            y: &y,
+            y_stride: w,
+            cb: &cb,
+            cb_stride: cw,
+            cr: &cr,
+            cr_stride: cw,
+        };
+        let e = EncoderConfig::ycbcr(85, sub)
+            .encode_from_ycbcr_planar(w as u32, h as u32)
+            .unwrap()
+            .push_subsampled(&planes, 3, Unstoppable)
+            .unwrap_err();
+        assert!(e.to_string().contains("Y plane too small for strip"), "{e}");
+    }
+
+    #[test]
     fn test_push_subsampled_of_no_rows_changes_nothing() {
         let (w, h) = (33usize, 27usize);
         let sub = ChromaSubsampling::Quarter;
