@@ -9,26 +9,17 @@
 
 ## summary
 #
-#   pub modules                                 1
-#   free functions                              5
 #   inherent methods                            3
 #   trait roster entries (type × trait)         3
 #
 # per-module pub lines:
-#   (root)                            4
-#   decode                            5
+#   (root)                            3
 
-## items (9 lines)
+## items (3 lines)
 
 pub fn Matrix::assert_fields_are_eq(&self)
 pub fn Range::assert_fields_are_eq(&self)
 pub fn YuvError::assert_fields_are_eq(&self)
-pub fn decode::yuv400_to_rgb(imgref::ImgRef<'_, u8>, imgref::ImgRefMut<'_, u8>, Range, Matrix)
-pub fn decode::yuv420_to_rgb(imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRefMut<'_, u8>, Range, Matrix)
-pub fn decode::yuv420_to_rgb_bilinear(imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRefMut<'_, u8>, Range, Matrix)
-pub fn decode::yuv422_to_rgb(imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRefMut<'_, u8>, Range, Matrix)
-pub fn decode::yuv444_to_rgb(imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRef<'_, u8>, imgref::ImgRefMut<'_, u8>, Range, Matrix)
-pub mod decode
 
 ## trait impls (3 types)
 
