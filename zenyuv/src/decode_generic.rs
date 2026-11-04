@@ -177,19 +177,20 @@ pub(crate) fn yuv420_to_rgb_generic(
             }
 
             // Flat unit-stride conversion over the chunk.
+            let y_chunk = &y_plane[yrow + base..yrow + base + n];
+            let rgb_chunk = &mut rgb[rgb_row + base * 3..rgb_row + (base + n) * 3];
             for k in 0..n {
-                let yi = yrow + base + k;
-                let y_val = y_plane[yi] as f32 + coeffs.y_offset;
+                let y_val = y_chunk[k] as f32 + coeffs.y_offset;
                 let cb_val = cb_row[k];
                 let cr_val = cr_row[k];
                 let y_scaled = y_val * coeffs.y_coeff;
 
-                let p = rgb_row + (base + k) * 3;
-                rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
-                rgb[p + 1] = crate::clamp_round(
+                let p = k * 3;
+                rgb_chunk[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
+                rgb_chunk[p + 1] = crate::clamp_round(
                     y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g,
                 );
-                rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
+                rgb_chunk[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
             }
 
             base += n;

@@ -131,20 +131,22 @@ pub(crate) fn rgb_to_yuv420_generic(
     let zero = i32x8::zero_t(token);
     let max255 = i32x8::splat_t(token, 255);
 
-    let chunks = n / 8;
     for run in 0..runs {
-        let rgb = &rgb[run * strides.rgb..];
-        let y = &mut y[run * strides.y..];
-        for c in 0..chunks {
-            let base = c * 8;
+        let rgb_off = run * strides.rgb;
+        let y_off = run * strides.y;
+        let rgb_run = &rgb[rgb_off..rgb_off + n * 3];
+        let y_run = &mut y[y_off..y_off + n];
+        let mut rgb_chunks = rgb_run.chunks_exact(24);
+        let mut y_chunks = y_run.chunks_exact_mut(8);
+        for (src, out) in (&mut rgb_chunks).zip(&mut y_chunks) {
             let mut ra = [0i32; 8];
             let mut ga = [0i32; 8];
             let mut ba = [0i32; 8];
             for i in 0..8 {
-                let p = (base + i) * 3;
-                ra[i] = rgb[p] as i32;
-                ga[i] = rgb[p + 1] as i32;
-                ba[i] = rgb[p + 2] as i32;
+                let p = i * 3;
+                ra[i] = src[p] as i32;
+                ga[i] = src[p + 1] as i32;
+                ba[i] = src[p + 2] as i32;
             }
             let r = i32x8::from_array_t(token, ra);
             let g = i32x8::from_array_t(token, ga);
@@ -153,15 +155,18 @@ pub(crate) fn rgb_to_yuv420_generic(
                 .shr_arithmetic_const::<{ PREC }>();
             let y_i = y_v.max(zero).min(max255).to_array();
             for i in 0..8 {
-                y[base + i] = y_i[i] as u8;
+                out[i] = y_i[i] as u8;
             }
         }
-        for i in (chunks * 8)..n {
-            let p = i * 3;
-            let r = rgb[p] as i32;
-            let g = rgb[p + 1] as i32;
-            let b = rgb[p + 2] as i32;
-            y[i] = ((r * coeffs.yr as i32
+        for (src, out) in rgb_chunks
+            .remainder()
+            .chunks_exact(3)
+            .zip(y_chunks.into_remainder())
+        {
+            let r = src[0] as i32;
+            let g = src[1] as i32;
+            let b = src[2] as i32;
+            *out = ((r * coeffs.yr as i32
                 + g * coeffs.yg as i32
                 + b * coeffs.yb as i32
                 + coeffs.y_bias)
@@ -178,15 +183,17 @@ pub(crate) fn rgb_to_yuv420_generic(
     let mut row = 0usize;
     while row < height {
         let row1 = (row + 1).min(height - 1);
+        let (top, bottom) = (row * strides.rgb, row1 * strides.rgb);
+        let (cb_row, cr_row) = (cy * strides.cb, cy * strides.cr);
         let mut cx = 0usize;
         let mut col = 0usize;
         while col < width {
             let col1 = (col + 1).min(width - 1);
 
-            let i00 = row * strides.rgb + col * 3;
-            let i01 = row * strides.rgb + col1 * 3;
-            let i10 = row1 * strides.rgb + col * 3;
-            let i11 = row1 * strides.rgb + col1 * 3;
+            let i00 = top + col * 3;
+            let i01 = top + col1 * 3;
+            let i10 = bottom + col * 3;
+            let i11 = bottom + col1 * 3;
 
             // Step 1: vertical avg_epu8 — (a + b + 1) / 2 per column
             let r_v0 = (rgb[i00] as i32 + rgb[i10] as i32 + 1) / 2;
@@ -202,13 +209,13 @@ pub(crate) fn rgb_to_yuv420_generic(
             let b_ps = b_v0 + b_v1;
 
             // Step 3: pmaddwd at PREC+1, shift by PREC+1
-            cb[cy * strides.cb + cx] = ((r_ps * coeffs.cb_r as i32
+            cb[cb_row + cx] = ((r_ps * coeffs.cb_r as i32
                 + g_ps * coeffs.cb_g as i32
                 + b_ps * coeffs.cb_b as i32
                 + coeffs.uv_bias_420)
                 >> (PREC + 1))
                 .clamp(0, 255) as u8;
-            cr[cy * strides.cr + cx] = ((r_ps * coeffs.cr_r as i32
+            cr[cr_row + cx] = ((r_ps * coeffs.cr_r as i32
                 + g_ps * coeffs.cr_g as i32
                 + b_ps * coeffs.cr_b as i32
                 + coeffs.uv_bias_420)
