@@ -9,31 +9,17 @@
 
 ## summary
 #
-#   pub modules                                 1
-#   free functions                             10
 #   inherent methods                            3
 #   trait roster entries (type × trait)         3
 #
 # per-module pub lines:
-#   (root)                            4
-#   decode                           10
+#   (root)                            3
 
-## items (14 lines)
+## items (3 lines)
 
 pub fn Matrix::assert_fields_are_eq(&self)
 pub fn Range::assert_fields_are_eq(&self)
 pub fn YuvError::assert_fields_are_eq(&self)
-pub fn decode::yuv400_to_rgb(&[u8], &mut [u8], usize, usize)
-pub fn decode::yuv400_to_rgb_with(&[u8], &mut [u8], usize, usize, Range, Matrix)
-pub fn decode::yuv420_to_rgb(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
-pub fn decode::yuv420_to_rgb_bilinear(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
-pub fn decode::yuv420_to_rgb_bilinear_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
-pub fn decode::yuv420_to_rgb_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
-pub fn decode::yuv422_to_rgb(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
-pub fn decode::yuv422_to_rgb_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
-pub fn decode::yuv444_to_rgb(&[u8], &[u8], &[u8], &mut [u8], usize, usize)
-pub fn decode::yuv444_to_rgb_with(&[u8], &[u8], &[u8], &mut [u8], usize, usize, Range, Matrix)
-pub mod decode
 
 ## trait impls (3 types)
 

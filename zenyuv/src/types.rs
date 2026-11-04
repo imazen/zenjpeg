@@ -495,3 +495,99 @@ mod tests {
         assert!((b - 255.0).abs() < 1.0, "B={b}");
     }
 }
+
+/// Row pitches of one image's planes: `rgb` in bytes, the others in samples.
+#[derive(Clone, Copy)]
+pub(crate) struct Strides {
+    pub(crate) rgb: usize,
+    pub(crate) y: usize,
+    pub(crate) cb: usize,
+    pub(crate) cr: usize,
+}
+
+impl Strides {
+    /// Tightly packed planes, chroma `cw` samples wide.
+    #[cfg(test)]
+    pub(crate) fn tight(width: usize, cw: usize) -> Self {
+        Self {
+            rgb: width * 3,
+            y: width,
+            cb: cw,
+            cr: cw,
+        }
+    }
+}
+
+/// Check a strided plane of `len` samples against the `needed` dimensions. It
+/// spans `(height - 1) * stride + width` samples: the last row needs no padding.
+pub(crate) fn check_plane(
+    buffer: &'static str,
+    len: usize,
+    got: (usize, usize),
+    stride: usize,
+    needed: (usize, usize),
+) -> Result<(), crate::YuvError> {
+    use crate::YuvError;
+    if got != needed {
+        return Err(YuvError::WrongDimensions {
+            buffer,
+            needed,
+            got,
+        });
+    }
+    let (width, height) = needed;
+    if stride < width {
+        return Err(YuvError::StrideTooSmall {
+            buffer,
+            width,
+            stride,
+        });
+    }
+    let span = match height {
+        _ if width == 0 => 0,
+        0 => 0,
+        h => (h - 1)
+            .checked_mul(stride)
+            .and_then(|start| start.checked_add(width))
+            .ok_or(YuvError::Overflow)?,
+    };
+    if len < span {
+        return Err(YuvError::BufferTooSmall {
+            buffer,
+            needed: span,
+            len,
+        });
+    }
+    Ok(())
+}
+
+/// [`check_plane`] for an entry point documented to panic.
+#[track_caller]
+pub(crate) fn assert_plane(
+    buffer: &'static str,
+    len: usize,
+    got: (usize, usize),
+    stride: usize,
+    needed: (usize, usize),
+) {
+    if let Err(e) = check_plane(buffer, len, got, stride, needed) {
+        panic!("{e}");
+    }
+}
+
+/// A packed RGB view's pixel dimensions. Its width counts samples, three per
+/// pixel, and its stride is in samples too, so a row pitch need not be a whole
+/// number of pixels.
+pub(crate) fn rgb_pixel_dims(
+    sample_width: usize,
+    height: usize,
+) -> Result<(usize, usize), crate::YuvError> {
+    if sample_width % 3 != 0 {
+        return Err(crate::YuvError::WrongDimensions {
+            buffer: "rgb",
+            needed: (sample_width - sample_width % 3, height),
+            got: (sample_width, height),
+        });
+    }
+    Ok((sample_width / 3, height))
+}

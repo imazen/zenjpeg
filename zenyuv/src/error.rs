@@ -27,6 +27,24 @@ pub enum YuvError {
         /// Elements supplied.
         len: usize,
     },
+    /// A strided plane's stride is below its width.
+    StrideTooSmall {
+        /// Which argument: `"rgb"`, `"y"`, `"cb"` or `"cr"`.
+        buffer: &'static str,
+        /// The plane's width.
+        width: usize,
+        /// The stride supplied.
+        stride: usize,
+    },
+    /// A strided plane's dimensions do not match the image's.
+    WrongDimensions {
+        /// Which argument: `"y"`, `"cb"` or `"cr"`.
+        buffer: &'static str,
+        /// The dimensions the image needs, `(width, height)`.
+        needed: (usize, usize),
+        /// The dimensions supplied.
+        got: (usize, usize),
+    },
     /// A buffer size overflows `usize`.
     Overflow,
     /// A scratch allocation failed.
@@ -44,6 +62,16 @@ impl fmt::Display for YuvError {
                 needed,
                 len,
             } => write!(f, "{buffer} buffer holds {len} elements, needs {needed}"),
+            Self::StrideTooSmall {
+                buffer,
+                width,
+                stride,
+            } => write!(f, "{buffer} stride {stride} is below its width {width}"),
+            Self::WrongDimensions {
+                buffer,
+                needed: (nw, nh),
+                got: (gw, gh),
+            } => write!(f, "{buffer} plane is {gw}x{gh}, needs {nw}x{nh}"),
             Self::Overflow => f.write_str("buffer size overflows usize"),
             Self::OutOfMemory => f.write_str("scratch allocation failed"),
         }

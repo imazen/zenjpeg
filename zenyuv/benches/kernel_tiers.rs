@@ -6,13 +6,6 @@
 //! elsewhere in the 2026-07-29 aarch64 sweep (zenquant 0.58x, linear-srgb
 //! 0.93x, zenresize 0.94x).
 //!
-//! Asymmetry worth measuring here specifically: ENCODE has hand-written AVX2
-//! and NEON kernels (`neon_encode.rs`), while DECODE has neither — `decode.rs`
-//! goes straight to the generic magetypes path on every architecture, and
-//! `avx2_decode.rs` is not called from anywhere. The generic path still
-//! instantiates a NEON tier, so whether that costs anything is a question for
-//! measurement rather than inspection.
-//!
 //! NEON is BASELINE on aarch64, so the "scalar" arm is autovectorized too:
 //! ~1.00x means LLVM already matched it, BELOW 1.00 is a bug.
 //!
@@ -34,7 +27,6 @@ const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(on: bool) -> bool {
-    use archmage::SimdToken;
     TierToken::dangerously_disable_token_process_wide(!on).is_ok()
 }
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
@@ -74,7 +66,13 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_444_u8(rgb, &mut y, &mut u, &mut v, W, H);
+                    ctx.encode_444_u8(
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                        imgref::ImgRefMut::new(&mut u[..], W, H),
+                        imgref::ImgRefMut::new(&mut v[..], W, H),
+                    )
+                    .unwrap();
                     (y, u, v)
                 })
             });
@@ -90,7 +88,13 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_420_u8(rgb, &mut y, &mut u, &mut v, W, H);
+                    ctx.encode_420_u8(
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                        imgref::ImgRefMut::new(&mut u[..], W / 2, H / 2),
+                        imgref::ImgRefMut::new(&mut v[..], W / 2, H / 2),
+                    )
+                    .unwrap();
                     (y, u, v)
                 })
             });
@@ -106,7 +110,11 @@ fn bench(suite: &mut Suite) {
                 })
                 .run(move |mut y| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-                    ctx.encode_420_y_only_u8(rgb, &mut y, W, H);
+                    ctx.encode_420_y_only_u8(
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                    )
+                    .unwrap();
                     y
                 })
             });
@@ -123,75 +131,18 @@ fn bench(suite: &mut Suite) {
                 .run(move |(mut y, mut u, mut v)| {
                     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
                     ctx.encode_sharp_420_u8(
-                        rgb,
-                        &mut y,
-                        &mut u,
-                        &mut v,
-                        W,
-                        H,
+                        imgref::ImgRef::new(rgb, W * 3, H),
+                        imgref::ImgRefMut::new(&mut y[..], W, H),
+                        imgref::ImgRefMut::new(&mut u[..], W / 2, H / 2),
+                        imgref::ImgRefMut::new(&mut v[..], W / 2, H / 2),
                         &SharpYuvConfig::default(),
-                    );
+                    )
+                    .unwrap();
                     (y, u, v)
                 })
             });
         }
     });
-
-    // DECODE is deliberately absent: `yuv*_to_rgb` are crate-internal (only
-    // `YuvContext`'s encode methods are public), so a bench outside the crate
-    // cannot reach them. That decode path is ALSO the one with no hand-written
-    // kernel on any architecture — `decode.rs` calls the generic magetypes path
-    // directly and `avx2_decode.rs` has no callers at all. Worth a look from
-    // inside the crate; flagged rather than silently skipped.
-
-    // ---- decode ----
-    // Flagged earlier as having no hand-written kernel on ANY architecture:
-    // `decode.rs` calls the generic magetypes path directly for all five entry
-    // points, and `avx2_decode.rs` — which exists and compiles — has zero
-    // callers. That generic path DOES instantiate a NEON tier through
-    // `incant!`, so this is a missing hand-written kernel, not a missing vector
-    // path. Whether that costs anything was unmeasurable until now, because the
-    // decode fns are crate-internal; `_dev` exposes them.
-    {
-        let yp: &'static [u8] = Box::leak(
-            (0..n)
-                .map(|i| (i % 251) as u8)
-                .collect::<Vec<u8>>()
-                .into_boxed_slice(),
-        );
-        let cp: &'static [u8] = Box::leak(
-            (0..n)
-                .map(|i| (i % 199) as u8)
-                .collect::<Vec<u8>>()
-                .into_boxed_slice(),
-        );
-        macro_rules! dec {
-            ($name:expr, $call:expr) => {
-                suite.compare($name, |g| {
-                    g.throughput(Throughput::Bytes((n * 3) as u64));
-                    for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
-                        g.bench(arm, move |b| {
-                            b.with_input(move || {
-                                set_simd(simd);
-                                vec![0u8; n * 3]
-                            })
-                            .run(move |mut out| {
-                                $call(&mut out);
-                                out
-                            })
-                        });
-                    }
-                });
-            };
-        }
-        dec!("yuv444_to_rgb", |o: &mut Vec<u8>| {
-            zenyuv::decode::yuv444_to_rgb(yp, cp, cp, o, W, H)
-        });
-        dec!("yuv420_to_rgb", |o: &mut Vec<u8>| {
-            zenyuv::decode::yuv420_to_rgb(yp, cp, cp, o, W, H)
-        });
-    }
-
     set_simd(true);
 }
 

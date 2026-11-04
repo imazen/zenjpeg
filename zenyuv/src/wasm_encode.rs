@@ -7,7 +7,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use crate::types::{ForwardCoeffs, PREC, pack_i16_pair};
+use crate::types::{ForwardCoeffs, PREC, Strides, pack_i16_pair};
 use archmage::prelude::*;
 
 /// 4:4:4 WASM SIMD128 encode kernel. Returns number of pixels processed
@@ -126,7 +126,7 @@ pub(crate) fn rgb_to_yuv420_wasm(
     cr_out: &mut [u8],
     width: usize,
     height: usize,
-    cw: usize,
+    strides: Strides,
     coeffs: &ForwardCoeffs,
 ) {
     // Y plane uses the same 4:4:4 math.
@@ -141,7 +141,7 @@ pub(crate) fn rgb_to_yuv420_wasm(
     let cr_b0 = i32x4_splat(pack_i16_pair(coeffs.cr_b, 0));
     let uv_bias_420_v = i32x4_splat(coeffs.uv_bias_420);
 
-    let row_stride = width * 3;
+    let row_stride = strides.rgb;
     let col_blocks = width / 8;
     let row_pairs = height / 2;
 
@@ -150,9 +150,10 @@ pub(crate) fn rgb_to_yuv420_wasm(
         let bot = top + 1;
         let top_off = top * row_stride;
         let bot_off = bot * row_stride;
-        let y_top_off = top * width;
-        let y_bot_off = bot * width;
-        let cb_row_off = ry * cw;
+        let y_top_off = top * strides.y;
+        let y_bot_off = bot * strides.y;
+        let cb_row_off = ry * strides.cb;
+        let cr_row_off = ry * strides.cr;
 
         for cx in 0..col_blocks {
             let px = cx * 8;
@@ -226,7 +227,7 @@ pub(crate) fn rgb_to_yuv420_wasm(
                     + coeffs.uv_bias_420)
                     >> (PREC + 1))
                     .clamp(0, 255) as u8;
-                cr_out[cb_row_off + cx * 4 + i] = ((r_ps * coeffs.cr_r as i32
+                cr_out[cr_row_off + cx * 4 + i] = ((r_ps * coeffs.cr_r as i32
                     + g_ps * coeffs.cr_g as i32
                     + b_ps * coeffs.cr_b as i32
                     + coeffs.uv_bias_420)
@@ -243,6 +244,6 @@ pub(crate) fn rgb_to_yuv420_wasm(
     // plus any odd last row.
     let simd_cols = col_blocks * 8;
     crate::encode::rgb_to_yuv420_scalar_tail(
-        rgb, y_out, cb_out, cr_out, width, height, cw, simd_cols, coeffs,
+        rgb, y_out, cb_out, cr_out, width, height, simd_cols, strides, coeffs,
     );
 }

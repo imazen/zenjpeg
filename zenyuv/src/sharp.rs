@@ -10,7 +10,9 @@
 
 extern crate alloc;
 
-use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
+use crate::types::{
+    ForwardCoeffs, InverseCoeffs, Matrix, Range, Strides, assert_plane, rgb_pixel_dims,
+};
 
 /// Configuration for Sharp YUV chroma optimization.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,84 +42,6 @@ impl Default for SharpYuvConfig {
             refine_y: true,
         }
     }
-}
-
-/// Like `rgb_to_yuv420_sharp` but takes a pre-allocated workspace. Use via
-/// `YuvContext::encode_sharp_420_*` for automatic workspace management.
-pub fn rgb_to_yuv420_sharp_with_workspace(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-    assert!(ws.chroma_width() >= cw);
-
-    crate::encode::rgb_to_yuv444_y_only(rgb, y, width, height, range, matrix);
-
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-
-    sharp_iterate_rows_u8(
-        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
-    );
-}
-
-/// f32 output: Y via fast SIMD (u8→f32 widen), Cb/Cr directly from iteration f32.
-///
-/// Y still goes through the SIMD u8 kernel (AVX2 pmaddwd) because that's faster
-/// than scalar f32 per-pixel. The u8 Y is widened to f32 for the caller's output
-/// AND used by the iteration SoA. Cb/Cr skip u8 entirely — written from the
-/// iteration workspace as f32.
-pub fn rgb_to_yuv420_sharp_f32(
-    rgb: &[u8],
-    y_f32: &mut [f32],
-    cb_f32: &mut [f32],
-    cr_f32: &mut [f32],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y_f32.len() >= n);
-    assert!(cb_f32.len() >= cw * ch);
-    assert!(cr_f32.len() >= cw * ch);
-    assert!(ws.chroma_width() >= cw);
-
-    // Y via fast SIMD → u8 temp, then widen to f32 for caller.
-    // This is faster than scalar f32 Y despite the u8→f32 step, because
-    // the AVX2 pmaddwd kernel processes 32 pixels/iter vs 1 pixel/iter scalar.
-    let mut y_u8 = alloc::vec![0u8; n];
-    crate::encode::rgb_to_yuv444_y_only(rgb, &mut y_u8, width, height, range, matrix);
-    for i in 0..n {
-        y_f32[i] = y_u8[i] as f32;
-    }
-
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-
-    // Cb/Cr: iteration produces f32 directly. SoA reads Y from u8 (via workspace).
-    sharp_iterate_rows_f32_hybrid(
-        rgb, &y_u8, cb_f32, cr_f32, width, height, cw, ch, &fwd, &inv, config, ws,
-    );
 }
 
 /// Convert gamma-encoded RGB f32 to Y/Cb/Cr f32 without eight-bit rounding.
@@ -224,129 +148,6 @@ pub fn rgb_f32_to_yuv420_sharp(
     }
 }
 
-/// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
-///
-/// Y is computed at full resolution via the fast SIMD path. Cb/Cr are computed
-/// per 2×2 block using iterative refinement that minimizes reconstruction error
-/// in gamma-encoded RGB space.
-///
-/// `luts` controls the gamma transfer (sRGB or libwebp). `range` and `matrix`
-/// control the YCbCr color space. `config` tunes the iteration.
-pub fn rgb_to_yuv420_sharp(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
-    let fwd = ForwardCoeffs::new(matrix, range);
-    let inv = InverseCoeffs::new(matrix, range);
-
-    // Compute Y at full resolution via fast SIMD path.
-    crate::encode::rgb_to_yuv444_y_only(rgb, y, width, height, range, matrix);
-
-    // Per-row SoA workspace. Caller can pre-allocate via SharpYuvWorkspace
-    // and pass it across strip calls to avoid per-call allocation.
-    let mut workspace = SharpYuvWorkspace::new(cw);
-    sharp_iterate_rows_u8(
-        rgb,
-        y,
-        cb,
-        cr,
-        width,
-        height,
-        cw,
-        ch,
-        &fwd,
-        &inv,
-        config,
-        &mut workspace,
-    );
-}
-
-/// Refine pre-computed Cb/Cr using Sharp YUV iteration.
-///
-/// Unlike `rgb_to_yuv420_sharp`, this does NOT compute initial Cb/Cr from the
-/// forward matrix. Instead, it takes the caller's pre-computed Cb/Cr as the
-/// starting point and runs Newton-step refinement to minimize reconstruction
-/// error in sRGB space.
-///
-/// Use this when the initial chroma was computed with a different averaging
-/// model (e.g., gamma-corrected averaging) but the reconstruction should
-/// still use the standard BT.601/BT.709 inverse matrix.
-///
-/// Y must be at full resolution (`width * height`). Cb/Cr must be at chroma
-/// resolution (`ceil(width/2) * ceil(height/2)`).
-pub fn refine_chroma_420_u8(
-    rgb: &[u8],
-    y: &[u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
-    let inv = InverseCoeffs::new(matrix, range);
-    let fwd = ForwardCoeffs::new(matrix, range);
-
-    let mut ws = SharpYuvWorkspace::new(cw);
-    refine_iterate_rows_u8(
-        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, &mut ws,
-    );
-}
-
-/// Like `refine_chroma_420_u8` but takes a pre-allocated workspace.
-pub fn refine_chroma_420_u8_with_workspace(
-    rgb: &[u8],
-    y: &[u8],
-    cb: &mut [u8],
-    cr: &mut [u8],
-    width: usize,
-    height: usize,
-    range: Range,
-    matrix: Matrix,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
-) {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-    assert!(ws.chroma_width() >= cw);
-
-    let inv = InverseCoeffs::new(matrix, range);
-    let fwd = ForwardCoeffs::new(matrix, range);
-
-    refine_iterate_rows_u8(
-        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
-    );
-}
-
 /// Refine Y plane to compensate for luma error from chroma subsampling.
 ///
 /// After Cb/Cr are refined, the reconstruction `inv(Y, upsample(Cb), upsample(Cr))`
@@ -363,27 +164,56 @@ pub fn refine_chroma_420_u8_with_workspace(
 /// Returns the total absolute luma error (sum of |adjustments|) for convergence
 /// checking.
 pub fn refine_y_420_u8(
-    rgb: &[u8],
-    y: &mut [u8],
-    cb: &[u8],
-    cr: &[u8],
-    width: usize,
-    height: usize,
+    rgb: imgref::ImgRef<'_, u8>,
+    mut y: imgref::ImgRefMut<'_, u8>,
+    cb: imgref::ImgRef<'_, u8>,
+    cr: imgref::ImgRef<'_, u8>,
     range: Range,
     matrix: Matrix,
 ) -> u64 {
-    let n = width * height;
-    let cw = width.div_ceil(2);
-    let ch = height.div_ceil(2);
-    assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
-
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
-
-    refine_y_rows(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, range)
+    refine_y_rows(
+        rgb,
+        y.buf_mut(),
+        cb.buf(),
+        cr.buf(),
+        width,
+        height,
+        strides,
+        &fwd,
+        &inv,
+        range,
+    )
 }
 
 /// Inner loop: refine Y row by row.
@@ -394,8 +224,7 @@ fn refine_y_rows(
     cr: &[u8],
     width: usize,
     height: usize,
-    cw: usize,
-    _ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     range: Range,
@@ -429,16 +258,15 @@ fn refine_y_rows(
 
         for col in 0..width {
             let cx = col / 2; // chroma column (nearest-neighbor horizontal)
-            let chroma_idx = cy * cw + cx;
 
             // Upsampled chroma (nearest-neighbor from 4:2:0 grid).
-            let cb_val = cb[chroma_idx] as f32;
-            let cr_val = cr[chroma_idx] as f32;
+            let cb_val = cb[cy * strides.cb + cx] as f32;
+            let cr_val = cr[cy * strides.cr + cx] as f32;
             let cb_c = cb_val - uv_center;
             let cr_c = cr_val - uv_center;
 
             // Current Y value.
-            let pixel_idx = row * width + col;
+            let pixel_idx = row * strides.y + col;
             let y_cur = y[pixel_idx] as f32;
 
             // Reconstruct RGB from current YCbCr.
@@ -451,7 +279,7 @@ fn refine_y_rows(
             let rec_luma = yr * rec_r + yg * rec_g + yb * rec_b + y_bias;
 
             // Original RGB.
-            let rgb_idx = pixel_idx * 3;
+            let rgb_idx = row * strides.rgb + col * 3;
             let orig_r = rgb[rgb_idx] as f32;
             let orig_g = rgb[rgb_idx + 1] as f32;
             let orig_b = rgb[rgb_idx + 2] as f32;
@@ -471,6 +299,255 @@ fn refine_y_rows(
     }
 
     total_diff
+}
+
+/// The byte view and geometry of a checked strided RGB input.
+#[track_caller]
+fn checked_rgb_input<'a>(rgb: imgref::ImgRef<'a, u8>) -> (&'a [u8], usize, usize, usize) {
+    let dims = (rgb.width(), rgb.height());
+    let stride = rgb.stride();
+    assert!(dims.0 > 0 && dims.1 > 0);
+    assert_plane("rgb", rgb.buf().len(), dims, stride, dims);
+    let (width, height) = rgb_pixel_dims(dims.0, dims.1).unwrap_or_else(|e| panic!("{e}"));
+    (*rgb.buf(), width, height, stride)
+}
+
+/// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
+///
+/// Y is computed at full resolution via the fast SIMD path. Cb/Cr are computed per
+/// 2×2 block using iterative refinement that minimizes reconstruction error in
+/// gamma-encoded RGB space. `range` and `matrix` control the YCbCr color space;
+/// `config` tunes the iteration. Reuse `ws` across strips to avoid reallocating it.
+///
+/// Each plane is a view at its own stride, in samples; padding is neither read nor
+/// written, and the last row of a plane needs none. `rgb`'s width and stride count
+/// samples, three per pixel, so a row pitch need not be a whole number of pixels.
+///
+/// # Panics
+///
+/// For zero dimensions, a plane that does not fit its dimensions, or an
+/// undersized workspace. Y has `rgb`'s dimensions; Cb/Cr are
+/// `ceil(width/2)` by `ceil(height/2)`.
+#[allow(clippy::too_many_arguments)]
+pub fn rgb_to_yuv420_sharp(
+    rgb: imgref::ImgRef<'_, u8>,
+    mut y: imgref::ImgRefMut<'_, u8>,
+    mut cb: imgref::ImgRefMut<'_, u8>,
+    mut cr: imgref::ImgRefMut<'_, u8>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    assert!(ws.chroma_width() >= cw);
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+    let y: &mut [u8] = y.buf_mut();
+    crate::encode::rgb_to_yuv444_y_only(
+        rgb,
+        y,
+        width,
+        height,
+        strides.rgb,
+        strides.y,
+        range,
+        matrix,
+    );
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+    sharp_iterate_rows_u8(
+        rgb,
+        y,
+        cb.buf_mut(),
+        cr.buf_mut(),
+        width,
+        height,
+        cw,
+        ch,
+        strides,
+        &fwd,
+        &inv,
+        config,
+        ws,
+    );
+}
+
+/// f32 output: Y via the fast SIMD u8 kernel, widened, because that is faster than
+/// scalar f32 per pixel; Cb/Cr directly from the iteration workspace, with no u8
+/// narrowing. The rules of [`rgb_to_yuv420_sharp`] apply.
+///
+/// # Panics
+///
+/// As [`rgb_to_yuv420_sharp`].
+#[allow(clippy::too_many_arguments)]
+pub fn rgb_to_yuv420_sharp_f32(
+    rgb: imgref::ImgRef<'_, u8>,
+    mut y: imgref::ImgRefMut<'_, f32>,
+    mut cb: imgref::ImgRefMut<'_, f32>,
+    mut cr: imgref::ImgRefMut<'_, f32>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    assert!(ws.chroma_width() >= cw);
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: width,
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+
+    // The same u8 intermediate as the tight form; this one is tight too.
+    let mut y_u8 = alloc::vec![0u8; width * height];
+    crate::encode::rgb_to_yuv444_y_only(
+        rgb, &mut y_u8, width, height, rgb_stride, width, range, matrix,
+    );
+    for (out, row) in y.rows_mut().zip(y_u8.chunks_exact(width)) {
+        for (d, &s) in out.iter_mut().zip(row) {
+            *d = f32::from(s);
+        }
+    }
+
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+    sharp_iterate_rows_f32_hybrid(
+        rgb,
+        &y_u8,
+        cb.buf_mut(),
+        cr.buf_mut(),
+        width,
+        height,
+        cw,
+        ch,
+        strides,
+        &fwd,
+        &inv,
+        config,
+        ws,
+    );
+}
+
+/// Refine pre-computed Cb/Cr using Sharp YUV iteration.
+///
+/// Unlike [`rgb_to_yuv420_sharp`], this does NOT compute initial Cb/Cr from the
+/// forward matrix: it starts from the caller's Cb/Cr and runs Newton-step refinement
+/// to minimize reconstruction error in sRGB space. Use this when the initial chroma
+/// came from a different averaging model (e.g., gamma-corrected averaging) but the
+/// reconstruction still uses the standard inverse matrix. The rules of
+/// [`rgb_to_yuv420_sharp`] apply.
+///
+/// # Panics
+///
+/// As [`rgb_to_yuv420_sharp`].
+#[allow(clippy::too_many_arguments)]
+pub fn refine_chroma_420_u8(
+    rgb: imgref::ImgRef<'_, u8>,
+    y: imgref::ImgRef<'_, u8>,
+    mut cb: imgref::ImgRefMut<'_, u8>,
+    mut cr: imgref::ImgRefMut<'_, u8>,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let (rgb, width, height, rgb_stride) = checked_rgb_input(rgb);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    assert_plane(
+        "y",
+        y.buf().len(),
+        (y.width(), y.height()),
+        y.stride(),
+        (width, height),
+    );
+    assert_plane(
+        "cb",
+        cb.buf().len(),
+        (cb.width(), cb.height()),
+        cb.stride(),
+        (cw, ch),
+    );
+    assert_plane(
+        "cr",
+        cr.buf().len(),
+        (cr.width(), cr.height()),
+        cr.stride(),
+        (cw, ch),
+    );
+    assert!(ws.chroma_width() >= cw);
+    let strides = Strides {
+        rgb: rgb_stride,
+        y: y.stride(),
+        cb: cb.stride(),
+        cr: cr.stride(),
+    };
+    let inv = InverseCoeffs::new(matrix, range);
+    let fwd = ForwardCoeffs::new(matrix, range);
+    refine_iterate_rows_u8(
+        rgb,
+        y.buf(),
+        cb.buf_mut(),
+        cr.buf_mut(),
+        width,
+        height,
+        cw,
+        ch,
+        strides,
+        &fwd,
+        &inv,
+        config,
+        ws,
+    );
 }
 
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to
@@ -569,6 +646,7 @@ fn refine_iterate_rows_u8(
     height: usize,
     cw: usize,
     ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     config: &SharpYuvConfig,
@@ -586,6 +664,8 @@ fn refine_iterate_rows_u8(
             row_bot,
             width,
             cw,
+            strides.rgb,
+            strides.y,
             &mut ws.y0s,
             &mut ws.y1s,
             &mut ws.y2s,
@@ -604,10 +684,10 @@ fn refine_iterate_rows_u8(
             &mut ws.ob3,
         );
         // Load caller's pre-computed Cb/Cr as f32 initial values.
-        let row_off = cy_idx * cw;
+        let (cb_off, cr_off) = (cy_idx * strides.cb, cy_idx * strides.cr);
         for cx_idx in 0..cw {
-            ws.cb_f[cx_idx] = cb[row_off + cx_idx] as f32;
-            ws.cr_f[cx_idx] = cr[row_off + cx_idx] as f32;
+            ws.cb_f[cx_idx] = cb[cb_off + cx_idx] as f32;
+            ws.cr_f[cx_idx] = cr[cr_off + cx_idx] as f32;
         }
         sharp_iterate_all_blocks(
             &ws.y0s[..cw],
@@ -634,8 +714,8 @@ fn refine_iterate_rows_u8(
             config.convergence_threshold,
         );
         for cx_idx in 0..cw {
-            cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
-            cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
+            cb[cb_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
+            cr[cr_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
     }
 }
@@ -650,6 +730,7 @@ fn sharp_iterate_rows_u8(
     height: usize,
     cw: usize,
     ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     config: &SharpYuvConfig,
@@ -665,6 +746,8 @@ fn sharp_iterate_rows_u8(
             row_bot,
             width,
             cw,
+            strides.rgb,
+            strides.y,
             &mut ws.y0s,
             &mut ws.y1s,
             &mut ws.y2s,
@@ -709,10 +792,10 @@ fn sharp_iterate_rows_u8(
             config.max_iterations,
             config.convergence_threshold,
         );
-        let row_off = cy_idx * cw;
+        let (cb_off, cr_off) = (cy_idx * strides.cb, cy_idx * strides.cr);
         for cx_idx in 0..cw {
-            cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
-            cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
+            cb[cb_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
+            cr[cr_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
     }
 }
@@ -727,6 +810,7 @@ fn sharp_iterate_rows_f32_hybrid(
     height: usize,
     cw: usize,
     ch: usize,
+    strides: Strides,
     fwd: &ForwardCoeffs,
     inv: &InverseCoeffs,
     config: &SharpYuvConfig,
@@ -742,6 +826,8 @@ fn sharp_iterate_rows_f32_hybrid(
             row_bot,
             width,
             cw,
+            strides.rgb,
+            width,
             &mut ws.y0s,
             &mut ws.y1s,
             &mut ws.y2s,
@@ -787,9 +873,9 @@ fn sharp_iterate_rows_f32_hybrid(
             config.convergence_threshold,
         );
         // Write Cb/Cr as f32 directly — no u8 narrowing.
-        let row_off = cy_idx * cw;
-        cb_f32[row_off..row_off + cw].copy_from_slice(&ws.cb_f[..cw]);
-        cr_f32[row_off..row_off + cw].copy_from_slice(&ws.cr_f[..cw]);
+        let (cb_off, cr_off) = (cy_idx * strides.cb, cy_idx * strides.cr);
+        cb_f32[cb_off..cb_off + cw].copy_from_slice(&ws.cb_f[..cw]);
+        cr_f32[cr_off..cr_off + cw].copy_from_slice(&ws.cr_f[..cw]);
     }
 }
 
@@ -808,6 +894,8 @@ fn extract_soa_row(
     row_bot: usize,
     width: usize,
     cw: usize,
+    rgb_stride: usize,
+    y_stride: usize,
     y0s: &mut [f32],
     y1s: &mut [f32],
     y2s: &mut [f32],
@@ -831,10 +919,10 @@ fn extract_soa_row(
     // Pre-slice the two Y rows and two RGB rows as contiguous spans.
     // This eliminates per-pixel index arithmetic and lets LLVM see
     // contiguous memory access patterns.
-    let y_top = &y_plane[row_top * width..row_top * width + width];
-    let y_bot = &y_plane[row_bot * width..row_bot * width + width];
-    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
-    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
+    let y_top = &y_plane[row_top * y_stride..row_top * y_stride + width];
+    let y_bot = &y_plane[row_bot * y_stride..row_bot * y_stride + width];
+    let rgb_top = &rgb[row_top * rgb_stride..row_top * rgb_stride + width * 3];
+    let rgb_bot = &rgb[row_bot * rgb_stride..row_bot * rgb_stride + width * 3];
 
     // Bulk: all blocks where x+1 < width (no edge clamping needed).
     // For width=1024, bulk_cw=512 (all blocks). For width=1023, bulk_cw=511.
@@ -885,6 +973,8 @@ fn extract_soa_row_no_chroma(
     row_bot: usize,
     width: usize,
     cw: usize,
+    rgb_stride: usize,
+    y_stride: usize,
     y0s: &mut [f32],
     y1s: &mut [f32],
     y2s: &mut [f32],
@@ -902,10 +992,10 @@ fn extract_soa_row_no_chroma(
     og3: &mut [f32],
     ob3: &mut [f32],
 ) {
-    let y_top = &y_plane[row_top * width..row_top * width + width];
-    let y_bot = &y_plane[row_bot * width..row_bot * width + width];
-    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
-    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
+    let y_top = &y_plane[row_top * y_stride..row_top * y_stride + width];
+    let y_bot = &y_plane[row_bot * y_stride..row_bot * y_stride + width];
+    let rgb_top = &rgb[row_top * rgb_stride..row_top * rgb_stride + width * 3];
+    let rgb_bot = &rgb[row_bot * rgb_stride..row_bot * rgb_stride + width * 3];
 
     let bulk_cw = width / 2;
 

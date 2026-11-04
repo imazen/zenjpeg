@@ -1235,6 +1235,13 @@ impl YCbCrPlanarEncoder {
             return Err(Error::too_many_rows(self.height, new_total as u32));
         }
 
+        // A stride below the width would overlap rows.
+        for stride in [planes.y_stride, planes.cb_stride, planes.cr_stride] {
+            if stride < width {
+                return Err(Error::stride_too_small(width as u32, stride));
+            }
+        }
+
         let mut src_row = 0;
         while src_row < rows {
             stop.check()?;
@@ -1362,74 +1369,29 @@ impl YCbCrPlanarEncoder {
             return Err(Error::too_many_rows(self.height, new_total as u32));
         }
 
-        // Check if input is already contiguous
-        let y_contiguous = planes.y_stride == width;
-        let cb_contiguous = planes.cb_stride == chroma_width;
-        let cr_contiguous = planes.cr_stride == chroma_width;
-
-        if y_contiguous && cb_contiguous && cr_contiguous {
-            // Fast path: data is already contiguous
-            let y_len = width * y_rows;
-            let c_len = chroma_width * chroma_rows;
-
-            if planes.y.len() < y_len {
-                return Err(Error::invalid_buffer_size(y_len, planes.y.len()));
+        // Validate every plane at its own stride. The last row needs only its
+        // samples, so a strided view of a larger image (a crop) ends there.
+        for (plane, stride, row_width, plane_rows) in [
+            (planes.y, planes.y_stride, width, y_rows),
+            (planes.cb, planes.cb_stride, chroma_width, chroma_rows),
+            (planes.cr, planes.cr_stride, chroma_width, chroma_rows),
+        ] {
+            if stride < row_width {
+                return Err(Error::stride_too_small(row_width as u32, stride));
             }
-            if planes.cb.len() < c_len {
-                return Err(Error::invalid_buffer_size(c_len, planes.cb.len()));
+            let expected = match plane_rows {
+                0 => 0,
+                n => (n - 1)
+                    .checked_mul(stride)
+                    .and_then(|start| start.checked_add(row_width))
+                    .ok_or_else(|| Error::invalid_buffer_size(usize::MAX, plane.len()))?,
+            };
+            if plane.len() < expected {
+                return Err(Error::invalid_buffer_size(expected, plane.len()));
             }
-            if planes.cr.len() < c_len {
-                return Err(Error::invalid_buffer_size(c_len, planes.cr.len()));
-            }
-
-            self.inner.push_ycbcr_strip_f32_subsampled(
-                &planes.y[..y_len],
-                &planes.cb[..c_len],
-                &planes.cr[..c_len],
-                y_rows,
-            )?;
-        } else {
-            // Slow path: copy strided data to contiguous buffers
-            let mut y_buf = vec![0.0f32; width * y_rows];
-            let mut cb_buf = vec![0.0f32; chroma_width * chroma_rows];
-            let mut cr_buf = vec![0.0f32; chroma_width * chroma_rows];
-
-            // Copy Y plane
-            for row in 0..y_rows {
-                stop.check()?;
-                let dst_start = row * width;
-                let dst_end = dst_start + width;
-                let src_start = row * planes.y_stride;
-                let src_end = src_start + width;
-                if src_end > planes.y.len() {
-                    return Err(Error::invalid_buffer_size(src_end, planes.y.len()));
-                }
-                y_buf[dst_start..dst_end].copy_from_slice(&planes.y[src_start..src_end]);
-            }
-
-            // Copy chroma planes
-            for row in 0..chroma_rows {
-                let dst_start = row * chroma_width;
-                let dst_end = dst_start + chroma_width;
-
-                let cb_src_start = row * planes.cb_stride;
-                let cb_src_end = cb_src_start + chroma_width;
-                if cb_src_end > planes.cb.len() {
-                    return Err(Error::invalid_buffer_size(cb_src_end, planes.cb.len()));
-                }
-                cb_buf[dst_start..dst_end].copy_from_slice(&planes.cb[cb_src_start..cb_src_end]);
-
-                let cr_src_start = row * planes.cr_stride;
-                let cr_src_end = cr_src_start + chroma_width;
-                if cr_src_end > planes.cr.len() {
-                    return Err(Error::invalid_buffer_size(cr_src_end, planes.cr.len()));
-                }
-                cr_buf[dst_start..dst_end].copy_from_slice(&planes.cr[cr_src_start..cr_src_end]);
-            }
-
-            self.inner
-                .push_ycbcr_strip_f32_subsampled(&y_buf, &cb_buf, &cr_buf, y_rows)?;
         }
+
+        self.inner.push_ycbcr_strip_f32_subsampled(planes, y_rows)?;
 
         self.total_rows_pushed += y_rows;
         Ok(())
@@ -2089,6 +2051,312 @@ mod tests {
         let jpeg = enc.finish().unwrap();
         assert!(!jpeg.is_empty());
         assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    }
+
+    /// `src` (tight, `w` wide) at `stride`: garbage padding on every row but the
+    /// last, so the buffer is the exact minimum and padding read shows up.
+    fn with_padding(src: &[f32], w: usize, stride: usize) -> Vec<f32> {
+        let h = src.len() / w;
+        let mut out = vec![1.0e6f32; (h - 1) * stride + w];
+        for (row, line) in src.chunks_exact(w).enumerate() {
+            out[row * stride..row * stride + w].copy_from_slice(line);
+        }
+        out
+    }
+
+    fn ycbcr_sample(x: usize, y: usize, plane: usize) -> f32 {
+        let v = (x * 3 + y * 5 + (x * y) / 7 + plane * 37) % 251;
+        if plane == 0 {
+            v as f32
+        } else {
+            v as f32 - 128.0
+        }
+    }
+
+    fn ycbcr_plane(w: usize, h: usize, plane: usize) -> Vec<f32> {
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| ycbcr_sample(x, y, plane))
+            .collect()
+    }
+
+    const SUBSAMPLINGS: [ChromaSubsampling; 4] = [
+        ChromaSubsampling::None,
+        ChromaSubsampling::HalfHorizontal,
+        ChromaSubsampling::Quarter,
+        ChromaSubsampling::HalfVertical,
+    ];
+
+    fn chroma_dims(sub: ChromaSubsampling, w: usize, h: usize) -> (usize, usize) {
+        match sub {
+            ChromaSubsampling::None => (w, h),
+            ChromaSubsampling::HalfHorizontal => (w.div_ceil(2), h),
+            ChromaSubsampling::Quarter => (w.div_ceil(2), h.div_ceil(2)),
+            ChromaSubsampling::HalfVertical => (w, h.div_ceil(2)),
+        }
+    }
+
+    /// Encode through `push_subsampled`, feeding `chunk` luma rows per call.
+    fn encode_subsampled(
+        sub: ChromaSubsampling,
+        (w, h): (usize, usize),
+        planes: &crate::encode::YCbCrPlanes<'_>,
+        chunk: usize,
+    ) -> Vec<u8> {
+        let mut enc = EncoderConfig::ycbcr(85, sub)
+            .encode_from_ycbcr_planar(w as u32, h as u32)
+            .unwrap();
+        // Luma rows per chroma row: only even row offsets are pushed below.
+        let factor = if matches!(
+            sub,
+            ChromaSubsampling::Quarter | ChromaSubsampling::HalfVertical
+        ) {
+            2
+        } else {
+            1
+        };
+        let mut row = 0;
+        while row < h {
+            let rows = chunk.min(h - row);
+            let c_row = row / factor;
+            let part = crate::encode::YCbCrPlanes {
+                y: &planes.y[row * planes.y_stride..],
+                y_stride: planes.y_stride,
+                cb: &planes.cb[c_row * planes.cb_stride..],
+                cb_stride: planes.cb_stride,
+                cr: &planes.cr[c_row * planes.cr_stride..],
+                cr_stride: planes.cr_stride,
+            };
+            enc.push_subsampled(&part, rows, Unstoppable).unwrap();
+            row += rows;
+        }
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn test_push_subsampled_strided_is_byte_identical_to_tight() {
+        for sub in SUBSAMPLINGS {
+            for (w, h) in [(16usize, 16usize), (33, 27), (64, 48), (65, 67), (17, 8)] {
+                let (cw, ch) = chroma_dims(sub, w, h);
+                let (y, cb, cr) = (
+                    ycbcr_plane(w, h, 0),
+                    ycbcr_plane(cw, ch, 1),
+                    ycbcr_plane(cw, ch, 2),
+                );
+                let tight = crate::encode::YCbCrPlanes {
+                    y: &y,
+                    y_stride: w,
+                    cb: &cb,
+                    cb_stride: cw,
+                    cr: &cr,
+                    cr_stride: cw,
+                };
+                let baseline = encode_subsampled(sub, (w, h), &tight, h);
+                assert!(!baseline.is_empty());
+
+                let (ys, cbs, crs) = (w + 7, cw + 3, cw + 11);
+                let (py, pcb, pcr) = (
+                    with_padding(&y, w, ys),
+                    with_padding(&cb, cw, cbs),
+                    with_padding(&cr, cw, crs),
+                );
+                let strided = crate::encode::YCbCrPlanes {
+                    y: &py,
+                    y_stride: ys,
+                    cb: &pcb,
+                    cb_stride: cbs,
+                    cr: &pcr,
+                    cr_stride: crs,
+                };
+                let label = format!("{sub:?} {w}x{h}");
+                assert!(
+                    baseline == encode_subsampled(sub, (w, h), &strided, h),
+                    "{label} strided one-shot"
+                );
+                // Streaming strips (16 luma rows keeps 2x2 chroma blocks whole)
+                // against one-shot, tight and strided.
+                assert!(
+                    baseline == encode_subsampled(sub, (w, h), &tight, 16),
+                    "{label} tight strips"
+                );
+                assert!(
+                    baseline == encode_subsampled(sub, (w, h), &strided, 16),
+                    "{label} strided strips"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_push_subsampled_rejects_bad_geometry_before_encoding() {
+        use crate::error::ErrorKind;
+        let (w, h) = (33usize, 27usize);
+        let sub = ChromaSubsampling::Quarter;
+        let (cw, ch) = chroma_dims(sub, w, h);
+        let (y, cb, cr) = (
+            with_padding(&ycbcr_plane(w, h, 0), w, w + 7),
+            with_padding(&ycbcr_plane(cw, ch, 1), cw, cw + 3),
+            with_padding(&ycbcr_plane(cw, ch, 2), cw, cw + 11),
+        );
+        let good = crate::encode::YCbCrPlanes {
+            y: &y,
+            y_stride: w + 7,
+            cb: &cb,
+            cb_stride: cw + 3,
+            cr: &cr,
+            cr_stride: cw + 11,
+        };
+        let try_push = |planes: crate::encode::YCbCrPlanes<'_>| {
+            EncoderConfig::ycbcr(85, sub)
+                .encode_from_ycbcr_planar(w as u32, h as u32)
+                .unwrap()
+                .push_subsampled(&planes, h, Unstoppable)
+        };
+        try_push(good).unwrap();
+        for bad in [
+            crate::encode::YCbCrPlanes {
+                y_stride: w - 1,
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cb_stride: cw - 1,
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cr_stride: cw - 1,
+                ..good
+            },
+        ] {
+            let e = try_push(bad).unwrap_err();
+            assert!(
+                matches!(e.kind(), ErrorKind::StrideTooSmall { .. }),
+                "{e:?}"
+            );
+        }
+        for bad in [
+            crate::encode::YCbCrPlanes {
+                y: &y[..y.len() - 1],
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cb: &cb[..cb.len() - 1],
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cr: &cr[..cr.len() - 1],
+                ..good
+            },
+            // Offset arithmetic that overflows is a short buffer, not a wrap.
+            crate::encode::YCbCrPlanes {
+                y_stride: usize::MAX,
+                ..good
+            },
+        ] {
+            let e = try_push(bad).unwrap_err();
+            assert!(
+                matches!(e.kind(), ErrorKind::InvalidBufferSize { .. }),
+                "{e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_push_subsampled_stopping_inside_a_strip_is_refused() {
+        let (w, h) = (33usize, 27usize);
+        let sub = ChromaSubsampling::Quarter;
+        let (cw, ch) = chroma_dims(sub, w, h);
+        let (y, cb, cr) = (
+            ycbcr_plane(w, h, 0),
+            ycbcr_plane(cw, ch, 1),
+            ycbcr_plane(cw, ch, 2),
+        );
+        let planes = crate::encode::YCbCrPlanes {
+            y: &y,
+            y_stride: w,
+            cb: &cb,
+            cb_stride: cw,
+            cr: &cr,
+            cr_stride: cw,
+        };
+        let e = EncoderConfig::ycbcr(85, sub)
+            .encode_from_ycbcr_planar(w as u32, h as u32)
+            .unwrap()
+            .push_subsampled(&planes, 3, Unstoppable)
+            .unwrap_err();
+        assert!(e.to_string().contains("Y plane too small for strip"), "{e}");
+    }
+
+    #[test]
+    fn test_push_subsampled_of_no_rows_changes_nothing() {
+        let (w, h) = (33usize, 27usize);
+        let sub = ChromaSubsampling::Quarter;
+        let (cw, ch) = chroma_dims(sub, w, h);
+        let (y, cb, cr) = (
+            ycbcr_plane(w, h, 0),
+            ycbcr_plane(cw, ch, 1),
+            ycbcr_plane(cw, ch, 2),
+        );
+        let planes = crate::encode::YCbCrPlanes {
+            y: &y,
+            y_stride: w,
+            cb: &cb,
+            cb_stride: cw,
+            cr: &cr,
+            cr_stride: cw,
+        };
+        let empty = crate::encode::YCbCrPlanes {
+            y: &[],
+            y_stride: w,
+            cb: &[],
+            cb_stride: cw,
+            cr: &[],
+            cr_stride: cw,
+        };
+        let mut encoder = EncoderConfig::ycbcr(85, sub)
+            .encode_from_ycbcr_planar(w as u32, h as u32)
+            .unwrap();
+        encoder.push_subsampled(&empty, 0, Unstoppable).unwrap();
+        encoder.push_subsampled(&planes, h, Unstoppable).unwrap();
+        assert!(encoder.finish().unwrap() == encode_subsampled(sub, (w, h), &planes, h));
+    }
+
+    #[test]
+    fn test_push_rejects_a_stride_below_the_width() {
+        use crate::error::ErrorKind;
+        let (w, h) = (16usize, 16usize);
+        let plane = ycbcr_plane(w, h, 0);
+        let good = crate::encode::YCbCrPlanes {
+            y: &plane,
+            y_stride: w,
+            cb: &plane,
+            cb_stride: w,
+            cr: &plane,
+            cr_stride: w,
+        };
+        for bad in [
+            crate::encode::YCbCrPlanes {
+                y_stride: w - 1,
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cb_stride: w - 1,
+                ..good
+            },
+            crate::encode::YCbCrPlanes {
+                cr_stride: w - 1,
+                ..good
+            },
+        ] {
+            let e = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
+                .encode_from_ycbcr_planar(w as u32, h as u32)
+                .unwrap()
+                .push(&bad, h, Unstoppable)
+                .unwrap_err();
+            assert!(
+                matches!(e.kind(), ErrorKind::StrideTooSmall { .. }),
+                "{e:?}"
+            );
+        }
     }
 
     #[test]
