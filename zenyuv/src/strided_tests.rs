@@ -117,7 +117,11 @@ fn zeroed<T: Copy>(w: usize, h: usize, pad: usize, fill: T) -> (Vec<T>, usize) {
 /// Run `f` in every token permutation.
 fn all_tiers(mut f: impl FnMut()) {
     let report = for_each_token_permutation(CompileTimePolicy::Warn, |_| f());
+    // Elsewhere the base tier can be compiled in, leaving one permutation.
+    #[cfg(target_arch = "x86_64")]
     assert!(report.permutations_run >= 2);
+    #[cfg(not(target_arch = "x86_64"))]
+    assert!(report.permutations_run >= 1);
 }
 
 fn context_u8_matches(c: &mut YuvContext, i: &Input, label: &str) {
