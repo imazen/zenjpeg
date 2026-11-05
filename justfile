@@ -879,3 +879,22 @@ pulse-progress-check:
 # Focused Pulse phase and cancellation qualification on the frozen graph.
 pulse-progress-focused-check:
     timeout --kill-after=15s 10m cargo test --locked -p zenjpeg --features inventory,parallel --test pulse_progress --test decode_cancellation
+
+# Shared sibling sources, resolving both root and standalone fuzz workspaces.
+sibling-cohort-resolve:
+    cargo metadata --format-version 1 > /dev/null
+    python3 -c 'import json,subprocess; metadata=json.loads(subprocess.check_output(["cargo","metadata","--format-version","1"])); old=any(p["name"] == "zenpixels" and p["version"] == "0.2.16" for p in metadata["packages"]); old and subprocess.run(["cargo","update","-p","zenpixels@0.2.16","--precise","0.3.1"],check=True)'
+    cargo metadata --format-version 1 > /dev/null
+    cargo metadata --manifest-path zenjpeg/fuzz/Cargo.toml --format-version 1 > /dev/null
+
+sibling-cohort-check: sibling-cohort-resolve
+    RUST_TEST_THREADS=1 cargo test -p zenjpeg --locked --lib --tests
+    RUST_TEST_THREADS=1 cargo test -p zenjpeg --locked --lib --tests --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert
+    cargo test -p zenjpeg --locked --doc --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert
+    cargo clippy -p zenjpeg --locked --lib --tests --examples --benches --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+
+# Ambiguous package identities fail these inverse queries; retain source receipts.
+sibling-cohort-tree:
+    cargo tree --locked -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -i zenpixels --depth 1
+    cargo tree --locked -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -i zencodec --depth 1

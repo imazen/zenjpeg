@@ -1858,3 +1858,28 @@ The shared one-shot adapter formerly enabled F32 when any ranked preference was
 float, overriding an earlier supported U8 format. Precision now uses the same
 first-supported selector as layout, after parsing source component count.
 The controlled-decode target retains mixed precision ordering regressions.
+
+## Known Bugs: shared sibling cohort test dependency (2026-11-05)
+
+The unlanded sibling cohort update cannot compile the Rust tests: two E0308
+errors in `zensim-regress` at `85577588` (`pixel_ops/mod.rs:228,577`). Its
+helpers take registry zenpixels 0.2.16 `PixelBuffer`; current PNG returns
+zenpixels 0.3.1 `PixelBuffer`. The root and standalone fuzz manifests otherwise
+resolve the selected shared core/pixel revisions. JPEG deliberately pins both
+its dev-only zensim and zensim-regress to the same revision. Resolving their
+pixel hold and then advancing that paired pin requires coordinating zensimx
+before the remaining sibling test gates; it cannot be represented as a passing
+JPEG cohort yet. No test expectation or metric profile has been changed.
+
+### Shared pixel resolution and resize (2026-11-05)
+
+After advancing both research dev-tool pins to qualified zensimx main02243a4b,
+the default library/integration tests pass, but the production HDR build found
+nine E0308 errors: published zenresize0.3.1 requires zenpixels^0.2.10 and keeps
+UltraHDR's broad pixel edge on0.2.16 alongside JPEG's0.3.1. Root-patch zenresize
+to its existing e3975fb9 git source (admits >=0.2.10,<0.4), then refresh the old
+pixel lock selection. Dependency patches do not propagate from zensimx.
+The resolved production graph must show exactly one pixel sourcefa836abf;
+never adapt pixel buffers across this accidental version split. No implementation
+file, profile, quality threshold or assertion is edited; the resize dependency
+source changes to the recorded git revision and needs full requalification.
