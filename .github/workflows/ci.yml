@@ -87,6 +87,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p zenjpeg --release --test native_precision -- --ignored --test-threads=1
 
+      - name: zencodec native-depth exits against libjpeg-turbo
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --release --features zencodec --test zencodec_native_depth -- --ignored
+
       - name: Ten-component reference parity
         if: matrix.os == 'ubuntu-latest'
         shell: bash

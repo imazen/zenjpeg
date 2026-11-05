@@ -5,6 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed: zencodec decoder keeps depths above 8 bits
+
+- The zencodec decoder advertises and honors `RGB16_SRGB`, `RGBA16_SRGB` and `GRAY16_SRGB` on one-shot, push and streaming paths. A frame above 8 bits with no supported preference, or a preference list offering U16 or F32 anywhere, now leaves deep instead of narrowing to U8; a list offering only U8 still gets U8. Samples are canonical U16 (nearest `code * 65535 / max`, every code recoverable) with `ExactDepth` on the one-shot and streaming results. Deep raw CMYK leaves as `CmykF32Inverted`, since no U16 CMYK descriptor exists, unless `CMYK8` is named. Eight-bit frames widen by exactly 257 when U16 is asked for and are otherwise unchanged.
+- Behavior change for callers passing no preference: 12-bit and lossless deep JPEG now returns U16 from `decode`, `push_decoder` and `streaming_decoder`, and `output_info` says so.
+
 - Concrete zeroed byte, f32 and DCT-block buffers request allocator-zeroed storage in every policy. Preserve helper-specific overflow/allocation errors and arbitrary Default/Clone fill contracts; correct reserve/fill implementation comments.
 
 - Align root/fuzz codec and pixel sources (`6c888700`), lock the paired research dev-tools

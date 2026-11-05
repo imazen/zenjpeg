@@ -106,7 +106,7 @@ pub(super) fn decode_descriptor(
     header: &crate::decode::JpegInfo,
     correct_color: Option<&crate::color::icc::TargetColorSpace>,
 ) -> PixelDescriptor {
-    let base = select_decode_descriptor(preferred, header.num_components);
+    let base = select_decode_descriptor(preferred, header.num_components, header.precision);
     let sc = source_color_from_header(header);
     // XYB is inverted to sRGB by the decoder even without optional ICC
     // correction. The source ICC describes encoded XYB, not the returned RGB.
