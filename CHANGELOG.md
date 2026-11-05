@@ -5,7 +5,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
-- Align root/fuzz codec and pixel sources, lock the paired research dev-tools
+- Align root/fuzz codec and pixel sources (`6c888700`), lock the paired research dev-tools
   and compatible resize source; retain all numeric gates and public API
   snapshots. [Qualification receipts](benchmarks/sibling_cohort_2026-11-05.pointer.md).
 
