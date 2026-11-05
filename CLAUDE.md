@@ -1883,3 +1883,10 @@ The resolved production graph must show exactly one pixel sourcefa836abf;
 never adapt pixel buffers across this accidental version split. No implementation
 file, profile, quality threshold or assertion is edited; the resize dependency
 source changes to the recorded git revision and needs full requalification.
+
+Shared-cohort qualification now passes:2466 default tests,2954 production-feature
+tests,16 doctests,93 focused layout tests, strict all-target lint, standalone
+fuzz compilation and unchanged CI-pinned API snapshots. Current compiler
+diagnostics needed explicit f32 layout literals and equivalent example
+format/chunk iteration. No numeric expectation, profile or ignore changed.
+Receipts:benchmarks/sibling_cohort_2026-11-05.pointer.md.

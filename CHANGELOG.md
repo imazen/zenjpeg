@@ -5,6 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Align root/fuzz codec and pixel sources, lock the paired research dev-tools
+  and compatible resize source; retain all numeric gates and public API
+  snapshots. [Qualification receipts](benchmarks/sibling_cohort_2026-11-05.pointer.md).
+
+
 ### Changed
 
 - Show the diagnostics viewer’s actual resolved encoder plan and expose the codec auto optimizer (`72432fbe`).
