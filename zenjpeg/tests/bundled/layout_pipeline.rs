@@ -88,7 +88,7 @@ fn make_test_jpeg_444(width: u32, height: u32) -> Vec<u8> {
 #[test]
 fn lossless_identity_returns_copy() {
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .execute(&Unstoppable)
         .unwrap();
@@ -104,7 +104,7 @@ fn lossless_identity_returns_copy() {
 fn lossless_rotate_90() {
     // MCU-aligned for 4:2:0 (16x16 MCU)
     let jpeg = make_test_jpeg(64, 48);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_90()
         .execute(&Unstoppable)
@@ -119,7 +119,7 @@ fn lossless_rotate_90() {
 #[test]
 fn lossless_rotate_180() {
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_180()
         .execute(&Unstoppable)
@@ -134,7 +134,7 @@ fn lossless_rotate_180() {
 #[test]
 fn lossless_rotate_270() {
     let jpeg = make_test_jpeg(64, 48);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_270()
         .execute(&Unstoppable)
@@ -148,7 +148,7 @@ fn lossless_rotate_270() {
 #[test]
 fn lossless_flip_horizontal() {
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .flip_h()
         .execute(&Unstoppable)
@@ -163,7 +163,7 @@ fn lossless_flip_horizontal() {
 #[test]
 fn lossless_flip_vertical() {
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .flip_v()
         .execute(&Unstoppable)
@@ -178,7 +178,7 @@ fn lossless_flip_vertical() {
 fn lossless_auto_orient_exif6() {
     // EXIF 6 = Rotate 90 CW
     let jpeg = make_test_jpeg(64, 48);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .auto_orient(6)
         .execute(&Unstoppable)
@@ -193,7 +193,7 @@ fn lossless_auto_orient_exif6() {
 fn lossless_auto_orient_exif1_is_noop() {
     // EXIF 1 = Normal (no transform needed)
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .auto_orient(1)
         .execute(&Unstoppable)
@@ -207,7 +207,7 @@ fn lossless_auto_orient_exif1_is_noop() {
 fn lossless_composed_rotations() {
     // Rotate90 + Rotate90 = Rotate180
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_90()
         .rotate_90()
@@ -223,7 +223,7 @@ fn lossless_composed_rotations() {
 #[test]
 fn lossless_output_is_valid_jpeg() {
     let jpeg = make_test_jpeg(64, 48);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_90()
         .execute(&Unstoppable)
@@ -242,7 +242,7 @@ fn lossless_output_is_valid_jpeg() {
 #[test]
 fn lossy_fit_downscale() {
     let jpeg = make_test_jpeg(128, 128);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -262,7 +262,7 @@ fn lossy_fit_downscale() {
 fn lossy_fit_aspect_ratio_preserved() {
     // 128x64 → fit 64x64 → should produce 64x32 (preserve aspect ratio)
     let jpeg = make_test_jpeg(128, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -277,7 +277,7 @@ fn lossy_fit_aspect_ratio_preserved() {
 fn lossy_within_no_upscale() {
     // 64x64 → within 256x256 → should stay 64x64 (Within doesn't upscale)
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .within(256, 256)
         .execute(&Unstoppable)
@@ -292,7 +292,7 @@ fn lossy_within_no_upscale() {
 fn lossy_within_downscale() {
     // 128x128 → within 64x64 → should produce 64x64
     let jpeg = make_test_jpeg(128, 128);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .within(64, 64)
         .execute(&Unstoppable)
@@ -307,7 +307,7 @@ fn lossy_within_downscale() {
 fn lossy_orient_plus_resize() {
     // Rotate + resize should go through lossy path
     let jpeg = make_test_jpeg(128, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .auto_orient(6) // Rotate 90
         .fit(32, 32)
@@ -330,7 +330,7 @@ fn lossy_output_smaller_than_input() {
     let jpeg = make_test_jpeg(128, 128);
     let original_size = jpeg.len();
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(32, 32)
         .execute(&Unstoppable)
@@ -353,7 +353,7 @@ fn lossy_output_smaller_than_input() {
 fn small_image_lossless() {
     // Minimum reasonable size (8x8 = one MCU for 4:4:4)
     let jpeg = make_test_jpeg_444(8, 8);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_180()
         .execute(&Unstoppable)
@@ -367,7 +367,7 @@ fn small_image_lossless() {
 #[test]
 fn small_image_lossy_resize() {
     let jpeg = make_test_jpeg(64, 64);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(16, 16)
         .execute(&Unstoppable)
@@ -384,7 +384,7 @@ fn small_image_lossy_resize() {
 
 #[test]
 fn config_reuse_across_images() {
-    let config = LayoutConfig::new(85.0);
+    let config = LayoutConfig::new(85.0_f32);
 
     let jpeg1 = make_test_jpeg(64, 64);
     let jpeg2 = make_test_jpeg(128, 128);
@@ -409,7 +409,7 @@ fn config_reuse_across_images() {
 #[test]
 fn custom_filter() {
     let jpeg = make_test_jpeg(128, 128);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .with_filter(zenresize::Filter::Lanczos)
         .request(&jpeg)
         .fit(64, 64)
@@ -424,7 +424,7 @@ fn custom_filter() {
 #[test]
 fn custom_subsampling_444() {
     let jpeg = make_test_jpeg(128, 128);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .with_subsampling(ChromaSubsampling::None)
         .request(&jpeg)
         .fit(64, 64)
@@ -441,7 +441,7 @@ fn custom_subsampling_444() {
 #[test]
 fn non_progressive_output() {
     let jpeg = make_test_jpeg(128, 128);
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .with_progressive(false)
         .request(&jpeg)
         .fit(64, 64)
@@ -462,22 +462,22 @@ fn lossless_rotate_roundtrip() {
     // (though re-optimized Huffman tables may differ in size)
     let jpeg = make_test_jpeg(64, 64);
 
-    let r1 = LayoutConfig::new(85.0)
+    let r1 = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_90()
         .execute(&Unstoppable)
         .unwrap();
-    let r2 = LayoutConfig::new(85.0)
+    let r2 = LayoutConfig::new(85.0_f32)
         .request(&r1.data)
         .rotate_90()
         .execute(&Unstoppable)
         .unwrap();
-    let r3 = LayoutConfig::new(85.0)
+    let r3 = LayoutConfig::new(85.0_f32)
         .request(&r2.data)
         .rotate_90()
         .execute(&Unstoppable)
         .unwrap();
-    let r4 = LayoutConfig::new(85.0)
+    let r4 = LayoutConfig::new(85.0_f32)
         .request(&r3.data)
         .rotate_90()
         .execute(&Unstoppable)
@@ -511,12 +511,12 @@ fn lossless_flip_roundtrip() {
     // flip_h twice should return identical output
     let jpeg = make_test_jpeg(64, 64);
 
-    let r1 = LayoutConfig::new(85.0)
+    let r1 = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .flip_h()
         .execute(&Unstoppable)
         .unwrap();
-    let r2 = LayoutConfig::new(85.0)
+    let r2 = LayoutConfig::new(85.0_f32)
         .request(&r1.data)
         .flip_h()
         .execute(&Unstoppable)
@@ -624,7 +624,7 @@ fn make_noise_pixels(width: u32, height: u32, seed: u32) -> Vec<u8> {
 fn ultrahdr_lossless_identity_preserves_gainmap() {
     let ultrahdr = make_ultrahdr_jpeg(64, 64, 32, 32);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&ultrahdr)
         .execute(&Unstoppable)
         .unwrap();
@@ -648,7 +648,7 @@ fn ultrahdr_lossless_identity_preserves_gainmap() {
 fn ultrahdr_lossless_rotate_preserves_gainmap() {
     let ultrahdr = make_ultrahdr_jpeg_with(64, 48, 32, 24, ChromaSubsampling::None);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&ultrahdr)
         .rotate_180()
         .execute(&Unstoppable)
@@ -700,7 +700,7 @@ fn ultrahdr_lossless_rotate_rejects_partial_gainmap_blocks() {
 fn ultrahdr_lossy_resize_preserves_gainmap() {
     let ultrahdr = make_ultrahdr_jpeg(128, 128, 64, 64);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&ultrahdr)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -950,7 +950,7 @@ fn non_ultrahdr_jpeg_unchanged_by_gainmap_detection() {
     // Regular JPEG without gain map XMP should work exactly as before
     let jpeg = make_test_jpeg(64, 64);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_180()
         .execute(&Unstoppable)
@@ -1104,7 +1104,7 @@ fn metadata_icc_preserved_through_lossy() {
         .unwrap();
     assert!(src_info.icc_profile.is_some(), "source should have ICC");
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1132,7 +1132,7 @@ fn metadata_xmp_preserved_through_lossy() {
         .unwrap();
     assert!(src_info.xmp.is_some(), "source should have XMP");
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1159,7 +1159,7 @@ fn metadata_exif_orientation_reset_after_lossy_orient() {
     assert_eq!(read_exif_orientation(&jpeg), Some(6));
 
     // Apply auto_orient (reads EXIF 6 → Rotate90) + resize (forces lossy path)
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .auto_orient(6)
         .fit(32, 32)
@@ -1184,7 +1184,7 @@ fn metadata_exif_preserved_without_orient() {
     let jpeg = make_test_jpeg_with_exif(128, 128, 3);
 
     // Resize only, no orient command
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1220,7 +1220,7 @@ fn progressive_input_lossless_identity() {
         "test JPEG should be progressive"
     );
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .execute(&Unstoppable)
         .unwrap();
@@ -1233,7 +1233,7 @@ fn progressive_input_lossless_identity() {
 fn progressive_input_lossy_resize() {
     let jpeg = make_test_jpeg_progressive(128, 128);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1256,7 +1256,7 @@ fn input_444_lossless_rotate() {
     // 4:4:4 has 8x8 MCU — dimensions divisible by 8 are MCU-aligned
     let jpeg = make_test_jpeg_444(64, 48);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_90()
         .execute(&Unstoppable)
@@ -1271,7 +1271,7 @@ fn input_444_lossless_rotate() {
 fn input_444_lossy_resize() {
     let jpeg = make_test_jpeg_444(128, 128);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1293,7 +1293,7 @@ fn lossy_fit_crop() {
     // 128x64 with fit_crop 64x64 should produce exact 64x64
     let jpeg = make_test_jpeg(128, 64);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit_crop(64, 64)
         .execute(&Unstoppable)
@@ -1316,7 +1316,7 @@ fn lossless_all_exif_orientations() {
     for exif in 1..=8u8 {
         let jpeg = make_test_jpeg(64, 48);
 
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .auto_orient(exif)
             .execute(&Unstoppable)
@@ -1354,7 +1354,7 @@ fn lossless_all_exif_orientations() {
 fn grayscale_input_lossless() {
     let jpeg = make_test_jpeg_gray(64, 64);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_180()
         .execute(&Unstoppable)
@@ -1369,7 +1369,7 @@ fn grayscale_input_lossless() {
 fn grayscale_input_lossy_resize() {
     let jpeg = make_test_jpeg_gray(128, 128);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1391,7 +1391,7 @@ fn auto_optimize_produces_valid_jpeg() {
     let jpeg = make_test_jpeg(128, 128);
 
     // auto_optimize defaults to true
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(64, 64)
         .execute(&Unstoppable)
@@ -1407,7 +1407,7 @@ fn auto_optimize_produces_valid_jpeg() {
 fn auto_optimize_off_produces_valid_jpeg() {
     let jpeg = make_test_jpeg(128, 128);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .with_auto_optimize(false)
         .request(&jpeg)
         .fit(64, 64)
@@ -1430,7 +1430,7 @@ fn non_mcu_aligned_lossless_with_trim() {
     // With TrimPartialBlocks, lossless transform should trim to MCU boundary
     let jpeg = make_test_jpeg(80, 48);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .with_edge_handling(zenjpeg::layout::EdgeHandling::TrimPartialBlocks)
         .request(&jpeg)
         .rotate_180()
@@ -1445,7 +1445,7 @@ fn non_mcu_aligned_lossless_with_trim() {
     // Now test with actually non-aligned dimensions (4:4:4, MCU=8)
     let jpeg_444 = make_test_jpeg_444(70, 50);
 
-    let result_444 = LayoutConfig::new(85.0)
+    let result_444 = LayoutConfig::new(85.0_f32)
         .with_edge_handling(zenjpeg::layout::EdgeHandling::TrimPartialBlocks)
         .request(&jpeg_444)
         .rotate_180()
@@ -1468,7 +1468,7 @@ fn upscale_via_fit() {
     // fit() CAN upscale (unlike within())
     let jpeg = make_test_jpeg(64, 64);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .fit(256, 256)
         .execute(&Unstoppable)
@@ -1530,7 +1530,7 @@ fn decode_fast_lossless_identity_progressive_to_baseline() {
     let jpeg = make_test_jpeg_progressive(64, 64);
     assert!(!is_baseline_jpeg(&jpeg), "input should be progressive");
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1560,7 +1560,7 @@ fn decode_fast_lossless_transform_progressive_to_baseline() {
     let jpeg = make_test_jpeg_progressive(64, 48);
     assert!(!is_baseline_jpeg(&jpeg), "input should be progressive");
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .rotate_90()
         .optimize_for_decode()
@@ -1586,7 +1586,7 @@ fn decode_fast_lossy_forces_baseline() {
     // Lossy path + optimize_for_decode → should force baseline output
     let jpeg = make_test_jpeg_progressive(128, 128);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .with_progressive(true) // Config says progressive, but decode_fast overrides
         .request(&jpeg)
         .fit(64, 64)
@@ -1618,7 +1618,7 @@ fn decode_fast_baseline_input_adds_dri() {
     assert!(is_baseline_jpeg(&jpeg), "input should already be baseline");
     assert!(!has_dri_marker(&jpeg), "input should have no DRI");
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1641,7 +1641,7 @@ fn decode_fast_pixel_identical_to_normal_lossless() {
 
     let normal = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1672,7 +1672,7 @@ fn decode_fast_auto_orients_mcu_aligned() {
     let jpeg = make_test_jpeg_with_exif(64, 48, 6);
     assert_eq!(read_exif_orientation(&jpeg), Some(6));
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1713,7 +1713,7 @@ fn decode_fast_skips_orient_non_mcu_aligned() {
 
     assert_eq!(read_exif_orientation(&jpeg), Some(6));
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1744,7 +1744,7 @@ fn decode_fast_auto_orient_flip_h_non_mcu_width() {
     // EXIF 2 = FlipHorizontal. For 4:2:0 (MCU=16), width must be divisible by 16.
     // 80x64: width=80 (80%16=0) → safe
     let jpeg_aligned = make_test_jpeg_with_exif(80, 64, 2);
-    let result_aligned = LayoutConfig::new(85.0)
+    let result_aligned = LayoutConfig::new(85.0_f32)
         .request(&jpeg_aligned)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1755,7 +1755,7 @@ fn decode_fast_auto_orient_flip_h_non_mcu_width() {
 
     // 72x64: width=72 (72%16=8) → NOT safe for flip_h
     let jpeg_unaligned = make_test_jpeg_with_exif(72, 64, 2);
-    let result_unaligned = LayoutConfig::new(85.0)
+    let result_unaligned = LayoutConfig::new(85.0_f32)
         .request(&jpeg_unaligned)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1781,7 +1781,7 @@ fn decode_fast_auto_orient_transpose_always_safe() {
 
     assert_eq!(read_exif_orientation(&jpeg), Some(5));
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1801,7 +1801,7 @@ fn decode_fast_does_not_duplicate_explicit_orient() {
     // Should NOT inject a second orient command
     let jpeg = make_test_jpeg_with_exif(64, 48, 6);
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .auto_orient(6)
         .optimize_for_decode()
@@ -1821,7 +1821,7 @@ fn decode_fast_already_optimized_skips_restructure() {
     let jpeg = make_test_jpeg_progressive(64, 64);
 
     // First pass: convert progressive → baseline+DRI (EveryMcuRows(4))
-    let first = LayoutConfig::new(85.0)
+    let first = LayoutConfig::new(85.0_f32)
         .request(&jpeg)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1830,7 +1830,7 @@ fn decode_fast_already_optimized_skips_restructure() {
     assert!(has_dri_marker(&first.data));
 
     // Second pass: already baseline+DRI, no transform → should return byte-identical
-    let second = LayoutConfig::new(85.0)
+    let second = LayoutConfig::new(85.0_f32)
         .request(&first.data)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1860,7 +1860,7 @@ fn decode_fast_small_baseline_no_dri_skips_restructure() {
     assert!(is_baseline_jpeg(&baseline_no_dri));
     assert!(!has_dri_marker(&baseline_no_dri));
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&baseline_no_dri)
         .optimize_for_decode()
         .execute(&Unstoppable)
@@ -1896,7 +1896,7 @@ fn decode_fast_large_baseline_no_dri_restructures() {
     assert!(is_baseline_jpeg(&baseline_no_dri));
     assert!(!has_dri_marker(&baseline_no_dri));
 
-    let result = LayoutConfig::new(85.0)
+    let result = LayoutConfig::new(85.0_f32)
         .request(&baseline_no_dri)
         .optimize_for_decode()
         .execute(&Unstoppable)

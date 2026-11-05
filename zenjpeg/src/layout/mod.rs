@@ -12,14 +12,14 @@
 //! use zenjpeg::layout::{LayoutConfig, LayoutResult};
 //!
 //! // Lossless auto-orient (uses DCT-domain transforms)
-//! let result = LayoutConfig::new(85.0)
+//! let result = LayoutConfig::new(85.0_f32)
 //!     .request(&jpeg_data)
 //!     .auto_orient(6)
 //!     .execute(&enough::Unstoppable)?;
 //! assert!(result.lossless);
 //!
 //! // Lossy resize (decode → resize → encode)
-//! let result = LayoutConfig::new(85.0)
+//! let result = LayoutConfig::new(85.0_f32)
 //!     .request(&jpeg_data)
 //!     .auto_orient(6)
 //!     .fit(800, 600)
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn identity_is_lossless() {
         let jpeg = make_test_jpeg(64, 64);
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .execute(&Unstoppable)
             .unwrap();
@@ -591,7 +591,7 @@ mod tests {
     fn rotate_90_is_lossless() {
         // Use MCU-aligned dimensions (divisible by 16 for 4:2:0)
         let jpeg = make_test_jpeg(64, 48);
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .rotate_90()
             .execute(&Unstoppable)
@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn flip_h_is_lossless() {
         let jpeg = make_test_jpeg(64, 64);
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .flip_h()
             .execute(&Unstoppable)
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn fit_is_lossy() {
         let jpeg = make_test_jpeg(64, 64);
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .fit(32, 32)
             .execute(&Unstoppable)
@@ -632,7 +632,7 @@ mod tests {
     fn within_no_upscale() {
         let jpeg = make_test_jpeg(64, 64);
         // Target larger than source — Within mode should not upscale
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .within(256, 256)
             .execute(&Unstoppable)
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn orient_plus_resize_is_lossy() {
         let jpeg = make_test_jpeg(64, 64);
-        let result = LayoutConfig::new(85.0)
+        let result = LayoutConfig::new(85.0_f32)
             .request(&jpeg)
             .auto_orient(6) // Rotate90
             .fit(32, 32)

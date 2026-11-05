@@ -891,10 +891,31 @@ sibling-cohort-check: sibling-cohort-resolve
     RUST_TEST_THREADS=1 cargo test -p zenjpeg --locked --lib --tests
     RUST_TEST_THREADS=1 cargo test -p zenjpeg --locked --lib --tests --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert
     cargo test -p zenjpeg --locked --doc --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert
-    cargo clippy -p zenjpeg --locked --lib --tests --examples --benches --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -- -D warnings
-    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+    just sibling-cohort-lint
 
 # Ambiguous package identities fail these inverse queries; retain source receipts.
 sibling-cohort-tree:
     cargo tree --locked -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -i zenpixels --depth 1
     cargo tree --locked -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -i zencodec --depth 1
+
+# Explicit f32 literals preserve the compiler's previous inferred values.
+sibling-layout-check:
+    RUST_TEST_THREADS=1 cargo test --locked -p zenjpeg --lib --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert layout::
+    RUST_TEST_THREADS=1 cargo test --locked -p zenjpeg --test bundled --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert layout_pipeline::
+
+# Match the existing CI public-surface toolchain without changing its baseline.
+sibling-api-check:
+    ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN=nightly-2026-07-13 cargo test --locked --manifest-path apidoc/Cargo.toml
+
+# Resume after the complete default/production runtime and doc gates.
+sibling-cohort-finish:
+    just sibling-cohort-resolve
+    just sibling-cohort-tree
+    just sibling-layout-check
+    just sibling-cohort-lint
+
+# Collect independent diagnostic failures without weakening the lint gate.
+sibling-cohort-lint:
+    cargo clippy --keep-going -p zenjpeg --locked --lib --tests --examples --benches --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+    just sibling-api-check
