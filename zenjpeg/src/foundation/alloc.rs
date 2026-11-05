@@ -552,25 +552,25 @@ pub fn try_alloc_vec<T: Default + Clone>(count: usize, context: &'static str) ->
 /// Allocate a Vec of zeros with fallible allocation.
 #[inline]
 pub fn try_alloc_zeroed(count: usize, context: &'static str) -> Result<Vec<u8>> {
-    let mut v = Vec::new();
-    v.try_reserve_exact(count)
-        .map_err(|_| Error::allocation_failed(count, context))?;
-    v.resize(count, 0u8);
-    Ok(v)
+    zeroed_with_policy(
+        zencodec::AllocPreference::Fallible,
+        true,
+        count,
+        context,
+        false,
+    )
 }
 
 /// Allocate a Vec of f32 zeros with fallible allocation.
 #[inline]
 pub fn try_alloc_zeroed_f32(count: usize, context: &'static str) -> Result<Vec<f32>> {
-    let byte_size = count
-        .checked_mul(4)
-        .ok_or_else(|| Error::size_overflow(context))?;
-
-    let mut v = Vec::new();
-    v.try_reserve_exact(count)
-        .map_err(|_| Error::allocation_failed(byte_size, context))?;
-    v.resize(count, 0.0f32);
-    Ok(v)
+    zeroed_with_policy(
+        zencodec::AllocPreference::Fallible,
+        true,
+        count,
+        context,
+        false,
+    )
 }
 
 /// Allocate a Vec with specific capacity (no initialization).
@@ -596,9 +596,9 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
 //   progressive/full-frame coefficient storage) default to the *fallible*
 //   `try_reserve` path — a malicious SOF can demand gigabytes, so we want a
 //   graceful [`Error::AllocationFailed`] rather than an abort.
-// * **Small, bounded scratch** (one MCU strip of `i16`, one upsampled chroma
-//   row) defaults to the *infallible* `vec!` path — a single `calloc` is
-//   faster and the size is bounded by the image width × 8, not unbounded.
+// * **Small, bounded scratch** defaults to infallible failure handling.
+// Concrete zero-only buffers share the allocator-zeroed success path; policy
+// controls failure handling. Generic Default and arbitrary fills stay separate.
 //
 // [`AllocPreference`](zencodec::AllocPreference) is a **3-mode, per-site
 // override** of that default: `Fallible` / `Infallible` force one path
@@ -630,7 +630,7 @@ pub fn resolve_fallible(pref: zencodec::AllocPreference, site_default_fallible: 
 /// `pref` is the caller's preference; `site_default_fallible` is this site's
 /// default when `pref` is `CodecDefault`. When resolved fallible this is exactly
 /// [`try_alloc_maybeuninit`]; when resolved infallible it is `vec![T::default();
-/// count]` (a single `calloc` for zero-`Default` types, aborting on OOM).
+/// count]`, using the allocator's error handler on OOM.
 #[inline]
 pub fn try_alloc_maybeuninit_pref<T: Default + Clone>(
     pref: zencodec::AllocPreference,
@@ -645,10 +645,36 @@ pub fn try_alloc_maybeuninit_pref<T: Default + Clone>(
     }
 }
 
+/// Shared success path for concrete zero-only buffers. Error classification
+/// preserves the stricter byte-helper bound and typed multiplication checks.
+fn zeroed_with_policy<T: bytemuck::Zeroable>(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    count: usize,
+    context: &'static str,
+    strict_byte_limit: bool,
+) -> Result<Vec<T>> {
+    bytemuck::allocation::try_zeroed_vec(count).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<T>(count).expect("capacity overflow");
+            std::alloc::handle_alloc_error(layout);
+        }
+        let Some(bytes) = count.checked_mul(core::mem::size_of::<T>()) else {
+            return Error::size_overflow(context);
+        };
+        if strict_byte_limit && bytes > isize::MAX as usize {
+            Error::size_overflow(context)
+        } else {
+            Error::allocation_failed(bytes, context)
+        }
+    })
+}
+
 /// [`try_alloc_zeroed_bytes`] honoring a per-site [`AllocPreference`].
 ///
-/// When resolved fallible this is exactly [`try_alloc_zeroed_bytes`]; when
-/// resolved infallible it is `vec![0u8; count]` (a single `calloc`).
+/// Both policies request allocator-zeroed storage. Failure returns the same
+/// error as [`try_alloc_zeroed_bytes`] when fallible, or invokes the allocator
+/// error handler (or capacity-overflow panic) when infallible.
 #[inline]
 pub fn try_alloc_zeroed_bytes_pref(
     pref: zencodec::AllocPreference,
@@ -656,17 +682,14 @@ pub fn try_alloc_zeroed_bytes_pref(
     count: usize,
     context: &'static str,
 ) -> Result<Vec<u8>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        try_alloc_zeroed_bytes(count, context)
-    } else {
-        Ok(vec![0u8; count])
-    }
+    zeroed_with_policy(pref, site_default_fallible, count, context, true)
 }
 
 /// [`try_alloc_zeroed`] honoring a per-site [`AllocPreference`].
 ///
-/// When resolved fallible this is exactly [`try_alloc_zeroed`]; when resolved
-/// infallible it is `vec![0u8; count]` (a single `calloc`).
+/// Both policies request allocator-zeroed storage. Failure returns the same
+/// error as [`try_alloc_zeroed`] when fallible, or invokes the allocator
+/// error handler (or capacity-overflow panic) when infallible.
 #[inline]
 pub fn try_alloc_zeroed_pref(
     pref: zencodec::AllocPreference,
@@ -674,17 +697,14 @@ pub fn try_alloc_zeroed_pref(
     count: usize,
     context: &'static str,
 ) -> Result<Vec<u8>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        try_alloc_zeroed(count, context)
-    } else {
-        Ok(vec![0u8; count])
-    }
+    zeroed_with_policy(pref, site_default_fallible, count, context, false)
 }
 
 /// [`try_alloc_zeroed_f32`] honoring a per-site [`AllocPreference`].
 ///
-/// When resolved fallible this is exactly [`try_alloc_zeroed_f32`]; when
-/// resolved infallible it is `vec![0.0f32; count]` (a single `calloc`).
+/// Both policies request allocator-zeroed storage. Failure returns the same
+/// error as [`try_alloc_zeroed_f32`] when fallible, or invokes the allocator
+/// error handler (or capacity-overflow panic) when infallible.
 #[inline]
 pub fn try_alloc_zeroed_f32_pref(
     pref: zencodec::AllocPreference,
@@ -692,17 +712,14 @@ pub fn try_alloc_zeroed_f32_pref(
     count: usize,
     context: &'static str,
 ) -> Result<Vec<f32>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        try_alloc_zeroed_f32(count, context)
-    } else {
-        Ok(vec![0.0f32; count])
-    }
+    zeroed_with_policy(pref, site_default_fallible, count, context, false)
 }
 
 /// [`try_alloc_dct_blocks`] honoring a per-site [`AllocPreference`].
 ///
-/// When resolved fallible this is exactly [`try_alloc_dct_blocks`]; when
-/// resolved infallible it is `vec![[0i16; 64]; count]`.
+/// Both policies request allocator-zeroed storage. Failure returns the same
+/// error as [`try_alloc_dct_blocks`] when fallible, or invokes the allocator
+/// error handler (or capacity-overflow panic) when infallible.
 #[inline]
 pub fn try_alloc_dct_blocks_pref(
     pref: zencodec::AllocPreference,
@@ -710,11 +727,7 @@ pub fn try_alloc_dct_blocks_pref(
     count: usize,
     context: &'static str,
 ) -> Result<Vec<[i16; 64]>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        try_alloc_dct_blocks(count, context)
-    } else {
-        Ok(vec![[0i16; 64]; count])
-    }
+    zeroed_with_policy(pref, site_default_fallible, count, context, false)
 }
 
 /// [`try_alloc_filled`] honoring a per-site [`AllocPreference`].
@@ -736,22 +749,12 @@ pub fn try_alloc_filled_pref<T: Clone>(
     }
 }
 
-/// Allocate a `Vec<T>` of zero-initialized elements using fallible
-/// allocation.
+/// Allocate a fully initialized `Vec<T>` using `T::default()`.
 ///
-/// Reserves capacity via [`Vec::try_reserve_exact`] and then fills with
-/// `T::default()`. The fill step on freshly-reserved capacity for types
-/// whose `Default` is all-zero bytes is internally specialized to
-/// `alloc_zeroed`/`calloc`, so the Linux fast path of returning
-/// zero-mapped pages from the OS without touching them is preserved on
-/// the happy path while OOM is reported as
-/// [`Error::AllocationFailed`](crate::error::Error) instead of panicking.
-///
-/// Originally named `try_alloc_maybeuninit` for its zero-page fast
-/// path. The "maybeuninit" in the name was misleading — the buffer is
-/// always fully initialized — and the previous body called
-/// `vec![T::default(); count]` directly, which panics on OOM. The
-/// name is kept for API compatibility; the body now propagates OOM.
+/// Capacity is reserved fallibly before calling `resize`. `Default` need not
+/// be all-zero bytes, so this generic helper preserves its fill semantics.
+/// The historical name is retained for API compatibility; no uninitialized
+/// values are exposed.
 #[inline]
 pub fn try_alloc_maybeuninit<T: Default + Clone>(
     count: usize,
@@ -768,51 +771,39 @@ pub fn try_alloc_maybeuninit<T: Default + Clone>(
     Ok(v)
 }
 
-/// Allocate a zero-initialized `Vec<u8>` using fallible allocation.
+/// Allocate a zero-initialized `Vec<u8>` directly through the allocator.
 ///
-/// Reserves capacity with [`Vec::try_reserve_exact`] and then fills
-/// with zero. For `u8`, `Vec::resize` on freshly-reserved capacity
-/// hits Rust's `SpecFromElem` zero specialization → `alloc_zeroed` →
-/// `calloc`, so on Linux the kernel still hands out zero-mapped pages
-/// without committing them. OOM is reported as
-/// [`Error::AllocationFailed`](crate::error::Error) instead of
-/// panicking.
+/// Counts above `isize::MAX` retain [`ErrorKind::SizeOverflow`](crate::error::ErrorKind::SizeOverflow);
+/// allocator refusal returns [`ErrorKind::AllocationFailed`](crate::error::ErrorKind::AllocationFailed).
 #[inline]
 pub fn try_alloc_zeroed_bytes(count: usize, context: &'static str) -> Result<Vec<u8>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-    if count > isize::MAX as usize {
-        return Err(Error::size_overflow(context));
-    }
-
-    let mut v: Vec<u8> = Vec::new();
-    v.try_reserve_exact(count)
-        .map_err(|_| Error::allocation_failed(count, context))?;
-    v.resize(count, 0u8);
-    Ok(v)
+    zeroed_with_policy(
+        zencodec::AllocPreference::Fallible,
+        true,
+        count,
+        context,
+        true,
+    )
 }
 
 /// Allocate a Vec of DCT blocks (64 i16 values each) using fallible
 /// allocation.
 ///
-/// Each block is `[i16; 64]` (128 bytes). Reserves capacity with
-/// `try_reserve_exact` and fills with zero blocks. OOM is reported
+/// Each block is `[i16; 64]` (128 bytes). Requests allocator-zeroed storage
+/// after validating the layout. OOM is reported
 /// as `Error::AllocationFailed` rather than panicking — important
 /// because this is called with attacker-influenced sizes
 /// (`mcu_cols * mcu_rows * h_samp * v_samp`) on validated but
 /// possibly very large dimensions.
 #[inline]
 pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[i16; 64]>> {
-    let byte_size = count
-        .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
-        .ok_or_else(|| Error::size_overflow(context))?;
-
-    let mut v: Vec<[i16; 64]> = Vec::new();
-    v.try_reserve_exact(count)
-        .map_err(|_| Error::allocation_failed(byte_size, context))?;
-    v.resize(count, [0i16; 64]);
-    Ok(v)
+    zeroed_with_policy(
+        zencodec::AllocPreference::Fallible,
+        true,
+        count,
+        context,
+        false,
+    )
 }
 
 /// Allocate a Vec filled with a specific value using fallible allocation.
@@ -930,6 +921,92 @@ pub fn try_bgra_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zeroed_policies_preserve_contents_and_generic_fills() {
+        for pref in [
+            zencodec::AllocPreference::CodecDefault,
+            zencodec::AllocPreference::Fallible,
+            zencodec::AllocPreference::Infallible,
+        ] {
+            for site in [false, true] {
+                for n in [0, 1, 4095, 4096, 4097] {
+                    let mut bytes = try_alloc_zeroed_bytes_pref(pref, site, n, "test").unwrap();
+                    assert_eq!(bytes.len(), n);
+                    assert!(bytes.iter().all(|&v| v == 0));
+                    bytes.fill(0xAB);
+                    bytes.push(0xCD);
+                    assert!(bytes[..n].iter().all(|&v| v == 0xAB));
+                    let floats = try_alloc_zeroed_f32_pref(pref, site, n, "test").unwrap();
+                    assert_eq!(floats.len(), n);
+                    assert!(floats.iter().all(|v| v.to_bits() == 0));
+                    let blocks = try_alloc_dct_blocks_pref(pref, site, n, "test").unwrap();
+                    assert_eq!(blocks.len(), n);
+                    assert!(blocks.iter().flatten().all(|&v| v == 0));
+                }
+                let zst = zeroed_with_policy::<()>(pref, site, usize::MAX, "zst", false).unwrap();
+                assert_eq!(zst.len(), usize::MAX);
+                assert_eq!(zst.capacity(), usize::MAX);
+                let negative = try_alloc_filled_pref(pref, site, 3, -0.0f32, "fill").unwrap();
+                assert!(negative.iter().all(|v| v.to_bits() == (-0.0f32).to_bits()));
+            }
+        }
+        #[derive(Clone)]
+        struct NonzeroDefault(u8);
+        impl Default for NonzeroDefault {
+            fn default() -> Self {
+                Self(7)
+            }
+        }
+        let values = try_alloc_maybeuninit::<NonzeroDefault>(3, "default").unwrap();
+        assert!(values.iter().all(|v| v.0 == 7));
+    }
+
+    #[test]
+    fn zeroed_error_categories_keep_byte_counts_and_context() {
+        assert!(matches!(
+            try_alloc_zeroed(usize::MAX, "plain").unwrap_err().kind(),
+            ErrorKind::AllocationFailed {
+                bytes: usize::MAX,
+                context: "plain"
+            }
+        ));
+        assert!(matches!(
+            try_alloc_zeroed_bytes(usize::MAX, "strict")
+                .unwrap_err()
+                .kind(),
+            ErrorKind::SizeOverflow { context: "strict" }
+        ));
+        assert!(matches!(
+            try_alloc_zeroed_f32(usize::MAX / 4 + 1, "multiply")
+                .unwrap_err()
+                .kind(),
+            ErrorKind::SizeOverflow {
+                context: "multiply"
+            }
+        ));
+        let count = isize::MAX as usize / 4 + 1;
+        assert!(
+            matches!(try_alloc_zeroed_f32(count, "layout").unwrap_err().kind(), ErrorKind::AllocationFailed { bytes, context: "layout" } if *bytes == count * 4)
+        );
+        assert!(matches!(
+            try_alloc_dct_blocks(usize::MAX / 128 + 1, "blocks")
+                .unwrap_err()
+                .kind(),
+            ErrorKind::SizeOverflow { context: "blocks" }
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn infallible_zeroed_layout_overflow_panics() {
+        let _ = try_alloc_zeroed_f32_pref(
+            zencodec::AllocPreference::Infallible,
+            true,
+            usize::MAX,
+            "overflow",
+        );
+    }
 
     #[test]
     fn test_checked_size() {

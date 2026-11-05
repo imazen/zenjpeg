@@ -919,3 +919,8 @@ sibling-cohort-lint:
     cargo clippy --keep-going -p zenjpeg --locked --lib --tests --examples --benches --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -- -D warnings
     cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
     just sibling-api-check
+
+# Exercise concrete zeros without changing generic initialization or error payloads.
+zeroed-alloc-check:
+    cargo test --locked -p zenjpeg --lib foundation::alloc::
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings

@@ -5,6 +5,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+- Concrete zeroed byte, f32 and DCT-block buffers request allocator-zeroed storage in every policy. Preserve helper-specific overflow/allocation errors and arbitrary Default/Clone fill contracts; correct reserve/fill implementation comments.
+
 - Align root/fuzz codec and pixel sources (`6c888700`), lock the paired research dev-tools
   and compatible resize source; retain all numeric gates and public API
   snapshots. [Qualification receipts](benchmarks/sibling_cohort_2026-11-05.pointer.md).

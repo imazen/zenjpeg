@@ -24,7 +24,7 @@ description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
 # Core
 wide = "1.1"
 aligned-vec = "0.6"
-bytemuck = { version = "1.14", features = ["derive"] }
+bytemuck = { version = "1.25.2", features = ["derive", "extern_crate_alloc"] }
 rgb = { version = "0.8", features = ["as-bytes"] }
 imgref = "1.12"
 
