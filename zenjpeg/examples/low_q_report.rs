@@ -30,11 +30,15 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 
 fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {
     let orig_pixels: Vec<rgb::RGB8> = original
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     let dist_pixels: Vec<rgb::RGB8> = distorted
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
