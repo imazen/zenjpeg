@@ -1866,7 +1866,7 @@ impl JpegDecoder<'_> {
     fn decode_reconstruct_hdr(
         &self,
         target_headroom: Option<f32>,
-    ) -> Result<Option<DecodeOutput>, Error> {
+    ) -> Result<Option<DecodeOutput>, At<CodecError>> {
         use crate::ultrahdr::UltraHdrExtras;
         use ultrahdr_core::gainmap::{HdrOutputFormat, apply_gainmap};
 
@@ -1904,7 +1904,9 @@ impl JpegDecoder<'_> {
         let header = read_job_info(&cfg, &self.data, self.policy.as_ref())?;
         check_progressive_policy(&header, self.policy.as_ref())?;
         if limits.max_width.is_some() || limits.max_height.is_some() {
-            limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
+            limits
+                .check_dimensions(header.dimensions.width, header.dimensions.height)
+                .map_err(Error::from)?;
         }
 
         let stop: &dyn enough::Stop = match &self.stop {
@@ -1922,7 +1924,8 @@ impl JpegDecoder<'_> {
         if resolved.is_none() && !cfg.preserve.xmp && extras.gainmap().is_some() {
             return Err(Error::policy_rejected(
                 "gain-map reconstruction needs metadata denied by decode policy",
-            ));
+            )
+            .into());
         }
         if resolved.is_none() && !extras.is_ultrahdr() {
             return Ok(None);
@@ -1948,7 +1951,8 @@ impl JpegDecoder<'_> {
         {
             return Err(Error::policy_rejected(
                 "HDR reconstruction needs ICC metadata denied by decode policy",
-            ));
+            )
+            .into());
         }
         let (primaries, transfer) = crate::ultrahdr::base_color(extras.icc_profile())?;
         let descriptor = zenpixels::PixelDescriptor::RGBA8_SRGB
@@ -1992,11 +1996,10 @@ impl JpegDecoder<'_> {
                 let mut output = PixelBuffer::try_new(w, h, descriptor)
                     .map_err(|_| Error::internal("HDR color output allocation failed"))?;
                 let mut converter =
-                    zenpixels_convert::RowConverter::new(hdr.descriptor(), descriptor).map_err(
-                        |e| Error::icc_error(alloc::format!("HDR output color conversion: {e}")),
-                    )?;
+                    zenpixels_convert::RowConverter::new(hdr.descriptor(), descriptor)
+                        .map_err(pixel_conversion_error)?;
                 for row in 0..h {
-                    stop.check()?;
+                    stop.check().map_err(Error::from)?;
                     converter.convert_row(
                         hdr.as_slice().row(row),
                         output.as_slice_mut().row_mut(row),
@@ -2017,8 +2020,7 @@ impl JpegDecoder<'_> {
             zencodec::Orientation::Identity => hdr,
             o => {
                 use zenpixels_convert::PixelBufferConvertExt;
-                hdr.into_oriented(o)
-                    .map_err(|_| Error::internal("HDR output orientation failed"))?
+                hdr.into_oriented(o).map_err(pixel_conversion_error)?
             }
         };
 
@@ -2083,6 +2085,21 @@ impl JpegDecoder<'_> {
 
         Ok(Some(output))
     }
+}
+
+// Preserve the converter's concrete cause and original location trace through
+// the codec envelope, including failures from the owned orientation fallback.
+#[cfg(feature = "ultrahdr")]
+fn pixel_conversion_error(cause: At<zenpixels_convert::ConvertError>) -> At<CodecError> {
+    cause.map_error(|detail| {
+        let category = match &detail {
+            zenpixels_convert::ConvertError::AllocationFailed => {
+                zencodec::ErrorCategory::Resource(zencodec::ResourceError::OutOfMemory)
+            }
+            _ => zencodec::ErrorCategory::Internal(zencodec::InternalKind::Bug),
+        };
+        CodecError::from_parts(Some("zenjpeg"), category, alloc::boxed::Box::new(detail))
+    })
 }
 
 /// Map the decoder's lossless transform to the equivalent `Orientation`
@@ -2160,4 +2177,40 @@ fn decode_gain_map_components(
     let gm_info =
         zencodec::GainMapInfo::new(metadata, gainmap.width, gainmap.height, gainmap.channels);
     Ok(Some(zencodec::decode::DecodedGainMap::new(pixels, gm_info)))
+}
+
+#[cfg(all(test, feature = "ultrahdr"))]
+mod conversion_cause_tests {
+    use super::pixel_conversion_error;
+    use zenpixels::{Orientation, PixelBuffer, PixelDescriptor};
+    use zenpixels_convert::{ConvertError, PixelSliceConvertExt};
+
+    #[test]
+    fn typed_and_erased_conversion_refusal_retains_cause_and_trace() {
+        let source = PixelBuffer::try_new(2, 3, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let mut wrong_destination =
+            PixelBuffer::try_new(1, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let cause = source
+            .as_slice()
+            .oriented_into(Orientation::Rotate90, wrong_destination.as_slice_mut())
+            .unwrap_err();
+        assert!(matches!(cause.error(), ConvertError::BufferSize { .. }));
+        let original = cause.error().clone();
+        let locations: alloc::vec::Vec<_> = cause.frames().filter_map(|f| f.location()).collect();
+        assert!(!locations.is_empty());
+        let wrapped = pixel_conversion_error(cause);
+        assert_eq!(
+            zencodec::find_cause::<ConvertError>(&wrapped),
+            Some(&original)
+        );
+        let wrapped_locations: alloc::vec::Vec<_> =
+            wrapped.frames().filter_map(|f| f.location()).collect();
+        assert_eq!(wrapped_locations, locations);
+        let erased: alloc::boxed::Box<dyn core::error::Error + Send + Sync> =
+            alloc::boxed::Box::new(wrapped);
+        assert_eq!(
+            zencodec::find_cause::<ConvertError>(&*erased),
+            Some(&original)
+        );
+    }
 }
