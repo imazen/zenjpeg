@@ -209,7 +209,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "linear-srgb"
 version = "0.6.12"
-source = "git+https://github.com/imazen/linear-srgb?rev=52896f4b24664315586bd60e5f048253b1f69052#52896f4b24664315586bd60e5f048253b1f69052"
+source = "git+https://github.com/imazen/linear-srgb?rev=2969ee846e92a4f00f34ab447edaf1eb6857ebe0#2969ee846e92a4f00f34ab447edaf1eb6857ebe0"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -583,7 +583,7 @@ source = "git+https://github.com/imazen/zenflate?rev=17233d1edd6192df441413943da
 [[patch.unused]]
 name = "zenpng"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenpng?rev=fd4f7a56c4a8802a626968a79e0a588bf570f979#fd4f7a56c4a8802a626968a79e0a588bf570f979"
+source = "git+https://github.com/imazen/zenpng?rev=6b740345e9550c72da462311024961a413a15abc#6b740345e9550c72da462311024961a413a15abc"
 
 [[patch.unused]]
 name = "zenresize"
