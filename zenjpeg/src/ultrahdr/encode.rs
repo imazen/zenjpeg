@@ -1019,7 +1019,7 @@ mod tests {
             .unwrap()
             .expect("a BT.709-transfer base needs a profile");
         assert_eq!(
-            zenpixels::icc::extract_cicp(&icc),
+            zenpixels::Cicp::from_icc(&icc),
             Some(zenpixels::Cicp::new(1, 1, 0, true))
         );
     }

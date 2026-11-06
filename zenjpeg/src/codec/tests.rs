@@ -1656,6 +1656,7 @@ mod pattern_b_envelope_tests {
     //! no `CategorizedError` vtable, so both recoveries return `None`; the
     //! envelope is exactly what flips them to `Some`.
     use super::*;
+    use imgref::ImgExt;
     use zencodec::decode::DynDecoderConfig;
     use zencodec::{CodecError, CodecErrorExt, ErrorCategory, ImageError};
 
@@ -1780,7 +1781,7 @@ mod pattern_b_envelope_tests {
                 zencodec_io::drive_from_slice(&mut decoder, bytes, &mut sink, None, chunk_size)
                     .unwrap();
             assert_eq!((info.width, info.height), (width as u32, height as u32));
-            assert_eq!(sink.rows_written(), height as u32);
+            assert_eq!(sink.rows_written(), height as u64);
             assert!(sink.finished());
             assert_eq!(sink.bytes().len(), expected.len());
             assert_eq!(sink.bytes(), expected);
@@ -1832,7 +1833,7 @@ mod pattern_b_envelope_tests {
                 zencodec_io::drive_from_slice(&mut decoder, bytes, &mut sink, None, chunk_size)
                     .unwrap();
             assert_eq!((info.width, info.height), (width as u32, height as u32));
-            assert_eq!(sink.rows_written(), height as u32);
+            assert_eq!(sink.rows_written(), height as u64);
             assert!(sink.finished());
             assert_eq!(sink.bytes().len(), expected.len());
             assert_eq!(sink.bytes(), expected);
@@ -1884,7 +1885,7 @@ mod pattern_b_envelope_tests {
                 zencodec_io::drive_from_slice(&mut *decoder, bytes, &mut sink, None, chunk_size)
                     .unwrap();
             assert_eq!((info.width, info.height), (width as u32, height as u32));
-            assert_eq!(sink.rows_written(), height as u32);
+            assert_eq!(sink.rows_written(), height as u64);
             assert!(sink.finished());
             assert_eq!(sink.bytes().len(), expected.len());
             assert_eq!(sink.bytes(), expected);
