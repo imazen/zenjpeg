@@ -21,7 +21,7 @@ use zencodec::operation::EncodeRequest;
 use zencodec::{CodecSet, ColorEmitPolicy, ImageFormat, Metadata, MetadataPolicy};
 use zenjpeg::JpegEncoderConfig;
 use zenpixels::{Cicp, ColorContext, ColorPrimaries, PixelDescriptor, PixelSlice};
-use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc, synthesize_icc_for_cicp};
+use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 
 const W: u32 = 48;
 const H: u32 = 32;
@@ -124,7 +124,7 @@ fn p3(base: PixelDescriptor) -> PixelDescriptor {
 }
 
 fn synthesized(cicp: Cicp) -> Vec<u8> {
-    match synthesize_icc_for_cicp(cicp) {
+    match SynthesizedIcc::for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
         other => panic!("the zencodec feature's icc-db must synthesize {cicp:?}: {other:?}"),
     }

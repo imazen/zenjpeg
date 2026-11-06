@@ -111,7 +111,8 @@ fn decode_then_bake(jpeg: &[u8], orient: Orientation) -> (u32, u32, Vec<u8>) {
         zenpixels::Orientation::from_exif(orient as u8).expect("valid EXIF orientation");
     let slice = PixelSlice::new(&pixels, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB)
         .expect("pixel slice");
-    let oriented = zenpixels_convert::orient::apply_orientation(slice, zp_orient);
+    use zenpixels_convert::PixelSliceConvertExt;
+    let oriented = slice.oriented(zp_orient).expect("fixture orientation");
     let (ow, oh) = (oriented.width(), oriented.height());
     let oslice = oriented.as_slice();
     let mut out = Vec::with_capacity(ow as usize * oh as usize * 3);

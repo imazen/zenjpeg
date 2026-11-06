@@ -1000,8 +1000,8 @@ fn sdr_base_carries_an_icc_profile_for_its_primaries() {
     // in the SDR base; a P3 or BT.2020 base must say so.
     use zenjpeg::ultrahdr::encode_ultrahdr_luma;
     use zenpixels::Cicp;
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-    let expected = |cicp| match synthesize_icc_for_cicp(cicp) {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    let expected = |cicp| match SynthesizedIcc::for_cicp(cicp) {
         SynthesizedIcc::Profile(icc) => icc.into_owned(),
         other => panic!("{other:?}"),
     };
@@ -1021,7 +1021,7 @@ fn sdr_base_carries_an_icc_profile_for_its_primaries() {
         (&bt2020, Cicp::new(9, 13, 0, true)),
     ] {
         let icc = primary_icc(jpeg).unwrap();
-        assert_eq!(zenpixels::icc::extract_cicp(&icc), Some(cicp));
+        assert_eq!(zenpixels::Cicp::from_icc(&icc), Some(cicp));
     }
     // BT.709 stays untagged: every reader assumes it.
     let bt709 = encode_ultrahdr_luma(&create_test_hdr_in(UhdrColorGamut::Bt709)).unwrap();
