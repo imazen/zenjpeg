@@ -1462,6 +1462,7 @@ impl<'a> ScanlineReader<'a> {
     /// If `scan_slice` ran out of data mid-row (or `is_overread()` is true):
     /// - Rolls back all state cleanly (`decoder_state`, `mcu_count`, `prev_coeff_counts`, `next_restart_num`).
     /// - Returns `Ok(None)` so the caller can push more input data and retry.
+    #[cfg(feature = "zencodec")]
     pub(crate) fn decode_mcu_row_slice(
         &mut self,
         scan_slice: &[u8],

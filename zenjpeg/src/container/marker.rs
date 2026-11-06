@@ -1027,11 +1027,13 @@ mod tests {
 /// Retain marker structure and payloads while discarding entropy bytes.
 /// Used only for metadata inspection: the result must never be published as an
 /// encoded image or used for source offsets. Native decoding uses original bytes.
+#[cfg(feature = "zencodec")]
 pub(crate) struct MetadataCapture {
     bytes: alloc::vec::Vec<u8>,
     state: CaptureState,
     done: bool,
 }
+#[cfg(feature = "zencodec")]
 #[derive(Clone, Copy)]
 enum CaptureState {
     Prefix,
@@ -1042,6 +1044,7 @@ enum CaptureState {
     Entropy,
     EntropyCode,
 }
+#[cfg(feature = "zencodec")]
 impl MetadataCapture {
     pub(crate) fn new() -> Self {
         Self {
