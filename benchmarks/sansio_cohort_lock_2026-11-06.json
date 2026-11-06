@@ -1,6 +1,6 @@
 {
   "baseline": "88635489732e02bc11282bf1b57ddfd9d78cbe95",
-  "lock_sha256": "b7ab9d23f7dd62494ddd9e0709630dc91e4b7931d7df9840467a9565e9c4180b",
+  "lock_sha256": "b96c3187c908aadb546f29edccd04a5268f2ba031be2e0c30d8d4e488eba6c0b",
   "removed": [
     [
       "archmage",
@@ -152,7 +152,7 @@
     [
       "linear-srgb",
       "0.6.12",
-      "git+https://github.com/imazen/linear-srgb?rev=52896f4b24664315586bd60e5f048253b1f69052#52896f4b24664315586bd60e5f048253b1f69052"
+      "git+https://github.com/imazen/linear-srgb?rev=2969ee846e92a4f00f34ab447edaf1eb6857ebe0#2969ee846e92a4f00f34ab447edaf1eb6857ebe0"
     ],
     [
       "magetypes",

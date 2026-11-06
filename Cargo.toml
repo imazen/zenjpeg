@@ -231,7 +231,7 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 [patch.crates-io]
 # Canonical-plane cohort used by the isolated sans-I/O qualification.
 garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "2969ee846e92a4f00f34ab447edaf1eb6857ebe0" }
 # Published zenresize 0.3.1 requires zenpixels 0.2; this existing git source admits 0.3.
 zenresize = { git = "https://github.com/imazen/zenresize", rev = "4ad64b3c0a29469e68ddfdda3798de20c60c3421" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
