@@ -476,8 +476,9 @@ impl Error {
     }
 
     /// Returns true if this is a truncated data error.
+    #[cfg(feature = "zencodec")]
     #[inline]
-    pub fn is_truncated(&self) -> bool {
+    pub(crate) fn is_truncated(&self) -> bool {
         matches!(self.kind(), ErrorKind::TruncatedData { .. })
     }
 

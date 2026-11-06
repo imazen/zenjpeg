@@ -152,17 +152,18 @@ pub struct EntropyDecoderState {
     last_written: u8,
 }
 
+#[cfg(feature = "zencodec")]
 impl EntropyDecoderState {
     /// Current read position in the byte buffer.
     #[inline]
     #[must_use]
-    pub fn position(&self) -> usize {
+    pub(crate) fn position(&self) -> usize {
         self.reader_state.position()
     }
 
     /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
     #[inline]
-    pub fn advance_buffer_by(&mut self, bytes: usize) {
+    pub(crate) fn advance_buffer_by(&mut self, bytes: usize) {
         self.reader_state.advance_position_by(bytes);
     }
 }
@@ -186,14 +187,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Returns true if the reader attempted to read past the end of input data.
     #[inline]
     #[must_use]
-    pub fn is_overread(&self) -> bool {
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn is_overread(&self) -> bool {
         self.reader.overread_by() > 0
-    }
-
-    /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
-    #[inline]
-    pub fn advance_buffer_by(&mut self, bytes: usize) {
-        self.reader.advance_position_by(bytes);
     }
 
     /// Enables lenient mode for maximum error recovery.

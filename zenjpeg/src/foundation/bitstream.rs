@@ -437,17 +437,18 @@ pub struct BitReaderState {
     rst_resync_count: u32,
 }
 
+#[cfg(feature = "zencodec")]
 impl BitReaderState {
     /// Current read position in the byte buffer.
     #[inline]
     #[must_use]
-    pub fn position(&self) -> usize {
+    pub(crate) fn position(&self) -> usize {
         self.position
     }
 
     /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
     #[inline]
-    pub fn advance_position_by(&mut self, bytes: usize) {
+    pub(crate) fn advance_position_by(&mut self, bytes: usize) {
         self.position = self.position.saturating_sub(bytes);
     }
 }
@@ -905,14 +906,9 @@ impl<'a> BitReader<'a> {
     /// Number of bytes attempted to read past end of data.
     #[inline]
     #[must_use]
-    pub fn overread_by(&self) -> usize {
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn overread_by(&self) -> usize {
         self.overread_by
-    }
-
-    /// Adjust the reader position by subtracting `bytes` consumed and sliced off.
-    #[inline]
-    pub fn advance_position_by(&mut self, bytes: usize) {
-        self.position = self.position.saturating_sub(bytes);
     }
 
     /// Reads and verifies a restart marker.
