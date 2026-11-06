@@ -1890,3 +1890,11 @@ fuzz compilation and unchanged CI-pinned API snapshots. Current compiler
 diagnostics needed explicit f32 layout literals and equivalent example
 format/chunk iteration. No numeric expectation, profile or ignore changed.
 Receipts:benchmarks/sibling_cohort_2026-11-05.pointer.md.
+
+### Native deep CMYK contract revalidated (2026-11-06)
+
+`just deep-cmyk-check` confirms the existing 12/16-bit non-Adobe seed contract:
+CmykF32Inverted by default, exact normalized native codes, CMYK8 only when
+explicitly requested. Scope and resource receipt are in
+`docs/native-depth-revalidation-2026-11-06.md`. This is not a new independent
+libjpeg-turbo comparison or qualification of the proposed shared cohort.

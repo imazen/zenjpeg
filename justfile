@@ -924,3 +924,7 @@ sibling-cohort-lint:
 zeroed-alloc-check:
     cargo test --locked -p zenjpeg --lib foundation::alloc::
     cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Native 12/16-bit CMYK remains float unless eight-bit is explicitly named.
+deep-cmyk-check:
+    cargo test --locked -p zenjpeg --features zencodec,extended-jpeg --test zencodec_native_depth deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named
