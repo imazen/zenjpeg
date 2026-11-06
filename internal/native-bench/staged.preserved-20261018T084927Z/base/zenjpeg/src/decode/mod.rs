@@ -1,0 +1,4039 @@
+//! JPEG decoder implementation.
+//!
+//! This module provides the main decoder interface for reading JPEG images.
+//! For a detailed map of which code paths run for different configurations, see
+//! [`docs/DECODER_PATHS.md`](https://github.com/imazen/zenjpeg/blob/main/zenjpeg/docs/DECODER_PATHS.md).
+//!
+//! # Decode paths
+//!
+//! The decoder selects between streaming and buffered decode paths automatically:
+//!
+//! - **[`decode()`](DecodeConfig::decode)** uses streaming single-pass decode for baseline
+//!   JPEGs with standard sampling and u8 RGB/BGR/RGBA/BGRA output. Falls back to
+//!   buffered coefficient decode for progressive, f32 output, lossless transforms,
+//!   dequant bias, Knusperli deblocking, or non-standard pixel formats.
+//!
+//! - **[`scanline_reader()`](DecodeConfig::scanline_reader)** uses streaming decode for
+//!   baseline JPEGs. Falls back to buffered decode for progressive, CMYK, and
+//!   Knusperli deblocking. With `--features parallel` and DRI present, wave-parallel
+//!   decode activates automatically.
+//!
+//! # Quick Start
+//!
+//! ```ignore
+//! use zenjpeg::decode::Decoder;
+//!
+//! let result = Decoder::new().decode(&jpeg_data, enough::Unstoppable)?;
+//! let pixels: &[u8] = result.pixels_u8().unwrap();
+//! ```
+//!
+//! # ICC Profile Support
+//!
+//! The decoder can extract and apply embedded ICC profiles, including XYB profiles
+//! used by jpegli. ICC profile support requires enabling `moxcms` feature.
+//!
+//! ```ignore
+//! use zenjpeg::decode::Decoder;
+//!
+//! use zenjpeg::color::icc::TargetColorSpace;
+//! let result = Decoder::new()
+//!     .correct_color(Some(TargetColorSpace::Srgb))
+//!     .decode(&jpeg_data, enough::Unstoppable)?;
+//! ```
+
+// IDCT modules (decoder-only)
+#[doc(hidden)]
+pub mod idct;
+#[doc(hidden)]
+pub mod idct_int;
+
+mod config;
+mod depth;
+mod extras;
+#[cfg(feature = "parallel")]
+mod fused_parallel;
+mod image;
+mod parser;
+mod pipeline;
+mod pool;
+mod request;
+mod row_slice;
+#[cfg(feature = "parallel")]
+pub(crate) mod rst_scan;
+mod scanline;
+#[cfg(feature = "__test-utils")]
+pub mod upsample;
+#[cfg(not(feature = "__test-utils"))]
+mod upsample;
+
+#[cfg(feature = "ultrahdr")]
+mod ultrahdr_reader;
+
+// These types are public API for coefficient analysis and decode results
+#[allow(unused_imports)]
+pub use image::{
+    CoefficientComparison, ComponentCoefficients, DecodedCoefficients, DecodedImage,
+    DecodedImageF32, DecodedYCbCr, JbrdMetadata, JbrdScanInfo,
+};
+
+// New unified types
+#[allow(unused_imports)]
+pub use config::{
+    CropRegion, DecodeConfig, DecodeInfo, DecodeResult, DecodedPixels, GainMapHandling,
+    GainMapResult, OrientationHint, OutputTarget, OwnedDecodedPixels, ParallelStrategy,
+};
+/// Backward-compatible alias for [`DecodeConfig`].
+pub type Decoder = DecodeConfig;
+use parser::JpegParser;
+
+pub use pool::DecodePool;
+pub use request::DecodeRequest;
+pub use row_slice::{RowSlice, RowSliceF32};
+pub use scanline::{ScanlineInfo, ScanlineReader};
+
+// UltraHDR streaming reader
+#[cfg(feature = "ultrahdr")]
+#[allow(unused_imports)] // Re-exports for public API
+pub use ultrahdr_reader::{GainMapMemory, UltraHdrMode, UltraHdrReader, UltraHdrReaderConfig};
+
+// Re-export extras types for public API
+#[allow(unused_imports)]
+pub use extras::{
+    AdobeColorTransform, AdobeInfo, Confidence, DecodedExtras, DensityUnits, DqtTable,
+    EncoderFamily, IccPreserve, JfifInfo, JpegProbe, MpfDirectory, MpfEntry, MpfImageType,
+    MpfImageTypeExt, PreserveConfig, PreservedMpfImage, PreservedSegment, QualityEstimate,
+    QualityScale, SegmentType, StandardProfile,
+};
+
+// Segment classification and the MPF index parser, for the structural
+// inventory walker (codec/inventory.rs).
+#[cfg(feature = "inventory")]
+pub(crate) use extras::{detect_segment_type, parse_mpf_directory};
+
+// Re-export depth map types for public API
+#[allow(unused_imports)]
+pub use depth::{
+    DepthMapData, DepthSource, GDepthFormat, GDepthMeasureType, GDepthMetadata, GDepthUnits,
+};
+
+// Re-export types used in public struct fields so users can access them
+#[allow(unused_imports)]
+pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
+use crate::types::{Component, Subsampling};
+
+// Re-export the cancellation types. `Stop` is the trait every decode entry
+// point is generic over; `Unstoppable` is the no-op impl callers actually pass.
+// Both are re-exported here so decode-only users don't have to reach into
+// `zenjpeg::encoder` for the token they need to call a *decoder* (issue #168).
+pub use enough::{Stop, Unstoppable};
+
+use crate::error::{Error, Result};
+use crate::foundation::consts::MAX_COMPONENTS;
+use imgref::ImgRefMut;
+
+/// Result of wave parallel eligibility check.
+#[cfg(feature = "parallel")]
+#[allow(clippy::large_enum_variant)]
+enum WaveResult<'a> {
+    /// Wave-only reader (4:2:0 + box filter): all output paths use wave decode.
+    WaveOnly(ScanlineReader<'a>),
+    /// Wave state only: caller creates sequential reader and attaches this for planar i16.
+    WaveState(fused_parallel::WaveParallelState),
+}
+
+/// Compute subsampling mode from component sampling factors.
+pub(crate) fn compute_subsampling(
+    components: &[Component; MAX_COMPONENTS],
+    num_components: u8,
+) -> Subsampling {
+    if num_components == 1 {
+        return Subsampling::S444; // Grayscale
+    }
+
+    // Find max sampling factors
+    let max_h = components[..num_components as usize]
+        .iter()
+        .map(|c| c.h_samp_factor)
+        .max()
+        .unwrap_or(1);
+    let max_v = components[..num_components as usize]
+        .iter()
+        .map(|c| c.v_samp_factor)
+        .max()
+        .unwrap_or(1);
+
+    subsampling_from_max(max_h, max_v, false)
+}
+
+/// Convert max sampling factors to Subsampling enum.
+fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling {
+    if is_grayscale {
+        return Subsampling::S444;
+    }
+    match (max_h, max_v) {
+        (1, 1) => Subsampling::S444,
+        (2, 1) => Subsampling::S422,
+        (2, 2) => Subsampling::S420,
+        (1, 2) => Subsampling::S440,
+        // For other patterns, approximate as 4:2:0
+        _ => Subsampling::S420,
+    }
+}
+
+// Re-export config types (defined in config.rs, public API preserved)
+#[cfg(all(feature = "zencodec", feature = "ultrahdr"))]
+pub(crate) use config::transform_interleaved;
+pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
+
+/// Convert a `zenpixels::Orientation` to the internal `LosslessTransform`.
+fn orientation_to_transform(o: zenpixels::Orientation) -> crate::lossless::LosslessTransform {
+    use crate::lossless::LosslessTransform;
+    use zenpixels::Orientation;
+    match o {
+        Orientation::Identity => LosslessTransform::None,
+        Orientation::FlipH => LosslessTransform::FlipHorizontal,
+        Orientation::FlipV => LosslessTransform::FlipVertical,
+        Orientation::Rotate180 => LosslessTransform::Rotate180,
+        Orientation::Rotate90 => LosslessTransform::Rotate90,
+        Orientation::Rotate270 => LosslessTransform::Rotate270,
+        Orientation::Transpose => LosslessTransform::Transpose,
+        Orientation::Transverse => LosslessTransform::Transverse,
+        _ => LosslessTransform::None,
+    }
+}
+
+#[cfg(feature = "moxcms")]
+use crate::color::icc::apply_icc_transform_f32;
+#[cfg(feature = "moxcms")]
+use crate::color::icc::{TargetColorSpace, apply_icc_transform};
+
+/// Routing decisions shared by the borrowed and owned scanline-reader
+/// entry points (computed by `DecodeConfig::classify_scanline_route`).
+struct ScanlineRoute {
+    is_grayscale: bool,
+    #[allow(dead_code)] // recorded for completeness; buffering already implied it
+    is_cmyk: bool,
+    is_xyb: bool,
+    max_h: u8,
+    max_v_samp: usize,
+    mcu_height: usize,
+    needs_buffered: bool,
+    needs_buffered_sampling: bool,
+}
+
+impl DecodeConfig {
+    /// Creates a new decoder configuration with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a per-job decode request binding this config with JPEG data.
+    ///
+    /// The returned [`DecodeRequest`] can optionally attach a [`DecodePool`]
+    /// for adaptive threading and a cancellation token before decoding.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, DecodePool};
+    ///
+    /// let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+    /// let pool = DecodePool::new();
+    ///
+    /// // With pool (server)
+    /// let result = decoder.request(&jpeg_data)
+    ///     .pool(&pool)
+    ///     .decode()?;
+    ///
+    /// // Without pool (standalone)
+    /// let result = decoder.request(&jpeg_data).decode()?;
+    /// ```
+    #[must_use]
+    pub fn request<'a>(&'a self, data: &'a [u8]) -> request::DecodeRequest<'a> {
+        request::DecodeRequest::new(self, data)
+    }
+
+    /// Sets the output pixel format.
+    #[must_use]
+    pub fn output_format(mut self, format: PixelFormat) -> Self {
+        self.output_format = Some(format);
+        self
+    }
+
+    /// Sets the chroma upsampling method.
+    ///
+    /// Controls how subsampled chroma channels (4:2:0, 4:2:2, 4:4:0) are
+    /// upsampled to match luma resolution.
+    ///
+    /// - [`ChromaUpsampling::Triangle`] (default): fused 2D filter, matches libjpeg-turbo/mozjpeg
+    /// - [`ChromaUpsampling::NearestNeighbor`]: fastest, lowest quality
+    #[must_use]
+    pub fn chroma_upsampling(mut self, method: ChromaUpsampling) -> Self {
+        self.chroma_upsampling = method;
+        self
+    }
+
+    /// Sets the integer IDCT algorithm.
+    ///
+    /// Controls which fixed-point IDCT is used during decoding. The two kernels
+    /// produce slightly different pixel values (max 2-3 levels).
+    ///
+    /// - [`IdctMethod::Libjpeg`] (**default**): 13-bit Loeffler islow. Byte-exact
+    ///   with libjpeg-turbo/mozjpeg/djpeg when paired with the default
+    ///   [`ChromaUpsampling::Triangle`], and the more accurate kernel (unbiased).
+    /// - [`IdctMethod::Jpegli`]: 12-bit fixed-point, ~3% faster to decode, at the
+    ///   cost of a systematic +0.002..+0.004 rounding bias and reference-exactness.
+    ///   Despite the name this is the stb/zune kernel, *not* what C++ jpegli uses
+    ///   (jpegli decodes with a float IDCT — zenjpeg's f32 path).
+    ///
+    /// Applies regardless of upsampling mode. 1-component (grayscale) sources
+    /// always use `Libjpeg` regardless of this setting (#154).
+    #[must_use]
+    pub fn idct_method(mut self, method: IdctMethod) -> Self {
+        self.idct_method = Some(method);
+        self
+    }
+
+    /// Returns the effective IDCT method, considering both explicit setting
+    /// and chroma upsampling mode.
+    ///
+    /// - Explicit `idct_method()` always wins
+    /// - Default is `Jpegli` for all upsampling modes
+    ///
+    /// The default `Triangle` upsampling matches libjpeg-turbo/mozjpeg within
+    /// max_diff ≤ 3. For near-exact matching (max_diff ≤ 1, YCbCr→RGB
+    /// rounding only), also set `.idct_method(IdctMethod::Libjpeg)` — that
+    /// selects both the libjpeg-exact IDCT and turbo's fixed h2v2 upsampling
+    /// biases. The islow kernel is SIMD with a scalar fallback and runs
+    /// within ~20% of the default kernel per block (~8% end-to-end on a
+    /// 10 MP gray scan; ~50% when it was scalar-only).
+    pub(crate) fn effective_idct_method(&self) -> IdctMethod {
+        self.idct_method.unwrap_or(IdctMethod::Libjpeg)
+    }
+
+    /// Enable post-decode deblocking to reduce JPEG block artifacts.
+    ///
+    /// Deblocking improves visual quality by smoothing 8x8 block boundaries.
+    /// The effect is strongest at low quality levels (Q5-Q50) where blocking
+    /// artifacts are most visible.
+    ///
+    /// # Supported paths
+    ///
+    /// | Mode | `decode()` | `scanline_reader()` |
+    /// |------|-----------|-------------------|
+    /// | `Off` | no-op | no-op (zero overhead) |
+    /// | `Boundary4Tap` | f32 planes | i16 planes (streaming) |
+    /// | `Knusperli` | DCT-domain | fallback to `decode()` internally |
+    /// | `Auto` | knusperli at low Q, boundary otherwise | same (falls back when needed) |
+    ///
+    /// `Knusperli` and `Auto` (when it picks Knusperli) work in `scanline_reader()`
+    /// by transparently falling back to coefficient-based decoding. Output is
+    /// consistent regardless of which decode path you use; only memory behavior
+    /// differs (fallback buffers the full image).
+    ///
+    /// # Performance
+    ///
+    /// Boundary 4-tap adds ~5-15% decode time. Knusperli adds ~20-40% due to extra
+    /// IDCT work. When `Off` (default), zero overhead in both paths.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, DeblockMode};
+    ///
+    /// let result = Decoder::new()
+    ///     .deblock(DeblockMode::Auto)
+    ///     .decode(&jpeg_data, enough::Unstoppable)?;
+    /// ```
+    #[must_use]
+    pub fn deblock(mut self, mode: DeblockMode) -> Self {
+        self.deblock_mode = mode;
+        self
+    }
+
+    /// Convert embedded ICC color profile to a target color space during decode.
+    ///
+    /// When set to `Some(target)`, the decoder applies the embedded ICC profile
+    /// to convert pixel data to the specified color space. When `None` (default),
+    /// no color conversion is performed — pixels are returned in the JPEG's
+    /// native color space.
+    ///
+    /// Requires the `moxcms` feature. Without it, this method is not available.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::color::icc::TargetColorSpace;
+    ///
+    /// let img = Decoder::new()
+    ///     .correct_color(Some(TargetColorSpace::Srgb))
+    ///     .decode(&jpeg, stop)?;
+    /// ```
+    #[cfg(feature = "moxcms")]
+    #[must_use]
+    pub fn correct_color(mut self, target: Option<TargetColorSpace>) -> Self {
+        self.correct_color = target;
+        self
+    }
+
+    /// Sets the maximum number of pixels allowed (for DoS protection).
+    ///
+    /// Default is 120 megapixels (admits common ~108 MP camera photos). Set to 0 for unlimited.
+    #[must_use]
+    pub fn max_pixels(mut self, pixels: u64) -> Self {
+        self.max_pixels = pixels;
+        self
+    }
+
+    /// Sets the ceiling for the decode's header-dimension-scaled allocations.
+    ///
+    /// Default is 512 MB; `0` and `u64::MAX` both mean unlimited.
+    ///
+    /// A JPEG header is a few hundred bytes no matter what frame size it
+    /// declares, while the decoder's coefficient storage and pixel output are
+    /// both sized from those declared dimensions — so without this cap a
+    /// 265-byte file declaring 15000x8000 costs ~716 MiB of peak RSS
+    /// (measured). This bounds that amplification.
+    ///
+    /// # What counts against the budget
+    ///
+    /// Every allocation whose size comes from the header-declared dimensions:
+    /// full-frame DCT coefficient storage (baseline, arithmetic, progressive)
+    /// with its per-block count and nonzero-bitmap side tables, and the
+    /// full-frame pixel output buffer on every path (streaming, fused
+    /// parallel, and buffered). Charges accumulate for the whole decode, so a
+    /// multi-scan file cannot spend the budget more than once.
+    ///
+    /// Per-MCU-row strip scratch is **not** counted: it is `O(width)`, not
+    /// `O(width * height)`, so a small header cannot amplify it. Neither are
+    /// buffers the caller supplies (`decode_into`). The cap therefore bounds
+    /// the decode's dimension-driven growth rather than its exact peak RSS.
+    ///
+    /// # Measured cost per pixel
+    ///
+    /// The budget a decode charges depends on the path, because the streaming
+    /// path stores no coefficients at all:
+    ///
+    /// | path | 4:2:0 | 4:4:4 |
+    /// |---|---|---|
+    /// | baseline, streaming (default `decode()`) | 3.00 B/px | 3.00 B/px |
+    /// | baseline, buffered (coefficients, transforms, non-interleaved scans) | 6.03 B/px | 9.05 B/px |
+    /// | progressive | 6.22 B/px | 9.42 B/px |
+    ///
+    /// Each cell is the smallest `max_memory` that still admits the decode, not
+    /// a reading of the charge sites. The 4:4:4 streaming cell is pinned by
+    /// `tests/decode_memory_limit.rs::streaming_444_charges_three_bytes_per_pixel`,
+    /// which binary-searches that threshold; if the streaming path ever starts
+    /// charging for coefficient storage it does not use, that test fails.
+    ///
+    /// At the 512 MB default that admits ~179 MP of streaming baseline but
+    /// only ~86 MP of 4:2:0 progressive and ~57 MP of 4:4:4 progressive.
+    /// [`max_pixels`](Self::max_pixels) defaults to 120 MP, so the two
+    /// defaults do not agree: frames between roughly 57 MP and 120 MP pass the
+    /// pixel cap and are then refused by this one. Raise this cap (or lower
+    /// `max_pixels`) if you decode images that large.
+    ///
+    /// Exceeding the cap returns
+    /// [`ErrorKind::ResourceLimitExceeded`](crate::error::ErrorKind) with
+    /// [`zencodec::LimitKind::Memory`].
+    #[must_use]
+    pub fn max_memory(mut self, bytes: u64) -> Self {
+        self.max_memory = bytes;
+        self
+    }
+
+    /// Sets resource limits from a [`Limits`](crate::types::Limits) struct.
+    ///
+    /// This applies `max_pixels` and `max_memory` from the `Limits` struct.
+    /// `None` values in `Limits` are treated as unlimited (0).
+    #[must_use]
+    pub fn limits(mut self, limits: crate::types::Limits) -> Self {
+        if let Some(pixels) = limits.max_pixels {
+            self.max_pixels = pixels;
+        }
+        if let Some(memory) = limits.max_memory {
+            self.max_memory = memory;
+        }
+        self
+    }
+
+    /// Configure what metadata and secondary images to preserve during decode.
+    ///
+    /// By default, most metadata (EXIF, XMP, ICC, IPTC) and gain maps are preserved.
+    /// Thumbnails and other MPF images are dropped by default.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, PreserveConfig};
+    ///
+    /// // Preserve nothing (minimal memory)
+    /// let decoder = Decoder::new().preserve(PreserveConfig::none());
+    ///
+    /// // Preserve everything
+    /// let decoder = Decoder::new().preserve(PreserveConfig::all());
+    ///
+    /// // Custom: keep gain maps under 500KB only
+    /// let config = PreserveConfig::default()
+    ///     .mpf_filter(|_idx, typ, size| {
+    ///         typ.is_gainmap() && size < 500_000
+    ///     });
+    /// let decoder = Decoder::new().preserve(config);
+    /// ```
+    #[must_use]
+    pub fn preserve(mut self, config: PreserveConfig) -> Self {
+        self.preserve = config;
+        self
+    }
+
+    /// Convenience: preserve no metadata (minimal memory, pixels only).
+    #[must_use]
+    pub fn preserve_no_metadata(self) -> Self {
+        self.preserve(PreserveConfig::none())
+    }
+
+    /// Convenience: preserve all metadata (EXIF, XMP, ICC, IPTC, comments, MPF).
+    #[must_use]
+    pub fn preserve_all_metadata(self) -> Self {
+        self.preserve(PreserveConfig::all())
+    }
+
+    /// Sets the strictness level for error handling.
+    ///
+    /// - [`Strictness::Strict`]: Fail on any spec violation or truncation
+    /// - [`Strictness::Balanced`]: Reject violations, recover from truncation (default)
+    /// - [`Strictness::Lenient`]: Recover from all errors when possible
+    /// - [`Strictness::Permissive`]: Maximum libjpeg-turbo compatibility
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, Strictness};
+    ///
+    /// // Strict mode for validation
+    /// let decoder = Decoder::new().strictness(Strictness::Strict);
+    ///
+    /// // Balanced mode (default) for production
+    /// let decoder = Decoder::new().strictness(Strictness::Balanced);
+    ///
+    /// // Lenient mode for corrupt file recovery
+    /// let decoder = Decoder::new().strictness(Strictness::Lenient);
+    ///
+    /// // Permissive mode for maximum compatibility
+    /// let decoder = Decoder::new().strictness(Strictness::Permissive);
+    /// ```
+    #[must_use]
+    pub fn strictness(mut self, strictness: Strictness) -> Self {
+        self.strictness = strictness;
+        self
+    }
+
+    /// Convenience: use strict mode (fail on any recoverable error).
+    #[must_use]
+    pub fn strict(self) -> Self {
+        self.strictness(Strictness::Strict)
+    }
+
+    /// Convenience: use lenient mode (recover from all errors).
+    #[must_use]
+    pub fn lenient(self) -> Self {
+        self.strictness(Strictness::Lenient)
+    }
+
+    /// Convenience: use permissive mode (maximum libjpeg-turbo compatibility).
+    #[must_use]
+    pub fn permissive(self) -> Self {
+        self.strictness(Strictness::Permissive)
+    }
+
+    /// Sets the output target controlling precision, transfer function, and IDCT variant.
+    ///
+    /// See [`OutputTarget`] for available options.
+    #[must_use]
+    pub fn output_target(mut self, target: OutputTarget) -> Self {
+        self.output_target = target;
+        self
+    }
+
+    /// Sets how UltraHDR gain maps are handled.
+    ///
+    /// See [`GainMapHandling`] for available options.
+    #[must_use]
+    pub fn gain_map(mut self, handling: GainMapHandling) -> Self {
+        self.gain_map = handling;
+        self
+    }
+
+    /// Controls automatic EXIF orientation correction during decode.
+    ///
+    /// **Enabled by default.** When enabled, the decoder reads the EXIF
+    /// orientation tag and applies the corresponding lossless transform in
+    /// DCT-coefficient space before IDCT. The output pixels will have the
+    /// correct visual orientation.
+    ///
+    /// If the image has no EXIF data or orientation is 1 (normal), this has
+    /// no effect on the decode path.
+    ///
+    /// Can be combined with [`transform()`](Self::transform) — the EXIF
+    /// correction is applied first, then the explicit transform.
+    ///
+    /// Pass `false` to disable and get raw pixel orientation (e.g., for
+    /// lossless re-encoding where you want to preserve the original
+    /// orientation tag).
+    ///
+    /// Equivalent to [`orientation(OrientationHint::Correct)`](Self::orientation)
+    /// when `true`, [`orientation(OrientationHint::Preserve)`](Self::orientation) when `false`.
+    #[must_use]
+    pub fn auto_orient(mut self, enable: bool) -> Self {
+        self.auto_orient = enable;
+        self
+    }
+
+    /// Sets an explicit lossless transform to apply during decode.
+    ///
+    /// The transform is applied as a lossless pixel permutation of the
+    /// decoded image, so there is no quality loss from the transform
+    /// itself. Only one full entropy decode pass is performed.
+    ///
+    /// When combined with [`auto_orient(true)`](Self::auto_orient), the
+    /// EXIF orientation correction is applied first, then this transform.
+    ///
+    /// Prefer [`orientation()`](Self::orientation) for new code.
+    #[must_use]
+    pub fn transform(mut self, transform: crate::lossless::LosslessTransform) -> Self {
+        self.decode_transform = Some(transform);
+        self
+    }
+
+    /// Sets the orientation strategy for decode.
+    ///
+    /// This is the preferred way to control orientation, combining EXIF
+    /// auto-correction and explicit transforms into a single setting.
+    /// See [`OrientationHint`] for details.
+    ///
+    /// Replaces separate calls to [`auto_orient()`](Self::auto_orient) and
+    /// [`transform()`](Self::transform).
+    #[must_use]
+    pub fn orientation(mut self, hint: config::OrientationHint) -> Self {
+        use config::OrientationHint;
+        match hint {
+            OrientationHint::Preserve => {
+                self.auto_orient = false;
+                self.decode_transform = None;
+            }
+            OrientationHint::Correct => {
+                self.auto_orient = true;
+                self.decode_transform = None;
+            }
+            OrientationHint::CorrectAndTransform(o) => {
+                self.auto_orient = true;
+                self.decode_transform = Some(orientation_to_transform(o));
+            }
+            OrientationHint::ExactTransform(o) => {
+                self.auto_orient = false;
+                self.decode_transform = Some(orientation_to_transform(o));
+            }
+        }
+        self
+    }
+
+    /// Apply optimal Laplacian dequantization biases (Price & Rabbani 2000).
+    ///
+    /// Convenience method equivalent to
+    /// `.output_target(OutputTarget::SrgbF32Precise)`.
+    ///
+    /// When enabled, the decoder computes per-coefficient biases from DCT
+    /// coefficient statistics and applies them during dequantization. This
+    /// reduces reconstruction error compared to the default midpoint
+    /// reconstruction, producing measurably higher quality output.
+    ///
+    /// Tradeoff: bypasses the fast integer IDCT path, using f32 dequantization
+    /// and IDCT instead. Expect ~1.3-2x slower decoding.
+    #[must_use]
+    pub fn dequant_bias(mut self, enable: bool) -> Self {
+        if enable {
+            self.output_target = OutputTarget::SrgbF32Precise;
+        } else if self.output_target.is_precise() {
+            self.output_target = OutputTarget::Srgb8;
+        }
+        self
+    }
+
+    /// Sets a crop region for decode.
+    ///
+    /// Only the specified sub-region of the image will be output.
+    /// Entropy decoding still runs for all MCUs (required by the DC predictor
+    /// chain), but IDCT and color conversion are skipped for MCU rows outside
+    /// the crop, providing significant speedup for small crops of large images.
+    ///
+    /// The crop is applied in output space (after `auto_orient` / `transform`).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, CropRegion};
+    ///
+    /// // Crop a 200x200 region starting at (100, 100)
+    /// let result = Decoder::new()
+    ///     .crop(CropRegion::pixels(100, 100, 200, 200))
+    ///     .decode(&jpeg_data, enough::Unstoppable)?;
+    ///
+    /// assert_eq!(result.width(), 200);
+    /// assert_eq!(result.height(), 200);
+    /// ```
+    #[must_use]
+    pub fn crop(mut self, region: config::CropRegion) -> Self {
+        self.crop_region = Some(region);
+        self
+    }
+
+    /// Sets the number of threads for parallel decode paths.
+    ///
+    /// - `0` (default): Auto — uses rayon's global thread pool. Fused parallel
+    ///   decode activates when DRI is present with enough segments.
+    /// - `1`: Force sequential — disables all parallel decode paths.
+    ///
+    /// Values > 1 are reserved for future use and currently behave like `0`.
+    #[must_use]
+    pub fn num_threads(mut self, n: usize) -> Self {
+        self.num_threads = n;
+        self
+    }
+
+    /// Sets the per-site allocation-fallibility preference (internal).
+    ///
+    /// Threaded from `ResourceLimits::prefer_fallible_allocations` at the
+    /// zencodec decode boundary (`codec::build_decode_config`). `CodecDefault`
+    /// (the default) keeps each allocation site's own default; `Fallible` /
+    /// `Infallible` force one path everywhere. See [`crate::foundation::alloc`].
+    // Only wired from the zencodec decode boundary (`codec::build_decode_config`);
+    // without that feature the builder has no caller and the field stays at its
+    // `CodecDefault`.
+    #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
+    #[must_use]
+    pub(crate) fn alloc_pref(mut self, pref: zencodec::AllocPreference) -> Self {
+        self.alloc_pref = pref;
+        self
+    }
+
+    /// Sets the parallel decode strategy.
+    ///
+    /// Controls how restart segments are mapped to rayon tasks during parallel
+    /// decode. Only affects baseline images with MCU-row-aligned DRI when
+    /// compiled with `--features parallel`.
+    ///
+    /// See [`ParallelStrategy`](config::ParallelStrategy) for available options.
+    #[must_use]
+    pub fn parallel_strategy(mut self, strategy: config::ParallelStrategy) -> Self {
+        self.parallel_strategy = strategy;
+        self
+    }
+
+    /// Reads JPEG info without decoding.
+    pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
+        // Preserve metadata segments for extraction without full decode
+        let preserve = PreserveConfig::none()
+            .jfif(true)
+            .exif(true)
+            .xmp(true)
+            .icc(IccPreserve::All);
+
+        self.read_info_preserving(data, &preserve)
+    }
+
+    /// Header metadata with an explicit extraction policy for codec adapters.
+    pub(crate) fn read_info_preserving(
+        &self,
+        data: &[u8],
+        preserve: &PreserveConfig,
+    ) -> Result<JpegInfo> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            Some(preserve),
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.read_header()?;
+
+        // Reject height=0 (DNL mode) since read_info cannot resolve it
+        // without scanning image data
+        if parser.height == 0 {
+            return Err(Error::unsupported_feature(
+                "DNL mode (height=0 in SOF) requires full decode to determine height",
+            ));
+        }
+
+        let mut info = parser.info();
+        if !preserve.exif {
+            info.exif = None;
+        }
+        if !preserve.xmp {
+            info.xmp = None;
+        }
+        if preserve.icc == IccPreserve::None {
+            info.icc_profile = None;
+            info.has_icc_profile = false;
+        }
+        Ok(info)
+    }
+
+    /// Estimates peak memory usage for decoding an image of given dimensions.
+    ///
+    /// This is useful for checking if an image can be decoded within memory limits
+    /// before attempting to decode it. The estimate includes:
+    /// - Strip buffers for one MCU row (Y, Cb, Cr at 2 bytes per pixel)
+    /// - Output RGB buffer (3 bytes per pixel)
+    ///
+    /// For streaming decode (baseline 4:4:4), no coefficient storage is needed.
+    /// For progressive or subsampled images, add ~128 bytes per DCT block for coefficients.
+    ///
+    /// # Example
+    /// ```
+    /// use zenjpeg::decode::Decoder;
+    ///
+    /// let decoder = Decoder::new();
+    /// let estimated = decoder.estimate_memory_usage(4096, 4096);
+    /// println!("Estimated peak memory: {} MB", estimated / 1024 / 1024);
+    /// ```
+    #[must_use]
+    pub fn estimate_memory_usage(&self, width: u32, height: u32) -> usize {
+        let w = width as usize;
+        let h = height as usize;
+
+        // MCU width for strip buffers (padded to 8)
+        let mcu_cols = (w + 7) / 8;
+        let strip_width = mcu_cols * 8;
+        let strip_height = 8; // One MCU row
+
+        // Strip buffers: Y, Cb, Cr each at i16 (2 bytes per pixel)
+        let strip_size = strip_width * strip_height;
+        let strip_total = strip_size * 2 * 3; // 3 components, 2 bytes each
+
+        // Output RGB buffer: 3 bytes per pixel
+        let rgb_size = w * h * 3;
+
+        // Total for streaming decode (baseline 4:4:4)
+        let streaming_total = strip_total + rgb_size;
+
+        // For non-streaming paths (progressive, subsampled), coefficient storage is needed
+        // ~130 bytes per block (64 i16 coefficients + u8 coeff count + alignment)
+        // 3 components, (w/8) * (h/8) blocks per component
+        let blocks_per_component = mcu_cols * ((h + 7) / 8);
+        let coeff_storage = blocks_per_component * 130 * 3;
+
+        // Return worst case (non-streaming)
+        streaming_total.max(coeff_storage + rgb_size)
+    }
+
+    /// Creates a pull-based scanline reader for streaming decode.
+    ///
+    /// This allows reading the image row by row without loading the entire
+    /// image into memory. Uses streaming single-pass decode for baseline JPEGs
+    /// (all standard subsampling modes: 4:4:4, 4:2:0, 4:2:2). Falls back to
+    /// buffered decode for progressive JPEGs, CMYK, and Knusperli deblocking.
+    ///
+    /// With `--features parallel` and DRI present in the JPEG, wave-parallel
+    /// decode activates automatically: restart segments are decoded in parallel
+    /// via rayon into a reusable wave buffer with a 6 MB memory budget.
+    /// Use [`num_threads(1)`](Self::num_threads) to force sequential decode.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::{Decoder, ImgRefMut};
+    ///
+    /// let mut reader = Decoder::new().scanline_reader(&jpeg_data)?;
+    /// let width = reader.width() as usize;
+    /// let height = reader.height() as usize;
+    ///
+    /// let mut pixels = vec![0u8; width * height * 3];
+    /// let mut rows_read = 0;
+    /// while rows_read < height {
+    ///     let remaining = height - rows_read;
+    ///     let slice = &mut pixels[rows_read * width * 3..];
+    ///     let output = ImgRefMut::new(slice, width * 3, remaining);
+    ///     rows_read += reader.read_rows_rgb8(output)?;
+    /// }
+    /// ```
+    pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        // Check if we need a transform — if so, use the buffered pixel-domain path
+        let effective_transform = self.compute_effective_transform_from_data(data);
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            return self.scanline_reader_with_transform(data);
+        }
+
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.read_header()?;
+
+        // Knusperli needs full coefficient access. When requested (explicitly or
+        // via Auto at low Q), fall back to decode() + buffered scanline reader
+        // transparently — the caller gets correct deblocked output without
+        // streaming memory savings.
+        if self.needs_coefficient_deblock(&parser) {
+            return self.scanline_reader_deblock_fallback(data);
+        }
+
+        let route = Self::classify_scanline_route(&parser)?;
+        let mcu_height = route.mcu_height;
+
+        // Coefficient-centric buffered path (issue #187): progressive /
+        // arithmetic JPEGs can't stream, but instead of pre-converting to RGB
+        // (which forces a lossy RGB→YCbCr/gray re-derivation on those reads) we
+        // decode to coefficients and run the SAME strip pipeline as streaming,
+        // so every output format is native. Limited to what the i16 strip
+        // supports (≤3 components, symmetric Cb/Cr sampling); CMYK, the
+        // exotic-sampling normalization, and asymmetric chroma stay on the RGB
+        // buffered path below.
+        if route.needs_buffered && !route.is_cmyk && Self::coeff_strip_compatible(&parser) {
+            let width = parser.width;
+            let height = parser.height;
+            let is_rgb = parser.is_rgb_colorspace();
+            let coeffs = self.decode_buffered_coefficients(&mut parser)?;
+            let mut reader = ScanlineReader::from_coefficients(
+                alloc::borrow::Cow::Borrowed(data),
+                coeffs,
+                self.chroma_upsampling,
+                self.effective_idct_method(),
+                OutputTarget::Srgb8,
+                self.deblock_mode,
+                self.alloc_pref,
+                route.is_xyb,
+                is_rgb,
+            )?;
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            return Ok(reader);
+        }
+
+        if route.needs_buffered || route.needs_buffered_sampling {
+            let width = parser.width;
+            let height = parser.height;
+            let num_components = parser.num_components;
+            // Progressive/arithmetic/CMYK use the actual sampling factors;
+            // the exotic-sampling fallback normalizes from the max factors.
+            let subsampling = if route.needs_buffered {
+                compute_subsampling(&parser.components, num_components)
+            } else {
+                subsampling_from_max(route.max_h, route.max_v_samp as u8, route.is_grayscale)
+            };
+
+            let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
+
+            let mut reader = ScanlineReader::new_buffered(
+                data,
+                width,
+                height,
+                num_components,
+                subsampling,
+                pixels,
+                route.is_xyb,
+            );
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            return Ok(reader);
+        }
+
+        // Extract scan data and construct scanline reader
+        let is_grayscale = route.is_grayscale;
+        let scan_data = parser.into_scan_data(is_grayscale)?;
+        let width = scan_data.width;
+        let height = scan_data.height;
+
+        // Try wave-parallel mode for images with DRI restart markers
+        #[cfg(feature = "parallel")]
+        if self.num_threads != 1
+            && let Some(result) = self.try_wave_parallel(&scan_data, mcu_height)?
+        {
+            match result {
+                WaveResult::WaveOnly(reader) => return Ok(reader),
+                WaveResult::WaveState(wave_state) => {
+                    // Sequential reader with wave state for planar i16 only
+                    let mut reader = ScanlineReader::from_scan_data(
+                        scan_data,
+                        self.chroma_upsampling,
+                        self.effective_idct_method(),
+                        self.output_target,
+                        self.deblock_mode,
+                        self.alloc_pref,
+                    )?;
+                    reader.attach_wave_state(wave_state);
+                    self.apply_crop(&mut reader, width, height, mcu_height)?;
+                    return Ok(reader);
+                }
+            }
+        }
+
+        let mut reader = ScanlineReader::from_scan_data(
+            scan_data,
+            self.chroma_upsampling,
+            self.effective_idct_method(),
+            self.output_target,
+            self.deblock_mode,
+            self.alloc_pref,
+        )?;
+        self.apply_crop(&mut reader, width, height, mcu_height)?;
+        Ok(reader)
+    }
+
+    /// Like [`scanline_reader`](Self::scanline_reader), but accepts a `Cow` for
+    /// the input data. When `Cow::Owned`, the returned reader owns the JPEG data
+    /// and can be effectively `'static` (no external borrow).
+    ///
+    /// `Cow::Borrowed` delegates to [`scanline_reader`](Self::scanline_reader).
+    pub fn scanline_reader_cow<'a>(
+        &self,
+        data: alloc::borrow::Cow<'a, [u8]>,
+    ) -> Result<ScanlineReader<'a>> {
+        use alloc::borrow::Cow;
+
+        match data {
+            Cow::Borrowed(slice) => self.scanline_reader(slice),
+            Cow::Owned(vec) => self.scanline_reader_owned(vec),
+        }
+    }
+
+    /// Shared routing decisions for `scanline_reader` / `scanline_reader_owned`.
+    ///
+    /// Validates the header (DNL / precision / component count) and computes
+    /// every mode-selection predicate in ONE place so the borrowed and owned
+    /// entry points cannot drift. The lifetime-driven ASSEMBLY (borrow vs
+    /// two-phase move of the owned Vec) intentionally stays per-variant; the
+    /// remaining structural unification is tracked with the CoeffSource
+    /// decision (docs/DECODER_UNIFICATION_PLAN.md).
+    fn classify_scanline_route(parser: &parser::JpegParser<'_>) -> Result<ScanlineRoute> {
+        if parser.height == 0 {
+            return Err(Error::unsupported_feature(
+                "scanline reader does not support DNL mode (height=0 in SOF)",
+            ));
+        }
+
+        if parser.precision != 8 {
+            return Err(Error::unsupported_feature(
+                "12-bit precision JPEG (Extended Sequential) is not yet supported. \
+                 Only 8-bit precision is currently implemented.",
+            ));
+        }
+
+        if parser.num_components != 1 && parser.num_components != 3 && parser.num_components != 4 {
+            return Err(Error::unsupported_feature(
+                "scanline reader requires 1, 3, or 4 component image",
+            ));
+        }
+
+        let is_grayscale = parser.num_components == 1;
+        let is_cmyk = parser.num_components == 4;
+        let is_xyb = parser.info().is_xyb;
+
+        let comps = &parser.components[..parser.num_components as usize];
+        let max_v_samp = comps
+            .iter()
+            .map(|c| c.v_samp_factor as usize)
+            .max()
+            .unwrap_or(1);
+        let max_h = comps.iter().map(|c| c.h_samp_factor).max().unwrap_or(1);
+        let mcu_height = max_v_samp * 8;
+
+        // Progressive/arithmetic require full coefficient storage; CMYK
+        // streaming is not implemented.
+        let needs_buffered = matches!(
+            parser.mode,
+            JpegMode::Progressive
+                | JpegMode::ArithmeticSequential
+                | JpegMode::ArithmeticProgressive
+        ) || is_cmyk;
+
+        // Exotic sampling the strip processor cannot handle:
+        // factors > 2, asymmetric Cb/Cr, or chroma factors exceeding luma.
+        let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
+            max_h > 2 || max_v_samp > 2
+        } else {
+            let cb_h = comps[1].h_samp_factor;
+            let cb_v = comps[1].v_samp_factor;
+            let cr_h = comps[2].h_samp_factor;
+            let cr_v = comps[2].v_samp_factor;
+            max_h > 2
+                || max_v_samp > 2
+                || cb_h != cr_h
+                || cb_v != cr_v
+                || cb_h > comps[0].h_samp_factor
+                || cb_v > comps[0].v_samp_factor
+        };
+
+        Ok(ScanlineRoute {
+            is_grayscale,
+            is_cmyk,
+            is_xyb,
+            max_h,
+            max_v_samp,
+            mcu_height,
+            needs_buffered,
+            needs_buffered_sampling,
+        })
+    }
+
+    /// Knusperli (and Auto-at-low-Q) deblocking needs full coefficient
+    /// access, so those requests fall back to the buffered decode path.
+    fn needs_coefficient_deblock(&self, parser: &parser::JpegParser<'_>) -> bool {
+        match self.deblock_mode {
+            DeblockMode::Knusperli => true,
+            DeblockMode::Auto => {
+                let dc_quant = parser
+                    .quant_tables
+                    .iter()
+                    .find_map(|qt| qt.as_ref().map(|t| t[0]))
+                    .unwrap_or(0);
+                dc_quant >= 27
+            }
+            _ => false,
+        }
+    }
+
+    /// Fully decode to pixels for the buffered scanline modes.
+    ///
+    /// Shared by the borrowed and owned entry points (each of which had two
+    /// copies of this block before the R6 dedup).
+    fn decode_buffered_pixels(
+        &self,
+        parser: &mut parser::JpegParser<'_>,
+        route: &ScanlineRoute,
+    ) -> Result<alloc::vec::Vec<u8>> {
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.apply_idct_method(self.effective_idct_method());
+        parser.decode(&Unstoppable)?;
+
+        let output_format = if route.is_grayscale {
+            PixelFormat::Gray
+        } else {
+            PixelFormat::Rgb
+        };
+        parser.to_pixels(
+            output_format,
+            route.is_xyb,
+            self.chroma_upsampling,
+            OutputTarget::Srgb8,
+            &Unstoppable,
+        )
+    }
+
+    /// Decode a non-streamable (progressive/arithmetic) JPEG all the way to
+    /// DCT coefficients, for the coefficient-centric buffered reader
+    /// ([`ScanlineReader::from_coefficients`]). Unlike
+    /// [`decode_buffered_pixels`](Self::decode_buffered_pixels) it stops before
+    /// `to_pixels`, keeping native YCbCr coefficients so every read format is
+    /// produced natively through the shared strip pipeline (issue #187).
+    fn decode_buffered_coefficients(
+        &self,
+        parser: &mut parser::JpegParser<'_>,
+    ) -> Result<DecodedCoefficients> {
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.apply_idct_method(self.effective_idct_method());
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.decode(&Unstoppable)?;
+        parser.extract_coefficients()
+    }
+
+    /// Whether a parsed JPEG's sampling fits the coefficient-centric buffered
+    /// reader ([`ScanlineReader::from_coefficients`]). Requirements:
+    ///
+    /// - at most 3 components (the i16 strip is 3-wide), and
+    /// - for color, symmetric Cb/Cr sampling (strip requires `h[1]==h[2]`,
+    ///   `v[1]==v[2]`).
+    ///
+    /// Vertically-subsampled chroma (4:2:0, 4:4:0) qualifies as of 2026-07-15.
+    /// It was previously gated out because the coefficient path's vertical
+    /// bottom-context peek (`peek_next_chroma_row`) diverged from the
+    /// whole-image reference by up to ~76/255 at MCU boundaries; that turned out
+    /// to be a wrong DC-only shortcut *inside* the peek rather than a defect in
+    /// the mechanism (see `docs/DECODER_UNIFICATION_PLAN.md`). With the shortcut
+    /// removed, all four symmetric-chroma modes decode byte-identically to the
+    /// streaming reference and to libjpeg-turbo, so they take the native
+    /// coefficient path (fixing the lossy YCbCr/gray reads).
+    fn coeff_strip_compatible(parser: &parser::JpegParser<'_>) -> bool {
+        // Only 3-component color benefits: grayscale already serves native Y
+        // from the RGB(=Y) buffer, so routing it gains nothing and only adds
+        // risk. The lossy re-derivation this fixes (RGB→YCbCr, RGB→Y) is a
+        // color-only defect.
+        if parser.num_components != 3 {
+            return false;
+        }
+        let c = &parser.components;
+        c[1].h_samp_factor == c[2].h_samp_factor && c[1].v_samp_factor == c[2].v_samp_factor
+    }
+
+    /// Internal: create a scanline reader that owns its JPEG data.
+    ///
+    /// The parser borrows `&vec` temporarily for header parsing, then the
+    /// reader stores `Cow::Owned(vec)` for ongoing entropy decoding.
+    fn scanline_reader_owned<'a>(&self, vec: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
+        use alloc::borrow::Cow;
+
+        // Check if we need a transform
+        let effective_transform = self.compute_effective_transform_from_data(&vec);
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            return self.scanline_reader_with_transform_owned(vec);
+        }
+
+        // Phase 1: parse the JPEG data, extract everything we need.
+        // The parser borrows &vec; we must drop all parser-derived borrows
+        // before moving vec into Cow::Owned.
+        #[allow(clippy::large_enum_variant)]
+        enum ParseResult {
+            Buffered {
+                width: u32,
+                height: u32,
+                num_components: u8,
+                subsampling: Subsampling,
+                pixels: alloc::vec::Vec<u8>,
+                is_xyb: bool,
+                mcu_height: usize,
+            },
+            Streaming {
+                scan_data: parser::ParsedScanData<'static>,
+                width: u32,
+                height: u32,
+                mcu_height: usize,
+                #[cfg(feature = "parallel")]
+                wave_info: Option<(fused_parallel::WaveParallelState, bool)>,
+            },
+        }
+
+        // Check if deblock mode needs coefficient path (Knusperli or Auto at low Q)
+        {
+            let needs_deblock = match self.deblock_mode {
+                DeblockMode::Knusperli => true,
+                DeblockMode::Auto => {
+                    let mut peek = JpegParser::with_strictness(
+                        &vec,
+                        self.max_pixels,
+                        self.max_memory,
+                        None,
+                        self.strictness,
+                        self.alloc_pref,
+                    )?;
+                    peek.read_header()?;
+                    self.needs_coefficient_deblock(&peek)
+                }
+                _ => false,
+            };
+            if needs_deblock {
+                return self.scanline_reader_deblock_fallback_owned(vec);
+            }
+        }
+
+        let parse_result = {
+            let mut parser = JpegParser::with_strictness(
+                &vec,
+                self.max_pixels,
+                self.max_memory,
+                None,
+                self.strictness,
+                self.alloc_pref,
+            )?;
+            parser.read_header()?;
+
+            let route = Self::classify_scanline_route(&parser)?;
+            let mcu_height = route.mcu_height;
+
+            if route.needs_buffered || route.needs_buffered_sampling {
+                let width = parser.width;
+                let height = parser.height;
+                let num_components = parser.num_components;
+                let subsampling = if route.needs_buffered {
+                    compute_subsampling(&parser.components, num_components)
+                } else {
+                    subsampling_from_max(route.max_h, route.max_v_samp as u8, route.is_grayscale)
+                };
+
+                let pixels = self.decode_buffered_pixels(&mut parser, &route)?;
+
+                ParseResult::Buffered {
+                    width,
+                    height,
+                    num_components,
+                    subsampling,
+                    pixels,
+                    is_xyb: route.is_xyb,
+                    mcu_height,
+                }
+            } else {
+                let is_grayscale = route.is_grayscale;
+                {
+                    // Baseline streaming mode
+                    let scan_data = parser.into_scan_data(is_grayscale)?;
+                    let width = scan_data.width;
+                    let height = scan_data.height;
+
+                    // Try wave-parallel — only extract the WaveParallelState,
+                    // not a full ScanlineReader (which would borrow vec).
+                    #[cfg(feature = "parallel")]
+                    let wave_info = if self.num_threads != 1 {
+                        self.compute_wave_state(&scan_data, mcu_height)?
+                    } else {
+                        None
+                    };
+
+                    // Release the borrow on vec by converting to owned scan data
+                    let scan_data = scan_data.into_owned();
+
+                    ParseResult::Streaming {
+                        scan_data,
+                        width,
+                        height,
+                        mcu_height,
+                        #[cfg(feature = "parallel")]
+                        wave_info,
+                    }
+                }
+            }
+        };
+        // parser and all borrows of vec are now dropped.
+
+        // Phase 2: construct the reader with owned data.
+        match parse_result {
+            ParseResult::Buffered {
+                width,
+                height,
+                num_components,
+                subsampling,
+                pixels,
+                is_xyb,
+                mcu_height,
+            } => {
+                let mut reader = ScanlineReader::new_buffered_cow(
+                    Cow::Owned(vec),
+                    width,
+                    height,
+                    num_components,
+                    subsampling,
+                    pixels,
+                    is_xyb,
+                );
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                Ok(reader)
+            }
+            ParseResult::Streaming {
+                scan_data,
+                width,
+                height,
+                mcu_height,
+                #[cfg(feature = "parallel")]
+                wave_info,
+            } => {
+                #[cfg(feature = "parallel")]
+                if let Some((wave_state, is_wave_only)) = wave_info {
+                    if is_wave_only {
+                        // Wave-only: create reader from wave state with owned data
+                        let mut reader =
+                            ScanlineReader::new_wave_parallel_cow(Cow::Owned(vec), wave_state);
+                        self.apply_crop(&mut reader, width, height, mcu_height)?;
+                        return Ok(reader);
+                    } else {
+                        let mut reader = ScanlineReader::from_scan_data_cow(
+                            scan_data,
+                            Cow::Owned(vec),
+                            self.chroma_upsampling,
+                            self.effective_idct_method(),
+                            self.output_target,
+                            self.deblock_mode,
+                            self.alloc_pref,
+                        )?;
+                        reader.attach_wave_state(wave_state);
+                        self.apply_crop(&mut reader, width, height, mcu_height)?;
+                        return Ok(reader);
+                    }
+                }
+
+                let mut reader = ScanlineReader::from_scan_data_cow(
+                    scan_data,
+                    Cow::Owned(vec),
+                    self.chroma_upsampling,
+                    self.effective_idct_method(),
+                    self.output_target,
+                    self.deblock_mode,
+                    self.alloc_pref,
+                )?;
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                Ok(reader)
+            }
+        }
+    }
+
+    /// MCU row height of the source image (max vertical sampling factor x 8),
+    /// from a header-only probe. Used to resolve user crop regions on the
+    /// scanline transform paths, matching the historical behavior of using
+    /// the pre-transform sampling factors.
+    fn source_mcu_height(&self, data: &[u8]) -> Result<usize> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.read_header()?;
+        let max_v_samp = parser.components[..parser.num_components as usize]
+            .iter()
+            .map(|c| c.v_samp_factor as usize)
+            .max()
+            .unwrap_or(1);
+        Ok(max_v_samp * 8)
+    }
+
+    /// Transform path for owned data: fully decodes and stores owned data.
+    ///
+    /// Transforms are applied in the pixel domain by decode() (issue #149:
+    /// the DCT-domain transform shifted content and desynced chroma for
+    /// non-MCU-aligned subsampled images, and diverged from the upright
+    /// IDCT for dimension swaps). Serve the oriented pixels from a buffered
+    /// reader so the scanline path matches decode() exactly.
+    fn scanline_reader_with_transform_owned<'a>(
+        &self,
+        vec: alloc::vec::Vec<u8>,
+    ) -> Result<ScanlineReader<'a>> {
+        use crate::types::Subsampling;
+        use alloc::borrow::Cow;
+
+        let mcu_height = self.source_mcu_height(&vec)?;
+        let mut config_no_crop = self.clone();
+        config_no_crop.crop_region = None;
+        let result = config_no_crop.decode(&vec, Unstoppable)?;
+        let vis_w = result.width();
+        let vis_h = result.height();
+        let num_components = result.format().num_channels() as u8;
+        let pixels = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
+
+        let mut reader = ScanlineReader::new_buffered_cow(
+            Cow::Owned(vec),
+            vis_w,
+            vis_h,
+            num_components,
+            Subsampling::S444,
+            pixels,
+            false,
+        );
+        self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+        Ok(reader)
+    }
+
+    /// Compute wave-parallel state from scan data without creating a reader.
+    ///
+    /// Returns `Ok(Some((wave_state, is_wave_only)))` if wave parallel is
+    /// eligible. `is_wave_only` is true when the wave decode can serve all
+    /// output paths (box filter 4:2:0).
+    ///
+    /// This is the core computation shared by [`try_wave_parallel`] and the
+    /// owned-data path.
+    #[cfg(feature = "parallel")]
+    fn compute_wave_state(
+        &self,
+        scan_data: &parser::ParsedScanData<'_>,
+        mcu_height: usize,
+    ) -> Result<Option<(fused_parallel::WaveParallelState, bool)>> {
+        use fused_parallel::{WaveParallelState, build_huffman_tables_from_scan_data};
+        use rst_scan::{compute_segments, scan_rst_markers};
+
+        let num_comps = scan_data.num_components as usize;
+
+        let ri = scan_data.restart_interval as usize;
+        if ri == 0 {
+            return Ok(None);
+        }
+
+        let max_h = scan_data.h_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let max_v = scan_data.v_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let mcu_width = max_h * 8;
+        let mcu_cols = (scan_data.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (scan_data.height as usize + mcu_height - 1) / mcu_height;
+        let total_mcus = mcu_cols * mcu_rows;
+
+        // MCU-row alignment check
+        if ri % mcu_cols != 0 {
+            return Ok(None);
+        }
+
+        if total_mcus < 1024 {
+            return Ok(None);
+        }
+
+        // Scan for RST markers
+        let expected_markers = total_mcus / ri;
+        let entropy_data = &scan_data.data[scan_data.scan_data_start..];
+        let rst_result = scan_rst_markers(entropy_data, expected_markers);
+
+        if rst_result.markers.is_empty() {
+            return Ok(None);
+        }
+
+        let (seg_starts, seg_ends) = compute_segments(&rst_result.markers, rst_result.entropy_end);
+        let num_segments = seg_starts.len();
+
+        if num_segments < 4 {
+            return Ok(None);
+        }
+
+        // Build scan_comps from table_mapping
+        let scan_comps: Vec<(usize, u8, u8)> = (0..num_comps)
+            .map(|i| {
+                let (dc, ac) = scan_data.table_mapping[i];
+                (i, dc as u8, ac as u8)
+            })
+            .collect();
+
+        // Build Huffman tables
+        let (dc_tables, ac_tables) = build_huffman_tables_from_scan_data(scan_data, &scan_comps);
+
+        // Determine wave size: balance parallelism, load balancing, and memory
+        let num_threads = rayon::current_num_threads();
+        let width = scan_data.width as usize;
+        let mcu_w = max_h * 8;
+        let mcu_h = max_v * 8;
+        let mcu_cols_wave = (width + mcu_w - 1) / mcu_w;
+        let mcu_rows_per_ri = ri / mcu_cols_wave;
+        let pixel_rows_per_seg = mcu_rows_per_ri * mcu_h;
+        let seg_rgb_bytes = pixel_rows_per_seg * width * 3;
+
+        // Cap wave_buf at ~6 MB to reduce peak memory vs full-buffer decode.
+        const WAVE_BUF_TARGET_BYTES: usize = 6 * 1024 * 1024;
+        let max_wave_by_mem = WAVE_BUF_TARGET_BYTES
+            .checked_div(seg_rgb_bytes)
+            .map(|n| n.max(1))
+            .unwrap_or(num_segments);
+
+        // 2x oversubscription for load balancing, capped by memory budget
+        let wave_size = (num_threads * 2)
+            .max(4)
+            .min(num_segments)
+            .min(max_wave_by_mem);
+
+        let wave_state = WaveParallelState::new(
+            scan_data,
+            seg_starts,
+            seg_ends,
+            scan_comps,
+            dc_tables,
+            ac_tables,
+            self.strictness,
+            self.effective_idct_method(),
+            wave_size,
+        );
+
+        // Determine if we can use the wave-only RGB box path (original behavior)
+        let is_box_filter = matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor);
+        let is_subsampled_color = num_comps == 3
+            && (scan_data.h_samp[1] != scan_data.h_samp[0]
+                || scan_data.v_samp[1] != scan_data.v_samp[0]);
+        let is_wave_only = is_box_filter && is_subsampled_color;
+
+        Ok(Some((wave_state, is_wave_only)))
+    }
+
+    /// Try to create a wave-parallel scanline reader.
+    ///
+    /// Returns `Ok(Some(reader))` if wave parallel is eligible and activated,
+    /// `Ok(None)` to fall through to the sequential streaming path.
+    ///
+    /// Eligibility: baseline 4:2:0, box filter, MCU-row-aligned DRI, enough segments.
+    #[cfg(feature = "parallel")]
+    fn try_wave_parallel<'a>(
+        &self,
+        scan_data: &parser::ParsedScanData<'a>,
+        mcu_height: usize,
+    ) -> Result<Option<WaveResult<'a>>> {
+        let Some((wave_state, is_wave_only)) = self.compute_wave_state(scan_data, mcu_height)?
+        else {
+            return Ok(None);
+        };
+
+        let width = scan_data.width;
+        let height = scan_data.height;
+
+        if is_wave_only {
+            // Wave-only reader: both RGB and planar served from wave decode
+            let mut reader = ScanlineReader::new_wave_parallel(scan_data.data, wave_state);
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            Ok(Some(WaveResult::WaveOnly(reader)))
+        } else {
+            // Return wave state for caller to attach to sequential reader
+            Ok(Some(WaveResult::WaveState(wave_state)))
+        }
+    }
+
+    /// Creates a scanline reader that applies a DCT-domain transform.
+    ///
+    /// Does a full coefficient decode + transform, then creates a reader
+    /// that streams pixels from the transformed coefficients.
+    /// Fallback for deblock modes that need coefficient access (Knusperli, Auto at low Q).
+    /// Runs full `decode()` then wraps the result in a buffered `ScanlineReader`.
+    fn scanline_reader_deblock_fallback<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        let result = self.decode(data, Unstoppable)?;
+        let (vis_w, vis_h, num_ch) = (
+            result.width(),
+            result.height(),
+            result.format().num_channels() as u8,
+        );
+        let pixels = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixels from deblock fallback"))?;
+        Ok(ScanlineReader::new_buffered(
+            data,
+            vis_w,
+            vis_h,
+            num_ch,
+            Subsampling::S444,
+            pixels,
+            false,
+        ))
+    }
+
+    /// Owned-data variant of deblock fallback.
+    fn scanline_reader_deblock_fallback_owned<'a>(
+        &self,
+        data: alloc::vec::Vec<u8>,
+    ) -> Result<ScanlineReader<'a>> {
+        let result = self.decode(&data, Unstoppable)?;
+        let (vis_w, vis_h, num_ch) = (
+            result.width(),
+            result.height(),
+            result.format().num_channels() as u8,
+        );
+        let pixels = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixels from deblock fallback"))?;
+        Ok(ScanlineReader::new_buffered_cow(
+            alloc::borrow::Cow::Owned(data),
+            vis_w,
+            vis_h,
+            num_ch,
+            Subsampling::S444,
+            pixels,
+            false,
+        ))
+    }
+
+    /// Transform path for borrowed data.
+    ///
+    /// Transforms are applied in the pixel domain by decode() (issue #149:
+    /// the DCT-domain transform shifted content and desynced chroma for
+    /// non-MCU-aligned subsampled images, and diverged from the upright
+    /// IDCT for dimension swaps). Serve the oriented pixels from a buffered
+    /// reader so the scanline path matches decode() exactly.
+    fn scanline_reader_with_transform<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        let mcu_height = self.source_mcu_height(data)?;
+        let mut config_no_crop = self.clone();
+        config_no_crop.crop_region = None;
+        let result = config_no_crop.decode(data, Unstoppable)?;
+        let vis_w = result.width();
+        let vis_h = result.height();
+        let num_components = result.format().num_channels() as u8;
+        let is_xyb = false; // XYB is converted to RGB during decode
+        let pixels = result
+            .into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
+
+        let mut reader = ScanlineReader::new_buffered(
+            data,
+            vis_w,
+            vis_h,
+            num_components,
+            Subsampling::S444,
+            pixels,
+            is_xyb,
+        );
+        // Crop is in output space (post-transform), resolve against visible dims
+        self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+        Ok(reader)
+    }
+
+    /// Resolves and applies the user's crop region to a scanline reader.
+    fn apply_crop(
+        &self,
+        reader: &mut ScanlineReader<'_>,
+        img_w: u32,
+        img_h: u32,
+        mcu_height: usize,
+    ) -> Result<()> {
+        if let Some(crop_region) = self.crop_region {
+            let resolved = crop_region.resolve(img_w, img_h, mcu_height)?;
+            reader.set_crop(resolved);
+        }
+        Ok(())
+    }
+
+    /// Compute the effective transform from raw JPEG data.
+    ///
+    /// Scans raw bytes for EXIF orientation (lightweight, no full parse),
+    /// composes with any user-specified transform.
+    /// Returns `LosslessTransform::None` if no transform is needed.
+    pub(crate) fn compute_effective_transform_from_data(
+        &self,
+        data: &[u8],
+    ) -> crate::lossless::LosslessTransform {
+        use crate::lossless::LosslessTransform;
+
+        let exif_transform = if self.auto_orient {
+            find_exif_orientation(data)
+                .and_then(LosslessTransform::from_exif_orientation)
+                .unwrap_or(LosslessTransform::None)
+        } else {
+            LosslessTransform::None
+        };
+
+        let user_transform = self.decode_transform.unwrap_or(LosslessTransform::None);
+
+        if exif_transform == LosslessTransform::None {
+            user_transform
+        } else if user_transform == LosslessTransform::None {
+            exif_transform
+        } else {
+            exif_transform.then(user_transform)
+        }
+    }
+
+    /// Decode upright, then apply `transform` as a pixel-domain permutation.
+    ///
+    /// This is how [`decode()`](Self::decode) applies EXIF orientation and
+    /// explicit transforms (issue #149). It matches decode-with-
+    /// `auto_orient(false)` followed by an external pixel-domain orientation
+    /// bake byte-for-byte, and keeps the streaming fast path eligible for
+    /// the upright decode. The user crop region is applied after orientation
+    /// (crop coordinates are in output space).
+    fn decode_upright_then_orient(
+        &self,
+        data: &[u8],
+        transform: crate::lossless::LosslessTransform,
+        stop: &dyn Stop,
+    ) -> Result<DecodeResult> {
+        let mut upright = self.clone();
+        upright.auto_orient = false;
+        upright.decode_transform = None;
+        upright.crop_region = None;
+
+        // EXIF extras handling matches the pre-#149 transform path: with
+        // auto_orient disabled on the inner decode, the user's own preserve
+        // config applies — EXIF is kept only when the caller asked for it.
+        let mut result = upright.decode_dyn(data, stop)?;
+        result.apply_pixel_transform(transform);
+
+        if let Some(crop_region) = self.crop_region {
+            let resolved = crop_region.resolve(result.width, result.height, 8)?;
+            result.crop_in_place(resolved.x, resolved.y, resolved.width, resolved.height);
+        }
+        Ok(result)
+    }
+
+    /// Decodes a JPEG image.
+    ///
+    /// Uses streaming single-pass decode (entropy, IDCT, color convert in one
+    /// MCU-row pass, no coefficient storage) for baseline JPEGs with u8
+    /// RGB/BGR/RGBA/BGRA output. Falls back to buffered coefficient decode for
+    /// progressive JPEGs, f32/u16 output, lossless transforms, dequant bias,
+    /// Knusperli deblocking, or grayscale/CMYK pixel formats.
+    ///
+    /// For large images or memory-constrained environments, consider using
+    /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
+    /// into caller-provided buffers.
+    pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        self.decode_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode`](Self::decode).
+    ///
+    /// Every public decode entry point is a thin `impl Stop` shim over a
+    /// `&dyn Stop` body like this one, so the decode pipeline is
+    /// monomorphized ONCE, here in zenjpeg, instead of once per `Stop` type
+    /// in every dependent crate (#190: a 300-line consumer used to pull
+    /// ~50k LLVM lines of decoder internals into its own codegen). The
+    /// cancellation checks are per-row / per-scan, so the indirect call is
+    /// noise. `&dyn Stop: Stop` (via `enough`'s blanket `&T` impl), so the
+    /// parser-level `&impl Stop` helpers instantiate for `&dyn Stop` only.
+    pub(crate) fn decode_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodeResult> {
+        // Track whether we force-preserved EXIF just for auto_orient
+        let forced_exif = self.auto_orient && !self.preserve.exif;
+        let preserve = if self.auto_orient {
+            // Ensure EXIF is preserved for orientation reading
+            let mut p = self.preserve.clone();
+            p.exif = true;
+            p
+        } else {
+            self.preserve.clone()
+        };
+
+        // Pre-compute effective transform from raw data before full parse.
+        // This avoids disabling streaming for the common case of orientation=1.
+        let effective_transform = self.compute_effective_transform_from_data(data);
+
+        // Orientation and explicit transforms are applied in the pixel
+        // domain: decode upright (streaming fast path stays eligible), then
+        // permute the decoded pixels. This matches decode-with-
+        // `auto_orient(false)` + an external pixel-domain orientation bake
+        // byte-for-byte. The previous DCT-coefficient-domain transform could
+        // not: the coefficient grid is MCU-padded, and transforms that move
+        // that padding onto a leading edge shifted the visible content and
+        // desynced chroma phase for subsampled non-MCU-aligned images (a
+        // 4000x3000 4:2:0 EXIF-6 photo came out shifted 8 px with 36% of
+        // pixels visibly wrong — issue #149); dimension-swapping transforms
+        // additionally forced the f32 IDCT, diverging from the integer-IDCT
+        // upright decode by up to 9 channel steps. DCT-domain transforms
+        // remain available through the lossless re-encode pipeline
+        // (`lossless::transform`), where they avoid generation loss.
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            return self.decode_upright_then_orient(data, effective_transform, stop);
+        }
+
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            Some(&preserve),
+            self.strictness,
+            self.alloc_pref,
+        )?;
+
+        // Streaming decode produces RGB u8 directly — disable it when the output
+        // needs coefficients (f32, u16, precise, dequant_bias, non-RGB formats,
+        // or Knusperli deblocking which requires DCT coefficients).
+        //
+        // Boundary4Tap, Auto, and AutoStreamable do NOT need coefficient storage —
+        // they operate in the pixel domain after IDCT and are applied as a post-decode
+        // pass on the u8 output. Only Knusperli needs raw coefficients.
+        {
+            let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
+            let needs_coefficients = self.output_target.is_f32()
+                || self.output_target.is_precise()
+                || self.output_target.uses_dequant_bias()
+                || self.deblock_mode == DeblockMode::Knusperli
+                || !matches!(
+                    output_format,
+                    PixelFormat::Rgb
+                        | PixelFormat::Bgr
+                        | PixelFormat::Rgba
+                        | PixelFormat::Bgra
+                        | PixelFormat::Bgrx
+                );
+            if needs_coefficients {
+                parser.decode_mode = parser::DecodeMode::Coefficient;
+            } else {
+                // Hint the streaming decoder to produce BGRA/RGBA/etc. directly,
+                // eliminating the post-decode full-buffer swizzle pass. Same hint
+                // that decode_into() sets — without it, the streaming path always
+                // outputs RGB and the caller pays a separate swizzle over the
+                // entire output buffer (measurable at 4096²+).
+                parser.streaming_output_format = Some(output_format);
+            }
+        }
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.apply_idct_method(self.effective_idct_method());
+        parser.num_threads = self.num_threads;
+        #[cfg(feature = "parallel")]
+        {
+            parser.parallel_strategy = self.parallel_strategy;
+        }
+        // Propagate force_f32_idct from config (set by dimension-swapping transforms).
+        // Must be set before decode() so can_use_streaming() sees it.
+        if self.force_f32_idct {
+            parser.force_f32_idct = true;
+        }
+        parser.decode(&stop)?;
+
+        let (visible_w, visible_h) = (parser.width, parser.height);
+
+        // Extract gain map before pixel conversion (needs parser state)
+        let gain_map_result = if self.gain_map != GainMapHandling::Discard {
+            self.extract_gain_map(&mut parser, data, &stop)?
+        } else {
+            None
+        };
+
+        let info = parser.info();
+        let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
+
+        let mut result = if self.output_target.is_f32() {
+            // f32 output path
+            #[allow(unused_mut)]
+            let mut pixels = if self.deblock_mode != DeblockMode::Off {
+                parser.to_pixels_f32_deblock(
+                    output_format,
+                    info.is_xyb,
+                    self.chroma_upsampling,
+                    self.deblock_mode,
+                    &stop,
+                )?
+            } else {
+                parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?
+            };
+
+            // Apply ICC profile if enabled and the caller explicitly asked
+            // for color correction. Pixels at this point are always RGB
+            // (CMYK/YCCK already converted). moxcms handles the transform
+            // to the user's target color space.
+            //
+            // XYB JPEGs are a special case: the output stage already ran
+            // the inverse XYB → sRGB transform in SIMD, so pixels are
+            // already visibly-correct sRGB. Applying the embedded XYB ICC
+            // profile here would double-transform (the XYB ICC describes
+            // scaled-XYB → sRGB, but pixels are no longer scaled-XYB).
+            // Skip the ICC apply for XYB in all cases.
+            #[cfg(feature = "moxcms")]
+            {
+                let is_xyb = parser
+                    .icc_profile
+                    .as_ref()
+                    .map(|icc| crate::color::icc::is_xyb_profile(icc))
+                    .unwrap_or(false);
+                if let Some(target) = self.correct_color
+                    && !is_xyb
+                    && let Some(ref icc_profile) = parser.icc_profile
+                {
+                    match apply_icc_transform_f32(
+                        &pixels,
+                        visible_w as usize,
+                        visible_h as usize,
+                        icc_profile,
+                        target,
+                    ) {
+                        Ok(transformed) => pixels = transformed,
+                        Err(_e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Warning: ICC f32 transform failed, using original colors: {_e:?}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Apply sRGB→linear transfer if requested
+            if self.output_target.is_linear() {
+                crate::color::icc::srgb_to_linear_inplace(&mut pixels);
+            }
+
+            // Apply user crop region (pixel-level crop of decoded buffer)
+            let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
+                let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    visible_w as usize,
+                    resolved.x as usize,
+                    resolved.y as usize,
+                    resolved.width as usize,
+                    resolved.height as usize,
+                    output_format.num_channels(),
+                );
+                (resolved.width, resolved.height)
+            } else {
+                (visible_w, visible_h)
+            };
+
+            let extras = finalize_extras(parser.take_extras(), data, forced_exif);
+            let warnings = parser.take_warnings();
+            DecodeResult::new_f32(
+                out_w,
+                out_h,
+                output_format,
+                self.output_target,
+                pixels,
+                extras,
+                warnings,
+            )
+        } else if self.deblock_mode == DeblockMode::Knusperli {
+            // u8 output with Knusperli deblocking: route through f32 deblock path.
+            // Knusperli requires raw DCT coefficients, so it must use the coefficient path.
+            let f32_pixels = parser.to_pixels_f32_deblock(
+                output_format,
+                info.is_xyb,
+                self.chroma_upsampling,
+                self.deblock_mode,
+                &stop,
+            )?;
+            #[allow(unused_mut)]
+            let mut pixels: Vec<u8> = f32_pixels
+                .iter()
+                .map(|&v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8)
+                .collect();
+
+            let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
+                let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    visible_w as usize,
+                    resolved.x as usize,
+                    resolved.y as usize,
+                    resolved.width as usize,
+                    resolved.height as usize,
+                    output_format.bytes_per_pixel(),
+                );
+                (resolved.width, resolved.height)
+            } else {
+                (visible_w, visible_h)
+            };
+
+            let extras = finalize_extras(parser.take_extras(), data, forced_exif);
+            let warnings = parser.take_warnings();
+            DecodeResult::new_u8(
+                out_w,
+                out_h,
+                output_format,
+                self.output_target,
+                pixels,
+                extras,
+                warnings,
+            )
+        } else {
+            // u8 output path (fast streaming decode).
+            // Boundary4Tap/Auto/AutoStreamable deblocking is applied post-decode.
+            #[allow(unused_mut)]
+            let mut pixels = parser.to_pixels(
+                output_format,
+                info.is_xyb,
+                self.chroma_upsampling,
+                self.output_target,
+                &stop,
+            )?;
+
+            // Apply boundary 4-tap deblock as post-processing on interleaved u8 data.
+            // This handles Boundary4Tap, Auto (resolved to Boundary4Tap in streaming),
+            // and AutoStreamable modes. The filter operates per-channel at 8-pixel block
+            // boundaries in the RGB domain, using luma DC quant for filter strength.
+            if matches!(
+                self.deblock_mode,
+                DeblockMode::Boundary4Tap | DeblockMode::Auto | DeblockMode::AutoStreamable
+            ) {
+                let width = visible_w as usize;
+                let height = visible_h as usize;
+                // bytes_per_pixel gives the interleaved channel count (3 for RGB, 4 for RGBA)
+                let channels = output_format.bytes_per_pixel();
+                // Use luma DC quant for strength — it's the dominant visual component.
+                let dc_quant = parser.quant_tables[parser.components[0].quant_table_idx as usize]
+                    .map(|qt| qt[0])
+                    .unwrap_or(1);
+                let strength = crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
+                crate::deblock::filter_interleaved_u8_boundary_4tap(
+                    &mut pixels,
+                    width,
+                    height,
+                    channels,
+                    strength,
+                );
+            }
+
+            // Apply ICC profile if enabled and the caller explicitly asked
+            // for color correction. Pixels are always RGB here (CMYK/YCCK
+            // converted earlier in output.rs).
+            //
+            // XYB JPEGs are a special case: the output stage already ran
+            // the inverse XYB → sRGB transform in SIMD, so pixels are
+            // already visibly-correct sRGB. Applying the embedded XYB ICC
+            // profile here would double-transform. Skip for XYB.
+            #[cfg(feature = "moxcms")]
+            {
+                let is_xyb = parser
+                    .icc_profile
+                    .as_ref()
+                    .map(|icc| crate::color::icc::is_xyb_profile(icc))
+                    .unwrap_or(false);
+                if let Some(target) = self.correct_color
+                    && !is_xyb
+                    && let Some(ref icc_profile) = parser.icc_profile
+                {
+                    match apply_icc_transform(
+                        &pixels,
+                        visible_w as usize,
+                        visible_h as usize,
+                        icc_profile,
+                        target,
+                    ) {
+                        Ok(transformed) => pixels = transformed,
+                        Err(_e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Warning: ICC profile transform failed, using original colors: {_e:?}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Apply user crop region (pixel-level crop of decoded buffer)
+            let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
+                let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    visible_w as usize,
+                    resolved.x as usize,
+                    resolved.y as usize,
+                    resolved.width as usize,
+                    resolved.height as usize,
+                    output_format.bytes_per_pixel(),
+                );
+                (resolved.width, resolved.height)
+            } else {
+                (visible_w, visible_h)
+            };
+
+            let extras = finalize_extras(parser.take_extras(), data, forced_exif);
+            let warnings = parser.take_warnings();
+            DecodeResult::new_u8(
+                out_w,
+                out_h,
+                output_format,
+                self.output_target,
+                pixels,
+                extras,
+                warnings,
+            )
+        };
+
+        result.set_gain_map(gain_map_result);
+        Ok(result)
+    }
+
+    /// Push-based callback decode: calls `callback` once per row of decoded u8 pixels.
+    ///
+    /// This is the push counterpart to the pull-based [`scanline_reader()`](Self::scanline_reader).
+    /// The callback receives a [`RowSlice`] borrowing the decoder's internal buffer (zero-copy).
+    ///
+    /// Supported formats: [`PixelFormat::Rgb`], [`Bgr`](PixelFormat::Bgr),
+    /// [`Rgba`](PixelFormat::Rgba), [`Bgra`](PixelFormat::Bgra),
+    /// [`Bgrx`](PixelFormat::Bgrx), [`Gray`](PixelFormat::Gray).
+    ///
+    /// For f32 output, use [`decode_rows_f32()`](Self::decode_rows_f32).
+    ///
+    /// # Early abort
+    ///
+    /// Return `Err` from the callback to stop decoding immediately.
+    /// The error is propagated as the return value.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, PixelFormat};
+    ///
+    /// let mut hash = 0u64;
+    /// let info = Decoder::new().decode_rows(
+    ///     &jpeg_data,
+    ///     PixelFormat::Rgb,
+    ///     |row| {
+    ///         for &b in row.as_bytes() {
+    ///             hash = hash.wrapping_mul(31).wrapping_add(b as u64);
+    ///         }
+    ///         Ok(())
+    ///     },
+    ///     enough::Unstoppable,
+    /// )?;
+    /// println!("{}x{}, hash={}", info.dimensions.width, info.dimensions.height, hash);
+    /// ```
+    /// Decode the JPEG and write the pixel data directly into a caller-owned
+    /// buffer, returning the number of bytes written.
+    ///
+    /// Skips the output [`Vec`] allocation that [`decode()`](Self::decode)
+    /// performs. Suitable when the caller already owns the output backing
+    /// store (e.g. a sink in a streaming pipeline). Supports the same u8
+    /// RGB-family / Gray output formats as the streaming fast paths; other
+    /// formats route through [`decode()`](Self::decode) + memcpy.
+    ///
+    /// `dst` must be at least `width * height * bytes_per_pixel(format)`.
+    pub fn decode_into(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: impl Stop,
+    ) -> Result<usize> {
+        self.decode_into_dyn(data, format, dst, &stop)
+    }
+
+    /// Non-generic body of [`decode_into`](Self::decode_into) (see
+    /// [`decode_dyn`](Self::decode_dyn) for why).
+    fn decode_into_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: &dyn Stop,
+    ) -> Result<usize> {
+        // Eligibility for the direct path, which decodes straight into `dst`
+        // and therefore runs NONE of `decode()`'s post-decode stages.
+        //
+        // Anything this list fails to exclude is silently dropped: the caller
+        // gets pixels that do not match what they configured, with no error to
+        // say so. `decode_into_via_decode` handles every excluded case
+        // correctly by delegating to `decode()` and copying, at the cost of one
+        // intermediate buffer. Correctness first; the fast path is an
+        // optimisation under the "decode_into == decode" contract, gated by
+        // `tests/decode_into_parity.rs`.
+        let direct_eligible = matches!(
+            format,
+            PixelFormat::Rgb
+                | PixelFormat::Bgr
+                | PixelFormat::Rgba
+                | PixelFormat::Bgra
+                | PixelFormat::Bgrx
+                | PixelFormat::Gray
+        ) && self.compute_effective_transform_from_data(data)
+            == crate::lossless::LosslessTransform::None
+            // Deblocking is applied after the decode loop, so no mode survives
+            // the direct path — not just the coefficient-domain ones.
+            // `Boundary4Tap`/`AutoStreamable` were previously admitted here and
+            // silently discarded (4819 of 18432 bytes wrong at Q25).
+            && self.deblock_mode == DeblockMode::Off
+            // Crop is applied to the decoded image. The direct path decoded the
+            // WHOLE frame into `dst` and reported the full byte count, so
+            // `.crop(..).decode_into(..)` returned the uncropped image.
+            && self.crop_region.is_none()
+            // ICC correction runs on the assembled output. Dropping it while
+            // `codec::info::decode_descriptor` stamps the result `Cicp::SRGB`
+            // hands the sink source-gamut pixels labelled sRGB — undetectable
+            // downstream (measured: 17417 of 18432 bytes wrong, max delta 108,
+            // for a Display-P3 source corrected to sRGB).
+            && self.correct_color.is_none()
+            && self.output_target == OutputTarget::Srgb8;
+
+        if direct_eligible {
+            let mut parser = parser::JpegParser::with_strictness(
+                data,
+                self.max_pixels,
+                self.max_memory,
+                None,
+                self.strictness,
+                self.alloc_pref,
+            )?;
+            parser.read_header()?;
+            let is_xyb = parser.info().is_xyb;
+
+            // For grayscale source, only PixelFormat::Gray is meaningful.
+            if parser.num_components == 1 && format != PixelFormat::Gray {
+                // Fall through to allocating decode (caller asked for RGB from a gray JPEG).
+                return self.decode_into_via_decode(data, format, dst, stop);
+            }
+            // For color source, PixelFormat::Gray would need RGB→Gray reduction,
+            // not handled by the direct path.
+            if parser.num_components > 1 && format == PixelFormat::Gray {
+                return self.decode_into_via_decode(data, format, dst, stop);
+            }
+
+            parser.chroma_upsampling = self.chroma_upsampling;
+            parser.apply_idct_method(self.effective_idct_method());
+            parser.num_threads = self.num_threads;
+            #[cfg(feature = "parallel")]
+            {
+                parser.parallel_strategy = self.parallel_strategy;
+            }
+            // Hint the streaming decoder to produce BGRA/RGBA directly,
+            // eliminating the post-decode full-buffer swizzle pass.
+            parser.streaming_output_format = Some(format);
+            parser.decode(&stop)?;
+            return parser.write_pixels_into(
+                format,
+                is_xyb,
+                self.chroma_upsampling,
+                self.output_target,
+                &Unstoppable,
+                dst,
+            );
+        }
+
+        self.decode_into_via_decode(data, format, dst, stop)
+    }
+
+    /// Streaming decode directly into `dst`, skipping eligibility re-checks
+    /// and header re-parsing. The caller (push_decoder_direct) has already
+    /// validated that the JPEG is baseline, non-XYB, non-progressive, no
+    /// crop/transform/deblock, and the format is an RGB-family u8 type.
+    ///
+    /// This is the same code path as `decode_into`'s `direct_eligible` branch,
+    /// but without the redundant `JpegParser::read_header()` — the header
+    /// info (num_components, is_xyb) is passed from the caller's cached probe.
+    ///
+    /// Returns `Ok(bytes_written)` on success, `Err` if the streaming path
+    /// fails internally (e.g., coefficient guard triggers).
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn decode_streaming_into(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: &dyn Stop,
+        num_components: u8,
+        is_xyb: bool,
+    ) -> Result<usize> {
+        // Grayscale source + non-Gray format: can't stream, need full decode
+        if num_components == 1 && format != PixelFormat::Gray {
+            return Err(Error::internal(
+                "grayscale source needs Gray format for streaming",
+            ));
+        }
+        if num_components > 1 && format == PixelFormat::Gray {
+            return Err(Error::internal("color source can't stream to Gray"));
+        }
+
+        let mut parser = parser::JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.read_header()?;
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.apply_idct_method(self.effective_idct_method());
+        parser.num_threads = self.num_threads;
+        #[cfg(feature = "parallel")]
+        {
+            parser.parallel_strategy = self.parallel_strategy;
+        }
+        parser.streaming_output_format = Some(format);
+        parser.decode(&stop)?;
+        parser.write_pixels_into(
+            format,
+            is_xyb,
+            self.chroma_upsampling,
+            self.output_target,
+            &Unstoppable,
+            dst,
+        )
+    }
+
+    fn decode_into_via_decode(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: &dyn Stop,
+    ) -> Result<usize> {
+        // Fallback: full decode then memcpy. Allocates an intermediate Vec but
+        // exists so callers can rely on `decode_into()` always working.
+        let mut cfg = self.clone();
+        cfg.output_format = Some(format);
+        let result = cfg.decode_dyn(data, stop)?;
+        let pixels = result.into_pixels_u8().ok_or_else(|| {
+            Error::internal("decode_into requires u8 output (use decode for f32)")
+        })?;
+        if dst.len() < pixels.len() {
+            return Err(Error::internal("destination buffer too small"));
+        }
+        dst[..pixels.len()].copy_from_slice(&pixels);
+        Ok(pixels.len())
+    }
+
+    pub fn decode_rows<F>(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        mut callback: F,
+        stop: impl Stop,
+    ) -> Result<ScanlineInfo>
+    where
+        F: FnMut(RowSlice<'_>) -> Result<()>,
+    {
+        self.decode_rows_dyn(data, format, &mut callback, &stop)
+    }
+
+    /// Non-generic body of [`decode_rows`](Self::decode_rows): the callback
+    /// and the stop token both cross a `dyn` boundary (one indirect call per
+    /// row, see [`decode_dyn`](Self::decode_dyn)).
+    fn decode_rows_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        callback: &mut dyn FnMut(RowSlice<'_>) -> Result<()>,
+        stop: &dyn Stop,
+    ) -> Result<ScanlineInfo> {
+        // Validate format is u8-based
+        match format {
+            PixelFormat::Rgb
+            | PixelFormat::Bgr
+            | PixelFormat::Rgba
+            | PixelFormat::Bgra
+            | PixelFormat::Bgrx
+            | PixelFormat::Gray => {}
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "decode_rows() only supports u8 formats (Rgb, Bgr, Rgba, Bgra, Bgrx, Gray). \
+                     For f32 formats use decode_rows_f32().",
+                ));
+            }
+        }
+
+        let mut reader = self.scanline_reader(data)?;
+        let info = reader.info();
+        let width = reader.width() as usize;
+        let bpp = format.bytes_per_pixel();
+        let row_bytes = width * bpp;
+
+        // Reusable single-row buffer
+        let mut row_buf = vec![0u8; row_bytes];
+
+        let mut row_index = 0usize;
+        while !reader.is_finished() {
+            stop.check()?;
+
+            // Wrap as 1-row ImgRefMut (width = stride in bytes for u8)
+            let img = ImgRefMut::new(&mut row_buf, row_bytes, 1);
+            let read = match format {
+                PixelFormat::Rgb => reader.read_rows_rgb8(img)?,
+                PixelFormat::Bgr => reader.read_rows_bgr8(img)?,
+                PixelFormat::Rgba => reader.read_rows_rgba8(img)?,
+                PixelFormat::Bgra => reader.read_rows_bgra8(img)?,
+                PixelFormat::Bgrx => reader.read_rows_bgrx8(img)?,
+                PixelFormat::Gray => reader.read_rows_gray8(img)?,
+                _ => unreachable!(),
+            };
+
+            if read > 0 {
+                let slice = RowSlice::new(&row_buf[..row_bytes], row_index, width, format);
+                callback(slice)?;
+                row_index += 1;
+            }
+        }
+
+        Ok(info)
+    }
+
+    /// Push-based callback decode for f32 pixel formats.
+    ///
+    /// The callback receives a [`RowSliceF32`] borrowing the decoder's internal buffer.
+    ///
+    /// Supported formats: [`PixelFormat::RgbaF32`], [`GrayF32`](PixelFormat::GrayF32).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, PixelFormat};
+    ///
+    /// Decoder::new().decode_rows_f32(
+    ///     &jpeg_data,
+    ///     PixelFormat::RgbaF32,
+    ///     |row| {
+    ///         let floats = row.as_slice();
+    ///         // Process RGBA f32 data...
+    ///         Ok(())
+    ///     },
+    ///     enough::Unstoppable,
+    /// )?;
+    /// ```
+    pub fn decode_rows_f32<F>(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        mut callback: F,
+        stop: impl Stop,
+    ) -> Result<ScanlineInfo>
+    where
+        F: FnMut(RowSliceF32<'_>) -> Result<()>,
+    {
+        self.decode_rows_f32_dyn(data, format, &mut callback, &stop)
+    }
+
+    /// Non-generic body of [`decode_rows_f32`](Self::decode_rows_f32).
+    fn decode_rows_f32_dyn(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        callback: &mut dyn FnMut(RowSliceF32<'_>) -> Result<()>,
+        stop: &dyn Stop,
+    ) -> Result<ScanlineInfo> {
+        // Validate format is f32-based
+        let floats_per_pixel = match format {
+            PixelFormat::RgbaF32 => 4,
+            PixelFormat::GrayF32 => 1,
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "decode_rows_f32() only supports f32 formats (RgbaF32, GrayF32). \
+                     For u8 formats use decode_rows().",
+                ));
+            }
+        };
+
+        let mut reader = self.scanline_reader(data)?;
+        let info = reader.info();
+        let width = reader.width() as usize;
+        let row_floats = width * floats_per_pixel;
+
+        // Reusable single-row buffer
+        let mut row_buf = vec![0f32; row_floats];
+
+        let mut row_index = 0usize;
+        while !reader.is_finished() {
+            stop.check()?;
+
+            // Wrap as 1-row ImgRefMut (width = stride in f32 elements)
+            let img = ImgRefMut::new(&mut row_buf, row_floats, 1);
+            let read = match format {
+                PixelFormat::RgbaF32 => reader.read_rows_rgba_f32(img)?,
+                PixelFormat::GrayF32 => reader.read_rows_gray_f32(img)?,
+                _ => unreachable!(),
+            };
+
+            if read > 0 {
+                let slice = RowSliceF32::new(&row_buf[..row_floats], row_index, width, format);
+                callback(slice)?;
+                row_index += 1;
+            }
+        }
+
+        Ok(info)
+    }
+
+    /// Decodes a JPEG and extracts raw quantized DCT coefficients.
+    ///
+    /// This provides access to the coefficients before IDCT and color conversion,
+    /// useful for debugging, quality analysis, and encoder comparison.
+    ///
+    /// Coefficients are stored in zigzag order as they appear in the JPEG file.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::Decoder;
+    ///
+    /// let decoder = Decoder::new();
+    /// let coeffs = decoder.decode_coefficients(&jpeg_data)?;
+    ///
+    /// // Access Y component DC coefficient for first block
+    /// let y_dc = coeffs.components[0].block(0)[0];
+    /// println!("Y DC coefficient: {}", y_dc);
+    ///
+    /// // Compare with another JPEG's coefficients
+    /// let other_coeffs = decoder.decode_coefficients(&other_jpeg_data)?;
+    /// let comparison = coeffs.compare(&other_coeffs);
+    /// println!("{}% of blocks differ", comparison.diff_block_pct());
+    /// ```
+    ///
+    /// For analysis of large images, consider streaming APIs.
+    pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
+        self.decode_coefficients_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode_coefficients`](Self::decode_coefficients).
+    fn decode_coefficients_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodedCoefficients> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        // Disable streaming - we need coefficients stored
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.decode(&stop)?;
+
+        // Extract coefficients from parser
+        parser.extract_coefficients()
+    }
+
+    /// Decodes a JPEG to coefficients AND JBRD per-scan reconstruction metadata.
+    ///
+    /// JBRD (JPEG-Bitstream-Reconstruction) is the metadata required by a
+    /// downstream JPEG-XL transcoder to reproduce the *exact original* JPEG
+    /// entropy-coded bitstream from DCT coefficients. The JXL spec stores
+    /// this in a JBRD box; libjxl populates the same fields in
+    /// `JPEGScanInfo::reset_points` and `JPEGScanInfo::extra_zero_runs`
+    /// (see `enc_jpeg_data_reader.cc`).
+    ///
+    /// Use this entry point when transcoding a JPEG to JPEG-XL losslessly
+    /// and you need byte-exact bitstream reconstruction (e.g.,
+    /// progressive JPEGs with successive-approximation refinement scans
+    /// where djxl re-derives EOB-run boundaries differently from the
+    /// original encoder).
+    ///
+    /// The existing [`decode_coefficients`] entry point is unchanged
+    /// (zero overhead, no tracking).
+    ///
+    /// # Returns
+    ///
+    /// A pair `(DecodedCoefficients, JbrdMetadata)`. The `JbrdMetadata`
+    /// contains one [`JbrdScanInfo`] per SOS scan in the JPEG, in
+    /// bitstream order.
+    ///
+    /// # Cost
+    ///
+    /// Tracking adds a small constant cost per AC entropy-decode block
+    /// (one branch on `Option` + one `Vec::push` only when a JBRD signal
+    /// fires). For typical progressive JPEGs this is a fraction of a
+    /// percent of decode wall.
+    ///
+    /// [`decode_coefficients`]: Self::decode_coefficients
+    /// [`JbrdScanInfo`]: crate::decode::image::JbrdScanInfo
+    pub fn decode_coefficients_with_jbrd_metadata(
+        &self,
+        data: &[u8],
+        stop: impl Stop,
+    ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
+        self.decode_coefficients_with_jbrd_metadata_dyn(data, &stop)
+    }
+
+    /// Non-generic body of
+    /// [`decode_coefficients_with_jbrd_metadata`](Self::decode_coefficients_with_jbrd_metadata).
+    fn decode_coefficients_with_jbrd_metadata_dyn(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.enable_jbrd_tracking();
+        parser.decode(&stop)?;
+        let coeffs = parser.extract_coefficients()?;
+        let scans = parser.take_jbrd_scans().unwrap_or_default();
+        let padding_bits = parser.take_jbrd_padding_bits().unwrap_or_default();
+        // libjxl semantics (jpeg_data.cc:368-380): set the flag iff ANY pad
+        // bit is 0 (a non-spec-compliant zero pad). If all bits are 1 (or
+        // there are no partial-byte boundaries), drop the redundant Vec —
+        // the JBRD writer treats `has_zero_padding_bit == false` as
+        // "spec-default 1-bit padding" and never needs the explicit bits.
+        let has_zero_padding_bit = padding_bits.contains(&0);
+        let metadata = crate::decode::image::JbrdMetadata {
+            scans,
+            has_zero_padding_bit,
+            padding_bits: if has_zero_padding_bit {
+                padding_bits
+            } else {
+                alloc::vec::Vec::new()
+            },
+        };
+        Ok((coeffs, metadata))
+    }
+
+    /// Decodes a JPEG to coefficients AND preserved metadata in a single parse pass.
+    ///
+    /// This avoids the overhead of decoding twice when you need both coefficients
+    /// and metadata (e.g., for lossless transforms that preserve EXIF/ICC/XMP).
+    pub fn decode_coefficients_with_extras(
+        &self,
+        data: &[u8],
+        stop: impl Stop,
+    ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
+        self.decode_coefficients_with_extras_dyn(data, &stop)
+    }
+
+    /// Non-generic body of
+    /// [`decode_coefficients_with_extras`](Self::decode_coefficients_with_extras).
+    fn decode_coefficients_with_extras_dyn(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            Some(&self.preserve),
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.decode(&stop)?;
+
+        let extras = finalize_extras(parser.take_extras(), data, false);
+        let coeffs = parser.extract_coefficients()?;
+        Ok((coeffs, extras))
+    }
+
+    /// Decodes a JPEG image to planar YCbCr f32 data.
+    ///
+    /// This bypasses the YCbCr→RGB color conversion, providing direct access
+    /// to the decoded YCbCr planes. This is significantly faster than decoding
+    /// to RGB when you need YCbCr data (e.g., for re-encoding or video pipelines).
+    ///
+    /// # Value Range
+    ///
+    /// Values are in centered range [-128, 127] (raw DCT output).
+    /// To convert to standard JPEG range [0, 255], add 128 to each value.
+    ///
+    /// # Chroma Planes
+    ///
+    /// Chroma planes (Cb, Cr) are always upsampled to full resolution,
+    /// matching the Y plane dimensions. The upsampling method is controlled
+    /// by the `chroma_upsampling` setting.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::Decoder;
+    ///
+    /// let decoder = Decoder::new();
+    /// let ycbcr = decoder.decode_to_ycbcr_f32(&jpeg_data)?;
+    ///
+    /// // Access planes directly
+    /// let y_plane = &ycbcr.y;   // [-128, 127] range
+    /// let cb_plane = &ycbcr.cb;
+    /// let cr_plane = &ycbcr.cr;
+    ///
+    /// // Or convert to JPEG range [0, 255]
+    /// let y_jpeg = ycbcr.y_to_jpeg_range();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The image is grayscale (only 1 component)
+    /// - The image uses XYB color space (not YCbCr)
+    /// - Parsing or decoding fails
+    ///
+    /// For large images, consider using streaming APIs for memory-efficient decoding.
+    pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
+        self.decode_to_ycbcr_f32_dyn(data, &stop)
+    }
+
+    /// Non-generic body of [`decode_to_ycbcr_f32`](Self::decode_to_ycbcr_f32).
+    fn decode_to_ycbcr_f32_dyn(&self, data: &[u8], stop: &dyn Stop) -> Result<DecodedYCbCr> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            None,
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        // Disable streaming - f32 YCbCr decode needs coefficients
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.decode(&stop)?;
+
+        let info = parser.info();
+
+        // XYB images store data differently - not actual YCbCr
+        if info.is_xyb {
+            return Err(Error::unsupported_feature(
+                "YCbCr output not available for XYB images",
+            ));
+        }
+
+        // Grayscale images have only Y component
+        if info.color_space == ColorSpace::Grayscale {
+            return Err(Error::unsupported_feature(
+                "YCbCr output requires 3-component image",
+            ));
+        }
+
+        // Get the YCbCr planes directly
+        let (y, cb, cr) = parser.to_ycbcr_planes_f32(self.chroma_upsampling)?;
+
+        // Pass through ICC profile if present
+        let icc_profile = parser.icc_profile.clone();
+
+        Ok(DecodedYCbCr {
+            y,
+            cb,
+            cr,
+            width: info.dimensions.width,
+            height: info.dimensions.height,
+            icc_profile,
+        })
+    }
+
+    /// Extract gain map from UltraHDR image if present.
+    ///
+    /// Called during `decode()` when `gain_map != Discard`.
+    fn extract_gain_map(
+        &self,
+        parser: &mut JpegParser,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<Option<GainMapResult>> {
+        stop.check()?;
+        let (gainmap_range, _metadata) = parser.extract_gainmap_early(data)?;
+
+        let (start, end) = match gainmap_range {
+            Some(range) => range,
+            None => return Ok(None), // Not an UltraHDR image
+        };
+
+        stop.check()?;
+        let mut gainmap_jpeg = Vec::new();
+        gainmap_jpeg
+            .try_reserve_exact(end - start)
+            .map_err(|_| Error::allocation_failed(end - start, "preserving gain map JPEG"))?;
+        gainmap_jpeg.extend_from_slice(&data[start..end]);
+        let mut decoder = Decoder::new()
+            .max_pixels(self.max_pixels)
+            .max_memory(self.max_memory)
+            .strictness(self.strictness)
+            .auto_orient(false);
+        decoder.alloc_pref = self.alloc_pref;
+
+        let (pixels, width, height) = if self.gain_map == GainMapHandling::Decode {
+            // Decode the gain map JPEG to pixels
+            let gm_result = decoder.decode(&gainmap_jpeg, stop)?;
+            let w = gm_result.width;
+            let h = gm_result.height;
+            (Some(gm_result.into_pixels_u8().unwrap()), w, h)
+        } else {
+            // PreserveRaw: just get dimensions from header without decoding pixels
+            let gm_info = decoder.read_info(&gainmap_jpeg)?;
+            (None, gm_info.dimensions.width, gm_info.dimensions.height)
+        };
+
+        Ok(Some(GainMapResult {
+            jpeg: gainmap_jpeg,
+            pixels,
+            width,
+            height,
+        }))
+    }
+
+    /// Creates a streaming reader for UltraHDR JPEGs.
+    ///
+    /// This allows decoding UltraHDR images row-by-row with configurable output modes:
+    /// - **SDR-only**: Fastest decode, ignores gain map
+    /// - **HDR**: Applies gain map to reconstruct HDR output
+    /// - **SDR+HDR**: Dual output for preview + processing workflows
+    /// - **SDR+GainMap**: For editing workflows that preserve gain maps
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, UltraHdrReaderConfig, UltraHdrMode};
+    ///
+    /// let config = UltraHdrReaderConfig::new()
+    ///     .mode(UltraHdrMode::Hdr)
+    ///     .display_boost(4.0);
+    ///
+    /// let mut reader = Decoder::new().ultrahdr_reader(&jpeg_data, config)?;
+    ///
+    /// while !reader.is_finished() {
+    ///     let rows = reader.read_rows(16, None, Some(&mut hdr_buf), None)?;
+    ///     // Process HDR rows...
+    /// }
+    /// ```
+    ///
+    /// # Memory Efficiency
+    ///
+    /// For a 4K image (3840x2160):
+    /// - SdrOnly: ~500 KB peak
+    /// - Hdr (Full): ~1 MB peak
+    /// - Hdr (Streaming): ~515 KB peak
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The JPEG cannot be parsed
+    /// - The image is not a baseline JPEG
+    /// - The image is grayscale
+    #[cfg(feature = "ultrahdr")]
+    pub fn ultrahdr_reader<'a>(
+        &self,
+        data: &'a [u8],
+        config: UltraHdrReaderConfig,
+    ) -> Result<UltraHdrReader<'a>> {
+        // Parse the JPEG header and get scanline reader
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            self.max_memory,
+            Some(&self.preserve),
+            self.strictness,
+            self.alloc_pref,
+        )?;
+        parser.read_header()?;
+
+        // Only baseline supported for scanline reading
+        if parser.mode != JpegMode::Baseline {
+            return Err(Error::unsupported_feature(
+                "ultrahdr reader only supports baseline JPEG",
+            ));
+        }
+
+        if parser.num_components != 3 {
+            return Err(Error::unsupported_feature(
+                "ultrahdr reader requires 3-component YCbCr image",
+            ));
+        }
+
+        // Extract gain map byte range from MPF secondary images (if present)
+        // Uses byte range instead of copying for zero-copy access
+        let (gainmap_range, metadata) = parser.extract_gainmap_early(data)?;
+
+        // Create base scanline reader
+        let base_reader = self.scanline_reader(data)?;
+
+        // Extract extras if preserving metadata
+        let extras = if config.preserve_metadata {
+            finalize_extras(parser.take_extras(), data, false)
+        } else {
+            None
+        };
+
+        UltraHdrReader::new(data, config, base_reader, extras, gainmap_range, metadata)
+    }
+
+    /// Gets the configured maximum pixels limit.
+    #[must_use]
+    pub fn get_max_pixels(&self) -> u64 {
+        self.max_pixels
+    }
+
+    /// Gets the configured maximum memory limit.
+    #[must_use]
+    pub fn get_max_memory(&self) -> u64 {
+        self.max_memory
+    }
+}
+
+/// The byte range of the gain-map JPEG that every gain-map reader finds in
+/// `data` ([`parser::JpegParser::extract_gainmap_early`]), or `None`.
+#[cfg(feature = "layout")]
+pub(crate) fn gain_map_range(data: &[u8]) -> Option<(usize, usize)> {
+    let mut parser = parser::JpegParser::new(data, u64::MAX, None).ok()?;
+    parser.read_header().ok()?;
+    parser.extract_gainmap_early(data).ok()?.0
+}
+
+/// Scan raw JPEG data for EXIF orientation tag without full parsing.
+///
+/// Looks for APP1 segments containing EXIF data and reads the orientation tag.
+/// Returns `Some(1..=8)` if found, `None` otherwise.
+pub(crate) fn find_exif_orientation(data: &[u8]) -> Option<u8> {
+    crate::lossless::parse_exif_orientation(first_exif_segment(data)?.payload)
+}
+
+/// The first EXIF segment reported by native metadata, including inter-scan
+/// and post-scan segments. An absent orientation in it does not select a
+/// different EXIF packet. Shared with inventory; never search inside payloads.
+pub(crate) fn first_exif_segment(data: &[u8]) -> Option<crate::container::MarkerSpan<'_>> {
+    if !data.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
+    crate::container::MarkerIter::for_decoder_metadata(data).find(|s| {
+        s.kind == crate::container::MarkerKind::App(1) && s.payload.starts_with(b"Exif\0\0")
+    })
+}
+
+/// Copy a `dst_w × dst_h` rectangle starting at `(crop_x, crop_y)` out of an interleaved
+/// `src_w`-wide buffer with `channels` elements per pixel.
+///
+/// Used by the post-decode pipeline for the two crop steps (lossless-transform crop and
+/// caller-supplied crop_region) on every output type — f32 and u8 paths share this
+/// fixed shape, only `T` and `channels` vary.
+fn copy_cropped_rect<T: Copy + Default>(
+    src: &[T],
+    src_w: usize,
+    crop_x: usize,
+    crop_y: usize,
+    dst_w: usize,
+    dst_h: usize,
+    channels: usize,
+) -> Vec<T> {
+    let mut dst = vec![T::default(); dst_w * dst_h * channels];
+    let src_stride = src_w * channels;
+    let dst_stride = dst_w * channels;
+    let row_elems = dst_w * channels;
+    for y in 0..dst_h {
+        let src_off = (crop_y + y) * src_stride + crop_x * channels;
+        let dst_off = y * dst_stride;
+        dst[dst_off..dst_off + row_elems].copy_from_slice(&src[src_off..src_off + row_elems]);
+    }
+    dst
+}
+
+/// Finalize extras: inject probe result and strip forced EXIF if needed.
+///
+/// Creates extras if none exist but probe data is available (e.g., for
+/// programmatically-encoded JPEGs with no metadata segments).
+fn finalize_extras(
+    extras: Option<DecodedExtras>,
+    data: &[u8],
+    forced_exif: bool,
+) -> Option<DecodedExtras> {
+    let mut extras = extras.unwrap_or_else(DecodedExtras::new);
+
+    // Inject probe result (quality estimation, encoder ID, DQT tables).
+    // This is a header-only scan (<1us) — no entropy decoding.
+    if let Ok(probe) = crate::detect::probe(data) {
+        extras.probe = Some(probe);
+    }
+
+    if forced_exif {
+        extras.remove_segments_by_type(SegmentType::Exif);
+    }
+
+    Some(extras)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    fn gain_map_fixture(map_side: u32) -> (Vec<u8>, Vec<u8>) {
+        use crate::encode::EncoderSegments;
+        let encode = |side: u32, segments: EncoderSegments| {
+            let pixels: Vec<u8> = (0..side * side * 3)
+                .map(|i| ((i * 73 + i / 17) % 256) as u8)
+                .collect();
+            let mut encoder = EncoderConfig::ycbcr(90, ChromaSubsampling::None)
+                .with_segments(segments)
+                .encode_from_bytes(side, side, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            encoder.push_packed(&pixels, Unstoppable).unwrap();
+            encoder.finish().unwrap()
+        };
+        let map = encode(map_side, EncoderSegments::new());
+        let primary = encode(
+            16,
+            EncoderSegments::new()
+                .set_xmp(&crate::container::xmp::generate_primary_xmp(map.len()))
+                .add_gainmap(map.clone()),
+        );
+        (primary, map)
+    }
+
+    #[test]
+    fn gain_map_preservation_does_not_require_hdr_rendering() {
+        let (jpeg, map) = gain_map_fixture(8);
+        for preserve in [PreserveConfig::all(), PreserveConfig::none()] {
+            for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+                let result = Decoder::new()
+                    .preserve(preserve.clone())
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let gain_map = result.gain_map.expect("requested gain map must be present");
+                assert_eq!(gain_map.jpeg, map);
+                assert_eq!((gain_map.width, gain_map.height), (8, 8));
+                if mode == GainMapHandling::Decode {
+                    let expected = Decoder::new()
+                        .auto_orient(false)
+                        .decode(&map, Unstoppable)
+                        .unwrap();
+                    assert_eq!(gain_map.pixels.as_deref(), expected.pixels_u8());
+                } else {
+                    assert!(gain_map.pixels.is_none());
+                }
+            }
+        }
+        assert!(
+            Decoder::new()
+                .decode(&jpeg, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+        assert!(
+            Decoder::new()
+                .gain_map(GainMapHandling::PreserveRaw)
+                .decode(&map, Unstoppable)
+                .unwrap()
+                .gain_map
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn gain_map_decode_inherits_pixel_limit() {
+        let (jpeg, _) = gain_map_fixture(32);
+        for mode in [GainMapHandling::PreserveRaw, GainMapHandling::Decode] {
+            assert!(
+                Decoder::new()
+                    .max_pixels(256)
+                    .gain_map(mode)
+                    .decode(&jpeg, Unstoppable)
+                    .is_err(),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_decoder_creation() {
+        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+
+        assert_eq!(decoder.output_format, Some(PixelFormat::Rgb));
+        assert_eq!(decoder.chroma_upsampling, ChromaUpsampling::Triangle);
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip_gray() {
+        // Create a simple 8x8 grayscale image
+        let width = 8u32;
+        let height = 8u32;
+        let mut input = vec![0u8; (width * height) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                input[y * width as usize + x] = ((x + y) * 16) as u8;
+            }
+        }
+
+        // Encode using v2 API
+        let config = EncoderConfig::grayscale(95.0);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
+
+        // Verify JPEG structure
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], 0xD8); // SOI
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], 0xD9); // EOI
+
+        // Decode
+        let decoder = Decoder::new().output_format(PixelFormat::Gray);
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("decoding should succeed");
+
+        assert_eq!(decoded.width, width);
+        assert_eq!(decoded.height, height);
+        assert_eq!(
+            decoded.pixels_u8().unwrap().len(),
+            (width * height) as usize
+        );
+
+        // Check pixel values are reasonably close (JPEG is lossy)
+        let mut max_diff = 0i32;
+        for i in 0..input.len() {
+            let diff = (input[i] as i32 - decoded.pixels_u8().unwrap()[i] as i32).abs();
+            max_diff = max_diff.max(diff);
+        }
+        // At quality 95, differences should be small
+        assert!(max_diff < 20, "max_diff {} too large", max_diff);
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip_rgb() {
+        // Create a simple 16x16 RGB image
+        let width = 16u32;
+        let height = 16u32;
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                input[idx] = (x * 16) as u8; // R
+                input[idx + 1] = (y * 16) as u8; // G
+                input[idx + 2] = 128; // B
+            }
+        }
+
+        // Encode using v2 API
+        let config = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
+
+        // Decode
+        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("decoding should succeed");
+
+        assert_eq!(decoded.width, width);
+        assert_eq!(decoded.height, height);
+        assert_eq!(
+            decoded.pixels_u8().unwrap().len(),
+            (width * height * 3) as usize
+        );
+
+        // Check pixel values are reasonably close
+        let mut max_diff = 0i32;
+        for i in 0..input.len() {
+            let diff = (input[i] as i32 - decoded.pixels_u8().unwrap()[i] as i32).abs();
+            max_diff = max_diff.max(diff);
+        }
+        // At quality 95, differences should be small
+        assert!(max_diff < 30, "max_diff {} too large", max_diff);
+    }
+
+    #[test]
+    fn test_decode_f32_roundtrip() {
+        // Create a simple 16x16 RGB image
+        let width = 16u32;
+        let height = 16u32;
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                input[idx] = (x * 16) as u8; // R
+                input[idx + 1] = (y * 16) as u8; // G
+                input[idx + 2] = 128; // B
+            }
+        }
+
+        // Encode using v2 API
+        let config = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
+
+        // Decode to f32
+        let decoder = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .output_target(OutputTarget::SrgbF32);
+        let decoded_f32 = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("f32 decoding should succeed");
+
+        assert_eq!(decoded_f32.width, width);
+        assert_eq!(decoded_f32.height, height);
+        let f32_pixels = decoded_f32.pixels_f32().unwrap();
+        assert_eq!(f32_pixels.len(), (width * height * 3) as usize);
+
+        // Verify values are approximately in 0.0-1.0 range.
+        // YCbCr→RGB color matrix can produce values slightly outside [0, 1]
+        // due to ringing — this is intentional to preserve full precision.
+        for &v in f32_pixels {
+            assert!(
+                (-0.05..=1.05).contains(&v),
+                "f32 value {} too far out of range",
+                v
+            );
+        }
+
+        // Compare with u8 decode
+        let decoded_u8 = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .decode(&jpeg, Unstoppable)
+            .expect("u8 decoding should succeed");
+        let u8_pixels = decoded_u8.pixels_u8().unwrap();
+
+        // Convert f32→u8 manually for comparison
+        let converted: Vec<u8> = f32_pixels
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        // Values should be close - allow diff of 2 because u8 path uses integer IDCT
+        // while f32 path uses f32 IDCT (standard JPEG precision difference)
+        let mut max_diff = 0i32;
+        for i in 0..u8_pixels.len() {
+            let diff = (u8_pixels[i] as i32 - converted[i] as i32).abs();
+            max_diff = max_diff.max(diff);
+        }
+        assert!(
+            max_diff <= 2,
+            "f32→u8 conversion differs by {} from direct u8",
+            max_diff
+        );
+    }
+
+    #[test]
+    fn test_decode_f32_precision() {
+        // Create a gradient image to test precision
+        let width = 64u32;
+        let height = 64u32;
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                // Create a smooth gradient
+                let val = ((x + y) * 2) as u8;
+                input[idx] = val;
+                input[idx + 1] = val;
+                input[idx + 2] = val;
+            }
+        }
+
+        // Encode at high quality using v2 API
+        let config = EncoderConfig::ycbcr(98.0, ChromaSubsampling::None);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
+
+        // Decode to f32
+        let decoder = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .output_target(OutputTarget::SrgbF32);
+        let decoded_f32 = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("f32 decoding should succeed");
+
+        // Check that f32 values show more precision than just u8/255
+        // by verifying we have non-quantized intermediate values
+        let mut found_fractional = false;
+        for &v in decoded_f32.pixels_f32().unwrap() {
+            let scaled = v * 255.0;
+            let frac = scaled - scaled.round();
+            if frac.abs() > 0.001 && frac.abs() < 0.999 {
+                found_fractional = true;
+                break;
+            }
+        }
+        // f32 should preserve sub-integer precision
+        assert!(
+            found_fractional,
+            "f32 output should have fractional precision"
+        );
+    }
+
+    /// Verify that the fused BGRA streaming path produces bit-exact output
+    /// compared to the RGB decode + swizzle path, for all subsampling modes.
+    #[test]
+    fn test_fused_bgra_vs_rgb_swizzle_parity() {
+        let width = 64u32;
+        let height = 64u32;
+        // Generate a simple gradient test image
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                input[idx] = (x * 4) as u8;
+                input[idx + 1] = (y * 4) as u8;
+                input[idx + 2] = ((x + y) * 2) as u8;
+            }
+        }
+
+        for &sub in &[
+            ChromaSubsampling::None,
+            ChromaSubsampling::Quarter,
+            ChromaSubsampling::HalfHorizontal,
+        ] {
+            let config = EncoderConfig::ycbcr(85.0, sub).progressive(false);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .expect("create encoder");
+            enc.push_packed(&input, Unstoppable).expect("push pixels");
+            let jpeg = enc.finish().expect("encode");
+
+            // Decode to RGB then manually convert to BGRA (reference path)
+            let result_rgb = Decoder::new()
+                .output_format(PixelFormat::Rgb)
+                .decode(&jpeg, Unstoppable)
+                .expect("decode RGB");
+            let rgb_pixels = result_rgb.pixels_u8().expect("u8 pixels");
+            let npixels = (width * height) as usize;
+            let mut reference_bgra = vec![0u8; npixels * 4];
+            for i in 0..npixels {
+                reference_bgra[i * 4] = rgb_pixels[i * 3 + 2]; // B
+                reference_bgra[i * 4 + 1] = rgb_pixels[i * 3 + 1]; // G
+                reference_bgra[i * 4 + 2] = rgb_pixels[i * 3]; // R
+                reference_bgra[i * 4 + 3] = 255; // A
+            }
+
+            // Decode directly to BGRA via decode_into (fused path)
+            let mut fused_bgra = vec![0u8; npixels * 4];
+            let bytes = Decoder::new()
+                .decode_into(&jpeg, PixelFormat::Bgra, &mut fused_bgra, Unstoppable)
+                .expect("decode_into BGRA");
+            assert_eq!(bytes, npixels * 4, "expected {npixels}*4 bytes for {sub:?}");
+
+            // Compare bit-exact
+            assert_eq!(
+                reference_bgra, fused_bgra,
+                "BGRA mismatch for subsampling {sub:?}"
+            );
+
+            // Also test RGBA
+            let mut reference_rgba = vec![0u8; npixels * 4];
+            for i in 0..npixels {
+                reference_rgba[i * 4] = rgb_pixels[i * 3]; // R
+                reference_rgba[i * 4 + 1] = rgb_pixels[i * 3 + 1]; // G
+                reference_rgba[i * 4 + 2] = rgb_pixels[i * 3 + 2]; // B
+                reference_rgba[i * 4 + 3] = 255; // A
+            }
+
+            let mut fused_rgba = vec![0u8; npixels * 4];
+            let bytes = Decoder::new()
+                .decode_into(&jpeg, PixelFormat::Rgba, &mut fused_rgba, Unstoppable)
+                .expect("decode_into RGBA");
+            assert_eq!(bytes, npixels * 4, "expected {npixels}*4 bytes for {sub:?}");
+
+            assert_eq!(
+                reference_rgba, fused_rgba,
+                "RGBA mismatch for subsampling {sub:?}"
+            );
+        }
+    }
+}
+
+// metadata_tests moved to tests/metadata_integration.rs to avoid
+// include_bytes! referencing test fixtures excluded from published crate (#28)
+#[cfg(test)]
+mod limits_tests {
+    use super::*;
+
+    #[test]
+    fn test_limits_builder_methods() {
+        let config = Decoder::new()
+            .max_pixels(50_000_000)
+            .max_memory(256 * 1024 * 1024);
+
+        assert_eq!(config.get_max_pixels(), 50_000_000);
+        assert_eq!(config.get_max_memory(), 256 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_limits_from_struct() {
+        let limits = crate::types::Limits {
+            max_pixels: Some(10_000_000),
+            max_memory: Some(128 * 1024 * 1024),
+            max_output: None,
+        };
+
+        let config = Decoder::new().limits(limits);
+
+        assert_eq!(config.get_max_pixels(), 10_000_000);
+        assert_eq!(config.get_max_memory(), 128 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_memory_is_u64() {
+        // Verify max_memory is u64 and doesn't require casting
+        let large_limit: u64 = 5_000_000_000; // 5GB, would overflow on 32-bit if usize
+        let config = Decoder::new().max_memory(large_limit);
+
+        assert_eq!(config.get_max_memory(), large_limit);
+    }
+
+    #[test]
+    fn test_fields_not_directly_accessible() {
+        // This test verifies that fields are private and must use methods
+        let config = Decoder::new();
+
+        // These should compile (using getters)
+        let _ = config.get_max_pixels();
+        let _ = config.get_max_memory();
+
+        // Direct field access should NOT compile (would fail if uncommented):
+        // let _ = config.max_pixels;
+        // let _ = config.max_memory;
+    }
+
+    #[test]
+    fn test_max_scans_enforced() {
+        use crate::encode::{EncoderConfig, PixelLayout};
+        use crate::error::ErrorKind;
+        use crate::foundation::alloc::MAX_SCANS;
+        use enough::Unstoppable;
+
+        // Encode a tiny 8x8 grayscale progressive JPEG
+        let width = 8u32;
+        let height = 8u32;
+        let input = vec![128u8; (width * height) as usize];
+
+        let config = EncoderConfig::grayscale(50.0).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
+
+        // Find the first SOS marker (0xFF 0xDA) and extract the scan segment
+        // (SOS header + entropy-coded data up to the next marker).
+        let mut first_sos = None;
+        let mut first_scan_end = None;
+        let mut i = 0;
+        while i < jpeg.len() - 1 {
+            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA && first_sos.is_none() {
+                first_sos = Some(i);
+                // Skip past the SOS marker and scan the entropy data
+                // to find the next marker (0xFF followed by non-0x00).
+                let mut j = i + 2;
+                // Read the SOS segment length
+                if j + 2 <= jpeg.len() {
+                    let seg_len = ((jpeg[j] as usize) << 8) | (jpeg[j + 1] as usize);
+                    j += seg_len; // Skip past the SOS segment header
+                }
+                // Now scan the entropy-coded data
+                while j < jpeg.len() - 1 {
+                    if jpeg[j] == 0xFF && jpeg[j + 1] != 0x00 {
+                        first_scan_end = Some(j);
+                        break;
+                    }
+                    j += 1;
+                }
+                break;
+            }
+            i += 1;
+        }
+
+        let sos_start = first_sos.expect("JPEG should contain an SOS marker");
+        let scan_end = first_scan_end.expect("should find end of first scan");
+        let scan_segment = &jpeg[sos_start..scan_end];
+
+        // Build a malicious JPEG: header + (MAX_SCANS + 1) copies of the scan segment + EOI
+        let header = &jpeg[..sos_start];
+        let num_scans = MAX_SCANS + 1; // 257, exceeding the limit of 256
+
+        let mut malicious = Vec::with_capacity(header.len() + scan_segment.len() * num_scans + 2);
+        malicious.extend_from_slice(header);
+        for _ in 0..num_scans {
+            malicious.extend_from_slice(scan_segment);
+        }
+        malicious.push(0xFF);
+        malicious.push(0xD9); // EOI
+
+        // Attempt to decode — should fail with TooManyScans, not panic
+        let decoder = Decoder::new();
+        let result = decoder.decode(&malicious, Unstoppable);
+        assert!(result.is_err(), "decoding should fail with too many scans");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err.kind(), ErrorKind::TooManyScans { .. }),
+            "expected TooManyScans error, got: {err}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod quality_estimation_tests {
+    use super::*;
+    use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    /// Helper: encode an RGB image at the given quality and return the JPEG bytes.
+    fn encode_test_image(quality: f32, width: u32, height: u32) -> Vec<u8> {
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                input[idx] = ((x * 7 + y * 3) % 256) as u8;
+                input[idx + 1] = ((x * 3 + y * 7 + 50) % 256) as u8;
+                input[idx + 2] = ((x * 5 + y * 5 + 100) % 256) as u8;
+            }
+        }
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation");
+        enc.push_packed(&input, Unstoppable).expect("push");
+        enc.finish().expect("finish")
+    }
+
+    #[test]
+    fn test_extras_quality_estimate_available() {
+        let jpeg = encode_test_image(75.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras should be present");
+
+        let estimate = extras
+            .quality_estimate()
+            .expect("quality estimate should be available");
+        // zenjpeg uses jpegli tables, so the estimate should be on the butteraugli scale
+        assert!(
+            estimate.value > 0.0,
+            "quality estimate value should be positive"
+        );
+    }
+
+    #[test]
+    fn test_extras_encoder_detected_as_jpegli() {
+        let jpeg = encode_test_image(80.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let encoder = extras.encoder().expect("encoder should be detected");
+        // zenjpeg uses jpegli internally — should be detected as CjpegliYcbcr
+        assert!(
+            matches!(
+                encoder,
+                crate::detect::EncoderFamily::CjpegliYcbcr
+                    | crate::detect::EncoderFamily::CjpegliXyb
+            ),
+            "expected jpegli encoder family, got: {encoder:?}"
+        );
+    }
+
+    #[test]
+    fn test_extras_dqt_tables_present() {
+        let jpeg = encode_test_image(85.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let tables = extras.dqt_tables().expect("DQT tables should be present");
+        // Color images should have at least 2 DQT tables (jpegli uses 3)
+        assert!(
+            tables.len() >= 2,
+            "expected at least 2 DQT tables, got {}",
+            tables.len()
+        );
+    }
+
+    #[test]
+    fn test_extras_luminance_qt_present() {
+        let jpeg = encode_test_image(90.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let luma_qt = extras
+            .luminance_qt()
+            .expect("luminance QT should be present");
+        // All values should be >= 1 (quantization table values are at least 1)
+        for &v in luma_qt {
+            assert!(v >= 1, "QT value should be >= 1, got {v}");
+        }
+        // At Q90, values should be relatively small
+        assert!(
+            luma_qt[0] < 20,
+            "DC quant at Q90 should be small, got {}",
+            luma_qt[0]
+        );
+    }
+
+    #[test]
+    fn test_extras_probe_full_access() {
+        let jpeg = encode_test_image(75.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let probe = extras.probe().expect("probe should be present");
+        assert_eq!(probe.dimensions.width, 64);
+        assert_eq!(probe.dimensions.height, 64);
+        assert_eq!(probe.num_components, 3);
+        assert!(probe.scan_count >= 1);
+    }
+
+    #[test]
+    fn test_extras_quality_range_sweep() {
+        // Encode at various qualities and verify estimates are in reasonable range
+        for q in [10.0, 25.0, 50.0, 75.0, 90.0, 95.0] {
+            let jpeg = encode_test_image(q, 32, 32);
+            let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+            let extras = decoded.extras().expect("extras");
+            let estimate = extras
+                .quality_estimate()
+                .expect("quality estimate should be available");
+
+            // The estimate should be a finite positive number
+            assert!(
+                estimate.value.is_finite() && estimate.value > 0.0,
+                "Q{q}: estimate should be finite positive, got {}",
+                estimate.value
+            );
+        }
+    }
+
+    #[test]
+    fn test_extras_higher_quality_means_smaller_qt_values() {
+        // Higher quality should produce smaller quantization table values
+        let jpeg_low = encode_test_image(50.0, 32, 32);
+        let jpeg_high = encode_test_image(95.0, 32, 32);
+
+        let low = Decoder::new()
+            .decode(&jpeg_low, Unstoppable)
+            .expect("decode");
+        let high = Decoder::new()
+            .decode(&jpeg_high, Unstoppable)
+            .expect("decode");
+
+        let low_qt = low.extras().unwrap().luminance_qt().unwrap();
+        let high_qt = high.extras().unwrap().luminance_qt().unwrap();
+
+        // Sum of QT values should be larger for lower quality
+        let low_sum: u64 = low_qt.iter().map(|&v| v as u64).sum();
+        let high_sum: u64 = high_qt.iter().map(|&v| v as u64).sum();
+        assert!(
+            low_sum > high_sum,
+            "Q50 QT sum ({low_sum}) should be > Q95 QT sum ({high_sum})"
+        );
+    }
+
+    #[test]
+    fn test_extras_chrominance_qt_present_for_color() {
+        let jpeg = encode_test_image(80.0, 32, 32);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        // Color image should have chrominance QT
+        let chroma_qt = extras.chrominance_qt();
+        assert!(
+            chroma_qt.is_some(),
+            "chrominance QT should be present for color image"
+        );
+    }
+
+    #[test]
+    fn test_extras_grayscale_has_luminance_qt() {
+        // Encode a grayscale image
+        let width = 32u32;
+        let height = 32u32;
+        let mut input = vec![0u8; (width * height) as usize];
+        for i in 0..input.len() {
+            input[i] = (i % 256) as u8;
+        }
+        let config = EncoderConfig::grayscale(80.0);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .expect("encoder");
+        enc.push_packed(&input, Unstoppable).expect("push");
+        let jpeg = enc.finish().expect("finish");
+
+        let decoded = Decoder::new()
+            .output_format(PixelFormat::Gray)
+            .decode(&jpeg, Unstoppable)
+            .expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        // Grayscale should have luminance QT
+        assert!(extras.luminance_qt().is_some());
+
+        // Probe should report 1 component
+        let probe = extras.probe().expect("probe");
+        assert_eq!(probe.num_components, 1, "grayscale should have 1 component");
+    }
+
+    #[test]
+    fn test_extras_quality_estimate_confidence() {
+        // Build a synthetic JPEG with known IJG Q75 tables and verify exact match
+        let jpeg = build_ijg_synthetic_jpeg(75);
+        let probe = crate::detect::probe(&jpeg).expect("probe should work");
+        assert_eq!(probe.quality.confidence, crate::detect::Confidence::Exact,);
+        assert_eq!(probe.quality.value, 75.0);
+    }
+
+    #[test]
+    fn test_extras_ijg_quality_roundtrip() {
+        // Build synthetic IJG JPEGs at various qualities and verify roundtrip
+        for q in [10, 25, 50, 75, 85, 90, 95, 100] {
+            let jpeg = build_ijg_synthetic_jpeg(q);
+            let probe = crate::detect::probe(&jpeg).expect("probe");
+            assert_eq!(
+                probe.quality.value, q as f32,
+                "IJG Q{q} should roundtrip exactly"
+            );
+            assert_eq!(probe.quality.confidence, crate::detect::Confidence::Exact,);
+            assert_eq!(probe.quality.scale, crate::detect::QualityScale::IjgQuality,);
+        }
+    }
+
+    /// Build a minimal synthetic JPEG with IJG tables at a given quality.
+    /// Produces a valid header but minimal entropy data (not decodable to pixels).
+    fn build_ijg_synthetic_jpeg(quality: u8) -> Vec<u8> {
+        use crate::detect::generate_ijg_table;
+        use crate::foundation::consts::{MARKER_DQT, MARKER_SOF0, MARKER_SOI, MARKER_SOS};
+
+        let mut data = Vec::new();
+
+        // SOI
+        data.extend_from_slice(&[0xFF, MARKER_SOI]);
+
+        // JFIF APP0
+        data.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x10]);
+        data.extend_from_slice(b"JFIF\0");
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+
+        // DQT table 0 (luminance)
+        let luma = generate_ijg_table(quality, false);
+        data.extend_from_slice(&[0xFF, MARKER_DQT, 0x00, 0x43, 0x00]);
+        for z in 0..64 {
+            let ni = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(luma[ni] as u8);
+        }
+
+        // DQT table 1 (chrominance)
+        let chroma = generate_ijg_table(quality, true);
+        data.extend_from_slice(&[0xFF, MARKER_DQT, 0x00, 0x43, 0x01]);
+        for z in 0..64 {
+            let ni = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(chroma[ni] as u8);
+        }
+
+        // SOF0
+        data.extend_from_slice(&[0xFF, MARKER_SOF0, 0x00, 0x11, 0x08]);
+        data.extend_from_slice(&[0x00, 0x08, 0x00, 0x08]);
+        data.push(0x03);
+        data.extend_from_slice(&[0x01, 0x11, 0x00]);
+        data.extend_from_slice(&[0x02, 0x11, 0x01]);
+        data.extend_from_slice(&[0x03, 0x11, 0x01]);
+
+        // Standard DHT tables (162 AC symbols each → libjpeg-turbo detection)
+        // DC table 0
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x00]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // AC table 0 (162 symbols)
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0xB5, 0x10]);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+            0x01, 0x7D,
+        ]);
+        for i in 0..162u8 {
+            data.push(i);
+        }
+
+        // DC table 1
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x01]);
+        data.extend_from_slice(&[
+            0x00, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // AC table 1 (162 symbols)
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0xB5, 0x11]);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x02, 0x04, 0x04, 0x03, 0x04, 0x07, 0x05, 0x04, 0x04, 0x00, 0x01,
+            0x02, 0x77,
+        ]);
+        for i in 0..162u8 {
+            data.push(i);
+        }
+
+        // SOS
+        data.extend_from_slice(&[0xFF, MARKER_SOS, 0x00, 0x0C, 0x03]);
+        data.extend_from_slice(&[0x01, 0x00, 0x02, 0x11, 0x03, 0x11]);
+        data.extend_from_slice(&[0x00, 0x3F, 0x00]);
+        data.push(0x00);
+
+        // EOI
+        data.extend_from_slice(&[0xFF, 0xD9]);
+
+        data
+    }
+
+    #[test]
+    fn test_extras_photoshop_detection() {
+        // Build a synthetic JPEG with APP13 (Photoshop 3.0) + APP14 (Adobe) markers
+        // and non-IJG tables to trigger Photoshop detection
+        let jpeg = build_photoshop_jpeg();
+        let probe = crate::detect::probe(&jpeg).expect("probe");
+        assert_eq!(
+            probe.encoder,
+            crate::detect::EncoderFamily::Photoshop,
+            "should detect as Photoshop"
+        );
+    }
+
+    /// Build a synthetic JPEG that mimics Photoshop output:
+    /// non-IJG DQT + APP13 Photoshop 3.0 + APP14 Adobe
+    fn build_photoshop_jpeg() -> Vec<u8> {
+        use crate::foundation::consts::{MARKER_DQT, MARKER_SOF0, MARKER_SOI, MARKER_SOS};
+
+        let mut data = Vec::new();
+
+        // SOI
+        data.extend_from_slice(&[0xFF, MARKER_SOI]);
+
+        // APP0 (JFIF)
+        data.extend_from_slice(&[0xFF, 0xE0]);
+        data.extend_from_slice(&[0x00, 0x10]);
+        data.extend_from_slice(b"JFIF\0");
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+
+        // APP13 (Photoshop 3.0 IPTC)
+        let ps_data = b"Photoshop 3.0\08BIM\x00";
+        let ps_len = (ps_data.len() + 2) as u16;
+        data.extend_from_slice(&[0xFF, 0xED]);
+        data.push((ps_len >> 8) as u8);
+        data.push((ps_len & 0xFF) as u8);
+        data.extend_from_slice(ps_data);
+
+        // APP14 (Adobe)
+        data.extend_from_slice(&[0xFF, 0xEE]);
+        data.extend_from_slice(&[0x00, 0x0E]); // Length 14
+        data.extend_from_slice(b"Adobe");
+        data.extend_from_slice(&[0x00, 0x64]); // Version 100
+        data.extend_from_slice(&[0x00, 0x00]); // Flags0
+        data.extend_from_slice(&[0x00, 0x00]); // Flags1
+        data.push(0x01); // YCbCr color transform
+
+        // DQT table 0 — non-IJG custom table (Photoshop quality 10)
+        // These are NOT generated by the IJG formula
+        let custom_luma: [u8; 64] = [
+            2, 2, 2, 2, 3, 4, 5, 6, 2, 2, 2, 2, 3, 4, 5, 6, 2, 2, 2, 2, 4, 5, 7, 9, 2, 2, 2, 4, 5,
+            7, 9, 12, 3, 3, 4, 5, 8, 10, 12, 12, 4, 4, 5, 7, 10, 12, 12, 12, 5, 5, 7, 9, 12, 12,
+            12, 12, 6, 6, 9, 12, 12, 12, 12, 12,
+        ];
+        data.extend_from_slice(&[0xFF, MARKER_DQT]);
+        data.extend_from_slice(&[0x00, 0x43]); // Length 67
+        data.push(0x00); // Precision 0, table 0
+        // Write in zigzag order
+        for z in 0..64 {
+            let natural_idx = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(custom_luma[natural_idx]);
+        }
+
+        // DQT table 1 — non-IJG custom chrominance
+        let custom_chroma: [u8; 64] = [
+            3, 3, 5, 9, 13, 15, 15, 15, 3, 4, 6, 11, 14, 12, 12, 12, 5, 6, 9, 14, 12, 12, 12, 12,
+            9, 11, 14, 12, 12, 12, 12, 12, 13, 14, 12, 12, 12, 12, 12, 12, 15, 12, 12, 12, 12, 12,
+            12, 12, 15, 12, 12, 12, 12, 12, 12, 12, 15, 12, 12, 12, 12, 12, 12, 12,
+        ];
+        data.extend_from_slice(&[0xFF, MARKER_DQT]);
+        data.extend_from_slice(&[0x00, 0x43]);
+        data.push(0x01);
+        for z in 0..64 {
+            let natural_idx = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(custom_chroma[natural_idx]);
+        }
+
+        // SOF0
+        data.extend_from_slice(&[0xFF, MARKER_SOF0]);
+        data.extend_from_slice(&[0x00, 0x11, 0x08]);
+        data.extend_from_slice(&[0x00, 0x08, 0x00, 0x08]);
+        data.push(0x03);
+        data.extend_from_slice(&[0x01, 0x11, 0x00]); // Y
+        data.extend_from_slice(&[0x02, 0x11, 0x01]); // Cb
+        data.extend_from_slice(&[0x03, 0x11, 0x01]); // Cr
+
+        // Minimal DHT + SOS + EOI
+        // DHT DC table 0
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x00]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // DHT AC table 0 (100 symbols — not 162 → triggers optimized Huffman)
+        let ac_sym_count: u16 = 100;
+        let ac_len = 2 + 1 + 16 + ac_sym_count;
+        data.extend_from_slice(&[0xFF, 0xC4]);
+        data.push((ac_len >> 8) as u8);
+        data.push((ac_len & 0xFF) as u8);
+        data.push(0x10);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+            0x01, 0x3F,
+        ]);
+        for i in 0..100u8 {
+            data.push(i);
+        }
+
+        // DHT DC table 1
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x01]);
+        data.extend_from_slice(&[
+            0x00, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // DHT AC table 1
+        data.extend_from_slice(&[0xFF, 0xC4]);
+        data.push((ac_len >> 8) as u8);
+        data.push((ac_len & 0xFF) as u8);
+        data.push(0x11);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+            0x01, 0x3F,
+        ]);
+        for i in 0..100u8 {
+            data.push(i);
+        }
+
+        // SOS
+        data.extend_from_slice(&[0xFF, MARKER_SOS]);
+        data.extend_from_slice(&[0x00, 0x0C, 0x03]);
+        data.extend_from_slice(&[0x01, 0x00, 0x02, 0x11, 0x03, 0x11]);
+        data.extend_from_slice(&[0x00, 0x3F, 0x00]);
+        data.push(0x00);
+
+        // EOI
+        data.extend_from_slice(&[0xFF, 0xD9]);
+
+        data
+    }
+
+    #[test]
+    fn test_extras_quality_q1_edge_case() {
+        // Q1 = maximum compression, highest quantization values
+        let jpeg = encode_test_image(1.0, 32, 32);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+        let estimate = extras.quality_estimate().expect("quality estimate");
+        assert!(
+            estimate.value > 0.0,
+            "Q1 quality estimate should be positive"
+        );
+    }
+
+    #[test]
+    fn test_extras_quality_q100_edge_case() {
+        // Q100 = near-lossless, lowest quantization values
+        let jpeg = encode_test_image(100.0, 32, 32);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let luma_qt = extras.luminance_qt().expect("luma QT");
+        // At Q100, most quantization values should be very small (1-2)
+        let all_ones = luma_qt.iter().all(|&v| v <= 2);
+        assert!(all_ones, "Q100 QT should have very small values");
+    }
+
+    #[test]
+    fn test_extras_probe_matches_standalone_probe() {
+        // Verify that the probe result stored in extras matches
+        // a standalone probe on the same JPEG bytes
+        let jpeg = encode_test_image(75.0, 64, 64);
+
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras_probe = decoded.extras().unwrap().probe().expect("probe in extras");
+
+        let standalone_probe = crate::detect::probe(&jpeg).expect("standalone probe");
+
+        assert_eq!(extras_probe.encoder, standalone_probe.encoder);
+        assert_eq!(extras_probe.quality.value, standalone_probe.quality.value);
+        assert_eq!(extras_probe.quality.scale, standalone_probe.quality.scale);
+        assert_eq!(
+            extras_probe.quality.confidence,
+            standalone_probe.quality.confidence
+        );
+        assert_eq!(
+            extras_probe.dimensions.width,
+            standalone_probe.dimensions.width
+        );
+        assert_eq!(
+            extras_probe.dimensions.height,
+            standalone_probe.dimensions.height
+        );
+        assert_eq!(
+            extras_probe.dqt_tables.len(),
+            standalone_probe.dqt_tables.len()
+        );
+    }
+}
+
+/// Decode a JPEG and return the raw DCT coefficients per component.
+///
+/// Each component is a `Vec<[i16; 64]>` of blocks in raster order (left-to-right,
+/// top-to-bottom). Coefficients are in JPEG zigzag order within each block.
+///
+/// Only available with the `__test-utils` feature.
+#[cfg(feature = "__test-utils")]
+pub fn decode_coefficients(
+    data: &[u8],
+) -> crate::error::Result<Vec<Vec<[i16; crate::foundation::consts::DCT_BLOCK_SIZE]>>> {
+    use enough::Unstoppable;
+    let mut parser = parser::JpegParser::new(data, 0, None)?;
+    parser.decode(&Unstoppable)?;
+    Ok(parser.coeffs)
+}

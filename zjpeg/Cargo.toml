@@ -15,7 +15,7 @@ path = "src/main.rs"
 zenjpeg = { path = "../zenjpeg", features = ["moxcms"] }
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 rayon = { workspace = true }
-indicatif = "0.17"
+indicatif = "0.18"
 anyhow = "1"
 rgb = { workspace = true }
 enough = { workspace = true }

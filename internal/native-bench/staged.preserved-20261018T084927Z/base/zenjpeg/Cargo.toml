@@ -1,0 +1,267 @@
+[package]
+name = "zenjpeg-base"
+version = "0.9.0"
+edition = "2024"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+repository = "https://github.com/imazen/zenjpeg"
+documentation = "https://docs.rs/zenjpeg"
+readme = "README.crates.md"
+description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
+keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
+categories = ["multimedia::images", "encoding"]
+authors = ["Lilith River <lilith@imazen.io>"]
+rust-version = "1.93"
+exclude = [
+    "tests/",
+    "test_cache/",
+    "benches/",
+    "examples/",
+    "docs/",
+    "fuzz/",
+    "scripts/",
+    "reports/",
+    "benchmarks/",
+    "*.log",
+    "*.csv",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "refactor.md",
+    "xyb.md",
+    "QUALITY_INVESTIGATION.md",
+    ".gitignore",
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    ".github/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
+]
+
+[lib]
+name = "zenjpeg_base"
+
+[dependencies]
+aligned-vec = { workspace = true }
+bytemuck = { workspace = true }
+rgb = { workspace = true }
+imgref = { workspace = true }
+enough = { workspace = true }
+zencodec = { workspace = true }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", default-features = false, features = ["xmp"] }
+zenpixels = { workspace = true }
+zenpixels-convert = { workspace = true, optional = true }
+# Image content analyzers (variance, edges, chroma sharpness, DCT energy)
+# used by `EncoderConfig::adaptive`. Pulls rows on demand from any
+# PixelSlice via zenpixels-convert internally.
+# `experimental` is required for PatchFraction and a handful of other
+# features the adaptive bucket inference reads. HDR features are
+# gated under `experimental` in registry 0.1.0 (a separate `hdr`
+# feature only exists on local-main and isn't required by src/).
+zenanalyze = { workspace = true, features = ["experimental"] }
+garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
+tinyvec = { workspace = true }  # Stack-allocated bounded vectors
+memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes
+linear-srgb = { workspace = true }
+whereat = { workspace = true }  # Error tracing with location tracking
+thiserror = { workspace = true }  # Error derive macros
+# lcms2 removed — use moxcms (pure Rust) instead
+moxcms = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }  # For parallel encoding
+# Fast SIMD RGB→YCbCr conversion via zenyuv (in-workspace crate, mandatory).
+zenyuv = { workspace = true }
+# Token-based safe SIMD intrinsics (mandatory — always compiled in)
+archmage = { workspace = true }
+# Token-gated SIMD types (wraps archmage tokens)
+magetypes = { workspace = true }
+# Safe unaligned SIMD load/store wrappers (eliminates unsafe for memory ops)
+safe_unaligned_simd = { workspace = true }
+# WASM console logging for debugging browser-specific issues
+web-sys = { version = "0.3", features = ["console"], optional = true }
+# Container/MPF types shared with UltraHDR (unconditional — no new transitive deps)
+ultrahdr-core = { workspace = true }
+# Half-precision float (f16) — used for UltraHDR HDR pixel decoding
+half = { workspace = true, optional = true }
+# Tone-mapping curves wired into encode_ultrahdr_luma. Optional, gated behind
+# the `ultrahdr` feature so the dep is only pulled when HDR encoding is used.
+zentone = { workspace = true, optional = true }
+# Layout pipeline: image resampling. Constraint solver (FitMode) and
+# EXIF-orientation bridge live in zenresize 0.3+.
+zenresize = { workspace = true, optional = true }
+# Self-documenting node definitions for pipeline integration
+# zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
+# Perceptual metric used by Quality::Zq target-perceptual-quality variants
+# (issue #113). Pulled in only when the `target-zq` feature is enabled.
+zensim = { workspace = true, optional = true }
+# Exact runtime identity required by the complete candidate scoring surface.
+zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
+
+# zenpredict (ZNPR v3 runtime) — pulled in only by the
+# `__picker-research` feature for the dev/picker_v0_3_holdout_ab.rs
+# held-out A/B harness. Path-only because the v3 schema lives on the
+# sibling `../zenanalyze/zenpredict` and isn't published yet.
+zenpredict = { path = "../../zenanalyze/zenpredict", package = "zenpredict-base", optional = true }
+# zenanalyze-api: the frozen 1.0 feature contract. Optional, enabled by
+# `__picker-research`, so the picker can reuse a shared feature `Offer`. Git-rev
+# (workspace dep) — see the workspace Cargo.toml note.
+zenanalyze-api = { workspace = true, optional = true }
+
+[features]
+metadata-rewrite = ["zenmeta/rewrite"]
+default = []
+# Optional structural inspection and validated metadata reassembly. The entire
+# implementation is excluded when disabled, not just hidden from public docs.
+extended-metadata = []
+inventory = ["zencodec"]
+__oracle-exiftool = ["extended-metadata"]
+# Dev-only: enables archmage/testable_dispatch so benches/tier_isolation.rs can
+# disable the baseline SIMD token (NEON on aarch64) and measure a real scalar
+# arm. Never enable in a published build.
+_dev = ["archmage/testable_dispatch", "__test-utils"]
+# Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
+parallel = ["dep:rayon"]
+# Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time
+# overhead when `BoundaryRd::On` is used (default remains `BoundaryRd::Off` which
+# keeps the module out of the hot path). Even with this feature enabled, the
+# default `EncoderConfig` produces byte-identical output to a feature-off build.
+# The knob set and defaults are evolvable — coefficient (#94, #103) will use this
+# feature for broader parameter-space exploration with GPU-backed metrics.
+boundary-rd = []
+# Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
+moxcms = ["dep:moxcms"]
+# ── Internal / dev-only features (prefixed with __ to signal "don't use") ──
+# FFI tests against C++ jpegli (requires git submodule + cmake + C++ toolchain)
+__ffi-tests = []
+# Corpus comparison tests (requires local codec-corpus directory)
+__corpus-tests = []
+# Debug token serialization for C++ comparison
+__debug-tokens = []
+# Internal profiling instrumentation (scope timers)
+__profile = []
+# Internal: BD-RD per-block trace sink for refinement-field analysis.
+# Installs a thread-local sink that captures per-luma-block refinement
+# decisions (coefficient delta L1, D_b before/after, trigger/retries).
+# Used by `coefficient/examples/bdrd_anisotropy_trace.rs` to validate
+# the pattern-formation hypothesis. Off in every production build.
+__bdrd-trace = ["boundary-rd"]
+# Vec allocation instrumentation (logs utilization on drop)
+__alloc-instrument = []
+# Test utilities (image generation, quality verification)
+__test-utils = []
+# Cross-codec uniformity hook: exposes the `InternalParams` knob bundle
+# and `EncoderConfig::with_internal_params(params)` setter so external
+# pipelines (codec calibration sweeps, picker training, learned
+# auto-tuners) can drive every zen codec through the same shape. Mirrors
+# `zenwebp`'s `__expert` feature. No new public knobs are exposed —
+# `InternalParams` only re-bundles existing builder methods.
+__expert = []
+# WASM SIMD128 tests (requires wasm runtime with SIMD support)
+__wasm-simd = []
+# Research-only dev binaries (`dev/picker_v0_3_holdout_ab.rs`) that
+# need the sibling `../../zenanalyze/zenpredict` checked out and use
+# post-0.1.0 zenanalyze symbols. Off by default; off in CI. Local
+# devs running picker A/B experiments enable this.
+#
+# `zenanalyze/hdr` is REQUIRED for the production picker: its 109-input
+# vector is the zenanalyze `SUPPORTED` set (108 features) which only equals
+# the 108 the picker trained on when BOTH `experimental` + `hdr` are on.
+# Without `hdr`, `SUPPORTED` shrinks and the feature order shifts, feeding
+# the MLP misaligned inputs. (The 8 hdr/alpha features are content-constant
+# for SDR inputs — `peak/p99_luminance_nits = 80`, the rest `0` — so they
+# carry no signal, but they must sit at the right positions with the right
+# values; `hdr` produces them via the same code path the training used.)
+# `zenpredict/advanced` unlocks the typed rescue/OOD API the picker uses to
+# stay safe on adversarial inputs: `first_out_of_distribution` (per-input
+# bounds + NaN/inf guard) and the bake's safety/fallback sections. The wire
+# format always parses those sections; this only exposes the Rust API. Lean
+# `predict`/`argmin_masked`-only consumers leave it off.
+#
+# Now a thin alias over `target-zq` (which carries the picker deps since the
+# 2026-07-16 one-shot/iterate fold). Kept as a distinct name only because the
+# `picker_v0_3_holdout_ab` dev binary and some docs reference it.
+__picker-research = ["target-zq"]
+# UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
+# Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
+# Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is
+# now mandatory there); container/metadata parsers moved to zencodec::gainmap
+# + zenjpeg::container::xmp; types fold to zenpixels (PixelFormat,
+# ColorPrimaries, TransferFunction, PixelBuffer).
+# `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
+# `ultrahdr-core/f16` restores HdrOutputFormat::LinearF16 (ultrahdr-core 0.6.0
+# made it default-off; ReconstructHdr's `wants_f16` output path needs it).
+ultrahdr = [
+    "ultrahdr-core/std",
+    "ultrahdr-core/tonemap",
+    "ultrahdr-core/f16",
+    "dep:half",
+    "dep:zentone",
+    # Measured content-light-level for the ReconstructHdr envelope (appendix
+    # AA): the zenpixels measurement owner (`CllMeasure::measure_max`) lives
+    # behind zenpixels-convert's `hdr-experimental` gate (stable math; the
+    # gate covers pre-0.3.0 surface churn).
+    "dep:zenpixels-convert",
+    "zenpixels-convert/hdr-experimental",
+    # The SDR base's ICC profile comes from `synthesize_icc_for_cicp`, which
+    # serves exact, cicp-tagged profiles (that libultrahdr recognises) only
+    # from the icc-db blob; without it a BT.2020 base with the sRGB transfer
+    # had no profile at all.
+    "zenpixels-convert/icc-db",
+]
+# zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
+# zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
+# path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
+# Includes zenpixels-convert's `icc-db` (a bundled ~36 KB LZ4 profile blob +
+# pure-Rust lz4_flex, no moxcms): full ITU-T H.273 grid coverage incl PQ/HLG,
+# so a CICP-described color always gets a real embedded ICC. Only a CICP
+# outside the assigned H.273 grid is an encode error (never a silently
+# mislabeled image). icc-db is unconditional because feature unification made
+# the old `cms` opt-in untestable and environment-dependent: zenpixels-convert
+# 0.2.13 ships icc-db in its defaults, so any default-features consumer
+# anywhere in a build graph flipped the capability on regardless of zenjpeg's
+# flag.
+# `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
+# kernels, which the decoder's auto-orient permute delegates to (#150); it
+# adds no dependency (archmage + magetypes are already mandatory here).
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
+# Target-perceptual-quality encoder — the umbrella for every `zq*` variant.
+#   - `Quality::Zq` / `Quality::ZqExplicit`: closed loop. Iterates
+#     encode + decode + zensim diffmap to land at a perceptual score target
+#     (issue #113). Needs zensim (the metric).
+#   - `Quality::ZqPicker`: realtime one-shot. The distilled picker predicts the
+#     config, single encode, no measurement. Needs zenpredict + zenanalyze-api
+#     (the picker runtime); it does NOT use zensim, but the fold keeps a single
+#     flag rather than splitting a `picker` feature out (chosen 2026-07-16).
+# So this pulls BOTH the metric and the picker. The picker deps are an
+# unpublished sibling path dep today (`../../zenanalyze/zenpredict`), which is
+# why no CI job enables `target-zq` yet; it resolves once they publish. Kept on
+# one line so the i686 CI manifest-strip can rewrite it to just `["dep:zensim"]`
+# (it deletes the unpublished zenpredict path dep, which would otherwise leave a
+# dangling `dep:zenpredict` reference here — see .github/workflows/ci.yml).
+target-zq = ["dep:zensim", "dep:zenpredict", "dep:zenanalyze-api", "zenpredict/advanced", "zenanalyze/hdr"]
+# Complete candidate binding in the recovered Zq experiment; explicit opt-in.
+__zensim-research = ["target-zq", "zensim/custom-profiles", "zensim/feature-regime-v2", "dep:zenpredict-serving"]
+# JPEG→JPEG recompression to a target zensim Profile A quality with no size
+# regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
+# core router/strategies/calibration need only the decoder — no heavy deps,
+# so enabling this barely moves compile time. The closed-loop IQA refinement
+# (`Budget::MaxIterations` > 1 / `MaxTime`) needs the perceptual metric, so it
+# is split into `recompress-iqa` (pulls `zensim`, like `target-zq`).
+recompress = []
+# Closed-loop measurement for `recompress` (generation loss vs source).
+recompress-iqa = ["recompress", "dep:zensim"]
+# Expose `recompress::expert` (per-strategy entry points, calibration-table
+# inspection, block classification). Unstable internals; not semver-covered.
+recompress-expert = ["recompress"]
+# Layout pipeline: lossless transforms + lossy decode→resize→encode.
+# Geometry/constraint solving (FitMode) and EXIF-orientation bridge live in
+# zenresize itself; orientation group algebra comes from zenpixels (re-exported
+# via zenresize). No separate zenlayout dep needed.
+layout = ["dep:zenresize"]
+# Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
+# zennode = ["dep:zennode", "zencodec"]
+

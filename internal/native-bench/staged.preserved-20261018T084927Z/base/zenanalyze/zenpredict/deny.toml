@@ -1,0 +1,72 @@
+# cargo-deny configuration for zenpredict.
+#
+# zenpredict is intentionally MIT/Apache-2.0 so it can be embedded in
+# any consumer (including MIT/Apache zensim and downstream codec
+# binaries). Anything that pulls AGPL into our transitive graph is a
+# license-policy violation; this file enforces that and the licenses
+# of every transitive dep we currently ship.
+#
+# Run from the workspace root:
+#     cargo deny --config zenpredict/deny.toml check
+
+[graph]
+all-features = true
+
+[licenses]
+# Permit only license expressions known to compose cleanly with
+# MIT/Apache-2.0 distribution. Any new transitive that doesn't fit
+# this list trips a cargo-deny error and forces a conscious decision
+# (vendor a different crate, get the license added, drop the dep).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MIT-0",
+    "0BSD",
+    "CC0-1.0",
+    # First-party workspace crates (zenanalyze, zenpicker) ship under
+    # this dual license. Listed here so cargo-deny doesn't reject the
+    # workspace's own crates — they are NEVER transitive deps of
+    # zenpredict (verified via `cargo tree -p zenpredict`); zenpredict
+    # itself only ever pulls in MIT/Apache/permissive crates.
+    "AGPL-3.0-only",
+]
+# Allow LicenseRef-* expressions only for the workspace's own
+# proprietary-track license; never for transitive deps.
+exceptions = [
+    { name = "zenanalyze", allow = ["LicenseRef-Imazen-Commercial"] },
+    { name = "zenpicker", allow = ["LicenseRef-Imazen-Commercial"] },
+]
+confidence-threshold = 0.93
+
+[bans]
+# Block on multiple versions of the same crate sneaking in via stale
+# transitive resolution. Allow `proc-macro2 / quote / syn` only —
+# they're the most volatile macro-time deps and a duplicate is
+# usually upstream lag, not our problem.
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+
+[advisories]
+# Enforce that we don't ship any crate with an open RUSTSEC advisory.
+# `unmaintained` is a warning rather than a hard ban so a stale-but-
+# functional dep doesn't block release; revisit case-by-case.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[sources]
+# Only allow crates from crates.io and our own GitHub orgs. Any other
+# git source is a deliberate vendor and must be explicitly listed.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,34 @@
+[package]
+name = "zenpredict-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+# Standalone — cargo-fuzz's RUSTFLAGS conflict with the zenanalyze
+# workspace's release profile settings.
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+# `advanced` pulls in the typed multi-output / scorer API exercised by
+# predictor_predict. The lz4 whole-bake decompression path is no longer
+# feature-gated (lz4_flex is an unconditional dep; the compressed flag is
+# checked at runtime in `Model::load`), so it's fuzzed unconditionally via
+# the parser_from_bytes target's `Model::from_bytes` call.
+zenpredict = { path = "..", features = ["std", "advanced"] }
+
+[[bin]]
+name = "parser_from_bytes"
+path = "fuzz_targets/parser_from_bytes.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "predictor_predict"
+path = "fuzz_targets/predictor_predict.rs"
+test = false
+doc = false

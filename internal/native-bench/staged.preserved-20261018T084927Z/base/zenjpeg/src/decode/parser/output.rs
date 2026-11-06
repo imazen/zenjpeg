@@ -1,0 +1,2405 @@
+//! Pixel output conversion for decoded JPEG data.
+//!
+//! This module handles the final conversion from decoded DCT coefficients
+//! to pixel output in various formats (RGB u8, RGB f32, YCbCr f32).
+//!
+//! ## Fast Paths
+//!
+//! - `to_pixels_fast_i16`: For 4:4:4 non-XYB images, uses integer IDCT throughout
+//! - `to_pixels_fast_i16_subsampled`: For 4:2:0/4:2:2/4:4:0 non-XYB images
+//!
+//! ## Generic Paths
+//!
+//! - `to_pixels`: General f32 path with bias computation, handles XYB
+//! - `to_pixels_f32`: f32 output normalized to [0.0, 1.0]
+//! - `to_ycbcr_planes_f32`: Raw YCbCr planes for custom processing
+
+#[cfg(feature = "parallel")]
+#[path = "output_parallel.rs"]
+mod output_parallel;
+
+use super::super::idct::inverse_dct_8x8;
+use super::super::idct_int::{
+    idct_int_auto, idct_int_libjpeg, idct_int_tiered, idct_int_tiered_libjpeg,
+};
+use super::super::upsample::{upsample_libjpeg_f32, upsample_nearest_f32};
+use crate::color::{
+    cmyk_planes_to_cmyk_u8, cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8,
+    gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
+    ycbcr::{
+        fused_h2v2_box_ycbcr_to_rgb_u8, rgb_u8_swap_rb_inplace, rgb_u8_to_bgra_u8,
+        rgb_u8_to_rgba_u8,
+    },
+    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
+    ycck_planes_to_cmyk_u8, ycck_planes_to_rgb_u8,
+};
+use crate::decode::extras::AdobeColorTransform;
+use crate::error::{Error, Result};
+use crate::foundation::alloc::{
+    checked_size_2d, try_alloc_maybeuninit_pref, try_alloc_zeroed_f32_pref, try_alloc_zeroed_pref,
+};
+use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
+use crate::quant::{
+    DequantBiasStats, dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
+};
+use crate::types::PixelFormat;
+use enough::Stop;
+
+use super::output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
+use super::{CompInfo, JpegParser};
+
+/// Output spec for the fast i16 paths' caller-provided destination buffer.
+#[allow(dead_code)] // variants chosen at the call site
+enum FastDst<'a> {
+    Rgb(&'a mut [u8]),
+    Rgba(&'a mut [u8]),
+    Bgra(&'a mut [u8]),
+}
+
+impl<'a> FastDst<'a> {
+    fn bpp(&self) -> usize {
+        match self {
+            FastDst::Rgb(_) => 3,
+            FastDst::Rgba(_) | FastDst::Bgra(_) => 4,
+        }
+    }
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            FastDst::Rgb(b) | FastDst::Rgba(b) | FastDst::Bgra(b) => b,
+        }
+    }
+}
+
+/// Returns true for formats that decode via the RGB u8 fast paths
+/// (i16 IDCT → direct u8 output), then optionally reformat.
+fn is_rgb_family_u8(format: PixelFormat) -> bool {
+    matches!(
+        format,
+        PixelFormat::Rgb
+            | PixelFormat::Bgr
+            | PixelFormat::Rgba
+            | PixelFormat::Bgra
+            | PixelFormat::Bgrx
+    )
+}
+
+/// Reformats an RGB u8 buffer into the target `PixelFormat`.
+///
+/// - `Rgb` → passthrough (returns `rgb` unchanged)
+/// - `Bgr` → in-place R/B swap (returns same buffer)
+/// - `Rgba` → allocate 4-bpp buffer, copy with alpha = 255
+/// - `Bgra` / `Bgrx` → allocate 4-bpp buffer, swap R/B + alpha = 255
+fn reformat_rgb_output(
+    mut rgb: Vec<u8>,
+    format: PixelFormat,
+    width: usize,
+    height: usize,
+    alloc_pref: zencodec::AllocPreference,
+) -> Result<Vec<u8>> {
+    match format {
+        PixelFormat::Rgb => Ok(rgb),
+        PixelFormat::Bgr => {
+            rgb_u8_swap_rb_inplace(&mut rgb);
+            Ok(rgb)
+        }
+        PixelFormat::Rgba => {
+            // Full-image output buffer → default fallible.
+            let dst_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
+            let mut dst =
+                try_alloc_zeroed_pref(alloc_pref, true, dst_size, "RGBA reformat output")?;
+            rgb_u8_to_rgba_u8(&rgb, &mut dst);
+            Ok(dst)
+        }
+        PixelFormat::Bgra | PixelFormat::Bgrx => {
+            // Full-image output buffer → default fallible.
+            let dst_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
+            let mut dst =
+                try_alloc_zeroed_pref(alloc_pref, true, dst_size, "BGRA reformat output")?;
+            rgb_u8_to_bgra_u8(&rgb, &mut dst);
+            Ok(dst)
+        }
+        _ => Err(Error::unsupported_feature("unsupported color conversion")),
+    }
+}
+
+/// Expands a 1bpp grayscale buffer into the requested RGB-family `PixelFormat`.
+///
+/// Used when the streaming decoder produces 1bpp gray (grayscale JPEGs always
+/// ignore `streaming_output_format`) but the caller asked for Rgb/Bgr/Rgba/Bgra/Bgrx.
+/// Replicates the gray sample into all color channels; alpha is 255 for 4-bpp targets.
+fn expand_gray_u8_to_format(
+    gray: &[u8],
+    format: PixelFormat,
+    width: usize,
+    height: usize,
+    alloc_pref: zencodec::AllocPreference,
+) -> Result<Vec<u8>> {
+    let npixels = checked_size_2d(width, height)?;
+    if gray.len() < npixels {
+        return Err(Error::internal("grayscale buffer too small"));
+    }
+    match format {
+        PixelFormat::Rgb | PixelFormat::Bgr => {
+            // Channel order is irrelevant — all three bytes are the gray sample.
+            // Full-image output buffer → default fallible.
+            let out_size = checked_size_2d(npixels, 3)?;
+            let mut out = try_alloc_zeroed_pref(alloc_pref, true, out_size, "gray->RGB expand")?;
+            for i in 0..npixels {
+                let g = gray[i];
+                let d = i * 3;
+                out[d] = g;
+                out[d + 1] = g;
+                out[d + 2] = g;
+            }
+            Ok(out)
+        }
+        PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
+            // Full-image output buffer → default fallible.
+            let out_size = checked_size_2d(npixels, 4)?;
+            let mut out = try_alloc_zeroed_pref(alloc_pref, true, out_size, "gray->RGBA expand")?;
+            for i in 0..npixels {
+                let g = gray[i];
+                let d = i * 4;
+                out[d] = g;
+                out[d + 1] = g;
+                out[d + 2] = g;
+                out[d + 3] = 255;
+            }
+            Ok(out)
+        }
+        _ => Err(Error::unsupported_feature(
+            "unsupported grayscale → color conversion",
+        )),
+    }
+}
+
+/// Reformats an RGB u8 source buffer into the target `PixelFormat` written
+/// directly into a caller-owned destination slice. Avoids the extra allocation
+/// that [`reformat_rgb_output`] does for 4-bpp targets.
+fn reformat_rgb_into(
+    rgb: &[u8],
+    format: PixelFormat,
+    width: usize,
+    height: usize,
+    dst: &mut [u8],
+) -> Result<usize> {
+    let npixels = width
+        .checked_mul(height)
+        .ok_or_else(|| Error::internal("size overflow"))?;
+    let written = match format {
+        PixelFormat::Rgb => {
+            let bytes = npixels
+                .checked_mul(3)
+                .ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < bytes {
+                return Err(Error::internal("destination/source too small for RGB"));
+            }
+            dst[..bytes].copy_from_slice(&rgb[..bytes]);
+            bytes
+        }
+        PixelFormat::Bgr => {
+            let bytes = npixels
+                .checked_mul(3)
+                .ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < bytes {
+                return Err(Error::internal("destination/source too small for BGR"));
+            }
+            dst[..bytes].copy_from_slice(&rgb[..bytes]);
+            rgb_u8_swap_rb_inplace(&mut dst[..bytes]);
+            bytes
+        }
+        PixelFormat::Rgba => {
+            let bytes = npixels
+                .checked_mul(4)
+                .ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < npixels * 3 {
+                return Err(Error::internal("destination/source too small for RGBA"));
+            }
+            // Garb dispatches to AVX2/NEON/WASM128/scalar.
+            garb::bytes::rgb_to_rgba(&rgb[..npixels * 3], &mut dst[..bytes])
+                .map_err(|_| Error::internal("garb size validation failed"))?;
+            bytes
+        }
+        PixelFormat::Bgra | PixelFormat::Bgrx => {
+            let bytes = npixels
+                .checked_mul(4)
+                .ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < npixels * 3 {
+                return Err(Error::internal("destination/source too small for BGRA"));
+            }
+            garb::bytes::rgb_to_bgra(&rgb[..npixels * 3], &mut dst[..bytes])
+                .map_err(|_| Error::internal("garb size validation failed"))?;
+            bytes
+        }
+        _ => return Err(Error::unsupported_feature("unsupported color conversion")),
+    };
+    Ok(written)
+}
+
+/// f32 IDCT path: dequantize (optionally with Laplacian bias), inverse DCT,
+/// and copy the 8x8 block of f32 pixels into `comp_plane_f32` at
+/// `(base_px, base_py)`, clipped to `(cols_to_copy, rows_to_copy)`.
+///
+/// Used for XYB (extended-gamut precision), `dequant_bias` (fractional bias
+/// application), and `force_f32_idct` (dimension-swapping transforms need
+/// symmetric IDCT). Hot path — inlined into the MCU-row loop.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn idct_block_f32_into_plane(
+    natural_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    biases: &[f32; DCT_BLOCK_SIZE],
+    is_xyb: bool,
+    dequant_bias: bool,
+    comp_plane_f32: &mut [f32],
+    comp_width: usize,
+    base_px: usize,
+    base_py: usize,
+    rows_to_copy: usize,
+    cols_to_copy: usize,
+) {
+    let dequant = if dequant_bias && !is_xyb {
+        dequantize_block_with_bias(natural_coeffs, quant, biases)
+    } else {
+        dequantize_block(natural_coeffs, quant)
+    };
+    let pixels = inverse_dct_8x8(&dequant);
+
+    if cols_to_copy == DCT_SIZE {
+        for y in 0..rows_to_copy {
+            let dst_offset = (base_py + y) * comp_width + base_px;
+            let src_offset = y * DCT_SIZE;
+            comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
+                .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+        }
+    } else {
+        for y in 0..rows_to_copy {
+            for x in 0..cols_to_copy {
+                comp_plane_f32[(base_py + y) * comp_width + base_px + x] = pixels[y * DCT_SIZE + x];
+            }
+        }
+    }
+}
+
+/// Integer IDCT path: dequantize to i32, run the integer IDCT
+/// (libjpeg-style for `Triangle` upsampling, auto-tier otherwise), then
+/// level-shift the i16 [0,255] result to f32 [-128, 127] and copy into
+/// `comp_plane_f32` at `(base_px, base_py)`, clipped to `(cols_to_copy,
+/// rows_to_copy)`.
+///
+/// Used for standard non-XYB, non-bias 4:4:4 / subsampled JPEGs that fell
+/// through the fast i16 paths (e.g., uncommon channel counts). Hot path —
+/// inlined into the MCU-row loop.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn idct_block_i16_into_plane(
+    natural_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    chroma_upsampling: super::super::ChromaUpsampling,
+    gray_source: bool,
+    comp_plane_f32: &mut [f32],
+    comp_width: usize,
+    base_px: usize,
+    base_py: usize,
+    rows_to_copy: usize,
+    cols_to_copy: usize,
+) {
+    let mut dequant_i32 = dequantize_block_i32(natural_coeffs, quant);
+    let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
+    // 1-component sources always use the libjpeg-exact kernel: there is no
+    // chroma for the jpegli tuning to matter, and the gray plane must be
+    // identical regardless of decode path or upsampling mode (#154).
+    if gray_source || matches!(chroma_upsampling, super::super::ChromaUpsampling::Triangle) {
+        idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
+    } else {
+        idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
+    }
+
+    if cols_to_copy == DCT_SIZE {
+        for y in 0..rows_to_copy {
+            let dst_offset = (base_py + y) * comp_width + base_px;
+            let src_offset = y * DCT_SIZE;
+            for x in 0..DCT_SIZE {
+                comp_plane_f32[dst_offset + x] = pixels_i16[src_offset + x] as f32 - 128.0;
+            }
+        }
+    } else {
+        for y in 0..rows_to_copy {
+            for x in 0..cols_to_copy {
+                comp_plane_f32[(base_py + y) * comp_width + base_px + x] =
+                    pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
+            }
+        }
+    }
+}
+
+/// Pixel output conversion methods for JpegParser.
+impl<'a> JpegParser<'a> {
+    /// Check if this JPEG stores raw RGB (not YCbCr).
+    ///
+    /// Adobe APP14 with transform=0 and 3 components means the data is stored
+    /// as raw RGB. Also detect RGB component IDs (R=82, G=71, B=66) without
+    /// Adobe marker. In these cases we must NOT apply YCbCr→RGB conversion.
+    pub(crate) fn is_rgb_jpeg(&self) -> bool {
+        if self.num_components != 3 {
+            return false;
+        }
+        // Adobe APP14 transform byte determines encoding:
+        // 0 = Unknown/RGB (no transform), 1 = YCbCr, 2 = YCCK
+        match self.adobe_transform {
+            Some(AdobeColorTransform::YCbCr) => return false, // Explicitly YCbCr
+            Some(AdobeColorTransform::Unknown) => return true, // Explicitly RGB (transform=0)
+            Some(AdobeColorTransform::Ycck) => return false,  // YCCK (shouldn't be 3-component)
+            None => {}                                        // No Adobe marker, check IDs
+        }
+        // No Adobe APP14: check component IDs for RGB ('R'=82, 'G'=71, 'B'=66)
+        let ids: [u8; 3] = [
+            self.components[0].id,
+            self.components[1].id,
+            self.components[2].id,
+        ];
+        ids == *b"RGB"
+    }
+
+    /// Check if we can use the fast i16 path for 4:4:4 images.
+    ///
+    /// Fast path requirements:
+    /// - Non-XYB (standard JPEG)
+    /// - 4:4:4 subsampling (no chroma downsampling to avoid f32 upsampling)
+    /// - RGB-family output format (Rgb, Bgr, Rgba, Bgra, Bgrx)
+    fn can_use_fast_i16_path(&self, format: PixelFormat, is_xyb: bool) -> bool {
+        if is_xyb || self.force_f32_idct {
+            return false;
+        }
+        if !is_rgb_family_u8(format) {
+            return false;
+        }
+        if self.num_components != 3 {
+            return false;
+        }
+
+        // Check for 4:4:4 (all components have same sampling factors)
+        let h_samp_0 = self.components[0].h_samp_factor;
+        let v_samp_0 = self.components[0].v_samp_factor;
+        for i in 1..3 {
+            if self.components[i].h_samp_factor != h_samp_0
+                || self.components[i].v_samp_factor != v_samp_0
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check if we can use the fast i16 path for subsampled images (4:2:0, 4:2:2, 4:4:0).
+    ///
+    /// Fast path requirements:
+    /// - Non-XYB (standard JPEG)
+    /// - RGB-family output format (Rgb, Bgr, Rgba, Bgra, Bgrx)
+    /// - 3 components (YCbCr)
+    /// - Standard subsampling (Y full-res, Cb/Cr subsampled)
+    fn can_use_fast_i16_subsampled(&self, format: PixelFormat, is_xyb: bool) -> bool {
+        if is_xyb || self.force_f32_idct {
+            return false;
+        }
+        if !is_rgb_family_u8(format) {
+            return false;
+        }
+        if self.num_components != 3 {
+            return false;
+        }
+
+        // Y component should have the highest sampling factors
+        let y_h = self.components[0].h_samp_factor;
+        let y_v = self.components[0].v_samp_factor;
+
+        // Cb and Cr should have <= Y sampling
+        let cb_h = self.components[1].h_samp_factor;
+        let cb_v = self.components[1].v_samp_factor;
+        let cr_h = self.components[2].h_samp_factor;
+        let cr_v = self.components[2].v_samp_factor;
+
+        // Cb and Cr must match each other
+        if cb_h != cr_h || cb_v != cr_v {
+            return false;
+        }
+
+        // Chroma must be subsampled (not 4:4:4, that uses the other path)
+        if cb_h == y_h && cb_v == y_v {
+            return false;
+        }
+
+        // Only support standard ratios: 2x1 (4:2:2), 1x2 (4:4:0), 2x2 (4:2:0)
+        let h_ratio = y_h / cb_h;
+        let v_ratio = y_v / cb_v;
+
+        matches!((h_ratio, v_ratio), (2, 1) | (1, 2) | (2, 2))
+    }
+
+    /// Fast decode path using integer arithmetic throughout.
+    ///
+    /// This path avoids f32 entirely by using:
+    /// - Integer IDCT (outputs i16 [0, 255])
+    /// - Integer color conversion (i16 YCbCr → u8 RGB)
+    ///
+    /// Streams MCU row by row to keep data in L2 cache.
+    /// Only works for non-XYB 4:4:4 RGB output.
+    fn to_pixels_fast_i16(
+        &self,
+        _chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Calculate max sampling factors (should all be the same for 4:4:4)
+        let max_h_samp = self.components[0].h_samp_factor as usize;
+        let max_v_samp = self.components[0].v_samp_factor as usize;
+
+        // MCU dimensions
+        let mcu_height = max_v_samp * 8;
+        let mcu_cols = (width + max_h_samp * 8 - 1) / (max_h_samp * 8);
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Component info
+        let comp_infos = self.build_comp_infos(mcu_cols, mcu_rows, max_h_samp, max_v_samp, 3)?;
+
+        // Allocate strip buffers for one MCU row (reused each iteration)
+        // Strip height = max_v_samp * 8 pixels
+        let strip_height = mcu_height;
+        let strip_width = comp_infos[0].comp_width;
+        let strip_size = strip_width * strip_height;
+
+        // Allocate strip buffers - values will be fully overwritten by IDCT.
+        // Note: Strips are fully written by IDCT before color conversion reads
+        // them. Bounded by the row width × strip height → default infallible.
+        let mut y_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Y strip buffer")?;
+        let mut cb_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cb strip buffer")?;
+        let mut cr_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, strip_size, "Cr strip buffer")?;
+
+        // Allocate output RGB buffer. Sized from the (untrusted) SOF
+        // dimensions → default fallible.
+        // Note: All pixels are written by color conversion before the buffer is returned
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "RGB output buffer")?;
+
+        // Process MCU row by row
+        // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
+        let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
+
+        for imcu_row in 0..mcu_rows {
+            // No need to clear strips - we write all pixels we'll read
+
+            // IDCT all blocks in this MCU row for all 3 components
+            let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+                super::super::IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+                super::super::IdctMethod::Jpegli => idct_int_tiered,
+            };
+
+            for (comp_idx, strip) in [&mut y_strip, &mut cb_strip, &mut cr_strip]
+                .into_iter()
+                .enumerate()
+            {
+                let quant = self.quant_tables[comp_infos[comp_idx].quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
+
+                idct_comp_mcu_row(
+                    &self.coeffs[comp_idx],
+                    &self.coeff_counts[comp_idx],
+                    &comp_infos[comp_idx],
+                    quant,
+                    imcu_row,
+                    strip,
+                    strip_width,
+                    idct_fn,
+                    &mut dequant_i32,
+                );
+            }
+
+            // Color convert this MCU row's strips directly to RGB output
+            let y_start = imcu_row * mcu_height;
+            let rows_this_mcu = mcu_height.min(height.saturating_sub(y_start));
+            let cols_this_mcu = width.min(strip_width);
+            let is_rgb = self.is_rgb_jpeg();
+
+            for row in 0..rows_this_mcu {
+                let strip_offset = row * strip_width;
+                let rgb_offset = (y_start + row) * width * 3;
+
+                if is_rgb {
+                    // RGB JPEG: just interleave the 3 planes (no YCbCr→RGB matrix)
+                    // IDCT already output level-shifted values [0, 255]
+                    for px in 0..cols_this_mcu {
+                        let i = strip_offset + px;
+                        let o = rgb_offset + px * 3;
+                        rgb[o] = y_strip[i].clamp(0, 255) as u8;
+                        rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
+                        rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
+                    }
+                } else {
+                    // Convert one row at a time for cache efficiency
+                    ycbcr_planes_i16_to_rgb_u8(
+                        &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                        self.idct_method == super::super::IdctMethod::Libjpeg,
+                    );
+                }
+            }
+        }
+
+        Ok(rgb)
+    }
+
+    /// Fast decode path for subsampled images (4:2:0, 4:2:2, 4:4:0) using i16 throughout.
+    ///
+    /// Uses double-buffered extended chroma strips instead of full-plane allocation.
+    /// Each extended strip has `c_strip_height + 2` rows: one boundary context row
+    /// above, `c_strip_height` data rows (IDCT output), and one boundary context row
+    /// below. The upsampler's edge-replication logic (`saturating_sub(1)` and
+    /// `.min(in_height-1)`) naturally reads the context rows, producing correct
+    /// cross-MCU-boundary interpolation without any changes to the upsample functions.
+    ///
+    /// Memory: ~200KB for 2048x2048 vs ~20MB for full-plane approach.
+    fn to_pixels_fast_i16_subsampled(
+        &self,
+        chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut dst: Vec<u8> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, true, rgb_size, "RGB output buffer")?;
+        self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, FastDst::Rgb(&mut dst))?;
+        Ok(dst)
+    }
+
+    /// Same as [`to_pixels_fast_i16_subsampled`] but writes into a caller-owned
+    /// buffer (RGB, RGBA, or BGRA layout). Eliminates the intermediate Vec.
+    fn to_pixels_fast_i16_subsampled_into(
+        &self,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        mut dst: FastDst<'_>,
+    ) -> Result<()> {
+        use super::super::ChromaUpsampling;
+        use crate::decode::upsample::{
+            upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
+            upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_libjpeg_turbo,
+            upsample_h2v2_i16_nearest,
+        };
+
+        // Guard: coefficients must exist. When the streaming path consumed
+        // the entropy data, coefficients are empty and this function cannot
+        // run. Return an error so the caller can fall back to decode().
+        if self.coeffs.is_empty() || self.num_components > 1 && self.coeffs.len() < 3 {
+            return Err(Error::internal(
+                "coefficient data unavailable (streaming decode consumed entropy data)",
+            ));
+        }
+
+        // Select IDCT function based on configured method
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            super::super::IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            super::super::IdctMethod::Jpegli => idct_int_tiered,
+        };
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Get sampling factors
+        let y_h = self.components[0].h_samp_factor as usize;
+        let y_v = self.components[0].v_samp_factor as usize;
+        let c_h = self.components[1].h_samp_factor as usize;
+        let c_v = self.components[1].v_samp_factor as usize;
+
+        let h_ratio = y_h / c_h;
+        let v_ratio = y_v / c_v;
+
+        // MCU dimensions
+        let mcu_width = y_h * 8;
+        let mcu_height = y_v * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Component info
+        let comp_infos = self.build_comp_infos(mcu_cols, mcu_rows, y_h, y_v, 3)?;
+
+        // Y strip dimensions (one MCU row)
+        let y_strip_height = y_v * 8;
+        let y_strip_width = comp_infos[0].comp_width;
+        let y_strip_size = y_strip_width * y_strip_height;
+
+        // Chroma dimensions (per strip, subsampled)
+        let c_strip_height = c_v * 8;
+        let c_strip_width = comp_infos[1].comp_width;
+
+        // Pre-fetch quant tables outside the loop (avoids Error allocation per MCU row)
+        let quant_y = self.quant_tables[comp_infos[0].quant_idx]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Y quant table"))?;
+        let quant_cb = self.quant_tables[comp_infos[1].quant_idx]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Cb quant table"))?;
+        let quant_cr = self.quant_tables[comp_infos[2].quant_idx]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Cr quant table"))?;
+
+        let y_cols_this_image = width.min(y_strip_width);
+
+        // Select upsampling function based on method
+        type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
+        let needs_full_upsample = !matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor)
+            || h_ratio != 2
+            || v_ratio != 2;
+
+        let (upsample_fn, _): (UpsampleFn, ()) = if needs_full_upsample {
+            let (upsample_h2v2, upsample_h2v1, upsample_h1v2): (
+                UpsampleFn,
+                UpsampleFn,
+                UpsampleFn,
+            ) = match chroma_upsampling {
+                // IdctMethod::Libjpeg => turbo's fixed h2v2 rounding bias
+                // (H2v2Bias); h2v1/h1v2 are already turbo-exact.
+                ChromaUpsampling::Triangle => (
+                    match self.idct_method {
+                        super::super::IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_turbo,
+                        _ => upsample_h2v2_i16_libjpeg,
+                    },
+                    upsample_h2v1_i16_libjpeg,
+                    upsample_h1v2_i16_libjpeg,
+                ),
+                ChromaUpsampling::NearestNeighbor => (
+                    upsample_h2v2_i16_nearest,
+                    upsample_h2v1_i16_nearest,
+                    upsample_h1v2_i16_nearest,
+                ),
+            };
+
+            let f = match (h_ratio, v_ratio) {
+                (2, 2) => upsample_h2v2,
+                (2, 1) => upsample_h2v1,
+                (1, 2) => upsample_h1v2,
+                _ => unreachable!(
+                    "unsupported ratio should be filtered by can_use_fast_i16_subsampled"
+                ),
+            };
+            (f, ())
+        } else {
+            // Placeholder — NearestNeighbor 4:2:0 uses the fused path
+            (upsample_h2v2_i16_nearest, ())
+        };
+
+        // ===================================================================
+        // Extended-buffer chroma strips (double-buffered).
+        //
+        // Each extended buffer has c_strip_height + 2 rows:
+        //   [row 0]                     = above context (last row from previous strip)
+        //   [rows 1..c_strip_height+1]  = IDCT output (current strip data)
+        //   [row c_strip_height+1]      = below context (first row from next strip)
+        //
+        // The upsampler sees in_height = c_strip_height + 2 and its edge
+        // replication reads the context rows, producing correct cross-MCU
+        // boundary interpolation without any changes to upsample functions.
+        // ===================================================================
+        let ext_height = c_strip_height + 2;
+        let ext_size = ext_height * c_strip_width;
+
+        // Double buffers: ext_a is the current strip, ext_b holds the next.
+        // Bounded by the chroma strip width × height → default infallible.
+        let mut ext_cb_a: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cb ext_a buffer")?;
+        let mut ext_cb_b: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cb ext_b buffer")?;
+        let mut ext_cr_a: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cr ext_a buffer")?;
+        let mut ext_cr_b: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, ext_size, "Cr ext_b buffer")?;
+
+        // Upsampled output for one extended strip (used per MCU row). Bounded by
+        // the row width × strip height → default infallible.
+        let upsample_out_height = ext_height * v_ratio;
+        let upsample_out_size = upsample_out_height * y_strip_width;
+        let mut cb_up: Vec<i16> = if needs_full_upsample {
+            try_alloc_maybeuninit_pref(
+                self.alloc_pref,
+                false,
+                upsample_out_size,
+                "Cb upsample buffer",
+            )?
+        } else {
+            Vec::new()
+        };
+        let mut cr_up: Vec<i16> = if needs_full_upsample {
+            try_alloc_maybeuninit_pref(
+                self.alloc_pref,
+                false,
+                upsample_out_size,
+                "Cr upsample buffer",
+            )?
+        } else {
+            Vec::new()
+        };
+
+        // Colsum scratch for the fused h2v2 path (padded layout: w + 2 taps).
+        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables, unused_mut))]
+        let mut cs_cb: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, c_strip_width + 2, "colsum cb")?;
+        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables, unused_mut))]
+        let mut cs_cr: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, c_strip_width + 2, "colsum cr")?;
+
+        // One MCU row of Y → bounded by the row width × strip height → infallible.
+        let mut y_strip: Vec<i16> =
+            try_alloc_maybeuninit_pref(self.alloc_pref, false, y_strip_size, "Y strip buffer")?;
+        // Sample the variant tag and bpp once; later we re-borrow dst mutably
+        // each MCU row iteration.
+        #[derive(Copy, Clone, PartialEq, Eq)]
+        enum DstKind {
+            Rgb,
+            Rgba,
+            Bgra,
+        }
+        let dst_kind = match dst {
+            FastDst::Rgb(_) => DstKind::Rgb,
+            FastDst::Rgba(_) => DstKind::Rgba,
+            FastDst::Bgra(_) => DstKind::Bgra,
+        };
+        let bpp = dst.bpp();
+        let row_bytes = width * bpp;
+        // Validate dst sizing once.
+        let needed = row_bytes
+            .checked_mul(height)
+            .ok_or_else(|| Error::internal("dst size overflow"))?;
+        if dst.as_bytes_mut().len() < needed {
+            return Err(Error::internal("dst too small for fast i16 subsampled"));
+        }
+
+        // Total valid chroma rows for the whole image
+        let chroma_height_total = (height + v_ratio - 1) / v_ratio;
+
+        // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
+        let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
+
+        // IDCT strip 0 into ext_a
+        idct_chroma_into_ext(
+            &mut ext_cb_a,
+            &self.coeffs[1],
+            &self.coeff_counts[1],
+            &comp_infos[1],
+            quant_cb,
+            0,
+            c_strip_width,
+            c_strip_height,
+            chroma_height_total,
+            idct_fn,
+            &mut dequant_i32,
+        );
+        idct_chroma_into_ext(
+            &mut ext_cr_a,
+            &self.coeffs[2],
+            &self.coeff_counts[2],
+            &comp_infos[2],
+            quant_cr,
+            0,
+            c_strip_width,
+            c_strip_height,
+            chroma_height_total,
+            idct_fn,
+            &mut dequant_i32,
+        );
+
+        // IDCT strip 1 into ext_b (if exists)
+        if mcu_rows > 1 {
+            idct_chroma_into_ext(
+                &mut ext_cb_b,
+                &self.coeffs[1],
+                &self.coeff_counts[1],
+                &comp_infos[1],
+                quant_cb,
+                1,
+                c_strip_width,
+                c_strip_height,
+                chroma_height_total,
+                idct_fn,
+                &mut dequant_i32,
+            );
+            idct_chroma_into_ext(
+                &mut ext_cr_b,
+                &self.coeffs[2],
+                &self.coeff_counts[2],
+                &comp_infos[2],
+                quant_cr,
+                1,
+                c_strip_width,
+                c_strip_height,
+                chroma_height_total,
+                idct_fn,
+                &mut dequant_i32,
+            );
+        }
+
+        // Set above context for first strip: edge replication (copy first data row)
+        ext_cb_a.copy_within(c_strip_width..2 * c_strip_width, 0);
+        ext_cr_a.copy_within(c_strip_width..2 * c_strip_width, 0);
+
+        // Pre-allocate scratch buffer for upsample — reused across all MCU rows
+        // to avoid re-zeroing [0i16; 4096] on every upsample call (saves ~3M instr/decode).
+        // Only used for h2v2 triangle-filter path; the scratch is written by the vertical
+        // pass before the horizontal pass reads it, so it doesn't need re-zeroing.
+        // Note: scratch upsample was only used for removed SeparableBiased path
+
+        // Horizontal chroma padding fixup (same as scan.rs streaming path)
+        let downsampled_w = (width + h_ratio - 1) / h_ratio;
+        let has_h_padding = downsampled_w < c_strip_width;
+        let fixup_h_padding = |buf: &mut [i16]| {
+            if has_h_padding {
+                super::output_helpers::edge_replicate_h_padding(
+                    buf,
+                    downsampled_w,
+                    c_strip_width,
+                    ext_height,
+                );
+            }
+        };
+
+        for imcu_row in 0..mcu_rows {
+            // Set below context for current strip (ext_a)
+            let last_data_row_start = c_strip_height * c_strip_width; // row c_strip_height in ext
+            let below_ctx_start = (c_strip_height + 1) * c_strip_width; // row c_strip_height+1
+            if imcu_row < mcu_rows - 1 {
+                // Below context = first data row of next strip (ext_b row 1)
+                let src_start = c_strip_width; // row 1 of ext_b
+                ext_cb_a[below_ctx_start..below_ctx_start + c_strip_width]
+                    .copy_from_slice(&ext_cb_b[src_start..src_start + c_strip_width]);
+                ext_cr_a[below_ctx_start..below_ctx_start + c_strip_width]
+                    .copy_from_slice(&ext_cr_b[src_start..src_start + c_strip_width]);
+            } else {
+                // Last strip: edge-replicate from the last REAL chroma row,
+                // not the last padding row. Padding rows have IDCT rounding
+                // differences vs the last real row (matching libjpeg-turbo's
+                // set_bottom_pointers behavior).
+                let downsampled_h = (height + v_ratio - 1) / v_ratio;
+                let real_rows =
+                    c_strip_height.min(downsampled_h.saturating_sub(imcu_row * c_strip_height));
+                // Overwrite padding data rows with last real row
+                if real_rows < c_strip_height {
+                    // Data rows start at offset c_strip_width (row 1 in extended buffer)
+                    let last_real_start = real_rows * c_strip_width; // in ext: row (real_rows)
+                    for pad_row in real_rows..c_strip_height {
+                        let dst = (1 + pad_row) * c_strip_width;
+                        ext_cb_a.copy_within(last_real_start..last_real_start + c_strip_width, dst);
+                        ext_cr_a.copy_within(last_real_start..last_real_start + c_strip_width, dst);
+                    }
+                }
+                // Below context = last real data row (now also at last_data_row_start after fixup)
+                ext_cb_a.copy_within(
+                    last_data_row_start..last_data_row_start + c_strip_width,
+                    below_ctx_start,
+                );
+                ext_cr_a.copy_within(
+                    last_data_row_start..last_data_row_start + c_strip_width,
+                    below_ctx_start,
+                );
+            }
+
+            // IDCT Y blocks (full resolution)
+            idct_comp_mcu_row(
+                &self.coeffs[0],
+                &self.coeff_counts[0],
+                &comp_infos[0],
+                quant_y,
+                imcu_row,
+                &mut y_strip,
+                y_strip_width,
+                idct_fn,
+                &mut dequant_i32,
+            );
+
+            let y_rows_this_mcu = y_strip_height.min(height.saturating_sub(imcu_row * mcu_height));
+            let y_start = imcu_row * mcu_height;
+
+            if !needs_full_upsample {
+                // NearestNeighbor 4:2:0: fused box-filter path. Only the 3-byte
+                // RGB output is supported by the fused kernel — for 4-byte
+                // targets, fall back via the upsample-then-convert path below.
+                let c_rows_this_mcu = c_strip_height
+                    .min((height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio);
+                let c_cols = (y_cols_this_image + 1) / 2;
+
+                let dst_bytes = dst.as_bytes_mut();
+                for row in 0..y_rows_this_mcu {
+                    let y_offset = row * y_strip_width;
+                    let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
+                    let c_offset = (1 + c_row) * c_strip_width;
+                    let dst_offset = (y_start + row) * row_bytes;
+
+                    match dst_kind {
+                        DstKind::Rgb => {
+                            fused_h2v2_box_ycbcr_to_rgb_u8(
+                                &y_strip[y_offset..y_offset + y_cols_this_image],
+                                &ext_cb_a[c_offset..c_offset + c_cols],
+                                &ext_cr_a[c_offset..c_offset + c_cols],
+                                &mut dst_bytes[dst_offset..dst_offset + y_cols_this_image * 3],
+                                y_cols_this_image,
+                                self.idct_method == super::super::IdctMethod::Libjpeg,
+                            );
+                        }
+                        DstKind::Rgba | DstKind::Bgra => {
+                            let swap_rb = dst_kind == DstKind::Bgra;
+                            let mut cb_row = [0i16; 8192];
+                            let mut cr_row = [0i16; 8192];
+                            let n = y_cols_this_image;
+                            assert!(n <= cb_row.len(), "row too wide for box-filter 4bpp tail");
+                            for px in 0..n {
+                                let c_idx = c_offset + (px / 2);
+                                cb_row[px] = ext_cb_a[c_idx];
+                                cr_row[px] = ext_cr_a[c_idx];
+                            }
+                            crate::color::ycbcr_planes_i16_to_xrgba_u8(
+                                &y_strip[y_offset..y_offset + n],
+                                &cb_row[..n],
+                                &cr_row[..n],
+                                &mut dst_bytes[dst_offset..dst_offset + n * 4],
+                                swap_rb,
+                                self.idct_method == super::super::IdctMethod::Libjpeg,
+                            );
+                        }
+                    }
+                }
+            } else {
+                // Upsample extended strip → upsampled output buffer
+                fixup_h_padding(&mut ext_cb_a);
+                fixup_h_padding(&mut ext_cr_a);
+
+                // Fused h2v2: shared colsums + fused upsample→RGB rows never
+                // materialize the upsampled chroma planes (same math the
+                // streaming path uses; Rgb-only, x86-64-v3).
+                #[cfg(target_arch = "x86_64")]
+                let fused_h2v2 = h_ratio == 2
+                    && v_ratio == 2
+                    && dst_kind == DstKind::Rgb
+                    && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+                    && <archmage::X64V3Token as archmage::SimdToken>::summon().is_some();
+                #[cfg(not(target_arch = "x86_64"))]
+                let fused_h2v2 = false;
+
+                let dst_bytes = dst.as_bytes_mut();
+                if fused_h2v2 {
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        super::baseline_streaming::output_fancy_strip_fused(
+                            <archmage::X64V3Token as archmage::SimdToken>::summon().unwrap(),
+                            &ext_cb_a,
+                            &ext_cr_a,
+                            c_strip_width,
+                            c_strip_height,
+                            &y_strip,
+                            y_strip_width,
+                            dst_bytes,
+                            width,
+                            y_start,
+                            y_rows_this_mcu,
+                            self.idct_method == super::super::IdctMethod::Libjpeg,
+                            &mut cs_cb,
+                            &mut cs_cr,
+                        );
+                    }
+                } else {
+                    upsample_fn(
+                        &ext_cb_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cb_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                    upsample_fn(
+                        &ext_cr_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cr_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                    for row in 0..y_rows_this_mcu {
+                        let strip_offset = row * y_strip_width;
+                        let up_row = v_ratio + row;
+                        let chroma_offset = up_row * y_strip_width;
+                        let dst_offset = (y_start + row) * row_bytes;
+                        let n = y_cols_this_image;
+
+                        match dst_kind {
+                            DstKind::Rgb => {
+                                ycbcr_planes_i16_to_rgb_u8(
+                                    &y_strip[strip_offset..strip_offset + n],
+                                    &cb_up[chroma_offset..chroma_offset + n],
+                                    &cr_up[chroma_offset..chroma_offset + n],
+                                    &mut dst_bytes[dst_offset..dst_offset + n * 3],
+                                    self.idct_method == super::super::IdctMethod::Libjpeg,
+                                );
+                            }
+                            DstKind::Rgba | DstKind::Bgra => {
+                                let swap_rb = dst_kind == DstKind::Bgra;
+                                crate::color::ycbcr_planes_i16_to_xrgba_u8(
+                                    &y_strip[strip_offset..strip_offset + n],
+                                    &cb_up[chroma_offset..chroma_offset + n],
+                                    &cr_up[chroma_offset..chroma_offset + n],
+                                    &mut dst_bytes[dst_offset..dst_offset + n * 4],
+                                    swap_rb,
+                                    self.idct_method == super::super::IdctMethod::Libjpeg,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Prepare for next iteration: swap buffers
+            if imcu_row + 1 < mcu_rows {
+                // ext_b's above context = last data row of ext_a
+                let last_data_start = c_strip_height * c_strip_width;
+                ext_cb_b[..c_strip_width]
+                    .copy_from_slice(&ext_cb_a[last_data_start..last_data_start + c_strip_width]);
+                ext_cr_b[..c_strip_width]
+                    .copy_from_slice(&ext_cr_a[last_data_start..last_data_start + c_strip_width]);
+
+                // Swap: ext_b becomes ext_a (current), ext_a becomes ext_b (free for next IDCT)
+                core::mem::swap(&mut ext_cb_a, &mut ext_cb_b);
+                core::mem::swap(&mut ext_cr_a, &mut ext_cr_b);
+
+                // IDCT the strip after next into the now-free ext_b
+                if imcu_row + 2 < mcu_rows {
+                    idct_chroma_into_ext(
+                        &mut ext_cb_b,
+                        &self.coeffs[1],
+                        &self.coeff_counts[1],
+                        &comp_infos[1],
+                        quant_cb,
+                        imcu_row + 2,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                        &mut dequant_i32,
+                    );
+                    idct_chroma_into_ext(
+                        &mut ext_cr_b,
+                        &self.coeffs[2],
+                        &self.coeff_counts[2],
+                        &comp_infos[2],
+                        quant_cr,
+                        imcu_row + 2,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                        &mut dequant_i32,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Shared helpers for f32 decode paths
+    // =========================================================================
+
+    /// Set up MCU grid, component info, bias tracking, and f32 planes
+    /// for all three f32 output paths (to_pixels, to_pixels_f32, to_ycbcr).
+    ///
+    /// Returns (comp_infos, bias_stats, component_biases, comp_planes_f32,
+    /// mcu_rows, max_h_samp, max_v_samp).
+    fn setup_f32_decode(
+        &self,
+        num_components: usize,
+    ) -> Result<(
+        Vec<CompInfo>,
+        DequantBiasStats,
+        Vec<[f32; DCT_BLOCK_SIZE]>,
+        Vec<Vec<f32>>,
+        usize,
+        u8,
+        u8,
+    )> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..num_components {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        let comp_infos = self.build_comp_infos(
+            mcu_cols,
+            mcu_rows,
+            max_h_samp as usize,
+            max_v_samp as usize,
+            num_components,
+        )?;
+
+        let bias_stats = DequantBiasStats::new(num_components);
+        let component_biases = vec![[0.0f32; DCT_BLOCK_SIZE]; num_components];
+
+        let mut comp_planes_f32 = Vec::with_capacity(num_components);
+        for info in &comp_infos {
+            let size = checked_size_2d(info.comp_width, info.comp_height)?;
+            // Full-image per-component f32 plane → default fallible.
+            comp_planes_f32.push(try_alloc_zeroed_f32_pref(
+                self.alloc_pref,
+                true,
+                size,
+                "f32 component plane",
+            )?);
+        }
+
+        Ok((
+            comp_infos,
+            bias_stats,
+            component_biases,
+            comp_planes_f32,
+            mcu_rows,
+            max_h_samp,
+            max_v_samp,
+        ))
+    }
+
+    /// Gather bias statistics for full-res components in a single MCU row.
+    fn gather_bias_stats(
+        &self,
+        imcu_row: usize,
+        comp_idx: usize,
+        info: &CompInfo,
+        bias_stats: &mut DequantBiasStats,
+    ) {
+        if !info.is_full_res {
+            return;
+        }
+        for iy in 0..info.v_samp {
+            let by = imcu_row * info.v_samp + iy;
+            if by >= info.comp_blocks_v {
+                continue;
+            }
+            for bx in 0..info.comp_blocks_h {
+                let block_idx = by * info.comp_blocks_h + bx;
+                if block_idx >= self.coeffs[comp_idx].len() {
+                    continue;
+                }
+                let coeffs = &self.coeffs[comp_idx][block_idx];
+                let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                    natural_coeffs[zi as usize] = coeffs[i];
+                }
+                bias_stats.gather_block(comp_idx, &natural_coeffs);
+            }
+        }
+    }
+
+    /// Apply deblocking filters to component planes in-place.
+    ///
+    /// Planes are centered around 0 (IDCT output: [-128, 127]). Boundary 4-tap
+    /// expects [0, 255], so we level-shift before filtering and shift back after.
+    /// Knusperli replaces the plane entirely (it does its own IDCT from coefficients).
+    fn apply_deblock_to_planes(
+        &self,
+        comp_planes: &mut [Vec<f32>],
+        comp_infos: &[CompInfo],
+        mode: super::super::DeblockMode,
+    ) -> Result<()> {
+        use super::super::DeblockMode;
+
+        if mode == DeblockMode::Off {
+            return Ok(());
+        }
+
+        for (comp_idx, info) in comp_infos.iter().enumerate() {
+            let quant = self.quant_tables[info.quant_idx]
+                .as_ref()
+                .ok_or(Error::internal("missing quant table for deblock"))?;
+            let dc_quant = quant[0];
+
+            // Decide strategy per-component
+            let use_knusperli = match mode {
+                DeblockMode::Off => unreachable!(),
+                DeblockMode::Knusperli => true,
+                DeblockMode::Boundary4Tap | DeblockMode::AutoStreamable => false,
+                DeblockMode::Auto => {
+                    // Simple heuristic: knusperli at low Q (high DC quant), boundary otherwise
+                    dc_quant >= 27
+                }
+            };
+
+            if use_knusperli && comp_idx < self.coeffs.len() {
+                // Knusperli: replace plane with its own IDCT + boundary correction.
+                // Output is [0, 255] range; shift to [-128, 127] to match pipeline.
+                // Coefficients are stored as Vec<[i16; 64]>; flatten to &[i16] for knusperli.
+                let flat_coeffs: &[i16] = bytemuck::cast_slice(&self.coeffs[comp_idx]);
+                let mut plane = crate::deblock::knusperli::process_component(
+                    flat_coeffs,
+                    info.comp_blocks_h,
+                    info.comp_blocks_v,
+                    quant,
+                );
+                // Level-shift from [0, 255] to [-128, 127] to match the rest of the pipeline
+                for v in &mut plane {
+                    *v -= 128.0;
+                }
+                comp_planes[comp_idx] = plane;
+            } else {
+                // Boundary 4-tap: level-shift to [0, 255], filter in-place, shift back.
+                let plane = &mut comp_planes[comp_idx];
+                let (w, h) = (info.comp_width, info.comp_height);
+
+                // Shift to [0, 255]
+                for v in plane.iter_mut() {
+                    *v += 128.0;
+                }
+
+                let strength = crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
+                crate::deblock::filter_plane_boundary_4tap(plane, w, h, strength);
+
+                // Shift back to [-128, 127]
+                for v in plane.iter_mut() {
+                    *v -= 128.0;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Upsample component f32 planes to full image resolution.
+    ///
+    /// Handles all chroma upsampling modes (Triangle, Jpegli, NearestNeighbor).
+    /// Full-res components are clipped to image dimensions without interpolation.
+    fn upsample_planes_f32(
+        &self,
+        comp_planes_f32: &mut [Vec<f32>],
+        comp_infos: &[CompInfo],
+        max_h_samp: u8,
+        max_v_samp: u8,
+        chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<Vec<Vec<f32>>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let output_size = checked_size_2d(width, height)?;
+        let mut planes_f32 = Vec::with_capacity(comp_infos.len());
+
+        for (comp_idx, info) in comp_infos.iter().enumerate() {
+            let plane = if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
+                let scale_x = max_h_samp as usize / info.h_samp;
+                let scale_y = max_v_samp as usize / info.v_samp;
+
+                // Edge-replicate the block-padding region of the chroma plane
+                // before upsampling, mirroring libjpeg-turbo's
+                // `set_bottom_pointers`. Non-MCU-aligned images have stale
+                // IDCT output in the padding rows/columns, and the fancy
+                // upsamplers read `input[(in_y+1) * stride + in_x]` at image
+                // boundaries, which otherwise lands inside the garbage region.
+                //
+                // Only touches O(comp_width + comp_height) elements in the
+                // padding area; MCU-aligned files skip it entirely.
+                let real_w =
+                    (width * info.h_samp + (max_h_samp as usize) - 1) / (max_h_samp as usize);
+                let real_h =
+                    (height * info.v_samp + (max_v_samp as usize) - 1) / (max_v_samp as usize);
+                let pad_right = real_w < info.comp_width && real_w > 0;
+                let pad_bottom = real_h < info.comp_height && real_h > 0;
+
+                if pad_right || pad_bottom {
+                    let comp_plane = &mut comp_planes_f32[comp_idx];
+                    let cw = info.comp_width;
+
+                    // Right-edge column replication over real content rows.
+                    if pad_right {
+                        for row in 0..real_h {
+                            let row_start = row * cw;
+                            let last = comp_plane[row_start + real_w - 1];
+                            for x in real_w..cw {
+                                comp_plane[row_start + x] = last;
+                            }
+                        }
+                    }
+
+                    // Bottom-edge row replication (picks up any right-pad fill
+                    // from the previous step).
+                    if pad_bottom {
+                        let src_start = (real_h - 1) * cw;
+                        let src_end = src_start + cw;
+                        // Split the vec so we can borrow src immutably and
+                        // dst mutably at the same time without allocating.
+                        let (before_dst, dst_slab) = comp_plane.split_at_mut(real_h * cw);
+                        let src_row = &before_dst[src_start..src_end];
+                        for row_idx in 0..(info.comp_height - real_h) {
+                            let dst_start = row_idx * cw;
+                            dst_slab[dst_start..dst_start + cw].copy_from_slice(src_row);
+                        }
+                    }
+                }
+
+                let comp_plane: &[f32] = &comp_planes_f32[comp_idx];
+
+                match chroma_upsampling {
+                    super::super::ChromaUpsampling::Triangle => upsample_libjpeg_f32(
+                        comp_plane,
+                        info.comp_width,
+                        info.comp_height,
+                        width,
+                        height,
+                        scale_x,
+                        scale_y,
+                    ),
+                    super::super::ChromaUpsampling::NearestNeighbor => {
+                        // Full-image upsampled f32 plane → default fallible.
+                        let mut upsampled = try_alloc_zeroed_f32_pref(
+                            self.alloc_pref,
+                            true,
+                            output_size,
+                            "f32 nearest upsample plane",
+                        )?;
+                        upsample_nearest_f32(
+                            comp_plane,
+                            info.comp_width,
+                            info.comp_height,
+                            &mut upsampled,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        );
+                        upsampled
+                    }
+                }
+            } else {
+                let comp_plane = &comp_planes_f32[comp_idx];
+                // Full resolution — clip to image dimensions
+                let mut plane = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    output_size,
+                    "f32 full-res output plane",
+                )?;
+                for py in 0..height {
+                    let src = &comp_plane[py * info.comp_width..py * info.comp_width + width];
+                    let dst = &mut plane[py * width..py * width + width];
+                    dst.copy_from_slice(src);
+                }
+                plane
+            };
+
+            planes_f32.push(plane);
+        }
+
+        Ok(planes_f32)
+    }
+
+    // =========================================================================
+    // Public output methods
+    // =========================================================================
+
+    /// Convert decoded coefficients to pixels in the requested format.
+    ///
+    /// This is the main entry point for pixel output. It selects the fastest
+    /// available path based on the image characteristics:
+    ///
+    /// 1. **Streaming result** (`streaming_rgb`): Already decoded during `parse_scan()`
+    ///    in a single entropy→IDCT→color pass. Zero-copy for RGB, reformat for others.
+    /// 2. **Fused parallel result** (`fused_result`): Entropy+IDCT+color per restart
+    ///    segment via rayon. Activated by `DecodeMode::Auto` + DRI + `parallel` feature.
+    /// 3. **i16 fast path** (`to_pixels_fast_i16`/`_subsampled`): Integer IDCT from
+    ///    buffered coefficients. Used for non-XYB, non-bias RGB output.
+    /// 4. **f32 generic path**: Full f32 pipeline with dequant bias, XYB support.
+    ///
+    /// Paths 1-2 produce results during entropy decode (no separate output pass).
+    /// Wave-parallel scanline decode is handled by `ScanlineReader`, not here.
+    ///
+    /// The `stop` parameter allows cancellation of long-running operations.
+    #[allow(clippy::wrong_self_convention)] // Takes &mut self to take() internal buffer
+    pub(in crate::decode) fn to_pixels(
+        &mut self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        output_target: super::super::OutputTarget,
+        _stop: &impl Stop,
+    ) -> Result<Vec<u8>> {
+        let dequant_bias = output_target.uses_dequant_bias();
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // If streaming decode was used, return its result directly.
+        // The buffer may be 3bpp RGB or 4bpp BGRA/RGBA depending on the hint.
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && let Some(buf) = self.streaming_rgb.take()
+            && let Some(result) = self.consume_streaming_rgb(buf, format, width, height)?
+        {
+            return Ok(result);
+        }
+
+        // If fused parallel decode was used, return its result
+        #[cfg(feature = "parallel")]
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && !dequant_bias
+            && let Some(fused) = self.fused_result.take()
+        {
+            use super::super::fused_parallel::FusedResult;
+            let FusedResult(rgb) = fused;
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
+        }
+
+        if self.coeffs.is_empty() {
+            return Err(Error::internal("no decoded data"));
+        }
+
+        // Full-frame pixel output, sized from the (untrusted) SOF dimensions.
+        // Charged here rather than at each of the dozen concrete allocation
+        // sites below because they are mutually exclusive alternatives — this
+        // is the one buffer every buffered path produces. The streaming and
+        // fused-parallel results returned above are charged where they are
+        // allocated instead, so neither is counted twice. Transient reformat
+        // scratch (one extra frame during a conversion that cannot be done in
+        // place) is not separately charged.
+        self.charge_memory(
+            width
+                .saturating_mul(height)
+                .saturating_mul(format.bytes_per_pixel()),
+            "pixel output buffer",
+        )?;
+
+        // Try parallel fast integer paths first (fall through to sequential if image too small)
+        #[cfg(feature = "parallel")]
+        if self.num_threads != 1
+            && !dequant_bias
+            && self.can_use_fast_i16_path(format, is_xyb)
+            && let Some(rgb) = self.to_pixels_fast_i16_parallel(chroma_upsampling)?
+        {
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
+        }
+        #[cfg(feature = "parallel")]
+        if self.num_threads != 1
+            && !dequant_bias
+            && self.can_use_fast_i16_subsampled(format, is_xyb)
+            && let Some(rgb) = self.to_pixels_fast_i16_subsampled_parallel(chroma_upsampling)?
+        {
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
+        }
+
+        // Try fast integer path for non-XYB 4:4:4 images
+        // (dequant_bias requires f32 path for fractional bias application)
+        if !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
+            let rgb = self.to_pixels_fast_i16(chroma_upsampling)?;
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
+        }
+
+        // Try fast integer path for subsampled images (4:2:0, 4:2:2, 4:4:0)
+        if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
+            let rgb = self.to_pixels_fast_i16_subsampled(chroma_upsampling)?;
+            return reformat_rgb_output(rgb, format, width, height, self.alloc_pref);
+        }
+
+        let num_components = self.num_components as usize;
+        let (
+            comp_infos,
+            mut bias_stats,
+            mut component_biases,
+            mut comp_planes_f32,
+            mcu_rows,
+            max_h_samp,
+            max_v_samp,
+        ) = self.setup_f32_decode(num_components)?;
+
+        self.decode_coeffs_to_planes_f32(
+            num_components,
+            &comp_infos,
+            &mut bias_stats,
+            &mut component_biases,
+            &mut comp_planes_f32,
+            mcu_rows,
+            is_xyb,
+            dequant_bias,
+            chroma_upsampling,
+        )?;
+
+        // Upsample and convert to output format
+        let planes_f32 = self.upsample_planes_f32(
+            &mut comp_planes_f32,
+            &comp_infos,
+            max_h_samp,
+            max_v_samp,
+            chroma_upsampling,
+        )?;
+
+        self.dispatch_planes_to_output_u8(format, is_xyb, &planes_f32, width, height)
+    }
+
+    /// Run the per-MCU-row IDCT loop for `to_pixels`, populating `comp_planes_f32`.
+    ///
+    /// Per component per MCU row: gather bias stats, refresh per-component
+    /// biases every 4 MCU rows (matching C++ incremental bias recomputation),
+    /// then IDCT each block via either the f32 path (XYB / dequant_bias /
+    /// `force_f32_idct`) or the standard integer path.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_coeffs_to_planes_f32(
+        &self,
+        num_components: usize,
+        comp_infos: &[CompInfo],
+        bias_stats: &mut DequantBiasStats,
+        component_biases: &mut [[f32; DCT_BLOCK_SIZE]],
+        comp_planes_f32: &mut [Vec<f32>],
+        mcu_rows: usize,
+        is_xyb: bool,
+        dequant_bias: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<()> {
+        for imcu_row in 0..mcu_rows {
+            for comp_idx in 0..num_components {
+                let info = &comp_infos[comp_idx];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
+
+                self.gather_bias_stats(imcu_row, comp_idx, info, bias_stats);
+                if info.is_full_res && imcu_row % 4 == 3 {
+                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                }
+
+                let biases = &component_biases[comp_idx];
+                let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    let base_py = by * DCT_SIZE;
+                    let rows_to_copy = DCT_SIZE.min(info.comp_height.saturating_sub(base_py));
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        let base_px = bx * DCT_SIZE;
+                        let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
+
+                        if is_xyb || dequant_bias || self.force_f32_idct {
+                            idct_block_f32_into_plane(
+                                &natural_coeffs,
+                                quant,
+                                biases,
+                                is_xyb,
+                                dequant_bias,
+                                comp_plane_f32,
+                                info.comp_width,
+                                base_px,
+                                base_py,
+                                rows_to_copy,
+                                cols_to_copy,
+                            );
+                        } else {
+                            idct_block_i16_into_plane(
+                                &natural_coeffs,
+                                quant,
+                                chroma_upsampling,
+                                self.num_components == 1,
+                                comp_plane_f32,
+                                info.comp_width,
+                                base_px,
+                                base_py,
+                                rows_to_copy,
+                                cols_to_copy,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Convert a pre-decoded streaming RGB-family buffer into `format`.
+    ///
+    /// `buf` is the buffer produced by the streaming decoder
+    /// (`self.streaming_rgb` after `take()`). It may be 1bpp gray (when
+    /// `num_components == 1`), 3bpp RGB, or 4bpp BGRA/RGBA/BGRX depending
+    /// on `self.streaming_output_format` and the streaming-path negotiation
+    /// in scan.rs.
+    ///
+    /// Returns `Ok(Some(out))` when the streaming buffer can fulfill the
+    /// caller's request (which is the common case), or `Ok(None)` to signal
+    /// "fall through to the generic f32 path" — currently only when the
+    /// streaming buffer is 4bpp and the requested `format` is something
+    /// outside the RGB family understood here.
+    fn consume_streaming_rgb(
+        &self,
+        buf: Vec<u8>,
+        format: PixelFormat,
+        width: usize,
+        height: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        // Grayscale streaming always emits 1bpp gray regardless of
+        // `streaming_output_format` (that hint only applies to 3-component
+        // JPEGs — see scan.rs `(out_bpp, out_4bpp, swap_rb)` selection for
+        // grayscale). Expand 1bpp → the requested RGB-family format here
+        // instead of honoring a hint the streaming path never applied.
+        if self.num_components == 1 {
+            return Ok(Some(expand_gray_u8_to_format(
+                &buf,
+                format,
+                width,
+                height,
+                self.alloc_pref,
+            )?));
+        }
+
+        let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
+        if streaming_fmt == format
+            || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
+            || (streaming_fmt == PixelFormat::Bgrx && format == PixelFormat::Bgra)
+        {
+            // Exact match (Bgra↔Bgrx are byte-identical) — return as-is.
+            return Ok(Some(buf));
+        }
+
+        let streaming_4bpp = matches!(
+            streaming_fmt,
+            PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba
+        );
+        if !streaming_4bpp {
+            // 3bpp RGB → target format — use existing reformat (swap / pad).
+            return Ok(Some(reformat_rgb_output(
+                buf,
+                format,
+                width,
+                height,
+                self.alloc_pref,
+            )?));
+        }
+
+        // 4bpp streaming → different target: allocate + reformat.
+        let npixels = width * height;
+        match format {
+            PixelFormat::Rgb | PixelFormat::Bgr => {
+                let swap_needed = (matches!(streaming_fmt, PixelFormat::Bgra | PixelFormat::Bgrx)
+                    && format == PixelFormat::Rgb)
+                    || (streaming_fmt == PixelFormat::Rgba && format == PixelFormat::Bgr);
+                let out_size = checked_size_2d(npixels, 3)?;
+                let mut out = try_alloc_zeroed_pref(
+                    self.alloc_pref,
+                    true,
+                    out_size,
+                    "streaming 4bpp->RGB reformat",
+                )?;
+                for i in 0..npixels {
+                    let s = i * 4;
+                    let d = i * 3;
+                    if swap_needed {
+                        out[d] = buf[s + 2];
+                        out[d + 1] = buf[s + 1];
+                        out[d + 2] = buf[s];
+                    } else {
+                        out[d] = buf[s];
+                        out[d + 1] = buf[s + 1];
+                        out[d + 2] = buf[s + 2];
+                    }
+                }
+                Ok(Some(out))
+            }
+            PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
+                // 4bpp → different 4bpp: swap R and B.
+                let out_size = checked_size_2d(npixels, 4)?;
+                let mut out = try_alloc_zeroed_pref(
+                    self.alloc_pref,
+                    true,
+                    out_size,
+                    "streaming 4bpp->4bpp swap",
+                )?;
+                for i in 0..npixels {
+                    let s = i * 4;
+                    out[s] = buf[s + 2];
+                    out[s + 1] = buf[s + 1];
+                    out[s + 2] = buf[s];
+                    out[s + 3] = buf[s + 3];
+                }
+                Ok(Some(out))
+            }
+            // Unsupported — fall through to generic path.
+            _ => Ok(None),
+        }
+    }
+
+    /// Dispatch upsampled f32 planes to the requested u8 output format.
+    ///
+    /// Handles the cross-product of `(num_components, format)`:
+    /// - `(1, Gray)`        → level-shifted grayscale
+    /// - `(1, RGB-family)`  → gray-expanded RGB, reformatted
+    /// - `(3, RGB-family)`  → XYB / RGB-JPEG / YCbCr → RGB, reformatted
+    /// - `(4, RGB-family)`  → CMYK / YCCK → RGB, reformatted
+    /// - `(4, Cmyk)`        → raw CMYK / YCCK → CMYK interleave
+    fn dispatch_planes_to_output_u8(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        planes_f32: &[Vec<f32>],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let output_size = checked_size_2d(width, height)?;
+        match (self.num_components, format) {
+            (1, PixelFormat::Gray) => {
+                let mut output = try_alloc_zeroed_pref(
+                    self.alloc_pref,
+                    true,
+                    output_size,
+                    "grayscale u8 output",
+                )?;
+                gray_f32_to_gray_u8(&planes_f32[0], &mut output);
+                Ok(output)
+            }
+            (1, f) if is_rgb_family_u8(f) => {
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb =
+                    try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "gray->RGB u8 output")?;
+                gray_f32_to_rgb_u8(&planes_f32[0], &mut rgb);
+                reformat_rgb_output(rgb, f, width, height, self.alloc_pref)
+            }
+            (3, f) if is_rgb_family_u8(f) => {
+                let rgb = self.three_chan_planes_to_rgb_u8(is_xyb, planes_f32, output_size)?;
+                reformat_rgb_output(rgb, f, width, height, self.alloc_pref)
+            }
+            (4, f) if is_rgb_family_u8(f) => {
+                let rgb = self.four_chan_planes_to_rgb_u8(planes_f32, width, height)?;
+                reformat_rgb_output(rgb, f, width, height, self.alloc_pref)
+            }
+            (4, PixelFormat::Cmyk) => self.four_chan_planes_to_cmyk_u8(planes_f32, width, height),
+            _ => Err(Error::unsupported_feature("unsupported color conversion")),
+        }
+    }
+
+    /// XYB / RGB-JPEG / YCbCr → 3-byte interleaved RGB u8.
+    fn three_chan_planes_to_rgb_u8(
+        &self,
+        is_xyb: bool,
+        planes_f32: &[Vec<f32>],
+        output_size: usize,
+    ) -> Result<Vec<u8>> {
+        let rgb_size = checked_size_2d(output_size, 3)?;
+        let mut rgb =
+            try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "3-channel RGB u8 output")?;
+
+        if is_xyb {
+            // XYB mode: run the inverse XYB → sRGB transform in-decoder
+            // (no CMS required). Output is visibly-correct sRGB.
+            crate::color::xyb::xyb_planes_to_srgb_u8_simd(
+                &planes_f32[0],
+                &planes_f32[1],
+                &planes_f32[2],
+                &mut rgb,
+            );
+        } else if self.is_rgb_jpeg() {
+            // RGB JPEG (Adobe APP14 transform=0 or RGB component IDs):
+            // Level-shift from [-128..127] to [0..255] and interleave.
+            for i in 0..output_size {
+                let r = (planes_f32[0][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                let g = (planes_f32[1][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                let b = (planes_f32[2][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                rgb[i * 3] = r;
+                rgb[i * 3 + 1] = g;
+                rgb[i * 3 + 2] = b;
+            }
+        } else {
+            ycbcr_planes_f32_to_rgb_u8(&planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb);
+        }
+        Ok(rgb)
+    }
+
+    /// CMYK or YCCK 4-plane → 3-byte interleaved RGB u8.
+    ///
+    /// Adobe APP14 transform=2 routes through YCCK; otherwise raw CMYK
+    /// with Adobe-inverted convention.
+    fn four_chan_planes_to_rgb_u8(
+        &self,
+        planes_f32: &[Vec<f32>],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb =
+            try_alloc_zeroed_pref(self.alloc_pref, true, rgb_size, "CMYK/YCCK->RGB u8 output")?;
+        match self.adobe_transform {
+            Some(AdobeColorTransform::Ycck) => {
+                ycck_planes_to_rgb_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut rgb,
+                );
+            }
+            _ => {
+                cmyk_planes_to_rgb_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut rgb,
+                );
+            }
+        }
+        Ok(rgb)
+    }
+
+    /// CMYK or YCCK 4-plane → raw 4-byte interleaved CMYK u8.
+    fn four_chan_planes_to_cmyk_u8(
+        &self,
+        planes_f32: &[Vec<f32>],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let cmyk_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
+        let mut cmyk_out =
+            try_alloc_zeroed_pref(self.alloc_pref, true, cmyk_size, "CMYK u8 output")?;
+        match self.adobe_transform {
+            Some(AdobeColorTransform::Ycck) => {
+                ycck_planes_to_cmyk_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut cmyk_out,
+                );
+            }
+            _ => {
+                cmyk_planes_to_cmyk_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut cmyk_out,
+                );
+            }
+        }
+        Ok(cmyk_out)
+    }
+
+    /// Convert decoded coefficients to f32 pixels.
+    /// Values are normalized to range 0.0-1.0.
+    ///
+    /// The `stop` parameter allows cancellation of long-running operations.
+    /// Convert decoded coefficients to pixels, writing directly into a
+    /// caller-provided buffer.
+    ///
+    /// Tries the fast i16 subsampled path with the destination as the direct
+    /// write target (no intermediate RGB allocation). For shapes/options not
+    /// supported by the fast path, falls back to `to_pixels(Rgb)` + reformat.
+    ///
+    /// Returns the number of bytes written.
+    pub(in crate::decode) fn write_pixels_into(
+        &mut self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        output_target: super::super::OutputTarget,
+        stop: &impl Stop,
+        dst: &mut [u8],
+    ) -> Result<usize> {
+        let dequant_bias = output_target.uses_dequant_bias();
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Grayscale streaming: if caller wants Gray and streaming produced 1bpp,
+        // direct copy. If streaming produced BGRA (from grayscale+BGRA hint),
+        // the is_rgb_family_u8 path below handles it.
+        if format == PixelFormat::Gray
+            && self.streaming_output_format.is_none()
+            && let Some(buf) = self.streaming_rgb.take()
+        {
+            let bytes = buf.len().min(dst.len());
+            dst[..bytes].copy_from_slice(&buf[..bytes]);
+            return Ok(bytes);
+        }
+
+        // Streaming-decode result: may be 3bpp RGB or 4bpp BGRA/RGBA depending
+        // on `streaming_output_format`. If the streaming data already matches the
+        // requested format, memcpy directly (zero-cost). Otherwise reformat.
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && let Some(buf) = self.streaming_rgb.take()
+        {
+            // Grayscale streaming always emits 1bpp (see `to_pixels`). Expand
+            // into the requested RGB-family format directly into `dst`.
+            if self.num_components == 1 {
+                let rgb = expand_gray_u8_to_format(&buf, format, width, height, self.alloc_pref)?;
+                let bytes = rgb.len().min(dst.len());
+                dst[..bytes].copy_from_slice(&rgb[..bytes]);
+                return Ok(bytes);
+            }
+            let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
+            let streaming_4bpp = matches!(
+                streaming_fmt,
+                PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba
+            );
+
+            if streaming_fmt == format
+                || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
+                || (streaming_fmt == PixelFormat::Bgrx && format == PixelFormat::Bgra)
+            {
+                // Exact match (or Bgra↔Bgrx which are byte-identical) — direct copy
+                let bytes = buf.len().min(dst.len());
+                dst[..bytes].copy_from_slice(&buf[..bytes]);
+                return Ok(bytes);
+            }
+
+            if streaming_4bpp {
+                // Streaming produced 4bpp but caller wants a different format.
+                // Reformat the 4bpp buffer to the target format.
+                let npixels = width * height;
+                if format == PixelFormat::Rgb {
+                    let swap = matches!(streaming_fmt, PixelFormat::Bgra | PixelFormat::Bgrx);
+                    let bytes = npixels * 3;
+                    if dst.len() < bytes {
+                        return Err(crate::error::Error::internal("dst too small"));
+                    }
+                    for i in 0..npixels {
+                        let s = i * 4;
+                        let d = i * 3;
+                        if swap {
+                            dst[d] = buf[s + 2];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s];
+                        } else {
+                            dst[d] = buf[s];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s + 2];
+                        }
+                    }
+                    return Ok(bytes);
+                }
+                if format == PixelFormat::Bgr {
+                    let swap = matches!(streaming_fmt, PixelFormat::Rgba);
+                    let bytes = npixels * 3;
+                    if dst.len() < bytes {
+                        return Err(crate::error::Error::internal("dst too small"));
+                    }
+                    for i in 0..npixels {
+                        let s = i * 4;
+                        let d = i * 3;
+                        if swap {
+                            dst[d] = buf[s + 2];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s];
+                        } else {
+                            dst[d] = buf[s];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s + 2];
+                        }
+                    }
+                    return Ok(bytes);
+                }
+                // 4bpp → different 4bpp: swap R and B channels
+                let bytes = npixels * 4;
+                if dst.len() < bytes {
+                    return Err(crate::error::Error::internal("dst too small"));
+                }
+                for i in 0..npixels {
+                    let s = i * 4;
+                    dst[s] = buf[s + 2];
+                    dst[s + 1] = buf[s + 1];
+                    dst[s + 2] = buf[s];
+                    dst[s + 3] = buf[s + 3];
+                }
+                return Ok(bytes);
+            }
+
+            // Streaming produced 3bpp RGB — use existing reformat
+            return reformat_rgb_into(&buf, format, width, height, dst);
+        }
+
+        // Fused parallel result (`parallel`, MCU-row restart markers), as in
+        // `to_pixels`. It holds the pixels and no coefficients, so the
+        // coefficient fast path below cannot run (#215).
+        #[cfg(feature = "parallel")]
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && !dequant_bias
+            && let Some(fused) = self.fused_result.take()
+        {
+            let super::super::fused_parallel::FusedResult(rgb) = fused;
+            return reformat_rgb_into(&rgb, format, width, height, dst);
+        }
+
+        // Direct-write fast path: subsampled (4:2:0/4:2:2/4:4:0) JPEGs decode
+        // straight into `dst` without an intermediate RGB Vec.
+        if !dequant_bias
+            && self.can_use_fast_i16_subsampled(format, is_xyb)
+            && let Some(fast_dst) = match format {
+                PixelFormat::Rgb => Some(FastDst::Rgb(dst)),
+                PixelFormat::Rgba => Some(FastDst::Rgba(dst)),
+                PixelFormat::Bgra | PixelFormat::Bgrx => Some(FastDst::Bgra(dst)),
+                _ => None,
+            }
+        {
+            let bytes = match fast_dst {
+                FastDst::Rgb(_) => width * height * 3,
+                FastDst::Rgba(_) | FastDst::Bgra(_) => width * height * 4,
+            };
+            self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, fast_dst)?;
+            return Ok(bytes);
+        }
+
+        // Generic fallback: existing dispatch returns Vec<u8>, then reformat
+        // (which uses garb for the 4-bpp swizzle).
+        let pixels = self.to_pixels(
+            PixelFormat::Rgb,
+            is_xyb,
+            chroma_upsampling,
+            output_target,
+            stop,
+        )?;
+        reformat_rgb_into(&pixels, format, width, height, dst)
+    }
+
+    pub(in crate::decode) fn to_pixels_f32(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        _stop: &impl Stop,
+    ) -> Result<Vec<f32>> {
+        self.to_pixels_f32_inner(
+            format,
+            is_xyb,
+            chroma_upsampling,
+            super::super::DeblockMode::Off,
+            _stop,
+        )
+    }
+
+    /// Internal f32 pixel conversion with optional deblocking.
+    ///
+    /// When `deblock_mode` is not `Off`, deblocking is applied to component
+    /// planes after IDCT but before chroma upsampling and color conversion.
+    pub(in crate::decode) fn to_pixels_f32_deblock(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        deblock_mode: super::super::DeblockMode,
+        _stop: &impl Stop,
+    ) -> Result<Vec<f32>> {
+        self.to_pixels_f32_inner(format, is_xyb, chroma_upsampling, deblock_mode, _stop)
+    }
+
+    fn to_pixels_f32_inner(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        deblock_mode: super::super::DeblockMode,
+        _stop: &impl Stop,
+    ) -> Result<Vec<f32>> {
+        if self.coeffs.is_empty() {
+            return Err(Error::internal("no decoded data"));
+        }
+
+        let num_components = self.num_components as usize;
+        let (
+            comp_infos,
+            mut bias_stats,
+            mut component_biases,
+            mut comp_planes_f32,
+            mcu_rows,
+            max_h_samp,
+            max_v_samp,
+        ) = self.setup_f32_decode(num_components)?;
+
+        // Process MCU row by MCU row
+        for imcu_row in 0..mcu_rows {
+            for comp_idx in 0..num_components {
+                let info = &comp_infos[comp_idx];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
+
+                self.gather_bias_stats(imcu_row, comp_idx, info, &mut bias_stats);
+                if info.is_full_res && imcu_row % 4 == 3 {
+                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                }
+
+                // IDCT for this component — always f32 for f32 output
+                let biases = &component_biases[comp_idx];
+                let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        // Always use f32 IDCT for f32 output - preserves fractional precision
+                        let dequant = if is_xyb {
+                            dequantize_block(&natural_coeffs, quant)
+                        } else {
+                            dequantize_block_with_bias(&natural_coeffs, quant, biases)
+                        };
+                        let pixels = inverse_dct_8x8(&dequant);
+
+                        for y in 0..DCT_SIZE {
+                            for x in 0..DCT_SIZE {
+                                let px = bx * DCT_SIZE + x;
+                                let py = by * DCT_SIZE + y;
+                                if px < info.comp_width && py < info.comp_height {
+                                    comp_plane_f32[py * info.comp_width + px] =
+                                        pixels[y * DCT_SIZE + x];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply deblocking to component planes (between IDCT and upsampling).
+        // Deblocking operates in [0, 255] pixel domain, so we level-shift
+        // the centered IDCT output (+128), filter, then shift back (-128).
+        self.apply_deblock_to_planes(&mut comp_planes_f32, &comp_infos, deblock_mode)?;
+
+        // Upsample and convert to output format
+        let planes_f32 = self.upsample_planes_f32(
+            &mut comp_planes_f32,
+            &comp_infos,
+            max_h_samp,
+            max_v_samp,
+            chroma_upsampling,
+        )?;
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let output_size = checked_size_2d(width, height)?;
+
+        match (self.num_components, format) {
+            (1, PixelFormat::Gray) => {
+                let mut output = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    output_size,
+                    "gray f32 output",
+                )?;
+                gray_f32_to_gray_f32(&planes_f32[0], &mut output);
+                Ok(output)
+            }
+            (1, PixelFormat::Rgb) => {
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    rgb_size,
+                    "gray->RGB f32 output",
+                )?;
+                gray_f32_to_rgb_f32(&planes_f32[0], &mut rgb);
+                Ok(rgb)
+            }
+            (3, PixelFormat::Rgb) => {
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb = try_alloc_zeroed_f32_pref(
+                    self.alloc_pref,
+                    true,
+                    rgb_size,
+                    "3-channel RGB f32 output",
+                )?;
+
+                if is_xyb {
+                    // XYB mode: run the inverse XYB → sRGB transform in-decoder
+                    // (no CMS required). Output is visibly-correct sRGB in the
+                    // sRGB gamma-encoded f32 domain.
+                    crate::color::xyb::xyb_planes_to_srgb_f32_simd(
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
+                    );
+                } else if self.is_rgb_jpeg() {
+                    // RGB JPEG: level-shift and normalize to [0.0, 1.0]
+                    for i in 0..output_size {
+                        rgb[i * 3] = (planes_f32[0][i] + 128.0) / 255.0;
+                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0) / 255.0;
+                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0) / 255.0;
+                    }
+                } else {
+                    // YCbCr to RGB conversion using batch function
+                    ycbcr_planes_f32_to_rgb_f32(
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
+                    );
+                }
+                Ok(rgb)
+            }
+            _ => Err(Error::unsupported_feature("unsupported color conversion")),
+        }
+    }
+
+    /// Convert decoded coefficients to YCbCr f32 planes.
+    ///
+    /// Returns (Y, Cb, Cr) planes, each width×height in size.
+    /// Values are in centered range [-128, 127] (raw DCT output).
+    /// Chroma planes are upsampled to full resolution.
+    pub(in crate::decode) fn to_ycbcr_planes_f32(
+        &self,
+        chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+        if self.coeffs.is_empty() {
+            return Err(Error::internal("no decoded data"));
+        }
+
+        if self.num_components != 3 {
+            return Err(Error::unsupported_feature(
+                "YCbCr planes require 3-component image",
+            ));
+        }
+
+        let num_components = self.num_components as usize;
+        let (
+            comp_infos,
+            mut bias_stats,
+            mut component_biases,
+            mut comp_planes_f32,
+            mcu_rows,
+            max_h_samp,
+            max_v_samp,
+        ) = self.setup_f32_decode(num_components)?;
+
+        // Process MCU row by MCU row
+        for imcu_row in 0..mcu_rows {
+            for comp_idx in 0..num_components {
+                let info = &comp_infos[comp_idx];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
+
+                self.gather_bias_stats(imcu_row, comp_idx, info, &mut bias_stats);
+                if info.is_full_res && imcu_row % 4 == 3 {
+                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                }
+
+                // IDCT — integer path for YCbCr output
+                let _biases = &component_biases[comp_idx];
+                let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    let base_py = by * DCT_SIZE;
+                    let rows_to_copy = DCT_SIZE.min(info.comp_height.saturating_sub(base_py));
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        // Zigzag reorder
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        // Use fast integer IDCT (always non-XYB for YCbCr output)
+                        let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
+                        let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
+                        match chroma_upsampling {
+                            super::super::ChromaUpsampling::Triangle => {
+                                idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
+                            }
+                            _ => {
+                                idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
+                            }
+                        }
+
+                        // Store pixels
+                        let base_px = bx * DCT_SIZE;
+                        let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
+
+                        // Convert i16 [0,255] to f32 centered [-128,127]
+                        if cols_to_copy == DCT_SIZE {
+                            for y in 0..rows_to_copy {
+                                let dst_offset = (base_py + y) * info.comp_width + base_px;
+                                let src_offset = y * DCT_SIZE;
+                                for x in 0..DCT_SIZE {
+                                    comp_plane_f32[dst_offset + x] =
+                                        pixels_i16[src_offset + x] as f32 - 128.0;
+                                }
+                            }
+                        } else {
+                            for y in 0..rows_to_copy {
+                                for x in 0..cols_to_copy {
+                                    comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
+                                        pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Upsample chroma and return planes
+        let mut planes_f32 = self.upsample_planes_f32(
+            &mut comp_planes_f32,
+            &comp_infos,
+            max_h_samp,
+            max_v_samp,
+            chroma_upsampling,
+        )?;
+
+        Ok((
+            core::mem::take(&mut planes_f32[0]),
+            core::mem::take(&mut planes_f32[1]),
+            core::mem::take(&mut planes_f32[2]),
+        ))
+    }
+}
