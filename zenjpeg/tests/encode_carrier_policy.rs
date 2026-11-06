@@ -134,7 +134,7 @@ fn lcms_2_17_rejects() -> Vec<(&'static str, Vec<u8>)> {
     let truncated = p3[..100].to_vec();
     // The header's colour-space field alone does not make a profile.
     assert_eq!(
-        zenpixels::icc::profile_color_space(&truncated),
+        zenpixels::ColorModel::from_icc(&truncated),
         Some(ColorModel::Rgb)
     );
     vec![

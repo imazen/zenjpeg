@@ -1059,7 +1059,7 @@ impl JpegEncoder {
                 "profile-tagged bytes require retained ICC metadata".into(),
             ));
         };
-        if zenpixels::icc::profile_color_space(icc) != Some(zenpixels::ColorModel::Rgb) {
+        if zenpixels::ColorModel::from_icc(icc) != Some(zenpixels::ColorModel::Rgb) {
             return Err(Error::icc_error(
                 "RGB samples require an RGB ICC carrier".into(),
             ));
@@ -1166,7 +1166,7 @@ impl JpegEncoder {
             } else {
                 ColorModel::Rgb
             };
-            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+            if zenpixels::ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
             let identified = ColorProfileSource::Icc(icc).resolve();
