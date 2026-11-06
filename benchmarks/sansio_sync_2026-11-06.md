@@ -139,3 +139,30 @@ directly atop the manifest-only repair. Actual full Clippy now compiles PNG and
 reaches four JPEG HDR private-facade uses (two ICC synthesis calls and the HDR
 orientation in-place/fallback calls). Those failures are retained history; the subsequent public-facade migrations
 and complete strict Clippy now pass. No PNG source was edited by this lane.
+
+## Full runtime and diagnostics follow-through
+
+The unchanged complete user-feature release library/test gate passes
+(jpeg-full-user-features-test.log rc0,415s). The unchanged complete default
+release library/test gate also passes (jpeg-default-release-test.log rc0,187s).
+Pre-existing ignores remain unchanged; these are command-scope results, not
+claims that every ignored experiment or native configuration is qualified.
+Strict default library/test/bench and true-default lib-only Clippy pass after
+compiling private incremental helpers with their sole caller's zencodec feature.
+No warning suppression or target exclusion was used.
+
+The independent Encoder diagnostics CI workspace still resolved published
+zensim0.2.7's stable-only SIMD edge. Its candidate now preserves the exact
+published runtime source at2894042dc0a444dd4df7e6c311ddf30996781deb; every
+Rust runtime source matches cargo-read0.2.7 byte-for-byte (aggregate SHA256
+27611673b4c8a6befe4a7f91b1ce13708e6ac750bd867c10efdcf46d90677a81).
+Only the two0.9.23 SIMD requirements change in reviewed
+4255242af5e84cde7099fd5bc8b4bee47df93dd8. It keeps0.2.7's profile/model/API;
+it does not substitute the research0.3 graph. The temporary beta.2 cap excludes
+stable0.9.31 and requires the same post-publication removal/qualification follow-up.
+
+The diagnostics workspace repeats exact reviewed main-cohort patches and retains
+its seeded lock delta. Actual CI wasm-pack release/web build passes
+(diagnostics-wasm-cohort-build.log rc0,28s), not just metadata resolution.
+Native legacy metric numeric tests and broader viewer/browser gates remain
+separate; no weights, scientific thresholds, fixture expectations or UI changed.
