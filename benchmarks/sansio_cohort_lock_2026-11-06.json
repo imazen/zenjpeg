@@ -1,6 +1,6 @@
 {
   "baseline": "88635489732e02bc11282bf1b57ddfd9d78cbe95",
-  "lock_sha256": "bf79f6d1fa1d398c08cd23c9b25dc04899139e28fd5e9697680a0948e32ff623",
+  "lock_sha256": "2dbf40b0ff82347a50985d83a15a0905eead0626f45ec781536a84b9cc5a3e8f",
   "removed": [
     [
       "archmage",
@@ -177,7 +177,7 @@
     [
       "ultrahdr-core",
       "0.6.0",
-      "git+https://github.com/imazen/ultrahdr?rev=fc15f2c2788eee8bff5404fbe09d3bf2781e2dcf#fc15f2c2788eee8bff5404fbe09d3bf2781e2dcf"
+      "git+https://github.com/imazen/ultrahdr?rev=30249993940e75dc2437bacac4756ac023e62121#30249993940e75dc2437bacac4756ac023e62121"
     ],
     [
       "zenblend",

@@ -256,7 +256,7 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb
 # resolve a second zencodec, and with `ultrahdr` the two GainMapParams collide
 # (E0308). This review revision of imazen/ultrahdr (branch
 # review/zencodec-0.2-family) takes the family through version edges too.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "fc15f2c2788eee8bff5404fbe09d3bf2781e2dcf" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "30249993940e75dc2437bacac4756ac023e62121" }
 
 # Exact-source SIMD admission candidates; only manifest ranges changed.
 # Temporary <=beta.2 caps exclude stable 0.9.31; replace after qualification.

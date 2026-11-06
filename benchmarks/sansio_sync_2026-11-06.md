@@ -28,8 +28,11 @@ SIMD admission from BT.2446 feature forwarding. Exact contents first supply
 bt2446a at e70065f; older same-version pixels do not. It pins reviewed fde59b96
 and forwards the feature explicitly. Unchanged all-feature core numeric tests
 pass on main and, in a distinct matching export, PR199. Main strict library/test
-Clippy passes; broader all-target Clippy fails on the unchanged benchmark
-mul_add deprecation. No arithmetic rewrite or suppression was made. Whole
+Clippy passes. The initial broader all-target benchmark deprecation was fixed
+in a separate benchmark-only alias migration: exact beta.2 mul_add directly
+delegates to mul_add_relaxed. A dev-only beta.2 edge leaves runtime floors
+unchanged. Main all-target strict Clippy and doctests now pass; no public API,
+rounding, numeric assertion or suppression changes. Whole
 UltraHDR workspace/platform gates remain open; no independent landing.
 
 Default triangle input remains whole-file backed. Native resumption is qualified

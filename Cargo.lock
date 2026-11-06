@@ -1987,7 +1987,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=fc15f2c2788eee8bff5404fbe09d3bf2781e2dcf#fc15f2c2788eee8bff5404fbe09d3bf2781e2dcf"
+source = "git+https://github.com/imazen/ultrahdr?rev=30249993940e75dc2437bacac4756ac023e62121#30249993940e75dc2437bacac4756ac023e62121"
 dependencies = [
  "archmage 0.9.31-beta.2",
  "bytemuck",
