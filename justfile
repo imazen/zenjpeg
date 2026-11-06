@@ -948,3 +948,6 @@ sansio-fuzz-cohort-check:
 sansio-ffi-tools:
     cmake -S internal/jpegli-cpp -B internal/jpegli-cpp/build -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_TOOLS=ON -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON -DJPEGXL_STATIC=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_TCMALLOC=OFF -DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF
     cmake --build internal/jpegli-cpp/build --target cjpegli djpegli --config Release --parallel 2
+
+sansio-conversion-cause-check:
+    cargo test --locked -p zenjpeg --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" --lib conversion_cause_tests

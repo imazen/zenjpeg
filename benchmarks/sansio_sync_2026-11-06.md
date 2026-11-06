@@ -166,3 +166,16 @@ its seeded lock delta. Actual CI wasm-pack release/web build passes
 (diagnostics-wasm-cohort-build.log rc0,28s), not just metadata resolution.
 Native legacy metric numeric tests and broader viewer/browser gates remain
 separate; no weights, scientific thresholds, fixture expectations or UI changed.
+
+The typed error review also retained the established color-refusal category:
+a real RowConverter CMYK→RGB refusal reproduced Internal(Bug) instead of the
+existing CmsRequired category before correction. The private color mapper now
+preserves CmsRequired plus the concrete ConvertError and original trace. Both
+typed/erased controls pass (jpeg-color-category-before.log rc101;
+jpeg-color-category-after.log rc0). No public API or pixel/threshold change.
+
+The initial complete FFI invocation is NOT a passing gate: its library stage
+passed, but the bundled stage was terminated withrc143 after139s and no reported
+test failure. Its zero-RSS wrapper receipt is invalid, and the full log remains
+retained. All children exited; no OOM record was found. Rerun the complete gate,
+without exclusions, after the category correction.

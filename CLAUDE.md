@@ -1916,3 +1916,13 @@ workspace, so CI failed resolution despite successful root resolution. The
 sansio draft now repeats the reviewed main-cohort patches and passes every
 fuzz target through cargo check. Root seed replay remains blocked by the
 separately owned PNG facade migration; no targets or expectations were removed.
+
+## Known Bugs: typed HDR conversion refusal category (2026-11-06)
+
+The sansio review's initial typed converter wrapper classified an existing HDR
+color-conversion refusal as Internal(Bug), replacing the established CmsRequired
+category. The private color adapter now retains CmsRequired while preserving
+the original ConvertError and location trace. A real RowConverter refusal fails
+before the correction and passes after it, including cause recovery through
+erasure. Orientation refusal retains its separate typed/resource handling. No
+public signature, pixel expectation or quality threshold changed.

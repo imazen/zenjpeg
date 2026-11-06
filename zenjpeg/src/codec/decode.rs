@@ -1997,7 +1997,7 @@ impl JpegDecoder<'_> {
                     .map_err(|_| Error::internal("HDR color output allocation failed"))?;
                 let mut converter =
                     zenpixels_convert::RowConverter::new(hdr.descriptor(), descriptor)
-                        .map_err(pixel_conversion_error)?;
+                        .map_err(color_conversion_error)?;
                 for row in 0..h {
                     stop.check().map_err(Error::from)?;
                     converter.convert_row(
@@ -2085,6 +2085,19 @@ impl JpegDecoder<'_> {
 
         Ok(Some(output))
     }
+}
+
+#[cfg(feature = "ultrahdr")]
+fn color_conversion_error(cause: At<zenpixels_convert::ConvertError>) -> At<CodecError> {
+    // Preserve this path's established ICC/CMS category while retaining the
+    // actual converter cause and its original location trace.
+    cause.map_error(|detail| {
+        CodecError::from_parts(
+            Some("zenjpeg"),
+            zencodec::ErrorCategory::Request(zencodec::RequestError::CmsRequired),
+            alloc::boxed::Box::new(detail),
+        )
+    })
 }
 
 // Preserve the converter's concrete cause and original location trace through
@@ -2184,6 +2197,40 @@ mod conversion_cause_tests {
     use super::pixel_conversion_error;
     use zenpixels::{Orientation, PixelBuffer, PixelDescriptor};
     use zenpixels_convert::{ConvertError, PixelSliceConvertExt};
+
+    #[test]
+    fn color_refusal_retains_the_existing_cms_category_and_typed_cause() {
+        let cause = zenpixels_convert::RowConverter::new(
+            PixelDescriptor::CMYK8,
+            PixelDescriptor::RGBA8_SRGB,
+        )
+        .unwrap_err();
+        let original = cause.error().clone();
+        let locations: alloc::vec::Vec<_> = cause.frames().filter_map(|f| f.location()).collect();
+        assert!(!locations.is_empty());
+        let wrapped = super::color_conversion_error(cause);
+        assert_eq!(
+            wrapped.error().category(),
+            zencodec::ErrorCategory::Request(zencodec::RequestError::CmsRequired,)
+        );
+        assert_eq!(
+            zencodec::find_cause::<ConvertError>(&wrapped),
+            Some(&original)
+        );
+        assert_eq!(
+            wrapped
+                .frames()
+                .filter_map(|f| f.location())
+                .collect::<alloc::vec::Vec<_>>(),
+            locations
+        );
+        let erased: alloc::boxed::Box<dyn core::error::Error + Send + Sync> =
+            alloc::boxed::Box::new(wrapped);
+        assert_eq!(
+            zencodec::find_cause::<ConvertError>(&*erased),
+            Some(&original)
+        );
+    }
 
     #[test]
     fn typed_and_erased_conversion_refusal_retains_cause_and_trace() {
