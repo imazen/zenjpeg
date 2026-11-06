@@ -108,3 +108,19 @@ errors, nearest-neighbor mismatch, truncated EOF mismatch, small pump allowance,
 and late metadata. An initial shared all-target test command also ran executable
 bench targets; it was terminated (rc143) and replaced by explicit library/tests.
 Those partial timings are not qualification measurements.
+
+## Standalone fuzz and FFI graph preparation
+
+Remote fuzz CI on3a1627aa reproduced the PNG errors in seed replay, while the
+separate fuzz-workspace compiler gate still failed stable-only SIMD resolution.
+Its patch table now matches the reviewed main root cohort, and actual
+`cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets` passes
+without removing a target or feature. Its regenerated lock is committed;
+seed replay remains part of the still-blocked root suite.
+
+The full FFI gate requires the exact C++ gitlink631732a5f73cd547255998478cf7b248e04a5880,
+Highway457c891775a7397bdb0376bb1031e6e027af1c48 and reference
+headers8ecba3647edb6dd940463fedf38ca33a8e2a73d1. These were independently
+materialized for the export, rather than borrowing an unidentified sibling build.
+The unchanged CI CMake configuration succeeds; tool build and actual FFI gates
+remain separate. `sansio-ffi-tools` retains the existing CI configuration.

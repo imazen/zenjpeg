@@ -1908,3 +1908,11 @@ whole-file route and fixes the focused native controls without weakening pixel
 expectations. This remains a review candidate: root dependency resolution fails
 on an optional UltraHDR stable-only SIMD edge. Full workspace, API snapshots and
 platform qualification are still open. See benchmarks/sansio_sync_2026-11-06.md.
+
+## Known Bugs: standalone fuzz cohort drift (2026-11-06)
+
+The root reviewed SIMD graph did not propagate into the independent fuzz
+workspace, so CI failed resolution despite successful root resolution. The
+sansio draft now repeats the reviewed main-cohort patches and passes every
+fuzz target through cargo check. Root seed replay remains blocked by the
+separately owned PNG facade migration; no targets or expectations were removed.

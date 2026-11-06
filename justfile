@@ -940,3 +940,11 @@ sansio-full-cohort-clippy:
 
 sansio-full-cohort-test:
     cargo test --locked -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+
+sansio-fuzz-cohort-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets
+
+# Exact oracle source revisions are recorded in the sansio receipt.
+sansio-ffi-tools:
+    cmake -S internal/jpegli-cpp -B internal/jpegli-cpp/build -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_TOOLS=ON -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON -DJPEGXL_STATIC=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_TCMALLOC=OFF -DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF
+    cmake --build internal/jpegli-cpp/build --target cjpegli djpegli --config Release --parallel 2
