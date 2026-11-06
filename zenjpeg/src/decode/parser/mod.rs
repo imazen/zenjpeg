@@ -142,7 +142,7 @@ pub(in crate::decode) fn empty_huffman_tables() -> Result<HuffmanTables> {
 ///
 /// Bundles the parser fields that `ScanlineReader` needs, replacing
 /// the previous 16-parameter constructor. Created via `JpegParser::into_scan_data()`.
-pub(super) struct ParsedScanData<'a> {
+pub(crate) struct ParsedScanData<'a> {
     pub precision: u8,
     pub data: &'a [u8],
     pub width: u32,
@@ -204,7 +204,7 @@ pub(super) enum DecodeMode {
 }
 
 /// Internal JPEG parser state.
-pub(super) struct JpegParser<'a> {
+pub(crate) struct JpegParser<'a> {
     pub(super) data: &'a [u8],
     pub(super) position: usize,
 
@@ -215,7 +215,7 @@ pub(super) struct JpegParser<'a> {
     pub(super) native_precision: bool,
     /// Lazily resolve category-16 tables preceding SOF, once per parser.
     pub(super) lossless_tables: Option<bool>,
-    pub(super) num_components: u8,
+    pub(crate) num_components: u8,
     pub(super) mode: JpegMode,
 
     // Component info
@@ -414,7 +414,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// `max_memory` is the ceiling for header-dimension-scaled allocations;
     /// pass `u64::MAX` for unlimited. See [`JpegParser::charge_memory`].
-    pub(super) fn with_strictness(
+    pub(crate) fn with_strictness(
         data: &'a [u8],
         max_pixels: u64,
         max_memory: u64,
@@ -1288,7 +1288,7 @@ impl<'a> JpegParser<'a> {
     // Info extraction
     // =========================================================================
 
-    pub(super) fn info(&self) -> JpegInfo {
+    pub(crate) fn info(&self) -> JpegInfo {
         let color_space = self.color_model.color_space();
         let is_xyb = self.color_model == ColorModel::Xyb;
 
@@ -1335,7 +1335,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// This bundles all the parser fields needed by `ScanlineReader::new()`,
     /// including the colour model decided at SOF.
-    pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
+    pub(crate) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
         // Extract sampling factors
         let h_samp = if is_grayscale {
             [

@@ -122,7 +122,7 @@ tempfile = "3"
 # contract as the codec. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 zencodec-testkit = ">=0.2.0, <0.3.0"
-zencodec-io = { version = "0.1.0", features = ["std"] }
+zencodec-io = { version = "0.1.0", features = ["std", "tokio"] }
 
 
 # WASM testing dependencies (browser + Node.js)

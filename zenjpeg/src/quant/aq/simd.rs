@@ -105,12 +105,12 @@ fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(
     let v = vals.max(GenericF32x8::<T>::zero_t(token));
     let v2 = v * v;
 
-    let num = v2.mul_add(
+    let num = v2.mul_add_relaxed(
         GenericF32x8::<T>::splat_t(token, K_NUM_MUL_RATIO),
         GenericF32x8::<T>::splat_t(token, K_NUM_OFFSET_RATIO),
     );
     let den = (v * GenericF32x8::<T>::splat_t(token, K_DEN_MUL_RATIO))
-        .mul_add(v2, GenericF32x8::<T>::splat_t(token, K_VOFFSET_RATIO));
+        .mul_add_relaxed(v2, GenericF32x8::<T>::splat_t(token, K_VOFFSET_RATIO));
 
     // den is always positive due to K_VOFFSET_RATIO > 0, no need for safe_den check
     den / num
@@ -126,12 +126,12 @@ fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(
     let v = vals.max(GenericF32x8::<T>::zero_t(token));
     let v2 = v * v;
 
-    let num = v2.mul_add(
+    let num = v2.mul_add_relaxed(
         GenericF32x8::<T>::splat_t(token, K_NUM_MUL_RATIO),
         GenericF32x8::<T>::splat_t(token, K_NUM_OFFSET_RATIO),
     );
     let den = (v * GenericF32x8::<T>::splat_t(token, K_DEN_MUL_RATIO))
-        .mul_add(v2, GenericF32x8::<T>::splat_t(token, K_VOFFSET_RATIO));
+        .mul_add_relaxed(v2, GenericF32x8::<T>::splat_t(token, K_VOFFSET_RATIO));
 
     num / den
 }
@@ -142,7 +142,7 @@ fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(
 fn masking_sqrt_x8_generic<T: F32x8Backend>(token: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
     let k_mul_sqrt = GenericF32x8::<T>::splat_t(token, (K_MASKING_MUL * 1e8_f32).sqrt());
     let k_offset = GenericF32x8::<T>::splat_t(token, K_MASKING_LOG_OFFSET);
-    GenericF32x8::<T>::splat_t(token, 0.25) * v.mul_add(k_mul_sqrt, k_offset).sqrt()
+    GenericF32x8::<T>::splat_t(token, 0.25) * v.mul_add_relaxed(k_mul_sqrt, k_offset).sqrt()
 }
 
 // ============================================================================

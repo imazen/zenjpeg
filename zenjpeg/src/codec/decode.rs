@@ -54,7 +54,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = {
 /// Wraps [`crate::decode::DecodeConfig`] with the zencodec trait interface.
 #[derive(Clone, Debug)]
 pub struct JpegDecoderConfig {
-    inner: crate::decode::DecodeConfig,
+    pub(super) inner: crate::decode::DecodeConfig,
     #[allow(dead_code)]
     limits: ResourceLimits,
     /// How to handle CMYK/YCCK 4-component JPEGs. See [`CmykHandling`].
@@ -629,6 +629,44 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 }
 
 impl JpegDecodeJob {
+    /// Review candidate: resume native baseline input between MCU rows.
+    pub fn into_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<super::incremental::JpegIncrementalDecoder, At<CodecError>> {
+        // Preserve configurations requiring lookahead, transforms or CMS through
+        // the existing whole-file route. Native input resumption is opt-in via
+        // nearest-neighbor, untransformed RGB8 decoding in this review candidate.
+        if self.config.inner.chroma_upsampling != crate::decode::ChromaUpsampling::NearestNeighbor
+            || self.config.inner.correct_color.is_some()
+            || self.config.inner.force_f32_idct
+            || self.config.inner.crop_region.is_some()
+            || self.config.inner.decode_transform.is_some()
+            || self.crop_hint.is_some()
+            || self.config.inner.output_target != crate::decode::OutputTarget::Srgb8
+            || self.config.inner.deblock_mode != crate::decode::DeblockMode::Off
+            || self.policy.is_some()
+            || preferred
+                .iter()
+                .any(|p| p.channel_type() != zenpixels::ChannelType::U8)
+            || self.config.inner.strictness != crate::decode::Strictness::Balanced
+            || self.gain_map_render != zencodec::GainMapRender::BaseOnly
+        {
+            return Ok(super::incremental::JpegIncrementalDecoder::buffered(
+                self, preferred,
+            ));
+        }
+        Ok(super::incremental::JpegIncrementalDecoder::new(
+            self.config,
+            self.limits,
+            self.crop_hint,
+            self.orientation,
+            self.policy,
+            self.stop,
+            preferred,
+        ))
+    }
+
     /// The inner decode config with this job's resource limits applied —
     /// probes must honor `with_limits` exactly like the decode path does
     /// (a 108 MP corpus file probes fine under a raised `max_pixels` but the
@@ -1213,7 +1251,7 @@ fn check_progressive_policy(
     Ok(())
 }
 
-fn build_decode_config(
+pub(super) fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
