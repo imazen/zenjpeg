@@ -12,10 +12,12 @@ cargo clippy --locked --manifest-path tools/sansio-validation/Cargo.toml --all-t
 
 Install `djpeg` (libjpeg-turbo) and `exiftool`; missing oracles fail the tests.
 The recipe copies `dependencies.lock` to the ignored `Cargo.lock` before testing.
-The full JPEG workspace currently cannot resolve this pixel cohort: optional
-UltraHDR SIMD still admits only stable archmage. This consumer deliberately
-qualifies the existing no-default-features + zencodec library, separately from
-that failed full-workspace gate. It is not a full feature/platform receipt.
+The full reviewed JPEG graph now resolves and passes the complete user/default/FFI/
+expert/recompress runtime gates plus strict linting, examples and doctests. The
+standalone consumer remains a focused no-default-features + zencodec check; it
+does not qualify every feature or platform. Its main graph uses the reviewed
+linear-srgb2969ee84 feature-ownership fix. The separately tested PR199 export
+retains its original linear528 graph and remains unmerged.
 
 `JpegDecodeJob::into_incremental_decoder(&[PixelDescriptor])` returns the concrete
 `JpegIncrementalDecoder`, which implements the current `step(Input, sink,

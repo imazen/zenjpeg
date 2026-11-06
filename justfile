@@ -972,3 +972,10 @@ sansio-static-check:
 sansio-recompress-check:
     RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features recompress-expert --test recompress_api
     RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features recompress-expert --lib recompress::
+
+# Standalone API runner handles featureless workspace packages without exclusions.
+sansio-api-check:
+    ZEN_API_DOC_TOOLCHAIN=nightly-2026-07-13 ZEN_API_DOC=check cargo test --locked --manifest-path apidoc/Cargo.toml
+
+sansio-colorspace-oracle-tools ROOT:
+    bash scripts/build-colorspace-oracles.sh "{{ROOT}}"

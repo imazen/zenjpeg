@@ -5,9 +5,9 @@
 The complete reviewed root graph resolves with exact remote source pins.
 Full strict Clippy now PASSES for library, tests and benches with the unchanged
 CI feature list, PNG owner facade candidate6b740345 and UltraHDR30249993.
-The instrumented pinned C++ oracle is enabled. Complete release user-feature
-library/integration tests are running; FFI, API-snapshot and platform gates
-remain open. Keep the draft; no merge on a focused test or lint result.
+The instrumented pinned C++ oracle is enabled. Complete release user/default/FFI/
+expert/recompress runtime gates, supported examples/doctests and API snapshots
+pass. Broad colorspace oracles pass; platform gates remain open. Keep the draft; no merge on a focused test or lint result.
 
 The former PNG errors were fixed by its owning facade-only candidate atop
 [manifest-only draft PR55](https://github.com/imazen/zenpng/pull/55).
@@ -164,7 +164,7 @@ stable0.9.31 and requires the same post-publication removal/qualification follow
 The diagnostics workspace repeats exact reviewed main-cohort patches and retains
 its seeded lock delta. Actual CI wasm-pack release/web build passes
 (diagnostics-wasm-cohort-build.log rc0,28s), not just metadata resolution.
-Native legacy metric numeric tests and broader viewer/browser gates remain
+Broader viewer/browser gates remain
 separate; no weights, scientific thresholds, fixture expectations or UI changed.
 
 The typed error review also retained the established color-refusal category:
@@ -223,3 +223,49 @@ The original API check detects expected snapshot drift. Regeneration with
 zenutils-apidoc0.1.0 then fails on featureless zenyuv's virtual manifest. Its
 published0.1.1 uses disambiguated cargo rustdoc per package; update the isolated
 API tool rather than excluding a crate or disabling the guard.
+
+## Complete API and frozen feature ownership
+
+The API tool0.1.0 fails on featureless zenyuv's virtual manifest. Its published
+0.1.1 invokes cargo rustdoc with the exact package, retaining every package and
+feature configuration. After that tooling repair the real default zenyuv graph
+fails on linear528's unguarded private transfer imports. Review ref
+[2969ee84](https://github.com/imazen/linear-srgb/commit/2969ee846e92a4f00f34ab447edaf1eb6857ebe0)
+reuses existing main506004d9 feature ownership and cb3ef992's equivalent
+NaN/nonpositive predicates, on frozen528. Arithmetic expressions, floors,
+rounding and expectations remain unchanged. Feature-off std105 library tests,
+all-feature165 and all3 existing tier tests pass, as do fmt and strict Clippy
+for both feature configurations (rc0,22s, peakRSS0.20GiB). Later main arithmetic
+changes are outside this graph. Full platform/assembly gates remain separate.
+
+The root lock delta from the previous reviewed graph is only linear-srgb's
+source identity. Standalone fuzz/viewer/main consumer locks have the same single
+identity delta. Main/PR199 core and pixel identities remain distinct; the older
+PR199 qualification retains its recorded linear528.
+
+Full API regeneration passes (jpeg-api-regenerate-3.log rc0,16s); strict check
+passes (jpeg-api-check-2.log rc0,9s), both with pinned nightly2026-07-13. Supported
+default and internal API surfaces are unchanged. The feature surface adds only
+JpegIncrementalDecoder, its explicit constructor and IncrementalDecode impl,
+with the recorded auto-trait exceptions. Recovery helpers stay private; unused
+new helper methods were removed. No pre-existing public method was removed.
+
+After private-helper scoping and the linear pin, full original strict Clippy,
+default strict library/test/bench Clippy and all11 standalone native controls
+pass (jpeg-final-cohort-check.log rc0,42s, peakRSS0.88GiB). The latter include
+independent djpeg/ExifTool and exact pixels, early rows, both stop reasons,
+whereat causes and synchronous/Tokio consumers. Full runtime suites recorded
+above precede these visibility/feature-guard-only edits; no active arithmetic
+changed.
+
+The complete existing colorspace_oracles target passes both controls with no
+filtered/ignored tests (jpeg-colorspace-oracles.log rc0,100s, peakRSS2.04GiB).
+All three independent readers run: Pillow/libjpeg-turbo2.1.5, IJG9f and the
+exact pinned jpegli binary. Existing exact/one-code thresholds are unchanged.
+The test-only IJG source comes from https://www.ijg.org/files/jpegsrc.v9f.tar.gz,
+SHA25604705c110cb2469caa79fb71fba3d7bf834914706e9641a4589485c1f832565b.
+The build helper pins that archive and verifies a real decode plus Pillow's
+libjpeg-turbo feature. An initial unsupported `djpeg -version` probe returned1;
+the corrected real-decode probe and the complete oracle suite both pass.
+These are color-model fixture controls, not full native incremental color
+qualification or a default-triangle promotion.
