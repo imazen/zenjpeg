@@ -2,13 +2,22 @@
 
 ## Remaining gates
 
-The complete root graph now resolves using exact remote cohort review revisions.
-Actual full-feature Clippy (library, tests and benches, unchanged CI features)
-compiles dependencies, then fails three private PNG pixel-helper calls at
-codec.rs:1657/5340 and encode.rs:731. PNG's owning source migration remains
-separate; [draft PR55](https://github.com/imazen/zenpng/pull/55) changes only
-its two manifest ranges. Full unit/integration/features, public API snapshot and
-platform CI remain unqualified. Keep this PR draft.
+The complete reviewed root graph resolves with exact remote source pins.
+Full strict Clippy now PASSES for library, tests and benches with the unchanged
+CI feature list, PNG owner facade candidate6b740345 and UltraHDR30249993.
+The instrumented pinned C++ oracle is enabled. Complete release user-feature
+library/integration tests are running; FFI, API-snapshot and platform gates
+remain open. Keep the draft; no merge on a focused test or lint result.
+
+The former PNG errors were fixed by its owning facade-only candidate atop
+[manifest-only draft PR55](https://github.com/imazen/zenpng/pull/55).
+That exposed JPEG HDR and test private-helper calls, now migrated to equivalent
+public facades. The private HDR helper returns the existing At<CodecError>
+envelope and retains typed converter causes and their original location traces,
+including orientation fallback failures. An actual destination-refusal control
+recovers the original ConvertError before/after erasure and checks every trace
+frame. No public signature, unwrap or silent fallback was added. Original ICC,
+orientation, dimension and pixel assertions remain unchanged.
 
 All manifest-only cohort candidates preserve their original dependency floors,
 source kernels and numeric assertions. Their temporary <=0.9.31-beta.2 caps
@@ -122,11 +131,11 @@ The full FFI gate requires the exact C++ gitlink631732a5f73cd547255998478cf7b248
 Highway457c891775a7397bdb0376bb1031e6e027af1c48 and reference
 headers8ecba3647edb6dd940463fedf38ca33a8e2a73d1. These were independently
 materialized for the export, rather than borrowing an unidentified sibling build.
-The unchanged CI CMake configuration succeeds; tool build and actual FFI gates
-remain separate. `sansio-ffi-tools` retains the existing CI configuration.
+The unchanged CI CMake configuration and both cjpegli/djpegli tool builds
+succeed. Actual FFI suite qualification remains separate. `sansio-ffi-tools` retains the existing CI configuration.
 
 PNG owner facade candidate6b740345e9550c72da462311024961a413a15abc is
 directly atop the manifest-only repair. Actual full Clippy now compiles PNG and
 reaches four JPEG HDR private-facade uses (two ICC synthesis calls and the HDR
-orientation in-place/fallback calls). These remain current blockers; prior PNG
-errors are historical. No PNG source was edited by this lane.
+orientation in-place/fallback calls). Those failures are retained history; the subsequent public-facade migrations
+and complete strict Clippy now pass. No PNG source was edited by this lane.
