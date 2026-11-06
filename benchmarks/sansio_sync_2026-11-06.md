@@ -205,3 +205,21 @@ library/test/bench and recompress strict Clippy, examples in default and all
 user configurations including layout, and both default/user-feature doctests.
 Existing ignored documentation examples remain unchanged; this does not claim
 those ignored examples executed. No hash, sample or quality expectation changed.
+
+Recompress's original API and filtered library runtime commands pass unchanged
+(jpeg-recompress-runtime.log rc0,49s). Frozen legacy0.2.7 native numeric controls
+pass with explicit beta.2 and the transfer-enabled dependency closure: default
+metric configuration rc0,44s; matching viewer no-default configuration with
+linear default/avx512/std/transfer rc0,48s. Runtime Rust/profile/weight sources
+remain identical to the published0.2.7 contents; optional zenpixels interop and
+ignored corpus studies were not promoted as qualified.
+
+The separate linear528 std-only export fails six unguarded PQ imports. That
+feature-off result remains failed; the actual viewer enables transfer, verified
+from its resolved feature graph. No production feature or test assertion was
+changed to hide the failure. Whole dependency release qualification stays open.
+
+The original API check detects expected snapshot drift. Regeneration with
+zenutils-apidoc0.1.0 then fails on featureless zenyuv's virtual manifest. Its
+published0.1.1 uses disambiguated cargo rustdoc per package; update the isolated
+API tool rather than excluding a crate or disabling the guard.

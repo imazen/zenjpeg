@@ -968,3 +968,7 @@ sansio-static-check:
     cargo check --locked -p zenjpeg --examples
     cargo test --locked -p zenjpeg --doc
     cargo test --locked -p zenjpeg --doc --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout"
+
+sansio-recompress-check:
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features recompress-expert --test recompress_api
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features recompress-expert --lib recompress::
