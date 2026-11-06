@@ -2,12 +2,35 @@
 
 ## Remaining gates
 
-The full JPEG workspace does not resolve the selected pixel cohort: enabling its
-UltraHDR SIMD graph selects stable-only `archmage >=0.9.30, <0.10.0`, conflicting
-with the cohort's explicit beta.2 requirement. Root-lock regeneration fails
-before compilation. Full unit/integration/features, public API snapshot and
-platform CI therefore remain unqualified. Do not merge this review candidate
-based only on the focused consumer.
+The complete root graph now resolves using exact remote cohort review revisions.
+Actual full-feature Clippy (library, tests and benches, unchanged CI features)
+compiles dependencies, then fails three private PNG pixel-helper calls at
+codec.rs:1657/5340 and encode.rs:731. PNG's owning source migration remains
+separate; [draft PR55](https://github.com/imazen/zenpng/pull/55) changes only
+its two manifest ranges. Full unit/integration/features, public API snapshot and
+platform CI remain unqualified. Keep this PR draft.
+
+All manifest-only cohort candidates preserve their original dependency floors,
+source kernels and numeric assertions. Their temporary <=0.9.31-beta.2 caps
+exclude stable0.9.31; replace them after the stable cohort publishes and passes
+unchanged qualification. Live registry checks found stable0.9.30 only.
+
+The root now pins reviewed remote source commits rather than local paths.
+The lock was regenerated from committed 88635489 Cargo.lock outside ambient
+workspace overrides, preserving unrelated versions. Exact removed/added package
+identities are in [the lock delta](sansio_cohort_lock_2026-11-06.json).
+There is one core/pixel/enough/whereat identity. The legacy HDR oracle retains
+core0.4.1 separately from core0.6.0 and mozjpeg-rs retains archmage0.4.0;
+these distinct major families are deliberate, not silently unified.
+
+[UltraHDR draft PR43](https://github.com/imazen/ultrahdr/pull/43) separates
+SIMD admission from BT.2446 feature forwarding. Exact contents first supply
+bt2446a at e70065f; older same-version pixels do not. It pins reviewed fde59b96
+and forwards the feature explicitly. Unchanged all-feature core numeric tests
+pass on main and, in a distinct matching export, PR199. Main strict library/test
+Clippy passes; broader all-target Clippy fails on the unchanged benchmark
+mul_add deprecation. No arithmetic rewrite or suppression was made. Whole
+UltraHDR workspace/platform gates remain open; no independent landing.
 
 Default triangle input remains whole-file backed. Native resumption is qualified
 only for the explicit nearest-neighbor eight-bit fixture configuration. Deep,

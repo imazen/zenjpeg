@@ -933,3 +933,10 @@ deep-cmyk-check:
 sansio-native-check:
     cp tools/sansio-validation/dependencies.lock tools/sansio-validation/Cargo.lock
     cargo test --locked --manifest-path tools/sansio-validation/Cargo.toml
+
+# Execute in an export outside ambient workspace overrides; preserves the CI gate.
+sansio-full-cohort-clippy:
+    cargo clippy --locked -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" -- -D warnings
+
+sansio-full-cohort-test:
+    cargo test --locked -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
