@@ -124,3 +124,9 @@ headers8ecba3647edb6dd940463fedf38ca33a8e2a73d1. These were independently
 materialized for the export, rather than borrowing an unidentified sibling build.
 The unchanged CI CMake configuration succeeds; tool build and actual FFI gates
 remain separate. `sansio-ffi-tools` retains the existing CI configuration.
+
+PNG owner facade candidate6b740345e9550c72da462311024961a413a15abc is
+directly atop the manifest-only repair. Actual full Clippy now compiles PNG and
+reaches four JPEG HDR private-facade uses (two ICC synthesis calls and the HDR
+orientation in-place/fallback calls). These remain current blockers; prior PNG
+errors are historical. No PNG source was edited by this lane.

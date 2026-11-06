@@ -1,6 +1,6 @@
 {
   "baseline": "88635489732e02bc11282bf1b57ddfd9d78cbe95",
-  "lock_sha256": "2dbf40b0ff82347a50985d83a15a0905eead0626f45ec781536a84b9cc5a3e8f",
+  "lock_sha256": "df1c973392acc7698020a1abd7bb35a263dfe87877979cd4110442e368c8b26a",
   "removed": [
     [
       "archmage",
@@ -227,7 +227,7 @@
     [
       "zenpng",
       "0.2.0",
-      "git+https://github.com/imazen/zenpng?rev=fd4f7a56c4a8802a626968a79e0a588bf570f979#fd4f7a56c4a8802a626968a79e0a588bf570f979"
+      "git+https://github.com/imazen/zenpng?rev=6b740345e9550c72da462311024961a413a15abc#6b740345e9550c72da462311024961a413a15abc"
     ],
     [
       "zenpredict",

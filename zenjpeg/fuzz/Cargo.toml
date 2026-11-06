@@ -37,7 +37,7 @@ linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24
 zenresize = { git = "https://github.com/imazen/zenresize", rev = "4ad64b3c0a29469e68ddfdda3798de20c60c3421" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "17233d1edd6192df441413943dabc3afc5028c6d" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "fd4f7a56c4a8802a626968a79e0a588bf570f979" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "6b740345e9550c72da462311024961a413a15abc" }
 
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
