@@ -2665,6 +2665,7 @@ dependencies = [
  "test-case",
  "thiserror",
  "tinyvec",
+ "tokio",
  "ultrahdr-core 0.6.0",
  "ultrahdr-rs",
  "wasm-bindgen",
