@@ -1,0 +1,27 @@
+[package]
+name = "jpeg-sansio-validation"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[features]
+default = ["zencodec"]
+zencodec = []
+[dependencies]
+ultrahdr-core = { version = "0.6.0", default-features = false }
+tokio = { version = "1.54.1", features = ["rt", "macros"] }
+zenjpeg = { path = "../../zenjpeg", default-features = false, features = ["zencodec"] }
+zencodec = { version = ">=0.2.0, <0.4.0", features = ["std"] }
+zencodec-io = { version = "0.1.0", features = ["std", "tokio"] }
+zencodec-testkit = ">=0.2.0, <0.4.0"
+zenpixels = ">=0.3.1, <0.5.0"
+[patch.crates-io]
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
+garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }

@@ -928,3 +928,8 @@ zeroed-alloc-check:
 # Native 12/16-bit CMYK remains float unless eight-bit is explicitly named.
 deep-cmyk-check:
     cargo test --locked -p zenjpeg --features zencodec,extended-jpeg --test zencodec_native_depth deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named
+
+# Standalone native input resumption controls; run from an exported checkout.
+sansio-native-check:
+    cp tools/sansio-validation/dependencies.lock tools/sansio-validation/Cargo.lock
+    cargo test --locked --manifest-path tools/sansio-validation/Cargo.toml

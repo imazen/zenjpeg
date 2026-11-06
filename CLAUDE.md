@@ -1898,3 +1898,13 @@ CmykF32Inverted by default, exact normalized native codes, CMYK8 only when
 explicitly requested. Scope and resource receipt are in
 `docs/native-depth-revalidation-2026-11-06.md`. This is not a new independent
 libjpeg-turbo comparison or qualification of the proposed shared cohort.
+
+## Known Bugs: recovered native sans-I/O review (2026-11-06)
+
+The old branch forced nearest-neighbor samples, omitted coefficient-scratch
+rollback, disagreed with balanced truncation recovery, and completed before late
+XMP discovery. The migration preserves default configurations through the
+whole-file route and fixes the focused native controls without weakening pixel
+expectations. This remains a review candidate: root dependency resolution fails
+on an optional UltraHDR stable-only SIMD edge. Full workspace, API snapshots and
+platform qualification are still open. See benchmarks/sansio_sync_2026-11-06.md.

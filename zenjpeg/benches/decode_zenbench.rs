@@ -819,8 +819,15 @@ fn bench_decode_sink(suite: &mut Suite) {
                         .into_incremental_decoder(&[])
                         .unwrap();
                     let reader = std::io::Cursor::new(&img.baseline_q85);
-                    zencodec::helpers::sansio::pump_read_to_sink(reader, &mut dec, &mut sink, None, 65536)
-                        .unwrap();
+                    zencodec_io::pump_read_to_sink(
+                        reader,
+                        &mut dec,
+                        &mut sink,
+                        None,
+                        65536,
+                        img.baseline_q85.len(),
+                    )
+                    .unwrap();
                 }
             })
         });
@@ -835,15 +842,20 @@ fn bench_decode_sink(suite: &mut Suite) {
                         .into_incremental_decoder(&[])
                         .unwrap();
                     let reader = std::io::Cursor::new(&img.baseline_q85);
-                    zencodec::helpers::sansio::pump_read_to_sink(reader, &mut dec, &mut sink, None, 16384)
-                        .unwrap();
+                    zencodec_io::pump_read_to_sink(
+                        reader,
+                        &mut dec,
+                        &mut sink,
+                        None,
+                        16384,
+                        img.baseline_q85.len(),
+                    )
+                    .unwrap();
                 }
             })
         });
     });
 }
-
-
 
 fn bench_decode_into(suite: &mut Suite) {
     let images = get_images();
