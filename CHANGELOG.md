@@ -43,6 +43,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Apply the same meter/millimeter normalization and unknown-unit rejection to Dynamic Depth and GDepth metadata. Verified through the embedded-depth consumer with appended depth/confidence PNG carriers.
+
 - Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
 
 - Controlled decoding now returns final owned details through `take_details`,

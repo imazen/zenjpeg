@@ -153,18 +153,9 @@ pub(crate) fn parse_gdepth_xmp(xmp: &str) -> Option<DepthMapData> {
         .or_else(|| extract_xmp_attr(xmp, "gdepth:Mime"))
         .unwrap_or_else(|| String::from("image/jpeg"));
 
-    let units_value = extract_xmp_attr(xmp, "GDepth:Units")
-        .or_else(|| extract_xmp_attr(xmp, "gdepth:Units"));
-    let units = match units_value.as_deref() {
-        None | Some("m" | "Meters" | "meters") => GDepthUnits::Meters,
-        Some("mm") => {
-            near *= 0.001;
-            far *= 0.001;
-            GDepthUnits::Meters
-        }
-        Some("Diopters" | "diopters") => GDepthUnits::Diopters,
-        _ => return None,
-    };
+    let units_value =
+        extract_xmp_attr(xmp, "GDepth:Units").or_else(|| extract_xmp_attr(xmp, "gdepth:Units"));
+    let units = normalize_depth_units(units_value.as_deref(), &mut near, &mut far)?;
 
     let measure_type = extract_xmp_attr(xmp, "GDepth:MeasureType")
         .or_else(|| extract_xmp_attr(xmp, "gdepth:MeasureType"))
@@ -243,24 +234,19 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
             _ => None,
         })?;
 
-    let near = extract_xmp_attr(xmp, "GDepth:Near")
+    let mut near = extract_xmp_attr(xmp, "GDepth:Near")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:Near"))
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0);
 
-    let far = extract_xmp_attr(xmp, "GDepth:Far")
+    let mut far = extract_xmp_attr(xmp, "GDepth:Far")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:Far"))
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0);
 
-    let units = extract_xmp_attr(xmp, "GDepth:Units")
-        .or_else(|| extract_xmp_attr(xmp, "DepthMap:Units"))
-        .and_then(|v| match v.as_str() {
-            "Meters" | "meters" => Some(GDepthUnits::Meters),
-            "Diopters" | "diopters" => Some(GDepthUnits::Diopters),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let units_value =
+        extract_xmp_attr(xmp, "GDepth:Units").or_else(|| extract_xmp_attr(xmp, "DepthMap:Units"));
+    let units = normalize_depth_units(units_value.as_deref(), &mut near, &mut far)?;
 
     let measure_type = extract_xmp_attr(xmp, "GDepth:MeasureType")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:MeasureType"))
@@ -448,6 +434,23 @@ pub(crate) fn base64_encode(input: &[u8]) -> String {
     }
 
     output
+}
+
+fn normalize_depth_units(
+    value: Option<&str>,
+    near: &mut f32,
+    far: &mut f32,
+) -> Option<GDepthUnits> {
+    match value {
+        None | Some("m" | "Meters" | "meters") => Some(GDepthUnits::Meters),
+        Some("mm") => {
+            *near *= 0.001;
+            *far *= 0.001;
+            Some(GDepthUnits::Meters)
+        }
+        Some("Diopters" | "diopters") => Some(GDepthUnits::Diopters),
+        _ => None,
+    }
 }
 
 // ============================================================================

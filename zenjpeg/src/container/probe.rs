@@ -622,7 +622,8 @@ fn handle_app2(probe: &mut ContainerProbe, span: &MarkerSpan<'_>, wants: Wants) 
                     let total_seqs = payload[ICC_PROFILE_PREFIX.len() + 1];
                     if seq_no == 1 && total_seqs == 1 {
                         let icc_bytes = &payload[ICC_PROFILE_PREFIX.len() + 2..];
-                        probe.icc_identification = zenpixels::icc::IccIdentification::from_icc(icc_bytes);
+                        probe.icc_identification =
+                            zenpixels::icc::IccIdentification::from_icc(icc_bytes);
                     }
                 }
             }
