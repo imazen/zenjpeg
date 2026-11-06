@@ -118,9 +118,9 @@ linear-srgb = "0.6.12"
 # member inherits workspace dependency features as a normal dependency, so it
 # would reach every downstream build and turn each archmage `summon()` there
 # into a cache read. Tests get it as a dev-dependency, tier benches via `_dev`.
-archmage = { version = ">=0.9.30, <0.10.0", features = ["macros", "avx512"] }
+archmage = { version = ">=0.9.31-beta.2, <0.10.0", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
-magetypes = { version = ">=0.9.30, <0.10.0", features = ["avx512"] }
+magetypes = { version = ">=0.9.31-beta.2, <0.10.0", features = ["avx512"] }
 
 # Error tracing with location tracking
 whereat = "0.1.5"
@@ -229,6 +229,9 @@ manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
 [patch.crates-io]
+# Canonical-plane cohort used by the isolated sans-I/O qualification.
+garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
 # Published zenresize 0.3.1 requires zenpixels 0.2; this existing git source admits 0.3.
 zenresize = { git = "https://github.com/imazen/zenresize", rev = "e3975fb9d6d6b7baa96038a0eb8e27febb37c012" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
@@ -236,16 +239,16 @@ zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a1
 zenpng = { git = "https://github.com/imazen/zenpng", rev = "02a7f0df5f72dd79b0afa58d66ced7cdd8395e31" }
 
 # Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
 # The zencodec 0.2 family, all from one optional-control revision.
 # zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
 # patches resolve them for local builds; releases stay gated on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 # Native PNG tests and metric dev-dependencies share the same core family.
 # Their formerly separate 0.1 core fails with the paired pixel representation.
 # zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and
@@ -253,4 +256,4 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1816b4d0
 # resolve a second zencodec, and with `ultrahdr` the two GainMapParams collide
 # (E0308). This review revision of imazen/ultrahdr (branch
 # review/zencodec-0.2-family) takes the family through version edges too.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "85cc309c07526341e6fa8b7e4d6130aaf64c8fea" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
