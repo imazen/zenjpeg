@@ -955,3 +955,7 @@ sansio-conversion-cause-check:
 # All existing FFI tests, with bounded concurrency for the shared validation host.
 sansio-full-ffi-check:
     RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
+
+sansio-expert-check:
+    cargo clippy --locked -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,boundary-rd,__expert" -- -D warnings
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,boundary-rd,__expert" --lib --tests

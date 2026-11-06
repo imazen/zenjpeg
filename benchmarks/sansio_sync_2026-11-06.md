@@ -189,3 +189,11 @@ RUST_TEST_THREADS=2 (jpeg-full-ffi-test-3.log rc0,83s, run-heavy peakRSS1.39GiB)
 Every original test/feature/assertion and pre-existing ignore remains. This
 limits test concurrency only; the prior default-concurrency3G scope failures
 remain recorded. These process resources are not codec memory bounds.
+
+The strict expert/boundary-RD gate initially found eight deprecated vector
+mul_add calls (expanded into sixteen diagnostics). They now explicitly name
+mul_add_relaxed, exactly the operation to which the selected beta.2 method
+delegates. No arithmetic order, runtime floor, hash constant, sample assertion
+or threshold changed. Strict expert library/test Clippy passes; the existing
+complete expert release test command, including frozen boundary hashes, remains
+a distinct runtime gate.
