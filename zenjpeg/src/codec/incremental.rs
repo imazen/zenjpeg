@@ -304,13 +304,13 @@ impl JpegIncrementalDecoder {
         }
 
         // Phase 3: Baseline Streaming
-        if !self.mcu_row_ready {
-            if let Some(ref mut reader) = self.reader {
-                let slice = &self.pending_scan[self.pending_scan_pos..];
-                if let Some(bytes) = reader.decode_mcu_row_slice(slice, self.is_eof, stop)? {
-                    self.pending_scan_pos += bytes;
-                    self.mcu_row_ready = true;
-                }
+        if !self.mcu_row_ready
+            && let Some(ref mut reader) = self.reader
+        {
+            let slice = &self.pending_scan[self.pending_scan_pos..];
+            if let Some(bytes) = reader.decode_mcu_row_slice(slice, self.is_eof, stop)? {
+                self.pending_scan_pos += bytes;
+                self.mcu_row_ready = true;
             }
         }
 
@@ -337,24 +337,24 @@ impl JpegIncrementalDecoder {
         }
 
         // Try decoding next MCU row if not already ready
-        if !self.mcu_row_ready && !self.is_progressive {
-            if let Some(ref mut reader) = self.reader {
-                if !reader.is_finished() {
-                    let slice = &self.pending_scan[self.pending_scan_pos..];
-                    if let Some(bytes) = reader.decode_mcu_row_slice(slice, self.is_eof, stop)? {
-                        self.pending_scan_pos += bytes;
-                        self.mcu_row_ready = true;
-                    }
-                }
+        if !self.mcu_row_ready
+            && !self.is_progressive
+            && let Some(ref mut reader) = self.reader
+            && !reader.is_finished()
+        {
+            let slice = &self.pending_scan[self.pending_scan_pos..];
+            if let Some(bytes) = reader.decode_mcu_row_slice(slice, self.is_eof, stop)? {
+                self.pending_scan_pos += bytes;
+                self.mcu_row_ready = true;
             }
         }
 
         let is_ready = self.mcu_row_ready || (self.is_progressive && self.reader.is_some());
         if !is_ready {
-            if let Some(ref reader) = self.reader {
-                if reader.is_finished() {
-                    self.is_complete = true;
-                }
+            if let Some(ref reader) = self.reader
+                && reader.is_finished()
+            {
+                self.is_complete = true;
             }
             return Ok(None);
         }

@@ -2016,11 +2016,9 @@ impl JpegDecoder<'_> {
         let hdr = match lossless_to_orientation(base_transform) {
             zencodec::Orientation::Identity => hdr,
             o => {
-                let mut buf = hdr;
-                match zenpixels_convert::orient::apply_orientation_in_place(&mut buf, o) {
-                    Ok(()) => buf,
-                    Err(_) => zenpixels_convert::orient::apply_orientation(buf.as_slice(), o),
-                }
+                use zenpixels_convert::PixelBufferConvertExt;
+                hdr.into_oriented(o)
+                    .map_err(|_| Error::internal("HDR output orientation failed"))?
             }
         };
 
