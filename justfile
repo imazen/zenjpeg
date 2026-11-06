@@ -959,3 +959,12 @@ sansio-full-ffi-check:
 sansio-expert-check:
     cargo clippy --locked -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,boundary-rd,__expert" -- -D warnings
     RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,boundary-rd,__expert" --lib --tests
+
+# Remaining supported lint/example/documentation gates; no source stripping.
+sansio-static-check:
+    cargo clippy --locked -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" -- -D warnings
+    cargo clippy --locked -p zenjpeg --lib --tests --features recompress -- -D warnings
+    cargo check --locked -p zenjpeg --examples --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout,__test-utils"
+    cargo check --locked -p zenjpeg --examples
+    cargo test --locked -p zenjpeg --doc
+    cargo test --locked -p zenjpeg --doc --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout"

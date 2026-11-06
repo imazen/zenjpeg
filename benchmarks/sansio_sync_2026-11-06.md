@@ -197,3 +197,11 @@ delegates. No arithmetic order, runtime floor, hash constant, sample assertion
 or threshold changed. Strict expert library/test Clippy passes; the existing
 complete expert release test command, including frozen boundary hashes, remains
 a distinct runtime gate.
+
+The unchanged complete expert release library/test command passes, including
+the frozen boundary-hash controls (jpeg-full-expert-test.log rc0,212s). The
+remaining static recipe also passes (jpeg-static-gates.log rc0,122s): full
+library/test/bench and recompress strict Clippy, examples in default and all
+user configurations including layout, and both default/user-feature doctests.
+Existing ignored documentation examples remain unchanged; this does not claim
+those ignored examples executed. No hash, sample or quality expectation changed.
