@@ -1023,3 +1023,128 @@ mod tests {
         assert_eq!(spans[1].payload, b"MPF\0body-bytes");
     }
 }
+
+/// Retain marker structure and payloads while discarding entropy bytes.
+/// Used only for metadata inspection: the result must never be published as an
+/// encoded image or used for source offsets. Native decoding uses original bytes.
+pub(crate) struct MetadataCapture {
+    bytes: alloc::vec::Vec<u8>,
+    state: CaptureState,
+    done: bool,
+}
+#[derive(Clone, Copy)]
+enum CaptureState {
+    Prefix,
+    Code,
+    LengthHigh(u8),
+    LengthLow(u8, u8),
+    Payload { remaining: usize, scan: bool },
+    Entropy,
+    EntropyCode,
+}
+impl MetadataCapture {
+    pub(crate) fn new() -> Self {
+        Self {
+            bytes: alloc::vec::Vec::new(),
+            state: CaptureState::Prefix,
+            done: false,
+        }
+    }
+    pub(crate) fn done(&self) -> bool {
+        self.done
+    }
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    pub(crate) fn push(&mut self, input: &[u8]) -> crate::error::Result<()> {
+        for &byte in input {
+            if self.done {
+                break;
+            }
+            match self.state {
+                CaptureState::Entropy => {
+                    if byte == 0xff {
+                        self.state = CaptureState::EntropyCode;
+                    }
+                    continue;
+                }
+                CaptureState::EntropyCode => {
+                    if byte == 0xff {
+                        continue;
+                    }
+                    if byte == 0 || (0xd0..=0xd7).contains(&byte) {
+                        self.state = CaptureState::Entropy;
+                        continue;
+                    }
+                    self.append(0xff)?;
+                    self.state = CaptureState::Code;
+                }
+                _ => {}
+            }
+            self.append(byte)?;
+            self.state = match self.state {
+                CaptureState::Prefix => {
+                    if byte == 0xff {
+                        CaptureState::Code
+                    } else {
+                        CaptureState::Prefix
+                    }
+                }
+                CaptureState::Code => match byte {
+                    0xff => CaptureState::Code,
+                    0xd9 => {
+                        self.done = true;
+                        CaptureState::Prefix
+                    }
+                    0xd8 | 0x01 | 0xd0..=0xd7 => CaptureState::Prefix,
+                    marker => CaptureState::LengthHigh(marker),
+                },
+                CaptureState::LengthHigh(marker) => CaptureState::LengthLow(marker, byte),
+                CaptureState::LengthLow(marker, high) => {
+                    let length = usize::from(u16::from_be_bytes([high, byte]));
+                    if length < 2 {
+                        return Err(crate::error::Error::invalid_jpeg_data(
+                            "invalid captured marker length",
+                        ));
+                    }
+                    let scan = marker == 0xda;
+                    if length == 2 {
+                        if scan {
+                            CaptureState::Entropy
+                        } else {
+                            CaptureState::Prefix
+                        }
+                    } else {
+                        CaptureState::Payload {
+                            remaining: length - 2,
+                            scan,
+                        }
+                    }
+                }
+                CaptureState::Payload { remaining, scan } => {
+                    if remaining == 1 {
+                        if scan {
+                            CaptureState::Entropy
+                        } else {
+                            CaptureState::Prefix
+                        }
+                    } else {
+                        CaptureState::Payload {
+                            remaining: remaining - 1,
+                            scan,
+                        }
+                    }
+                }
+                CaptureState::Entropy | CaptureState::EntropyCode => unreachable!(),
+            };
+        }
+        Ok(())
+    }
+    fn append(&mut self, byte: u8) -> crate::error::Result<()> {
+        self.bytes
+            .try_reserve(1)
+            .map_err(|_| crate::error::Error::allocation_failed(1, "JPEG marker metadata"))?;
+        self.bytes.push(byte);
+        Ok(())
+    }
+}

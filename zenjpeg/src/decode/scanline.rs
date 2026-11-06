@@ -1466,6 +1466,7 @@ impl<'a> ScanlineReader<'a> {
         &mut self,
         scan_slice: &[u8],
         is_eof: bool,
+        stop: &dyn enough::Stop,
     ) -> Result<Option<usize>> {
         if self.mcu_row_decoded {
             return Ok(Some(0));
@@ -1475,6 +1476,7 @@ impl<'a> ScanlineReader<'a> {
         let saved_state = self.decoder_state;
         let saved_mcu_count = self.mcu_count;
         let saved_prev_coeff = self.prev_coeff_counts;
+        let saved_coeffs = self.coeffs_buf;
         let saved_restart_num = self.next_restart_num;
 
         let mut decoder = EntropyDecoder::new(scan_slice);
@@ -1483,10 +1485,10 @@ impl<'a> ScanlineReader<'a> {
         for comp_idx in 0..self.num_components as usize {
             let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
 
-            if let Some(ref table) = self.dc_tables[dc_idx] {
+            if let Some(table) = self.dc_tables.as_ref().and_then(|t| t[dc_idx].as_ref()) {
                 decoder.set_dc_table(dc_idx, table);
             }
-            if let Some(ref table) = self.ac_tables[ac_idx] {
+            if let Some(table) = self.ac_tables.as_ref().and_then(|t| t[ac_idx].as_ref()) {
                 decoder.set_ac_table(ac_idx, table);
             }
         }
@@ -1503,6 +1505,7 @@ impl<'a> ScanlineReader<'a> {
         let mut hit_truncation = false;
 
         'mcu_loop: for mcu_x in 0..mcu_cols {
+            stop.check()?;
             // Check for restart marker
             if self.restart_interval > 0
                 && self.mcu_count > 0
@@ -1541,9 +1544,14 @@ impl<'a> ScanlineReader<'a> {
                             ac_idx,
                         )? {
                             ScanRead::Value(c) => c,
-                            ScanRead::Truncated => {
+                            ScanRead::Truncated if !is_eof => {
                                 hit_truncation = true;
                                 break 'mcu_loop;
+                            }
+                            ScanRead::Truncated => {
+                                self.prev_coeff_counts[comp_idx] = 64;
+                                self.coeffs_buf = [0i16; 64];
+                                1
                             }
                             ScanRead::EndOfScan => {
                                 if !is_last_row && !is_eof {
@@ -1582,6 +1590,7 @@ impl<'a> ScanlineReader<'a> {
             self.decoder_state = saved_state;
             self.mcu_count = saved_mcu_count;
             self.prev_coeff_counts = saved_prev_coeff;
+            self.coeffs_buf = saved_coeffs;
             self.next_restart_num = saved_restart_num;
             return Ok(None);
         }
@@ -1590,7 +1599,7 @@ impl<'a> ScanlineReader<'a> {
         let mut new_state = decoder.save_state();
         let start_pos = saved_state.map_or(0, |s| s.position());
         let end_pos = new_state.position();
-        let bytes_consumed = end_pos.saturating_sub(start_pos);
+        let bytes_consumed = end_pos.saturating_sub(start_pos).min(scan_slice.len());
         new_state.advance_buffer_by(end_pos);
         self.decoder_state = Some(new_state);
 
