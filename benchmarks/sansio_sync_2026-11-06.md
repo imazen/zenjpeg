@@ -177,5 +177,15 @@ jpeg-color-category-after.log rc0). No public API or pixel/threshold change.
 The initial complete FFI invocation is NOT a passing gate: its library stage
 passed, but the bundled stage was terminated withrc143 after139s and no reported
 test failure. Its zero-RSS wrapper receipt is invalid, and the full log remains
-retained. All children exited; no OOM record was found. Rerun the complete gate,
-without exclusions, after the category correction.
+retained. All children exited. The initial journal-only search found no OOM record,
+but privileged kernel messages subsequently verified bundled-process cgroup
+OOM kills for both3G attempts. DefaultOOMPolicy=stop terminated remaining scope
+children, explainingrc143. Rerun the full gate at6G with two test threads; no
+test, feature, assertion or existing ignore is removed. The wrapper receipts
+from the killed attempts are invalid memory evidence.
+
+The complete FFI gate subsequently PASSES at6G/jobs2 with
+RUST_TEST_THREADS=2 (jpeg-full-ffi-test-3.log rc0,83s, run-heavy peakRSS1.39GiB).
+Every original test/feature/assertion and pre-existing ignore remains. This
+limits test concurrency only; the prior default-concurrency3G scope failures
+remain recorded. These process resources are not codec memory bounds.

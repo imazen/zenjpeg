@@ -951,3 +951,7 @@ sansio-ffi-tools:
 
 sansio-conversion-cause-check:
     cargo test --locked -p zenjpeg --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" --lib conversion_cause_tests
+
+# All existing FFI tests, with bounded concurrency for the shared validation host.
+sansio-full-ffi-check:
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
