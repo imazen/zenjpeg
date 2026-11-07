@@ -1664,8 +1664,8 @@ fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
         descriptor,
     )
     .ok()?;
-    zenpixels_convert::orient::apply_orientation_into(
-        src_slice,
+    zenpixels_convert::PixelSliceConvertExt::oriented_into(
+        &src_slice,
         transform.as_orientation(),
         dst_slice,
     )

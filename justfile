@@ -928,3 +928,54 @@ zeroed-alloc-check:
 # Native 12/16-bit CMYK remains float unless eight-bit is explicitly named.
 deep-cmyk-check:
     cargo test --locked -p zenjpeg --features zencodec,extended-jpeg --test zencodec_native_depth deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named
+
+# Standalone native input resumption controls; run from an exported checkout.
+sansio-native-check:
+    cp tools/sansio-validation/dependencies.lock tools/sansio-validation/Cargo.lock
+    cargo test --locked --manifest-path tools/sansio-validation/Cargo.toml
+
+# Execute in an export outside ambient workspace overrides; preserves the CI gate.
+sansio-full-cohort-clippy:
+    cargo clippy --locked -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" -- -D warnings
+
+sansio-full-cohort-test:
+    cargo test --locked -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout" --lib --tests
+
+sansio-fuzz-cohort-check:
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --all-targets
+
+# Exact oracle source revisions are recorded in the sansio receipt.
+sansio-ffi-tools:
+    cmake -S internal/jpegli-cpp -B internal/jpegli-cpp/build -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_TOOLS=ON -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON -DJPEGXL_STATIC=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_TCMALLOC=OFF -DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF
+    cmake --build internal/jpegli-cpp/build --target cjpegli djpegli --config Release --parallel 2
+
+sansio-conversion-cause-check:
+    cargo test --locked -p zenjpeg --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" --lib conversion_cause_tests
+
+# All existing FFI tests, with bounded concurrency for the shared validation host.
+sansio-full-ffi-check:
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__ffi-tests,__test-utils"
+
+sansio-expert-check:
+    cargo clippy --locked -p zenjpeg --lib --tests --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,boundary-rd,__expert" -- -D warnings
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,boundary-rd,__expert" --lib --tests
+
+# Remaining supported lint/example/documentation gates; no source stripping.
+sansio-static-check:
+    cargo clippy --locked -p zenjpeg --lib --tests --benches --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests" -- -D warnings
+    cargo clippy --locked -p zenjpeg --lib --tests --features recompress -- -D warnings
+    cargo check --locked -p zenjpeg --examples --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout,__test-utils"
+    cargo check --locked -p zenjpeg --examples
+    cargo test --locked -p zenjpeg --doc
+    cargo test --locked -p zenjpeg --doc --features "parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,extended-metadata,metadata-rewrite,layout"
+
+sansio-recompress-check:
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features recompress-expert --test recompress_api
+    RUST_TEST_THREADS=2 cargo test --locked -p zenjpeg --release --features recompress-expert --lib recompress::
+
+# Standalone API runner handles featureless workspace packages without exclusions.
+sansio-api-check:
+    ZEN_API_DOC_TOOLCHAIN=nightly-2026-07-13 ZEN_API_DOC=check cargo test --locked --manifest-path apidoc/Cargo.toml
+
+sansio-colorspace-oracle-tools ROOT:
+    bash scripts/build-colorspace-oracles.sh "{{ROOT}}"

@@ -10,19 +10,19 @@
 ## summary
 #
 #   pub modules                                 5
-#   pub types (struct/enum/trait/alias)        82
+#   pub types (struct/enum/trait/alias)        83
 #   pub consts/statics                          4
 #   free functions                             32
-#   inherent methods                          138
+#   inherent methods                          139
 #   struct fields                             158
 #   enum variants                             146
 #   re-exports                                 25
-#   trait roster entries (type × trait)       307
+#   trait roster entries (type × trait)       308
 #   auto-trait-complete types                  69
-#   auto-trait exceptions                       7
+#   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                           39
+#   (root)                           41
 #   container                       211
 #   decoder                           3
 #   encoder                          40
@@ -31,7 +31,7 @@
 #   recompress                      156
 #   ultrahdr                         73
 
-## items (590 lines)
+## items (592 lines)
 
 #[non_exhaustive] pub enum container::metadata::ItemKind<'a>
 pub container::metadata::ItemKind::Adobe(container::metadata::Adobe)
@@ -593,6 +593,7 @@ pub fn ultrahdr::tonemapper_from_ultrahdr(&decoder::DecodedExtras) -> encoder::R
 pub CmykHandling::BadRgb
 pub CmykHandling::Passthrough
 pub struct JpegDecodeJob
+pub fn JpegDecodeJob::into_incremental_decoder(self, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<JpegIncrementalDecoder, whereat::at::At<zencodec::error::CodecError>>
 pub struct JpegDecoder<'a>
 pub struct JpegDecoderConfig
 pub fn JpegDecoderConfig::cmyk_handling(self, CmykHandling) -> Self
@@ -620,11 +621,12 @@ pub fn JpegEncoderConfig::with_progressive(self, bool) -> Self
 pub fn JpegEncoderConfig::with_sharp_yuv(self, bool) -> Self
 pub fn JpegEncoderConfig::with_subsampling(self, encoder::ChromaSubsampling) -> Self
 pub fn JpegEncoderConfig::ycbcr(f32, encoder::ChromaSubsampling) -> Self
+pub struct JpegIncrementalDecoder
 pub struct JpegStreamingDecoder<'a>
 pub type JpegDecoding = JpegDecoderConfig
 pub type JpegEncoding = JpegEncoderConfig
 
-## trait impls (79 types)
+## trait impls (80 types)
 
 CmykHandling: Clone, Copy, Debug, Default, Eq, PartialEq
 JpegDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
@@ -633,6 +635,7 @@ JpegDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderCon
 JpegEncodeJob: Clone, zencodec::traits::encoding::EncodeJob
 JpegEncoder: zencodec::traits::encoder::Encoder
 JpegEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
+JpegIncrementalDecoder: zencodec::traits::incremental::IncrementalDecode
 JpegStreamingDecoder<'_>: zencodec::traits::decoder::StreamingDecode
 container::metadata::Adobe: Clone, Copy, Debug, Eq, PartialEq
 container::metadata::Avi1: Clone, Copy, Debug, Eq, PartialEq
@@ -714,5 +717,6 @@ JpegDecoder<'a>: !RefUnwindSafe !UnwindSafe
 JpegDecoderConfig: !RefUnwindSafe !UnwindSafe
 JpegEncodeJob: !RefUnwindSafe !UnwindSafe
 JpegEncoder: !RefUnwindSafe !Sync !UnwindSafe
+JpegIncrementalDecoder: !RefUnwindSafe !UnwindSafe
 JpegStreamingDecoder<'a>: !RefUnwindSafe !UnwindSafe
 ultrahdr::UltraHdrReader<'a>: !Freeze !RefUnwindSafe !UnwindSafe

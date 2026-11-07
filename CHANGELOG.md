@@ -2880,3 +2880,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Align the standalone fuzz workspace's direct/patch zencodec revisions with
   the codec's controlled-decode dependency. Two shared-trait copies previously
   prevented the inventory target from compiling; no fuzz target is disabled.
+
+### Sans-I/O review candidate (unreleased)
+
+- Recover the published sansio graph with current step/Input/optional-Pulse
+  contracts, native MCU-row resumption controls, bounded sink loans and late
+  metadata discovery. Default triangle stays whole-file backed. Full workspace
+  qualification remains blocked; see benchmarks/sansio_sync_2026-11-06.md.

@@ -94,7 +94,7 @@ fn emit_cicp_only_display_p3_synthesizes_icc() {
         .and_then(|e| e.icc_profile().map(<[u8]>::to_vec))
         .expect("embedded ICC");
     assert_eq!(
-        zenpixels::icc::extract_cicp(&icc),
+        zenpixels::Cicp::from_icc(&icc),
         Some(zenpixels::Cicp::new(12, 13, 0, true)),
         "embedded ICC should name Display P3 with the sRGB transfer"
     );

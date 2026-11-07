@@ -808,6 +808,52 @@ fn bench_decode_sink(suite: &mut Suite) {
                 }
             })
         });
+
+        // incremental stdio (64KB buffer)
+        g.bench("incremental stdio (64KB buffer)", |b| {
+            let mut sink = ReuseSink::new();
+            b.iter(|| {
+                for img in get_images() {
+                    let mut dec = JpegDecoderConfig::new()
+                        .job()
+                        .into_incremental_decoder(&[])
+                        .unwrap();
+                    let reader = std::io::Cursor::new(&img.baseline_q85);
+                    zencodec_io::pump_read_to_sink(
+                        reader,
+                        &mut dec,
+                        &mut sink,
+                        None,
+                        65536,
+                        img.baseline_q85.len(),
+                    )
+                    .unwrap();
+                }
+            })
+        });
+
+        // incremental stdio (16KB buffer)
+        g.bench("incremental stdio (16KB buffer)", |b| {
+            let mut sink = ReuseSink::new();
+            b.iter(|| {
+                for img in get_images() {
+                    let mut dec = JpegDecoderConfig::new()
+                        .job()
+                        .into_incremental_decoder(&[])
+                        .unwrap();
+                    let reader = std::io::Cursor::new(&img.baseline_q85);
+                    zencodec_io::pump_read_to_sink(
+                        reader,
+                        &mut dec,
+                        &mut sink,
+                        None,
+                        16384,
+                        img.baseline_q85.len(),
+                    )
+                    .unwrap();
+                }
+            })
+        });
     });
 }
 

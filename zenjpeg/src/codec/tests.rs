@@ -1656,6 +1656,7 @@ mod pattern_b_envelope_tests {
     //! no `CategorizedError` vtable, so both recoveries return `None`; the
     //! envelope is exactly what flips them to `Some`.
     use super::*;
+    use imgref::ImgExt;
     use zencodec::decode::DynDecoderConfig;
     use zencodec::{CodecError, CodecErrorExt, ErrorCategory, ImageError};
 
@@ -1738,5 +1739,161 @@ mod pattern_b_envelope_tests {
             erased.codec_error().and_then(CodecError::codec),
             Some("zenjpeg")
         );
+    }
+
+    #[test]
+    fn incremental_decode_chunk_sizes() {
+        use zencodec::decode::{
+            Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode as _,
+        };
+        let width = 64;
+        let height = 64;
+        let pixels: Vec<Rgb<u8>> = (0..width * height)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels.as_slice(), width, height);
+        let encoded = JpegEncoderConfig::new()
+            .with_calibrated_quality(85.0)
+            .with_progressive(true)
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        let bytes = encoded.data();
+        let cfg = JpegDecoderConfig::new();
+        let reference = cfg
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(bytes), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let view = reference.pixels();
+        let expected: Vec<u8> = (0..view.rows())
+            .flat_map(|y| view.row(y).to_vec())
+            .collect();
+        for chunk_size in [bytes.len(), 512, 128, 33, 7, 3, 1] {
+            let mut decoder = cfg.clone().job().into_incremental_decoder(&[]).unwrap();
+            let mut sink = zencodec_io::CollectSink::new();
+            let (info, _) =
+                zencodec_io::drive_from_slice(&mut decoder, bytes, &mut sink, None, chunk_size)
+                    .unwrap();
+            assert_eq!((info.width, info.height), (width as u32, height as u32));
+            assert_eq!(sink.rows_written(), height as u64);
+            assert!(sink.finished());
+            assert_eq!(sink.bytes().len(), expected.len());
+            assert_eq!(sink.bytes(), expected);
+            let repeated = decoder
+                .step(zencodec::decode::Input::empty(), &mut sink, None)
+                .unwrap();
+            assert!(repeated.event.is_done());
+            assert_eq!(repeated.consumed, 0);
+        }
+    }
+
+    #[test]
+    fn incremental_decode_baseline_chunk_sizes() {
+        use zencodec::decode::{
+            Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode as _,
+        };
+        let width = 64;
+        let height = 64;
+        let pixels: Vec<Rgb<u8>> = (0..width * height)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels.as_slice(), width, height);
+        let encoded = JpegEncoderConfig::new()
+            .with_calibrated_quality(85.0)
+            .with_progressive(false)
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        let bytes = encoded.data();
+        let cfg = JpegDecoderConfig::new();
+        let reference = cfg
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(bytes), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let view = reference.pixels();
+        let expected: Vec<u8> = (0..view.rows())
+            .flat_map(|y| view.row(y).to_vec())
+            .collect();
+        for chunk_size in [bytes.len(), 512, 128, 33, 7, 3, 1] {
+            let mut decoder = cfg.clone().job().into_incremental_decoder(&[]).unwrap();
+            let mut sink = zencodec_io::CollectSink::new();
+            let (info, _) =
+                zencodec_io::drive_from_slice(&mut decoder, bytes, &mut sink, None, chunk_size)
+                    .unwrap();
+            assert_eq!((info.width, info.height), (width as u32, height as u32));
+            assert_eq!(sink.rows_written(), height as u64);
+            assert!(sink.finished());
+            assert_eq!(sink.bytes().len(), expected.len());
+            assert_eq!(sink.bytes(), expected);
+            let repeated = decoder
+                .step(zencodec::decode::Input::empty(), &mut sink, None)
+                .unwrap();
+            assert!(repeated.event.is_done());
+            assert_eq!(repeated.consumed, 0);
+        }
+    }
+
+    #[test]
+    fn incremental_decode_dyn_dispatch() {
+        use zencodec::decode::{
+            Decode as _, DecodeJob as _, DecoderConfig as _, IncrementalDecode as _,
+        };
+        let width = 64;
+        let height = 64;
+        let pixels: Vec<Rgb<u8>> = (0..width * height)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels.as_slice(), width, height);
+        let encoded = JpegEncoderConfig::new()
+            .with_calibrated_quality(85.0)
+            .with_progressive(true)
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        let bytes = encoded.data();
+        let cfg = JpegDecoderConfig::new();
+        let reference = cfg
+            .clone()
+            .job()
+            .decoder(Cow::Borrowed(bytes), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let view = reference.pixels();
+        let expected: Vec<u8> = (0..view.rows())
+            .flat_map(|y| view.row(y).to_vec())
+            .collect();
+        for chunk_size in [bytes.len(), 512, 128, 33, 7, 3, 1] {
+            let mut decoder = cfg.clone().job().dyn_incremental_decoder(&[]).unwrap();
+            let mut sink = zencodec_io::CollectSink::new();
+            let (info, _) =
+                zencodec_io::drive_from_slice(&mut *decoder, bytes, &mut sink, None, chunk_size)
+                    .unwrap();
+            assert_eq!((info.width, info.height), (width as u32, height as u32));
+            assert_eq!(sink.rows_written(), height as u64);
+            assert!(sink.finished());
+            assert_eq!(sink.bytes().len(), expected.len());
+            assert_eq!(sink.bytes(), expected);
+            let repeated = decoder
+                .step(zencodec::decode::Input::empty(), &mut sink, None)
+                .unwrap();
+            assert!(repeated.event.is_done());
+            assert_eq!(repeated.consumed, 0);
+        }
     }
 }

@@ -937,7 +937,7 @@ fn is_default_meaning((icc, cicp): (Option<&[u8]>, Option<Cicp>), gray: bool) ->
                 && (gray || matches!(c.color_primaries, 1 | 2))
         }
         (Some(icc), _) => {
-            zenpixels::icc::is_common_srgb(icc)
+            zenpixels::icc::IccIdentification::is_common_srgb(icc)
                 || matches!(
                     ColorProfileSource::Icc(icc).resolve(),
                     Some((primaries, TransferFunction::Srgb))
@@ -1059,7 +1059,7 @@ impl JpegEncoder {
                 "profile-tagged bytes require retained ICC metadata".into(),
             ));
         };
-        if zenpixels::icc::profile_color_space(icc) != Some(zenpixels::ColorModel::Rgb) {
+        if zenpixels::ColorModel::from_icc(icc) != Some(zenpixels::ColorModel::Rgb) {
             return Err(Error::icc_error(
                 "RGB samples require an RGB ICC carrier".into(),
             ));
@@ -1166,7 +1166,7 @@ impl JpegEncoder {
             } else {
                 ColorModel::Rgb
             };
-            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+            if zenpixels::ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
             let identified = ColorProfileSource::Icc(icc).resolve();
@@ -1428,9 +1428,7 @@ impl JpegEncoder {
                     }
                 }
                 zencodec::IccDisposition::SynthesizeFrom(cicp) => {
-                    use zenpixels_convert::icc_profiles::{
-                        SynthesizedIcc, synthesize_icc_for_cicp,
-                    };
+                    use zenpixels_convert::icc_profiles::SynthesizedIcc;
                     // `Profile` → embed; `NotNeeded` (sRGB default) →
                     // nothing. Every other outcome is an ERROR, not a
                     // silent skip: JPEG has NO CICP carrier, so an
@@ -1441,7 +1439,7 @@ impl JpegEncoder {
                     // grid incl PQ/HLG, no moxcms), so the only
                     // unsynthesizable CICPs are outside the assigned
                     // H.273 grid (reserved / unassigned code points).
-                    match synthesize_icc_for_cicp(cicp) {
+                    match SynthesizedIcc::for_cicp(cicp) {
                         SynthesizedIcc::Profile(bytes) => {
                             req = req.icc_profile_owned(bytes.into_owned());
                             wrote_icc = true;

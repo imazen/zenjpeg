@@ -122,7 +122,9 @@ tempfile = "3"
 # contract as the codec. Provides `check_decode_truncation_series`
 # (truncated/EOF input must categorize as incomplete, never panic/OOM/Internal).
 zencodec-testkit = ">=0.2.0, <0.3.0"
-zencodec-io = { version = "0.1.0", features = ["std"] }
+zencodec-io = { version = "0.1.0", features = ["std", "tokio"] }
+# Direct macro/runtime edge for the existing async consumer parity control.
+tokio = { version = "1.54.1", features = ["rt", "macros"] }
 
 
 # WASM testing dependencies (browser + Node.js)
@@ -173,7 +175,7 @@ ultrahdr-core = { workspace = true }
 # our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
 # `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
-zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "02243a4ba84ed71611f2cf445553eb4d41c2fbac" }
+zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "73ae3948f9f0f8cce3769957cf189097cf3f734a" }
 zensim = { workspace = true, features = ["classification"] }
 
 [features]

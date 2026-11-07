@@ -312,7 +312,7 @@ fn mage_boundary_distortion(
     let alpha_v = f32x8::splat_t(token, alpha);
     let sq_cur = d_cur * d_cur;
     let sq_left = d_left * d_left;
-    let sq_seam_a = d_seam.mul_add(alpha_v * d_seam, sq_cur + sq_left);
+    let sq_seam_a = d_seam.mul_add_relaxed(alpha_v * d_seam, sq_cur + sq_left);
     sq_seam_a.reduce_add()
 }
 
@@ -345,19 +345,19 @@ fn mage_ac_dct_energy(token: Token, dct_f32: &Block8x8f) -> f32 {
 
     // Rows 1..8: full f32x8 square-and-accumulate.
     let v1 = f32x8::from_array_t(token, dct_f32.rows[1]);
-    acc = v1.mul_add(v1, acc);
+    acc = v1.mul_add_relaxed(v1, acc);
     let v2 = f32x8::from_array_t(token, dct_f32.rows[2]);
-    acc = v2.mul_add(v2, acc);
+    acc = v2.mul_add_relaxed(v2, acc);
     let v3 = f32x8::from_array_t(token, dct_f32.rows[3]);
-    acc = v3.mul_add(v3, acc);
+    acc = v3.mul_add_relaxed(v3, acc);
     let v4 = f32x8::from_array_t(token, dct_f32.rows[4]);
-    acc = v4.mul_add(v4, acc);
+    acc = v4.mul_add_relaxed(v4, acc);
     let v5 = f32x8::from_array_t(token, dct_f32.rows[5]);
-    acc = v5.mul_add(v5, acc);
+    acc = v5.mul_add_relaxed(v5, acc);
     let v6 = f32x8::from_array_t(token, dct_f32.rows[6]);
-    acc = v6.mul_add(v6, acc);
+    acc = v6.mul_add_relaxed(v6, acc);
     let v7 = f32x8::from_array_t(token, dct_f32.rows[7]);
-    acc = v7.mul_add(v7, acc);
+    acc = v7.mul_add_relaxed(v7, acc);
 
     acc.reduce_add()
 }
