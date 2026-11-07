@@ -89,7 +89,8 @@ pub enum GDepthFormat {
     /// Linear depth: pixel_value = (depth - near) / (far - near).
     #[default]
     RangeLinear,
-    /// Inverse depth: pixel_value = (1/depth - 1/far) / (1/near - 1/far).
+    /// Google inverse range: pixel_value = far * (depth - near) / (depth * (far - near)).
+    /// Zero denotes the near plane; one denotes the far plane.
     RangeInverse,
 }
 
@@ -132,19 +133,18 @@ pub(crate) fn parse_gdepth_xmp(xmp: &str) -> Option<DepthMapData> {
     // Extract metadata fields
     let format = extract_xmp_attr(xmp, "GDepth:Format")
         .or_else(|| extract_xmp_attr(xmp, "gdepth:Format"))
-        .and_then(|v| match v.as_str() {
+        .map_or(Some(GDepthFormat::RangeInverse), |v| match v.as_str() {
             "RangeLinear" => Some(GDepthFormat::RangeLinear),
             "RangeInverse" => Some(GDepthFormat::RangeInverse),
             _ => None,
-        })
-        .unwrap_or_default();
+        })?;
 
-    let near = extract_xmp_attr(xmp, "GDepth:Near")
+    let mut near = extract_xmp_attr(xmp, "GDepth:Near")
         .or_else(|| extract_xmp_attr(xmp, "gdepth:Near"))
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0);
 
-    let far = extract_xmp_attr(xmp, "GDepth:Far")
+    let mut far = extract_xmp_attr(xmp, "GDepth:Far")
         .or_else(|| extract_xmp_attr(xmp, "gdepth:Far"))
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0);
@@ -153,14 +153,9 @@ pub(crate) fn parse_gdepth_xmp(xmp: &str) -> Option<DepthMapData> {
         .or_else(|| extract_xmp_attr(xmp, "gdepth:Mime"))
         .unwrap_or_else(|| String::from("image/jpeg"));
 
-    let units = extract_xmp_attr(xmp, "GDepth:Units")
-        .or_else(|| extract_xmp_attr(xmp, "gdepth:Units"))
-        .and_then(|v| match v.as_str() {
-            "Meters" | "meters" => Some(GDepthUnits::Meters),
-            "Diopters" | "diopters" => Some(GDepthUnits::Diopters),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let units_value =
+        extract_xmp_attr(xmp, "GDepth:Units").or_else(|| extract_xmp_attr(xmp, "gdepth:Units"));
+    let units = normalize_depth_units(units_value.as_deref(), &mut near, &mut far)?;
 
     let measure_type = extract_xmp_attr(xmp, "GDepth:MeasureType")
         .or_else(|| extract_xmp_attr(xmp, "gdepth:MeasureType"))
@@ -233,31 +228,25 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
     // Parse DepthMap metadata from XMP (separate from container directory)
     let format = extract_xmp_attr(xmp, "GDepth:Format")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:Format"))
-        .and_then(|v| match v.as_str() {
+        .map_or(Some(GDepthFormat::RangeInverse), |v| match v.as_str() {
             "RangeLinear" => Some(GDepthFormat::RangeLinear),
             "RangeInverse" => Some(GDepthFormat::RangeInverse),
             _ => None,
-        })
-        .unwrap_or_default();
+        })?;
 
-    let near = extract_xmp_attr(xmp, "GDepth:Near")
+    let mut near = extract_xmp_attr(xmp, "GDepth:Near")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:Near"))
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0);
 
-    let far = extract_xmp_attr(xmp, "GDepth:Far")
+    let mut far = extract_xmp_attr(xmp, "GDepth:Far")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:Far"))
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0);
 
-    let units = extract_xmp_attr(xmp, "GDepth:Units")
-        .or_else(|| extract_xmp_attr(xmp, "DepthMap:Units"))
-        .and_then(|v| match v.as_str() {
-            "Meters" | "meters" => Some(GDepthUnits::Meters),
-            "Diopters" | "diopters" => Some(GDepthUnits::Diopters),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let units_value =
+        extract_xmp_attr(xmp, "GDepth:Units").or_else(|| extract_xmp_attr(xmp, "DepthMap:Units"));
+    let units = normalize_depth_units(units_value.as_deref(), &mut near, &mut far)?;
 
     let measure_type = extract_xmp_attr(xmp, "GDepth:MeasureType")
         .or_else(|| extract_xmp_attr(xmp, "DepthMap:MeasureType"))
@@ -445,6 +434,23 @@ pub(crate) fn base64_encode(input: &[u8]) -> String {
     }
 
     output
+}
+
+fn normalize_depth_units(
+    value: Option<&str>,
+    near: &mut f32,
+    far: &mut f32,
+) -> Option<GDepthUnits> {
+    match value {
+        None | Some("m" | "Meters" | "meters") => Some(GDepthUnits::Meters),
+        Some("mm") => {
+            *near *= 0.001;
+            *far *= 0.001;
+            Some(GDepthUnits::Meters)
+        }
+        Some("Diopters" | "diopters") => Some(GDepthUnits::Diopters),
+        _ => None,
+    }
 }
 
 // ============================================================================
@@ -1120,6 +1126,18 @@ mod tests {
     }
 
     // === GDepth metadata field parsing ===
+
+    #[test]
+    fn gdepth_spec_default_inverse_and_millimeter_ranges() {
+        let xmp = r#"<rdf:Description GDepth:Near="150" GDepth:Far="100000" GDepth:Units="mm" GDepth:Data="AQID"/>"#;
+        let metadata = parse_gdepth_xmp(xmp).unwrap().metadata.unwrap();
+        assert_eq!(metadata.format, GDepthFormat::RangeInverse);
+        assert_eq!(metadata.units, GDepthUnits::Meters);
+        assert!((metadata.near - 0.15).abs() < 1e-6);
+        assert!((metadata.far - 100.0).abs() < 1e-4);
+        let unknown = xmp.replace("GDepth:Near", "GDepth:Format=\"unknown\" GDepth:Near");
+        assert!(parse_gdepth_xmp(&unknown).is_none());
+    }
 
     #[test]
     fn gdepth_format_range_linear() {

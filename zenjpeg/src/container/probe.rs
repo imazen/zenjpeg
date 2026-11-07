@@ -88,7 +88,7 @@ impl Wants {
     /// Record the ICC profile APP2 location (single-segment only;
     /// multi-segment reassembly is left to the caller).
     pub const ICC_LOCATION: Self = Self::new(1 << 1);
-    /// Additionally run `zenpixels::icc::identify_common` on the ICC
+    /// Additionally run `zenpixels::icc::IccIdentification::from_icc` on the ICC
     /// payload. Requires [`ICC_LOCATION`](Self::ICC_LOCATION).
     pub const ICC_IDENTIFY: Self = Self::new(1 << 2);
     /// Record the first APP1 Exif segment location.
@@ -201,7 +201,7 @@ pub struct ContainerProbe {
 
     /// ICC profile APP2 payload range (single-segment).
     pub(crate) icc_profile: Option<Range<u32>>,
-    /// Result of [`zenpixels::icc::identify_common`] on the ICC profile.
+    /// Result of [`zenpixels::icc::IccIdentification::from_icc`] on the ICC profile.
     pub(crate) icc_identification: Option<zenpixels::icc::IccIdentification>,
 
     /// First APP1 Exif segment range.
@@ -281,7 +281,7 @@ impl ContainerProbe {
         self.icc_profile.as_ref()
     }
 
-    /// Result of [`zenpixels::icc::identify_common`] on the ICC profile.
+    /// Result of [`zenpixels::icc::IccIdentification::from_icc`] on the ICC profile.
     /// `None` unless [`Wants::ICC_IDENTIFY`] was requested AND the
     /// profile was single-segment AND identification succeeded.
     #[inline]
@@ -622,7 +622,8 @@ fn handle_app2(probe: &mut ContainerProbe, span: &MarkerSpan<'_>, wants: Wants) 
                     let total_seqs = payload[ICC_PROFILE_PREFIX.len() + 1];
                     if seq_no == 1 && total_seqs == 1 {
                         let icc_bytes = &payload[ICC_PROFILE_PREFIX.len() + 2..];
-                        probe.icc_identification = zenpixels::icc::identify_common(icc_bytes);
+                        probe.icc_identification =
+                            zenpixels::icc::IccIdentification::from_icc(icc_bytes);
                     }
                 }
             }
@@ -1117,7 +1118,7 @@ mod tests {
     }
 
     /// Synthesize a single-chunk ICC_PROFILE APP2 with a minimal valid
-    /// header so `zenpixels::icc::identify_common` can classify it.
+    /// header so `zenpixels::icc::IccIdentification::from_icc` can classify it.
     /// The profile size is tiny — well under the 128-byte ICC header —
     /// but `identify_common` just looks at the header bytes it finds;
     /// anything it doesn't recognize returns `None`, which still
