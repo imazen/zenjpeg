@@ -368,6 +368,24 @@ impl DecodeConfig {
     ///     .decode(&jpeg_data, enough::Unstoppable)?;
     /// ```
     #[must_use]
+    /// Enable zensr artifact removal before ICC conversion, orientation and crop.
+    /// The restorer is loaded once and shared across decode calls.
+    #[cfg(feature = "restoration")]
+    pub fn artifact_removal(mut self, restorer: std::sync::Arc<zensr::api::Restorer>) -> Self {
+        self.restorer = Some(restorer);
+        self
+    }
+    fn has_artifact_removal(&self) -> bool {
+        #[cfg(feature = "restoration")]
+        {
+            self.restorer.is_some()
+        }
+        #[cfg(not(feature = "restoration"))]
+        {
+            false
+        }
+    }
+
     pub fn deblock(mut self, mode: DeblockMode) -> Self {
         self.deblock_mode = mode;
         self
@@ -1300,6 +1318,9 @@ impl DecodeConfig {
     /// Knusperli (and Auto-at-low-Q) deblocking needs full coefficient
     /// access, so those requests fall back to the buffered decode path.
     fn needs_coefficient_deblock(&self, parser: &parser::JpegParser<'_>) -> bool {
+        if self.has_artifact_removal() {
+            return true;
+        }
         match self.deblock_mode {
             DeblockMode::Knusperli => true,
             DeblockMode::Auto => {
@@ -2328,6 +2349,13 @@ impl DecodeConfig {
                 break;
             }
         }
+        if self.has_artifact_removal()
+            && (native_frame || self.output_target == OutputTarget::Native16)
+        {
+            return Err(Error::unsupported_feature(
+                "artifact removal requires an 8-bit DCT JPEG",
+            ));
+        }
         if native_frame || self.output_target == OutputTarget::Native16 {
             parser.read_header_with_stop(stop)?;
             if let Some(scan) = scan_phase.as_mut().and_then(|phase| phase.take()) {
@@ -2347,6 +2375,30 @@ impl DecodeConfig {
             }
             return Ok(result);
         }
+
+        #[cfg(feature = "restoration")]
+        let (mut repaired, restoration_report) = if let Some(restorer) = &self.restorer {
+            if self
+                .output_format
+                .is_some_and(|format| format != PixelFormat::Rgb)
+                || self.output_target.is_precise()
+                || self.output_target.uses_dequant_bias()
+                || self.deblock_mode != DeblockMode::Off
+            {
+                return Err(Error::invalid_config("artifact removal currently accepts RGB8/f32 output and owns its deblocking policy".into()));
+            }
+            let mut source = crate::restoration::JpegSource::new(data, self, stop)?;
+            let outcome = restorer
+                .restore(&mut source)
+                .threads(self.num_threads)
+                .run()
+                .map_err(|e| Error::decode_error(e.to_string()))?;
+            stop.check()?;
+            let summary = outcome.summary();
+            (Some(outcome.into_pixels()), Some(summary))
+        } else {
+            (None, None)
+        };
 
         // Streaming decode produces RGB u8 directly — disable it when the output
         // needs coefficients (f32, u16, precise, dequant_bias, non-RGB formats,
@@ -2432,7 +2484,19 @@ impl DecodeConfig {
         let mut result = if self.output_target.is_f32() {
             // f32 output path
             #[allow(unused_mut)]
-            let mut pixels = if self.deblock_mode != DeblockMode::Off {
+            let mut pixels = if self.has_artifact_removal() {
+                #[cfg(feature = "restoration")]
+                {
+                    repaired
+                        .take()
+                        .expect("restoration prepared")
+                        .into_rgb_f32()
+                }
+                #[cfg(not(feature = "restoration"))]
+                {
+                    unreachable!()
+                }
+            } else if self.deblock_mode != DeblockMode::Off {
                 parser.to_pixels_f32_deblock(
                     output_format,
                     self.chroma_upsampling,
@@ -2471,6 +2535,9 @@ impl DecodeConfig {
                     ) {
                         Ok(transformed) => pixels = transformed,
                         Err(_e) => {
+                            if self.has_artifact_removal() {
+                                return Err(_e);
+                            }
                             #[cfg(debug_assertions)]
                             eprintln!(
                                 "Warning: ICC f32 transform failed, using original colors: {_e:?}"
@@ -2559,12 +2626,23 @@ impl DecodeConfig {
             // u8 output path (fast streaming decode).
             // Boundary4Tap/Auto/AutoStreamable deblocking is applied post-decode.
             #[allow(unused_mut)]
-            let mut pixels = parser.to_pixels(
-                output_format,
-                self.chroma_upsampling,
-                self.output_target,
-                &stop,
-            )?;
+            let mut pixels = if self.has_artifact_removal() {
+                #[cfg(feature = "restoration")]
+                {
+                    repaired.take().expect("restoration prepared").to_rgb8()
+                }
+                #[cfg(not(feature = "restoration"))]
+                {
+                    unreachable!()
+                }
+            } else {
+                parser.to_pixels(
+                    output_format,
+                    self.chroma_upsampling,
+                    self.output_target,
+                    &stop,
+                )?
+            };
 
             // Apply boundary 4-tap deblock as post-processing on interleaved u8 data.
             // This handles Boundary4Tap, Auto (resolved to Boundary4Tap in streaming),
@@ -2617,6 +2695,9 @@ impl DecodeConfig {
                     ) {
                         Ok(transformed) => pixels = transformed,
                         Err(_e) => {
+                            if self.has_artifact_removal() {
+                                return Err(_e);
+                            }
                             #[cfg(debug_assertions)]
                             eprintln!(
                                 "Warning: ICC profile transform failed, using original colors: {_e:?}"
@@ -2656,6 +2737,10 @@ impl DecodeConfig {
             )
         };
 
+        #[cfg(feature = "restoration")]
+        {
+            result.restoration = restoration_report;
+        }
         result.set_gain_map(gain_map_result);
         if let Some(progress) = progress {
             progress.advance(u64::from(result.height()));
@@ -2762,6 +2847,7 @@ impl DecodeConfig {
             // hands the sink source-gamut pixels labelled sRGB — undetectable
             // downstream (measured: 17417 of 18432 bytes wrong, max delta 108,
             // for a Display-P3 source corrected to sRGB).
+            && !self.has_artifact_removal()
             && self.correct_color.is_none()
             && self.output_target == OutputTarget::Srgb8;
 

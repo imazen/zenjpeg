@@ -974,6 +974,8 @@ pub(crate) struct ResolvedCrop {
 /// ```
 #[derive(Clone)]
 pub struct DecodeConfig {
+    #[cfg(feature = "restoration")]
+    pub(crate) restorer: Option<std::sync::Arc<zensr::api::Restorer>>,
     /// Output pixel format (None = use source format)
     pub output_format: Option<crate::types::PixelFormat>,
     /// Output target controlling precision, transfer function, and IDCT variant.
@@ -1106,6 +1108,8 @@ impl Default for DecodeConfig {
             parallel_strategy: ParallelStrategy::default(),
             idct_method: None,
             deblock_mode: DeblockMode::default(),
+            #[cfg(feature = "restoration")]
+            restorer: None,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
             wave_only_reader: true,
         }
@@ -1164,6 +1168,8 @@ pub enum OwnedDecodedPixels {
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecodeResult {
+    #[cfg(feature = "restoration")]
+    pub(crate) restoration: Option<zensr::api::Summary>,
     /// Image width in pixels.
     pub width: u32,
     /// Image height in pixels.
@@ -1197,6 +1203,12 @@ impl core::fmt::Debug for DecodeResult {
 }
 
 impl DecodeResult {
+    /// The zensr decision for this decode, when artifact removal was requested.
+    #[cfg(feature = "restoration")]
+    pub fn artifact_removal_report(&self) -> Option<&zensr::api::Summary> {
+        self.restoration.as_ref()
+    }
+
     /// Create a new u8 result.
     pub(crate) fn new_u8(
         width: u32,
@@ -1217,6 +1229,8 @@ impl DecodeResult {
             pixels_u16: None,
             sample_precision: 8,
             gain_map: None,
+            #[cfg(feature = "restoration")]
+            restoration: None,
             extras,
             warnings,
         }
@@ -1242,6 +1256,8 @@ impl DecodeResult {
             pixels_u16: None,
             sample_precision: 8,
             gain_map: None,
+            #[cfg(feature = "restoration")]
+            restoration: None,
             extras,
             warnings,
         }

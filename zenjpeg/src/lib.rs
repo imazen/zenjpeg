@@ -357,3 +357,7 @@ pub use codec::{
 
 #[cfg(feature = "metadata-rewrite")]
 pub mod metadata;
+
+/// zensr-backed artifact removal through the native decoder.
+#[cfg(feature = "restoration")]
+pub mod restoration;
