@@ -375,6 +375,18 @@ impl DecodeConfig {
         self.restorer = Some(restorer);
         self
     }
+    /// Enable restoration with the same model-tier, routing and consistency
+    /// choices available to direct zensr callers.
+    #[cfg(feature = "restoration")]
+    pub fn artifact_removal_with(
+        mut self,
+        restorer: std::sync::Arc<zensr::api::Restorer>,
+        options: zensr::api::Options,
+    ) -> Self {
+        self.restorer = Some(restorer);
+        self.restoration_options = options;
+        self
+    }
     fn has_artifact_removal(&self) -> bool {
         #[cfg(feature = "restoration")]
         {
@@ -1055,6 +1067,9 @@ impl DecodeConfig {
         data: &'a [u8],
         stop: &dyn Stop,
     ) -> Result<ScanlineReader<'a>> {
+        if self.has_artifact_removal() {
+            return self.scanline_reader_deblock_fallback(data, stop);
+        }
         // Check if we need a transform — if so, use the buffered pixel-domain path
         let effective_transform = self.compute_effective_transform_from_data(data);
         if effective_transform != crate::lossless::LosslessTransform::None {
@@ -1397,6 +1412,9 @@ impl DecodeConfig {
     /// reader stores `Cow::Owned(vec)` for ongoing entropy decoding.
     fn scanline_reader_owned<'a>(&self, vec: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
         use alloc::borrow::Cow;
+        if self.has_artifact_removal() {
+            return self.scanline_reader_deblock_fallback_owned(vec);
+        }
 
         // Check if we need a transform
         let effective_transform = self.compute_effective_transform_from_data(&vec);
@@ -2376,20 +2394,25 @@ impl DecodeConfig {
             return Ok(result);
         }
 
+        let requested_format = self.output_format.unwrap_or(PixelFormat::Rgb);
         #[cfg(feature = "restoration")]
         let (mut repaired, restoration_report) = if let Some(restorer) = &self.restorer {
-            if self
-                .output_format
-                .is_some_and(|format| format != PixelFormat::Rgb)
-                || self.output_target.is_precise()
+            if self.output_format.is_some_and(|format| {
+                if self.output_target.is_f32() {
+                    format != PixelFormat::Rgb
+                } else {
+                    crate::color::planes::Layout8::from_pixel_format(format).is_none()
+                }
+            }) || self.output_target.is_precise()
                 || self.output_target.uses_dequant_bias()
                 || self.deblock_mode != DeblockMode::Off
             {
-                return Err(Error::invalid_config("artifact removal currently accepts RGB8/f32 output and owns its deblocking policy".into()));
+                return Err(Error::invalid_config("artifact removal requires 8-bit output or RGB f32 and owns its deblocking policy".into()));
             }
             let mut source = crate::restoration::JpegSource::new(data, self, stop)?;
             let outcome = restorer
                 .restore(&mut source)
+                .options(self.restoration_options)
                 .threads(self.num_threads)
                 .run()
                 .map_err(|e| Error::decode_error(e.to_string()))?;
@@ -2408,7 +2431,11 @@ impl DecodeConfig {
         // they operate in the pixel domain after IDCT and are applied as a post-decode
         // pass on the u8 output. Only Knusperli needs raw coefficients.
         {
-            let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
+            let output_format = if self.has_artifact_removal() {
+                PixelFormat::Rgb
+            } else {
+                requested_format
+            };
             let needs_coefficients = self.output_target.is_f32()
                 || self.output_target.is_precise()
                 || self.output_target.uses_dequant_bias()
@@ -2479,7 +2506,11 @@ impl DecodeConfig {
             None
         };
 
-        let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
+        let output_format = if self.has_artifact_removal() {
+            PixelFormat::Rgb
+        } else {
+            requested_format
+        };
 
         let mut result = if self.output_target.is_f32() {
             // f32 output path
@@ -2740,6 +2771,9 @@ impl DecodeConfig {
         #[cfg(feature = "restoration")]
         {
             result.restoration = restoration_report;
+            if self.has_artifact_removal() && !self.output_target.is_f32() {
+                result.relayout_restored_u8(requested_format, self.alloc_pref)?;
+            }
         }
         result.set_gain_map(gain_map_result);
         if let Some(progress) = progress {

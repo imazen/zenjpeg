@@ -92,7 +92,7 @@ zenresize = { workspace = true, optional = true }
 spin = { version = "0.12.3", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
 
 # Repair policy/inference stays in the codec-independent zensr dependency.
-zensr = { path = "../../zensr/crates/zensr", optional = true }
+zensr = { git = "https://github.com/imazen/zensr", rev = "e6bd12df3a65c354330918dc9f71e31a49713663", optional = true }
 
 [dev-dependencies]
 # The unit tests' `for_each_token_permutation` needs `testable_dispatch` to
