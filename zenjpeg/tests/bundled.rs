@@ -288,3 +288,6 @@ mod inventory_corpus;
 #[cfg(feature = "inventory")]
 #[path = "bundled/inventory_review.rs"]
 mod inventory_review;
+
+#[path = "bundled/chroma_edge_padding.rs"]
+mod chroma_edge_padding;
