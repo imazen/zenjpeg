@@ -375,7 +375,7 @@ fn mage_quantize_block_zigzag(
         let bias_mul_m = f32x8::from_array_t(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
-        let threshold = bias_mul_m.mul_add(aq_m, offset_m);
+        let threshold = bias_mul_m.mul_add_relaxed(aq_m, offset_m);
         let abs_qval = qval.abs();
         let mask = abs_qval.simd_ge(threshold);
         let rounded = qval.to_i32_round();
@@ -424,7 +424,7 @@ fn mage_quantize_block(
         let bias_mul_m = f32x8::from_array_t(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
-        let threshold = bias_mul_m.mul_add(aq_m, offset_m);
+        let threshold = bias_mul_m.mul_add_relaxed(aq_m, offset_m);
         let abs_qval = qval.abs();
         let mask = abs_qval.simd_ge(threshold);
         let rounded = qval.to_i32_round();

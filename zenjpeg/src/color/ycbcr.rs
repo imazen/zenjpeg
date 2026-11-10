@@ -404,12 +404,12 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
         let y_off = y + offset;
 
         // YCbCr to RGB with FMA
-        let r = cr_to_r.mul_add(cr, y_off).max(zero).min(max_val);
+        let r = cr_to_r.mul_add_relaxed(cr, y_off).max(zero).min(max_val);
         let g = cb_to_g
-            .mul_add(cb, cr_to_g.mul_add(cr, y_off))
+            .mul_add_relaxed(cb, cr_to_g.mul_add_relaxed(cr, y_off))
             .max(zero)
             .min(max_val);
-        let b = cb_to_b.mul_add(cb, y_off).max(zero).min(max_val);
+        let b = cb_to_b.mul_add_relaxed(cb, y_off).max(zero).min(max_val);
 
         // Extract to arrays for interleaved store
         let r_arr = r.to_array();
@@ -506,9 +506,9 @@ fn ycbcr_planes_f32_to_rgb_f32_impl(
         let y_off = y + offset;
 
         // YCbCr to RGB with FMA, level shift, normalize — no clamping
-        let r = cr_to_r.mul_add(cr, y_off) * scale;
-        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y_off)) * scale;
-        let b = cb_to_b.mul_add(cb, y_off) * scale;
+        let r = cr_to_r.mul_add_relaxed(cr, y_off) * scale;
+        let g = cb_to_g.mul_add_relaxed(cb, cr_to_g.mul_add_relaxed(cr, y_off)) * scale;
+        let b = cb_to_b.mul_add_relaxed(cb, y_off) * scale;
 
         let r_arr = r.to_array();
         let g_arr = g.to_array();
