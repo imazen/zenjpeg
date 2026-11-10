@@ -2149,6 +2149,23 @@ mod tests {
     use super::*;
     use crate::encode::trellis::TrellisSpeedMode;
 
+    #[cfg(feature = "metadata")]
+    #[test]
+    fn record_preserves_ssim2_dial_and_glassa_table_source() {
+        use crate::detect::record::{DialScale, EncodeRecord, TableSource};
+        let mut header = vec![255, 216, 255, 219, 0, 67, 0];
+        header.extend_from_slice(&[1; 64]);
+        header.extend_from_slice(&[255, 218, 0, 2]);
+        let config = EncoderConfig::ycbcr(Quality::ApproxSsim2(60.0), ChromaSubsampling::Quarter)
+            .quant_table_config(QuantTableConfig::GlassaLowBpp);
+        let payload = config.record_payload(&header).unwrap();
+        let record = EncodeRecord::from_payload(&payload).unwrap();
+        let entry = &record.entries[0];
+        assert_eq!(entry.quality_scale, DialScale::Ssim2);
+        assert_eq!(entry.quality, 60.0);
+        assert_eq!(entry.table_source, TableSource::GlassaLowBpp);
+    }
+
     #[test]
     fn test_ycbcr_config() {
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);

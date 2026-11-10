@@ -1020,3 +1020,8 @@ encode-record-clippy:
 encode-record-minimal-check:
     cargo check -p zenjpeg --release --no-default-features --lib
     cargo test -p zenjpeg --release --no-default-features --features extended-jpeg --lib encode::byte_encoders::tests::test_finish_into -- --exact
+
+encode-record-coverage-check:
+    cargo test -p zenjpeg --release --lib record_
+    cargo test -p zenjpeg --release --lib detect::record::tests
+    just encode-record-check encode-record-clippy

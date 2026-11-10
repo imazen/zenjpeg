@@ -375,7 +375,8 @@ pub(crate) fn insert_record(jpeg: &mut Vec<u8>, mut entries: Vec<EncodeEntry>) {
 pub fn read_record(jpeg: &[u8]) -> Option<EncodeRecord> {
     let mut rec = None;
     for_each_segment(jpeg, |marker, payload| {
-        if marker == MARKER_APP15 && rec.is_none() {
+        // The visitor stops as soon as a record is found.
+        if marker == MARKER_APP15 {
             rec = EncodeRecord::from_payload(payload);
         }
         rec.is_none()
@@ -645,6 +646,7 @@ mod tests {
     #[test]
     fn record_position_follows_metadata_and_precedes_image_markers() {
         assert_eq!(record_insert_position(&[255, 216]), 2);
+        assert_eq!(record_insert_position(&[255, 216, 0, 224, 0, 2]), 6);
         assert_eq!(record_insert_position(&[255, 216, 255, 224, 0, 1]), 6);
         assert_eq!(record_insert_position(&[255, 216, 255, 224, 0, 2]), 6);
         for marker in [MARKER_DQT, MARKER_SOS, 0xC0] {
