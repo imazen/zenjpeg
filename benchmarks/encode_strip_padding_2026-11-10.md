@@ -248,7 +248,9 @@ synthetic integration tests and the versioned hash check).
 ## Progressive compatibility checks across word sizes
 
 The progressive noise regression now compares an in-process RGB decode with a
-versioned SHA-256 identity shared by 32-bit and 64-bit builds. The original
+versioned SHA-256 identity shared by 32-bit and 64-bit builds. Both fixtures
+also pin their encoded JPEG hashes: i686 must produce byte-identical streams
+to those validated by the native oracle. The original
 64×64 Q50/420 progressive fixture and zune-jpeg size assertion remain. The
 16×16 grayscale-gradient regression likewise checks an independently validated
 RGB hash, replacing an optional subprocess that never supplied its JPEG input

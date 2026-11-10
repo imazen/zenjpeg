@@ -1,9 +1,14 @@
 //! Shared progressive witnesses and transitive decode identities.
 //! Native pinned-turbo validation is selected explicitly by the oracle job;
-//! ordinary builds, including i686, verify these same RGB bytes in process.
+//! ordinary builds, including i686, verify the same JPEG and RGB bytes in process.
 use sha2::{Digest, Sha256};
 use zenjpeg::decoder::{ChromaUpsampling, Decoder, IdctMethod, OutputTarget, PixelFormat};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
+
+pub const NOISE_JPEG_SHA256: &str =
+    "b81b28f6b1eb89e7e6c12d94704e58b8ba2e10c3ac7472b7bf5fd4ab00252cc6";
+pub const GRADIENT_JPEG_SHA256: &str =
+    "06a11db345d1cee577d0a5fc4618db21a0cbb7d876f3c5d9ce545b777f14263c";
 
 pub const WIDTH: u32 = 64;
 pub const HEIGHT: u32 = 64;
@@ -35,6 +40,7 @@ pub fn encode_noise() -> Vec<u8> {
 }
 
 pub fn check_noise_decode(jpeg: &[u8]) {
+    check_jpeg(jpeg, NOISE_JPEG_SHA256);
     check_decode(jpeg, WIDTH, HEIGHT, RGB_SHA256);
 }
 
@@ -73,5 +79,14 @@ pub fn encode_gradient() -> Vec<u8> {
 }
 
 pub fn check_gradient_decode(jpeg: &[u8]) {
+    check_jpeg(jpeg, GRADIENT_JPEG_SHA256);
     check_decode(jpeg, GRADIENT_SIZE, GRADIENT_SIZE, GRADIENT_RGB_SHA256);
+}
+
+fn check_jpeg(jpeg: &[u8], expected: &str) {
+    assert_eq!(
+        format!("{:x}", Sha256::digest(jpeg)),
+        expected,
+        "encoded progressive witness changed; validate the native oracle before updating"
+    );
 }
