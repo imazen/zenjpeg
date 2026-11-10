@@ -1500,6 +1500,9 @@ impl YCbCrPlanarEncoder {
 
         // Finish streaming encoder directly into output
         self.inner.finish_into(output)?;
+        // Include the record before metadata injection computes MPF offsets.
+        let record = self.config.record_payload(output);
+        inject_record_inplace(output, record.as_deref());
 
         // When using EncoderSegments with MPF images, we need to merge individual
         // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE

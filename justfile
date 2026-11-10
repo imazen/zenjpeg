@@ -1025,3 +1025,8 @@ encode-record-coverage-check:
     cargo test -p zenjpeg --release --lib record_
     cargo test -p zenjpeg --release --lib detect::record::tests
     just encode-record-check encode-record-clippy
+
+encode-record-planar-check:
+    cargo test -p zenjpeg --release --test encode_record planar_encodes_emit_app15_across_sampling_and_finish_paths -- --exact
+    cargo test -p zenjpeg --release --test planar_streaming
+    just encode-record-check encode-record-clippy

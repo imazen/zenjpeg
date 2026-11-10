@@ -1911,3 +1911,11 @@ The encode-record draft referenced metadata-gated detection types unconditionall
 so builds without default features failed, including WASM. Record history and
 serialization now follow the `metadata` feature. `encode_record` remains callable
 without it and has no effect, preserving metadata-free encoder builds.
+
+## Known Bugs: planar encode records (fixed on encode-record-189, 2026-11-10)
+
+The record draft injected APP15 only for packed encodes, so planar encodes
+silently ignored the record setting. Planar completion now injects the record
+before metadata and MPF indexing. Regression coverage exercises full-resolution
+and pre-sampled planes, all four samplings, all three finish methods, verified
+DQT checksums and identical image bytes after removing the record.

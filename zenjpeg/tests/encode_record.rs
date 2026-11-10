@@ -272,3 +272,81 @@ fn metadata_scrubbing_removes_app15_without_changing_the_image() {
     assert!(read_record(&scrubbed).is_none());
     assert_eq!(scrubbed, scrub(&plain));
 }
+
+#[test]
+fn planar_encodes_emit_app15_across_sampling_and_finish_paths() {
+    use zenjpeg::encoder::YCbCrPlanes;
+    for (sub, expected) in [
+        (ChromaSubsampling::None, SubsamplingCode::Full),
+        (ChromaSubsampling::Quarter, SubsamplingCode::Quarter),
+        (
+            ChromaSubsampling::HalfHorizontal,
+            SubsamplingCode::HalfHorizontal,
+        ),
+        (
+            ChromaSubsampling::HalfVertical,
+            SubsamplingCode::HalfVertical,
+        ),
+    ] {
+        for presampled in [false, true] {
+            let (w, h) = (33usize, 35usize);
+            let (cw, ch) = if presampled {
+                (
+                    w.div_ceil(sub.h_factor() as usize),
+                    h.div_ceil(sub.v_factor() as usize),
+                )
+            } else {
+                (w, h)
+            };
+            let (ys, cs) = (w + 3, cw + 5);
+            let (y, cb, cr) = (vec![127.; ys * h], vec![11.; cs * ch], vec![-17.; cs * ch]);
+            let planes = YCbCrPlanes {
+                y: &y,
+                y_stride: ys,
+                cb: &cb,
+                cb_stride: cs,
+                cr: &cr,
+                cr_stride: cs,
+            };
+            for finish in 0..3 {
+                let encode = |record| {
+                    let config = EncoderConfig::ycbcr(70.0, sub)
+                        .encode_record(record)
+                        .progressive(false);
+                    let mut encoder = config.encode_from_ycbcr_planar(w as u32, h as u32).unwrap();
+                    if presampled {
+                        encoder.push_subsampled(&planes, h, Unstoppable).unwrap();
+                    } else {
+                        encoder.push(&planes, h, Unstoppable).unwrap();
+                    }
+                    match finish {
+                        0 => encoder.finish().unwrap(),
+                        1 => {
+                            let mut out = vec![0xE7; 2];
+                            encoder.finish_into(&mut out).unwrap();
+                            out
+                        }
+                        _ => encoder.finish_to(Vec::new()).unwrap(),
+                    }
+                };
+                let mut recorded = encode(true);
+                let plain = encode(false);
+                assert_eq!(
+                    count_app15(&recorded),
+                    1,
+                    "{sub:?} presampled={presampled} finish={finish}"
+                );
+                assert_eq!(count_app15(&plain), 0);
+                let record = read_record(&recorded).unwrap();
+                assert!(record.verified);
+                assert_eq!(record.current().unwrap().subsampling, expected);
+                let span = zenjpeg::container::iter(&recorded)
+                    .find(|s| s.payload.starts_with(b"ZENJ\0"))
+                    .unwrap();
+                let range = span.offset..span.offset + span.length;
+                recorded.drain(range);
+                assert_eq!(recorded, plain);
+            }
+        }
+    }
+}
