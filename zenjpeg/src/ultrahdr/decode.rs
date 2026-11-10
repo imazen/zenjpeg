@@ -371,8 +371,14 @@ pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Re
     transform
         .prepare(pixels.width())
         .map_err(ultrahdr_to_zenjpeg_error)?;
-    let mut output = PixelBuffer::try_new(pixels.width(), pixels.height(), target)
-        .map_err(ultrahdr_to_zenjpeg_error)?;
+    let mut output = PixelBuffer::try_new(pixels.width(), pixels.height(), target).map_err(
+        crate::color::icc::pixel_buffer_error(
+            (pixels.width() as usize)
+                .saturating_mul(pixels.height() as usize)
+                .saturating_mul(target.bytes_per_pixel()),
+            "Ultra HDR ICC output",
+        ),
+    )?;
     let source = pixels.as_slice();
     let mut destination = output.as_slice_mut();
     for y in 0..pixels.height() {

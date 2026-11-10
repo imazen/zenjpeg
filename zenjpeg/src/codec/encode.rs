@@ -843,6 +843,11 @@ fn cms_error(error: impl core::fmt::Display) -> Error {
     Error::icc_error(error.to_string())
 }
 
+fn reserve_cms_rows(data: &mut Vec<u8>, additional: usize) -> Result<(), Error> {
+    data.try_reserve(additional)
+        .map_err(|_| Error::allocation_failed(additional, "push_rows buffer"))
+}
+
 fn working_icc(
     profile: zenpixels_convert::icc_profiles::SynthesizedIcc,
 ) -> Result<Arc<[u8]>, Error> {
@@ -868,21 +873,38 @@ fn working_descriptor(descriptor: PixelDescriptor, icc: &[u8]) -> PixelDescripto
 }
 
 impl LinearCms {
+    fn source_icc(
+        descriptor: PixelDescriptor,
+        context: Option<&ColorContext>,
+        layout: PixelLayout,
+    ) -> Option<&Arc<[u8]>> {
+        if !transfer_changes(layout, descriptor) {
+            return None;
+        }
+        let icc = context?.icc.as_ref()?;
+        if ColorProfileSource::Icc(icc).resolve().is_some() {
+            return None;
+        }
+        Some(icc)
+    }
+
     fn prepare(
         descriptor: PixelDescriptor,
         context: Option<&ColorContext>,
         layout: PixelLayout,
         width: u32,
     ) -> Result<Option<Self>, Error> {
-        if !transfer_changes(layout, descriptor) {
-            return Ok(None);
-        }
-        let Some(icc) = context.and_then(|c| c.icc.as_ref()) else {
-            return Ok(None);
-        };
-        if ColorProfileSource::Icc(icc).resolve().is_some() {
-            return Ok(None);
-        }
+        Self::source_icc(descriptor, context, layout)
+            .map(|icc| Self::new(descriptor, icc, layout, width))
+            .transpose()
+    }
+
+    fn new(
+        descriptor: PixelDescriptor,
+        icc: &Arc<[u8]>,
+        layout: PixelLayout,
+        width: u32,
+    ) -> Result<Self, Error> {
         let current = Arc::new(ColorContext::from_icc(Arc::clone(icc)));
         let opaque = descriptor
             .with_primaries(ColorPrimaries::Unknown)
@@ -922,8 +944,13 @@ impl LinearCms {
         )
         .map_err(cms_error)?;
         plan.prepare(width).map_err(cms_error)?;
-        let row = zenpixels::PixelBuffer::try_new(width, 1, target).map_err(cms_error)?;
-        Ok(Some(Self { plan, current, row }))
+        let row = zenpixels::PixelBuffer::try_new(width, 1, target).map_err(
+            crate::color::icc::pixel_buffer_error(
+                (width as usize).saturating_mul(target.bytes_per_pixel()),
+                "linear ICC row",
+            ),
+        )?;
+        Ok(Self { plan, current, row })
     }
 
     fn push(
@@ -1106,10 +1133,10 @@ impl JpegEncoder {
         self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
         let binding = self.bind_color(descriptor, context, layout)?;
-        let linear_cms = LinearCms::prepare(descriptor, context, layout, width)?;
         let lag = self
             .build_request(layout, &binding)?
             .plan_byte_output(width, height, layout)?;
+        let linear_cms = LinearCms::prepare(descriptor, context, layout, width)?;
         Ok(RowStart {
             layout,
             timing: self.timing(lag, height),
@@ -1795,10 +1822,10 @@ impl JpegEncoder {
         self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
         let binding = self.bind_color(descriptor, context, layout)?;
-        let linear_cms = LinearCms::prepare(descriptor, context, layout, width)?;
         let enc = self
             .build_request(layout, &binding)?
             .encode_from_bytes(width, height, layout)?;
+        let linear_cms = LinearCms::prepare(descriptor, context, layout, width)?;
         self.streaming_enc = Some(enc);
         self.row_descriptor = Some(descriptor);
         self.bound = Some(binding);
@@ -1925,19 +1952,17 @@ impl zencodec::encode::Encoder for JpegEncoder {
         self.check_one_shot()?;
         let descriptor = pixels.descriptor();
         let layout = self.pixel_layout(descriptor)?;
+        self.check_limits(pixels.width(), pixels.rows(), layout)?;
         let binding = self.bind_color(descriptor, pixels.color_context().map(|c| &**c), layout)?;
-        if let Some(mut cms) = LinearCms::prepare(
-            descriptor,
-            pixels.color_context().map(|c| &**c),
-            layout,
-            pixels.width(),
-        )? {
-            self.check_limits(pixels.width(), pixels.rows(), layout)?;
+        if let Some(icc) =
+            LinearCms::source_icc(descriptor, pixels.color_context().map(|c| &**c), layout)
+        {
             let mut encoder = self.build_request(layout, &binding)?.encode_from_bytes(
                 pixels.width(),
                 pixels.rows(),
                 layout,
             )?;
+            let mut cms = LinearCms::new(descriptor, icc, layout, pixels.width())?;
             cms.push(&pixels, |row| {
                 encoder.push(row, 1, row.len(), self.stop_ref())
             })?;
@@ -2113,18 +2138,35 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
 
         // Fallback: accumulate rows (dimensions unknown).
-        if let Some(acc) = &self.accumulator {
-            if acc.width != rows.width() || acc.descriptor != desc {
-                return Err(Error::invalid_state(
-                    "push_rows: width or format changed between calls",
-                )
-                .into());
-            }
-            self.check_rows_color(&rows, layout)?;
+        if let Some(acc) = &self.accumulator
+            && (acc.width != rows.width() || acc.descriptor != desc)
+        {
+            return Err(
+                Error::invalid_state("push_rows: width or format changed between calls").into(),
+            );
         }
         let width = rows.width();
+        let total_rows = self
+            .accumulator
+            .as_ref()
+            .map_or(0, |acc| acc.total_rows)
+            .checked_add(rows.rows())
+            .ok_or_else(|| Error::size_overflow("push_rows height"))?;
+        self.check_limits(width, total_rows, layout)?;
+        if self.accumulator.is_some() {
+            self.check_rows_color(&rows, layout)?;
+        }
         if self.accumulator.is_none() {
             let binding = self.bind_color(desc, rows.color_context().map(|c| &**c), layout)?;
+            if LinearCms::source_icc(desc, rows.color_context().map(|c| &**c), layout).is_some() {
+                // Height is not declared yet; validate JPEG's width before preparing
+                // a CMS row, including for an empty first batch.
+                self.build_request(layout, &binding)?.plan_byte_output(
+                    width,
+                    total_rows.max(1),
+                    layout,
+                )?;
+            }
             let cms = LinearCms::prepare(desc, rows.color_context().map(|c| &**c), layout, width)?;
             self.bound = Some(binding);
             self.linear_cms = cms;
@@ -2139,7 +2181,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 descriptor: desc,
             });
             cms.push(&rows, |row| {
-                acc.data.try_reserve(row.len()).map_err(cms_error)?;
+                reserve_cms_rows(&mut acc.data, row.len())?;
                 acc.data.extend_from_slice(row);
                 acc.total_rows += 1;
                 Ok(())
@@ -2409,6 +2451,29 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/support/compact_icc.rs"
         ));
+    }
+
+    #[test]
+    fn cms_accumulation_reports_capacity_and_height_overflow() {
+        use zencodec::encode::Encoder as _;
+        let mut bytes = vec![1, 2, 3];
+        let error = reserve_cms_rows(&mut bytes, usize::MAX).unwrap_err();
+        assert!(matches!(error.kind(), ErrorKind::AllocationFailed { .. }));
+        assert_eq!(bytes, [1, 2, 3]);
+        reserve_cms_rows(&mut bytes, 12).unwrap();
+
+        let mut encoder = JpegEncoderConfig::new().job().encoder().unwrap();
+        encoder.accumulator = Some(RowAccumulator {
+            data: Vec::new(),
+            width: 1,
+            total_rows: u32::MAX,
+            layout: PixelLayout::Rgb8Srgb,
+            descriptor: PixelDescriptor::RGB8_SRGB,
+        });
+        let pixels = PixelSlice::new(&[1, 2, 3], 1, 1, 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let error = encoder.push_rows(pixels).unwrap_err();
+        assert!(error.to_string().contains("push_rows height"));
+        assert_eq!(encoder.accumulator.as_ref().unwrap().total_rows, u32::MAX);
     }
 
     #[test]

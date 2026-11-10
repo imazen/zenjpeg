@@ -1961,3 +1961,9 @@ Float-plane YCbCr batch remainders differed by one ULP from complete vectors
 Scalar tails shifted and normalized in a different order. Padded vector tails
 now use the same arithmetic for lengths 0–31, with exact prefix identity and
 an independent double-precision matrix check. Existing golden values are retained.
+
+ICC adapter preparation checks resource limits and native JPEG geometry before
+allocating its conversion row. Unknown-height feeding checks each accumulated
+height before changing color state. Pixel-buffer allocation/capacity failures
+retain resource error categories instead of becoming ICC failures; deterministic
+capacity-overflow and invalid-geometry controls require no large allocation.

@@ -684,3 +684,64 @@ fn linear_icc_one_shot_propagates_cms_and_native_start_refusals() {
         .with_color_context(context);
     assert!(quality().job().encoder().unwrap().encode(empty).is_err());
 }
+
+#[test]
+fn linear_icc_limits_and_geometry_precede_cms_preparation() {
+    use zencodec::encode::EncodeDeclaration;
+    let raster = rgbf32_linear();
+    let context = Arc::new(ColorContext::from_icc(synthesized(Cicp::new(
+        12, 8, 0, true,
+    ))));
+    // Narrow range would be refused by the CMS; limits must win before preparing it.
+    let desc = p3(PixelDescriptor::RGBF32_LINEAR).with_signal_range(zenpixels::SignalRange::Narrow);
+    let pixels = || raster.slice(desc).with_color_context(Arc::clone(&context));
+    let limited = || {
+        quality()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_pixels(1))
+    };
+    let error = limited().encoder().unwrap().encode(pixels()).unwrap_err();
+    assert!(error.to_string().contains("image too large"), "{error}");
+    let mut encoder = limited().encoder().unwrap();
+    let error = encoder.push_rows(pixels()).unwrap_err();
+    assert!(error.to_string().contains("image too large"), "{error}");
+    assert!(encoder.pending_output().is_empty());
+
+    // Empty views carry arbitrarily large widths without allocating input.
+    // All feeding modes must validate native geometry before making a CMS row.
+    let width = 65_536;
+    let empty = || {
+        PixelSlice::new(&[], width, 0, width as usize * 12, desc)
+            .unwrap()
+            .with_color_context(Arc::clone(&context))
+    };
+    let error = quality()
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(empty())
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid dimensions"), "{error}");
+    let declaration = EncodeDeclaration::new(width, 1, desc).with_color(&context);
+    let job = quality().job();
+    let error = job.plan_encode(&declaration).unwrap_err();
+    assert!(error.to_string().contains("invalid dimensions"), "{error}");
+    let too_tall = EncodeDeclaration::new(1, width, desc).with_color(&context);
+    let error = job.plan_encode(&too_tall).unwrap_err();
+    assert!(error.to_string().contains("invalid dimensions"), "{error}");
+    let mut encoder = quality().job().encoder().unwrap();
+    let error = encoder.begin_declared(&declaration).unwrap_err();
+    assert!(error.to_string().contains("invalid dimensions"), "{error}");
+    assert!(encoder.pending_output().is_empty());
+    let mut encoder = quality().job().encoder().unwrap();
+    let error = encoder.push_rows(empty()).unwrap_err();
+    assert!(error.to_string().contains("invalid dimensions"), "{error}");
+    let mut encoder = quality()
+        .job()
+        .with_canvas_size(width, 1)
+        .encoder()
+        .unwrap();
+    let error = encoder.push_rows(empty()).unwrap_err();
+    assert!(error.to_string().contains("invalid dimensions"), "{error}");
+    assert!(encoder.pending_output().is_empty());
+}

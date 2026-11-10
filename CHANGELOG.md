@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Validate limits and native geometry before ICC conversion-row allocation; preserve resource error categories for CMS buffer allocation failures.
+
 - Keep float-plane YCbCr conversion identical for partial and complete SIMD batches by using the same arithmetic for tails.
 
 - Preserve linear ICC encode inputs with row-bounded profile preparation across one-shot, declared, implicit and accumulated row feeding. Validate rejected batch geometry before color-state changes, and accept the default gray CICP after an untagged declaration.
