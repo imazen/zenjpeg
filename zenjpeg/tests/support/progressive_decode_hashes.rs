@@ -30,6 +30,7 @@ pub fn encode_noise() -> Vec<u8> {
         .collect();
     let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(50.0)
+        .encode_record(false)
         .progressive(true)
         .optimize_huffman(true);
     let mut enc = config
@@ -70,7 +71,9 @@ pub fn encode_gradient() -> Vec<u8> {
     let data: Vec<u8> = (0..GRADIENT_SIZE)
         .flat_map(|_| (0..GRADIENT_SIZE).map(|x| (x * 16) as u8))
         .collect();
-    let config = EncoderConfig::grayscale(90.0).progressive(true);
+    let config = EncoderConfig::grayscale(90.0)
+        .encode_record(false)
+        .progressive(true);
     let mut enc = config
         .encode_from_bytes(GRADIENT_SIZE, GRADIENT_SIZE, PixelLayout::Gray8Srgb)
         .unwrap();

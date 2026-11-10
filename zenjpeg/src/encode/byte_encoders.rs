@@ -466,6 +466,10 @@ impl BytesEncoder {
         self.inner.finish_into(output)?;
         // With streaming output the metadata went into the header at
         // `start_output`, and this injects nothing.
+        // The record goes in before the other metadata so an MPF index
+        // written by `inject_metadata` measures the primary with it included.
+        let record = self.config.record_payload(output);
+        inject_record_inplace(output, record.as_deref());
         inject_metadata(
             self.config.color_mode,
             &mut self.config.segments,
@@ -503,6 +507,8 @@ impl BytesEncoder {
             ));
         }
         let mut header = self.inner.take_header()?;
+        let record = self.config.record_payload(&header);
+        inject_record_inplace(&mut header, record.as_deref());
         inject_metadata(
             self.config.color_mode,
             &mut self.config.segments,
@@ -511,6 +517,8 @@ impl BytesEncoder {
             &mut self.icc_profile,
             &mut header,
         )?;
+        // The record is in the streamed header now; `finish_into` must not add a second.
+        self.config.encode_record = false;
         self.inner.start_output(header)
     }
 
@@ -716,6 +724,27 @@ fn find_xmp_insert_position(jpeg: &[u8]) -> usize {
 }
 
 // ============================================================================
+#[cfg(not(feature = "metadata"))]
+fn inject_record_inplace(_jpeg: &mut Vec<u8>, _payload: Option<&[u8]>) {}
+
+/// Insert the APP15 `ZENJ` record (zenjpeg#189) after every other APPn,
+/// just before the first DQT.
+#[cfg(feature = "metadata")]
+fn inject_record_inplace(jpeg: &mut Vec<u8>, payload: Option<&[u8]>) {
+    let Some(payload) = payload else { return };
+    let at = crate::detect::record::record_insert_position(jpeg);
+    let len = payload.len() + 2;
+    let mut seg = Vec::with_capacity(len + 2);
+    seg.extend_from_slice(&[
+        0xFF,
+        crate::detect::record::MARKER_APP15,
+        (len >> 8) as u8,
+        len as u8,
+    ]);
+    seg.extend_from_slice(payload);
+    jpeg.splice(at..at, seg);
+}
+
 // In-place metadata injection functions (for finish_into)
 // These use Vec::splice to avoid creating new Vecs
 // ============================================================================
@@ -1471,6 +1500,9 @@ impl YCbCrPlanarEncoder {
 
         // Finish streaming encoder directly into output
         self.inner.finish_into(output)?;
+        // Include the record before metadata injection computes MPF offsets.
+        let record = self.config.record_payload(output);
+        inject_record_inplace(output, record.as_deref());
 
         // When using EncoderSegments with MPF images, we need to merge individual
         // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE

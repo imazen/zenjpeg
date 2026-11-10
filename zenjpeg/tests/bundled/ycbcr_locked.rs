@@ -245,7 +245,8 @@ fn encode_jpeg(
     let config = EncoderConfig::ycbcr(quality as f32, subsampling)
         .optimize_huffman(true)
         .progressive(progressive)
-        .restart_mcu_rows(0); // Disable restart markers to match locked hashes
+        .restart_mcu_rows(0) // Disable restart markers to match locked hashes
+        .encode_record(false); // Metadata record is not part of the locked bitstream
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

@@ -170,6 +170,9 @@ fn component<'a>(req: &ScrubRequest<'a>, gain_map: bool) -> Result<Plan<'a>, Err
             {
                 plan.keep(req, range, "Adobe color transform")?;
             }
+            MarkerKind::App(15) if span.payload.starts_with(crate::detect::record::SIGNATURE) => {
+                plan.remove(req, range, "zenjpeg encode record")?
+            }
             MarkerKind::App(_) | MarkerKind::Com => {
                 plan.remove(req, range, "private JPEG marker")?
             }

@@ -153,6 +153,7 @@ jobs:
       # source stopped needing 16-bit tables after 544a1c48).
       - name: Test (recompress)
         run: |
+          cargo test -p zenjpeg --release --features recompress-expert,metadata-rewrite --test encode_record
           cargo test -p zenjpeg --release --features recompress-expert --test recompress_api
           cargo test -p zenjpeg --release --features recompress-expert --lib recompress::
 

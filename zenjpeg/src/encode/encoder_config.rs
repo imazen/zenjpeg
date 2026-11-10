@@ -481,6 +481,13 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
+    /// Emit the APP15 `ZENJ` encoder parameter record (zenjpeg#189). On by
+    /// default; tens of bytes. See [`crate::detect::record`].
+    pub(crate) encode_record: bool,
+    /// Prior generations to carry in the record (recompression hands the
+    /// source's chain through); this encode's entry is appended.
+    #[cfg(feature = "metadata")]
+    pub(crate) record_history: Vec<crate::detect::record::EncodeEntry>,
     /// Tiny-file optimizations for small images.
     ///
     /// See [`TinyFileMode`] for details. Defaults to [`TinyFileMode::Auto`],
@@ -683,6 +690,9 @@ impl EncoderConfig {
             trellis: None,
             segments: None,
             pre_blur: 0.0,
+            encode_record: true,
+            #[cfg(feature = "metadata")]
+            record_history: Vec::new(),
             tiny_file_mode: TinyFileMode::Auto,
             #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
@@ -1358,6 +1368,153 @@ impl EncoderConfig {
         self
     }
 
+    /// Whether to emit the APP15 `ZENJ` encoder parameter record (default
+    /// `true`). Emission requires the default `metadata` feature; without
+    /// it this setting has no effect. The record gives later decoders the dial, table family and
+    /// knobs this encode actually used instead of a fingerprint estimate,
+    /// plus a CRC of the quantization tables so they can tell when it no
+    /// longer describes the file. 31 bytes for one generation, then 20 bytes
+    /// for each additional generation. See
+    /// [`crate::detect::record`].
+    #[must_use]
+    pub fn encode_record(mut self, enable: bool) -> Self {
+        self.encode_record = enable;
+        self
+    }
+
+    /// Prior generations to carry in this encode's record, oldest first:
+    /// a recompressor passes the source's [`crate::detect::EncodeRecord`]
+    /// entries so the chain survives. This encode's own entry is appended;
+    /// the oldest entries beyond [`crate::detect::record::MAX_ENTRIES`] are
+    /// dropped at write time.
+    #[must_use]
+    #[cfg(feature = "metadata")]
+    pub fn record_history(mut self, entries: Vec<crate::detect::record::EncodeEntry>) -> Self {
+        self.record_history = entries;
+        self
+    }
+
+    #[cfg(not(feature = "metadata"))]
+    pub(crate) fn record_payload(&self, _jpeg: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The APP15 payload for this encode, given the finished header (the
+    /// DQT CRC is taken from `jpeg`). `None` when disabled or no DQT found.
+    #[cfg(feature = "metadata")]
+    pub(crate) fn record_payload(&self, jpeg: &[u8]) -> Option<Vec<u8>> {
+        use crate::detect::record::{
+            ColorFront, DialScale, EncodeEntry, EncodeFlags, EncodeRecord, EncoderId,
+            SubsamplingCode, TableSource, dqt_crc32,
+        };
+        if !self.encode_record {
+            return None;
+        }
+        let dqt_crc32 = dqt_crc32(jpeg)?;
+        let (quality_scale, quality) = match self.quality {
+            Quality::ApproxJpegli(q) => (DialScale::Jpegli, q),
+            Quality::ApproxMozjpeg(q) => (DialScale::Mozjpeg, q as f32),
+            Quality::ApproxSsim2(q) => (DialScale::Ssim2, q),
+            Quality::ApproxButteraugli(d) => (DialScale::Butteraugli, d),
+        };
+        let table_source = match &self.quant_table_config {
+            QuantTableConfig::Jpegli { .. } => TableSource::Jpegli,
+            QuantTableConfig::JpegliSharedChroma { .. } => TableSource::JpegliSharedChroma,
+            QuantTableConfig::MozjpegRobidoux { .. } => TableSource::MozjpegRobidoux,
+            QuantTableConfig::Custom(_) => TableSource::Custom,
+            QuantTableConfig::PiecewiseV4 => TableSource::PiecewiseV4,
+            QuantTableConfig::GlassaLowBpp => TableSource::GlassaLowBpp,
+        };
+        let (color_front, subsampling) = match self.color_mode {
+            ColorMode::YCbCr { subsampling } => (
+                ColorFront::YCbCr,
+                match subsampling {
+                    ChromaSubsampling::None => SubsamplingCode::Full,
+                    ChromaSubsampling::Quarter => SubsamplingCode::Quarter,
+                    ChromaSubsampling::HalfHorizontal => SubsamplingCode::HalfHorizontal,
+                    ChromaSubsampling::HalfVertical => SubsamplingCode::HalfVertical,
+                },
+            ),
+            ColorMode::Xyb { subsampling } => (
+                ColorFront::Xyb,
+                match subsampling {
+                    XybSubsampling::Full => SubsamplingCode::Full,
+                    XybSubsampling::BQuarter => SubsamplingCode::Quarter,
+                },
+            ),
+            ColorMode::Grayscale => (ColorFront::Grayscale, SubsamplingCode::NotApplicable),
+            ColorMode::Rgb => (ColorFront::Rgb, SubsamplingCode::NotApplicable),
+        };
+        let mut flags = 0u8;
+        // Record the AQ that reached the coefficients, not the switch:
+        // with all-zero zero-bias multipliers (Robidoux presets) the field
+        // is computed and never applied, and the output is byte-identical
+        // either way.
+        if self.aq_enabled {
+            let resolved = super::plan::resolve_quant_tables(super::plan::TableResolveInputs {
+                quality: self.quality,
+                table_config: &self.quant_table_config,
+                use_xyb: matches!(self.color_mode, ColorMode::Xyb { .. }),
+                use_rgb: matches!(self.color_mode, ColorMode::Rgb),
+                is_420: matches!(
+                    self.color_mode,
+                    ColorMode::YCbCr {
+                        subsampling: ChromaSubsampling::Quarter
+                    }
+                ),
+                allow_16bit: self.allow_16bit_quant_tables,
+            });
+            let zb = &resolved.zero_bias;
+            if [&zb.0, &zb.1, &zb.2]
+                .iter()
+                .any(|p| p.mul.iter().any(|&m| m != 0.0))
+            {
+                flags |= EncodeFlags::AQ;
+            }
+        }
+        if let Some(t) = &self.trellis
+            && t.enabled
+        {
+            flags |= EncodeFlags::TRELLIS_AC;
+            if t.dc_enabled {
+                flags |= EncodeFlags::TRELLIS_DC;
+            }
+        }
+        if self.deringing {
+            flags |= EncodeFlags::DERINGING;
+        }
+        if self.scan_mode.is_progressive() {
+            flags |= EncodeFlags::PROGRESSIVE;
+        }
+        if matches!(self.scan_mode.scan_strategy(), ScanStrategy::Search) {
+            flags |= EncodeFlags::SCAN_SEARCH;
+        }
+        if !matches!(self.downsampling_method, DownsamplingMethod::Box) {
+            flags |= EncodeFlags::GAMMA_AWARE_CHROMA;
+        }
+        let version = crate::detect::record::crate_version();
+        let mut entries = self.record_history.clone();
+        entries.push(EncodeEntry {
+            encoder: EncoderId::Zenjpeg,
+            version,
+            quality_scale,
+            quality,
+            table_source,
+            color_front,
+            subsampling,
+            flags: EncodeFlags(flags),
+            pre_blur: self.pre_blur,
+            dqt_crc32,
+        });
+        Some(
+            EncodeRecord {
+                entries,
+                verified: true,
+            }
+            .to_payload(),
+        )
+    }
+
     /// Control tiny-file optimizations for small images.
     ///
     /// Defaults to [`TinyFileMode::Auto`], which activates the optimizations
@@ -1991,6 +2148,23 @@ impl EncoderConfig {
 mod tests {
     use super::*;
     use crate::encode::trellis::TrellisSpeedMode;
+
+    #[cfg(feature = "metadata")]
+    #[test]
+    fn record_preserves_ssim2_dial_and_glassa_table_source() {
+        use crate::detect::record::{DialScale, EncodeRecord, TableSource};
+        let mut header = vec![255, 216, 255, 219, 0, 67, 0];
+        header.extend_from_slice(&[1; 64]);
+        header.extend_from_slice(&[255, 218, 0, 2]);
+        let config = EncoderConfig::ycbcr(Quality::ApproxSsim2(60.0), ChromaSubsampling::Quarter)
+            .quant_table_config(QuantTableConfig::GlassaLowBpp);
+        let payload = config.record_payload(&header).unwrap();
+        let record = EncodeRecord::from_payload(&payload).unwrap();
+        let entry = &record.entries[0];
+        assert_eq!(entry.quality_scale, DialScale::Ssim2);
+        assert_eq!(entry.quality, 60.0);
+        assert_eq!(entry.table_source, TableSource::GlassaLowBpp);
+    }
 
     #[test]
     fn test_ycbcr_config() {

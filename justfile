@@ -1004,3 +1004,29 @@ planar-streaming-regressions:
     cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test planar_streaming --test strip_padding --test strip_padding_hashes --test streaming_encode --test encode_stop_reasons
     cargo test --locked -p zenjpeg --doc
     cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
+
+# APP15 encode records, namespace isolation, metadata stripping and hash contracts.
+encode-record-check:
+    cargo test -p zenjpeg --release --features recompress,metadata-rewrite --test encode_record
+    cargo test -p zenjpeg --release --lib detect::record::tests
+    cargo test -p zenjpeg --release --test strip_padding_hashes
+
+encode-record-progressive-check:
+    cargo test -p zenjpeg --release --test bundled progressive_encoding::
+
+encode-record-clippy:
+    cargo clippy -p zenjpeg --release --features recompress,metadata-rewrite --lib --test encode_record -- -D warnings
+
+encode-record-minimal-check:
+    cargo check -p zenjpeg --release --no-default-features --lib
+    cargo test -p zenjpeg --release --no-default-features --features extended-jpeg --lib encode::byte_encoders::tests::test_finish_into -- --exact
+
+encode-record-coverage-check:
+    cargo test -p zenjpeg --release --lib record_
+    cargo test -p zenjpeg --release --lib detect::record::tests
+    just encode-record-check encode-record-clippy
+
+encode-record-planar-check:
+    cargo test -p zenjpeg --release --test encode_record planar_encodes_emit_app15_across_sampling_and_finish_paths -- --exact
+    cargo test -p zenjpeg --release --test planar_streaming
+    just encode-record-check encode-record-clippy

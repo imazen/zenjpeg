@@ -52,6 +52,9 @@ pub fn run_tuned(
     // a future modern-decoder mode.
     let cfg = EncoderConfig::ycbcr(params.target_ijg_q, chroma)
         .optimization(OptimizationPreset::HybridMaxCompression)
+        // The source's encode history rides along; this encode appends
+        // its own entry (zenjpeg#189).
+        .record_history(crate::detect::record::history_of(jpeg_bytes))
         // Entropy-stage exactness on top of the RD-ablated param set:
         // the scan search stays (preset behaviour) and the sequential
         // (+tiny) trials run when the searched progressive output lands
