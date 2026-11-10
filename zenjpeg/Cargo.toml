@@ -269,6 +269,8 @@ ultrahdr = [
     # gate covers pre-0.3.0 surface churn).
     "dep:zenpixels-convert",
     "zenpixels-convert/hdr-experimental",
+    # ICC recognition may identify metadata without permitting matrix/TRC substitution.
+    "zenpixels-convert/cms-moxcms",
     # The SDR base's ICC profile comes from `synthesize_icc_for_cicp`, which
     # serves exact, cicp-tagged profiles (that libultrahdr recognises) only
     # from the icc-db blob; without it a BT.2020 base with the sRGB transfer

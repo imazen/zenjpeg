@@ -3006,6 +3006,7 @@ dependencies = [
  "linear-srgb",
  "lz4_flex",
  "magetypes",
+ "moxcms 0.9.2",
  "once_cell",
  "pastey",
  "rgb",

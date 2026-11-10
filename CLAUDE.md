@@ -1938,3 +1938,11 @@ contracts and compiles the standalone fuzz targets without local path overrides.
 The standalone diagnostics WASM workspace also needs matching source pins: root
 patches do not propagate into it. `just depth-viewer-check` builds the actual
 wasm32 target against the same main pixel/core sources.
+
+Current zenpixels distinguishes ICC metadata identification from safe matrix/TRC
+substitution. Native and codec HDR readers now convert metadata-only ICC bases
+through the shared CMS into the identified working space before gain-map math.
+Linear row-reconstructor callers supply color-managed working-space rows.
+The UltraHDR feature enables the shared moxcms backend for this conversion.
+Current zentone uses physical-unit BT.2446C parameters; the owner approved replacing
+the historical reserved-parameter guard with white/transfer/inverse controls.

@@ -1055,3 +1055,14 @@ depth-viewer-check:
 depth-boundary-check:
     cargo test -p zenjpeg --release --locked --features boundary-rd --lib encode::boundary_rd::tests
     cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+
+# Independent documentation and standalone fuzz compilation on the pinned graph.
+depth-cohort-doc-fuzz-check:
+    cargo test -p zenjpeg --release --locked --doc --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+
+# Current-main tone curve plus authoritative ICC transforms on all HDR readers.
+depth-hdr-check:
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --lib ultrahdr::
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --test bundled ultrahdr_roundtrip::
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
