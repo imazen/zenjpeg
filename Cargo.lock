@@ -2862,7 +2862,7 @@ dependencies = [
 [[package]]
 name = "zensr"
 version = "0.0.1"
-source = "git+https://github.com/imazen/zensr?rev=e6bd12df3a65c354330918dc9f71e31a49713663#e6bd12df3a65c354330918dc9f71e31a49713663"
+source = "git+https://github.com/imazen/zensr?rev=0bb29cf63a4ab8fa8864994acc659e61c890c5e6#0bb29cf63a4ab8fa8864994acc659e61c890c5e6"
 dependencies = [
  "zenanalyze",
  "zenanalyze-api",
@@ -2872,7 +2872,7 @@ dependencies = [
 [[package]]
 name = "zensr-micro"
 version = "0.0.1"
-source = "git+https://github.com/imazen/zensr?rev=e6bd12df3a65c354330918dc9f71e31a49713663#e6bd12df3a65c354330918dc9f71e31a49713663"
+source = "git+https://github.com/imazen/zensr?rev=0bb29cf63a4ab8fa8864994acc659e61c890c5e6#0bb29cf63a4ab8fa8864994acc659e61c890c5e6"
 dependencies = [
  "archmage 0.9.30",
  "magetypes",
