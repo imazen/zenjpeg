@@ -1934,3 +1934,7 @@ methods and conversion traits. The stable SIMD cohort requires 0.9.31; explicit
 `mul_add_relaxed` preserves the previous vector arithmetic.
 `just depth-cohort-check` checks these adapters against existing pixel/golden
 contracts and compiles the standalone fuzz targets without local path overrides.
+
+The standalone diagnostics WASM workspace also needs matching source pins: root
+patches do not propagate into it. `just depth-viewer-check` builds the actual
+wasm32 target against the same main pixel/core sources.

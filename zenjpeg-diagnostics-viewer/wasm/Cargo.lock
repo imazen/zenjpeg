@@ -22,9 +22,9 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.30"
+version = "0.9.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15785ee3576fbd41276a25f063b1e6b5bf323af9b4924632e25a8de6a3065f06"
+checksum = "67dcf4e0bcce8da7704d177f604cf43299777de9d0f052ffe8822ab188de2820"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -33,9 +33,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.30"
+version = "0.9.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce7707714970d5cf476caccbae2d282000c6c14ca5aada878e722a10d8e1c153"
+checksum = "8ec18ef9ee506a934ab4f46f204f1d1d83528283d5400df800688748268b82bc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -259,12 +259,11 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "magetypes"
-version = "0.9.30"
+version = "0.9.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5726fd3335b1d2814036c420a5c8d105abcc0e0b43eebb477e48f8c725fc8fb2"
+checksum = "f509b5e651143f19077f1d3874e87d1f8ed617f7c257f60e38d58f27563e0f98"
 dependencies = [
  "archmage",
- "libm",
  "rustversion",
 ]
 
@@ -502,7 +501,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=7e9d296c9e037e626234c9f0e8673d48278f83f0#7e9d296c9e037e626234c9f0e8673d48278f83f0"
+source = "git+https://github.com/imazen/ultrahdr?rev=aadf102169086fc232205bdb3b92572cfda07032#aadf102169086fc232205bdb3b92572cfda07032"
 dependencies = [
  "bytemuck",
  "enough",
@@ -624,7 +623,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
+source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
 dependencies = [
  "almost-enough",
  "enough",
@@ -682,7 +681,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=61fb96f1c8c89d4c8d2210eed8679372d66f8aa7#61fb96f1c8c89d4c8d2210eed8679372d66f8aa7"
+source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
 dependencies = [
  "zencodec",
  "zenpixels",
@@ -691,7 +690,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=f23ac7535be1144a22d0dc6b71f866a08b151f34#f23ac7535be1144a22d0dc6b71f866a08b151f34"
+source = "git+https://github.com/imazen/zenpixels?rev=3286169c7ef5b1e66ac841c3d8204eb54e390f8c#3286169c7ef5b1e66ac841c3d8204eb54e390f8c"
 dependencies = [
  "bytemuck",
  "imgref",

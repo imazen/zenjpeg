@@ -1046,3 +1046,7 @@ depth-cohort-check:
     cargo test -p zenjpeg --release --locked --doc --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert
     cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert -- -D warnings
     cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+
+# Standalone viewer dependencies must follow the root codec/pixel source pins.
+depth-viewer-check:
+    cargo build --manifest-path zenjpeg-diagnostics-viewer/wasm/Cargo.toml --release --target wasm32-unknown-unknown
