@@ -527,14 +527,25 @@ mod tests {
     use super::*;
     use crate::decode::SegmentType;
 
+    fn p3_fixture_icc() -> Vec<u8> {
+        let pixels = [0.5_f32, 0.5, 0.5, 1.0];
+        let bytes = pixels.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let hdr = PixelBuffer::from_vec(
+            bytes,
+            1,
+            1,
+            zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3),
+        )
+        .unwrap();
+        let jpeg = crate::ultrahdr::encode_ultrahdr_luma(&hdr).unwrap();
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        decoded.extras().unwrap().icc_profile().unwrap().to_vec()
+    }
+
     #[test]
     fn base_icc_cms_preserves_strided_rows_and_alpha() {
         use zenpixels::PixelDescriptor;
-        use zenpixels_convert::icc_profiles::SynthesizedIcc;
-        let SynthesizedIcc::Profile(icc) = SynthesizedIcc::for_cicp(zenpixels::Cicp::DISPLAY_P3)
-        else {
-            panic!("P3 fixture missing");
-        };
+        let icc = p3_fixture_icc();
         assert_eq!(
             zenpixels::icc::IccIdentification::from_icc(&icc)
                 .unwrap()
@@ -595,11 +606,7 @@ mod tests {
         }
         assert!(base_color(Some(b"invalid ICC")).is_err());
         assert!(prepare_base_pixels(pixels(), Some(b"invalid ICC")).is_err());
-        use zenpixels_convert::icc_profiles::SynthesizedIcc;
-        let SynthesizedIcc::Profile(icc) = SynthesizedIcc::for_cicp(zenpixels::Cicp::DISPLAY_P3)
-        else {
-            panic!("P3 fixture missing");
-        };
+        let icc = p3_fixture_icc();
         let unsupported = PixelBuffer::from_vec(
             vec![30, 20, 10, 255],
             1,

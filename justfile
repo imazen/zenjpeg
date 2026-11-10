@@ -1077,8 +1077,30 @@ depth-coverage-check:
     test -n "$ZENJPEG_DEPTH_COV_DIR"
     cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils
     cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test source_color_binding --test encode_carrier_policy --test row_planning --test streaming_encode
-    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test bundled ultrahdr_roundtrip::
-    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test bundled gain_map_render::
+    just depth-coverage-report
+
+# Resume the bounded HDR witnesses and report after the instrumented core run.
+depth-coverage-report:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test bundled -- ultrahdr_roundtrip::
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test bundled -- gain_map_render::
+    cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
+    cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_DEPTH_COV_DIR/branches.json"
+    python3 scripts/check-component-coverage.py origin/main "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
+    python3 scripts/check-native-branches.py origin/main "$ZENJPEG_DEPTH_COV_DIR/branches.json" --require-complete
+
+# Exact float-plane batch edges and profile/propagation coverage witnesses.
+depth-edge-coverage-check:
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --lib
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --test source_color_binding --test encode_carrier_policy --test row_planning --test streaming_encode
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+
+# Verify the corpus prefetch used before cross tests includes its shared helper.
+depth-corpus-prefetch-check:
+    cargo check -p zenjpeg --release --locked --example metadata_corpus_prefetch
+
+# Exercise native dispatch and the scalar fallback without changing production inputs.
+depth-vector-coverage-check:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils -- color::ycbcr::tests::float_plane_batch_remainders_match_complete_vectors
     cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
     cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_DEPTH_COV_DIR/branches.json"
     python3 scripts/check-component-coverage.py origin/main "$ZENJPEG_DEPTH_COV_DIR/lcov.info"

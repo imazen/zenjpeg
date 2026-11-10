@@ -352,6 +352,15 @@ fn linear_input_writes_the_carrier_of_the_stored_samples() {
         assert_eq!(icc.as_deref(), Some(p3_synth.as_slice()), "{what}");
         assert_samples(&samples, 4, what);
     }
+    // Post-transform sRGB-transfer metadata describes the stored samples.
+    let encoded = with_metadata(
+        Metadata::none().with_icc(p3_synth.clone()),
+        raster.slice(desc),
+    )
+    .unwrap();
+    let (samples, icc) = oracle(&encoded);
+    assert_eq!(icc.as_deref(), Some(p3_synth.as_slice()));
+    assert_samples(&samples, 4, "post-transform ICC metadata");
     // The same pre-transform profile supplied explicitly as metadata is a
     // request to describe samples the encoder does not store: refuse.
     let pixels = raster.slice(desc);
@@ -657,4 +666,21 @@ fn linear_icc_rejected_batches_leave_the_row_state_usable() {
     let mut rows = quality().job().encoder().unwrap();
     assert!(rows.begin_declared(&declaration).is_err());
     assert!(rows.pending_output().is_empty());
+}
+
+#[test]
+fn linear_icc_one_shot_propagates_cms_and_native_start_refusals() {
+    let raster = rgbf32_linear();
+    let context = Arc::new(ColorContext::from_icc(synthesized(Cicp::new(
+        12, 8, 0, true,
+    ))));
+    let desc = p3(PixelDescriptor::RGBF32_LINEAR);
+    let narrow = raster
+        .slice(desc.with_signal_range(zenpixels::SignalRange::Narrow))
+        .with_color_context(Arc::clone(&context));
+    assert!(quality().job().encoder().unwrap().encode(narrow).is_err());
+    let empty = PixelSlice::new(&[], 1, 0, 12, desc)
+        .unwrap()
+        .with_color_context(context);
+    assert!(quality().job().encoder().unwrap().encode(empty).is_err());
 }

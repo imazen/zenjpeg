@@ -843,6 +843,30 @@ fn cms_error(error: impl core::fmt::Display) -> Error {
     Error::icc_error(error.to_string())
 }
 
+fn working_icc(
+    profile: zenpixels_convert::icc_profiles::SynthesizedIcc,
+) -> Result<Arc<[u8]>, Error> {
+    match profile {
+        zenpixels_convert::icc_profiles::SynthesizedIcc::Profile(bytes) => {
+            Ok(Arc::from(bytes.as_ref()))
+        }
+        _ => Err(Error::icc_error(
+            "linear ICC working profile unavailable".into(),
+        )),
+    }
+}
+
+fn working_descriptor(descriptor: PixelDescriptor, icc: &[u8]) -> PixelDescriptor {
+    ColorProfileSource::Icc(icc)
+        .resolve()
+        .map(|(p, t)| descriptor.with_primaries(p).with_transfer(t))
+        .unwrap_or_else(|| {
+            descriptor
+                .with_primaries(ColorPrimaries::Unknown)
+                .with_transfer(TransferFunction::Unknown)
+        })
+}
+
 impl LinearCms {
     fn prepare(
         descriptor: PixelDescriptor,
@@ -885,18 +909,8 @@ impl LinearCms {
         } else {
             SynthesizedIcc::for_cicp(cicp)
         };
-        let target_icc = match synthesized {
-            SynthesizedIcc::Profile(profile) => Arc::<[u8]>::from(profile.as_ref()),
-            _ => {
-                return Err(Error::icc_error(
-                    "linear ICC working profile unavailable".into(),
-                ));
-            }
-        };
-        let target = ColorProfileSource::Icc(&target_icc)
-            .resolve()
-            .map(|(p, t)| descriptor.with_primaries(p).with_transfer(t))
-            .unwrap_or(opaque);
+        let target_icc = working_icc(synthesized)?;
+        let target = working_descriptor(descriptor, &target_icc);
         let mut plan = zenpixels_convert::OutputPlan::new_with_descriptor(
             opaque,
             Some(Arc::clone(&current)),
@@ -2385,3 +2399,93 @@ fn decode_srgb16(rows: &PixelSlice<'_>, out: &mut Vec<u8>) -> Result<(), Error> 
 // ============================================================================
 // Decode side: DecoderConfig → DecodeJob → Decoder / StreamingDecoder
 // ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zencodec::encode::{EncodeJob as _, EncoderConfig as _};
+    mod profiles {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/compact_icc.rs"
+        ));
+    }
+
+    #[test]
+    fn working_icc_declines_fail_closed_and_descriptors_follow_authority() {
+        use zenpixels_convert::icc_profiles::SynthesizedIcc;
+        for unavailable in [
+            SynthesizedIcc::NotNeeded,
+            SynthesizedIcc::NeedsCms,
+            SynthesizedIcc::CmsUnsupported,
+        ] {
+            assert!(
+                working_icc(unavailable)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("working profile unavailable")
+            );
+        }
+        let srgb = profiles::profile("sRGB-v2-magic.icc");
+        let desc = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3);
+        let identified = working_descriptor(desc, &srgb);
+        assert_eq!(identified.primaries, ColorPrimaries::Bt709);
+        assert_eq!(identified.transfer(), TransferFunction::Srgb);
+        let opaque = working_descriptor(desc, b"opaque");
+        assert_eq!(opaque.primaries, ColorPrimaries::Unknown);
+        assert_eq!(opaque.transfer(), TransferFunction::Unknown);
+        assert!(is_default_meaning((Some(&srgb), None), false));
+        let gray_linear = (None, Some(Cicp::new(2, 8, 0, true)));
+        assert!(!same_meaning((None, None), gray_linear, true));
+        assert!(!same_meaning(gray_linear, (None, None), true));
+        let safe = ColorContext::from_icc(profiles::profile("scRGB-v2.icc"));
+        assert!(
+            ColorProfileSource::Icc(safe.icc.as_ref().unwrap())
+                .resolve()
+                .is_some()
+        );
+        assert!(
+            LinearCms::prepare(
+                PixelDescriptor::RGBF32_LINEAR,
+                Some(&safe),
+                PixelLayout::RgbF32Linear,
+                1
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn profile_tagged_admission_checks_rgb_channel_model() {
+        use zenpixels_convert::icc_profiles::ADOBE_RGB;
+        let desc = PixelDescriptor::RGB8_SRGB
+            .with_primaries(ColorPrimaries::AdobeRgb)
+            .with_transfer(TransferFunction::Gamma22);
+        let good = JpegEncoderConfig::new()
+            .job()
+            .try_with_metadata_policy(
+                Metadata::none().with_icc(ADOBE_RGB),
+                zencodec::MetadataPolicy::PreserveExact,
+            )
+            .unwrap()
+            .encoder()
+            .unwrap();
+        assert_eq!(good.pixel_layout(desc).unwrap(), PixelLayout::Rgb8Srgb);
+        let bad = JpegEncoderConfig::new()
+            .job()
+            .try_with_metadata_policy(
+                Metadata::none().with_icc(profiles::profile("sGrey-v2-micro.icc")),
+                zencodec::MetadataPolicy::PreserveExact,
+            )
+            .unwrap()
+            .encoder()
+            .unwrap();
+        assert!(
+            bad.pixel_layout(desc)
+                .unwrap_err()
+                .to_string()
+                .contains("RGB samples require an RGB ICC")
+        );
+    }
+}
