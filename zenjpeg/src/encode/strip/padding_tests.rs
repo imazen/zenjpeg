@@ -365,6 +365,7 @@ fn rgb_case(
 
 #[test]
 fn rgb_padding_all_residues_and_reused_strips() {
+    let _dispatch = archmage::testing::lock_token_testing();
     let mut cells = 0;
     for sub in SUBS {
         for method in [
@@ -400,6 +401,7 @@ fn rgb_padding_all_residues_and_reused_strips() {
 
 #[test]
 fn format_padding_aliases_and_fallbacks() {
+    let _dispatch = archmage::testing::lock_token_testing();
     let mut cells = 0;
     for fmt in FORMATS {
         for sub in SUBS {
@@ -536,6 +538,7 @@ fn standard_downsample_even_partial_bottom_witness() {
 #[cfg(feature = "parallel")]
 #[test]
 fn dct_parallel_threshold_and_chunk_edges() {
+    let _dispatch = archmage::testing::lock_token_testing();
     // Y threshold/chunks = 4096 blocks; chroma threshold = 2048.
     // One/two-row strips cross these at different source widths.
     for sub in SUBS {

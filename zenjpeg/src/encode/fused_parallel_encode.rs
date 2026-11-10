@@ -632,6 +632,7 @@ mod padding_tests {
     use super::*;
 
     fn check(sub: Subsampling) {
+        let _dispatch = archmage::testing::lock_token_testing();
         let q = [16; 64];
         let zb = ZeroBiasParams::for_ycbcr(1.0, 0);
         let mut cells = 0;
@@ -830,6 +831,9 @@ mod padding_tests {
 
     #[test]
     fn fused_aq_padding_coordinate_oracle() {
+        // Token permutations are process-wide. Both AQ passes must see the
+        // same dispatch while other library tests exercise fallback tiers.
+        let _dispatch = archmage::testing::lock_token_testing();
         let mut cells = 0;
         for sub in [
             Subsampling::S444,

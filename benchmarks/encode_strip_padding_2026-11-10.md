@@ -143,3 +143,19 @@ the scalar fallback. Cross-tier bit identity of unrelated floating-point
 conversion is not asserted: every tier must satisfy its own exact padding
 oracle. Other platforms require observed CI results; wiring is not a claim of
 execution. No C++ jpegli encode parity or performance claim is made.
+
+## Test isolation
+
+Archmage token permutations change process-wide dispatch. Two-pass float/AQ
+reference tests hold `archmage::testing::lock_token_testing()` so another
+library test cannot change tiers between actual and reference passes. Without
+that guard the combined parallel/zencodec library suite exposed an AQ-oracle
+race, despite isolated focused runs passing. Assertions and expected samples
+remain unchanged.
+
+Local regression gates pass: 2,483 default library/integration tests, the
+parallel/zencodec library plus strip/streaming/grayscale/cancellation targets,
+15 doctests, scoped formatting, and strict Clippy for library and all tests
+with `parallel`. Existing external/corpus test gates retain their prior state.
+The two new turbo gates were explicitly run using a fresh SHA-verified release
+build, in addition to the ordinary synthetic tests.
