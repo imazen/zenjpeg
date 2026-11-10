@@ -1977,13 +1977,8 @@ impl JpegDecoder<'_> {
         // orientation the in-place path declines.
         let hdr = match lossless_to_orientation(base_transform) {
             zencodec::Orientation::Identity => hdr,
-            o => {
-                let mut buf = hdr;
-                match zenpixels_convert::orient::apply_orientation_in_place(&mut buf, o) {
-                    Ok(()) => buf,
-                    Err(_) => zenpixels_convert::orient::apply_orientation(buf.as_slice(), o),
-                }
-            }
+            o => zenpixels_convert::PixelBufferConvertExt::into_oriented(hdr, o)
+                .map_err(|_| Error::internal("HDR orientation failed"))?,
         };
 
         let mut info = ImageInfo::new(hdr.width(), hdr.height(), ImageFormat::Jpeg);

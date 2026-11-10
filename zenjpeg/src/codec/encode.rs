@@ -937,7 +937,7 @@ fn is_default_meaning((icc, cicp): (Option<&[u8]>, Option<Cicp>), gray: bool) ->
                 && (gray || matches!(c.color_primaries, 1 | 2))
         }
         (Some(icc), _) => {
-            zenpixels::icc::is_common_srgb(icc)
+            zenpixels::icc::IccIdentification::is_common_srgb(icc)
                 || matches!(
                     ColorProfileSource::Icc(icc).resolve(),
                     Some((primaries, TransferFunction::Srgb))
@@ -1331,7 +1331,7 @@ impl JpegEncoder {
     /// [`ColorEmitPolicy`](zencodec::ColorEmitPolicy): JPEG's only color
     /// carrier is an APP2 ICC profile (no CICP carrier), so a CICP-only
     /// source synthesizes an ICC via zenpixels-convert's
-    /// `synthesize_icc_for_cicp` instead of silently producing an untagged
+    /// `SynthesizedIcc::for_cicp` instead of silently producing an untagged
     /// (sRGB-assumed) JPEG. EXIF/XMP pass through verbatim — the blessed
     /// `with_metadata_policy` path has already filtered them (sub-field EXIF
     /// retention + orientation-tag reconciliation) before the bytes get here.
@@ -1428,9 +1428,7 @@ impl JpegEncoder {
                     }
                 }
                 zencodec::IccDisposition::SynthesizeFrom(cicp) => {
-                    use zenpixels_convert::icc_profiles::{
-                        SynthesizedIcc, synthesize_icc_for_cicp,
-                    };
+                    use zenpixels_convert::icc_profiles::SynthesizedIcc;
                     // `Profile` → embed; `NotNeeded` (sRGB default) →
                     // nothing. Every other outcome is an ERROR, not a
                     // silent skip: JPEG has NO CICP carrier, so an
@@ -1441,7 +1439,7 @@ impl JpegEncoder {
                     // grid incl PQ/HLG, no moxcms), so the only
                     // unsynthesizable CICPs are outside the assigned
                     // H.273 grid (reserved / unassigned code points).
-                    match synthesize_icc_for_cicp(cicp) {
+                    match SynthesizedIcc::for_cicp(cicp) {
                         SynthesizedIcc::Profile(bytes) => {
                             req = req.icc_profile_owned(bytes.into_owned());
                             wrote_icc = true;
