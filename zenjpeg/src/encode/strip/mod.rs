@@ -1351,6 +1351,15 @@ impl StripProcessor {
         // (needed for vertical downsampling modes at image bottom)
         if actual_strip_height < self.layout.strip_height {
             self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
+            // Fused RGB paths write cb_down/cr_down directly. Replicating the
+            // unused full-resolution cb/cr strips does not pad the DCT input.
+            if chroma_already_downsampled
+                && !self.layout.use_xyb
+                && !self.use_rgb
+                && !self.pixel_format.is_grayscale()
+            {
+                self.pad_chroma_down_vertically(actual_strip_height)?;
+            }
         }
 
         let need_chroma_downsample =

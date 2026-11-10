@@ -706,6 +706,15 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed 2026-11-10 on the restoration integration: fused RGB 420 and
+  gamma-aware conversion left partial bottom cb_down/cr_down rows unwritten.
+  Vertical padding touched unused full-resolution buffers instead of the DCT
+  inputs. The same repair makes pre-subsampled input horizontally padded
+  before vertical replication, with an explicit padded chroma stride.
+  The neutral 32×8 regression fails before the fix; RGB neutrality and
+  full-resolution/pre-subsampled strided parity cover partial width/height
+  boundaries. This is distinct from learned restoration/SR chroma behavior.
+
 - Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
   unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
   `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:

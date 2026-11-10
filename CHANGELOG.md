@@ -30,6 +30,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Replicate the actual downsampled chroma buffers at partial bottom edges;
+  use padded chroma strides for pre-subsampled input, preserving neutral RGB
+  and strided planar equivalence (`99e2ec99` regression).
+
 - Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
 
 - Controlled decoding now returns final owned details through `take_details`,
