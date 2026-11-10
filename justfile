@@ -987,3 +987,11 @@ progressive-decode-oracle:
 
 progressive-decode-i686:
     cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --test bundled progressive_encoding:: -- --nocapture
+
+# Arbitrary pre-sampled planar row partitions, chroma phase and buffer state.
+planar-streaming-check:
+    cargo test --locked -p zenjpeg --features parallel --test planar_streaming -- --nocapture
+
+planar-streaming-lint:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --features parallel --lib --test planar_streaming -- -D warnings
