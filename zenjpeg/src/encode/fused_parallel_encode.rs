@@ -557,3 +557,106 @@ fn new_freqs() -> HuffmanSymbolFrequencies {
         ac_chroma: FrequencyCounter::new(),
     }
 }
+
+#[cfg(test)]
+mod padding_tests {
+    use super::*;
+
+    fn check(sub: Subsampling) {
+        let q = [16; 64];
+        let zb = ZeroBiasParams::for_ycbcr(1.0, 0);
+        let mut cells = 0;
+        for w in (1..=33).chain([63, 64, 65, 127, 128, 129]) {
+            for tail in 1..=16 {
+                for start in [0, 2, 4, 8] {
+                    let mut cfg =
+                        build_config(w, 1, sub, 40.0, &q, &q, &q, &zb, &zb, &zb, false, false);
+                    cfg.height = start * cfg.mcu_height + tail;
+                    let count = tail.div_ceil(cfg.mcu_height);
+                    let dims = segment_dims(&cfg, start, count);
+                    let mut rgb = vec![0; w as usize * cfg.height * 3];
+                    for (i, v) in rgb.iter_mut().enumerate() {
+                        *v = ((i * 37 + i / 7 * 23) % 251) as u8;
+                    }
+                    let w = w as usize;
+                    let h = dims.pixel_h;
+                    let cw = w.div_ceil(cfg.h_samp);
+                    let ch = h.div_ceil(cfg.v_samp);
+                    let input = &rgb[start * cfg.mcu_height * w * 3..];
+                    let mut y = vec![-9876.; dims.padded_h * cfg.padded_width];
+                    let mut cb = vec![-9876.; dims.c_width * dims.c_height];
+                    let mut cr = cb.clone();
+                    color_convert(&rgb, &cfg, start, h, &mut y, &mut cb, &mut cr, dims.c_width);
+                    // Conversion oracle has PACKED output; scalar coordinate clamping
+                    // independently supplies every right/bottom padding sample.
+                    let mut ry = vec![0.; w * h];
+                    let mut rc = vec![0.; cw * ch];
+                    let mut rr = rc.clone();
+                    if sub == Subsampling::S420 {
+                        let mut ty = vec![0; w * h];
+                        let mut tc = vec![0; cw * ch];
+                        let mut tr = tc.clone();
+                        crate::color::fast_yuv::rgb_to_ycbcr_420_reuse(
+                            input, &mut ry, &mut rc, &mut rr, &mut ty, &mut tc, &mut tr, w, h, w, 3,
+                        );
+                    } else {
+                        let mut fc = vec![0.; w * h];
+                        let mut fr = fc.clone();
+                        crate::color::fast_yuv::rgb_to_ycbcr_strided_fast(
+                            input, &mut ry, &mut fc, &mut fr, w, h, w, 3,
+                        );
+                        for (dst, src) in [(&mut rc, &fc), (&mut rr, &fr)] {
+                            for yy in 0..ch {
+                                for xx in 0..cw {
+                                    let mut sum = 0.;
+                                    for dy in 0..cfg.v_samp {
+                                        for dx in 0..cfg.h_samp {
+                                            sum += src[(yy * cfg.v_samp + dy).min(h - 1) * w
+                                                + (xx * cfg.h_samp + dx).min(w - 1)];
+                                        }
+                                    }
+                                    dst[yy * cw + xx] = sum / (cfg.h_samp * cfg.v_samp) as f32;
+                                }
+                            }
+                        }
+                    }
+                    for (name, actual, stride, rows, expected, vw, vh) in [
+                        ("Y", &y, cfg.padded_width, dims.padded_h, &ry, w, h),
+                        ("Cb", &cb, dims.c_width, dims.c_height, &rc, cw, ch),
+                        ("Cr", &cr, dims.c_width, dims.c_height, &rr, cw, ch),
+                    ] {
+                        for yy in 0..rows {
+                            for xx in 0..stride {
+                                assert_eq!(
+                                    actual[yy * stride + xx],
+                                    expected[yy.min(vh - 1) * vw + xx.min(vw - 1)],
+                                    "{sub:?} {w}x{} start {start} {name} ({xx},{yy})",
+                                    cfg.height
+                                );
+                            }
+                        }
+                    }
+                    cells += 1;
+                }
+            }
+        }
+        eprintln!("fused parallel {sub:?}: {cells} segment geometries, 3 planes each");
+    }
+
+    #[test]
+    fn fused_420_edges() {
+        check(Subsampling::S420);
+    }
+    #[test]
+    fn fused_444_edges() {
+        check(Subsampling::S444);
+    }
+    #[test]
+    fn fused_422_edges() {
+        check(Subsampling::S422);
+    }
+    #[test]
+    fn fused_440_edges() {
+        check(Subsampling::S440);
+    }
+}

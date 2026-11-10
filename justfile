@@ -928,3 +928,17 @@ zeroed-alloc-check:
 # Native 12/16-bit CMYK remains float unless eight-bit is explicitly named.
 deep-cmyk-check:
     cargo test --locked -p zenjpeg --features zencodec,extended-jpeg --test zencodec_native_depth deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named
+
+# Synthetic edge/stride/partition oracles; no corpus or C++ jpegli required.
+strip-padding-check:
+    cargo test --locked -p zenjpeg --features parallel --lib padding_tests -- --nocapture
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding -- --nocapture
+
+# Explicit selection: missing pinned tools is a failure, never a graceful skip.
+strip-padding-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding -- --ignored --nocapture
+
+strip-padding-lint:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --features parallel --lib --test strip_padding -- -D warnings

@@ -43,6 +43,8 @@
 #![cfg_attr(not(feature = "__test-utils"), allow(dead_code))]
 
 mod convert;
+#[cfg(test)]
+mod padding_tests;
 
 use crate::encode::encoder_types::DownsamplingMethod;
 use crate::encode::layout::LayoutParams;
