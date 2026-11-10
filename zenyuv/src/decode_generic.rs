@@ -2,7 +2,7 @@
 //!
 //! YCbCr->RGB inverse matrix for 4:4:4, 4:2:0, 4:2:2, and 4:0:0 (grayscale).
 
-use crate::types::InverseCoeffs;
+use crate::types::{InverseCoeffs, Strides};
 use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
@@ -132,10 +132,9 @@ pub(crate) fn yuv420_to_rgb_generic(
     rgb: &mut [u8],
     width: usize,
     height: usize,
+    strides: Strides,
     coeffs: &InverseCoeffs,
 ) {
-    let cw = width.div_ceil(2);
-
     // Chroma is duplicated into a FIXED stack scratch so the inner loop is a
     // flat, unit-stride pass — the same shape as the 4:4:4 kernel, which is the
     // one that actually vectorizes (3.57x). No allocation: a decode hot path
@@ -150,8 +149,9 @@ pub(crate) fn yuv420_to_rgb_generic(
 
     for row in 0..height {
         let cy = row / 2;
-        let crow = cy * cw;
-        let yrow = row * width;
+        let (cb_row_off, cr_row_off) = (cy * strides.cb, cy * strides.cr);
+        let yrow = row * strides.y;
+        let rgb_row = row * strides.rgb;
 
         let mut base = 0usize;
         while base < width {
@@ -163,8 +163,8 @@ pub(crate) fn yuv420_to_rgb_generic(
             let mut i = 0usize;
             while i < n {
                 let cx = cx0 + (base + i) / 2 - base / 2;
-                let cb_val = cb_plane[crow + cx] as f32 + coeffs.uv_offset;
-                let cr_val = cr_plane[crow + cx] as f32 + coeffs.uv_offset;
+                let cb_val = cb_plane[cb_row_off + cx] as f32 + coeffs.uv_offset;
+                let cr_val = cr_plane[cr_row_off + cx] as f32 + coeffs.uv_offset;
                 cb_row[i] = cb_val;
                 cr_row[i] = cr_val;
                 if i + 1 < n && (base + i) % 2 == 0 {
@@ -177,19 +177,20 @@ pub(crate) fn yuv420_to_rgb_generic(
             }
 
             // Flat unit-stride conversion over the chunk.
+            let y_chunk = &y_plane[yrow + base..yrow + base + n];
+            let rgb_chunk = &mut rgb[rgb_row + base * 3..rgb_row + (base + n) * 3];
             for k in 0..n {
-                let yi = yrow + base + k;
-                let y_val = y_plane[yi] as f32 + coeffs.y_offset;
+                let y_val = y_chunk[k] as f32 + coeffs.y_offset;
                 let cb_val = cb_row[k];
                 let cr_val = cr_row[k];
                 let y_scaled = y_val * coeffs.y_coeff;
 
-                let p = yi * 3;
-                rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
-                rgb[p + 1] = crate::clamp_round(
+                let p = k * 3;
+                rgb_chunk[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
+                rgb_chunk[p + 1] = crate::clamp_round(
                     y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g,
                 );
-                rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
+                rgb_chunk[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
             }
 
             base += n;
@@ -209,6 +210,7 @@ pub(crate) fn yuv420_to_rgb_bilinear_generic(
     rgb: &mut [u8],
     width: usize,
     height: usize,
+    strides: Strides,
     coeffs: &InverseCoeffs,
 ) {
     let cw = width.div_ceil(2);
@@ -216,7 +218,7 @@ pub(crate) fn yuv420_to_rgb_bilinear_generic(
 
     for row in 0..height {
         for col in 0..width {
-            let yi = row * width + col;
+            let yi = row * strides.y + col;
 
             // Chroma sample center is at (col/2, row/2) in chroma space.
             // For bilinear: compute fractional position and interpolate.
@@ -238,21 +240,22 @@ pub(crate) fn yuv420_to_rgb_bilinear_generic(
             let w10 = (1.0 - fx) * fy;
             let w11 = fx * fy;
 
-            let cb_val = cb_plane[cy0 * cw + cx0] as f32 * w00
-                + cb_plane[cy0 * cw + cx1] as f32 * w01
-                + cb_plane[cy1 * cw + cx0] as f32 * w10
-                + cb_plane[cy1 * cw + cx1] as f32 * w11
+            let (cbs, crs) = (strides.cb, strides.cr);
+            let cb_val = cb_plane[cy0 * cbs + cx0] as f32 * w00
+                + cb_plane[cy0 * cbs + cx1] as f32 * w01
+                + cb_plane[cy1 * cbs + cx0] as f32 * w10
+                + cb_plane[cy1 * cbs + cx1] as f32 * w11
                 + coeffs.uv_offset;
-            let cr_val = cr_plane[cy0 * cw + cx0] as f32 * w00
-                + cr_plane[cy0 * cw + cx1] as f32 * w01
-                + cr_plane[cy1 * cw + cx0] as f32 * w10
-                + cr_plane[cy1 * cw + cx1] as f32 * w11
+            let cr_val = cr_plane[cy0 * crs + cx0] as f32 * w00
+                + cr_plane[cy0 * crs + cx1] as f32 * w01
+                + cr_plane[cy1 * crs + cx0] as f32 * w10
+                + cr_plane[cy1 * crs + cx1] as f32 * w11
                 + coeffs.uv_offset;
 
             let y_val = y_plane[yi] as f32 + coeffs.y_offset;
             let y_scaled = y_val * coeffs.y_coeff;
 
-            let p = yi * 3;
+            let p = row * strides.rgb + col * 3;
             rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
             rgb[p + 1] =
                 crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
@@ -273,22 +276,20 @@ pub(crate) fn yuv422_to_rgb_generic(
     rgb: &mut [u8],
     width: usize,
     height: usize,
+    strides: Strides,
     coeffs: &InverseCoeffs,
 ) {
-    let cw = width.div_ceil(2);
-
     for row in 0..height {
         for col in 0..width {
             let cx = col / 2;
-            let yi = row * width + col;
-            let ci = row * cw + cx;
+            let yi = row * strides.y + col;
 
             let y_val = y_plane[yi] as f32 + coeffs.y_offset;
-            let cb_val = cb_plane[ci] as f32 + coeffs.uv_offset;
-            let cr_val = cr_plane[ci] as f32 + coeffs.uv_offset;
+            let cb_val = cb_plane[row * strides.cb + cx] as f32 + coeffs.uv_offset;
+            let cr_val = cr_plane[row * strides.cr + cx] as f32 + coeffs.uv_offset;
             let y_scaled = y_val * coeffs.y_coeff;
 
-            let p = yi * 3;
+            let p = row * strides.rgb + col * 3;
             rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
             rgb[p + 1] =
                 crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);

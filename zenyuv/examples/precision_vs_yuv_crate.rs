@@ -64,7 +64,13 @@ fn encode_zenyuv_444(rgb: &[u8], w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u
     let mut u = vec![0u8; n];
     let mut v = vec![0u8; n];
     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-    ctx.encode_444_u8(rgb, &mut y, &mut u, &mut v, w, h);
+    ctx.encode_444_u8(
+        imgref::ImgRef::new(rgb, w * 3, h),
+        imgref::ImgRefMut::new(&mut y[..], w, h),
+        imgref::ImgRefMut::new(&mut u[..], w, h),
+        imgref::ImgRefMut::new(&mut v[..], w, h),
+    )
+    .unwrap();
     (y, u, v)
 }
 
@@ -121,7 +127,13 @@ fn encode_zenyuv_420(rgb: &[u8], w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u
     let mut u = vec![0u8; cw * ch];
     let mut v = vec![0u8; cw * ch];
     let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-    ctx.encode_420_u8(rgb, &mut y, &mut u, &mut v, w, h);
+    ctx.encode_420_u8(
+        imgref::ImgRef::new(rgb, w * 3, h),
+        imgref::ImgRefMut::new(&mut y[..], w, h),
+        imgref::ImgRefMut::new(&mut u[..], cw, ch),
+        imgref::ImgRefMut::new(&mut v[..], cw, ch),
+    )
+    .unwrap();
     (y, u, v)
 }
 

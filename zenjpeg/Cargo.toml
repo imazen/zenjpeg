@@ -420,6 +420,10 @@ name = "encode_zenbench"
 harness = false
 
 [[bench]]
+name = "ycbcr_planar_push"
+harness = false
+
+[[bench]]
 name = "container_scan"
 harness = false
 

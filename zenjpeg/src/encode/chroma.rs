@@ -303,12 +303,10 @@ fn zenyuv_strip_420(
             &packed
         };
         zenyuv::sharp::rgb_to_yuv420_sharp_f32(
-            rgb_input,
-            y_strip,
-            cb_down,
-            cr_down,
-            width,
-            strip_height,
+            imgref::ImgRef::new(rgb_input, width * 3, strip_height),
+            imgref::ImgRefMut::new(&mut *y_strip, width, strip_height),
+            imgref::ImgRefMut::new(&mut *cb_down, cw, strip_height.div_ceil(2)),
+            imgref::ImgRefMut::new(&mut *cr_down, cw, strip_height.div_ceil(2)),
             zenyuv::Range::Full,
             zenyuv::Matrix::Bt601,
             &config,

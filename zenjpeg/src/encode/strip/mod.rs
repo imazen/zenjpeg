@@ -44,7 +44,7 @@
 
 mod convert;
 
-use crate::encode::encoder_types::DownsamplingMethod;
+use crate::encode::encoder_types::{DownsamplingMethod, YCbCrPlanes};
 use crate::encode::layout::LayoutParams;
 use crate::error::Result;
 use crate::foundation::alloc::{
@@ -1417,9 +1417,9 @@ impl StripProcessor {
     /// subsampling mode. Skips the internal chroma downsampling step.
     ///
     /// # Arguments
-    /// * `y_row` - Y plane data for this row (width floats)
-    /// * `cb_row` - Cb plane data (chroma_width floats, already downsampled)
-    /// * `cr_row` - Cr plane data (chroma_width floats, already downsampled)
+    /// * `planes` - This strip's rows, starting at each slice's first sample.
+    ///   Each plane has its own stride, in samples; padding is never read.
+    ///   Cb/Cr are already downsampled.
     /// * `strip_y` - Starting row index of this strip
     ///
     /// # Value Range
@@ -1431,9 +1431,7 @@ impl StripProcessor {
     /// - 4:2:0: cb/cr at width/2 (and height/2, but handled row-by-row)
     pub fn process_strip_ycbcr_f32_subsampled(
         &mut self,
-        y_row: &[f32],
-        cb_row: &[f32],
-        cr_row: &[f32],
+        planes: &YCbCrPlanes<'_>,
         strip_y: usize,
     ) -> Result<usize> {
         // XYB mode requires RGB input for conversion
@@ -1454,7 +1452,7 @@ impl StripProcessor {
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Copy Y with level shift, copy chroma directly to downsampled buffers
-        self.copy_ycbcr_subsampled_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
+        self.copy_ycbcr_subsampled_to_strips(planes, actual_strip_height)?;
 
         // Pad strips vertically if this is a partial bottom strip
         if actual_strip_height < self.layout.strip_height {

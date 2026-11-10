@@ -706,6 +706,11 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- zenyuv decode (2026-11-04): SIMD and scalar paths disagree on tail rounding in 4:4:4 and 4:0:0
+  (8,903, 76 and 64 differing cases over 16.8M searched triples). Not fixed. It's no longer built
+  outside tests, where encode tests use it as a round-trip inverse, so nothing shipped is affected.
+  Fix it before ever exposing decode again.
+
 - Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
   unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
   `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:

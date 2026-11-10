@@ -3,7 +3,7 @@
 //! RGB->YCbCr via 15-bit fixed-point matrix using pmaddwd. 32 pixels per iter
 //! for 4:4:4, 2x32 fused Y+chroma for 4:2:0.
 
-use crate::types::{ForwardCoeffs, pack_i16_pair};
+use crate::types::{ForwardCoeffs, Strides, pack_i16_pair};
 use archmage::prelude::*;
 use safe_unaligned_simd::x86_64 as safe_simd;
 
@@ -59,7 +59,7 @@ pub(crate) fn rgb_to_yuv420_avx2(
     cr_out: &mut [u8],
     width: usize,
     height: usize,
-    cw: usize,
+    strides: Strides,
     coeffs: &ForwardCoeffs,
 ) {
     use core::arch::x86_64::*;
@@ -75,7 +75,7 @@ pub(crate) fn rgb_to_yuv420_avx2(
     let uv_bias_v = _mm256_set1_epi32(coeffs.uv_bias_420);
 
     let all_ones = _mm256_set1_epi8(1);
-    let row_stride = width * 3;
+    let row_stride = strides.rgb;
     let col_blocks = width / 32;
 
     let row_pairs = height / 2;
@@ -84,9 +84,10 @@ pub(crate) fn rgb_to_yuv420_avx2(
         let bot = top + 1;
         let top_off = top * row_stride;
         let bot_off = bot * row_stride;
-        let y_top_off = top * width;
-        let y_bot_off = bot * width;
-        let cb_row_off = ry * cw;
+        let y_top_off = top * strides.y;
+        let y_bot_off = bot * strides.y;
+        let cb_row_off = ry * strides.cb;
+        let cr_row_off = ry * strides.cr;
 
         for cx in 0..col_blocks {
             let px = cx * 32;
@@ -189,7 +190,7 @@ pub(crate) fn rgb_to_yuv420_avx2(
             let cr_u8 = _mm256_permute4x64_epi64::<0b11_01_10_00>(cr_u8);
             safe_simd::_mm_storeu_si128(
                 <&mut [u8; 16]>::try_from(
-                    &mut cr_out[cb_row_off + cx * 16..cb_row_off + cx * 16 + 16],
+                    &mut cr_out[cr_row_off + cx * 16..cr_row_off + cx * 16 + 16],
                 )
                 .unwrap(),
                 _mm256_castsi256_si128(cr_u8),
@@ -205,8 +206,8 @@ pub(crate) fn rgb_to_yuv420_avx2(
         cr_out,
         width,
         height,
-        cw,
         col_blocks * 32,
+        strides,
         coeffs,
     );
 }
@@ -222,6 +223,8 @@ pub(crate) fn rgb_to_yuv420_y_only_avx2(
     y_out: &mut [u8],
     width: usize,
     height: usize,
+    row_stride: usize,
+    y_stride: usize,
     coeffs: &ForwardCoeffs,
 ) {
     use core::arch::x86_64::*;
@@ -230,12 +233,11 @@ pub(crate) fn rgb_to_yuv420_y_only_avx2(
     let y_b0 = _mm256_set1_epi32(pack_i16_pair(coeffs.yb, 0));
     let y_bias_v = _mm256_set1_epi32(coeffs.y_bias);
 
-    let row_stride = width * 3;
     let col_blocks = width / 32;
 
     for row in 0..height {
         let row_off = row * row_stride;
-        let y_row_off = row * width;
+        let y_row_off = row * y_stride;
         for cx in 0..col_blocks {
             let px = cx * 32;
             let src = &rgb[row_off + px * 3..row_off + px * 3 + 96];
@@ -255,7 +257,16 @@ pub(crate) fn rgb_to_yuv420_y_only_avx2(
 
     // Scalar tail: Y only. Covers the [col_blocks * 32..width) columns that
     // the AVX2 kernel skipped.
-    crate::encode::rgb_to_y_scalar_tail(rgb, y_out, width, height, col_blocks * 32, coeffs);
+    crate::encode::rgb_to_y_scalar_tail(
+        rgb,
+        y_out,
+        width,
+        height,
+        col_blocks * 32,
+        row_stride,
+        y_stride,
+        coeffs,
+    );
 }
 
 // ── AVX2 helper functions ──────────────────────────────────────────────────

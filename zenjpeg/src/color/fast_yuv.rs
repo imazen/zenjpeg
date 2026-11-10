@@ -12,6 +12,8 @@
 //! zenyuv uses 15-bit fixed-point (AVX2 pmaddwd) or f32 FMA (other platforms).
 //! Max error vs f32 reference: ±1 level — invisible after JPEG quantization.
 
+use imgref::{ImgRef, ImgRefMut};
+
 /// Convert RGB to YCbCr with strided Y output (for padded strips).
 ///
 /// Y is written with `y_stride` spacing between rows, while Cb/Cr use `width` stride.
@@ -52,7 +54,13 @@ pub fn rgb_to_ycbcr_strided_fast(
     let mut cr_u8 = alloc::vec![0u8; num_pixels];
 
     let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
-    ctx.encode_444_u8(rgb_input, &mut y_u8, &mut cb_u8, &mut cr_u8, width, height);
+    ctx.encode_444_u8(
+        ImgRef::new(rgb_input, width * 3, height),
+        ImgRefMut::new(&mut y_u8[..], width, height),
+        ImgRefMut::new(&mut cb_u8[..], width, height),
+        ImgRefMut::new(&mut cr_u8[..], width, height),
+    )
+    .expect("the planes are sized for these dimensions");
 
     u8_to_f32_strided(&y_u8, y_plane, width, height, y_stride);
     u8_to_f32_contiguous(&cb_u8, cb_plane, num_pixels);
@@ -98,13 +106,12 @@ pub fn rgb_to_ycbcr_strided_reuse(
 
     let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
     ctx.encode_444_u8(
-        rgb_input,
-        &mut yuv_temp_y[..num_pixels],
-        &mut yuv_temp_cb[..num_pixels],
-        &mut yuv_temp_cr[..num_pixels],
-        width,
-        height,
-    );
+        ImgRef::new(rgb_input, width * 3, height),
+        ImgRefMut::new(&mut yuv_temp_y[..num_pixels], width, height),
+        ImgRefMut::new(&mut yuv_temp_cb[..num_pixels], width, height),
+        ImgRefMut::new(&mut yuv_temp_cr[..num_pixels], width, height),
+    )
+    .expect("the planes are sized for these dimensions");
 
     u8_to_f32_strided(yuv_temp_y, y_plane, width, height, y_stride);
     u8_to_f32_contiguous(yuv_temp_cb, cb_plane, num_pixels);
@@ -245,14 +252,14 @@ pub fn rgb_to_ycbcr_420_reuse(
     };
 
     let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
     ctx.encode_420_u8(
-        rgb_input,
-        &mut yuv_temp_y[..num_pixels],
-        &mut yuv_temp_cb[..c_size],
-        &mut yuv_temp_cr[..c_size],
-        width,
-        height,
-    );
+        ImgRef::new(rgb_input, width * 3, height),
+        ImgRefMut::new(&mut yuv_temp_y[..num_pixels], width, height),
+        ImgRefMut::new(&mut yuv_temp_cb[..c_size], cw, ch),
+        ImgRefMut::new(&mut yuv_temp_cr[..c_size], cw, ch),
+    )
+    .expect("the planes are sized for these dimensions");
 
     u8_to_f32_strided(yuv_temp_y, y_plane, width, height, y_stride);
     u8_to_f32_contiguous(yuv_temp_cb, cb_down, c_size);

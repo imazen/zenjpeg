@@ -253,7 +253,14 @@ fn bench_encode(suite: &mut Suite) {
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            b.iter(|| ctx.encode_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h))
+            b.iter(|| {
+                ctx.encode_420_u8(
+                    imgref::ImgRef::new(rgb_1k, w * 3, h),
+                    imgref::ImgRefMut::new(&mut y[..], w, h),
+                    imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+                    imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+                )
+            })
         });
 
         g.bench("sharp iter=4 (default)", move |b| {
@@ -265,7 +272,15 @@ fn bench_encode(suite: &mut Suite) {
                 max_iterations: 4,
                 ..Default::default()
             };
-            b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
+            b.iter(|| {
+                ctx.encode_sharp_420_u8(
+                    imgref::ImgRef::new(rgb_1k, w * 3, h),
+                    imgref::ImgRefMut::new(&mut y[..], w, h),
+                    imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+                    imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+                    &config,
+                )
+            })
         });
 
         g.bench("sharp iter=1", move |b| {
@@ -277,7 +292,15 @@ fn bench_encode(suite: &mut Suite) {
                 max_iterations: 1,
                 ..Default::default()
             };
-            b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
+            b.iter(|| {
+                ctx.encode_sharp_420_u8(
+                    imgref::ImgRef::new(rgb_1k, w * 3, h),
+                    imgref::ImgRefMut::new(&mut y[..], w, h),
+                    imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+                    imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+                    &config,
+                )
+            })
         });
 
         g.bench("sharp iter=0 (gamma-aware only)", move |b| {
@@ -289,7 +312,15 @@ fn bench_encode(suite: &mut Suite) {
                 max_iterations: 0,
                 ..Default::default()
             };
-            b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
+            b.iter(|| {
+                ctx.encode_sharp_420_u8(
+                    imgref::ImgRef::new(rgb_1k, w * 3, h),
+                    imgref::ImgRefMut::new(&mut y[..], w, h),
+                    imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+                    imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+                    &config,
+                )
+            })
         });
     });
 }

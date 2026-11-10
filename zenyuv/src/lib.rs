@@ -15,6 +15,7 @@
 //! # Example
 //!
 //! ```
+//! use imgref::{ImgRef, ImgRefMut};
 //! use zenyuv::{YuvContext, Range, Matrix};
 //!
 //! let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
@@ -24,7 +25,13 @@
 //! let mut y = vec![0u8; 64 * 64];
 //! let mut cb = vec![0u8; 32 * 32];
 //! let mut cr = vec![0u8; 32 * 32];
-//! ctx.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 64, 64);
+//! ctx.encode_420_u8(
+//!     ImgRef::new(&rgb[..], 64 * 3, 64),
+//!     ImgRefMut::new(&mut y[..], 64, 64),
+//!     ImgRefMut::new(&mut cb[..], 32, 32),
+//!     ImgRefMut::new(&mut cr[..], 32, 32),
+//! )
+//! .unwrap();
 //! ```
 
 #![no_std]
@@ -33,12 +40,12 @@
 // ── Modules ────────────────────────────────────────────────────────────────
 
 pub mod context;
-/// Public under `_dev` so `benches/kernel_tiers.rs` can measure the decode
-/// kernels per-tier. Not public API, not semver-covered.
-#[cfg(feature = "_dev")]
-pub mod decode;
-#[cfg(not(feature = "_dev"))]
+// Decode exists only as the inverse that encode tests round-trip through. No zen crate
+// called it, and its SIMD and scalar paths disagree on tail rounding, so it isn't built
+// outside tests.
+#[cfg(test)]
 mod decode;
+#[cfg(test)]
 mod decode_generic;
 mod encode;
 mod encode_generic;
@@ -46,8 +53,6 @@ mod error;
 pub mod sharp;
 pub(crate) mod types;
 
-#[cfg(target_arch = "x86_64")]
-mod avx2_decode;
 #[cfg(target_arch = "x86_64")]
 mod avx2_encode;
 
@@ -64,20 +69,9 @@ pub use error::YuvError;
 pub use sharp::SharpYuvConfig;
 pub use types::{Matrix, Range};
 
-// Crate-internal re-exports for tests. NOT public API.
-#[allow(unused_imports)]
-#[allow(dead_code)]
-pub(crate) use decode::{
-    yuv400_to_rgb, yuv400_to_rgb_with, yuv420_to_rgb, yuv420_to_rgb_bilinear,
-    yuv420_to_rgb_bilinear_with, yuv420_to_rgb_with, yuv422_to_rgb, yuv422_to_rgb_with,
-    yuv444_to_rgb, yuv444_to_rgb_with,
-};
-#[allow(unused_imports)]
-#[allow(dead_code)]
-pub(crate) use encode::{rgb_to_yuv420, rgb_to_yuv420_with, rgb_to_yuv444, rgb_to_yuv444_with};
-
 // ── Shared utilities ───────────────────────────────────────────────────────
 
+#[cfg(test)]
 #[inline(always)]
 fn clamp_round(v: f32) -> u8 {
     let r = v.round() as i32;
@@ -92,8 +86,14 @@ extern crate alloc;
 extern crate std;
 
 #[cfg(test)]
+mod strided_tests;
+#[cfg(test)]
+mod tight_for_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tight_for_tests::*;
     fn ctx() -> YuvContext {
         YuvContext::new(Range::Full, Matrix::Bt601)
     }
@@ -154,7 +154,7 @@ mod tests {
         let mut cr = vec![0u8; n];
         {
             let mut c = ctx();
-            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            c.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
         }
 
         let mut ref_img =
@@ -193,7 +193,7 @@ mod tests {
         let mut cr = vec![0u8; cw * ch];
         {
             let mut c = ctx();
-            c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            c.t_encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
         }
 
         let mut ref_img =
@@ -239,7 +239,7 @@ mod tests {
         let mut cr = [0u8; 2];
         {
             let mut c = ctx();
-            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 2, 1);
+            c.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 2, 1);
         }
         assert_eq!(y, [0, 255]);
         assert_eq!(cb, [128, 128]);
@@ -297,7 +297,7 @@ mod tests {
             let mut cr_ref = vec![0u8; n];
             {
                 let mut c = YuvContext::new(range, matrix);
-                c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+                c.t_encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
             }
 
             let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
@@ -306,7 +306,7 @@ mod tests {
                 let mut cr = vec![0u8; n];
                 {
                     let mut c = YuvContext::new(range, matrix);
-                    c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+                    c.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
                 }
                 assert_eq!(y, y_ref, "{name}: Y not byte-identical at {perm}");
                 assert_eq!(cb, cb_ref, "{name}: Cb not byte-identical at {perm}");
@@ -338,7 +338,7 @@ mod tests {
             let mut cr_ref = vec![0u8; cw * ch];
             {
                 let mut c = YuvContext::new(range, matrix);
-                c.encode_420_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+                c.t_encode_420_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
             }
 
             let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
@@ -347,7 +347,7 @@ mod tests {
                 let mut cr = vec![0u8; cw * ch];
                 {
                     let mut c = YuvContext::new(range, matrix);
-                    c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+                    c.t_encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
                 }
                 assert_eq!(y, y_ref, "{name}: Y not byte-identical at {perm}");
                 assert_eq!(cb, cb_ref, "{name}: Cb not byte-identical at {perm}");
@@ -424,7 +424,7 @@ mod tests {
                 let mut cr_arr = [0u8; 256];
                 {
                     let mut c = ctx();
-                    c.encode_444_u8(&rgb, &mut y, &mut cb_arr, &mut cr_arr, 256, 1);
+                    c.t_encode_444_u8(&rgb, &mut y, &mut cb_arr, &mut cr_arr, 256, 1);
                 }
 
                 for r in 0..=255u8 {
@@ -483,7 +483,7 @@ mod tests {
                     let mut y = [0u8; 256];
                     let mut cb = [0u8; 256];
                     let mut cr = [0u8; 256];
-                    ctx_combo.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 1);
+                    ctx_combo.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 1);
 
                     for r in 0..=255u8 {
                         let (y_ref, cb_ref, cr_ref) = ycbcr_reference_f64(r, g, b, matrix, range);
@@ -543,7 +543,7 @@ mod tests {
                     let mut y = [0u8; 256 * 2];
                     let mut cb = [0u8; 128];
                     let mut cr = [0u8; 128];
-                    ctx_combo.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 2);
+                    ctx_combo.t_encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 2);
 
                     // For each 2×2 block, verify against f64 reference.
                     // With uniform R/G/B across the block, the chroma average
@@ -640,13 +640,13 @@ mod tests {
         let mut cr = vec![0u8; n];
         {
             let mut c = ctx();
-            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            c.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
         }
 
         let mut out = vec![0u8; n * 3];
         {
             let c = ctx();
-            c.decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h);
+            c.t_decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h);
         }
 
         // Roundtrip error: encode + decode should be <= 2 levels max.
@@ -681,13 +681,13 @@ mod tests {
         let mut cr = vec![0u8; cw * ch];
         {
             let mut c = ctx();
-            c.encode_420_u8(&rgb, &mut y_plane, &mut cb, &mut cr, w, h);
+            c.t_encode_420_u8(&rgb, &mut y_plane, &mut cb, &mut cr, w, h);
         }
 
         let mut out = vec![0u8; n * 3];
         {
             let c = ctx();
-            c.decode_420_to_rgb(&y_plane, &cb, &cr, &mut out, w, h);
+            c.t_decode_420_to_rgb(&y_plane, &cb, &cr, &mut out, w, h);
         }
 
         // 4:2:0 loses chroma resolution. Smooth gradients should roundtrip
@@ -752,7 +752,7 @@ mod tests {
         let mut y = [0u8; 2];
         let mut cb = [0u8; 2];
         let mut cr = [0u8; 2];
-        encode::rgb_to_yuv444_with(
+        rgb_to_yuv444_with(
             &rgb,
             &mut y,
             &mut cb,
@@ -773,7 +773,7 @@ mod tests {
 
         // Roundtrip through limited range decode.
         let mut out = [0u8; 6];
-        decode::yuv444_to_rgb_with(&y, &cb, &cr, &mut out, 2, 1, Range::Limited, Matrix::Bt601);
+        yuv444_to_rgb_with(&y, &cb, &cr, &mut out, 2, 1, Range::Limited, Matrix::Bt601);
 
         // Should recover close to original.
         let max_err = max_abs_err(&rgb, &out);
@@ -792,7 +792,7 @@ mod tests {
         let mut cb709 = [0u8; 1];
         let mut cr709 = [0u8; 1];
 
-        encode::rgb_to_yuv444_with(
+        rgb_to_yuv444_with(
             &rgb,
             &mut y601,
             &mut cb601,
@@ -802,7 +802,7 @@ mod tests {
             Range::Full,
             Matrix::Bt601,
         );
-        encode::rgb_to_yuv444_with(
+        rgb_to_yuv444_with(
             &rgb,
             &mut y709,
             &mut cb709,
@@ -835,7 +835,7 @@ mod tests {
         let mut cr = vec![0u8; n];
         {
             let mut c = ctx();
-            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            c.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
         }
 
         // Reference decode.
@@ -846,7 +846,7 @@ mod tests {
             let mut out = vec![0u8; n * 3];
             {
                 let c = ctx();
-                c.decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h);
+                c.t_decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h);
             }
             let max_err = max_abs_err(&out, &ref_out);
             assert!(
@@ -869,7 +869,7 @@ mod tests {
         let mut cr = vec![0u8; cw * ch];
 
         let config = SharpYuvConfig::default();
-        sharp::rgb_to_yuv420_sharp(
+        rgb_to_yuv420_sharp(
             &rgb,
             &mut y,
             &mut cb,
@@ -887,7 +887,7 @@ mod tests {
         let mut cr_ref = vec![0u8; w * h];
         {
             let mut c = ctx();
-            c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+            c.t_encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
         }
         // Fused scalar Y vs SIMD Y may differ by ±1 (different rounding).
         let y_max = max_abs_err(&y, &y_ref);
@@ -929,7 +929,7 @@ mod tests {
         let mut cr = vec![0u8; cw * ch];
 
         let config = SharpYuvConfig::default();
-        sharp::rgb_to_yuv420_sharp(
+        rgb_to_yuv420_sharp(
             &rgb,
             &mut y,
             &mut cb,
@@ -958,7 +958,7 @@ mod tests {
         let mut cr = vec![0u8; cw * ch];
 
         let config = sharp::SharpYuvConfig::default();
-        sharp::rgb_to_yuv420_sharp(
+        rgb_to_yuv420_sharp(
             &rgb,
             &mut y,
             &mut cb,
@@ -997,7 +997,7 @@ mod tests {
             refine_y: false,
             ..Default::default()
         };
-        sharp::rgb_to_yuv420_sharp(
+        rgb_to_yuv420_sharp(
             &rgb,
             &mut y_chroma,
             &mut cb_chroma,
@@ -1014,7 +1014,7 @@ mod tests {
 
         // Chroma + Y refinement.
         let mut y_both = y_chroma.clone();
-        let total_diff = sharp::refine_y_420_u8(
+        let total_diff = refine_y_420_u8(
             &rgb,
             &mut y_both,
             &cb_chroma,
@@ -1073,7 +1073,7 @@ mod tests {
             refine_y: false,
             ..Default::default()
         };
-        sharp::rgb_to_yuv420_sharp(
+        rgb_to_yuv420_sharp(
             &rgb,
             &mut y,
             &mut cb,
@@ -1086,7 +1086,7 @@ mod tests {
         );
 
         // Apply Y refinement.
-        sharp::refine_y_420_u8(&rgb, &mut y, &cb, &cr, w, h, Range::Limited, Matrix::Bt601);
+        refine_y_420_u8(&rgb, &mut y, &cb, &cr, w, h, Range::Limited, Matrix::Bt601);
 
         // All Y values should remain in limited range.
         for &yv in y.iter() {
@@ -1185,7 +1185,7 @@ mod tests {
             let mut cb_sharp = vec![0u8; cw * ch];
             let mut cr_sharp = vec![0u8; cw * ch];
             let config = SharpYuvConfig::default();
-            sharp::rgb_to_yuv420_sharp(
+            rgb_to_yuv420_sharp(
                 rgb,
                 &mut y_sharp,
                 &mut cb_sharp,
@@ -1302,7 +1302,7 @@ mod tests {
             let mut cb = vec![0u8; w * h];
             let mut cr = vec![0u8; w * h];
             let mut ctx = YuvContext::new(Range::Limited, Matrix::WebpEncoder);
-            ctx.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            ctx.t_encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
 
             let expected_y = libwebp_y(g);
             let actual_y = y[(h / 2) * w + w / 2]; // center pixel; avoid any padding

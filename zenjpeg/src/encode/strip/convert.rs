@@ -7,7 +7,7 @@
 //! - Chroma downsampling
 //! - Strip padding (horizontal and vertical)
 
-use crate::encode::encoder_types::DownsamplingMethod;
+use crate::encode::encoder_types::{DownsamplingMethod, YCbCrPlanes};
 use crate::error::Result;
 use crate::types::{PixelFormat, Subsampling};
 
@@ -129,9 +129,7 @@ impl StripProcessor {
     /// Cb/Cr go directly to cb_down/cr_down (already downsampled).
     pub(super) fn copy_ycbcr_subsampled_to_strips(
         &mut self,
-        y_row: &[f32],
-        cb_row: &[f32],
-        cr_row: &[f32],
+        planes: &YCbCrPlanes<'_>,
         strip_height: usize,
     ) -> Result<()> {
         let width = self.layout.width;
@@ -140,38 +138,32 @@ impl StripProcessor {
         let chroma_width = self.layout.c_width;
         let chroma_height = self.layout.c_strip_height_for(strip_height);
 
-        // Validate input sizes
-        let expected_y_size = strip_height * width;
-        if y_row.len() < expected_y_size {
+        // `push_subsampled` validated each plane for its rows. A push that stops inside
+        // a strip reaches here with fewer rows than the strip needs. The last row needs
+        // only its samples.
+        if planes.y.len() < strip_height.saturating_sub(1) * planes.y_stride + width {
             return Err(crate::error::Error::internal("Y plane too small for strip"));
-        }
-
-        let expected_chroma_size = chroma_width * chroma_height;
-        if !self.pixel_format.is_grayscale()
-            && (cb_row.len() < expected_chroma_size || cr_row.len() < expected_chroma_size)
-        {
-            return Err(crate::error::Error::internal(
-                "Cb/Cr planes too small for subsampled strip",
-            ));
         }
 
         // Copy Y with level shift and padded stride
         for row in 0..strip_height {
-            let src_start = row * width;
+            let src_start = row * planes.y_stride;
             let dst_start = row * padded_width;
 
             for x in 0..width {
-                self.y_strip[dst_start + x] = y_row[src_start + x] + 128.0;
+                self.y_strip[dst_start + x] = planes.y[src_start + x] + 128.0;
             }
 
             PlaneStripMut::new(&mut self.y_strip, padded_width).pad_row_right(row, width);
         }
 
         // Copy Cb/Cr directly to downsampled buffers with level shift
-        if !self.pixel_format.is_grayscale() {
-            for i in 0..expected_chroma_size {
-                self.cb_down[i] = cb_row[i] + 128.0;
-                self.cr_down[i] = cr_row[i] + 128.0;
+        for row in 0..chroma_height {
+            let dst = row * chroma_width;
+            let (cb_src, cr_src) = (row * planes.cb_stride, row * planes.cr_stride);
+            for x in 0..chroma_width {
+                self.cb_down[dst + x] = planes.cb[cb_src + x] + 128.0;
+                self.cr_down[dst + x] = planes.cr[cr_src + x] + 128.0;
             }
         }
 

@@ -61,7 +61,14 @@ fn sharp_yuv_iteration_sweep() {
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
             let start = std::time::Instant::now();
-            ctx.encode_sharp_420_u8(rgb, &mut y, &mut cb, &mut cr, w, h, &config);
+            ctx.encode_sharp_420_u8(
+                imgref::ImgRef::new(rgb, w * 3, h),
+                imgref::ImgRefMut::new(&mut y[..], w, h),
+                imgref::ImgRefMut::new(&mut cb[..], cw, ch),
+                imgref::ImgRefMut::new(&mut cr[..], cw, ch),
+                &config,
+            )
+            .unwrap();
             total_us += start.elapsed().as_micros() as u64;
 
             // Skip quality measurement — this is a speed sweep only.

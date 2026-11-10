@@ -46,7 +46,13 @@ fn bench_444(suite: &mut Suite) {
                 let mut u = vec![0u8; n];
                 let mut v = vec![0u8; n];
                 b.iter(|| {
-                    ctx.encode_444_u8(rgb, &mut y, &mut u, &mut v, size, size);
+                    ctx.encode_444_u8(
+                        imgref::ImgRef::new(rgb, size * 3, size),
+                        imgref::ImgRefMut::new(&mut y[..], size, size),
+                        imgref::ImgRefMut::new(&mut u[..], size, size),
+                        imgref::ImgRefMut::new(&mut v[..], size, size),
+                    )
+                    .unwrap();
                 })
             });
 
@@ -94,7 +100,13 @@ fn bench_420(suite: &mut Suite) {
                 let mut u = vec![0u8; cn];
                 let mut v = vec![0u8; cn];
                 b.iter(|| {
-                    ctx.encode_420_u8(rgb, &mut y, &mut u, &mut v, size, size);
+                    ctx.encode_420_u8(
+                        imgref::ImgRef::new(rgb, size * 3, size),
+                        imgref::ImgRefMut::new(&mut y[..], size, size),
+                        imgref::ImgRefMut::new(&mut u[..], cw, cw),
+                        imgref::ImgRefMut::new(&mut v[..], cw, cw),
+                    )
+                    .unwrap();
                 })
             });
 
