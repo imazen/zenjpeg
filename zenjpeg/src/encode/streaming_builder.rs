@@ -347,6 +347,13 @@ impl StreamingEncoderBuilder {
                 "dimensions must be non-zero",
             ));
         }
+        if self.width > u16::MAX as u32 || self.height > u16::MAX as u32 {
+            return Err(Error::invalid_dimensions(
+                self.width,
+                self.height,
+                "dimensions exceed JPEG's 16-bit fields",
+            ));
+        }
 
         if self.use_rgb {
             if self.use_xyb {

@@ -295,7 +295,9 @@ fn reconstruct_hdr_exif_oriented_matches_preserve_plus_bake() {
             );
         }
 
-        let baked = zenpixels_convert::orient::apply_orientation(preserved.pixels(), orientation);
+        let baked =
+            zenpixels_convert::PixelSliceConvertExt::oriented(&preserved.pixels(), orientation)
+                .unwrap();
         assert_eq!(
             (corrected.pixels().width(), corrected.pixels().rows()),
             (baked.width(), baked.height()),
@@ -404,8 +406,11 @@ fn components_gain_map_oriented_with_base() {
             .extras::<zencodec::decode::DecodedGainMap>()
             .expect("Components must surface the DecodedGainMap");
 
-        let expected =
-            zenpixels_convert::orient::apply_orientation(dgm_p.pixels.as_slice(), orientation);
+        let expected = zenpixels_convert::PixelSliceConvertExt::oriented(
+            &dgm_p.pixels.as_slice(),
+            orientation,
+        )
+        .unwrap();
         assert_eq!(
             (dgm_c.pixels.width(), dgm_c.pixels.height()),
             (expected.width(), expected.height()),

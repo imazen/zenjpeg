@@ -478,15 +478,8 @@ pub fn encode_ultrahdr_luma(hdr: &PixelBuffer) -> Result<Vec<u8>> {
     //   (~0.91), not mid-gray. The previous `203.0` pasted BT.2408's
     //   HDR-terms diffuse white into the SDR-reference slot.
     //
-    // VERSION FACT (pinned by `bt2446c_params_inert_at_zentone_0_1`): the
-    // published zentone 0.1.0 this build resolves RESERVES both params
-    // (`let _ = (hdr_peak_nits, sdr_peak_nits)`) — its curve is
-    // input-relative (1.0 == "HDR peak", percent domain), so this change
-    // is byte-neutral TODAY. The constants go live with zentone's
-    // nits-faithful curve (local zentone 0.2.0); stating the correct
-    // values now means that dependency bump changes rendering because the
-    // CURVE improved, not because stale config constants suddenly started
-    // being believed.
+    // Current zentone uses these physical-unit parameters. The white/transfer
+    // controls below pin the linear, sRGB, PQ and HLG normalization conventions.
     let scale = curve_input_scale_nits(hdr);
     encode_ultrahdr_with_curve(
         hdr,
@@ -704,8 +697,8 @@ pub fn encode_with_gainmap_metadata(
             })?;
             zencodec::Cicp::new(primaries, 13, 0, true)
         };
-        use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-        match synthesize_icc_for_cicp(cicp) {
+        use zenpixels_convert::icc_profiles::SynthesizedIcc;
+        match SynthesizedIcc::for_cicp(cicp) {
             SynthesizedIcc::Profile(icc) => retained.icc_profile = Some(icc.as_ref().into()),
             SynthesizedIcc::NotNeeded => {}
             _ => {
@@ -926,7 +919,7 @@ fn encode_sdr_base(
 /// the base would be mislabelled. A caller with another colour supplies its
 /// profile in the `EncoderConfig` segments instead.
 fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
     let desc = sdr.descriptor();
     // Untagged means sRGB to every reader: right for BT.709 primaries with
     // the sRGB (or unstated) transfer, and for unknown primaries (nothing to
@@ -942,7 +935,7 @@ fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     {
         return Ok(None);
     }
-    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(synthesize_icc_for_cicp);
+    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(SynthesizedIcc::for_cicp);
     match synthesized {
         Some(SynthesizedIcc::Profile(icc)) => Ok(Some(icc)),
         Some(SynthesizedIcc::NotNeeded) => Ok(None),
@@ -1019,7 +1012,7 @@ mod tests {
             .unwrap()
             .expect("a BT.709-transfer base needs a profile");
         assert_eq!(
-            zenpixels::icc::extract_cicp(&icc),
+            zenpixels::Cicp::from_icc(&icc),
             Some(zenpixels::Cicp::new(1, 1, 0, true))
         );
     }
@@ -1049,33 +1042,43 @@ mod tests {
         );
     }
 
-    /// VERSION PIN: the published zentone 0.1.0 this build resolves treats
-    /// `Bt2446C::new`'s two parameters as RESERVED (`let _ = ...`) — its
-    /// curve is input-relative, so every construction behaves identically.
-    /// This pin does two jobs: (1) it documents that the appendix-AA
-    /// constant correction in `encode_ultrahdr_luma` is byte-neutral at
-    /// this zentone version, and (2) it FAILS the moment a zentone bump
-    /// makes the parameters live (the nits-faithful curve in zentone git),
-    /// forcing that bump to be taken consciously: re-verify that
-    /// `curve_input_scale_nits` + the 100-nit SDR reference then map SDR
-    /// diffuse white (input 1.0 = 203 nits) to white (~0.9) in the base —
-    /// the assertion to flip this test to.
+    /// Pin the physical-unit contract of current zentone main.
     #[test]
-    fn bt2446c_params_inert_at_zentone_0_1() {
+    fn bt2446c_current_main_white_and_transfer_scale_controls() {
+        use ultrahdr_core::color::transfer::{hlg_ootf_inv, pq_oetf};
         use zentone::LumaToneMap as _;
-        let corrected = Bt2446C::new(203.0, 100.0);
-        let legacy = Bt2446C::new(1000.0, 203.0);
-        for y in [0.05_f32, 0.25, 1.0, 4.0, 40.0] {
-            let (c, l) = (corrected.map_luma(y), legacy.map_luma(y));
+        let curve = Bt2446C::new(203.0, 100.0);
+        let white = curve.map_luma(1.0);
+        assert!((white - 0.9).abs() < 0.02, "SDR diffuse white: {white}");
+        let hlg_white = linear_srgb::tf::linear_to_hlg(hlg_ootf_inv(203.0, 1000.0));
+        for (transfer, encoded) in [
+            (TransferFunction::Linear, 1.0),
+            (TransferFunction::Srgb, 1.0),
+            (TransferFunction::Pq, pq_oetf(203.0 / 10_000.0)),
+            (TransferFunction::Hlg, hlg_white),
+        ] {
+            let samples = [encoded, encoded, encoded, 1.0];
+            let bytes = samples.iter().flat_map(|f| f.to_ne_bytes()).collect();
+            let desc = zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer);
+            let hdr = PixelBuffer::from_vec(bytes, 1, 1, desc).unwrap();
+            let mut row = [0.0; 4];
+            extract_hdr_row_rgba_linear(&hdr, 0, &mut row);
+            let scale = curve_input_scale_nits(&hdr);
             assert!(
-                (c - l).abs() < 1e-7,
-                "zentone made Bt2446C's constructor params LIVE (map_luma({y}): \
-                 corrected {c} vs legacy {l}) — re-verify encode_ultrahdr_luma's \
-                 measured-scale constants and flip this test to assert \
-                 map_luma(1.0) ≈ 0.9 (SDR white → white) per appendix AA"
+                (row[0] * scale - 203.0).abs() < 0.02,
+                "{transfer:?}: {row:?}"
+            );
+            let mapped = Bt2446C::new(scale, 100.0).map_luma(row[0]);
+            assert!(
+                (mapped - white).abs() < 2e-4,
+                "{transfer:?}: {mapped} vs {white}"
             );
         }
-        // Monotone into the highlights under the pinned semantics too.
-        assert!(corrected.map_luma(4.0) > corrected.map_luma(1.0));
+        for nits in [0.0, 1.0, 10.0, 69.81, 100.0, 203.0, 1000.0] {
+            let back = curve.inverse_tone_curve(curve.tone_curve(nits));
+            assert!((back - nits).abs() < 1e-2, "{nits} -> {back}");
+        }
+        assert!(curve.map_luma(4.0) > white);
+        assert!((curve.map_luma(0.05) - Bt2446C::new(1000.0, 203.0).map_luma(0.05)).abs() > 0.1);
     }
 }

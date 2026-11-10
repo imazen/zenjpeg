@@ -607,7 +607,7 @@ pub(crate) mod simd {
         let r3 = t2_scaled - t3_scaled;
 
         // B<2>: r2 = r2 * sqrt2 + r3 (FMA)
-        let r2_final = r2.mul_add(sqrt2, r3);
+        let r2_final = r2.mul_add_relaxed(sqrt2, r3);
 
         // InverseEvenOdd<4>: interleave
         m[0] = r0;
@@ -655,7 +655,7 @@ pub(crate) mod simd {
         dct1d_4_mage(&mut second, wc4_0, wc4_1, sqrt2);
 
         // B<4>: cumulative sum with FMA
-        second[0] = second[0].mul_add(sqrt2, second[1]);
+        second[0] = second[0].mul_add_relaxed(sqrt2, second[1]);
         second[1] += second[2];
         second[2] += second[3];
 

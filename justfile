@@ -1030,3 +1030,78 @@ encode-record-planar-check:
     cargo test -p zenjpeg --release --test encode_record planar_encodes_emit_app15_across_sampling_and_finish_paths -- --exact
     cargo test -p zenjpeg --release --test planar_streaming
     just encode-record-check encode-record-clippy
+
+# GDepth and Dynamic Depth metadata: real JPEG/PNG carriers and unit/format matrix.
+depth-metadata-check:
+    cargo test -p zenjpeg --release --lib decode::depth::tests
+    cargo test -p zenjpeg --release --features zencodec --test encode_carrier_policy
+    cargo clippy -p zenjpeg --release --features zencodec --lib -- -D warnings
+
+# Current-main source compatibility, unchanged pixel hashes, and depth metadata.
+depth-cohort-check:
+    just depth-metadata-check
+    RUST_TEST_THREADS=1 cargo test -p zenjpeg --release --locked --lib --tests
+    cargo test -p zenjpeg --release --locked --features parallel,zencodec --test planar_streaming --test strip_padding --test strip_padding_hashes
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --lib --test bundled --test source_color_binding --test controlled_decode
+    cargo test -p zenjpeg --release --locked --doc --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+
+# Standalone viewer dependencies must follow the root codec/pixel source pins.
+depth-viewer-check:
+    cargo build --manifest-path zenjpeg-diagnostics-viewer/wasm/Cargo.toml --release --target wasm32-unknown-unknown
+
+# Optional boundary-RD arithmetic uses the same explicit relaxed SIMD operations.
+depth-boundary-check:
+    cargo test -p zenjpeg --release --locked --features boundary-rd --lib encode::boundary_rd::tests
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+
+# Independent documentation and standalone fuzz compilation on the pinned graph.
+depth-cohort-doc-fuzz-check:
+    cargo test -p zenjpeg --release --locked --doc --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+
+# Current-main tone curve plus authoritative ICC transforms on all HDR readers.
+depth-hdr-check:
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --lib ultrahdr::
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --test bundled ultrahdr_roundtrip::
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+
+# Authoritative linear ICC conversion across all native row-feeding modes.
+depth-linear-icc-check:
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --test source_color_binding --test encode_carrier_policy --test row_planning --test streaming_encode
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+
+# Focused changed-line/branch evidence for depth and current-main color adapters.
+depth-coverage-check:
+    test -n "$ZENJPEG_DEPTH_COV_DIR"
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test source_color_binding --test encode_carrier_policy --test row_planning --test streaming_encode
+    just depth-coverage-report
+
+# Resume the bounded HDR witnesses and report after the instrumented core run.
+depth-coverage-report:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test bundled -- ultrahdr_roundtrip::
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils --test bundled -- gain_map_render::
+    cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
+    cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_DEPTH_COV_DIR/branches.json"
+    python3 scripts/check-component-coverage.py origin/main "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
+    python3 scripts/check-native-branches.py origin/main "$ZENJPEG_DEPTH_COV_DIR/branches.json" --require-complete
+
+# Exact float-plane batch edges and profile/propagation coverage witnesses.
+depth-edge-coverage-check:
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --lib
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --test source_color_binding --test encode_carrier_policy --test row_planning --test streaming_encode
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert,boundary-rd,__expert -- -D warnings
+
+# Verify the corpus prefetch used before cross tests includes its shared helper.
+depth-corpus-prefetch-check:
+    cargo check -p zenjpeg --release --locked --example metadata_corpus_prefetch
+
+# Exercise native dispatch and the scalar fallback without changing production inputs.
+depth-vector-coverage-check:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report -p zenjpeg --lib --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,inventory,__test-utils -- color::ycbcr::tests::float_plane_batch_remainders_match_complete_vectors
+    cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
+    cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_DEPTH_COV_DIR/branches.json"
+    python3 scripts/check-component-coverage.py origin/main "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
+    python3 scripts/check-native-branches.py origin/main "$ZENJPEG_DEPTH_COV_DIR/branches.json" --require-complete

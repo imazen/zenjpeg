@@ -1595,7 +1595,7 @@ impl DecodeInfo {
 /// `transform`, returning the oriented buffer.
 ///
 /// With the `zencodec` feature this delegates to
-/// `zenpixels_convert::orient::apply_orientation_into` (#150): one permute
+/// `zenpixels_convert::PixelSliceConvertExt::oriented_into` (#150): one permute
 /// implementation for the ecosystem, cache-tiled and SIMD (`fast-transpose`:
 /// AVX2 / NEON kernels for every pixel width from 1 to 16 bytes) where it
 /// pays. The scalar gather [`transform_interleaved`] stays as the fallback
@@ -1664,8 +1664,8 @@ fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
         descriptor,
     )
     .ok()?;
-    zenpixels_convert::orient::apply_orientation_into(
-        src_slice,
+    zenpixels_convert::PixelSliceConvertExt::oriented_into(
+        &src_slice,
         transform.as_orientation(),
         dst_slice,
     )

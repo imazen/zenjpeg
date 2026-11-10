@@ -200,9 +200,9 @@ mod simd_fused {
         let kb_cr = mt_f32x8::splat_t(token, YCBCR_B_TO_CR);
         let offset = mt_f32x8::splat_t(token, CHROMA_OFFSET);
 
-        let y = kr_y.mul_add(r, kg_y.mul_add(g, kb_y * b));
-        let cb = kr_cb.mul_add(r, kg_cb.mul_add(g, kb_cb * b)) + offset;
-        let cr = kr_cr.mul_add(r, kg_cr.mul_add(g, kb_cr * b)) + offset;
+        let y = kr_y.mul_add_relaxed(r, kg_y.mul_add_relaxed(g, kb_y * b));
+        let cb = kr_cb.mul_add_relaxed(r, kg_cb.mul_add_relaxed(g, kb_cb * b)) + offset;
+        let cr = kr_cr.mul_add_relaxed(r, kg_cr.mul_add_relaxed(g, kb_cr * b)) + offset;
 
         (y.to_array(), cb.to_array(), cr.to_array())
     }
@@ -243,9 +243,9 @@ mod simd_fused {
         let kb_cr = mt_f32x8::splat_t(token, YCBCR_B_TO_CR);
         let offset = mt_f32x8::splat_t(token, CHROMA_OFFSET);
 
-        let y = kr_y.mul_add(r, kg_y.mul_add(g, kb_y * b));
-        let cb = kr_cb.mul_add(r, kg_cb.mul_add(g, kb_cb * b)) + offset;
-        let cr = kr_cr.mul_add(r, kg_cr.mul_add(g, kb_cr * b)) + offset;
+        let y = kr_y.mul_add_relaxed(r, kg_y.mul_add_relaxed(g, kb_y * b));
+        let cb = kr_cb.mul_add_relaxed(r, kg_cb.mul_add_relaxed(g, kb_cb * b)) + offset;
+        let cr = kr_cr.mul_add_relaxed(r, kg_cr.mul_add_relaxed(g, kb_cr * b)) + offset;
 
         (y.to_array(), cb.to_array(), cr.to_array())
     }

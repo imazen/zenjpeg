@@ -73,7 +73,7 @@ fn emit_srgb_cicp_no_icc_marker() {
 
 /// A CICP-only Display-P3 source must synthesize an embedded ICC
 /// (`IccDisposition::SynthesizeFrom` lowered via zenpixels-convert's
-/// `synthesize_icc_for_cicp`): JPEG has no CICP carrier, so an embedded ICC is
+/// `SynthesizedIcc::for_cicp`): JPEG has no CICP carrier, so an embedded ICC is
 /// the only way the wide-gamut description survives — otherwise the file is
 /// silently relabeled sRGB. The oracle is what the embedded profile says: its
 /// `cicp` tag names Display P3 with the sRGB transfer. (It was the curated
@@ -94,7 +94,7 @@ fn emit_cicp_only_display_p3_synthesizes_icc() {
         .and_then(|e| e.icc_profile().map(<[u8]>::to_vec))
         .expect("embedded ICC");
     assert_eq!(
-        zenpixels::icc::extract_cicp(&icc),
+        zenpixels::Cicp::from_icc(&icc),
         Some(zenpixels::Cicp::new(12, 13, 0, true)),
         "embedded ICC should name Display P3 with the sRGB transfer"
     );

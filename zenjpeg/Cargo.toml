@@ -173,7 +173,7 @@ ultrahdr-core = { workspace = true }
 # our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
 # `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
 # Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
-zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "02243a4ba84ed71611f2cf445553eb4d41c2fbac" }
+zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "952fc1860933ac17a0b71ceaa2256f3b4fb07546" }
 zensim = { workspace = true, features = ["classification"] }
 
 [features]
@@ -269,6 +269,8 @@ ultrahdr = [
     # gate covers pre-0.3.0 surface churn).
     "dep:zenpixels-convert",
     "zenpixels-convert/hdr-experimental",
+    # ICC recognition may identify metadata without permitting matrix/TRC substitution.
+    "zenpixels-convert/cms-moxcms",
     # The SDR base's ICC profile comes from `synthesize_icc_for_cicp`, which
     # serves exact, cicp-tagged profiles (that libultrahdr recognises) only
     # from the icc-db blob; without it a BT.2020 base with the sRGB transfer
@@ -290,7 +292,7 @@ ultrahdr = [
 # `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
 # kernels, which the decoder's auto-orient permute delegates to (#150); it
 # adds no dependency (archmage + magetypes are already mandatory here).
-zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose", "zenpixels-convert/cms-moxcms"]
 
 # One-shot JPEG→JPEG recompression with calibrated routing and no metric runtime.
 recompress = ["metadata"]

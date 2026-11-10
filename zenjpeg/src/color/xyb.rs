@@ -474,9 +474,9 @@ fn generic_linear_rgb_to_scaled_xyb<T: magetypes::simd::backends::F32x8Convert>(
     let neg_bias_cbrt = f32x8::<T>::splat_t(token, neg_bias_cbrt_val);
     let half = f32x8::<T>::splat_t(token, 0.5);
 
-    let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias)));
-    let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias)));
-    let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b_in, bias)));
+    let mixed0 = m00.mul_add_relaxed(r, m01.mul_add_relaxed(g, m02.mul_add_relaxed(b_in, bias)));
+    let mixed1 = m10.mul_add_relaxed(r, m11.mul_add_relaxed(g, m12.mul_add_relaxed(b_in, bias)));
+    let mixed2 = m20.mul_add_relaxed(r, m21.mul_add_relaxed(g, m22.mul_add_relaxed(b_in, bias)));
 
     let mixed0 = mixed0.max(zero);
     let mixed1 = mixed1.max(zero);
@@ -556,9 +556,12 @@ fn generic_linear_rgb_to_xyb_inplace<T: magetypes::simd::backends::F32x8Convert>
         let g = f32x8::<T>::from_array_t(token, g_arr);
         let b_in = f32x8::<T>::from_array_t(token, b_arr);
 
-        let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias)));
-        let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias)));
-        let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b_in, bias)));
+        let mixed0 =
+            m00.mul_add_relaxed(r, m01.mul_add_relaxed(g, m02.mul_add_relaxed(b_in, bias)));
+        let mixed1 =
+            m10.mul_add_relaxed(r, m11.mul_add_relaxed(g, m12.mul_add_relaxed(b_in, bias)));
+        let mixed2 =
+            m20.mul_add_relaxed(r, m21.mul_add_relaxed(g, m22.mul_add_relaxed(b_in, bias)));
 
         let mixed0 = mixed0.max(zero);
         let mixed1 = mixed1.max(zero);
@@ -1124,9 +1127,9 @@ fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert
     let m21 = f32x8::<T>::splat_t(token, inv[7]);
     let m22 = f32x8::<T>::splat_t(token, inv[8]);
 
-    let r = m00.mul_add(opsin_r, m01.mul_add(opsin_g, m02 * opsin_b));
-    let g = m10.mul_add(opsin_r, m11.mul_add(opsin_g, m12 * opsin_b));
-    let b_out = m20.mul_add(opsin_r, m21.mul_add(opsin_g, m22 * opsin_b));
+    let r = m00.mul_add_relaxed(opsin_r, m01.mul_add_relaxed(opsin_g, m02 * opsin_b));
+    let g = m10.mul_add_relaxed(opsin_r, m11.mul_add_relaxed(opsin_g, m12 * opsin_b));
+    let b_out = m20.mul_add_relaxed(opsin_r, m21.mul_add_relaxed(opsin_g, m22 * opsin_b));
 
     (r, g, b_out)
 }

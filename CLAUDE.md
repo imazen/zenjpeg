@@ -1919,3 +1919,51 @@ silently ignored the record setting. Planar completion now injects the record
 before metadata and MPF indexing. Regression coverage exercises full-resolution
 and pre-sampled planes, all four samplings, all three finish methods, verified
 DQT checksums and identical image bytes after removing the record.
+
+## Known Bugs: Google depth metadata and current pixel facades (fixed 2026-11-10)
+
+Absent GDepth/Dynamic Depth format was interpreted as linear instead of inverse,
+and millimeter endpoints were neither normalized nor identified correctly. Both
+carriers now use the Google default, normalize millimeters to meters, and reject
+unknown format/unit labels. The explicit `GDepthFormat::default()` remains linear.
+`just depth-metadata-check` exercises real JPEGs with PNG depth/confidence data
+across 128 carrier/prefix/format/unit combinations and retains existing parser tests.
+
+Current pixel sources expose ICC and orientation operations through associated
+methods and conversion traits. The stable SIMD cohort requires 0.9.31; explicit
+`mul_add_relaxed` preserves the previous vector arithmetic.
+`just depth-cohort-check` checks these adapters against existing pixel/golden
+contracts and compiles the standalone fuzz targets without local path overrides.
+
+The standalone diagnostics WASM workspace also needs matching source pins: root
+patches do not propagate into it. `just depth-viewer-check` builds the actual
+wasm32 target against the same main pixel/core sources.
+
+Current zenpixels distinguishes ICC metadata identification from safe matrix/TRC
+substitution. Native and codec HDR readers now convert metadata-only ICC bases
+through the shared CMS into the identified working space before gain-map math.
+Linear row-reconstructor callers supply color-managed working-space rows.
+The UltraHDR feature enables the shared moxcms backend for this conversion.
+Current zentone uses physical-unit BT.2446C parameters; the owner approved replacing
+the historical reserved-parameter guard with white/transfer/inverse controls.
+
+Linear ICC encode inputs use a reusable one-row profile plan before native
+linear-to-sRGB encoding, with RGB and GRAY target profiles matching the carrier
+family. `just depth-linear-icc-check` covers 576 byte-parity cases: six linear
+layouts, two encoder configurations, four feeding modes, four batch sizes and
+three context patterns, at odd dimensions with padded strides. Rejected width
+or descriptor changes leave the row state usable; validate geometry before
+replacing its color plan. Gray's unspecified-primaries/sRGB CICP agrees with
+an untagged gray header. Existing carrier/sample expectations remain intact.
+
+Float-plane YCbCr batch remainders differed by one ULP from complete vectors
+(witness: length one, first red component, bits 1052080859 vs 1052080860).
+Scalar tails shifted and normalized in a different order. Padded vector tails
+now use the same arithmetic for lengths 0–31, with exact prefix identity and
+an independent double-precision matrix check. Existing golden values are retained.
+
+ICC adapter preparation checks resource limits and native JPEG geometry before
+allocating its conversion row. Unknown-height feeding checks each accumulated
+height before changing color state. Pixel-buffer allocation/capacity failures
+retain resource error categories instead of becoming ICC failures; deterministic
+capacity-overflow and invalid-geometry controls require no large allocation.

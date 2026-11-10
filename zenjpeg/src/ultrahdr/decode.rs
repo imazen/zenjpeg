@@ -131,8 +131,9 @@ fn optional_gainmap_xmp(xmp: &str) -> Option<Result<(GainMapMetadata, Option<usi
 /// as it processes rows in batches rather than loading the entire image.
 ///
 /// The reconstructor accepts **linear f32 RGB** input and produces **linear f32 RGBA**
-/// output. The caller must convert sRGB u8 decoder output to linear f32 before
-/// calling `process_rows`.
+/// output. The caller must color-manage the decoded base into linear RGB in
+/// the identified working primaries before calling `process_rows`. For an
+/// untagged sRGB base this is the ordinary sRGB EOTF.
 ///
 /// # Arguments
 ///
@@ -234,7 +235,8 @@ pub fn tonemapper_from_ultrahdr(extras: &DecodedExtras) -> Result<AdaptiveTonema
 /// One-call equivalent of libultrahdr's `uhdr_decode` followed by
 /// `uhdr_get_decoded_image` with `display_boost = 1.0`. Returns the SDR
 /// base image with its resolved primaries and transfer function. Unknown ICC
-/// profiles require a color-managed decode and return an error here. For HDR output, use
+/// profiles remain unsupported here; recognized profiles that require a CMS
+/// are converted into their identified working space. For HDR output, use
 /// [`decode_ultrahdr_hdr`].
 ///
 /// Works on any JPEG (Ultra HDR or not) since it returns the primary
@@ -295,7 +297,11 @@ pub fn decode_ultrahdr_hdr(
 /// to [`zenpixels::PixelFormat`]; expands 3-channel RGB to 4-channel Rgba8
 /// when the codec returned packed RGB (the common case).
 fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result<PixelBuffer> {
-    let (primaries, transfer) = base_color(decoded.extras().and_then(DecodedExtras::icc_profile))?;
+    let icc = decoded
+        .extras()
+        .and_then(DecodedExtras::icc_profile)
+        .map(<[u8]>::to_vec);
+    let (primaries, transfer) = base_color(icc.as_deref())?;
     let width = decoded.width;
     let height = decoded.height;
     let format = decoded.format;
@@ -314,12 +320,14 @@ fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result
             )));
         }
     };
-    pixel_buffer_from_vec(bytes, width, height, zp_format, primaries, transfer)
-        .map_err(ultrahdr_to_zenjpeg_error)
+    let pixels = pixel_buffer_from_vec(bytes, width, height, zp_format, primaries, transfer)
+        .map_err(ultrahdr_to_zenjpeg_error)?;
+    prepare_base_pixels(pixels, icc.as_deref())
 }
 
-// The decoder inverts XYB to sRGB. For other ICC profiles, resolve only
-// color spaces the shared resolver can represent without a CMS.
+// Describe the base's working color. Metadata-only identification chooses a
+// destination; prepare_base_pixels applies the authoritative ICC before pixel math.
+// RowDecoder callers already supply linearized, color-managed working-space rows.
 pub(crate) fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, TransferFunction)> {
     let Some(icc) = icc else {
         return Ok((ColorPrimaries::Bt709, TransferFunction::Srgb));
@@ -329,9 +337,56 @@ pub(crate) fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, Transfer
     }
     zenpixels::ColorProfileSource::Icc(icc)
         .resolve()
+        .or_else(|| {
+            zenpixels::icc::IccIdentification::from_icc(icc).map(|id| (id.primaries, id.transfer))
+        })
         .ok_or_else(|| {
             Error::unsupported_feature("Ultra HDR base ICC requires color-managed conversion")
         })
+}
+
+/// Convert an ICC base that permits metadata identification only into its named
+/// working space. Source ICC authority stays on the strided slice through CMS.
+pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Result<PixelBuffer> {
+    let Some(icc) = icc else { return Ok(pixels) };
+    if crate::color::icc::is_xyb_profile(icc)
+        || zenpixels::ColorProfileSource::Icc(icc).resolve().is_some()
+    {
+        return Ok(pixels);
+    }
+    use zenpixels_convert::cms::PluggableCms as _;
+    let target = pixels.descriptor();
+    let mut transform = zenpixels_convert::MoxCms
+        .build_source_transform(
+            zenpixels::ColorProfileSource::Icc(icc),
+            target.color_profile_source(),
+            target.pixel_format(),
+            target.pixel_format(),
+            &zenpixels::ConvertOptions::permissive(),
+        )
+        .ok_or(Error::unsupported_feature(
+            "Ultra HDR base ICC conversion declined",
+        ))?
+        .map_err(ultrahdr_to_zenjpeg_error)?;
+    transform
+        .prepare(pixels.width())
+        .map_err(ultrahdr_to_zenjpeg_error)?;
+    let mut output = PixelBuffer::try_new(pixels.width(), pixels.height(), target).map_err(
+        crate::color::icc::pixel_buffer_error(
+            (pixels.width() as usize)
+                .saturating_mul(pixels.height() as usize)
+                .saturating_mul(target.bytes_per_pixel()),
+            "Ultra HDR ICC output",
+        ),
+    )?;
+    let source = pixels.as_slice();
+    let mut destination = output.as_slice_mut();
+    for y in 0..pixels.height() {
+        transform
+            .try_transform_row(source.row(y), destination.row_mut(y), pixels.width())
+            .map_err(ultrahdr_to_zenjpeg_error)?;
+    }
+    Ok(output)
 }
 
 /// Pad packed RGB bytes to RGBA8 with `A=0xFF`. Done in-place via Vec growth.
@@ -459,12 +514,12 @@ pub(crate) fn primary_xmp_gain_map(
         .then_some((metadata, len))
 }
 
-/// Convert an ultrahdr_core error to a zenjpeg Error.
+/// Convert a core, CMS or orientation workflow error into a decoder error.
 ///
 /// Generic over `Display` so it accepts both bare `ultrahdr_core::Error` and
 /// the `At<Error>` location wrapper (ultrahdr-core #31) — zenjpeg stays
 /// compatible across the ultrahdr-core error-type change without pinning.
-fn ultrahdr_to_zenjpeg_error(e: impl core::fmt::Display) -> Error {
+pub(crate) fn ultrahdr_to_zenjpeg_error(e: impl core::fmt::Display) -> Error {
     Error::decode_error(e.to_string())
 }
 
@@ -477,6 +532,96 @@ fn xmp_to_zenjpeg_error(e: crate::container::xmp::XmpError) -> Error {
 mod tests {
     use super::*;
     use crate::decode::SegmentType;
+
+    fn p3_fixture_icc() -> Vec<u8> {
+        let pixels = [0.5_f32, 0.5, 0.5, 1.0];
+        let bytes = pixels.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let hdr = PixelBuffer::from_vec(
+            bytes,
+            1,
+            1,
+            zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3),
+        )
+        .unwrap();
+        let jpeg = crate::ultrahdr::encode_ultrahdr_luma(&hdr).unwrap();
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        decoded.extras().unwrap().icc_profile().unwrap().to_vec()
+    }
+
+    #[test]
+    fn base_icc_cms_preserves_strided_rows_and_alpha() {
+        use zenpixels::PixelDescriptor;
+        let icc = p3_fixture_icc();
+        assert_eq!(
+            zenpixels::icc::IccIdentification::from_icc(&icc)
+                .unwrap()
+                .valid_use,
+            zenpixels::icc::IdentificationUse::MetadataOnly
+        );
+        for desc in [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB] {
+            let desc = desc.with_primaries(ColorPrimaries::DisplayP3);
+            let bpp = desc.bytes_per_pixel();
+            let data: Vec<u8> = (0..6 * bpp).map(|i| (i * 37) as u8).collect();
+            let mut parts = PixelBuffer::from_vec(data, 3, 2, desc)
+                .unwrap()
+                .into_parts();
+            parts.width = 2; // retain one pixel of padding on each row
+            let padded = PixelBuffer::try_from_parts(parts).unwrap();
+            let slice = padded.as_slice();
+            let packed: Vec<u8> = (0..2).flat_map(|y| slice.row(y).iter().copied()).collect();
+            let tight = PixelBuffer::from_vec(packed.clone(), 2, 2, desc).unwrap();
+            let actual = prepare_base_pixels(padded, Some(&icc)).unwrap();
+            let expected = prepare_base_pixels(tight, Some(&icc)).unwrap();
+            assert_eq!(actual.descriptor(), desc);
+            assert_eq!(
+                actual.as_contiguous_bytes().unwrap(),
+                expected.as_contiguous_bytes().unwrap()
+            );
+            if bpp == 4 {
+                for (before, after) in packed.as_chunks::<4>().0.iter().zip(
+                    actual
+                        .as_contiguous_bytes()
+                        .unwrap()
+                        .as_chunks::<4>()
+                        .0
+                        .iter(),
+                ) {
+                    assert_eq!(before[3], after[3], "CMS must carry alpha exactly");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn base_icc_fast_paths_and_failed_transforms() {
+        use zenpixels::PixelDescriptor;
+        let desc = PixelDescriptor::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        let pixels = || PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, desc).unwrap();
+        for icc in [
+            None,
+            Some(&crate::foundation::consts::XYB_ICC_PROFILE[..]),
+            Some(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
+        ] {
+            assert_eq!(
+                prepare_base_pixels(pixels(), icc)
+                    .unwrap()
+                    .as_contiguous_bytes()
+                    .unwrap(),
+                &[10, 20, 30, 255]
+            );
+        }
+        assert!(base_color(Some(b"invalid ICC")).is_err());
+        assert!(prepare_base_pixels(pixels(), Some(b"invalid ICC")).is_err());
+        let icc = p3_fixture_icc();
+        let unsupported = PixelBuffer::from_vec(
+            vec![30, 20, 10, 255],
+            1,
+            1,
+            PixelDescriptor::BGRA8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+        )
+        .unwrap();
+        assert!(prepare_base_pixels(unsupported, Some(&icc)).is_err());
+    }
 
     fn make_test_extras_with_xmp(xmp: &str) -> DecodedExtras {
         let mut extras = DecodedExtras::new();

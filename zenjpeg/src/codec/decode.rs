@@ -1919,6 +1919,8 @@ impl JpegDecoder<'_> {
         let sdr = PixelBuffer::from_vec(pixels_u8, w, h, descriptor)
             .map_err(|_| Error::internal("pixel buffer creation failed"))?;
 
+        let sdr = crate::ultrahdr::prepare_base_pixels(sdr, extras.icc_profile())?;
+
         // Output form: honor an f16 preference; default linear f32 RGBA.
         let wants_f16 = self
             .preferred
@@ -1977,13 +1979,8 @@ impl JpegDecoder<'_> {
         // orientation the in-place path declines.
         let hdr = match lossless_to_orientation(base_transform) {
             zencodec::Orientation::Identity => hdr,
-            o => {
-                let mut buf = hdr;
-                match zenpixels_convert::orient::apply_orientation_in_place(&mut buf, o) {
-                    Ok(()) => buf,
-                    Err(_) => zenpixels_convert::orient::apply_orientation(buf.as_slice(), o),
-                }
-            }
+            o => zenpixels_convert::PixelBufferConvertExt::into_oriented(hdr, o)
+                .map_err(crate::ultrahdr::ultrahdr_to_zenjpeg_error)?,
         };
 
         let mut info = ImageInfo::new(hdr.width(), hdr.height(), ImageFormat::Jpeg);

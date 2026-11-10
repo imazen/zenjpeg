@@ -55,9 +55,9 @@
 
 mod decode;
 #[cfg(feature = "zencodec")]
-pub(crate) use decode::base_color;
-#[cfg(feature = "zencodec")]
 pub(crate) use decode::metadata_with_xmp;
+#[cfg(feature = "zencodec")]
+pub(crate) use decode::{base_color, prepare_base_pixels, ultrahdr_to_zenjpeg_error};
 
 #[cfg(feature = "inventory")]
 pub(crate) use decode::{primary_xmp_gain_map, xmp_segment_range};

@@ -30,17 +30,23 @@ members = ["."]
 
 # This standalone workspace repeats the root's zencodec 0.2 family patches.
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 # zenjpeg depends on ultrahdr-core unconditionally, and crates.io ultrahdr-core
 # 0.6.0 requires zencodec ^0.1 (a second zencodec); use the review revision,
 # which takes the family through version edges.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "85cc309c07526341e6fa8b7e4d6130aaf64c8fea" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
+
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "23318f5d953419f90f504e8666cf69370310cd58" }
+
+garb = { git = "https://github.com/imazen/garb", rev = "7356e8f17776bf408b73bb958982e79aa2b9cac1" }
+
+zentone = { git = "https://github.com/imazen/zentone", rev = "d640ee4b8b84017b9ea39c132bf86aa3745e09df" }
 
 [[bin]]
 name = "fuzz_decode"

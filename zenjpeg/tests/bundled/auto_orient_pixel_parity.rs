@@ -97,7 +97,7 @@ fn decode_auto_orient(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 }
 
 /// Path B: decode upright, then bake the orientation in the pixel domain
-/// with zenpixels_convert::orient::apply_orientation (the reference
+/// with zenpixels_convert::PixelSliceConvertExt::oriented (the reference
 /// workaround from issue #149, which matches ImageMagick -auto-orient).
 fn decode_then_bake(jpeg: &[u8], orient: Orientation) -> (u32, u32, Vec<u8>) {
     let result = Decoder::new()
@@ -111,7 +111,7 @@ fn decode_then_bake(jpeg: &[u8], orient: Orientation) -> (u32, u32, Vec<u8>) {
         zenpixels::Orientation::from_exif(orient as u8).expect("valid EXIF orientation");
     let slice = PixelSlice::new(&pixels, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB)
         .expect("pixel slice");
-    let oriented = zenpixels_convert::orient::apply_orientation(slice, zp_orient);
+    let oriented = zenpixels_convert::PixelSliceConvertExt::oriented(&slice, zp_orient).unwrap();
     let (ow, oh) = (oriented.width(), oriented.height());
     let oslice = oriented.as_slice();
     let mut out = Vec::with_capacity(ow as usize * oh as usize * 3);

@@ -7,6 +7,16 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Validate limits and native geometry before ICC conversion-row allocation; preserve resource error categories for CMS buffer allocation failures.
+
+- Keep float-plane YCbCr conversion identical for partial and complete SIMD batches by using the same arithmetic for tails.
+
+- Preserve linear ICC encode inputs with row-bounded profile preparation across one-shot, declared, implicit and accumulated row feeding. Validate rejected batch geometry before color-state changes, and accept the default gray CICP after an untagged declaration.
+
+- Honor authoritative base ICC transforms in native/codec HDR reconstruction when profile identification permits metadata use only. Enable the shared moxcms backend for UltraHDR, retaining identified working primaries. Adopt current zentone's physical-unit BT.2446C parameters with white/transfer/inverse controls.
+
+- Correct absent GDepth/Dynamic Depth format to RangeInverse, normalize millimeter ranges to meters, and reject unknown format/unit labels. Preserve the explicit enum constructor default.
+
 - Buffer arbitrary pre-sampled planar row pushes, preserve chroma phase across odd row boundaries, and validate layouts before consuming input. Full-resolution/pre-sampled modes may alternate at complete-strip boundaries. (`ed37e5ed`)
 
 ### Fixed: zencodec decoder keeps depths above 8 bits
@@ -22,6 +32,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 
 ### Changed
+
+- Refresh codec, pixel, resize, color and metric git pins to current main revisions in root and fuzz graphs; use current associated ICC helpers with stable SIMD dependencies.
 
 - Accept the archmage and magetypes 0.9.31 stable release.
 

@@ -404,12 +404,12 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
         let y_off = y + offset;
 
         // YCbCr to RGB with FMA
-        let r = cr_to_r.mul_add(cr, y_off).max(zero).min(max_val);
+        let r = cr_to_r.mul_add_relaxed(cr, y_off).max(zero).min(max_val);
         let g = cb_to_g
-            .mul_add(cb, cr_to_g.mul_add(cr, y_off))
+            .mul_add_relaxed(cb, cr_to_g.mul_add_relaxed(cr, y_off))
             .max(zero)
             .min(max_val);
-        let b = cb_to_b.mul_add(cb, y_off).max(zero).min(max_val);
+        let b = cb_to_b.mul_add_relaxed(cb, y_off).max(zero).min(max_val);
 
         // Extract to arrays for interleaved store
         let r_arr = r.to_array();
@@ -425,20 +425,20 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
         }
     }
 
-    // Scalar remainder
+    // Use the same vector arithmetic for a partial batch: scalar level-shift
+    // placement can round differently, even with the same FMA coefficients.
     let start = chunks * 8;
-    for i in start..num_pixels {
-        let y = y_plane[i];
-        let cb = cb_plane[i];
-        let cr = cr_plane[i];
-
-        let r = 1.402f32.mul_add(cr, y);
-        let g = (-0.344136f32).mul_add(cb, (-0.714136f32).mul_add(cr, y));
-        let b_val = 1.772f32.mul_add(cb, y);
-
-        rgb[i * 3] = (r + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[i * 3 + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[i * 3 + 2] = (b_val + 128.0).clamp(0.0, 255.0) as u8;
+    let remaining = num_pixels - start;
+    if remaining != 0 {
+        let mut ys = [0.0; 8];
+        let mut cbs = [0.0; 8];
+        let mut crs = [0.0; 8];
+        ys[..remaining].copy_from_slice(&y_plane[start..]);
+        cbs[..remaining].copy_from_slice(&cb_plane[start..]);
+        crs[..remaining].copy_from_slice(&cr_plane[start..]);
+        let mut output = [0; 24];
+        ycbcr_planes_f32_to_rgb_u8(&ys, &cbs, &crs, &mut output);
+        rgb[start * 3..].copy_from_slice(&output[..remaining * 3]);
     }
 }
 
@@ -506,9 +506,9 @@ fn ycbcr_planes_f32_to_rgb_f32_impl(
         let y_off = y + offset;
 
         // YCbCr to RGB with FMA, level shift, normalize — no clamping
-        let r = cr_to_r.mul_add(cr, y_off) * scale;
-        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y_off)) * scale;
-        let b = cb_to_b.mul_add(cb, y_off) * scale;
+        let r = cr_to_r.mul_add_relaxed(cr, y_off) * scale;
+        let g = cb_to_g.mul_add_relaxed(cb, cr_to_g.mul_add_relaxed(cr, y_off)) * scale;
+        let b = cb_to_b.mul_add_relaxed(cb, y_off) * scale;
 
         let r_arr = r.to_array();
         let g_arr = g.to_array();
@@ -522,20 +522,19 @@ fn ycbcr_planes_f32_to_rgb_f32_impl(
         }
     }
 
-    // Scalar remainder
-    for i in (chunks * 8)..num_pixels {
-        let y = y_plane[i];
-        let cb = cb_plane[i];
-        let cr = cr_plane[i];
-
-        let r = 1.402f32.mul_add(cr, y);
-        let g = (-0.344136f32).mul_add(cb, (-0.714136f32).mul_add(cr, y));
-        let b = 1.772f32.mul_add(cb, y);
-
-        let idx = i * 3;
-        rgb[idx] = (r + 128.0) / 255.0;
-        rgb[idx + 1] = (g + 128.0) / 255.0;
-        rgb[idx + 2] = (b + 128.0) / 255.0;
+    // Padded vector work keeps every output bit independent of batch length.
+    let start = chunks * 8;
+    let remaining = num_pixels - start;
+    if remaining != 0 {
+        let mut ys = [0.0; 8];
+        let mut cbs = [0.0; 8];
+        let mut crs = [0.0; 8];
+        ys[..remaining].copy_from_slice(&y_plane[start..]);
+        cbs[..remaining].copy_from_slice(&cb_plane[start..]);
+        crs[..remaining].copy_from_slice(&cr_plane[start..]);
+        let mut output = [0.0; 24];
+        ycbcr_planes_f32_to_rgb_f32(&ys, &cbs, &crs, &mut output);
+        rgb[start * 3..].copy_from_slice(&output[..remaining * 3]);
     }
 }
 
@@ -2725,6 +2724,67 @@ pub(crate) fn fused_h1v2_fancy_ycbcr_row_avx2<const TURBO: bool>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn float_plane_batch_remainders_match_complete_vectors() {
+        let _guard = archmage::testing::lock_token_testing();
+        let check = || {
+            let y = [
+                -150.125, -127.375, -25.625, 0.125, 20.375, 80.625, 140.875, 200.125,
+            ];
+            let cb = [-50.25, 4.75, 21.25, -80.75, 120.25, -100.75, 0.25, 10.75];
+            let cr = [80.25, -10.75, 0.25, 90.75, -120.25, 30.75, -5.25, 40.75];
+            let mut reference_u8 = [0; 24];
+            let mut reference_f32 = [0.0; 24];
+            ycbcr_planes_f32_to_rgb_u8(&y, &cb, &cr, &mut reference_u8);
+            ycbcr_planes_f32_to_rgb_f32(&y, &cb, &cr, &mut reference_f32);
+            for len in 0..=31 {
+                let ys: Vec<_> = (0..len).map(|i| y[i % 8]).collect();
+                let cbs: Vec<_> = (0..len).map(|i| cb[i % 8]).collect();
+                let crs: Vec<_> = (0..len).map(|i| cr[i % 8]).collect();
+                let mut bytes = vec![0; len * 3];
+                let mut floats = vec![0.0; len * 3];
+                ycbcr_planes_f32_to_rgb_u8(&ys, &cbs, &crs, &mut bytes);
+                ycbcr_planes_f32_to_rgb_f32(&ys, &cbs, &crs, &mut floats);
+                for i in 0..len * 3 {
+                    assert_eq!(
+                        bytes[i],
+                        reference_u8[i % 24],
+                        "u8 length={len} channel={i}"
+                    );
+                    assert_eq!(
+                        floats[i].to_bits(),
+                        reference_f32[i % 24].to_bits(),
+                        "f32 length={len} channel={i}"
+                    );
+                }
+            }
+            for i in 0..8 {
+                let exact = [
+                    f64::from(y[i]) + 128.0 + f64::from(1.402_f32) * f64::from(cr[i]),
+                    f64::from(y[i])
+                        + 128.0
+                        + f64::from(-0.344136_f32) * f64::from(cb[i])
+                        + f64::from(-0.714136_f32) * f64::from(cr[i]),
+                    f64::from(y[i]) + 128.0 + f64::from(1.772_f32) * f64::from(cb[i]),
+                ];
+                for c in 0..3 {
+                    assert_eq!(reference_u8[i * 3 + c], exact[c].clamp(0.0, 255.0) as u8);
+                    assert!((f64::from(reference_f32[i * 3 + c]) - exact[c] / 255.0).abs() < 1e-6);
+                }
+            }
+        };
+        check();
+        archmage::dangerously_disable_tokens_except_wasm(true).unwrap();
+        struct Restore;
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                archmage::dangerously_disable_tokens_except_wasm(false).unwrap();
+            }
+        }
+        let _restore = Restore;
+        check();
+    }
 
     #[test]
     fn test_rgb_ycbcr_roundtrip() {

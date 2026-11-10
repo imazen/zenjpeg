@@ -29,6 +29,19 @@
 
 use crate::error::{Error, Result};
 
+/// Retain resource failures from shared pixel allocation at the codec boundary.
+#[cfg(any(feature = "zencodec", feature = "ultrahdr"))]
+pub(crate) fn pixel_buffer_error(
+    bytes: usize,
+    context: &'static str,
+) -> impl FnOnce(whereat::At<zenpixels::BufferError>) -> Error {
+    move |error| match error.error() {
+        zenpixels::BufferError::AllocationFailed => Error::allocation_failed(bytes, context),
+        zenpixels::BufferError::InvalidDimensions => Error::size_overflow(context),
+        _ => Error::icc_error(error.to_string()),
+    }
+}
+
 /// ICC profile signature in APP2 marker
 pub const ICC_PROFILE_SIGNATURE: &[u8; 12] = b"ICC_PROFILE\0";
 
@@ -292,6 +305,25 @@ pub fn srgb_to_linear_inplace(pixels: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(feature = "zencodec", feature = "ultrahdr"))]
+    #[test]
+    fn pixel_allocation_errors_keep_resource_classification() {
+        use crate::error::ErrorKind;
+        use zenpixels::BufferError;
+        let error =
+            pixel_buffer_error(192, "ICC test")(whereat::at!(BufferError::AllocationFailed));
+        assert!(matches!(
+            error.kind(),
+            ErrorKind::AllocationFailed { bytes: 192, .. }
+        ));
+        let error =
+            pixel_buffer_error(192, "ICC test")(whereat::at!(BufferError::InvalidDimensions));
+        assert!(matches!(error.kind(), ErrorKind::SizeOverflow { .. }));
+        let error =
+            pixel_buffer_error(192, "ICC test")(whereat::at!(BufferError::InsufficientData));
+        assert!(matches!(error.kind(), ErrorKind::IccError(_)));
+    }
 
     #[test]
     fn test_is_xyb_profile() {
