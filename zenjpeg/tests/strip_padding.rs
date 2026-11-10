@@ -11,7 +11,7 @@ const SUBS: [Sub; 4] = [
     Sub::Quarter,
     Sub::HalfVertical,
 ];
-const QUALITIES: [u8; 10] = [5, 10, 20, 30, 40, 60, 70, 80, 90, 100];
+const QUALITIES: [u8; 11] = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 fn pixels(w: usize, h: usize, layout: Layout, pattern: usize) -> Vec<u8> {
     let mut v = Vec::new();

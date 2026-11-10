@@ -83,12 +83,12 @@ All counts below are emitted by tests, not inferred quality claims:
 | Separate fused AQ coordinate replication | 4,356 geometries |
 | Byte source stride/partition/entropy equality | 5,940 comparisons |
 | Planar full/pre-sampled, packed/padded, partition equality | 16,224 comparisons |
-| Neutral RGB qualities / methods / sampling | 1,320 encodes |
+| Neutral RGB qualities / methods / sampling | 1,452 encodes |
 | RGB/gray/XYB format controls, explicit extension | 21,090 visible coefficient blocks |
 | RGB/gray/XYB Full complete residues, explicit extension | 2,664 geometries; 42,672 visible coefficient blocks |
 | Both XYB layouts, independently sampled planes | 2,664 geometries, three planes each |
 | Explicit automatic parallel entropy / row partitions | 192 configurations |
-| Quantization / trellis / 16-bit quant allowance controls | 480 comparisons |
+| Quantization / trellis / 16-bit quant allowance controls | 528 comparisons |
 | Public fused parallel segment/edge neutrality | 192 encodes |
 | Independent libjpeg-turbo strip RGB equality | 1,728 encodes |
 | Independent libjpeg-turbo fused RGB equality | 384 encodes |
@@ -104,7 +104,7 @@ cross the 2,048-chroma-block and 4,096-luma-block thresholds and 4,096-block
 parallel chunks (widths near 16,384 and 32,768). SIMD tail witnesses cross
 8/16/32/64/128 source-column boundaries.
 
-Quality list: 5, 10, 20, 30, 40, 60, 70, 80, 90, 100. The independent decoder
+Quality list: 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100. The independent decoder
 matrix uses 5, 20, 40, 60, 80, 100. Quantization controls exercise jpegli
 separate/shared chroma tables, Robidoux independent chroma quality, trellis
 optimization and the 16-bit-table allowance. No assertion depends on a lossy
