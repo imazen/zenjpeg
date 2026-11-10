@@ -1955,3 +1955,9 @@ three context patterns, at odd dimensions with padded strides. Rejected width
 or descriptor changes leave the row state usable; validate geometry before
 replacing its color plan. Gray's unspecified-primaries/sRGB CICP agrees with
 an untagged gray header. Existing carrier/sample expectations remain intact.
+
+Float-plane YCbCr batch remainders differed by one ULP from complete vectors
+(witness: length one, first red component, bits 1052080859 vs 1052080860).
+Scalar tails shifted and normalized in a different order. Padded vector tails
+now use the same arithmetic for lengths 0–31, with exact prefix identity and
+an independent double-precision matrix check. Existing golden values are retained.

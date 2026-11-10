@@ -7,6 +7,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Keep float-plane YCbCr conversion identical for partial and complete SIMD batches by using the same arithmetic for tails.
+
 - Preserve linear ICC encode inputs with row-bounded profile preparation across one-shot, declared, implicit and accumulated row feeding. Validate rejected batch geometry before color-state changes, and accept the default gray CICP after an untagged declaration.
 
 - Honor authoritative base ICC transforms in native/codec HDR reconstruction when profile identification permits metadata use only. Enable the shared moxcms backend for UltraHDR, retaining identified working primaries. Adopt current zentone's physical-unit BT.2446C parameters with white/transfer/inverse controls.
