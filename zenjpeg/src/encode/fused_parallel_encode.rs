@@ -518,11 +518,24 @@ fn compute_aq(
     if let Some(s) = aq.flush() {
         out.extend_from_slice(s);
     }
+    pad_aq_grid(
+        out,
+        &layout,
+        y_stride / 8,
+        seg_h.div_ceil(imcu_h) * (imcu_h / 8),
+    )
+}
+
+/// Extend a visible AQ grid to the segment's MCU block grid.
+fn pad_aq_grid(
+    out: Vec<f32>,
+    layout: &LayoutParams,
+    padded_blocks_w: usize,
+    padded_blocks_h: usize,
+) -> Result<Vec<f32>> {
     // AQ describes visible 8x8 blocks. Segment entropy also visits dummy
     // blocks needed to complete an MCU, at padded rather than visible stride.
     // Clamp the AQ grid in both axes just like the corresponding pixel plane.
-    let padded_blocks_w = y_stride / 8;
-    let padded_blocks_h = seg_h.div_ceil(imcu_h) * (imcu_h / 8);
     if out.len() != layout.blocks_w * layout.blocks_h {
         return Err(crate::error::Error::internal(
             "incomplete fused segment AQ grid",
@@ -862,9 +875,11 @@ mod padding_tests {
                             visible.extend_from_slice(s);
                         }
                     }
-                    if let Some(s) = reference.flush() {
-                        visible.extend_from_slice(s);
-                    }
+                    visible.extend_from_slice(
+                        reference
+                            .flush()
+                            .expect("nonempty image leaves a final pending iMCU"),
+                    );
                     assert_eq!(visible.len(), l.blocks_w * l.blocks_h);
                     assert_eq!(
                         actual.len(),
@@ -886,5 +901,15 @@ mod padding_tests {
             }
         }
         eprintln!("fused AQ coordinate oracle: {cells} geometries");
+    }
+
+    #[test]
+    fn malformed_aq_grid_is_rejected_before_padding() {
+        let layout = LayoutParams::new(17, 17, Subsampling::S420, false);
+        assert_eq!(layout.blocks_w * layout.blocks_h, 9);
+        for actual in [0, 8, 10] {
+            let err = pad_aq_grid(vec![0.; actual], &layout, 4, 4).unwrap_err();
+            assert!(err.to_string().contains("incomplete fused segment AQ grid"));
+        }
     }
 }

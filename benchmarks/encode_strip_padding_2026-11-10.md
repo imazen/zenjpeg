@@ -143,7 +143,8 @@ parallel kernels; i686 additionally runs it through `cross` with parallel.
 
 A controlled replay attached these same tests to otherwise unchanged base
 production code: all 19 regression library tests failed. The fixed revision passes
-all 19; an additional complete-residue XYB control also passes. Distinct witnesses expose packed chroma stride, full-resolution output
+all 19; complete-residue XYB and malformed-AQ-grid boundary controls bring
+the final focused library suite to 21 tests. Distinct witnesses expose packed chroma stride, full-resolution output
 storage, missing downsampled bottom padding, standard even-height averaging,
 AQ grid size and the 440 AQ input stride separately.
 
@@ -169,3 +170,27 @@ strip/streaming/grayscale/cancellation tests,
 with `parallel`. Existing external/corpus test gates retain their prior state.
 The two new turbo gates were explicitly run using a fresh SHA-verified release
 build, in addition to the ordinary synthetic tests.
+
+## Changed-code coverage gates
+
+The existing LLVM gates pass locally: **296/296 changed executable lines**
+and **18/18 changed production branch outcomes**. This is the gate's measured
+changed-code scope, not whole-library coverage. Command: `just
+strip-padding-coverage`, with `ZENJPEG_PADDING_LCOV` and
+`ZENJPEG_PADDING_BRANCHES` pointing at caller-selected report paths. The recipe
+uses the same pinned nightly and unchanged gate scripts as CI.
+
+AQ grid extension is an internal helper so malformed empty/short/long grids can
+be checked directly, before indexing. The reference test requires its final
+pending AQ row, rather than conditionally omitting it. The bottom-padding guard
+uses the converter's dispatch invariant: after excluding XYB and RGB passthrough,
+`chroma_already_downsampled` implies color input (gray always uses the standard
+path). This removes a redundant unreachable grayscale predicate.
+
+The first CI run at `c6085f89` hit an existing i686 bundled test's attempt to
+launch `djpeg`, returning `ENOSYS`. Direct cross execution passed 1,193 library
+and eight synthetic integration tests. The focused CI i686 matrix now runs
+before the broad suite, preserving the broad suite's failure behavior while
+making its padding evidence available independently. The coverage artifact
+upload also runs after a gate failure, retaining the raw reports; the gate still
+fails the job. Latest platform status is on [the PR](https://github.com/imazen/zenjpeg/pull/262).

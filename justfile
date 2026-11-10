@@ -951,3 +951,15 @@ strip-padding-regressions:
 
 strip-padding-oracle-build root:
     bash scripts/build-native-oracle.sh '{{root}}'
+
+# Exact existing changed-line/branch gates, restricted to encoder witnesses.
+strip-padding-coverage:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report --locked -p zenjpeg --features parallel --lib -- padding_tests
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report --locked -p zenjpeg --features parallel --test strip_padding
+    cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_PADDING_LCOV"
+    cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_PADDING_BRANCHES"
+    python3 scripts/check-component-coverage.py main "$ZENJPEG_PADDING_LCOV"
+    python3 scripts/check-native-branches.py main "$ZENJPEG_PADDING_BRANCHES" --require-complete
+
+strip-padding-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib --test strip_padding

@@ -192,13 +192,13 @@ jobs:
       - name: Prefetch metadata corpora before parallel tests
         run: cargo run -p zenjpeg --example metadata_corpus_prefetch
 
-      - name: Test (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
-
       - name: Encoder strip padding with parallel kernels (i686)
         run: |
           cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib padding_tests
           cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test strip_padding
+
+      - name: Test (i686)
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
       - name: Metadata and inventory (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --features inventory,extended-metadata,metadata-rewrite,controlled-decode --test controlled_decode --test grayscale_geometry --test inventory_feature --test extended_metadata --test fuzz_regression --test metadata_rewrite
