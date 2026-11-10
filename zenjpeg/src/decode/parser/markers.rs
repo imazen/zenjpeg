@@ -252,13 +252,13 @@ impl<'a> JpegParser<'a> {
         self.interleaved = self.num_components == 1
             || peek_first_scan_components(self.data, self.position) == Some(self.num_components);
 
-        // 1-component sources always use the libjpeg-exact IDCT kernel
-        // (#154): no chroma exists for the jpegli tuning to matter, and the
-        // gray plane must be identical across decode paths. Post-header
-        // assignments route through `apply_idct_method` for the same rule.
-        if self.num_components == 1 {
-            self.idct_method = super::super::IdctMethod::Libjpeg;
-        }
+        // 1-component sources never use the jpegli-named kernel (#154): no
+        // chroma exists for its tuning to matter, and the gray plane must be
+        // identical across decode paths. Post-header assignments route through
+        // `apply_idct_method` for the same rule.
+        self.idct_method = self
+            .idct_method
+            .for_components(self.num_components as usize);
 
         Ok(())
     }

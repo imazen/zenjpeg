@@ -345,11 +345,14 @@ pub(super) fn select_upsample_fn(
     };
     Ok(Some(match (geom.h_ratio, geom.v_ratio) {
         (2, 2) => match chroma_upsampling {
-            // IdctMethod::Libjpeg => turbo's fixed rounding bias (H2v2Bias).
-            ChromaUpsampling::Triangle => match idct_method {
-                IdctMethod::Libjpeg => upsample_h2v2_i16_libjpeg_turbo,
-                _ => upsample_h2v2_i16_libjpeg,
-            },
+            // IdctMethod::Libjpeg / LibjpegFast => turbo's fixed rounding bias (H2v2Bias).
+            ChromaUpsampling::Triangle => {
+                if idct_method.is_libjpeg_exact() {
+                    upsample_h2v2_i16_libjpeg_turbo
+                } else {
+                    upsample_h2v2_i16_libjpeg
+                }
+            }
             ChromaUpsampling::NearestNeighbor => {
                 unreachable!()
             }
@@ -377,6 +380,9 @@ pub(super) fn select_idct_fn(method: IdctMethod) -> fn(&mut [i32; 64], &mut [i16
     match method {
         IdctMethod::Libjpeg => super::super::idct_int::idct_int_tiered_libjpeg,
         IdctMethod::Jpegli => idct_int_tiered,
+        // Never called: `LoopInputs::fast_integer` routes every block (DC-only
+        // ones included) to the fused JDCT_IFAST kernel before this pointer.
+        IdctMethod::LibjpegFast => super::super::idct_int::idct_int_tiered_libjpeg,
     }
 }
 
@@ -482,12 +488,12 @@ pub(super) fn decode_mcu_row(
                         let dst_y = by * 8;
                         let dst_offset = dst_y * y_strip_width + dst_x;
                         if coeff_count <= 1 {
-                            let dc = state.coeffs[0] as i32 * quant[0] as i32;
-                            if inputs.w16_idct() {
-                                idct_int_dc_only_w16(dc, &mut y_strip[dst_offset..], y_strip_width);
-                            } else {
-                                idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
-                            }
+                            inputs.dc_only_block(
+                                &state.coeffs,
+                                quant,
+                                &mut y_strip[dst_offset..],
+                                y_strip_width,
+                            );
                         } else {
                             run_block_idct(
                                 inputs,
@@ -505,12 +511,12 @@ pub(super) fn decode_mcu_row(
                         let dst_offset = c_data_offset + dst_y * c_strip_width + dst_x;
                         let strip = if *comp_idx == 1 { &mut *cb } else { &mut *cr };
                         if coeff_count <= 1 {
-                            let dc = state.coeffs[0] as i32 * quant[0] as i32;
-                            if inputs.w16_idct() {
-                                idct_int_dc_only_w16(dc, &mut strip[dst_offset..], c_strip_width);
-                            } else {
-                                idct_int_dc_only(dc, &mut strip[dst_offset..], c_strip_width);
-                            }
+                            inputs.dc_only_block(
+                                &state.coeffs,
+                                quant,
+                                &mut strip[dst_offset..],
+                                c_strip_width,
+                            );
                         } else {
                             run_block_idct(
                                 inputs,
@@ -824,9 +830,14 @@ pub(super) struct LoopInputs<'a, 'b> {
     pub idct_v3: Option<archmage::X64V3Token>,
     /// Planes → pixels for the frame's colour model and the output layout.
     pub kernel: RowKernel,
-    /// `IdctMethod::Libjpeg`: libjpeg-turbo-exact IDCT, h2v2 upsampling bias
-    /// and (for a YCbCr kernel) colour; the kernel carries the same flag.
+    /// `IdctMethod::Libjpeg` or `LibjpegFast`: libjpeg-turbo's h2v2 upsampling
+    /// bias and (for a YCbCr kernel) colour tables; the kernel carries the
+    /// same flag. Under `Libjpeg` it also selects the wrap-faithful islow IDCT.
     pub turbo_color: bool,
+    /// `IdctMethod::LibjpegFast`: every block, DC-only ones included, goes
+    /// through the fused JDCT_IFAST kernel (`idct_int_ifast`) instead of
+    /// `idct_fn` and the DC-only shortcuts.
+    pub fast_integer: bool,
 }
 
 impl LoopInputs<'_, '_> {
@@ -837,11 +848,28 @@ impl LoopInputs<'_, '_> {
     fn w16_idct(&self) -> bool {
         #[cfg(target_arch = "x86_64")]
         {
-            self.turbo_color && self.idct_v3.is_some()
+            self.turbo_color && !self.fast_integer && self.idct_v3.is_some()
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
             false
+        }
+    }
+
+    /// The DC-only shortcut for one block, or the JDCT_IFAST kernel under
+    /// `fast_integer` (its DC path is not the islow one).
+    #[inline(always)]
+    fn dc_only_block(&self, coeffs: &[i16; 64], quant: &[u16; 64], out: &mut [i16], stride: usize) {
+        if self.fast_integer {
+            let mult = super::super::idct_int::ifast_multipliers(quant);
+            super::super::idct_int::idct_int_ifast(coeffs, &mult, out, stride);
+            return;
+        }
+        let dc = coeffs[0] as i32 * quant[0] as i32;
+        if self.w16_idct() {
+            idct_int_dc_only_w16(dc, out, stride);
+        } else {
+            idct_int_dc_only(dc, out, stride);
         }
     }
 }
@@ -859,6 +887,12 @@ fn run_block_idct(
     stride: usize,
     coeff_count: u8,
 ) {
+    if inputs.fast_integer {
+        // JDCT_IFAST: fused dequantize + IDCT, the x86-64 SSE2 kernel's arithmetic.
+        let mult = super::super::idct_int::ifast_multipliers(quant);
+        super::super::idct_int::idct_int_ifast(coeffs, &mult, out, stride);
+        return;
+    }
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = inputs.idct_v3 {
         use super::super::idct_int::{

@@ -1733,6 +1733,15 @@ impl<'a> ScanlineReader<'a> {
                                         coeff_count,
                                     );
                                 }
+                                super::IdctMethod::LibjpegFast => {
+                                    super::idct_int::idct_int_ifast_zigzag(
+                                        &temp_coeffs,
+                                        coeff_count,
+                                        &super::idct_int::ifast_multipliers(quant),
+                                        &mut temp_pixels,
+                                        8,
+                                    );
+                                }
                             }
                         }
                         for px in 0..8 {

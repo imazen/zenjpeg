@@ -125,6 +125,7 @@ pub enum ChromaUpsampling {
 /// |--------|-----------|---------|
 /// | `Jpegli` | 12-bit fixed-point | stb / zune-jpeg (NOT jpegli — see below) |
 /// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg (default) |
+/// | `LibjpegFast` | AAN 8-bit, 16-bit lanes | libjpeg-turbo `JDCT_IFAST` (`djpeg -dct fast`, TensorFlow `INTEGER_FAST`) |
 ///
 /// The default is `Libjpeg` (since 2026-07-15): it is both the more accurate
 /// integer kernel and byte-exact with libjpeg-turbo/mozjpeg/djpeg. Set
@@ -186,20 +187,51 @@ pub enum IdctMethod {
     /// `tests/libjpeg_idct_all_paths_parity.rs`).
     #[default]
     Libjpeg,
+
+    /// libjpeg-turbo's fast-integer IDCT (`JDCT_IFAST`), as its x86-64 SSE2
+    /// kernel computes it.
+    ///
+    /// The AAN 8-bit integer IDCT in 16-bit lanes (`jidctfst-sse2.asm`): the
+    /// kernel every x86-64 libjpeg-turbo build runs for `JDCT_IFAST`, and the
+    /// decode TensorFlow's `decode_jpeg(dct_method="INTEGER_FAST")` produces.
+    /// Paired with libjpeg-turbo's h2v2 fancy-upsampling biases and 16-bit
+    /// YCbCr→RGB tables like [`Libjpeg`](Self::Libjpeg), so the whole decode is
+    /// byte-exact with `djpeg -dct fast` (verified against mozjpeg-sys on every
+    /// u8 decode path by `tests/libjpeg_fast_idct_parity.rs`, `__ffi-tests`).
+    ///
+    /// Less accurate than [`Libjpeg`](Self::Libjpeg): the point of this method
+    /// is to reproduce the fast decoder's pixels, rounding included. The C
+    /// kernel (`jidctfst.c`) differs from the SIMD one only where a 16-bit
+    /// intermediate overflows (corrupt or extreme blocks); zenjpeg follows the
+    /// SIMD kernel. Applies to 1-component sources too, as libjpeg-turbo's
+    /// does. 12-bit sources decode with the islow kernel under every integer
+    /// method (libjpeg-turbo has no 12-bit `JDCT_IFAST`), and the f32 output
+    /// targets receive the same saturated 8-bit samples (there is no unclamped
+    /// fast-integer kernel).
+    LibjpegFast,
 }
 
 impl IdctMethod {
     /// The method a frame with `num_components` components decodes with:
-    /// 1-component frames always use [`Libjpeg`](Self::Libjpeg) (#154), so the
-    /// gray plane is identical on every path. Every consumer of the requested
-    /// method (`decode()`, the scanline strips, the wave reader) goes through
-    /// this.
+    /// 1-component frames never use [`Jpegli`](Self::Jpegli) (#154) — they take
+    /// [`Libjpeg`](Self::Libjpeg), so the gray plane is identical on every
+    /// path; [`LibjpegFast`](Self::LibjpegFast) applies to gray as
+    /// libjpeg-turbo's does. Every consumer of the requested method
+    /// (`decode()`, the scanline strips, the wave reader) goes through this.
     pub(crate) fn for_components(self, num_components: usize) -> Self {
-        if num_components == 1 {
+        if num_components == 1 && self == IdctMethod::Jpegli {
             IdctMethod::Libjpeg
         } else {
             self
         }
+    }
+
+    /// Whether the decode's h2v2 upsampling biases and YCbCr→RGB tables are
+    /// libjpeg-turbo's: [`Libjpeg`](Self::Libjpeg) and
+    /// [`LibjpegFast`](Self::LibjpegFast).
+    #[inline]
+    pub(crate) fn is_libjpeg_exact(self) -> bool {
+        matches!(self, IdctMethod::Libjpeg | IdctMethod::LibjpegFast)
     }
 }
 

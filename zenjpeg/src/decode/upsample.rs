@@ -137,12 +137,14 @@ pub enum H2v2Bias {
 }
 
 impl H2v2Bias {
-    /// Select the mode for a decode: `Turbo` under [`super::IdctMethod::Libjpeg`].
+    /// Select the mode for a decode: `Turbo` under [`super::IdctMethod::Libjpeg`]
+    /// and [`super::IdctMethod::LibjpegFast`].
     #[inline]
     pub(crate) fn for_idct_method(method: super::IdctMethod, is_upper: bool) -> Self {
-        match method {
-            super::IdctMethod::Libjpeg => H2v2Bias::Turbo,
-            _ => H2v2Bias::Alternating { is_upper },
+        if method.is_libjpeg_exact() {
+            H2v2Bias::Turbo
+        } else {
+            H2v2Bias::Alternating { is_upper }
         }
     }
 
