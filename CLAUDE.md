@@ -706,6 +706,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed in focused strip-padding PR (2026-11-10): downsampled chroma must be padded at padded chroma stride, after subsampling real rows. The separate fused parallel encoder also needs padded planes, full-resolution 422/440 conversion scratch and AQ grid extension. See [encoder edge qualification](benchmarks/encode_strip_padding_2026-11-10.md); gates: `just strip-padding-check`, `just strip-padding-oracle`.
+
 - Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
   unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
   `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:

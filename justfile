@@ -948,3 +948,6 @@ strip-padding-regressions:
     cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test strip_padding --test streaming_encode --test grayscale_geometry --test encode_stop_reasons
     cargo test --locked -p zenjpeg --doc
     cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
+
+strip-padding-oracle-build root:
+    bash scripts/build-native-oracle.sh '{{root}}'

@@ -35,6 +35,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Replicate strip chroma at the stride and resolution consumed by DCT, including fused/gamma-aware bottom edges, pre-sampled right/bottom edges and standard even-height 420/440 tails. Repair separate fused-parallel chroma storage, bottom rows and padded AQ geometry. [Qualification](benchmarks/encode_strip_padding_2026-11-10.md).
+
 - Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
 
 - Controlled decoding now returns final owned details through `take_details`,
