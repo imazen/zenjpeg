@@ -171,8 +171,8 @@ fn planar_full_and_pre_subsampled_exact_bytes() {
         let hs = sub.h_factor() as usize;
         let vs = sub.v_factor() as usize;
         let sh = vs * 8;
-        for w in (1..=33).chain([63, 64, 65, 127, 128, 129]) {
-            for h in [1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 47, 48, 49] {
+        for w in (1usize..=33).chain([63, 64, 65, 127, 128, 129]) {
+            for h in [1usize, 7, 8, 9, 15, 16, 17, 31, 32, 33, 47, 48, 49] {
                 let cw = w.div_ceil(hs);
                 let ch = h.div_ceil(vs);
                 for extra in [0, 3] {
@@ -281,7 +281,9 @@ fn neutral_quality_and_gamma_matrix() {
                     assert!(
                         dec.pixels_u8()
                             .unwrap()
-                            .chunks_exact(3)
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
                             .all(|p| p[0] == p[1] && p[1] == p[2]),
                         "q{q} {sub:?} {method:?} {w}x{h}"
                     );
@@ -297,54 +299,90 @@ fn neutral_quality_and_gamma_matrix() {
 fn color_modes_replicated_source_coefficients() {
     use zenjpeg::encoder::XybSubsampling;
     let mut cells = 0;
-    for cfg in [
+    for (mode, cfg) in [
         EncoderConfig::rgb(40),
         EncoderConfig::grayscale(40),
         EncoderConfig::xyb(40, XybSubsampling::Full),
         EncoderConfig::xyb(40, XybSubsampling::BQuarter),
-    ] {
-        for (w, h) in [
-            (1usize, 1usize),
-            (7, 9),
-            (9, 7),
-            (17, 31),
-            (31, 33),
-            (33, 49),
-            (129, 65),
-        ] {
-            // No AQ/deringing: changing frame dimensions must not change
-            // quantization, so explicit source extension is an exact oracle.
-            let cfg = cfg.clone().aq_enabled(false).deringing(false);
-            let pw = w.div_ceil(16) * 16;
-            let ph = h.div_ceil(16) * 16;
-            let src = pixels(w, h, Layout::Rgb8Srgb, 3);
-            let mut extended = vec![0; pw * ph * 3];
-            for y in 0..ph {
-                for x in 0..pw {
-                    extended[(y * pw + x) * 3..(y * pw + x + 1) * 3].copy_from_slice(
-                        &src[(y.min(h - 1) * w + x.min(w - 1)) * 3
-                            ..(y.min(h - 1) * w + x.min(w - 1) + 1) * 3],
-                    );
-                }
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let layouts = [
+            Layout::Rgb8Srgb,
+            Layout::Rgba8Srgb,
+            Layout::Rgbx8Srgb,
+            Layout::Bgr8Srgb,
+            Layout::Bgra8Srgb,
+            Layout::Bgrx8Srgb,
+            Layout::Rgb16Linear,
+            Layout::Rgba16Linear,
+            Layout::Rgbx16Linear,
+            Layout::RgbF32Linear,
+            Layout::RgbaF32Linear,
+            Layout::RgbxF32Linear,
+        ];
+        for (index, layout) in layouts.into_iter().enumerate() {
+            // RGB passthrough explicitly accepts only eight-bit RGB-family input.
+            if mode == 0 && index >= 6 {
+                continue;
             }
-            let a = cfg
-                .encode_bytes(&src, w as u32, h as u32, Layout::Rgb8Srgb)
-                .unwrap();
-            let b = cfg
-                .encode_bytes(&extended, pw as u32, ph as u32, Layout::Rgb8Srgb)
-                .unwrap();
-            let a = Decoder::new().decode_coefficients(&a, Unstoppable).unwrap();
-            let b = Decoder::new().decode_coefficients(&b, Unstoppable).unwrap();
-            for (ca, cb) in a.components.iter().zip(&b.components) {
-                for by in 0..ca.blocks_high {
-                    for bx in 0..ca.blocks_wide {
-                        assert_eq!(
-                            ca.block_at(bx, by),
-                            cb.block_at(bx, by),
-                            "{w}x{h} component {} block {bx},{by}",
-                            ca.id
+            let bpp = layout.bytes_per_pixel();
+            for (w, h) in [
+                (1usize, 1usize),
+                (7, 9),
+                (9, 7),
+                (17, 31),
+                (31, 33),
+                (33, 49),
+                (129, 65),
+            ] {
+                // No AQ/deringing: changing frame dimensions must not change
+                // quantization, so explicit source extension is an exact oracle.
+                let cfg = cfg.clone().aq_enabled(false).deringing(false);
+                let pw = w.div_ceil(16) * 16;
+                let ph = h.div_ceil(16) * 16;
+                let src = pixels(w, h, layout, 3);
+                let mut extended = vec![0; pw * ph * bpp];
+                for y in 0..ph {
+                    for x in 0..pw {
+                        extended[(y * pw + x) * bpp..(y * pw + x + 1) * bpp].copy_from_slice(
+                            &src[(y.min(h - 1) * w + x.min(w - 1)) * bpp
+                                ..(y.min(h - 1) * w + x.min(w - 1) + 1) * bpp],
                         );
-                        cells += 1;
+                    }
+                }
+                let a = cfg.encode_bytes(&src, w as u32, h as u32, layout).unwrap();
+                let b = cfg
+                    .encode_bytes(&extended, pw as u32, ph as u32, layout)
+                    .unwrap();
+                let a = Decoder::new().decode_coefficients(&a, Unstoppable).unwrap();
+                let b = Decoder::new().decode_coefficients(&b, Unstoppable).unwrap();
+                let max_h = a
+                    .components
+                    .iter()
+                    .map(|c| c.h_samp as usize)
+                    .max()
+                    .unwrap();
+                let max_v = a
+                    .components
+                    .iter()
+                    .map(|c| c.v_samp as usize)
+                    .max()
+                    .unwrap();
+                for (ca, cb) in a.components.iter().zip(&b.components) {
+                    // Entropy padding may use dummy blocks outside the visible
+                    // component. Only visible DCT blocks carry pixel semantics.
+                    for by in 0..(h * ca.v_samp as usize).div_ceil(max_v * 8) {
+                        for bx in 0..(w * ca.h_samp as usize).div_ceil(max_h * 8) {
+                            assert_eq!(
+                                ca.block_at(bx, by),
+                                cb.block_at(bx, by),
+                                "{w}x{h} component {} block {bx},{by}",
+                                ca.id
+                            );
+                            cells += 1;
+                        }
                     }
                 }
             }
@@ -359,16 +397,9 @@ fn fused_parallel_neutral_segments() {
     let mut cells = 0;
     for sub in SUBS {
         for restart in [2, 4, 8] {
-            for w in [
-                1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
-            ] {
+            for w in [257, 511, 512, 513] {
                 let sh = sub.v_factor() as usize * 8;
-                for h in [
-                    restart * sh + 1,
-                    restart * sh + 7,
-                    restart * sh + sh,
-                    3 * restart * sh + 1,
-                ] {
+                for h in [513, 519, 528, 3 * restart * sh + 513] {
                     let src = pixels(w, h, Layout::Rgb8Srgb, 0);
                     let jpeg = EncoderConfig::ycbcr(40, sub)
                         .progressive(false)
@@ -379,7 +410,9 @@ fn fused_parallel_neutral_segments() {
                     assert!(
                         dec.pixels_u8()
                             .unwrap()
-                            .chunks_exact(3)
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
                             .all(|p| p[0] == p[1] && p[1] == p[2]),
                         "{sub:?} {w}x{h} restart {restart}"
                     );
@@ -394,15 +427,6 @@ fn fused_parallel_neutral_segments() {
 #[test]
 #[ignore = "requires explicitly selected pinned libjpeg-turbo; run just strip-padding-oracle"]
 fn independent_turbo_decodes_edges() {
-    use std::{
-        io::Write,
-        path::PathBuf,
-        process::{Command, Stdio},
-    };
-    let bin = PathBuf::from(
-        std::env::var_os("ZENJPEG_TURBO_BIN")
-            .expect("set ZENJPEG_TURBO_BIN to pinned libjpeg-turbo tools directory"),
-    );
     let mut cells = 0;
     for sub in SUBS {
         for q in [5, 20, 40, 60, 80, 100] {
@@ -414,31 +438,11 @@ fn independent_turbo_decodes_edges() {
                         let jpeg = cfg
                             .encode_bytes(&src, w as u32, h as u32, Layout::Rgb8Srgb)
                             .unwrap();
-                        let mut child = Command::new(bin.join("djpeg-static"))
-                            .args(["-nosmooth"])
-                            .stdin(Stdio::piped())
-                            .stdout(Stdio::piped())
-                            .stderr(Stdio::piped())
-                            .spawn()
-                            .expect("launch pinned djpeg");
-                        child.stdin.take().unwrap().write_all(&jpeg).unwrap();
-                        let out = child.wait_with_output().unwrap();
-                        assert!(
-                            out.status.success(),
-                            "{}",
-                            String::from_utf8_lossy(&out.stderr)
-                        );
-                        let header = format!("P6\n{w} {h}\n255\n");
-                        assert!(out.stdout.starts_with(header.as_bytes()));
-                        let expected = &out.stdout[header.len()..];
-                        let native = Decoder::new()
-                            .fancy_upsampling(false)
-                            .decode(&jpeg, Unstoppable)
-                            .unwrap();
-                        assert_eq!(
-                            native.pixels_u8().unwrap(),
-                            expected,
-                            "q{q} {sub:?} {method:?} {w}x{h} pattern {pattern}"
+                        compare_turbo(
+                            &jpeg,
+                            w,
+                            h,
+                            &format!("q{q} {sub:?} {method:?} {w}x{h} pattern {pattern}"),
                         );
                         cells += 1;
                     }
@@ -447,4 +451,110 @@ fn independent_turbo_decodes_edges() {
         }
     }
     eprintln!("independent libjpeg-turbo RGB pixel equality: {cells} encodes");
+}
+
+fn compare_turbo(jpeg: &[u8], w: usize, h: usize, label: &str) {
+    use std::{
+        io::Write,
+        path::PathBuf,
+        process::{Command, Stdio},
+    };
+    let bin = PathBuf::from(
+        std::env::var_os("ZENJPEG_TURBO_BIN")
+            .expect("set ZENJPEG_TURBO_BIN to pinned libjpeg-turbo tools directory"),
+    );
+    let mut child = Command::new(bin.join("djpeg-static"))
+        .args(["-nosmooth"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("launch pinned djpeg");
+    let mut stdin = child.stdin.take().unwrap();
+    let out = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || stdin.write_all(jpeg).unwrap());
+        let out = child.wait_with_output().unwrap();
+        writer.join().unwrap();
+        out
+    });
+    assert!(
+        out.status.success(),
+        "{label}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let header = format!("P6\n{w} {h}\n255\n");
+    assert!(
+        out.stdout.starts_with(header.as_bytes()),
+        "{label}: PPM header"
+    );
+    let expected = &out.stdout[header.len()..];
+    let native = Decoder::new()
+        .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::NearestNeighbor)
+        .decode(jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(native.pixels_u8().unwrap(), expected, "{label}");
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+#[ignore = "requires explicitly selected pinned libjpeg-turbo; run just strip-padding-oracle"]
+fn independent_turbo_fused_parallel_edges() {
+    let mut cells = 0;
+    for sub in SUBS {
+        for q in [5, 20, 40, 60, 80, 100] {
+            for (w, h) in [(257, 513), (511, 519), (512, 528), (513, 545)] {
+                for pattern in 0..4 {
+                    let src = pixels(w, h, Layout::Rgb8Srgb, pattern);
+                    let jpeg = EncoderConfig::ycbcr(q, sub)
+                        .progressive(false)
+                        .encode_bytes_parallel(&src, w as u32, h as u32)
+                        .unwrap();
+                    compare_turbo(
+                        &jpeg,
+                        w,
+                        h,
+                        &format!("fused q{q} {sub:?} {w}x{h} pattern {pattern}"),
+                    );
+                    cells += 1;
+                }
+            }
+        }
+    }
+    eprintln!("independent libjpeg-turbo fused pixel equality: {cells} encodes");
+}
+
+#[test]
+fn quantization_and_optimization_edge_controls() {
+    use zenjpeg::encoder::QuantTableConfig;
+    let mut cells = 0;
+    for sub in SUBS {
+        for q in QUALITIES {
+            for tables in [
+                QuantTableConfig::default(),
+                QuantTableConfig::JpegliSharedChroma {
+                    chroma_distance_scales: [1., 1.],
+                },
+                QuantTableConfig::MozjpegRobidoux {
+                    chroma_quality: Some(q),
+                },
+            ] {
+                for (w, h) in [(1, 1), (9, 2), (17, 33), (33, 49)] {
+                    let cfg = EncoderConfig::ycbcr(q, sub)
+                        .quant_table_config(tables.clone())
+                        .auto_optimize(true)
+                        .allow_16bit_quant_tables(true);
+                    let src = pixels(w, h, Layout::Rgb8Srgb, 3);
+                    let expected = cfg
+                        .encode_bytes(&src, w as u32, h as u32, Layout::Rgb8Srgb)
+                        .unwrap();
+                    assert_eq!(
+                        streamed(&cfg, &src, w, h, Layout::Rgb8Srgb, 11, &[1, 3, 7]),
+                        expected
+                    );
+                    cells += 1;
+                }
+            }
+        }
+    }
+    eprintln!("quantization/trellis/16-bit-table allowance byte parity: {cells} comparisons");
 }

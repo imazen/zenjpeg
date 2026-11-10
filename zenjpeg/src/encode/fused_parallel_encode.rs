@@ -394,7 +394,7 @@ fn color_convert(
     y_plane: &mut [f32],
     cb_plane: &mut [f32],
     cr_plane: &mut [f32],
-    _c_width: usize,
+    c_width: usize,
 ) {
     let px_start = mcu_row_start * cfg.mcu_height;
     let bpp = 3;
@@ -419,7 +419,7 @@ fn color_convert(
             cfg.padded_width,
             bpp,
         );
-    } else {
+    } else if cfg.h_samp == 1 && cfg.v_samp == 1 {
         crate::color::fast_yuv::rgb_to_ycbcr_strided_fast(
             &rgb[..rgb_len],
             y_plane,
@@ -430,6 +430,47 @@ fn color_convert(
             cfg.padded_width,
             bpp,
         );
+    } else {
+        // 422/440 conversion first produces full-resolution packed chroma.
+        // The segment output planes have subsampled geometry, so they cannot
+        // serve as the converter's full-resolution scratch buffers.
+        let mut cb_full = vec![0.; cfg.width * seg_pixel_h];
+        let mut cr_full = vec![0.; cfg.width * seg_pixel_h];
+        crate::color::fast_yuv::rgb_to_ycbcr_strided_fast(
+            &rgb[..rgb_len],
+            y_plane,
+            &mut cb_full,
+            &mut cr_full,
+            cfg.width,
+            seg_pixel_h,
+            cfg.padded_width,
+            bpp,
+        );
+        for (src, dst) in [(&cb_full, &mut *cb_plane), (&cr_full, &mut *cr_plane)] {
+            if cfg.h_samp == 2 {
+                crate::encode_simd::downsample_2x1_simd_inplace(src, cfg.width, seg_pixel_h, dst);
+            } else {
+                crate::encode_simd::downsample_1x2_simd_inplace(src, cfg.width, seg_pixel_h, dst);
+            }
+        }
+    }
+
+    // Chroma converters/downsamplers produce packed rows. DCT uses padded
+    // chroma stride. Rearrange from the end to preserve overlapping rows.
+    let visible_c_width = cfg.width.div_ceil(cfg.h_samp);
+    let visible_c_height = seg_pixel_h.div_ceil(cfg.v_samp);
+    for plane in [&mut *cb_plane, &mut *cr_plane] {
+        for row in (0..visible_c_height).rev() {
+            let src = row * visible_c_width;
+            let dst = row * c_width;
+            plane.copy_within(src..src + visible_c_width, dst);
+            let edge = plane[dst + visible_c_width - 1];
+            plane[dst + visible_c_width..dst + c_width].fill(edge);
+        }
+        let last = (visible_c_height - 1) * c_width;
+        for row in visible_c_height..plane.len() / c_width {
+            plane.copy_within(last..last + c_width, row * c_width);
+        }
     }
 
     // Edge-replicate Y to padded width
@@ -441,6 +482,10 @@ fn color_convert(
                 y_plane[off + x] = v;
             }
         }
+    }
+    let last = (seg_pixel_h - 1) * cfg.padded_width;
+    for row in seg_pixel_h..y_plane.len() / cfg.padded_width {
+        y_plane.copy_within(last..last + cfg.padded_width, row * cfg.padded_width);
     }
 }
 
@@ -473,7 +518,28 @@ fn compute_aq(
     if let Some(s) = aq.flush() {
         out.extend_from_slice(s);
     }
-    Ok(out)
+    // AQ describes visible 8x8 blocks. Segment entropy also visits dummy
+    // blocks needed to complete an MCU, at padded rather than visible stride.
+    // Clamp the AQ grid in both axes just like the corresponding pixel plane.
+    let padded_blocks_w = y_stride / 8;
+    let padded_blocks_h = seg_h.div_ceil(imcu_h) * (imcu_h / 8);
+    if out.len() != layout.blocks_w * layout.blocks_h {
+        return Err(crate::error::Error::internal(
+            "incomplete fused segment AQ grid",
+        ));
+    }
+    if padded_blocks_w == layout.blocks_w && padded_blocks_h == layout.blocks_h {
+        return Ok(out);
+    }
+    let mut padded = Vec::with_capacity(padded_blocks_w * padded_blocks_h);
+    for by in 0..padded_blocks_h {
+        for bx in 0..padded_blocks_w {
+            padded.push(
+                out[by.min(layout.blocks_h - 1) * layout.blocks_w + bx.min(layout.blocks_w - 1)],
+            );
+        }
+    }
+    Ok(padded)
 }
 
 // =============================================================================
@@ -519,7 +585,10 @@ fn build_config(
         Subsampling::S420 => (2, 2),
         Subsampling::S440 => (1, 2),
     };
-    let pw = ((w + hs * 8 - 1) / (hs * 8)) * hs * 8;
+    // StreamingAQ reads the layout's padded row stride (also 16-aligned
+    // for 440). Keep plane storage consistent with that contract while
+    // retaining the JPEG sampling grid's actual MCU column count.
+    let pw = LayoutParams::new(w, h, subsampling, false).padded_width;
 
     // Lambda scales inversely with quality squared: lower quality → more dropping.
     // Base: 0.001 at Q85 (tuned on karwin-luo 4K, -0.53% size, +2 max pixel diff).
@@ -530,7 +599,7 @@ fn build_config(
         height: h,
         padded_width: pw,
         blocks_w: pw / 8,
-        mcu_cols: pw / (hs * 8),
+        mcu_cols: w.div_ceil(hs * 8),
         mcu_height: vs * 8,
         h_samp: hs,
         v_samp: vs,
@@ -658,5 +727,160 @@ mod padding_tests {
     #[test]
     fn fused_440_edges() {
         check(Subsampling::S440);
+    }
+
+    #[test]
+    fn fused_packed_chroma_stride_witness() {
+        let q = [16; 64];
+        let zb = ZeroBiasParams::for_ycbcr(1., 0);
+        let cfg = build_config(
+            9,
+            16,
+            Subsampling::S420,
+            40.,
+            &q,
+            &q,
+            &q,
+            &zb,
+            &zb,
+            &zb,
+            false,
+            false,
+        );
+        let d = segment_dims(&cfg, 0, 1);
+        let mut y = vec![-9876.; d.padded_h * cfg.padded_width];
+        let mut cb = vec![-9876.; d.c_width * d.c_height];
+        let mut cr = cb.clone();
+        color_convert(
+            &[81; 9 * 16 * 3],
+            &cfg,
+            0,
+            16,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            d.c_width,
+        );
+        assert!(cb.iter().all(|&v| v == 128.));
+        assert!(cr.iter().all(|&v| v == 128.));
+    }
+
+    fn full_chroma_storage_witness(sub: Subsampling) {
+        let q = [16; 64];
+        let zb = ZeroBiasParams::for_ycbcr(1., 0);
+        let cfg = build_config(32, 16, sub, 40., &q, &q, &q, &zb, &zb, &zb, false, false);
+        let d = segment_dims(&cfg, 0, 16 / cfg.mcu_height);
+        let mut y = vec![-9876.; d.padded_h * cfg.padded_width];
+        let mut cb = vec![-9876.; d.c_width * d.c_height];
+        let mut cr = cb.clone();
+        color_convert(
+            &[81; 32 * 16 * 3],
+            &cfg,
+            0,
+            16,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            d.c_width,
+        );
+        assert!(cb.iter().all(|&v| v == 128.));
+        assert!(cr.iter().all(|&v| v == 128.));
+    }
+    #[test]
+    fn fused_422_full_resolution_storage_witness() {
+        full_chroma_storage_witness(Subsampling::S422);
+    }
+    #[test]
+    fn fused_440_full_resolution_storage_witness() {
+        full_chroma_storage_witness(Subsampling::S440);
+    }
+
+    #[test]
+    fn fused_440_aq_input_stride_witness() {
+        let q = [16; 64];
+        let zb = ZeroBiasParams::for_ycbcr(1., 0);
+        let cfg = build_config(
+            17,
+            1,
+            Subsampling::S440,
+            40.,
+            &q,
+            &q,
+            &q,
+            &zb,
+            &zb,
+            &zb,
+            false,
+            false,
+        );
+        assert_eq!(
+            cfg.padded_width,
+            LayoutParams::new(17, 1, Subsampling::S440, false).padded_width
+        );
+        compute_aq(
+            &vec![81.; cfg.padded_width * 16],
+            17,
+            1,
+            cfg.padded_width,
+            Subsampling::S440,
+            16,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn fused_aq_padding_coordinate_oracle() {
+        let mut cells = 0;
+        for sub in [
+            Subsampling::S444,
+            Subsampling::S422,
+            Subsampling::S420,
+            Subsampling::S440,
+        ] {
+            for w in 1..=33 {
+                for h in 1..=33 {
+                    let l = LayoutParams::new(w, h, sub, false);
+                    let pw = l.padded_width;
+                    let ph = h.div_ceil(l.strip_height) * l.strip_height;
+                    let y: Vec<f32> = (0..pw * ph)
+                        .map(|i| ((i * 37 + i / 11 * 19) % 251) as f32)
+                        .collect();
+                    let actual = compute_aq(&y, w, h, pw, sub, 16).unwrap();
+                    let mut reference = StreamingAQ::new(&l, 16, true).unwrap();
+                    let mut visible = Vec::new();
+                    for start in (0..h).step_by(l.strip_height) {
+                        let rows = l.strip_height.min(h - start);
+                        if let Some(s) = reference.process_y_strip(
+                            &y[start * pw..(start + rows) * pw],
+                            start,
+                            rows,
+                        ) {
+                            visible.extend_from_slice(s);
+                        }
+                    }
+                    if let Some(s) = reference.flush() {
+                        visible.extend_from_slice(s);
+                    }
+                    assert_eq!(visible.len(), l.blocks_w * l.blocks_h);
+                    assert_eq!(
+                        actual.len(),
+                        pw / 8 * ph / 8,
+                        "{sub:?} {w}x{h} padded AQ size"
+                    );
+                    for by in 0..ph / 8 {
+                        for bx in 0..pw / 8 {
+                            assert_eq!(
+                                actual[by * (pw / 8) + bx],
+                                visible
+                                    [by.min(l.blocks_h - 1) * l.blocks_w + bx.min(l.blocks_w - 1)],
+                                "{sub:?} {w}x{h} AQ ({bx},{by})"
+                            );
+                        }
+                    }
+                    cells += 1;
+                }
+            }
+        }
+        eprintln!("fused AQ coordinate oracle: {cells} geometries");
     }
 }

@@ -1353,6 +1353,15 @@ impl StripProcessor {
         // (needed for vertical downsampling modes at image bottom)
         if actual_strip_height < self.layout.strip_height {
             self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
+            // Fused RGB paths write cb_down/cr_down directly. Replicating the
+            // unused full-resolution cb/cr strips does not pad the DCT input.
+            if chroma_already_downsampled
+                && !self.layout.use_xyb
+                && !self.use_rgb
+                && !self.pixel_format.is_grayscale()
+            {
+                self.pad_chroma_down_vertically(actual_strip_height)?;
+            }
         }
 
         let need_chroma_downsample =
@@ -1518,7 +1527,11 @@ impl StripProcessor {
 
         // Downsample chroma if needed (skipped when fused path or caller handled it)
         if need_chroma_downsample {
-            self.downsample_chroma_strip(downsample_height)?;
+            // Downsample only real rows. Padding full-resolution rows first
+            // would replace the last chroma average with the last source row
+            // when an even-height 420/440 strip ends inside a chroma block.
+            self.downsample_chroma_strip(actual_strip_height)?;
+            self.pad_chroma_down_vertically(actual_strip_height)?;
         }
 
         // If we got AQ strengths, quantize the previous pending iMCU.

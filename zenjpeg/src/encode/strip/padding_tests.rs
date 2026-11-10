@@ -510,3 +510,64 @@ fn pre_subsampled_vertical_stride_witness() {
         "pre-subsampled vertical stride",
     );
 }
+
+#[test]
+fn standard_downsample_even_partial_bottom_witness() {
+    rgb_case(
+        1,
+        2,
+        0,
+        Subsampling::S440,
+        PixelFormat::Rgb,
+        DownsamplingMethod::Box,
+        3,
+    );
+    rgb_case(
+        9,
+        2,
+        2,
+        Subsampling::S420,
+        PixelFormat::Rgb16,
+        DownsamplingMethod::Box,
+        3,
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn dct_parallel_threshold_and_chunk_edges() {
+    // Y threshold/chunks = 4096 blocks; chroma threshold = 2048.
+    // One/two-row strips cross these at different source widths.
+    for sub in SUBS {
+        for w in [
+            16375, 16376, 16377, 16383, 16384, 16385, 32759, 32760, 32761, 32767, 32768, 32769,
+        ] {
+            for h in [1, 8] {
+                rgb_case(w, h, 2, sub, PixelFormat::Rgb, DownsamplingMethod::Box, 3);
+            }
+        }
+    }
+}
+
+#[test]
+fn reachable_dispatch_padding_oracles() {
+    let report = archmage::testing::for_each_token_permutation(
+        archmage::testing::CompileTimePolicy::Warn,
+        |perm| {
+            for sub in SUBS {
+                for method in [
+                    DownsamplingMethod::Box,
+                    DownsamplingMethod::GammaAware,
+                    DownsamplingMethod::GammaAwareIterative,
+                ] {
+                    for (w, h) in [(1, 1), (7, 2), (9, 7), (17, 3), (33, 7), (65, 2), (129, 7)] {
+                        rgb_case(w, h, 2, sub, PixelFormat::Rgb, method, 3);
+                        rgb_case(w, h, 2, sub, PixelFormat::RgbF32, method, 1);
+                    }
+                }
+            }
+            eprintln!("padding dispatch permutation: {perm}");
+        },
+    );
+    eprintln!("padding dispatch report: {report:?}");
+}
