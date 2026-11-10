@@ -2,6 +2,8 @@
 //! read back by `detect::probe`, verified against the file's DQT tables,
 //! chained across generations, and absent when disabled.
 
+#![cfg(feature = "metadata")]
+
 use enough::Unstoppable;
 use zenjpeg::detect::record::{
     ColorFront, DialScale, EncodeFlags, SubsamplingCode, TableSource, dqt_crc32, read_record,

@@ -1016,3 +1016,7 @@ encode-record-progressive-check:
 
 encode-record-clippy:
     cargo clippy -p zenjpeg --release --features recompress,metadata-rewrite --lib --test encode_record -- -D warnings
+
+encode-record-minimal-check:
+    cargo check -p zenjpeg --release --no-default-features --lib
+    cargo test -p zenjpeg --release --no-default-features --features extended-jpeg --lib encode::byte_encoders::tests::test_finish_into -- --exact

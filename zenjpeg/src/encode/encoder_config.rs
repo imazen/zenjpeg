@@ -486,6 +486,7 @@ pub struct EncoderConfig {
     pub(crate) encode_record: bool,
     /// Prior generations to carry in the record (recompression hands the
     /// source's chain through); this encode's entry is appended.
+    #[cfg(feature = "metadata")]
     pub(crate) record_history: Vec<crate::detect::record::EncodeEntry>,
     /// Tiny-file optimizations for small images.
     ///
@@ -690,6 +691,7 @@ impl EncoderConfig {
             segments: None,
             pre_blur: 0.0,
             encode_record: true,
+            #[cfg(feature = "metadata")]
             record_history: Vec::new(),
             tiny_file_mode: TinyFileMode::Auto,
             #[cfg(feature = "boundary-rd")]
@@ -1367,7 +1369,8 @@ impl EncoderConfig {
     }
 
     /// Whether to emit the APP15 `ZENJ` encoder parameter record (default
-    /// `true`). The record gives later decoders the dial, table family and
+    /// `true`). Emission requires the default `metadata` feature; without
+    /// it this setting has no effect. The record gives later decoders the dial, table family and
     /// knobs this encode actually used instead of a fingerprint estimate,
     /// plus a CRC of the quantization tables so they can tell when it no
     /// longer describes the file. 31 bytes for one generation, then 20 bytes
@@ -1385,13 +1388,20 @@ impl EncoderConfig {
     /// the oldest entries beyond [`crate::detect::record::MAX_ENTRIES`] are
     /// dropped at write time.
     #[must_use]
+    #[cfg(feature = "metadata")]
     pub fn record_history(mut self, entries: Vec<crate::detect::record::EncodeEntry>) -> Self {
         self.record_history = entries;
         self
     }
 
+    #[cfg(not(feature = "metadata"))]
+    pub(crate) fn record_payload(&self, _jpeg: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
     /// The APP15 payload for this encode, given the finished header (the
     /// DQT CRC is taken from `jpeg`). `None` when disabled or no DQT found.
+    #[cfg(feature = "metadata")]
     pub(crate) fn record_payload(&self, jpeg: &[u8]) -> Option<Vec<u8>> {
         use crate::detect::record::{
             ColorFront, DialScale, EncodeEntry, EncodeFlags, EncodeRecord, EncoderId,

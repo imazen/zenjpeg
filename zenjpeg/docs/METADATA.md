@@ -102,7 +102,7 @@ fixed layout is `Unknown`, never half-parsed.
 | anything else | `Unknown` | — | payload |
 
 Encode records use APP15 with the `ZENJ\0` signature (version 1), independently
-of the GraphicConverter payload above. They are emitted by default and exposed
+of the GraphicConverter payload above. With the default `metadata` feature, they are emitted by default and exposed
 through `detect::probe().record`; `EncoderConfig::encode_record(false)` disables
 them. Metadata rewriting removes these private records. See
 [`detect::record`](https://docs.rs/zenjpeg/latest/zenjpeg/detect/record/index.html)

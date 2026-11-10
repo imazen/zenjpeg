@@ -1904,3 +1904,10 @@ CmykF32Inverted by default, exact normalized native codes, CMYK8 only when
 explicitly requested. Scope and resource receipt are in
 `docs/native-depth-revalidation-2026-11-06.md`. This is not a new independent
 libjpeg-turbo comparison or qualification of the proposed shared cohort.
+
+## Known Bugs: encode record feature gating (fixed on encode-record-189, 2026-11-10)
+
+The encode-record draft referenced metadata-gated detection types unconditionally,
+so builds without default features failed, including WASM. Record history and
+serialization now follow the `metadata` feature. `encode_record` remains callable
+without it and has no effect, preserving metadata-free encoder builds.

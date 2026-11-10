@@ -724,8 +724,12 @@ fn find_xmp_insert_position(jpeg: &[u8]) -> usize {
 }
 
 // ============================================================================
+#[cfg(not(feature = "metadata"))]
+fn inject_record_inplace(_jpeg: &mut Vec<u8>, _payload: Option<&[u8]>) {}
+
 /// Insert the APP15 `ZENJ` record (zenjpeg#189) after every other APPn,
 /// just before the first DQT.
+#[cfg(feature = "metadata")]
 fn inject_record_inplace(jpeg: &mut Vec<u8>, payload: Option<&[u8]>) {
     let Some(payload) = payload else { return };
     let at = crate::detect::record::record_insert_position(jpeg);
