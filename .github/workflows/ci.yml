@@ -87,6 +87,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p zenjpeg --release --features parallel --test strip_padding -- --ignored --nocapture
 
+      - name: Versioned strip padding decode hashes against libjpeg-turbo
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --release --features parallel --test strip_padding_hashes independent_padding_decode_hashes -- --ignored --nocapture
+
       - name: Native-precision sample equality with libjpeg-turbo
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p zenjpeg --release --test native_precision -- --ignored --test-threads=1
@@ -195,7 +199,7 @@ jobs:
       - name: Encoder strip padding with parallel kernels (i686)
         run: |
           cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib padding_tests
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test strip_padding
+          cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test strip_padding --test strip_padding_hashes
 
       - name: Test (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests

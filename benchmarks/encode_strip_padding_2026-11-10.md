@@ -121,7 +121,8 @@ paths additionally compare coefficients across every residue class.
 The coordinate oracles share color conversion with production but independently
 construct sample addressing, box averages, right/bottom replication and AQ grid
 extension. Exact independent decoder equality is an additional check, not the
-padding oracle. No implementation-generated golden pixels are accepted.
+padding oracle. Versioned decode hashes below record regression identity only;
+they do not replace the independent correctness checks.
 
 ## Reproduce
 
@@ -194,3 +195,51 @@ before the broad suite, preserving the broad suite's failure behavior while
 making its padding evidence available independently. The coverage artifact
 upload also runs after a gate failure, retaining the raw reports; the gate still
 fails the job. Latest platform status is on [the PR](https://github.com/imazen/zenjpeg/pull/262).
+
+
+## Versioned decode hashes
+
+`tests/support/strip_padding_decode_v1.json` versions **109 SHA-256 groups,
+9,600 decodes** in 21,760 bytes of text. The existing SHA-256 test dependency
+avoids updating the pinned pixel dependency cohort. Each group binds the schema,
+decode settings, source/configuration identity, ordered witness labels, dimensions
+and length-prefixed row-major RGB8 bytes. Input samples and partition order live
+in the shared deterministic source helper and hash test; native-endian input
+samples are converted to a fixed RGB byte stream before hashing.
+
+The hash executable disables archmage tokens under the testing mutex for a
+canonical scalar identity. Decode settings explicitly select Libjpeg IDCT,
+nearest-neighbor chroma, sRGB8 and RGB output, without an ICC transform.
+It covers box/gamma/iterative sampling at q5/q40/q100; all 15 byte layouts with
+all three downsampling settings; RGB, grayscale and both XYB color modes;
+u16/f32 XYB; full and pre-sampled planar pushes; four separate fused parallel
+paths and four automatic parallel consumers. Automatic parallel includes admitted
+large frames. Four source patterns and all mod-16 residues are included, alongside
+corners after preceding strips, nonzero row padding and uneven pushes.
+
+The explicit pinned-turbo check proves exact RGB equality for **8,832/9,600**
+versioned witnesses before accepting the manifest. The other **768/9,600** are
+XYB: turbo does not perform the XYB color transform. Their hashes supplement the
+independent XYB sample-addressing and visible-coefficient oracles documented
+above; they are not an independent XYB color-conversion oracle. Native dispatch
+remains checked separately by the per-tier plane tests. Hash stability is not a
+claim that unrelated floating-point kernels agree across tiers.
+
+Ordinary tests compare the committed manifest and never update it. Regeneration
+requires an explicit ignored test, pinned turbo, and an output path for a review
+candidate outside the repository. Review the correctness oracles and the text
+diff before copying a candidate into the versioned manifest:
+
+```sh
+just strip-padding-hashes
+ZENJPEG_TURBO_BIN="$HOME/tmp/zenjpeg-padding-oracle/build" just strip-padding-hash-oracle
+ZENJPEG_TURBO_BIN="$HOME/tmp/zenjpeg-padding-oracle/build" \
+  just strip-padding-hash-candidate "$HOME/tmp/strip-padding-hash-candidate.json"
+```
+
+CI runs the ordinary hash check on each native platform and in the dedicated
+i686 parallel step, plus the explicitly selected independent hash check on
+Linux. The scalar hash check passes locally both with and without `parallel`. The
+pinned-turbo check passes with `parallel`; the same committed 109-group manifest
+also passes under i686 `cross` with `parallel` (1,194 library tests, eight
+synthetic integration tests and the versioned hash check).

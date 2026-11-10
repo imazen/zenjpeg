@@ -941,11 +941,11 @@ strip-padding-oracle:
 
 strip-padding-lint:
     cargo fmt -p zenjpeg -- --check
-    cargo clippy --locked -p zenjpeg --features parallel --lib --test strip_padding -- -D warnings
+    cargo clippy --locked -p zenjpeg --features parallel --lib --test strip_padding --test strip_padding_hashes -- -D warnings
 
 strip-padding-regressions:
     cargo test --locked -p zenjpeg --lib --tests
-    cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test strip_padding --test streaming_encode --test grayscale_geometry --test encode_stop_reasons
+    cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test strip_padding --test strip_padding_hashes --test streaming_encode --test grayscale_geometry --test encode_stop_reasons
     cargo test --locked -p zenjpeg --doc
     cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
 
@@ -962,4 +962,17 @@ strip-padding-coverage:
     python3 scripts/check-native-branches.py main "$ZENJPEG_PADDING_BRANCHES" --require-complete
 
 strip-padding-i686:
-    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib --test strip_padding
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib --test strip_padding --test strip_padding_hashes
+
+# Versioned, fixed-settings scalar decode hashes; independent planes remain the oracle.
+strip-padding-hashes:
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes versioned_padding_decode_hashes
+
+strip-padding-hash-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes independent_padding_decode_hashes -- --ignored --nocapture
+
+# Writes a review candidate only; never replaces committed expectations automatically.
+strip-padding-hash-candidate output:
+    test -n "$ZENJPEG_TURBO_BIN"
+    ZENJPEG_PADDING_HASH_CANDIDATE='{{output}}' cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes regenerate_padding_decode_hashes -- --ignored --nocapture
