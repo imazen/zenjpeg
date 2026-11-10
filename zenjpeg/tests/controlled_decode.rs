@@ -42,8 +42,8 @@ fn part(bytes: &[u8], number: u8, total: u8) -> Vec<u8> {
     segment
 }
 fn profile() -> Vec<u8> {
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-    match synthesize_icc_for_cicp(zencodec::Cicp::DISPLAY_P3) {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    match SynthesizedIcc::for_cicp(zencodec::Cicp::DISPLAY_P3) {
         SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
         other => panic!("{other:?}"),
     }

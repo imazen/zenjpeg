@@ -704,8 +704,8 @@ pub fn encode_with_gainmap_metadata(
             })?;
             zencodec::Cicp::new(primaries, 13, 0, true)
         };
-        use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-        match synthesize_icc_for_cicp(cicp) {
+        use zenpixels_convert::icc_profiles::SynthesizedIcc;
+        match SynthesizedIcc::for_cicp(cicp) {
             SynthesizedIcc::Profile(icc) => retained.icc_profile = Some(icc.as_ref().into()),
             SynthesizedIcc::NotNeeded => {}
             _ => {
@@ -926,7 +926,7 @@ fn encode_sdr_base(
 /// the base would be mislabelled. A caller with another colour supplies its
 /// profile in the `EncoderConfig` segments instead.
 fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
     let desc = sdr.descriptor();
     // Untagged means sRGB to every reader: right for BT.709 primaries with
     // the sRGB (or unstated) transfer, and for unknown primaries (nothing to
@@ -942,7 +942,7 @@ fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     {
         return Ok(None);
     }
-    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(synthesize_icc_for_cicp);
+    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(SynthesizedIcc::for_cicp);
     match synthesized {
         Some(SynthesizedIcc::Profile(icc)) => Ok(Some(icc)),
         Some(SynthesizedIcc::NotNeeded) => Ok(None),
@@ -1019,7 +1019,7 @@ mod tests {
             .unwrap()
             .expect("a BT.709-transfer base needs a profile");
         assert_eq!(
-            zenpixels::icc::extract_cicp(&icc),
+            zenpixels::Cicp::from_icc(&icc),
             Some(zenpixels::Cicp::new(1, 1, 0, true))
         );
     }
