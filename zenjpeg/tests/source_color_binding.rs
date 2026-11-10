@@ -488,3 +488,173 @@ fn descriptor_primaries_do_not_override_colour_metadata() {
     assert_eq!(icc.as_deref(), Some(DISPLAY_P3_V4));
     assert_samples(&samples, 4, "metadata over descriptor");
 }
+
+/// The authoritative ICC conversion must precede native transfer encoding on
+/// every row-feeding path. Strided, odd-sized RGB/RGBA inputs keep byte identity.
+#[test]
+fn linear_icc_one_shot_matches_every_row_feeding_path() {
+    use zencodec::encode::EncodeDeclaration;
+    let (width, height) = (47, 31);
+    let mut cases = 0;
+    for descriptor in [
+        PixelDescriptor::RGBF32_LINEAR,
+        PixelDescriptor::RGBAF32_LINEAR,
+        PixelDescriptor::RGB16_SRGB.with_transfer(zenpixels::TransferFunction::Linear),
+        PixelDescriptor::RGBA16_SRGB.with_transfer(zenpixels::TransferFunction::Linear),
+        PixelDescriptor::GRAYF32_LINEAR,
+        PixelDescriptor::GRAY16_SRGB.with_transfer(zenpixels::TransferFunction::Linear),
+    ] {
+        let gray = descriptor.layout().channels() == 1;
+        let descriptor = if gray { descriptor } else { p3(descriptor) };
+        let icc = if gray {
+            match SynthesizedIcc::for_gray_cicp(Cicp::new(1, 8, 0, true)) {
+                SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
+                other => panic!("gray linear ICC fixture: {other:?}"),
+            }
+        } else {
+            synthesized(Cicp::new(12, 8, 0, true))
+        };
+        let context = Arc::new(ColorContext::from_icc(icc));
+        let bpp = descriptor.bytes_per_pixel();
+        let channels = descriptor.layout().channels();
+        let sample_bytes = bpp / channels;
+        let mut raster = Raster::new(bpp, 3, 0xA5);
+        for y in 0..H {
+            for x in 0..W {
+                for c in 0..channels {
+                    let v = if c == 3 {
+                        1.0
+                    } else {
+                        srgb_to_linear(f32::from(colour_at(x, y)[c]) / 255.0)
+                    };
+                    let at = x as usize * bpp + c * sample_bytes;
+                    if sample_bytes == 4 {
+                        raster.row(y)[at..at + 4].copy_from_slice(&v.to_ne_bytes());
+                    } else {
+                        raster.row(y)[at..at + 2]
+                            .copy_from_slice(&((v * 65535.0).round() as u16).to_ne_bytes());
+                    }
+                }
+            }
+        }
+        let pixels = || {
+            PixelSlice::new(
+                &raster.buf[raster.start..],
+                width,
+                height,
+                raster.stride,
+                descriptor,
+            )
+            .unwrap()
+        };
+        for config in [
+            quality(),
+            quality().with_progressive(false).with_huffman(false),
+        ] {
+            let expected = config
+                .clone()
+                .job()
+                .encoder()
+                .unwrap()
+                .encode(pixels().with_color_context(Arc::clone(&context)))
+                .unwrap()
+                .into_vec();
+            for mode in 0..4 {
+                for batch in [1, 7, 16, 31] {
+                    for contexts in 0..3 {
+                        let job = config.clone().job();
+                        let mut rows = if mode == 2 {
+                            job.with_canvas_size(width, height).encoder().unwrap()
+                        } else {
+                            job.encoder().unwrap()
+                        };
+                        if mode == 0 {
+                            rows.begin_declared(
+                                &EncodeDeclaration::new(width, height, descriptor)
+                                    .with_color(&context),
+                            )
+                            .unwrap();
+                        } else if mode == 1 {
+                            rows.begin(width, height, descriptor).unwrap();
+                        }
+                        let mut file = Vec::new();
+                        for y in (0..height).step_by(batch as usize) {
+                            let source = pixels();
+                            let mut part = source.sub_rows(y, batch.min(height - y));
+                            if contexts != 2 || (y == 0 && mode != 0) {
+                                let ctx = if contexts == 1 {
+                                    Arc::new((*context).clone())
+                                } else {
+                                    Arc::clone(&context)
+                                };
+                                part = part.with_color_context(ctx);
+                            }
+                            rows.push_rows(part).unwrap_or_else(|e| panic!("{descriptor:?} mode={mode} batch={batch} contexts={contexts} y={y}: {e}"));
+                            rows.take_output(&mut file);
+                        }
+                        file.extend_from_slice(rows.finish().unwrap().data());
+                        assert_eq!(
+                            file, expected,
+                            "{descriptor:?} mode={mode} batch={batch} context={contexts}"
+                        );
+                        cases += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 576);
+}
+
+#[test]
+fn linear_icc_rejected_batches_leave_the_row_state_usable() {
+    use zencodec::encode::EncodeDeclaration;
+    let raster = rgbf32_linear();
+    let descriptor = p3(PixelDescriptor::RGBF32_LINEAR);
+    let context = Arc::new(ColorContext::from_icc(synthesized(Cicp::new(
+        12, 8, 0, true,
+    ))));
+    let pixels = || {
+        raster
+            .slice(descriptor)
+            .with_color_context(Arc::clone(&context))
+    };
+    let expected = quality()
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(pixels())
+        .unwrap()
+        .into_vec();
+    for known_size in [true, false] {
+        let mut rows = quality().job().encoder().unwrap();
+        if known_size {
+            rows.begin_declared(&EncodeDeclaration::new(W, H, descriptor).with_color(&context))
+                .unwrap();
+        }
+        rows.push_rows(pixels().sub_rows(0, 7)).unwrap();
+        let narrow = PixelSlice::new(
+            &raster.buf[raster.start..],
+            W - 1,
+            1,
+            raster.stride,
+            descriptor,
+        )
+        .unwrap()
+        .with_color_context(Arc::new((*context).clone()));
+        assert!(rows.push_rows(narrow).is_err());
+        let wrong = raster
+            .slice(PixelDescriptor::RGBF32_LINEAR)
+            .with_color_context(Arc::new((*context).clone()));
+        assert!(rows.push_rows(wrong.sub_rows(7, 1)).is_err());
+        rows.push_rows(raster.slice(descriptor).sub_rows(7, H - 7))
+            .unwrap();
+        assert_eq!(rows.finish().unwrap().data(), expected);
+    }
+    // A narrow-range declaration cannot be treated as a full-range ICC source.
+    let unsupported = descriptor.with_signal_range(zenpixels::SignalRange::Narrow);
+    let declaration = EncodeDeclaration::new(W, H, unsupported).with_color(&context);
+    let mut rows = quality().job().encoder().unwrap();
+    assert!(rows.begin_declared(&declaration).is_err());
+    assert!(rows.pending_output().is_empty());
+}

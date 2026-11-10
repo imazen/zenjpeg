@@ -292,7 +292,7 @@ ultrahdr = [
 # `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
 # kernels, which the decoder's auto-orient permute delegates to (#150); it
 # adds no dependency (archmage + magetypes are already mandatory here).
-zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose"]
+zencodec = ["dep:zenpixels-convert", "zenpixels-convert/icc-db", "zenpixels-convert/fast-transpose", "zenpixels-convert/cms-moxcms"]
 
 # One-shot JPEG→JPEG recompression with calibrated routing and no metric runtime.
 recompress = ["metadata"]

@@ -761,6 +761,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             bound: None,
             checked_context: None,
             srgb16_rows: Vec::new(),
+            linear_cms: None,
         })
     }
 
@@ -810,6 +811,8 @@ pub struct JpegEncoder {
     checked_context: Option<Arc<ColorContext>>,
     /// Reused linear f32 rows for 16-bit sRGB input (`decode_srgb16`).
     srgb16_rows: Vec<u8>,
+    /// Authoritative ICC conversion, with a single reusable destination row.
+    linear_cms: Option<LinearCms>,
 }
 
 /// Internal buffer for accumulating pushed rows.
@@ -826,6 +829,110 @@ struct RowStart {
     layout: PixelLayout,
     binding: ColorBinding,
     timing: zencodec::encode::OutputTiming,
+    linear_cms: Option<LinearCms>,
+}
+
+/// A row-bounded ICC-to-working-space conversion before native transfer encoding.
+struct LinearCms {
+    plan: zenpixels_convert::OutputPlan,
+    current: Arc<ColorContext>,
+    row: zenpixels::PixelBuffer,
+}
+
+fn cms_error(error: impl core::fmt::Display) -> Error {
+    Error::icc_error(error.to_string())
+}
+
+impl LinearCms {
+    fn prepare(
+        descriptor: PixelDescriptor,
+        context: Option<&ColorContext>,
+        layout: PixelLayout,
+        width: u32,
+    ) -> Result<Option<Self>, Error> {
+        if !transfer_changes(layout, descriptor) {
+            return Ok(None);
+        }
+        let Some(icc) = context.and_then(|c| c.icc.as_ref()) else {
+            return Ok(None);
+        };
+        if ColorProfileSource::Icc(icc).resolve().is_some() {
+            return Ok(None);
+        }
+        let current = Arc::new(ColorContext::from_icc(Arc::clone(icc)));
+        let opaque = descriptor
+            .with_primaries(ColorPrimaries::Unknown)
+            .with_transfer(TransferFunction::Unknown);
+        // The linear counterpart of the profile the JPEG carrier will use.
+        // Gray CMS targets need a GRAY ICC, rather than an RGB CICP profile.
+        use zenpixels_convert::icc_profiles::SynthesizedIcc;
+        let id = zenpixels::icc::IccIdentification::from_icc(icc)
+            .ok_or(Error::icc_error("unidentified linear ICC source".into()))?;
+        let cicp = Cicp::new(
+            if layout.is_grayscale() {
+                1
+            } else {
+                id.primaries.to_cicp().ok_or(Error::icc_error(
+                    "linear ICC primaries have no code point".into(),
+                ))?
+            },
+            8,
+            0,
+            true,
+        );
+        let synthesized = if layout.is_grayscale() {
+            SynthesizedIcc::for_gray_cicp(cicp)
+        } else {
+            SynthesizedIcc::for_cicp(cicp)
+        };
+        let target_icc = match synthesized {
+            SynthesizedIcc::Profile(profile) => Arc::<[u8]>::from(profile.as_ref()),
+            _ => {
+                return Err(Error::icc_error(
+                    "linear ICC working profile unavailable".into(),
+                ));
+            }
+        };
+        let target = ColorProfileSource::Icc(&target_icc)
+            .resolve()
+            .map(|(p, t)| descriptor.with_primaries(p).with_transfer(t))
+            .unwrap_or(opaque);
+        let mut plan = zenpixels_convert::OutputPlan::new_with_descriptor(
+            opaque,
+            Some(Arc::clone(&current)),
+            &zenpixels::ColorOrigin::from_icc(Arc::clone(icc)),
+            zenpixels_convert::output::OutputProfile::Icc(target_icc),
+            target,
+            &zenpixels::ConvertOptions::permissive(),
+            Some(&zenpixels_convert::MoxCms),
+        )
+        .map_err(cms_error)?;
+        plan.prepare(width).map_err(cms_error)?;
+        let row = zenpixels::PixelBuffer::try_new(width, 1, target).map_err(cms_error)?;
+        Ok(Some(Self { plan, current, row }))
+    }
+
+    fn push(
+        &mut self,
+        rows: &PixelSlice<'_>,
+        mut emit: impl FnMut(&[u8]) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let opaque = rows
+            .descriptor()
+            .with_primaries(ColorPrimaries::Unknown)
+            .with_transfer(TransferFunction::Unknown);
+        for y in 0..rows.rows() {
+            let source = rows
+                .sub_rows(y, 1)
+                .with_descriptor(opaque)
+                .with_color_context(Arc::clone(&self.current));
+            self.plan
+                .convert_rows(source, self.row.as_slice_mut())
+                .map_err(cms_error)?;
+            emit(self.row.as_slice().row(0))?;
+        }
+        Ok(())
+    }
 }
 
 /// What the stored samples mean, as a reader of the written file must
@@ -919,6 +1026,11 @@ fn same_meaning(
     b: (Option<&[u8]>, Option<Cicp>),
     gray: bool,
 ) -> bool {
+    // Gray CICP may leave primaries unspecified; the default sRGB transfer
+    // still agrees with an untagged gray header.
+    if gray && is_default_meaning(a, true) && is_default_meaning(b, true) {
+        return true;
+    }
     if a.0.is_some() && a.0 == b.0 || a.0.is_none() && b.0.is_none() && a.1 == b.1 {
         return true;
     }
@@ -980,6 +1092,7 @@ impl JpegEncoder {
         self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
         let binding = self.bind_color(descriptor, context, layout)?;
+        let linear_cms = LinearCms::prepare(descriptor, context, layout, width)?;
         let lag = self
             .build_request(layout, &binding)?
             .plan_byte_output(width, height, layout)?;
@@ -987,6 +1100,7 @@ impl JpegEncoder {
             layout,
             timing: self.timing(lag, height),
             binding,
+            linear_cms,
         })
     }
 
@@ -1169,7 +1283,10 @@ impl JpegEncoder {
             if zenpixels::ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
-            let identified = ColorProfileSource::Icc(icc).resolve();
+            // This is metadata validation. A metadata-only match is converted
+            // through LinearCms before the native linear-to-sRGB operation.
+            let identified = zenpixels::icc::IccIdentification::from_icc(icc)
+                .map(|id| (id.primaries, id.transfer));
             if let Some(cicp) = context.and_then(|c| c.cicp)
                 && (identified.is_none() || identified != ColorProfileSource::Cicp(cicp).resolve())
             {
@@ -1260,8 +1377,13 @@ impl JpegEncoder {
         };
         let explicit = context.is_some_and(|c| c.icc.is_some() || c.cicp.is_some());
         if !explicit {
+            let metadata_transfer = metadata
+                .0
+                .and_then(zenpixels::icc::IccIdentification::from_icc)
+                .map(|id| id.transfer)
+                .or_else(|| identify(metadata).map(|(_, transfer)| transfer));
             if transfer_changes(layout, descriptor)
-                && matches!(identify(metadata), Some((_, TransferFunction::Linear)))
+                && metadata_transfer == Some(TransferFunction::Linear)
             {
                 return Err(Error::icc_error(
                     "the colour metadata describes linear samples, which this encoder \
@@ -1320,6 +1442,8 @@ impl JpegEncoder {
                 ));
             }
         }
+        let linear_cms = LinearCms::prepare(descriptor, Some(context), layout, rows.width())?;
+        self.linear_cms = linear_cms;
         self.checked_context = Some(Arc::clone(context));
         Ok(())
     }
@@ -1657,12 +1781,15 @@ impl JpegEncoder {
         self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
         let binding = self.bind_color(descriptor, context, layout)?;
+        let linear_cms = LinearCms::prepare(descriptor, context, layout, width)?;
         let enc = self
             .build_request(layout, &binding)?
             .encode_from_bytes(width, height, layout)?;
         self.streaming_enc = Some(enc);
         self.row_descriptor = Some(descriptor);
         self.bound = Some(binding);
+        self.linear_cms = linear_cms;
+        self.checked_context = context.cloned().map(Arc::new);
         Ok(())
     }
 
@@ -1762,7 +1889,8 @@ impl JpegEncoder {
         self.streaming_enc = Some(enc);
         self.row_descriptor = Some(descriptor);
         self.bound = Some(start.binding);
-        self.checked_context = None;
+        self.linear_cms = start.linear_cms;
+        self.checked_context = declaration.color.cloned().map(Arc::new);
         self.begun = true;
         Ok(start.timing)
     }
@@ -1784,6 +1912,25 @@ impl zencodec::encode::Encoder for JpegEncoder {
         let descriptor = pixels.descriptor();
         let layout = self.pixel_layout(descriptor)?;
         let binding = self.bind_color(descriptor, pixels.color_context().map(|c| &**c), layout)?;
+        if let Some(mut cms) = LinearCms::prepare(
+            descriptor,
+            pixels.color_context().map(|c| &**c),
+            layout,
+            pixels.width(),
+        )? {
+            self.check_limits(pixels.width(), pixels.rows(), layout)?;
+            let mut encoder = self.build_request(layout, &binding)?.encode_from_bytes(
+                pixels.width(),
+                pixels.rows(),
+                layout,
+            )?;
+            cms.push(&pixels, |row| {
+                encoder.push(row, 1, row.len(), self.stop_ref())
+            })?;
+            let output = encoder.finish()?;
+            self.check_output_size(&output)?;
+            return Ok(EncodeOutput::new(output, ImageFormat::Jpeg));
+        }
         if srgb16_layout(descriptor).is_some() {
             return self
                 .encode_srgb16(&pixels, layout, &binding)
@@ -1907,22 +2054,29 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // Dimensions known (`begin` or `with_canvas_size`): push straight
         // into the native encoder, which encodes MCU rows as they fill.
         if let Some((img_w, img_h)) = self.image_size {
+            if rows.width() != img_w {
+                return Err(
+                    Error::invalid_state("push_rows: width differs from the one declared").into(),
+                );
+            }
             if self.streaming_enc.is_none() {
                 self.start_rows(img_w, img_h, desc, rows.color_context().map(|c| &**c))?;
             }
-            self.check_rows_color(&rows, layout)?;
             if self.row_descriptor != Some(desc) {
                 return Err(Error::invalid_state(
                     "push_rows: pixel format differs from the one declared",
                 )
                 .into());
             }
+            self.check_rows_color(&rows, layout)?;
             let stop: &dyn enough::Stop = match self.pulse {
                 Some(ref s) => s,
                 None => &enough::Unstoppable,
             };
             let enc = self.streaming_enc.as_mut().expect("started above");
-            if srgb16_layout(desc).is_some() {
+            if let Some(cms) = &mut self.linear_cms {
+                cms.push(&rows, |row| enc.push(row, 1, row.len(), stop))?;
+            } else if srgb16_layout(desc).is_some() {
                 decode_srgb16(&rows, &mut self.srgb16_rows)?;
                 enc.push(
                     &self.srgb16_rows,
@@ -1945,10 +2099,39 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
 
         // Fallback: accumulate rows (dimensions unknown).
-        if self.accumulator.is_some() {
+        if let Some(acc) = &self.accumulator {
+            if acc.width != rows.width() || acc.descriptor != desc {
+                return Err(Error::invalid_state(
+                    "push_rows: width or format changed between calls",
+                )
+                .into());
+            }
             self.check_rows_color(&rows, layout)?;
         }
         let width = rows.width();
+        if self.accumulator.is_none() {
+            let binding = self.bind_color(desc, rows.color_context().map(|c| &**c), layout)?;
+            let cms = LinearCms::prepare(desc, rows.color_context().map(|c| &**c), layout, width)?;
+            self.bound = Some(binding);
+            self.linear_cms = cms;
+            self.checked_context = rows.color_context().cloned();
+        }
+        if let Some(cms) = &mut self.linear_cms {
+            let acc = self.accumulator.get_or_insert_with(|| RowAccumulator {
+                data: Vec::new(),
+                width,
+                total_rows: 0,
+                layout,
+                descriptor: desc,
+            });
+            cms.push(&rows, |row| {
+                acc.data.try_reserve(row.len()).map_err(cms_error)?;
+                acc.data.extend_from_slice(row);
+                acc.total_rows += 1;
+                Ok(())
+            })?;
+            return Ok(());
+        }
         let contiguous;
         let data: &[u8] = if srgb16_layout(desc).is_some() {
             decode_srgb16(&rows, &mut self.srgb16_rows)?;
@@ -1977,12 +2160,6 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 });
             }
             Some(acc) => {
-                if acc.width != width || acc.descriptor != desc {
-                    return Err(Error::invalid_state(
-                        "push_rows: width or format changed between calls",
-                    )
-                    .into());
-                }
                 acc.data.extend_from_slice(data);
                 acc.total_rows += rows.rows();
             }

@@ -1946,3 +1946,12 @@ Linear row-reconstructor callers supply color-managed working-space rows.
 The UltraHDR feature enables the shared moxcms backend for this conversion.
 Current zentone uses physical-unit BT.2446C parameters; the owner approved replacing
 the historical reserved-parameter guard with white/transfer/inverse controls.
+
+Linear ICC encode inputs use a reusable one-row profile plan before native
+linear-to-sRGB encoding, with RGB and GRAY target profiles matching the carrier
+family. `just depth-linear-icc-check` covers 576 byte-parity cases: six linear
+layouts, two encoder configurations, four feeding modes, four batch sizes and
+three context patterns, at odd dimensions with padded strides. Rejected width
+or descriptor changes leave the row state usable; validate geometry before
+replacing its color plan. Gray's unspecified-primaries/sRGB CICP agrees with
+an untagged gray header. Existing carrier/sample expectations remain intact.
