@@ -42,7 +42,7 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb
 # which takes the family through version edges.
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
 
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c5b83e3e950e7e5955eb64174eddecc7a90d4c08" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "23318f5d953419f90f504e8666cf69370310cd58" }
 
 garb = { git = "https://github.com/imazen/garb", rev = "7356e8f17776bf408b73bb958982e79aa2b9cac1" }
 

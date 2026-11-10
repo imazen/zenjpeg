@@ -1210,7 +1210,7 @@ dependencies = [
 [[package]]
 name = "linear-srgb"
 version = "0.6.13"
-source = "git+https://github.com/imazen/linear-srgb?rev=c5b83e3e950e7e5955eb64174eddecc7a90d4c08#c5b83e3e950e7e5955eb64174eddecc7a90d4c08"
+source = "git+https://github.com/imazen/linear-srgb?rev=23318f5d953419f90f504e8666cf69370310cd58#23318f5d953419f90f504e8666cf69370310cd58"
 dependencies = [
  "archmage 0.9.31",
  "bytemuck",
