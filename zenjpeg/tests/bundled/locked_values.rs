@@ -183,11 +183,13 @@ fn encode_config(
             .progressive(progressive)
             .optimize_huffman(optimize)
             .restart_mcu_rows(0) // Disable restart markers to match locked hashes
+            .encode_record(false) // Metadata record is not part of the locked bitstream
     } else {
         EncoderConfig::ycbcr(quality as f32, subsamp)
             .progressive(progressive)
             .optimize_huffman(optimize)
             .restart_mcu_rows(0) // Disable restart markers to match locked hashes
+            .encode_record(false) // Metadata record is not part of the locked bitstream
     };
 
     let mut enc = config

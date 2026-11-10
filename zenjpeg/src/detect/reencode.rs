@@ -889,6 +889,7 @@ mod tests {
             num_components: 3,
             scan_count: 10,
             dqt_tables: alloc::vec::Vec::new(),
+            record: None,
         }
     }
 

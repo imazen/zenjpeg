@@ -30,8 +30,8 @@ members = ["."]
 
 # This standalone workspace repeats the root's zencodec 0.2 family patches.
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
@@ -40,13 +40,13 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb
 # zenjpeg depends on ultrahdr-core unconditionally, and crates.io ultrahdr-core
 # 0.6.0 requires zencodec ^0.1 (a second zencodec); use the review revision,
 # which takes the family through version edges.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "174b1aff22b76ce2f8963e221edb94b50f84d823" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
 
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c5b83e3e950e7e5955eb64174eddecc7a90d4c08" }
 
-garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+garb = { git = "https://github.com/imazen/garb", rev = "7356e8f17776bf408b73bb958982e79aa2b9cac1" }
 
-zentone = { git = "https://github.com/imazen/zentone", rev = "4b5ab710157743e3018b7de3a79f336c2f61113e" }
+zentone = { git = "https://github.com/imazen/zentone", rev = "d640ee4b8b84017b9ea39c132bf86aa3745e09df" }
 
 [[bin]]
 name = "fuzz_decode"

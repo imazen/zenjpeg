@@ -466,6 +466,10 @@ impl BytesEncoder {
         self.inner.finish_into(output)?;
         // With streaming output the metadata went into the header at
         // `start_output`, and this injects nothing.
+        // The record goes in before the other metadata so an MPF index
+        // written by `inject_metadata` measures the primary with it included.
+        let record = self.config.record_payload(output);
+        inject_record_inplace(output, record.as_deref());
         inject_metadata(
             self.config.color_mode,
             &mut self.config.segments,
@@ -503,6 +507,8 @@ impl BytesEncoder {
             ));
         }
         let mut header = self.inner.take_header()?;
+        let record = self.config.record_payload(&header);
+        inject_record_inplace(&mut header, record.as_deref());
         inject_metadata(
             self.config.color_mode,
             &mut self.config.segments,
@@ -511,6 +517,8 @@ impl BytesEncoder {
             &mut self.icc_profile,
             &mut header,
         )?;
+        // The record is in the streamed header now; `finish_into` must not add a second.
+        self.config.encode_record = false;
         self.inner.start_output(header)
     }
 
@@ -716,6 +724,27 @@ fn find_xmp_insert_position(jpeg: &[u8]) -> usize {
 }
 
 // ============================================================================
+#[cfg(not(feature = "metadata"))]
+fn inject_record_inplace(_jpeg: &mut Vec<u8>, _payload: Option<&[u8]>) {}
+
+/// Insert the APP15 `ZENJ` record (zenjpeg#189) after every other APPn,
+/// just before the first DQT.
+#[cfg(feature = "metadata")]
+fn inject_record_inplace(jpeg: &mut Vec<u8>, payload: Option<&[u8]>) {
+    let Some(payload) = payload else { return };
+    let at = crate::detect::record::record_insert_position(jpeg);
+    let len = payload.len() + 2;
+    let mut seg = Vec::with_capacity(len + 2);
+    seg.extend_from_slice(&[
+        0xFF,
+        crate::detect::record::MARKER_APP15,
+        (len >> 8) as u8,
+        len as u8,
+    ]);
+    seg.extend_from_slice(payload);
+    jpeg.splice(at..at, seg);
+}
+
 // In-place metadata injection functions (for finish_into)
 // These use Vec::splice to avoid creating new Vecs
 // ============================================================================
@@ -1105,6 +1134,8 @@ pub struct YCbCrPlanarEncoder {
     cr_buffer: Vec<f32>,
     /// Number of rows currently buffered
     buffered_rows: usize,
+    /// Whether pending chroma uses the subsampled row layout.
+    buffered_subsampled: bool,
     /// Inner streaming encoder (handles actual encoding)
     inner: StreamingEncoder,
     /// ICC profile (per-image metadata)
@@ -1175,6 +1206,7 @@ impl YCbCrPlanarEncoder {
             cb_buffer: vec![0.0f32; buffer_size],
             cr_buffer: vec![0.0f32; buffer_size],
             buffered_rows: 0,
+            buffered_subsampled: false,
             inner,
             icc_profile,
             exif_data,
@@ -1215,6 +1247,8 @@ impl YCbCrPlanarEncoder {
     ///
     /// Data can be pushed in any amount - the encoder buffers partial strips
     /// internally and flushes when a complete strip is accumulated.
+    /// Switch to `push_subsampled()` only at a complete-strip boundary;
+    /// a switch while rows are buffered is rejected without consuming input.
     ///
     /// # Arguments
     /// - `planes`: Y, Cb, Cr plane data with per-plane strides
@@ -1225,87 +1259,34 @@ impl YCbCrPlanarEncoder {
     /// - Y: 0.0 to 255.0
     /// - Cb, Cr: -128.0 to 127.0
     pub fn push(&mut self, planes: &YCbCrPlanes<'_>, rows: usize, stop: impl Stop) -> Result<()> {
-        stop.check()?;
-
-        let width = self.width as usize;
-
-        // Validate row count
-        let new_total = self.total_rows_pushed + rows;
-        if new_total > self.height as usize {
-            return Err(Error::too_many_rows(self.height, new_total as u32));
-        }
-
-        let mut src_row = 0;
-        while src_row < rows {
-            stop.check()?;
-
-            // How many rows can we add to the buffer?
-            let rows_to_add = (rows - src_row).min(self.strip_height - self.buffered_rows);
-
-            // Copy rows to buffer
-            for i in 0..rows_to_add {
-                let buf_offset = (self.buffered_rows + i) * width;
-                let src_row_idx = src_row + i;
-
-                // Copy Y
-                let y_src_start = src_row_idx * planes.y_stride;
-                let y_src_end = y_src_start + width;
-                if y_src_end > planes.y.len() {
-                    return Err(Error::invalid_buffer_size(y_src_end, planes.y.len()));
-                }
-                self.y_buffer[buf_offset..buf_offset + width]
-                    .copy_from_slice(&planes.y[y_src_start..y_src_end]);
-
-                // Copy Cb
-                let cb_src_start = src_row_idx * planes.cb_stride;
-                let cb_src_end = cb_src_start + width;
-                if cb_src_end > planes.cb.len() {
-                    return Err(Error::invalid_buffer_size(cb_src_end, planes.cb.len()));
-                }
-                self.cb_buffer[buf_offset..buf_offset + width]
-                    .copy_from_slice(&planes.cb[cb_src_start..cb_src_end]);
-
-                // Copy Cr
-                let cr_src_start = src_row_idx * planes.cr_stride;
-                let cr_src_end = cr_src_start + width;
-                if cr_src_end > planes.cr.len() {
-                    return Err(Error::invalid_buffer_size(cr_src_end, planes.cr.len()));
-                }
-                self.cr_buffer[buf_offset..buf_offset + width]
-                    .copy_from_slice(&planes.cr[cr_src_start..cr_src_end]);
-            }
-
-            self.buffered_rows += rows_to_add;
-            src_row += rows_to_add;
-            self.total_rows_pushed += rows_to_add;
-
-            // Flush if we have a complete strip or this is the final strip
-            let remaining_image_rows = self.height as usize - self.inner.rows_pushed();
-            if self.buffered_rows >= self.strip_height || self.buffered_rows >= remaining_image_rows
-            {
-                self.flush_buffer()?;
-            }
-        }
-
-        Ok(())
+        self.push_planar(planes, rows, false, stop)
     }
 
-    /// Flush buffered rows to the inner encoder.
+    /// Flush exactly one complete strip, or the image's final partial strip.
     fn flush_buffer(&mut self) -> Result<()> {
         if self.buffered_rows == 0 {
             return Ok(());
         }
-
-        let width = self.width as usize;
-        let data_len = self.buffered_rows * width;
-
-        self.inner.push_ycbcr_strip_f32(
-            &self.y_buffer[..data_len],
-            &self.cb_buffer[..data_len],
-            &self.cr_buffer[..data_len],
-            self.buffered_rows,
-        )?;
-
+        let y_len = self.buffered_rows * self.width as usize;
+        if self.buffered_subsampled {
+            let cw = (self.width as usize).div_ceil(self.subsampling.h_factor() as usize);
+            let ch = self
+                .buffered_rows
+                .div_ceil(self.subsampling.v_factor() as usize);
+            self.inner.push_ycbcr_strip_f32_subsampled(
+                &self.y_buffer[..y_len],
+                &self.cb_buffer[..cw * ch],
+                &self.cr_buffer[..cw * ch],
+                self.buffered_rows,
+            )?;
+        } else {
+            self.inner.push_ycbcr_strip_f32(
+                &self.y_buffer[..y_len],
+                &self.cb_buffer[..y_len],
+                &self.cr_buffer[..y_len],
+                self.buffered_rows,
+            )?;
+        }
         self.buffered_rows = 0;
         Ok(())
     }
@@ -1315,9 +1296,16 @@ impl YCbCrPlanarEncoder {
     /// Use this when your chroma planes are already at the target subsampled resolution.
     /// Y plane is still at full resolution.
     ///
-    /// **Note:** Unlike `push()`, this method does not buffer partial strips.
-    /// For best results, push complete strips (multiples of `strip_height` rows,
-    /// which is 8 for 4:4:4 or 16 for 4:2:0).
+    /// Any luma row count is accepted; partial strips are buffered internally.
+    /// If the first luma row of this push is `y`, chroma starts at row
+    /// `floor(y / v_factor)` of the original chroma planes. For 4:2:0/4:4:0,
+    /// a push starting on an odd luma row repeats the shared first chroma row
+    /// from the preceding push. Its values must match the buffered samples.
+    /// Supply `ceil((y % v_factor + y_rows) / v_factor)` chroma rows.
+    ///
+    /// Full-resolution and pre-sampled input may alternate at complete-strip
+    /// boundaries. Switching methods while a partial strip is buffered returns
+    /// an error without consuming input. A zero-row push is a no-op.
     ///
     /// # Arguments
     /// - `planes`: Y at full resolution, Cb/Cr at subsampled resolution
@@ -1327,111 +1315,135 @@ impl YCbCrPlanarEncoder {
     /// # Chroma Dimensions
     /// The expected chroma dimensions depend on the subsampling mode:
     /// - 4:4:4 (None): cb/cr at full width × full height
-    /// - 4:2:2 (HalfHorizontal): cb/cr at width/2 × full height
-    /// - 4:2:0 (Quarter): cb/cr at width/2 × height/2
+    /// - 4:2:2 (HalfHorizontal): ceil(width/2) × full height
+    /// - 4:2:0 (Quarter): ceil(width/2) × chroma rows as described above
+    /// - 4:4:0 (HalfVertical): full width × chroma rows as described above
     pub fn push_subsampled(
         &mut self,
         planes: &YCbCrPlanes<'_>,
         y_rows: usize,
         stop: impl Stop,
     ) -> Result<()> {
-        stop.check()?;
+        self.push_planar(planes, y_rows, true, stop)
+    }
 
-        // Check that we don't have buffered full-resolution data
-        // (can't mix push() and push_subsampled())
-        if self.buffered_rows > 0 {
-            return Err(Error::internal(
-                "cannot mix push() and push_subsampled() - flush first",
+    // Validate every plane before consuming rows, including the final visible
+    // row without requiring unused stride padding after it.
+    fn validate_plane(data: &[f32], width: usize, rows: usize, stride: usize) -> Result<()> {
+        if stride < width {
+            return Err(Error::stride_too_small(width as u32, stride));
+        }
+        let required = (rows - 1)
+            .checked_mul(stride)
+            .and_then(|n| n.checked_add(width))
+            .ok_or_else(|| {
+                Error::invalid_config("planar row layout exceeds addressable memory".into())
+            })?;
+        if data.len() < required {
+            return Err(Error::invalid_buffer_size(required, data.len()));
+        }
+        Ok(())
+    }
+
+    fn push_planar(
+        &mut self,
+        planes: &YCbCrPlanes<'_>,
+        rows: usize,
+        subsampled: bool,
+        stop: impl Stop,
+    ) -> Result<()> {
+        stop.check()?;
+        if rows > self.height as usize - self.total_rows_pushed {
+            return Err(Error::too_many_rows(
+                self.height,
+                self.total_rows_pushed
+                    .saturating_add(rows)
+                    .min(u32::MAX as usize) as u32,
             ));
         }
-
+        if rows == 0 {
+            return Ok(());
+        }
+        if self.buffered_rows > 0 && self.buffered_subsampled != subsampled {
+            return Err(Error::invalid_config(
+                "cannot switch planar sampling while a partial strip is buffered".into(),
+            ));
+        }
         let width = self.width as usize;
-
-        // Calculate chroma dimensions based on subsampling
-        let (chroma_width, chroma_v_factor) = match self.subsampling {
-            super::encoder_types::ChromaSubsampling::None => (width, 1),
-            super::encoder_types::ChromaSubsampling::HalfHorizontal => ((width + 1) / 2, 1),
-            super::encoder_types::ChromaSubsampling::Quarter => ((width + 1) / 2, 2),
-            super::encoder_types::ChromaSubsampling::HalfVertical => (width, 2),
-        };
-        let chroma_rows = (y_rows + chroma_v_factor - 1) / chroma_v_factor;
-
-        // Validate row count
-        let new_total = self.total_rows_pushed + y_rows;
-        if new_total > self.height as usize {
-            return Err(Error::too_many_rows(self.height, new_total as u32));
-        }
-
-        // Check if input is already contiguous
-        let y_contiguous = planes.y_stride == width;
-        let cb_contiguous = planes.cb_stride == chroma_width;
-        let cr_contiguous = planes.cr_stride == chroma_width;
-
-        if y_contiguous && cb_contiguous && cr_contiguous {
-            // Fast path: data is already contiguous
-            let y_len = width * y_rows;
-            let c_len = chroma_width * chroma_rows;
-
-            if planes.y.len() < y_len {
-                return Err(Error::invalid_buffer_size(y_len, planes.y.len()));
-            }
-            if planes.cb.len() < c_len {
-                return Err(Error::invalid_buffer_size(c_len, planes.cb.len()));
-            }
-            if planes.cr.len() < c_len {
-                return Err(Error::invalid_buffer_size(c_len, planes.cr.len()));
-            }
-
-            self.inner.push_ycbcr_strip_f32_subsampled(
-                &planes.y[..y_len],
-                &planes.cb[..c_len],
-                &planes.cr[..c_len],
-                y_rows,
-            )?;
+        let (cw, vf) = if subsampled {
+            (
+                width.div_ceil(self.subsampling.h_factor() as usize),
+                self.subsampling.v_factor() as usize,
+            )
         } else {
-            // Slow path: copy strided data to contiguous buffers
-            let mut y_buf = vec![0.0f32; width * y_rows];
-            let mut cb_buf = vec![0.0f32; chroma_width * chroma_rows];
-            let mut cr_buf = vec![0.0f32; chroma_width * chroma_rows];
-
-            // Copy Y plane
-            for row in 0..y_rows {
-                stop.check()?;
-                let dst_start = row * width;
-                let dst_end = dst_start + width;
-                let src_start = row * planes.y_stride;
-                let src_end = src_start + width;
-                if src_end > planes.y.len() {
-                    return Err(Error::invalid_buffer_size(src_end, planes.y.len()));
-                }
-                y_buf[dst_start..dst_end].copy_from_slice(&planes.y[src_start..src_end]);
+            (width, 1)
+        };
+        let phase = self.total_rows_pushed % vf;
+        let chroma_rows = (phase + rows).div_ceil(vf);
+        Self::validate_plane(planes.y, width, rows, planes.y_stride)?;
+        Self::validate_plane(planes.cb, cw, chroma_rows, planes.cb_stride)?;
+        Self::validate_plane(planes.cr, cw, chroma_rows, planes.cr_stride)?;
+        if phase != 0 {
+            let first = (self.buffered_rows / vf) * cw;
+            if self.cb_buffer[first..first + cw] != planes.cb[..cw]
+                || self.cr_buffer[first..first + cw] != planes.cr[..cw]
+            {
+                return Err(Error::invalid_config(
+                    "chroma row shared by adjacent pushes must match".into(),
+                ));
             }
-
-            // Copy chroma planes
-            for row in 0..chroma_rows {
-                let dst_start = row * chroma_width;
-                let dst_end = dst_start + chroma_width;
-
-                let cb_src_start = row * planes.cb_stride;
-                let cb_src_end = cb_src_start + chroma_width;
-                if cb_src_end > planes.cb.len() {
-                    return Err(Error::invalid_buffer_size(cb_src_end, planes.cb.len()));
-                }
-                cb_buf[dst_start..dst_end].copy_from_slice(&planes.cb[cb_src_start..cb_src_end]);
-
-                let cr_src_start = row * planes.cr_stride;
-                let cr_src_end = cr_src_start + chroma_width;
-                if cr_src_end > planes.cr.len() {
-                    return Err(Error::invalid_buffer_size(cr_src_end, planes.cr.len()));
-                }
-                cr_buf[dst_start..dst_end].copy_from_slice(&planes.cr[cr_src_start..cr_src_end]);
-            }
-
-            self.inner
-                .push_ycbcr_strip_f32_subsampled(&y_buf, &cb_buf, &cr_buf, y_rows)?;
         }
-
-        self.total_rows_pushed += y_rows;
+        self.buffered_subsampled = subsampled;
+        let contiguous =
+            planes.y_stride == width && planes.cb_stride == cw && planes.cr_stride == cw;
+        let mut src_row = 0;
+        while src_row < rows {
+            stop.check()?;
+            let n = (rows - src_row).min(self.strip_height - self.buffered_rows);
+            let cs = (phase + src_row) / vf;
+            let ce = (phase + src_row + n).div_ceil(vf);
+            // Keep packed complete strips on the direct path. Strided and
+            // partial input reuse the already allocated one-strip buffers.
+            if self.buffered_rows == 0
+                && contiguous
+                && (n == self.strip_height || n == self.height as usize - self.total_rows_pushed)
+            {
+                let y = &planes.y[src_row * width..(src_row + n) * width];
+                let cb = &planes.cb[cs * cw..ce * cw];
+                let cr = &planes.cr[cs * cw..ce * cw];
+                if subsampled {
+                    self.inner.push_ycbcr_strip_f32_subsampled(y, cb, cr, n)?;
+                } else {
+                    self.inner.push_ycbcr_strip_f32(y, cb, cr, n)?;
+                }
+                self.total_rows_pushed += n;
+                src_row += n;
+                continue;
+            }
+            for i in 0..n {
+                stop.check()?;
+                let start = (src_row + i) * planes.y_stride;
+                let dst = (self.buffered_rows + i) * width;
+                self.y_buffer[dst..dst + width].copy_from_slice(&planes.y[start..start + width]);
+            }
+            let dst_c = self.buffered_rows / vf;
+            for i in 0..ce - cs {
+                stop.check()?;
+                let cb_start = (cs + i) * planes.cb_stride;
+                let cr_start = (cs + i) * planes.cr_stride;
+                let dst = (dst_c + i) * cw;
+                self.cb_buffer[dst..dst + cw].copy_from_slice(&planes.cb[cb_start..cb_start + cw]);
+                self.cr_buffer[dst..dst + cw].copy_from_slice(&planes.cr[cr_start..cr_start + cw]);
+            }
+            self.buffered_rows += n;
+            self.total_rows_pushed += n;
+            src_row += n;
+            if self.buffered_rows == self.strip_height
+                || self.total_rows_pushed == self.height as usize
+            {
+                self.flush_buffer()?;
+            }
+        }
         Ok(())
     }
 
@@ -1488,6 +1500,9 @@ impl YCbCrPlanarEncoder {
 
         // Finish streaming encoder directly into output
         self.inner.finish_into(output)?;
+        // Include the record before metadata injection computes MPF offsets.
+        let record = self.config.record_payload(output);
+        inject_record_inplace(output, record.as_deref());
 
         // When using EncoderSegments with MPF images, we need to merge individual
         // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE

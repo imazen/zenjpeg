@@ -5,10 +5,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
-- Interpret the Google depth metadata format default as RangeInverse and
-  normalize millimeter ranges; document zero-at-near inverse encoding.
-- Use current pixel-cohort associated ICC helpers and admit SIMD beta.2.
-  Verified by decoding grayscale depth payloads in the zensally consumer.
+### Fixed
+
+- Correct absent GDepth/Dynamic Depth format to RangeInverse, normalize millimeter ranges to meters, and reject unknown format/unit labels. Preserve the explicit enum constructor default.
+
+- Buffer arbitrary pre-sampled planar row pushes, preserve chroma phase across odd row boundaries, and validate layouts before consuming input. Full-resolution/pre-sampled modes may alternate at complete-strip boundaries. (`ed37e5ed`)
 
 ### Fixed: zencodec decoder keeps depths above 8 bits
 
@@ -24,8 +25,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
-- Pin standalone codec/pixel operation dependencies to the verified saliency consumer cohort.
-  Full standalone resolution still needs other optional/dev crates to admit SIMD beta.2.
+- Refresh codec, pixel, resize, color and metric git pins to current main revisions in root and fuzz graphs; use current associated ICC helpers with stable SIMD dependencies.
 
 - Accept the archmage and magetypes 0.9.31 stable release.
 
@@ -39,11 +39,20 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- Encoder parameter record (#189): every encode writes an APP15 `ZENJ` segment
+  carrying the quality dial on its native scale, quant-table family, AQ /
+  trellis / deringing / scan flags, pre-blur and a CRC-32 of the DQT tables, as
+  an append-only chain across generations; `detect::probe` returns it as
+  `JpegProbe::record` (`detect::EncodeRecord`, `verified` when the newest entry
+  matches the file's tables). `EncoderConfig::encode_record(false)` disables it;
+  `EncoderConfig::record_history` carries a source chain forward, which all three
+  `recompress` strategies do. Field choice is measured, not enumerated: zensr
+  `benchmarks/zenjpeg_knobs_2026-10-30.md`.
 - Add opt-in, unstable per-block encoder diagnostics (`d07a8710`) and a WASM viewer (`0d98644d`) for AQ, quantization tables, and interactive comparison.
 
 ### Fixed
 
-- Apply the same meter/millimeter normalization and unknown-unit rejection to Dynamic Depth and GDepth metadata. Verified through the embedded-depth consumer with appended depth/confidence PNG carriers.
+- Replicate strip chroma at the stride and resolution consumed by DCT, including fused/gamma-aware bottom edges, pre-sampled right/bottom edges and standard even-height 420/440 tails. Repair separate fused-parallel chroma storage, bottom rows and padded AQ geometry (`989fc609`). [Qualification](benchmarks/encode_strip_padding_2026-11-10.md).
 
 - Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
 
@@ -100,6 +109,8 @@ All notable changes to zenjpeg are documented here. Earlier history
   crates.io, so releases stay gated on publishing them.
 
 ### QUEUED BREAKING CHANGES
+
+- `detect::JpegProbe` gained the public field `record`; struct-literal constructors outside the crate must add it (#189).
 
 - Native `Decoder::decode_with_pulse` and `Decoder::scanline_reader_with_pulse`
   accept `Option<&dyn how_far::Pulse>`; `None` adds no per-call control.

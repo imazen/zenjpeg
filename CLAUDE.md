@@ -706,6 +706,12 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed pre-sampled planar streaming (2026-11-10): `YCbCrPlanarEncoder::push_subsampled` buffers arbitrary row counts and retains vertical chroma phase. Odd-start 420/440 pushes repeat the shared first chroma row; conflicting values and mid-strip sampling-mode switches are rejected before consuming input. Packed complete strips retain direct consumption; buffered/strided input reuses one-strip storage. Gates: `just planar-streaming-check`, `just planar-streaming-i686`.
+
+- Fixed progressive compatibility test portability (2026-11-10): ordinary 32-bit/64-bit tests use the same native-oracle-validated RGB hashes for the unchanged noise and grayscale-gradient witnesses. They no longer spawn optional `djpeg` processes; native CI explicitly revalidates both fixtures with pinned turbo. Gates: `just progressive-decode-check`, `just progressive-decode-i686`, `just progressive-decode-oracle`.
+
+- Fixed in focused strip-padding PR (2026-11-10): downsampled chroma must be padded at padded chroma stride, after subsampling real rows. The separate fused parallel encoder also needs padded planes, full-resolution 422/440 conversion scratch and AQ grid extension. See [encoder edge qualification](benchmarks/encode_strip_padding_2026-11-10.md); gates: `just strip-padding-check`, `just strip-padding-oracle`.
+
 - Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
   unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
   `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:
@@ -1898,3 +1904,18 @@ CmykF32Inverted by default, exact normalized native codes, CMYK8 only when
 explicitly requested. Scope and resource receipt are in
 `docs/native-depth-revalidation-2026-11-06.md`. This is not a new independent
 libjpeg-turbo comparison or qualification of the proposed shared cohort.
+
+## Known Bugs: encode record feature gating (fixed on encode-record-189, 2026-11-10)
+
+The encode-record draft referenced metadata-gated detection types unconditionally,
+so builds without default features failed, including WASM. Record history and
+serialization now follow the `metadata` feature. `encode_record` remains callable
+without it and has no effect, preserving metadata-free encoder builds.
+
+## Known Bugs: planar encode records (fixed on encode-record-189, 2026-11-10)
+
+The record draft injected APP15 only for packed encodes, so planar encodes
+silently ignored the record setting. Planar completion now injects the record
+before metadata and MPF indexing. Regression coverage exercises full-resolution
+and pre-sampled planes, all four samplings, all three finish methods, verified
+DQT checksums and identical image bytes after removing the record.

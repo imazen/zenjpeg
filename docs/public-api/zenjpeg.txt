@@ -6,21 +6,21 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1722 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3621 lines (1019 hidden + 7091 excluded-feature)
+# files: zenjpeg.txt 1817 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3636 lines (1031 hidden + 7098 excluded-feature)
 
 ## summary
 #
-#   pub modules                                19
-#   pub types (struct/enum/trait/alias)       148
-#   pub consts/statics                         94
+#   pub modules                                20
+#   pub types (struct/enum/trait/alias)       158
+#   pub consts/statics                        105
 #   pub macros                                  2
-#   free functions                             65
-#   inherent methods                          507
-#   struct fields                             396
-#   enum variants                             406
+#   free functions                             68
+#   inherent methods                          520
+#   struct fields                             421
+#   enum variants                             432
 #   re-exports                                  2
-#   trait roster entries (type × trait)       508
-#   auto-trait-complete types                 107
+#   trait roster entries (type × trait)       551
+#   auto-trait-complete types                 115
 #   auto-trait exceptions                      14
 #
 # per-module pub lines:
@@ -29,14 +29,14 @@
 #   container                       295
 #   deblock                          16
 #   decoder                         577
-#   detect                           56
-#   encoder                         534
+#   detect                          143
+#   encoder                         536
 #   heuristics                       24
 #   lossless                         43
 #   profile                           7
 #   target_quality                   18
 
-## items (1583 lines)
+## items (1670 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -964,6 +964,71 @@ pub type decoder::DecodeError = encoder::Error
 pub type decoder::Decoder = decoder::DecodeConfig
 pub type decoder::Result<T> = core::result::Result<T, encoder::Error> [also: encoder]
 pub mod detect
+pub mod detect::record
+#[non_exhaustive] pub enum detect::record::ColorFront
+pub detect::record::ColorFront::Grayscale
+pub detect::record::ColorFront::Rgb
+pub detect::record::ColorFront::Unknown(u8)
+pub detect::record::ColorFront::Xyb
+pub detect::record::ColorFront::YCbCr
+#[non_exhaustive] pub enum detect::record::DialScale
+pub detect::record::DialScale::Butteraugli
+pub detect::record::DialScale::Jpegli
+pub detect::record::DialScale::Mozjpeg
+pub detect::record::DialScale::Ssim2
+pub detect::record::DialScale::Unknown(u8)
+pub detect::record::DialScale::ZensimA
+#[non_exhaustive] pub enum detect::record::EncoderId
+pub detect::record::EncoderId::Unknown(u8)
+pub detect::record::EncoderId::Zenjpeg
+#[non_exhaustive] pub enum detect::record::SubsamplingCode
+pub detect::record::SubsamplingCode::Full
+pub detect::record::SubsamplingCode::HalfHorizontal
+pub detect::record::SubsamplingCode::HalfVertical
+pub detect::record::SubsamplingCode::NotApplicable
+pub detect::record::SubsamplingCode::Quarter
+pub detect::record::SubsamplingCode::Unknown(u8)
+#[non_exhaustive] pub enum detect::record::TableSource
+pub detect::record::TableSource::Custom
+pub detect::record::TableSource::GlassaLowBpp
+pub detect::record::TableSource::Jpegli
+pub detect::record::TableSource::JpegliSharedChroma
+pub detect::record::TableSource::MozjpegRobidoux
+pub detect::record::TableSource::PiecewiseV4
+pub detect::record::TableSource::Unknown(u8)
+pub detect::record::EncodeEntry::color_front: detect::record::ColorFront
+pub detect::record::EncodeEntry::dqt_crc32: u32
+pub detect::record::EncodeEntry::encoder: detect::record::EncoderId
+pub detect::record::EncodeEntry::flags: detect::record::EncodeFlags
+pub detect::record::EncodeEntry::pre_blur: f32
+pub detect::record::EncodeEntry::quality: f32
+pub detect::record::EncodeEntry::quality_scale: detect::record::DialScale
+pub detect::record::EncodeEntry::subsampling: detect::record::SubsamplingCode
+pub detect::record::EncodeEntry::table_source: detect::record::TableSource
+pub detect::record::EncodeEntry::version: (u8, u8, u8)
+pub struct detect::record::EncodeFlags(pub u8)
+pub const detect::record::EncodeFlags::AQ: u8
+pub const detect::record::EncodeFlags::DERINGING: u8
+pub const detect::record::EncodeFlags::GAMMA_AWARE_CHROMA: u8
+pub const detect::record::EncodeFlags::PROGRESSIVE: u8
+pub const detect::record::EncodeFlags::SCAN_SEARCH: u8
+pub const detect::record::EncodeFlags::TRELLIS_AC: u8
+pub const detect::record::EncodeFlags::TRELLIS_DC: u8
+pub fn detect::record::EncodeFlags::has(self, u8) -> bool
+pub detect::record::EncodeRecord::entries: alloc::vec::Vec<detect::record::EncodeEntry>
+pub detect::record::EncodeRecord::verified: bool
+pub fn detect::record::EncodeRecord::current(&self) -> core::option::Option<&detect::record::EncodeEntry>
+pub fn detect::record::EncodeRecord::from_payload(&[u8]) -> core::option::Option<Self>
+pub fn detect::record::EncodeRecord::generations(&self) -> usize
+pub fn detect::record::EncodeRecord::to_payload(&self) -> alloc::vec::Vec<u8>
+pub fn detect::record::EncodeRecord::verify_against(&mut self, &[u8])
+pub const detect::record::MARKER_APP15: u8
+pub const detect::record::MAX_ENTRIES: usize
+pub const detect::record::SIGNATURE: &[u8; 5]
+pub const detect::record::VERSION: u8
+pub fn detect::record::dqt_crc32(&[u8]) -> core::option::Option<u32>
+pub fn detect::record::history_of(&[u8]) -> alloc::vec::Vec<detect::record::EncodeEntry>
+pub fn detect::record::read_record(&[u8]) -> core::option::Option<detect::record::EncodeRecord>
 pub enum detect::Confidence
 pub detect::Confidence::Approximate
 pub detect::Confidence::Exact
@@ -996,6 +1061,25 @@ pub struct detect::DqtTable
 pub detect::DqtTable::index: u8
 pub detect::DqtTable::precision: u8
 pub detect::DqtTable::values: [u16; 64]
+pub struct detect::EncodeEntry [also: detect::record]
+pub detect::EncodeEntry::color_front: detect::record::ColorFront
+pub detect::EncodeEntry::dqt_crc32: u32
+pub detect::EncodeEntry::encoder: detect::record::EncoderId
+pub detect::EncodeEntry::flags: detect::record::EncodeFlags
+pub detect::EncodeEntry::pre_blur: f32
+pub detect::EncodeEntry::quality: f32
+pub detect::EncodeEntry::quality_scale: detect::record::DialScale
+pub detect::EncodeEntry::subsampling: detect::record::SubsamplingCode
+pub detect::EncodeEntry::table_source: detect::record::TableSource
+pub detect::EncodeEntry::version: (u8, u8, u8)
+pub struct detect::EncodeRecord [also: detect::record]
+pub detect::EncodeRecord::entries: alloc::vec::Vec<detect::record::EncodeEntry>
+pub detect::EncodeRecord::verified: bool
+pub fn detect::record::EncodeRecord::current(&self) -> core::option::Option<&detect::record::EncodeEntry>
+pub fn detect::record::EncodeRecord::from_payload(&[u8]) -> core::option::Option<Self>
+pub fn detect::record::EncodeRecord::generations(&self) -> usize
+pub fn detect::record::EncodeRecord::to_payload(&self) -> alloc::vec::Vec<u8>
+pub fn detect::record::EncodeRecord::verify_against(&mut self, &[u8])
 pub struct detect::JpegProbe
 pub detect::JpegProbe::dimensions: decoder::Dimensions
 pub detect::JpegProbe::dqt_tables: alloc::vec::Vec<detect::DqtTable>
@@ -1003,6 +1087,7 @@ pub detect::JpegProbe::encoder: detect::EncoderFamily
 pub detect::JpegProbe::mode: decoder::JpegMode
 pub detect::JpegProbe::num_components: u8
 pub detect::JpegProbe::quality: detect::QualityEstimate
+pub detect::JpegProbe::record: core::option::Option<detect::record::EncodeRecord>
 pub detect::JpegProbe::scan_count: u16
 pub detect::JpegProbe::subsampling: decoder::Subsampling
 pub fn detect::JpegProbe::estimated_ba(&self) -> f32
@@ -1335,6 +1420,7 @@ pub fn encoder::EncoderConfig::encode_from_bytes(&self, u32, u32, encoder::Pixel
 pub fn encoder::EncoderConfig::encode_from_rgb<P: encoder::Pixel>(&self, u32, u32) -> encoder::Result<encoder::RgbEncoder<P>>
 pub fn encoder::EncoderConfig::encode_from_ycbcr_planar(&self, u32, u32) -> encoder::Result<encoder::YCbCrPlanarEncoder>
 pub fn encoder::EncoderConfig::encode_into<P: encoder::Pixel>(&self, &[P], u32, u32, &mut alloc::vec::Vec<u8>) -> encoder::Result<()>
+pub fn encoder::EncoderConfig::encode_record(self, bool) -> Self
 pub fn encoder::EncoderConfig::estimate_memory(&self, u32, u32) -> usize
 pub fn encoder::EncoderConfig::estimate_memory_ceiling(&self, u32, u32) -> usize
 pub fn encoder::EncoderConfig::force_baseline(self) -> Self
@@ -1358,6 +1444,7 @@ pub fn encoder::EncoderConfig::progressive(self, impl core::convert::Into<encode
 pub fn encoder::EncoderConfig::quality(self, impl core::convert::Into<encoder::Quality>) -> Self
 pub fn encoder::EncoderConfig::quant_source(self, encode::encoder_types::QuantTableSource) -> Self
 pub fn encoder::EncoderConfig::quant_table_config(self, encoder::QuantTableConfig) -> Self
+pub fn encoder::EncoderConfig::record_history(self, alloc::vec::Vec<detect::record::EncodeEntry>) -> Self
 pub fn encoder::EncoderConfig::request(&self) -> encoder::EncodeRequest<'_>
 pub fn encoder::EncoderConfig::restart_mcu_rows(self, u16) -> Self
 pub fn encoder::EncoderConfig::rgb(impl core::convert::Into<encoder::Quality>) -> Self
@@ -1622,7 +1709,7 @@ pub fn target_quality::search_target<E, Err>(f64, &target_quality::TargetOptions
 pub macro profile_block!
 pub macro profile_scope!
 
-## trait impls (124 types)
+## trait impls (132 types)
 
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
@@ -1693,6 +1780,14 @@ detect::QualityEstimate: Clone, Debug
 detect::QualityScale: Clone, Copy, Debug, Eq, Hash, PartialEq
 detect::ReencodeError: Clone, Debug, Display, Error
 detect::ReencodeSettings: Clone, Debug
+detect::record::ColorFront: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::record::DialScale: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::record::EncodeEntry: Clone, Debug, PartialEq
+detect::record::EncodeFlags: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+detect::record::EncodeRecord: Clone, Debug, PartialEq
+detect::record::EncoderId: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::record::SubsamplingCode: Clone, Copy, Debug, Eq, Hash, PartialEq
+detect::record::TableSource: Clone, Copy, Debug, Eq, Hash, PartialEq
 encoder::AqCoupling: Clone, Copy, Debug, Default, PartialEq
 encoder::ChromaSubsampling: Clone, Copy, Debug, Eq, From<decoder::Subsampling>, PartialEq
 encoder::ColorMode: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -1751,7 +1846,7 @@ whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder
 
 ## auto traits
 
-107 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+115 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 decoder::DecodeConfig: !RefUnwindSafe !UnwindSafe
 decoder::DecodeInfo: !Freeze
 decoder::DecodePool: !Freeze

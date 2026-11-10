@@ -28,6 +28,7 @@
 pub mod content;
 mod fingerprint;
 mod quality;
+pub mod record;
 mod reencode;
 mod scanner;
 
@@ -35,6 +36,7 @@ pub use fingerprint::EncoderFamily;
 #[cfg(test)]
 pub(crate) use fingerprint::generate_ijg_table;
 pub use quality::{Confidence, QualityEstimate, QualityScale};
+pub use record::{EncodeEntry, EncodeRecord};
 pub use reencode::{ReencodeError, ReencodeSettings};
 
 use crate::foundation::consts::{MARKER_SOF0, MARKER_SOF2};
@@ -61,6 +63,11 @@ pub struct JpegProbe {
     pub scan_count: u16,
     /// DQT tables in natural (row-major) order. Typically 1-3 tables.
     pub dqt_tables: Vec<DqtTable>,
+    /// Encoder parameter record (APP15 `ZENJ`), when the file carries one.
+    /// Authoritative where [`EncodeRecord::verified`]; `encoder` and
+    /// `quality` above stay the fingerprint *estimate* regardless, so
+    /// callers choose explicitly. See [`record`].
+    pub record: Option<EncodeRecord>,
 }
 
 /// A quantization table extracted from a JPEG file, in natural (row-major) order.
@@ -184,6 +191,7 @@ pub fn probe(data: &[u8]) -> Result<JpegProbe, ProbeError> {
         num_components,
         scan_count: scan.sos_count,
         dqt_tables,
+        record: record::read_record(data),
     })
 }
 
