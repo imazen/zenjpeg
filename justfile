@@ -1030,3 +1030,19 @@ encode-record-planar-check:
     cargo test -p zenjpeg --release --test encode_record planar_encodes_emit_app15_across_sampling_and_finish_paths -- --exact
     cargo test -p zenjpeg --release --test planar_streaming
     just encode-record-check encode-record-clippy
+
+# GDepth and Dynamic Depth metadata: real JPEG/PNG carriers and unit/format matrix.
+depth-metadata-check:
+    cargo test -p zenjpeg --release --lib decode::depth::tests
+    cargo test -p zenjpeg --release --features zencodec --test encode_carrier_policy
+    cargo clippy -p zenjpeg --release --features zencodec --lib -- -D warnings
+
+# Current-main source compatibility, unchanged pixel hashes, and depth metadata.
+depth-cohort-check:
+    just depth-metadata-check
+    RUST_TEST_THREADS=1 cargo test -p zenjpeg --release --locked --lib --tests
+    cargo test -p zenjpeg --release --locked --features parallel,zencodec --test planar_streaming --test strip_padding --test strip_padding_hashes
+    cargo test -p zenjpeg --release --locked --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert --lib --test bundled --test source_color_binding --test controlled_decode
+    cargo test -p zenjpeg --release --locked --doc --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,layout,recompress-expert
+    cargo clippy -p zenjpeg --release --locked --lib --tests --benches --features parallel,moxcms,ultrahdr,zencodec,controlled-decode,__test-utils,__oracle-tests,metadata-rewrite,layout,recompress-expert -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets

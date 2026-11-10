@@ -1127,6 +1127,167 @@ mod tests {
 
     // === GDepth metadata field parsing ===
 
+    // Reference: https://developers.google.com/depthmap-metadata/reference
+    #[test]
+    #[cfg(feature = "metadata")]
+    fn depth_carriers_preserve_pngs_and_normalize_format_units() {
+        use crate::decoder::{Decoder, PreserveConfig};
+        use crate::encoder::{EncoderConfig, PixelLayout};
+        use enough::Unstoppable;
+        fn png_bytes(samples: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut out, 2, 1);
+                encoder.set_color(png::ColorType::Grayscale);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(samples)
+                    .unwrap();
+            }
+            out
+        }
+        let depth = png_bytes(&[0, 255]);
+        let confidence = png_bytes(&[255, 128]);
+        let mut cases = 0;
+        for dynamic in [false, true] {
+            let prefixes = if dynamic {
+                ["GDepth", "DepthMap"]
+            } else {
+                ["GDepth", "gdepth"]
+            };
+            for prefix in prefixes {
+                for format in [
+                    None,
+                    Some("RangeLinear"),
+                    Some("RangeInverse"),
+                    Some("unknown"),
+                ] {
+                    for units in [
+                        None,
+                        Some("m"),
+                        Some("Meters"),
+                        Some("meters"),
+                        Some("mm"),
+                        Some("Diopters"),
+                        Some("diopters"),
+                        Some("unknown"),
+                    ] {
+                        let range = if units == Some("mm") {
+                            (150., 100000.)
+                        } else {
+                            (0.15, 100.)
+                        };
+                        let mut attrs = alloc::format!(
+                            r#"{prefix}:Near="{}" {prefix}:Far="{}""#,
+                            range.0,
+                            range.1
+                        );
+                        if let Some(v) = format {
+                            attrs += &alloc::format!(r#" {prefix}:Format="{v}""#);
+                        }
+                        if let Some(v) = units {
+                            attrs += &alloc::format!(r#" {prefix}:Units="{v}""#);
+                        }
+                        let body = if dynamic {
+                            alloc::format!(
+                                r#"<Container:Directory><rdf:Seq>
+<rdf:li><Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary" Item:Length="0" Item:Padding="3"/></rdf:li>
+<rdf:li><Container:Item Item:Mime="image/png" Item:Semantic="DepthMap" Item:Length="{}"/></rdf:li>
+<rdf:li><Container:Item Item:Mime="image/png" Item:Semantic="ConfidenceMap" Item:Length="{}"/></rdf:li>
+</rdf:Seq></Container:Directory>"#,
+                                depth.len(),
+                                confidence.len()
+                            )
+                        } else {
+                            attrs += &alloc::format!(
+                                r#" {prefix}:Data="{}" {prefix}:Mime="image/png" {prefix}:Confidence="{}" {prefix}:ConfidenceMime="image/png""#,
+                                base64_encode(&depth),
+                                base64_encode(&confidence)
+                            );
+                            String::new()
+                        };
+                        let xmp = alloc::format!(
+                            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:RDF><rdf:Description xmlns:{prefix}="http://ns.google.com/photos/1.0/depthmap/" xmlns:Container="http://ns.google.com/photos/dd/1.0/container/" xmlns:Item="http://ns.google.com/photos/dd/1.0/item/" {attrs}>{body}</rdf:Description></rdf:RDF></x:xmpmeta>"#
+                        );
+                        let config = EncoderConfig::grayscale(80.);
+                        let mut encoder = config
+                            .request()
+                            .xmp(xmp.as_bytes())
+                            .encode_from_bytes(8, 8, PixelLayout::Gray8Srgb)
+                            .unwrap();
+                        encoder.push_packed(&[127; 64], Unstoppable).unwrap();
+                        let mut jpeg = encoder.finish().unwrap();
+                        if dynamic {
+                            jpeg.extend_from_slice(&[0xE7; 3]);
+                            jpeg.extend_from_slice(&depth);
+                            jpeg.extend_from_slice(&confidence);
+                        }
+                        let decoded = Decoder::new()
+                            .preserve(PreserveConfig::all())
+                            .decode(&jpeg, Unstoppable)
+                            .unwrap();
+                        let extracted = decoded.extras().unwrap().extract_depth_map(Some(&jpeg));
+                        if format == Some("unknown") || units == Some("unknown") {
+                            assert!(
+                                extracted.is_none(),
+                                "{dynamic} {prefix} {format:?} {units:?}"
+                            );
+                        } else {
+                            let extracted = extracted.unwrap();
+                            assert_eq!(
+                                extracted.source,
+                                if dynamic {
+                                    DepthSource::DynamicDepth
+                                } else {
+                                    DepthSource::GDepthXmp
+                                }
+                            );
+                            assert_eq!(extracted.data, depth);
+                            assert_eq!(extracted.confidence.as_ref(), Some(&confidence));
+                            assert_eq!(extracted.mime, "image/png");
+                            assert_eq!(extracted.confidence_mime.as_deref(), Some("image/png"));
+                            let meta = extracted.metadata.unwrap();
+                            assert_eq!(
+                                meta.format,
+                                if format == Some("RangeLinear") {
+                                    GDepthFormat::RangeLinear
+                                } else {
+                                    GDepthFormat::RangeInverse
+                                }
+                            );
+                            assert_eq!(
+                                meta.units,
+                                if matches!(units, Some("Diopters" | "diopters")) {
+                                    GDepthUnits::Diopters
+                                } else {
+                                    GDepthUnits::Meters
+                                }
+                            );
+                            assert!((meta.near - 0.15).abs() < 1e-6);
+                            assert!((meta.far - 100.).abs() < 1e-4);
+                            let mut reader =
+                                png::Decoder::new(std::io::Cursor::new(extracted.data))
+                                    .read_info()
+                                    .unwrap();
+                            let mut samples = vec![0; reader.output_buffer_size().unwrap()];
+                            let info = reader.next_frame(&mut samples).unwrap();
+                            assert_eq!(
+                                (info.width, info.height, info.color_type),
+                                (2, 1, png::ColorType::Grayscale)
+                            );
+                            assert_eq!(&samples[..info.buffer_size()], &[0, 255]);
+                        }
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 128);
+        assert_eq!(GDepthFormat::default(), GDepthFormat::RangeLinear);
+    }
+
     #[test]
     fn gdepth_spec_default_inverse_and_millimeter_ranges() {
         let xmp = r#"<rdf:Description GDepth:Near="150" GDepth:Far="100000" GDepth:Units="mm" GDepth:Data="AQID"/>"#;

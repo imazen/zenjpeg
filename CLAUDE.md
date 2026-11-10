@@ -1919,3 +1919,18 @@ silently ignored the record setting. Planar completion now injects the record
 before metadata and MPF indexing. Regression coverage exercises full-resolution
 and pre-sampled planes, all four samplings, all three finish methods, verified
 DQT checksums and identical image bytes after removing the record.
+
+## Known Bugs: Google depth metadata and current pixel facades (fixed 2026-11-10)
+
+Absent GDepth/Dynamic Depth format was interpreted as linear instead of inverse,
+and millimeter endpoints were neither normalized nor identified correctly. Both
+carriers now use the Google default, normalize millimeters to meters, and reject
+unknown format/unit labels. The explicit `GDepthFormat::default()` remains linear.
+`just depth-metadata-check` exercises real JPEGs with PNG depth/confidence data
+across 128 carrier/prefix/format/unit combinations and retains existing parser tests.
+
+Current pixel sources expose ICC and orientation operations through associated
+methods and conversion traits. The stable SIMD cohort requires 0.9.31; explicit
+`mul_add_relaxed` preserves the previous vector arithmetic.
+`just depth-cohort-check` checks these adapters against existing pixel/golden
+contracts and compiles the standalone fuzz targets without local path overrides.
