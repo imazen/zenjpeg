@@ -1,4 +1,4 @@
-//! Encoder parameter record (APP10 `ZENJ`): authoritative encode history
+//! Encoder parameter record (APP15 `ZENJ`): authoritative encode history
 //! instead of fingerprint estimation (zenjpeg#189).
 //!
 //! A JPEG carries no record of how it was encoded beyond its tables, so
@@ -44,7 +44,8 @@
 //!
 //! # Wire format (version 1)
 //!
-//! APP10 (`0xFFEA`) segment, payload:
+//! APP15 (`0xFFEF`) segment. The `ZENJ\0` signature distinguishes this
+//! record from other applications using APP15. Payload:
 //!
 //! ```text
 //! "ZENJ\0"            5  signature
@@ -70,15 +71,15 @@
 //! unknown versions are skipped (the record is an optimization, probing
 //! falls back to estimation).
 //!
-//! Metadata strippers drop APP10 like any other APPn. The record is never
+//! Metadata strippers drop APP15 like any other APPn. The record is never
 //! load-bearing: a file without one behaves exactly as before.
 
 use alloc::vec::Vec;
 
 use crate::foundation::consts::{MARKER_DQT, MARKER_SOS};
 
-/// APP10 marker byte used for the record.
-pub const MARKER_APP10: u8 = 0xEA;
+/// APP15 marker byte used for the record.
+pub const MARKER_APP15: u8 = 0xEF;
 /// Payload signature.
 pub const SIGNATURE: &[u8; 5] = b"ZENJ\0";
 /// Current wire-format version.
@@ -252,7 +253,7 @@ impl EncodeRecord {
         self.entries.len()
     }
 
-    /// Serialize as an APP10 payload (signature included, marker and length
+    /// Serialize as an APP15 payload (signature included, marker and length
     /// excluded), keeping the newest [`MAX_ENTRIES`].
     #[must_use]
     pub fn to_payload(&self) -> Vec<u8> {
@@ -278,7 +279,7 @@ impl EncodeRecord {
         out
     }
 
-    /// Parse an APP10 payload. `None` for anything that is not a record this
+    /// Parse an APP15 payload. `None` for anything that is not a record this
     /// reader understands. `verified` is left `false`; see
     /// [`EncodeRecord::verify_against`].
     #[must_use]
@@ -348,6 +349,7 @@ pub(crate) fn crate_version() -> (u8, u8, u8) {
 /// the newest entry's `dqt_crc32` set from the tables in `jpeg`. Used by
 /// coefficient-domain rewrites that do not go through the encoder. No-op
 /// on an empty chain.
+#[cfg(any(test, feature = "recompress"))]
 pub(crate) fn insert_record(jpeg: &mut Vec<u8>, mut entries: Vec<EncodeEntry>) {
     let (Some(crc), Some(last)) = (dqt_crc32(jpeg), entries.last_mut()) else {
         return;
@@ -361,19 +363,19 @@ pub(crate) fn insert_record(jpeg: &mut Vec<u8>, mut entries: Vec<EncodeEntry>) {
     let at = record_insert_position(jpeg);
     let len = payload.len() + 2;
     let mut seg = Vec::with_capacity(len + 2);
-    seg.extend_from_slice(&[0xFF, MARKER_APP10, (len >> 8) as u8, len as u8]);
+    seg.extend_from_slice(&[0xFF, MARKER_APP15, (len >> 8) as u8, len as u8]);
     seg.extend_from_slice(&payload);
     jpeg.splice(at..at, seg);
 }
 
-/// Extract the record from a JPEG's headers (first APP10 `ZENJ` segment
+/// Extract the record from a JPEG's headers (first APP15 `ZENJ` segment
 /// before SOS), verified against the file's DQT tables. `None` when absent
 /// or unreadable.
 #[must_use]
 pub fn read_record(jpeg: &[u8]) -> Option<EncodeRecord> {
     let mut rec = None;
     for_each_segment(jpeg, |marker, payload| {
-        if marker == MARKER_APP10 && rec.is_none() {
+        if marker == MARKER_APP15 && rec.is_none() {
             rec = EncodeRecord::from_payload(payload);
         }
         rec.is_none()
@@ -386,7 +388,7 @@ pub fn read_record(jpeg: &[u8]) -> Option<EncodeRecord> {
 /// CRC-32 (IEEE, as in PNG/zlib) over the file's quantization tables, in
 /// the order they appear: for each table `Pq | Tq` byte followed by its 64
 /// values as big-endian u16 (zigzag order as stored, so the hash is of the
-/// segment contents, independent of 8/16-bit storage width). `None` if there
+/// segment contents, including its 8/16-bit storage precision). `None` if there
 /// is no DQT before SOS.
 #[must_use]
 pub fn dqt_crc32(jpeg: &[u8]) -> Option<u32> {
@@ -548,6 +550,108 @@ mod tests {
             flags: EncodeFlags(EncodeFlags::AQ | EncodeFlags::TRELLIS_AC),
             pre_blur: 0.4375,
             dqt_crc32: crc,
+        }
+    }
+
+    #[test]
+    fn coefficient_rewrite_inserts_app15_with_verified_tables() {
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xDB, 0, 67, 0];
+        jpeg.extend_from_slice(&[1; 64]);
+        jpeg.extend_from_slice(&[0xFF, 0xDA, 0, 2]);
+        insert_record(&mut jpeg, vec![entry(70.0, 0)]);
+        assert_eq!(&jpeg[2..4], &[0xFF, 0xEF]);
+        let record = read_record(&jpeg).unwrap();
+        assert!(record.verified);
+        assert_eq!(record.current().unwrap().quality, 70.0);
+    }
+
+    #[test]
+    fn unknown_wire_codes_roundtrip_without_aliasing_known_values() {
+        for code in 0..=255 {
+            assert_eq!(EncoderId::from_code(code).code(), code);
+            assert_eq!(DialScale::from_code(code).code(), code);
+            assert_eq!(TableSource::from_code(code).code(), code);
+            assert_eq!(ColorFront::from_code(code).code(), code);
+            assert_eq!(SubsamplingCode::from_code(code).code(), code);
+        }
+    }
+
+    #[test]
+    fn truncated_payloads_and_invalid_counts_are_rejected() {
+        let record = EncodeRecord {
+            entries: vec![entry(70.0, 0)],
+            verified: false,
+        };
+        assert!(record.current().is_none());
+        let payload = record.to_payload();
+        for end in 0..payload.len() {
+            assert!(EncodeRecord::from_payload(&payload[..end]).is_none());
+        }
+        for (offset, value) in [(0, 0), (5, 99), (6, 0), (6, 9)] {
+            let mut bad = payload.clone();
+            bad[offset] = value;
+            assert!(EncodeRecord::from_payload(&bad).is_none());
+        }
+    }
+
+    #[test]
+    fn malformed_headers_do_not_yield_records_or_table_checksums() {
+        for bytes in [
+            vec![],
+            vec![0; 4],
+            vec![255, 0, 0, 0],
+            vec![255, 216, 0, 0, 0, 0],
+            vec![255, 216, 255, 217, 0, 0],
+            vec![255, 216, 255, 218, 0, 0],
+            vec![255, 216, 255, 224, 0, 1],
+            vec![255, 216, 255, 224, 0, 8],
+            vec![255, 216, 255, 255, 224, 0, 2],
+            vec![255, 216, 255, 208, 255, 1, 255, 224, 0, 2],
+            vec![255, 216, 255, 219, 0, 3, 0],
+            vec![255, 216, 255, 219, 0, 3, 16],
+        ] {
+            assert!(read_record(&bytes).is_none());
+            assert!(dqt_crc32(&bytes).is_none());
+            assert!(history_of(&bytes).is_empty());
+        }
+    }
+
+    #[test]
+    fn wide_tables_hash_their_full_precision_and_history_requires_a_match() {
+        let mut jpeg = vec![255, 216, 255, 219, 0, 131, 16];
+        for _ in 0..64 {
+            jpeg.extend_from_slice(&[1, 2]);
+        }
+        jpeg.extend_from_slice(&[255, 218, 0, 2]);
+        let crc = dqt_crc32(&jpeg).unwrap();
+        let mut reference = Crc32::new();
+        reference.update(&[16]);
+        for _ in 0..64 {
+            reference.update(&[1, 2]);
+        }
+        assert_eq!(crc, reference.finish());
+        insert_record(&mut jpeg, vec![entry(70.0, 0)]);
+        assert_eq!(history_of(&jpeg).len(), 1);
+        let dqt = jpeg.windows(2).position(|b| b == [255, 219]).unwrap();
+        jpeg[dqt + 5] ^= 1;
+        assert!(history_of(&jpeg).is_empty());
+        let mut empty = vec![255, 216, 255, 218, 0, 2];
+        let original = empty.clone();
+        insert_record(&mut empty, vec![]);
+        assert_eq!(empty, original);
+        insert_record(&mut jpeg, vec![]);
+    }
+
+    #[test]
+    fn record_position_follows_metadata_and_precedes_image_markers() {
+        assert_eq!(record_insert_position(&[255, 216]), 2);
+        assert_eq!(record_insert_position(&[255, 216, 255, 224, 0, 1]), 6);
+        assert_eq!(record_insert_position(&[255, 216, 255, 224, 0, 2]), 6);
+        for marker in [MARKER_DQT, MARKER_SOS, 0xC0] {
+            assert_eq!(
+                record_insert_position(&[255, 216, 255, 224, 0, 2, 255, marker, 0, 2]),
+                6
+            );
         }
     }
 

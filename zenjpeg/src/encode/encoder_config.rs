@@ -481,7 +481,7 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
-    /// Emit the APP10 `ZENJ` encoder parameter record (zenjpeg#189). On by
+    /// Emit the APP15 `ZENJ` encoder parameter record (zenjpeg#189). On by
     /// default; tens of bytes. See [`crate::detect::record`].
     pub(crate) encode_record: bool,
     /// Prior generations to carry in the record (recompression hands the
@@ -1366,11 +1366,12 @@ impl EncoderConfig {
         self
     }
 
-    /// Whether to emit the APP10 `ZENJ` encoder parameter record (default
+    /// Whether to emit the APP15 `ZENJ` encoder parameter record (default
     /// `true`). The record gives later decoders the dial, table family and
     /// knobs this encode actually used instead of a fingerprint estimate,
     /// plus a CRC of the quantization tables so they can tell when it no
-    /// longer describes the file. ~27 bytes per recorded generation. See
+    /// longer describes the file. 31 bytes for one generation, then 20 bytes
+    /// for each additional generation. See
     /// [`crate::detect::record`].
     #[must_use]
     pub fn encode_record(mut self, enable: bool) -> Self {
@@ -1389,7 +1390,7 @@ impl EncoderConfig {
         self
     }
 
-    /// The APP10 payload for this encode, given the finished header (the
+    /// The APP15 payload for this encode, given the finished header (the
     /// DQT CRC is taken from `jpeg`). `None` when disabled or no DQT found.
     pub(crate) fn record_payload(&self, jpeg: &[u8]) -> Option<Vec<u8>> {
         use crate::detect::record::{

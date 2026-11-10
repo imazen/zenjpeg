@@ -1,0 +1,273 @@
+[workspace]
+resolver = "2"
+members = [
+    "zenjpeg",
+    "zenyuv",
+]
+# `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
+# `cargo test` and every CI job (incl. --all-features) never compile its
+# dependency tree or run rustdoc. Regenerate via `just api-doc`.
+exclude = ["apidoc", "zenanalyze"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+repository = "https://github.com/imazen/zenjpeg"
+description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
+
+[workspace.dependencies]
+# Core
+wide = "1.1"
+aligned-vec = "0.6"
+bytemuck = { version = "1.14", features = ["derive"] }
+rgb = { version = "0.8", features = ["as-bytes"] }
+imgref = "1.12"
+
+# Serialization (for test data)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Color management
+lcms2 = "6.0"
+# zenjpeg's own moxcms usage resolves to 0.9.0 (verified 2026-07-23 via
+# `cargo tree -p zenjpeg` — moxcms is a direct child, not unified with any
+# older instance). The `image` crate that used to force-cap this whole
+# workspace at 0.8.1 is gone (see zenjpeg/Cargo.toml's dev-dependencies).
+#
+# UPDATE 2026-07-24: the 3-hop chain (zenpixels-convert -> ultrahdr-core ->
+# ultrahdr-rs) that used to force an isolated moxcms 0.8.1 instance is now
+# published for real, not just locally patched: zenpixels 0.2.16,
+# zenpixels-convert 0.2.16 (crates.io), ultrahdr-core 0.6.0 (crates.io,
+# see below). `cargo tree -i moxcms` inside ~/work/zen/ultrahdr now shows a
+# single unified moxcms 0.9.0 instance.
+#
+# One ISOLATED moxcms 0.8.1 instance remains here in zenjpeg specifically,
+# entirely contained within the ultrahdr-rs *dev*-dependency subtree (used
+# only by our own test suite as a black-box HDR comparison tool — dev-deps
+# never ship in the published zenjpeg crate). Root cause is now circular
+# rather than unpublished-sibling: ultrahdr-rs's own next release (0.4.1,
+# tagged + GitHub-released, see imazen/ultrahdr) requires zenjpeg 0.9.0
+# published on crates.io first (workspace pin `zenjpeg = { path =
+# "../zenjpeg/zenjpeg", version = "0.9.0" }`), and zenjpeg 0.9.0 itself is
+# pre-bumped but gated on explicit owner sign-off before `cargo publish`
+# (same zencodec-0.1.26-driven release batch as zenpng 0.2.0 — see
+# CHANGELOG.md's `[Unreleased]` section). So crates.io ultrahdr-rs stays at
+# 0.3.5 (hard-pinning moxcms = "0.8.1") until that publish happens. As
+# before: zenjpeg's own code never crosses a moxcms type across the
+# ultrahdr-rs boundary, so the isolated instance is harmless, not just
+# unfixed. Revisit by publishing zenjpeg 0.9.0 (unblocks ultrahdr-rs 0.4.1,
+# which then unblocks this).
+#
+# RESOLVED 2026-07-24: a second, unrelated isolated moxcms 0.7.11 instance
+# via `codec-eval` (our own crate at ~/work/codec-eval, a dev-dependency for
+# corpus comparison tests) is now gone for real. Root cause wasn't moxcms:
+# codec-eval's published 0.3.1/0.3.2 both required `fast-ssim2 = "^0.7.2"`,
+# and fast-ssim2 0.7.2 + 0.7.3 are BOTH YANKED with no 0.7.4 — codec-eval
+# >0.3.0 was unresolvable from crates.io at all, so this workspace stuck on
+# the last resolvable version, 0.3.0. Fixed by publishing codec-eval 0.3.3
+# (bumps fast-ssim2 to 0.8.0+ and widens its own moxcms range to cover
+# 0.9.0). `cargo update -p codec-eval@0.3.0` picked it up; only the
+# ultrahdr-rs 0.8.1 instance documented above remains.
+moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
+
+# Image I/O (for testing)
+png = "0.18"
+zenpng = { version = ">=0.1.1, <0.3.0", default-features = false }
+zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
+# NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
+# excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
+
+# Quality metrics
+dssim-core = "3.4"
+fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
+# Used by zenjpeg's Quality::Zq target-perceptual-quality closed loop, the
+# `recompress` module's IQA path, and dev-only test/measurement examples.
+# Pinned to the imazen/zensim main commit that carries the canonical
+# `ZensimProfile::A` ("Profile A", the dial the recompressor targets) — the
+# crates.io 0.2.x releases dropped it. A git rev (NOT a `../zensim` path dep)
+# so CI's isolated checkout can resolve it; a committed sibling-path dep breaks
+# every CI job (no siblings in the checkout). For local live-iteration against
+# the sibling, add a gitignored `.cargo/config.toml` patch — do not commit it.
+zensim = { git = "https://github.com/imazen/zensim", rev = "280b77d695ccf2975903b06556969d440e88ffeb" }
+rayon = "1.10"
+
+# Color conversion (for benchmarking/comparison - faster than libyuv)
+yuv = { version = "0.8", features = ["professional_mode"] }
+zenyuv = { path = "zenyuv", package = "zenyuv-base" }
+# zenanalyze: git-pinned to the imazen/zenanalyze rev that carries the
+# `hdr` feature (the 108-feature `SUPPORTED` set the source-feature
+# picker trains + infers against). zenjpeg's non-picker `src/` (adaptive
+# bucket inference) needs only `experimental`; the picker (behind
+# `__picker-research`) additionally enables `zenanalyze/hdr`. A git rev
+# rather than registry because zenanalyze 0.2.0 (which adds `hdr` and
+# removes the retired `composites` feature) isn't published yet — CI that
+# pulls zenjpeg as a path-dep resolves zenanalyze from the same git rev,
+# so no sibling checkout is required.
+zenanalyze = { version = "0.2.0" }
+# zenanalyze-api: the zero-dep, version-unifying feature contract (Request /
+# Offer / FeatureProvider), and this crate's INTERCHANGE BOUNDARY — so a host on
+# any zenanalyze version can hand the picker an Offer. The picker (behind
+# `__picker-research`) reuses that Offer instead of re-analyzing when it can.
+#
+# The plain `zenanalyze` dep above sits alongside it deliberately and is
+# explicitly PERMITTED (owner, 2026-08-28: "a direct dep is okay though, a
+# reanalysis might be needed anyway if the upstream provided features are
+# insufficient") — pick_config, zq and zq_seed all run their own pass when no
+# usable offer is present. Don't 'finish the migration' by deleting it.
+# See `docs/sole-contract.md` in imazen/zenanalyze.
+#
+# Both are crates.io VERSIONS, resolved through the workspace-root
+# [patch.crates-io] below. They used to be two DIFFERENT git revs of the same
+# repo (zenanalyze 13d40c3, zenanalyze-api 47b4d0f5), with a comment claiming
+# that pinning the same rev across codecs keeps the contract type unified.
+# It does the opposite: Cargo unifies by source, so a rev pin is its own source
+# — zenavif carried 47b4d0f5, zensquoosh 7b84d53c, zenpipe/zencodecs the
+# registry form, and any graph combining them got several incompatible `Offer`
+# types (zenpipe recorded the E0308). A registry version plus ONE root patch is
+# the form that actually unifies, because the patch rewrites every edge at once
+# — including zenanalyze's own internal `{ version, path }` dep on the contract,
+# which a per-manifest rev pin cannot reach.
+zenanalyze-api = { version = "0.1.0" }
+
+# Testing
+approx = "0.5"
+proptest = "1.4"
+criterion = "0.8"
+zenbench = "0.1.7"
+test-case = "3.3"
+codec-eval = "0.3"
+
+# FFI
+libc = "0.2"
+libloading = "0.8"
+
+# no_std compatible lazy initialization
+spin = "0.9"
+
+# Stack-allocated bounded vectors (no heap allocation for small fixed-size collections)
+tinyvec = { version = "1.10", features = ["alloc"] }
+
+# Fast linear-sRGB conversion
+linear-srgb = "0.6.12"
+
+# Token-based safe SIMD intrinsics. Never add `testable_dispatch` here: every
+# member inherits workspace dependency features as a normal dependency, so it
+# would reach every downstream build and turn each archmage `summon()` there
+# into a cache read. Tests get it as a dev-dependency, tier benches via `_dev`.
+archmage = { version = "0.9.30", features = ["macros", "avx512"] }
+safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
+magetypes = { version = "0.9.30", features = ["avx512"] }
+
+# Error tracing with location tracking
+whereat = "0.1.5"
+
+# Error derive macros (no_std compatible)
+thiserror = { version = "2.0", default-features = false }
+
+# Cooperative cancellation
+enough = { version = "0.4", features = ["std"] }
+almost-enough = { version = "0.4", features = ["std"] }
+zencodec = { version = ">=0.1.26, <0.3.0", git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"] }
+zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
+garb = { version = "0.2.6", default-features = false }
+
+# Published crates
+butteraugli = "0.9.0"
+mozjpeg-rs = "0.5.3"
+mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_simd"] }
+
+# Metadata crates (for integration testing)
+kamadak-exif = "0.6"
+img-parts = "0.4"
+
+# Half-precision floating point
+half = { version = "2.7.1", default-features = false }
+
+# Tone-mapping curves (Bt2446C default for encode_ultrahdr_luma).
+zentone = { version = "0.1", default-features = false }
+
+# Our ultrahdr crates
+ultrahdr-rs = ">=0.3.5, <0.5"
+ultrahdr-core = { version = "0.6.0", default-features = false }
+
+# Resize pipeline. Constraint solver (FitMode) and EXIF-orientation bridge
+# both live in zenresize 0.3+. zenlayout is no longer used anywhere in this
+# workspace (replaced by direct zenresize calls in both zenjpeg and zjpeg).
+zenresize = { version = "0.3.1" }
+
+[workspace.metadata.superwork.ci]
+delete_members = ["internal/jpegli-internals-sys", "zjpeg"]
+delete_workspace_deps = ["zenresize"]
+
+[workspace.metadata.superwork.ci.member_overrides.zenjpeg]
+delete_deps = ["jpegli-internals-sys", "zenresize", "zennode"]
+strip_features = ["cjpegli-ffi"]
+blank = { layout = "[]", zennode = "[]" }
+
+[profile.dev]
+opt-level = 2
+
+[profile.release]
+debug = true
+
+[workspace.lints.rust]
+# unsafe_code is allowed - we have intentional unsafe for performance-critical
+# allocation (try_alloc_uninitialized) and SIMD operations
+unsafe_code = "allow"
+# incant! macro internally checks cfg(feature = "avx512") for AVX-512 dispatch
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("avx512", "optimized-tables"))'] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# pedantic and nursery are too noisy for ported code with:
+# - mathematical single-char variable names (x, y, r, g, b)
+# - long numeric constants from C++ (without _ separators)
+# Enable selectively when code stabilizes
+# pedantic = "warn"
+# nursery = "warn"
+
+# Allow common patterns in ported image processing code
+cast_possible_truncation = "allow"  # Necessary for u8/f32 conversions
+cast_precision_loss = "allow"  # f32/f64 conversions
+cast_sign_loss = "allow"  # Dimension calculations
+cast_lossless = "allow"  # From trait suggestions (noisy)
+missing_panics_doc = "allow"  # Many internal functions
+missing_errors_doc = "allow"  # Doc cleanup is future work
+must_use_candidate = "allow"  # Nice but noisy for initial port
+excessive_precision = "allow"  # C++ constants with many decimals
+doc_markdown = "allow"  # Backtick suggestions in docs
+uninlined_format_args = "allow"  # Style preference
+unreadable_literal = "allow"  # Long C++ constants
+items_after_statements = "allow"  # Common in ported code
+unnecessary_wraps = "allow"  # Result consistency
+unused_self = "allow"  # Builder patterns, future expansion
+approx_constant = "allow"  # Use C++ exact values for parity
+needless_range_loop = "allow"  # Common in ported array code
+too_many_arguments = "allow"  # Architecture from C++
+type_complexity = "allow"  # Complex types from C++
+redundant_closure = "allow"  # Style preference
+similar_names = "allow"  # Common in math code
+many_single_char_names = "allow"  # Math variables (x, y, r, g, b)
+enum_variant_names = "allow"  # Emit* prefix is clear
+doc_overindented_list_items = "allow"  # Doc formatting preferences
+manual_div_ceil = "allow"  # Common pattern in ported code
+manual_is_multiple_of = "allow"  # Common pattern in ported code
+
+# zenanalyze 0.2.x and the zenanalyze-api additions this graph needs
+# (FeatureProvider, Select::Names) are on `main` but not yet on crates.io. ONE
+# patch here at the workspace root rewrites every registry edge, so the whole
+# graph resolves a single zenanalyze and a single zenanalyze-api and the `Offer`
+# contract typechecks across the picker boundary. Never re-pin these as
+# per-manifest git revs — that is what split the ecosystem before. Drop both
+# entries once zenanalyze 0.2.x / zenanalyze-api 0.1.1 publish.
+[patch.crates-io]
+# Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }

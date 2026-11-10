@@ -1,0 +1,87 @@
+[package]
+name = "zenpredict-cand"
+version = "0.2.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/imazen/zenanalyze"
+description = "Zero-copy MLP runtime: parse a packed binary model (ZNPR v3), run scaler + forward pass, surface typed metadata, run masked argmin for codec-config selection. Core of zenjpeg/zenwebp/zenavif/zenjxl picker selection and zensim perceptual distance. Bake-side composer lives in the sibling `zenpredict-bake` crate."
+keywords = ["mlp", "inference", "zero-copy", "no-std"]
+categories = ["multimedia::images", "no-std"]
+authors = ["Lilith River <lilith@imazen.io>"]
+rust-version = "1.93"
+readme = "README.crates.md"
+exclude = [
+  # Dev/CI tooling
+  "deny.toml",
+  # Internal dev notes (wire format spec WIRE_FORMAT_V3_1.md and docs/ZNPR_V3.md are kept)
+  "docs/v0_2_review_2026-05-13.md",
+  # Fuzz crate — not useful to crates.io consumers
+  "fuzz/**",
+]
+
+[package.metadata.docs.rs]
+# Render the complete API. The `advanced` typed subsystems are
+# feature-gated; without this docs.rs builds only the default surface
+# and intra-doc links from default items into the gated API break.
+features = ["advanced"]
+
+[lib]
+name = "zenpredict"
+
+[features]
+default = ["std"]
+# `std::error::Error` trait impls only. All numeric work (including
+# `f32::exp` for `argmin::ScoreTransform::Exp`) runs identically on
+# `no_std + alloc` via the unconditional `libm` dependency — no
+# transform degrades when `std` is off.
+std = []
+# Advanced runtime extras for picker pipelines: typed multi-output
+# API (`output_spec::*`, `predict_with_specs*`), bake-time safety
+# metadata reader (`safety::*`), the two-shot rescue framework
+# (`rescue::*`), and the closure-scorer / confidence argmin hybrids
+# (`*_with_scorer*`, `pick_with_confidence*`). The wire format parses
+# the corresponding sections unconditionally — gating only controls the
+# typed Rust API. Codec runtimes that only call `predict` /
+# `argmin_masked` (or the default-surface top-K + constraint masks)
+# stay lean by default; per-codec pickers that need the extras opt in.
+#
+# NOT YET STABILIZED: unlike the default surface, items behind
+# `advanced` may change shape or be removed in a 0.2.x patch. Pin a
+# specific version if you depend on them. (Distinct from `zenanalyze`'s
+# `experimental`, which gates unstable feature numerics rather than
+# extra API.)
+advanced = []
+
+[dependencies]
+# Zero-copy byte → typed slice reinterpret without `unsafe` in our
+# tree. Tiny, no_std, well-audited.
+bytemuck = { version = "1.25.0", default-features = false, features = ["derive"] }
+# `f32::ln` / `f32::ln_1p` are not in `core`. `no_std` builds need
+# `libm`; `std` builds call `f32::ln`/`f32::ln_1p` directly via the
+# `cfg(feature = "std")` arm in `feature_transform::FeatureTransform::apply`.
+# Kept as an unconditional dep because cargo doesn't allow
+# `cfg(not(feature = "X"))` on a target-dependency and the `optional`
+# pattern requires consumers to opt in to a private feature — bad UX
+# for a 13 KB compile-only cost on std builds.
+libm = { version = "0.2.16", default-features = false }
+# LZ4 block decoder for whole-bake-compressed payloads (header flag
+# bit 0 + algo nibble 1). ~4 KB binary; pure-safe-Rust + no_std.
+# Always available — the wire format may set the compressed flag,
+# so the loader needs decompression unconditionally.
+# `default-features = false` strips the encoder/frame helpers; we
+# only need `safe-decode`. The bake-side crate pulls `safe-encode`
+# separately.
+lz4_flex = { version = "0.11.6", default-features = false, features = ["safe-decode"] }
+
+
+[dev-dependencies]
+rand = { version = "0.9.2", default-features = false, features = ["std", "std_rng", "small_rng"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"

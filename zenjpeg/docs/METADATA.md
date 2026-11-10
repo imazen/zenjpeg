@@ -101,6 +101,13 @@ fixed layout is `Unknown`, never half-parsed.
 | COM | `Comment` | — | payload |
 | anything else | `Unknown` | — | payload |
 
+Encode records use APP15 with the `ZENJ\0` signature (version 1), independently
+of the GraphicConverter payload above. They are emitted by default and exposed
+through `detect::probe().record`; `EncoderConfig::encode_record(false)` disables
+them. Metadata rewriting removes these private records. See
+[`detect::record`](https://docs.rs/zenjpeg/latest/zenjpeg/detect/record/index.html)
+for the wire layout and table verification contract.
+
 SPIFF: ITU-T T.84 F.2.1 puts the image height right after the component
 count (24-byte body). ExifTool identifies SPIFF only for a 26-byte body and
 reads every later field two bytes further on, citing its single Kodak sample.

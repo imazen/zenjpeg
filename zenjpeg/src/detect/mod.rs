@@ -63,7 +63,7 @@ pub struct JpegProbe {
     pub scan_count: u16,
     /// DQT tables in natural (row-major) order. Typically 1-3 tables.
     pub dqt_tables: Vec<DqtTable>,
-    /// Encoder parameter record (APP10 `ZENJ`), when the file carries one.
+    /// Encoder parameter record (APP15 `ZENJ`), when the file carries one.
     /// Authoritative where [`EncodeRecord::verified`]; `encoder` and
     /// `quality` above stay the fingerprint *estimate* regardless, so
     /// callers choose explicitly. See [`record`].

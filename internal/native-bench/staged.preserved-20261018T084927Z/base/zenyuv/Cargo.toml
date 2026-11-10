@@ -1,0 +1,44 @@
+[package]
+name = "zenyuv-base"
+version = "0.1.3"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Lilith River <lilith@imazen.io>"]
+description = "SIMD-optimized YUV↔RGB color matrix conversion (BT.601/709/2020)"
+license = "MIT OR Apache-2.0"
+keywords = ["yuv", "ycbcr", "simd", "color", "bt601"]
+categories = ["graphics", "multimedia::images", "no-std"]
+repository = "https://github.com/imazen/zenjpeg"
+readme = "README.md"
+include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
+
+[dependencies]
+imgref = { workspace = true }
+archmage = { workspace = true }
+magetypes = { workspace = true }
+safe_unaligned_simd = { workspace = true }
+linear-srgb = { workspace = true }
+libm = "0.2"
+
+[dev-dependencies]
+yuv = { workspace = true }
+png = { workspace = true }
+zenbench = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+# Dev-only: exposes internal decode kernels for per-tier benchmarking. Not API.
+_dev = ["archmage/testable_dispatch"]
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "rgb_to_yuv_bench"
+harness = false
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+required-features = ["_dev"]

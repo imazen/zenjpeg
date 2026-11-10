@@ -365,9 +365,9 @@ fn test_mozjpeg_images() {
     let decoder = Decoder::new();
 
     // Test mozjpeg reference images
-    // testimgari.jpg = arithmetic coded (not supported)
+    // testimgari.jpg = arithmetic coded (needs `extended-jpeg`)
     // testimgint.jpg = baseline interleaved
-    // testorig12.jpg = 12-bit (not supported)
+    // testorig12.jpg = 12-bit (needs `extended-jpeg`; see zencodec_native_depth.rs)
     // testorig.jpg = standard baseline
     let jpeg_files = ["testimgint.jpg", "testorig.jpg"];
 
@@ -394,7 +394,7 @@ fn test_mozjpeg_images() {
         assert!(img.width > 0 && img.height > 0);
     }
 
-    // Check that unsupported formats are rejected gracefully
+    // Report how the formats behind `extended-jpeg` behave in this build
     let unsupported_files = ["testimgari.jpg", "testorig12.jpg"];
     for filename in unsupported_files {
         let path = test_dir.join(filename);
@@ -406,12 +406,12 @@ fn test_mozjpeg_images() {
         let result = decoder.decode(&data, Unstoppable);
 
         println!(
-            "mozjpeg/{} (unsupported): {}",
+            "mozjpeg/{}: {}",
             filename,
             if result.is_err() {
-                "correctly rejected"
+                "rejected"
             } else {
-                "unexpectedly decoded"
+                "decoded"
             }
         );
     }

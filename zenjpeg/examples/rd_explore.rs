@@ -289,7 +289,9 @@ fn main() {
             continue;
         };
         let orig_rgb: Vec<RGB8> = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| RGB8::new(c[0], c[1], c[2]))
             .collect();
         let orig = ImgVec::new(orig_rgb, w as usize, h as usize);

@@ -879,3 +879,140 @@ pulse-progress-check:
 # Focused Pulse phase and cancellation qualification on the frozen graph.
 pulse-progress-focused-check:
     timeout --kill-after=15s 10m cargo test --locked -p zenjpeg --features inventory,parallel --test pulse_progress --test decode_cancellation
+
+# Shared sibling sources, resolving both root and standalone fuzz workspaces.
+sibling-cohort-resolve:
+    cargo metadata --format-version 1 > /dev/null
+    python3 -c 'import json,subprocess; metadata=json.loads(subprocess.check_output(["cargo","metadata","--format-version","1"])); old=any(p["name"] == "zenpixels" and p["version"] == "0.2.16" for p in metadata["packages"]); old and subprocess.run(["cargo","update","-p","zenpixels@0.2.16","--precise","0.3.1"],check=True)'
+    cargo metadata --format-version 1 > /dev/null
+    cargo metadata --manifest-path zenjpeg/fuzz/Cargo.toml --format-version 1 > /dev/null
+
+sibling-cohort-check: sibling-cohort-resolve
+    RUST_TEST_THREADS=1 cargo test -p zenjpeg --locked --lib --tests
+    RUST_TEST_THREADS=1 cargo test -p zenjpeg --locked --lib --tests --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert
+    cargo test -p zenjpeg --locked --doc --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert
+    just sibling-cohort-lint
+
+# Ambiguous package identities fail these inverse queries; retain source receipts.
+sibling-cohort-tree:
+    cargo tree --locked -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -i zenpixels --depth 1
+    cargo tree --locked -p zenjpeg --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -i zencodec --depth 1
+
+# Explicit f32 literals preserve the compiler's previous inferred values.
+sibling-layout-check:
+    RUST_TEST_THREADS=1 cargo test --locked -p zenjpeg --lib --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert layout::
+    RUST_TEST_THREADS=1 cargo test --locked -p zenjpeg --test bundled --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert layout_pipeline::
+
+# Match the existing CI public-surface toolchain without changing its baseline.
+sibling-api-check:
+    ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN=nightly-2026-07-13 cargo test --locked --manifest-path apidoc/Cargo.toml
+
+# Resume after the complete default/production runtime and doc gates.
+sibling-cohort-finish:
+    just sibling-cohort-resolve
+    just sibling-cohort-tree
+    just sibling-layout-check
+    just sibling-cohort-lint
+
+# Collect independent diagnostic failures without weakening the lint gate.
+sibling-cohort-lint:
+    cargo clippy --keep-going -p zenjpeg --locked --lib --tests --examples --benches --features parallel,moxcms,ultrahdr,controlled-decode,inventory,layout,recompress-expert -- -D warnings
+    cargo check --manifest-path zenjpeg/fuzz/Cargo.toml --locked --all-targets
+    just sibling-api-check
+
+# Exercise concrete zeros without changing generic initialization or error payloads.
+zeroed-alloc-check:
+    cargo test --locked -p zenjpeg --lib foundation::alloc::
+    cargo clippy --locked -p zenjpeg --lib -- -D warnings
+
+# Native 12/16-bit CMYK remains float unless eight-bit is explicitly named.
+deep-cmyk-check:
+    cargo test --locked -p zenjpeg --features zencodec,extended-jpeg --test zencodec_native_depth deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named
+
+# Synthetic edge/stride/partition oracles; no corpus or C++ jpegli required.
+strip-padding-check:
+    cargo test --locked -p zenjpeg --features parallel --lib padding_tests -- --nocapture
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding -- --nocapture
+
+# Explicit selection: missing pinned tools is a failure, never a graceful skip.
+strip-padding-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding -- --ignored --nocapture
+
+strip-padding-lint:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --features parallel --lib --test strip_padding --test strip_padding_hashes -- -D warnings
+
+strip-padding-regressions:
+    cargo test --locked -p zenjpeg --lib --tests
+    cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test strip_padding --test strip_padding_hashes --test streaming_encode --test grayscale_geometry --test encode_stop_reasons
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
+
+strip-padding-oracle-build root:
+    bash scripts/build-native-oracle.sh '{{root}}'
+
+# Exact existing changed-line/branch gates, restricted to encoder witnesses.
+strip-padding-coverage:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report --locked -p zenjpeg --features parallel --lib -- padding_tests
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report --locked -p zenjpeg --features parallel --test strip_padding
+    cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_PADDING_LCOV"
+    cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_PADDING_BRANCHES"
+    python3 scripts/check-component-coverage.py main "$ZENJPEG_PADDING_LCOV"
+    python3 scripts/check-native-branches.py main "$ZENJPEG_PADDING_BRANCHES" --require-complete
+
+strip-padding-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib --test strip_padding --test strip_padding_hashes
+
+# Versioned, fixed-settings scalar decode hashes; independent planes remain the oracle.
+strip-padding-hashes:
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes versioned_padding_decode_hashes
+
+strip-padding-hash-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes independent_padding_decode_hashes -- --ignored --nocapture
+
+# Writes a review candidate only; never replaces committed expectations automatically.
+strip-padding-hash-candidate output:
+    test -n "$ZENJPEG_TURBO_BIN"
+    ZENJPEG_PADDING_HASH_CANDIDATE='{{output}}' cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes regenerate_padding_decode_hashes -- --ignored --nocapture
+
+# Same native/turbo-validated RGB identity on 32-bit and 64-bit builds.
+progressive-decode-check:
+    cargo test --locked -p zenjpeg --test bundled progressive_encoding:: -- --nocapture
+
+progressive-decode-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes independent_progressive_decode_hashes -- --ignored --exact --nocapture
+
+progressive-decode-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --test bundled progressive_encoding:: -- --nocapture
+
+# Arbitrary pre-sampled planar row partitions, chroma phase and buffer state.
+planar-streaming-check:
+    cargo test --locked -p zenjpeg --features parallel --test planar_streaming -- --nocapture
+
+planar-streaming-lint:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --features parallel --lib --test planar_streaming -- -D warnings
+
+planar-streaming-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test planar_streaming --test strip_padding_hashes
+
+planar-streaming-regressions:
+    cargo test --locked -p zenjpeg --lib --tests
+    cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test planar_streaming --test strip_padding --test strip_padding_hashes --test streaming_encode --test encode_stop_reasons
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
+
+# APP15 encode records, namespace isolation, metadata stripping and hash contracts.
+encode-record-check:
+    cargo test -p zenjpeg --release --features recompress,metadata-rewrite --test encode_record
+    cargo test -p zenjpeg --release --lib detect::record::tests
+    cargo test -p zenjpeg --release --test strip_padding_hashes
+
+encode-record-progressive-check:
+    cargo test -p zenjpeg --release --test bundled progressive_encoding::
+
+encode-record-clippy:
+    cargo clippy -p zenjpeg --release --features recompress,metadata-rewrite --lib --test encode_record -- -D warnings

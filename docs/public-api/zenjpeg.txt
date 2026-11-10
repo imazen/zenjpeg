@@ -1022,7 +1022,7 @@ pub fn detect::record::EncodeRecord::from_payload(&[u8]) -> core::option::Option
 pub fn detect::record::EncodeRecord::generations(&self) -> usize
 pub fn detect::record::EncodeRecord::to_payload(&self) -> alloc::vec::Vec<u8>
 pub fn detect::record::EncodeRecord::verify_against(&mut self, &[u8])
-pub const detect::record::MARKER_APP10: u8
+pub const detect::record::MARKER_APP15: u8
 pub const detect::record::MAX_ENTRIES: usize
 pub const detect::record::SIGNATURE: &[u8; 5]
 pub const detect::record::VERSION: u8

@@ -149,7 +149,9 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
     let dec_pixels: Vec<rgb::RGB8> = decoded
         .pixels_u8()
         .unwrap()
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     let dec_img = imgref::Img::new(&dec_pixels[..], width, height);

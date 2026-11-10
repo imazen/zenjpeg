@@ -145,11 +145,15 @@ fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usi
     use butteraugli::ButteraugliParams;
 
     let orig_pixels: Vec<rgb::RGB8> = orig
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     let comp_pixels: Vec<rgb::RGB8> = comp
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     let orig_img = imgref::Img::new(&orig_pixels[..], width, height);

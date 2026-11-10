@@ -228,11 +228,15 @@ fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
 
 fn butter(orig: &[u8], dec: &[u8], w: usize, h: usize) -> f64 {
     let orig_p: Vec<rgb::RGB8> = orig
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     let dec_p: Vec<rgb::RGB8> = dec
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
         .collect();
     if orig_p.len() != dec_p.len() {

@@ -27,6 +27,22 @@ samples do not retain out-of-range IDCT ringing.
 The existing `into_parts()` tuple has no integer slot; it converts native
 samples to normalized f32. Use `into_pixels()` for ownership without conversion.
 
+## zencodec output
+
+`JpegDecoderConfig` delivers these frames as canonical U16, where white is 65535:
+`(code * 65535 + max / 2) / max`, with `max` the frame's largest code. Every code
+is recoverable, and `PixelBuffer::exact_depth()` states the depth on one-shot and
+streaming results. `ImageInfo::source_color.bit_depth` reports the frame precision.
+
+| Preferences | Result for a frame above 8 bits |
+|---|---|
+| None, or none supported | `RGB16_SRGB` or `GRAY16_SRGB` |
+| Any supported U16 or F32 entry | The first such entry, even after a U8 entry |
+| Only U8 entries | The first of them: the caller asked for 8 bits |
+
+Raw CMYK has no U16 descriptor, so it leaves as `CmykF32Inverted`, unless `CMYK8` is
+named. `CmykHandling::BadRgb` follows the table.
+
 ## Component output
 
 `ScanlineReader::read_rows_components16` accepts `ImgRefMut<[u16; N]>`, where

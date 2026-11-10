@@ -22,6 +22,8 @@ pub struct JpegStreamingDecoder<'a> {
     pub(super) current_row: u32,
     /// MCU height in pixels (8 or 16 depending on subsampling).
     pub(super) mcu_height: u32,
+    /// The frame's sample precision, which selects the U16 widening.
+    pub(super) precision: u8,
     /// Cooperative cancellation (and progress) control, polled as a `Stop`.
     pub(super) stop: Option<zencodec::SharedPulse>,
 }
@@ -118,6 +120,17 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     }
                     count
                 }
+                (
+                    ChannelType::U16,
+                    ChannelLayout::Gray | ChannelLayout::Rgb | ChannelLayout::Rgba,
+                ) => super::decode::read_canonical_u16_rows(
+                    &mut self.reader,
+                    &mut self.row_buf[..batch_bytes],
+                    row_bytes,
+                    batch_rows,
+                    ch_layout,
+                    self.precision,
+                )?,
                 _ => {
                     // A caller-requested pixel format/descriptor this codec
                     // doesn't negotiate — the dedicated
@@ -148,6 +161,13 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                 self.descriptor,
             )
             .map_err(|_| Error::internal("streaming decode: pixel slice construction failed"))?;
+            let slice = if ch_type == ChannelType::U16 {
+                slice
+                    .with_exact_depth(super::decode::u16_exact_depth(self.precision)?)
+                    .map_err(|_| Error::internal("streaming decode: U16 depth refused"))?
+            } else {
+                slice
+            };
 
             Ok(Some((y, slice)))
         }

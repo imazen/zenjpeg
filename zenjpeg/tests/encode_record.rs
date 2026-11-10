@@ -1,4 +1,4 @@
-//! APP10 `ZENJ` encoder parameter record (zenjpeg#189): emitted by default,
+//! APP15 `ZENJ` encoder parameter record (zenjpeg#189): emitted by default,
 //! read back by `detect::probe`, verified against the file's DQT tables,
 //! chained across generations, and absent when disabled.
 
@@ -34,11 +34,11 @@ fn encode(config: &EncoderConfig, w: u32, h: u32) -> Vec<u8> {
     enc.finish().expect("finish")
 }
 
-fn count_app10(jpeg: &[u8]) -> usize {
+fn count_app15(jpeg: &[u8]) -> usize {
     let mut n = 0;
     let mut pos = 2;
     while pos + 4 <= jpeg.len() && jpeg[pos] == 0xFF && jpeg[pos + 1] != 0xDA {
-        if jpeg[pos + 1] == 0xEA {
+        if jpeg[pos + 1] == 0xEF {
             n += 1;
         }
         let len = ((jpeg[pos + 2] as usize) << 8) | jpeg[pos + 3] as usize;
@@ -53,7 +53,7 @@ fn default_encode_carries_a_verified_record() {
         .optimization(OptimizationPreset::HybridProgressive)
         .pre_blur(0.4);
     let jpeg = encode(&cfg, 64, 48);
-    assert_eq!(count_app10(&jpeg), 1);
+    assert_eq!(count_app15(&jpeg), 1);
 
     let p = probe(&jpeg).expect("probe");
     let rec = p.record.as_ref().expect("record present");
@@ -98,7 +98,7 @@ fn robidoux_tables_are_named_where_the_fingerprint_says_unknown() {
 fn disabled_means_no_marker_and_no_record() {
     let cfg = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter).encode_record(false);
     let jpeg = encode(&cfg, 32, 32);
-    assert_eq!(count_app10(&jpeg), 0);
+    assert_eq!(count_app15(&jpeg), 0);
     assert!(read_record(&jpeg).is_none());
     assert!(probe(&jpeg).expect("probe").record.is_none());
 }
@@ -183,6 +183,7 @@ fn recompress_appends_a_generation_to_the_chain() {
         RecompressResult::Recompressed {
             bytes, strategy, ..
         } => {
+            assert_eq!(count_app15(&bytes), 1, "{strategy:?}");
             let rec = read_record(&bytes).unwrap_or_else(|| panic!("record after {strategy:?}"));
             assert!(
                 rec.verified,
@@ -198,4 +199,74 @@ fn recompress_appends_a_generation_to_the_chain() {
         }
         other => panic!("expected a recompressed result, got {other:?}"),
     }
+}
+
+fn prepend_segment(jpeg: &mut Vec<u8>, marker: u8, payload: &[u8]) {
+    let mut segment = vec![0xFF, marker];
+    segment.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    segment.extend_from_slice(payload);
+    jpeg.splice(2..2, segment);
+}
+
+#[test]
+fn app15_signature_is_required_and_other_applications_do_not_mask_the_record() {
+    let config = EncoderConfig::ycbcr(70.0, ChromaSubsampling::Quarter);
+    let mut jpeg = encode(&config.encode_record(false), 32, 32);
+    prepend_segment(&mut jpeg, 0xEA, b"UNICODE\0other application");
+    prepend_segment(&mut jpeg, 0xEF, b"Q 85"); // GraphicConverter
+    assert!(read_record(&jpeg).is_none());
+
+    let recorded = encode(&EncoderConfig::grayscale(70.0), 32, 32);
+    let record = read_record(&recorded).unwrap();
+    // The draft's former marker must not be mistaken for the APP15 record.
+    prepend_segment(&mut jpeg, 0xEA, &record.to_payload());
+    assert!(read_record(&jpeg).is_none());
+    prepend_segment(&mut jpeg, 0xEF, &record.to_payload());
+    prepend_segment(&mut jpeg, 0xEF, b"ZENJ\0\xFF\x01unsupported");
+    prepend_segment(&mut jpeg, 0xEF, b"Q 90");
+    assert_eq!(read_record(&jpeg).unwrap().entries, record.entries);
+    assert!(!read_record(&jpeg).unwrap().verified); // grayscale tables differ
+}
+
+#[test]
+fn app15_record_is_the_only_change_to_the_encoded_image() {
+    for config in [
+        EncoderConfig::ycbcr(70.0, ChromaSubsampling::Quarter).progressive(false),
+        EncoderConfig::ycbcr(70.0, ChromaSubsampling::None).progressive(true),
+        EncoderConfig::grayscale(70.0),
+        EncoderConfig::xyb(70.0, Default::default()),
+    ] {
+        let mut recorded = encode(&config, 33, 35);
+        let plain = encode(&config.clone().encode_record(false), 33, 35);
+        let record = zenjpeg::container::iter(&recorded)
+            .find(|span| span.payload.starts_with(b"ZENJ\0"))
+            .unwrap();
+        assert_eq!(record.kind, zenjpeg::container::MarkerKind::App(15));
+        let range = record.offset..record.offset + record.length;
+        assert_eq!(range.len(), 31);
+        recorded.drain(range);
+        assert_eq!(
+            recorded, plain,
+            "record must not change tables or entropy bytes"
+        );
+    }
+}
+
+#[cfg(feature = "metadata-rewrite")]
+#[test]
+fn metadata_scrubbing_removes_app15_without_changing_the_image() {
+    use zencodec::metadata_rewrite::RewriteRequest;
+    let config = EncoderConfig::ycbcr(70.0, ChromaSubsampling::Quarter);
+    let recorded = encode(&config, 32, 32);
+    let plain = encode(&config.encode_record(false), 32, 32);
+    let scrub = |bytes: &[u8]| {
+        zenjpeg::metadata::rewrite(&RewriteRequest::new(bytes))
+            .unwrap()
+            .to_vec()
+            .unwrap()
+    };
+    let scrubbed = scrub(&recorded);
+    assert_eq!(count_app15(&scrubbed), 0);
+    assert!(read_record(&scrubbed).is_none());
+    assert_eq!(scrubbed, scrub(&plain));
 }

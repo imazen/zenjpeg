@@ -706,6 +706,12 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed pre-sampled planar streaming (2026-11-10): `YCbCrPlanarEncoder::push_subsampled` buffers arbitrary row counts and retains vertical chroma phase. Odd-start 420/440 pushes repeat the shared first chroma row; conflicting values and mid-strip sampling-mode switches are rejected before consuming input. Packed complete strips retain direct consumption; buffered/strided input reuses one-strip storage. Gates: `just planar-streaming-check`, `just planar-streaming-i686`.
+
+- Fixed progressive compatibility test portability (2026-11-10): ordinary 32-bit/64-bit tests use the same native-oracle-validated RGB hashes for the unchanged noise and grayscale-gradient witnesses. They no longer spawn optional `djpeg` processes; native CI explicitly revalidates both fixtures with pinned turbo. Gates: `just progressive-decode-check`, `just progressive-decode-i686`, `just progressive-decode-oracle`.
+
+- Fixed in focused strip-padding PR (2026-11-10): downsampled chroma must be padded at padded chroma stride, after subsampling real rows. The separate fused parallel encoder also needs padded planes, full-resolution 422/440 conversion scratch and AQ grid extension. See [encoder edge qualification](benchmarks/encode_strip_padding_2026-11-10.md); gates: `just strip-padding-check`, `just strip-padding-oracle`.
+
 - Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in
   unoptimized consumer builds (zenpipe tests aborted on 2 MiB threads; gdb:
   `scanline_reader_inner` 1.15 MB, `streaming_decoder` 453 KB frames). Cause:
@@ -1858,3 +1864,43 @@ The shared one-shot adapter formerly enabled F32 when any ranked preference was
 float, overriding an earlier supported U8 format. Precision now uses the same
 first-supported selector as layout, after parsing source component count.
 The controlled-decode target retains mixed precision ordering regressions.
+
+## Known Bugs: shared sibling cohort test dependency (2026-11-05)
+
+The unlanded sibling cohort update cannot compile the Rust tests: two E0308
+errors in `zensim-regress` at `85577588` (`pixel_ops/mod.rs:228,577`). Its
+helpers take registry zenpixels 0.2.16 `PixelBuffer`; current PNG returns
+zenpixels 0.3.1 `PixelBuffer`. The root and standalone fuzz manifests otherwise
+resolve the selected shared core/pixel revisions. JPEG deliberately pins both
+its dev-only zensim and zensim-regress to the same revision. Resolving their
+pixel hold and then advancing that paired pin requires coordinating zensimx
+before the remaining sibling test gates; it cannot be represented as a passing
+JPEG cohort yet. No test expectation or metric profile has been changed.
+
+### Shared pixel resolution and resize (2026-11-05)
+
+After advancing both research dev-tool pins to qualified zensimx main02243a4b,
+the default library/integration tests pass, but the production HDR build found
+nine E0308 errors: published zenresize0.3.1 requires zenpixels^0.2.10 and keeps
+UltraHDR's broad pixel edge on0.2.16 alongside JPEG's0.3.1. Root-patch zenresize
+to its existing e3975fb9 git source (admits >=0.2.10,<0.4), then refresh the old
+pixel lock selection. Dependency patches do not propagate from zensimx.
+The resolved production graph must show exactly one pixel sourcefa836abf;
+never adapt pixel buffers across this accidental version split. No implementation
+file, profile, quality threshold or assertion is edited; the resize dependency
+source changes to the recorded git revision and needs full requalification.
+
+Shared-cohort qualification now passes:2466 default tests,2954 production-feature
+tests,16 doctests,93 focused layout tests, strict all-target lint, standalone
+fuzz compilation and unchanged CI-pinned API snapshots. Current compiler
+diagnostics needed explicit f32 layout literals and equivalent example
+format/chunk iteration. No numeric expectation, profile or ignore changed.
+Receipts:benchmarks/sibling_cohort_2026-11-05.pointer.md.
+
+### Native deep CMYK contract revalidated (2026-11-06)
+
+`just deep-cmyk-check` confirms the existing 12/16-bit non-Adobe seed contract:
+CmykF32Inverted by default, exact normalized native codes, CMYK8 only when
+explicitly requested. Scope and resource receipt are in
+`docs/native-depth-revalidation-2026-11-06.md`. This is not a new independent
+libjpeg-turbo comparison or qualification of the proposed shared cohort.

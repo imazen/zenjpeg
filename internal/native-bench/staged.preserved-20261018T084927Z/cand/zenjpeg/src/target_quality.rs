@@ -1,0 +1,478 @@
+//! zenjpeg-owned perceptual-target encode loop.
+//!
+//! Per the per-codec-loop-ownership directive (2026-08-25), each codec owns its
+//! own target/secant loop rather than delegating to a central dispatcher. This
+//! module is zenjpeg's.
+//!
+//! [`search_target`] is the pure, dependency-free bracketed secant/bisection
+//! core (the algorithm is shared, by construction, with zenavif's
+//! `target_quality::search_target` — same math, per-codec copy by directive):
+//! given a monotone score-vs-quality relationship and a trial closure that
+//! encodes at a quality and returns the achieved score, it converges on the
+//! *lowest* quality whose achieved score reaches the target band (which, under
+//! monotonicity, is the smallest file that hits the target). It takes the metric
+//! as an injected closure — zenjpeg CANNOT depend on `zensim` (zensim depends on
+//! zenjpeg; the reverse is a cycle), so the loop owns the search and the caller
+//! supplies the score.
+//!
+//! [`encode_with_target`] is the thin loop over [`search_target`] that returns
+//! the actual winning encode: the caller injects a `trial(quality) -> (bytes,
+//! score)` closure (which does zenjpeg encode → decode → score), and the loop
+//! owns the search, selection, and
+//! bytes bookkeeping. The metric+codec are injected so zenjpeg never depends on
+//! `zensim` (that would be a dependency cycle — zensim depends on zenjpeg).
+
+use alloc::vec::Vec;
+
+/// Search configuration for [`search_target`] / [`encode_with_target`].
+#[derive(Debug, Clone)]
+pub struct TargetOptions {
+    /// Lowest quality the search may try (inclusive), 0–100.
+    pub min_quality: f32,
+    /// Highest quality the search may try (inclusive), 0–100.
+    pub max_quality: f32,
+    /// Convergence half-width: a trial within `target ± tolerance` stops the loop.
+    pub tolerance: f64,
+    /// Hard cap on encode→decode→score iterations.
+    pub max_encodes: u8,
+    /// Optional starting quality (e.g. a zenpredict Zq seed). `None` uses
+    /// [`anchor_guess`].
+    pub q_start: Option<f32>,
+    /// Quality resolution the search honors. zenjpeg quality is FLOAT end to
+    /// end (`EncodeOptions`-side and internally), so the secant may select
+    /// fractional qualities; trial qualities snap to multiples of this step
+    /// and the bracket terminates once its span is at or below it. `1.0`
+    /// reproduces the earlier integer-only behavior. Default `0.25`.
+    pub quality_step: f32,
+}
+
+impl Default for TargetOptions {
+    fn default() -> Self {
+        Self {
+            min_quality: 1.0,
+            max_quality: 100.0,
+            tolerance: 0.5,
+            max_encodes: 8,
+            q_start: None,
+            quality_step: 0.25,
+        }
+    }
+}
+
+impl TargetOptions {
+    /// The canonical options for a zensim-targeted encode of `rgb` at
+    /// `target`: defaults plus the census-validated Zq seed head as the
+    /// `q_start` source ([`crate::zq_seed::predict_q0_from_image`]; `None`
+    /// falls back to [`anchor_guess`] inside the search). User-approved
+    /// default wiring 2026-08-28 — plain [`Default`] stays seedless for
+    /// callers that bring their own seed.
+    #[must_use]
+    pub fn seeded_for_image(rgb: &[u8], width: u32, height: u32, target: f64) -> Self {
+        Self {
+            q_start: crate::zq_seed::predict_q0_from_image(rgb, width, height, target),
+            ..Self::default()
+        }
+    }
+}
+
+/// Outcome of [`search_target`]: which quality won, its achieved score, and
+/// whether the target band was actually reached.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetSearchResult {
+    /// The selected quality (lowest quality reaching the target band, or the
+    /// closest-scoring quality if the target was unreachable).
+    pub quality: f32,
+    /// The achieved score at [`Self::quality`].
+    pub score: f64,
+    /// `true` iff some trial reached `>= target - tolerance`.
+    pub converged: bool,
+    /// Number of trial encodes performed.
+    pub encodes: u8,
+}
+
+/// Fixed anchor initial guess for a `[0,100]`-scaled perceptual target, used
+/// when no `q_start` seed is supplied. Deliberately conservative (mid-high),
+/// since most web-quality targets land there; the bracketed search corrects it
+/// within a couple of iterations regardless.
+#[must_use]
+pub fn anchor_guess(target: f64) -> f32 {
+    // Linear-ish map: target 0 → q40, target 100 → q98, clamped.
+    ((0.40 + target / 100.0 * 0.58) * 100.0).clamp(1.0, 100.0) as f32
+}
+
+/// Pure bracketed secant/bisection search over a monotone score-vs-quality
+/// curve. `trial(q)` performs one encode-at-`q` and returns the achieved score
+/// (higher score = higher fidelity). Returns the lowest quality whose score
+/// reaches `target - tolerance` (the smallest file at the target, by
+/// monotonicity), or the closest-scoring quality if the target is unreachable in
+/// `[min_quality, max_quality]`.
+///
+/// The metric is fully injected via `trial`; this function has no codec or
+/// metric dependency and is unit-tested with synthetic monotone curves.
+///
+/// # Errors
+/// Propagates the first error returned by `trial`.
+pub fn search_target<E, Err>(
+    target: f64,
+    options: &TargetOptions,
+    mut trial: E,
+) -> Result<TargetSearchResult, Err>
+where
+    E: FnMut(f32) -> Result<f64, Err>,
+{
+    let tol = options.tolerance.max(0.0);
+    let min_q = options.min_quality.clamp(0.0, 100.0);
+    let max_q = options.max_quality.clamp(0.0, 100.0);
+    let (min_q, max_q) = if min_q <= max_q {
+        (min_q, max_q)
+    } else {
+        (max_q, min_q)
+    };
+    let max_encodes = options.max_encodes.max(1);
+
+    // Lowest quality known to reach the band (smallest file, by monotonicity),
+    // and the overall closest-scoring iterate as a fallback.
+    let mut best_reaching: Option<(f32, f64)> = None;
+    let mut best_any: Option<(f32, f64)> = None;
+
+    // Bracket: lo = highest q known BELOW target, hi = lowest q known AT/ABOVE.
+    let mut lo: Option<(f32, f64)> = None;
+    let mut hi: Option<(f32, f64)> = None;
+
+    let mut q = options
+        .q_start
+        .filter(|v| v.is_finite())
+        .unwrap_or_else(|| anchor_guess(target))
+        .clamp(min_q, max_q);
+    let mut encodes = 0u8;
+    let step = options.quality_step.max(1.0 / 64.0);
+
+    while encodes < max_encodes {
+        let s = trial(q)?;
+        encodes += 1;
+
+        if best_any.is_none_or(|(_, bs)| (s - target).abs() < (bs - target).abs()) {
+            best_any = Some((q, s));
+        }
+        if s >= target - tol && best_reaching.is_none_or(|(bq, _)| q < bq) {
+            best_reaching = Some((q, s));
+        }
+
+        if (s - target).abs() <= tol {
+            break;
+        }
+        if s < target {
+            lo = Some((q, s));
+        } else {
+            hi = Some((q, s));
+        }
+
+        let next = match (lo, hi) {
+            (Some((lq, ls)), Some((hq, hs))) => {
+                let span = hq - lq;
+                if span <= step {
+                    break; // bracket at the quality-step resolution floor
+                }
+                let sec = if (hs - ls).abs() > 1e-9 {
+                    lq + ((target - ls) / (hs - ls)) as f32 * span
+                } else {
+                    lq + span / 2.0
+                };
+                // Clamp away from endpoints so the bracket provably shrinks.
+                sec.clamp(lq + span * 0.1, hq - span * 0.1)
+            }
+            (Some((lq, ls)), None) => {
+                // Under target, no upper bracket yet: extrapolate up.
+                let up = (((target - ls) as f32) * 1.2).max(4.0);
+                let n = (lq + up).min(max_q);
+                if n <= lq + step * 0.5 {
+                    break; // pinned at max_quality and still short
+                }
+                n
+            }
+            (None, Some((hq, hs))) => {
+                // At/above target, no lower bracket yet: extrapolate down.
+                let down = (((hs - target) as f32) * 1.2).max(4.0);
+                let n = (hq - down).max(min_q);
+                if n >= hq - step * 0.5 {
+                    break; // pinned at min_quality and still over
+                }
+                n
+            }
+            (None, None) => unreachable!("one of lo/hi is set after a trial"),
+        };
+
+        // Snap to the quality-step grid (zenjpeg quality is float-valued;
+        // the step is a search resolution, not a codec constraint) and stop
+        // if the search would repeat the same quality.
+        let next = ((next / step).round() * step).clamp(min_q, max_q);
+        if (next - q).abs() < step * 0.5 {
+            break;
+        }
+        q = next;
+    }
+
+    let (quality, score, converged) = match (best_reaching, best_any) {
+        (Some((q, s)), _) => (q, s, true),
+        (None, Some((q, s))) => (q, s, false),
+        // max_encodes >= 1 guarantees at least one trial populated best_any.
+        (None, None) => unreachable!("at least one trial always runs"),
+    };
+    Ok(TargetSearchResult {
+        quality,
+        score,
+        converged,
+        encodes,
+    })
+}
+
+/// Result of [`encode_with_target`]: the winning encode plus the search outcome.
+#[derive(Debug, Clone)]
+pub struct TargetedEncode {
+    /// The encoded bytes at the selected quality.
+    pub data: Vec<u8>,
+    /// The search outcome (quality, achieved score, converged, encodes).
+    pub search: TargetSearchResult,
+}
+
+/// Run the target-quality loop and return the actual winning encode.
+///
+/// `trial(quality)` performs one encode-at-`quality` and returns
+/// `(encoded_bytes, achieved_score)` — the caller wires zenjpeg's real
+/// `JpegEncoderConfig` encode + `JpegDecoderConfig` decode + an injected metric
+/// there (caller-supplied). This function owns the bracketed
+/// secant search ([`search_target`]), the selection policy (lowest quality
+/// reaching the target band = smallest file, by monotonicity), and returns that
+/// iterate's bytes without re-encoding.
+///
+/// The metric+codec are injected via `trial`, so zenjpeg depends on neither
+/// `zensim` nor a specific decoder here — keeping this the reusable, always-
+/// available core of zenjpeg's owned loop.
+///
+/// # Errors
+/// Propagates the first error returned by `trial`.
+pub fn encode_with_target<E, Err>(
+    target: f64,
+    options: &TargetOptions,
+    mut trial: E,
+) -> Result<TargetedEncode, Err>
+where
+    E: FnMut(f32) -> Result<(Vec<u8>, f64), Err>,
+{
+    // Keep each trial's bytes so the winning quality is returned without a
+    // redundant final encode.
+    let mut cache: Vec<(u32, Vec<u8>)> = Vec::new();
+    let search = search_target(target, options, |q| {
+        let (bytes, score) = trial(q)?;
+        cache.push((q.to_bits(), bytes));
+        Ok(score)
+    })?;
+    let qbits = search.quality.to_bits();
+    let data = cache
+        .into_iter()
+        .rev()
+        .find(|(cq, _)| *cq == qbits)
+        .map(|(_, b)| b)
+        .unwrap_or_default();
+    Ok(TargetedEncode { data, search })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A synthetic monotone score-vs-quality curve: score(q) = q (identity), so
+    // the target IS the quality that hits it.
+    #[test]
+    fn identity_curve_converges_to_target() {
+        let opts = TargetOptions {
+            tolerance: 0.5,
+            max_encodes: 12,
+            ..Default::default()
+        };
+        let r = search_target(72.0, &opts, |q| Ok::<_, ()>(q as f64)).unwrap();
+        assert!(r.converged);
+        assert!((r.score - 72.0).abs() <= 0.5, "score {} off band", r.score);
+        assert!((r.quality - 72.0).abs() <= 1.0, "quality {}", r.quality);
+    }
+
+    // Selection + walk-down: a SATURATED curve (many high qualities all score
+    // the same, over target beyond tolerance) must not stop at the high seed —
+    // it brackets DOWN and returns a low quality near the saturation knee (the
+    // lowest reaching quality = smallest file). Small tolerance so the seed does
+    // NOT immediately satisfy.
+    #[test]
+    fn selects_lowest_reaching_quality() {
+        let opts = TargetOptions {
+            tolerance: 1.0,
+            max_encodes: 24,
+            q_start: Some(95.0), // start high, well above the band, force walk-down
+            ..Default::default()
+        };
+        // score(q) = 92 for q>=40 (saturated), else q*2.3. Target 85, band [84,∞):
+        // reached for q >= ~36.5. Seed q95 scores 92 (over by 7 > tol) → must walk
+        // down past the saturation plateau to the knee, not stop at 95.
+        let curve = |q: f32| if q >= 40.0 { 92.0 } else { q as f64 * 2.3 };
+        let r = search_target(85.0, &opts, |q| Ok::<_, ()>(curve(q))).unwrap();
+        assert!(r.converged, "should reach the band");
+        assert!(r.score >= 84.0, "score {} not in band", r.score);
+        assert!(
+            r.quality < 50.0,
+            "did not walk down to the low reaching region from q95 seed: {}",
+            r.quality
+        );
+    }
+
+    // Unreachable target: even at max_quality the score falls short → converged
+    // is false and the best (highest) score is reported.
+    #[test]
+    fn unreachable_target_reports_best_not_converged() {
+        let opts = TargetOptions {
+            tolerance: 0.5,
+            max_encodes: 12,
+            ..Default::default()
+        };
+        // score(q) = q*0.5: max at q100 is 50, target 80 is unreachable.
+        let r = search_target(80.0, &opts, |q| Ok::<_, ()>(q as f64 * 0.5)).unwrap();
+        assert!(!r.converged);
+        assert!(
+            (r.quality - 100.0).abs() <= 1.0,
+            "should pin at max_quality: {}",
+            r.quality
+        );
+        assert!(r.score <= 50.5 && r.score >= 49.0, "best score {}", r.score);
+    }
+
+    // Trivially-reachable target (score always over): converge at the LOWEST
+    // quality via downward extrapolation.
+    #[test]
+    fn always_over_walks_to_min_quality() {
+        let opts = TargetOptions {
+            min_quality: 5.0,
+            tolerance: 0.5,
+            max_encodes: 20,
+            ..Default::default()
+        };
+        // score(q) = 95 constant: every q reaches target 60 → lowest = min_quality.
+        let r = search_target(60.0, &opts, |_q| Ok::<_, ()>(95.0)).unwrap();
+        assert!(r.converged);
+        assert!(
+            (r.quality - 5.0).abs() <= 1.0,
+            "should reach min_quality: {}",
+            r.quality
+        );
+    }
+
+    // The search respects max_encodes (never exceeds the budget).
+    #[test]
+    fn honors_encode_budget() {
+        let opts = TargetOptions {
+            tolerance: 0.0, // impossible exact match forces max iterations
+            max_encodes: 5,
+            ..Default::default()
+        };
+        let mut calls = 0u32;
+        let r = search_target(33.3, &opts, |q| {
+            calls += 1;
+            Ok::<_, ()>(q as f64)
+        })
+        .unwrap();
+        assert!(calls <= 5, "exceeded encode budget: {calls}");
+        assert!(r.encodes <= 5);
+    }
+
+    // Error propagation: a failing trial surfaces the error.
+    #[test]
+    fn propagates_trial_error() {
+        let opts = TargetOptions::default();
+        let r = search_target(50.0, &opts, |_q| Err::<f64, _>("boom"));
+        assert_eq!(r, Err("boom"));
+    }
+
+    #[test]
+    fn anchor_guess_is_monotone_and_clamped() {
+        assert!(anchor_guess(0.0) >= 1.0);
+        assert!(anchor_guess(100.0) <= 100.0);
+        assert!(anchor_guess(90.0) > anchor_guess(10.0));
+    }
+
+    // encode_with_target returns the WINNING iterate's bytes (not a re-encode):
+    // each quality's "bytes" are a marker (q as a single byte); the returned
+    // data must be the marker for the selected quality.
+    #[test]
+    fn encode_with_target_returns_winning_bytes() {
+        let opts = TargetOptions {
+            tolerance: 0.5,
+            max_encodes: 12,
+            ..Default::default()
+        };
+        // score(q) = q (identity); target 70 → selected quality ~70.
+        let out = encode_with_target(70.0, &opts, |q| {
+            let qi = q.round().clamp(0.0, 100.0) as u8;
+            Ok::<_, ()>((alloc::vec![qi], q as f64))
+        })
+        .unwrap();
+        assert!(out.search.converged);
+        assert_eq!(out.data.len(), 1);
+        assert_eq!(
+            out.data[0],
+            out.search.quality.round() as u8,
+            "returned bytes are not the selected quality's encode"
+        );
+        assert!((out.search.quality - 70.0).abs() <= 1.0);
+    }
+
+    // Float-native selection (2026-08-29, user correction: zenjpeg quality is
+    // float internally AND externally — the earlier integer rounding was a
+    // search-side artifact, not a codec constraint).
+    #[test]
+    fn search_selects_fractional_quality_at_fine_step() {
+        let opts = TargetOptions {
+            tolerance: 0.05,
+            max_encodes: 16,
+            quality_step: 0.25,
+            ..Default::default()
+        };
+        // score(q) = q; target 70.4 is reachable only on the fractional grid.
+        let out = search_target(70.4, &opts, |q| Ok::<_, ()>(q as f64)).unwrap();
+        assert!(out.converged);
+        assert!(
+            (out.quality - 70.5).abs() < 0.26,
+            "expected a fractional-grid quality near 70.4, got {}",
+            out.quality
+        );
+        assert!(
+            (out.quality.fract()).abs() > 1e-6,
+            "search stayed on the integer grid: {}",
+            out.quality
+        );
+    }
+
+    #[test]
+    fn quality_step_one_restores_integer_grid() {
+        let opts = TargetOptions {
+            tolerance: 0.05,
+            max_encodes: 16,
+            quality_step: 1.0,
+            ..Default::default()
+        };
+        let out = search_target(70.4, &opts, |q| Ok::<_, ()>(q as f64)).unwrap();
+        for _ in 0..1 {
+            assert!(
+                out.quality.fract().abs() < 1e-6,
+                "step 1.0 must keep integer qualities, got {}",
+                out.quality
+            );
+        }
+    }
+
+    // encode_with_target propagates a trial error.
+    #[test]
+    fn encode_with_target_propagates_error() {
+        let opts = TargetOptions::default();
+        let r = encode_with_target(50.0, &opts, |_q| {
+            Err::<(alloc::vec::Vec<u8>, f64), _>("enc-fail")
+        });
+        assert!(matches!(r, Err("enc-fail")));
+    }
+}

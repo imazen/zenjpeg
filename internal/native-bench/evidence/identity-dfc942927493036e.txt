@@ -1,0 +1,30 @@
+binary_sha256=dfc942927493036e78865f6f8f65cb52187a7aad066c310b2d13d599daf6ab18
+binary_path=/home/lilith/work/zen/zenjpeg/internal/native-bench/target/release/native-bench
+manifest_dir=/home/lilith/work/zen/zenjpeg/internal/native-bench
+cwd=/home/lilith/work/zen/zenjpeg/internal/native-bench
+rustc_vv=rustc 1.99.1 (58cf8f9c3 2026-10-13) | binary: rustc | commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67 | commit-date: 2026-10-13 | host: x86_64-unknown-linux-gnu | release: 1.99.1 | LLVM version: 23.1.1
+cargo_encoded_rustflags=""
+profile=release opt_level=3 debug=true
+sha256 Cargo.toml = b8b499e54d6693fa12fddd63a2f1f7f743dd8449c5c65310b7d88729f861abc3
+sha256 Cargo.lock = 7aaf5eb4435eacf1234fefa370422dacad772c606bd5c7a471c1b64fbe4e6086
+sha256 build.rs = 992aa8ae965b74657a1d29ea2a4ecdcf7141acdfe4bec2aaaae119d72885d6ad
+sha256 stage.sh = 6fe50031b255ed7b1a24937f52d234bc4435d69037a9bd0557265de2fd74d190
+sha256 src/main.rs = 07ce898786905ee2ee35c8876410bfaf0699cf5dbdf73ab002c5967aefab3283
+sha256 README.md = ae65d15b8d27dcf88f7f22be15e7479ae9268afef3dbea51c46b749f884e6be5
+sha256 ../coz-loop/Cargo.toml = ce850904e769f7aa75031014b1cf009f906070c333916121760a0b743ee466d9
+sha256 ../../Cargo.toml = 06adc2bdd086fdef4da0c666ae6c336cf203a311842abf39e5f8eb934cf3a1dd
+sha256 ../../justfile = 0f4e29eb3171d251bbc665f53225bc43aa3ed24841a307bae0d83103bf753665
+sha256 ../../.gitignore = 958b1d188c9678eed031e01018c0fca470b3aedd52d114dcd4edfef660c8fb27
+--- staged/base/SOURCE ---
+variant=base
+commit=7ed2d3ab4ebcb5a0972f045ade34872aa6abd421
+staged base <- 7ed2d3ab4ebcb5a0972f045ade34872aa6abd421
+staged/base/SOURCE.sha256 sha256=ebb3f54ae710dcfb019de02ae11c7a96c1a694028cbfac26298270782bf06ee6
+--- staged/cand/SOURCE ---
+variant=cand
+commit=7b34f262c37411a7a1d2bad7173e1b595ba539e7
+staged cand <- 7b34f262c37411a7a1d2bad7173e1b595ba539e7
+staged/cand/SOURCE.sha256 sha256=b99babe8fdbc6e2634a813c9ed0642fbbd565af203797d63ed012058b2a9a59d
+ancestor_cargo_configs=[
+/home/lilith/work/zen/zenjpeg/.cargo/config.toml sha256=60b65d8f9bf75643aba416e17bdc850a23095bb11961f826caa80070b7f5bd80
+]

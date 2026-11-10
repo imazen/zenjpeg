@@ -132,7 +132,9 @@ fn decode_jpeg_decoder(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
         jpeg_decoder::PixelFormat::L16 => {
             // 16-bit grayscale → 8-bit RGB
             pixels
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .flat_map(|pair| {
                     let v = (u16::from_ne_bytes([pair[0], pair[1]]) >> 8) as u8;
                     [v, v, v]
@@ -142,7 +144,9 @@ fn decode_jpeg_decoder(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
         jpeg_decoder::PixelFormat::CMYK32 => {
             // CMYK → RGB approximation
             pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|cmyk| {
                     let c = cmyk[0] as f32 / 255.0;
                     let m = cmyk[1] as f32 / 255.0;

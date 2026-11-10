@@ -5,7 +5,25 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+
+- Buffer arbitrary pre-sampled planar row pushes, preserve chroma phase across odd row boundaries, and validate layouts before consuming input. Full-resolution/pre-sampled modes may alternate at complete-strip boundaries. (`ed37e5ed`)
+
+### Fixed: zencodec decoder keeps depths above 8 bits
+
+- The zencodec decoder advertises and honors `RGB16_SRGB`, `RGBA16_SRGB` and `GRAY16_SRGB` on one-shot, push and streaming paths. A frame above 8 bits with no supported preference, or a preference list offering U16 or F32 anywhere, now leaves deep instead of narrowing to U8; a list offering only U8 still gets U8. Samples are canonical U16 (nearest `code * 65535 / max`, every code recoverable) with `ExactDepth` on the one-shot and streaming results. Deep raw CMYK leaves as `CmykF32Inverted`, since no U16 CMYK descriptor exists, unless `CMYK8` is named. Eight-bit frames widen by exactly 257 when U16 is asked for and are otherwise unchanged.
+- Behavior change for callers passing no preference: 12-bit and lossless deep JPEG now returns U16 from `decode`, `push_decoder` and `streaming_decoder`, and `output_info` says so.
+
+- Concrete zeroed byte, f32 and DCT-block buffers request allocator-zeroed storage in every policy. Preserve helper-specific overflow/allocation errors and arbitrary Default/Clone fill contracts; correct reserve/fill implementation comments.
+
+- Align root/fuzz codec and pixel sources (`6c888700`), lock the paired research dev-tools
+  and compatible resize source; retain all numeric gates and public API
+  snapshots. [Qualification receipts](benchmarks/sibling_cohort_2026-11-05.pointer.md).
+
+
 ### Changed
+
+- Accept the archmage and magetypes 0.9.31 stable release.
 
 - Show the diagnostics viewer’s actual resolved encoder plan and expose the codec auto optimizer (`72432fbe`).
 - Report buffered JPEG scan work and output rows in separate Pulse phases when planning is supported; unplanned and native paths retain their documented reporting limits (`a5ea723b`).
@@ -17,7 +35,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
-- Encoder parameter record (#189): every encode writes an APP10 `ZENJ` segment
+- Encoder parameter record (#189): every encode writes an APP15 `ZENJ` segment
   carrying the quality dial on its native scale, quant-table family, AQ /
   trellis / deringing / scan flags, pre-blur and a CRC-32 of the DQT tables, as
   an append-only chain across generations; `detect::probe` returns it as
@@ -29,6 +47,8 @@ All notable changes to zenjpeg are documented here. Earlier history
 - Add opt-in, unstable per-block encoder diagnostics (`d07a8710`) and a WASM viewer (`0d98644d`) for AQ, quantization tables, and interactive comparison.
 
 ### Fixed
+
+- Replicate strip chroma at the stride and resolution consumed by DCT, including fused/gamma-aware bottom edges, pre-sampled right/bottom edges and standard even-height 420/440 tails. Repair separate fused-parallel chroma storage, bottom rows and padded AQ geometry (`989fc609`). [Qualification](benchmarks/encode_strip_padding_2026-11-10.md).
 
 - Show that progressive diagnostics encodes always optimize Huffman tables, and preserve the sequential choice (`d315724a`).
 
