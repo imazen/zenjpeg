@@ -91,6 +91,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p zenjpeg --release --features parallel --test strip_padding_hashes independent_padding_decode_hashes -- --ignored --nocapture
 
+      - name: Progressive decode hashes against libjpeg-turbo
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p zenjpeg --release --features parallel --test strip_padding_hashes independent_progressive_decode_hashes -- --ignored --exact --nocapture
+
       - name: Native-precision sample equality with libjpeg-turbo
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p zenjpeg --release --test native_precision -- --ignored --test-threads=1

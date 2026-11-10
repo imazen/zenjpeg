@@ -706,6 +706,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed progressive compatibility test portability (2026-11-10): ordinary 32-bit/64-bit tests use the same native-oracle-validated RGB hashes for the unchanged noise and grayscale-gradient witnesses. They no longer spawn optional `djpeg` processes; native CI explicitly revalidates both fixtures with pinned turbo. Gates: `just progressive-decode-check`, `just progressive-decode-i686`, `just progressive-decode-oracle`.
+
 - Fixed in focused strip-padding PR (2026-11-10): downsampled chroma must be padded at padded chroma stride, after subsampling real rows. The separate fused parallel encoder also needs padded planes, full-resolution 422/440 conversion scratch and AQ grid extension. See [encoder edge qualification](benchmarks/encode_strip_padding_2026-11-10.md); gates: `just strip-padding-check`, `just strip-padding-oracle`.
 
 - Fixed 2026-10-28: decoder construction needed about 2.2 MiB of stack in

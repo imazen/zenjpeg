@@ -7,7 +7,6 @@
 //! our progressive output correctly.
 
 use std::io::Cursor;
-use std::process::Command;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
@@ -46,20 +45,7 @@ fn decode_with_zune(jpeg_data: &[u8]) -> Result<Vec<u8>, String> {
 /// Test that progressive encoding of a grayscale gradient produces valid output.
 #[test]
 fn test_progressive_grayscale_gradient() {
-    let width = 16u32;
-    let height = 16u32;
-    let mut data = Vec::with_capacity((width * height) as usize);
-
-    for _y in 0..height {
-        for x in 0..width {
-            data.push((x * 16) as u8);
-        }
-    }
-
-    let config = EncoderConfig::grayscale(90.0).progressive(true);
-
-    let jpeg_data =
-        encode_gray(width, height, &data, &config).expect("Progressive encoding should succeed");
+    let jpeg_data = progressive_decode_hashes::encode_gradient();
 
     // Verify the file is a valid JPEG by checking markers
     assert!(jpeg_data.len() > 100, "JPEG should be at least 100 bytes");
@@ -80,17 +66,7 @@ fn test_progressive_grayscale_gradient() {
     assert_eq!(jpeg_data[jpeg_data.len() - 2], 0xFF);
     assert_eq!(jpeg_data[jpeg_data.len() - 1], 0xD9);
 
-    // If djpeg is available, verify the file decodes correctly
-    if let Ok(output) = Command::new("djpeg")
-        .args(["-outfile", "/dev/null"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        let _ = output.wait_with_output();
-        // djpeg might not be available in all environments, that's OK
-    }
+    progressive_decode_hashes::check_gradient_decode(&jpeg_data);
 }
 
 /// Test that progressive encoding of solid gray produces valid output.
@@ -819,81 +795,23 @@ fn test_progressive_extreme_low_quality() {
     }
 }
 
-/// Test libjpeg/djpeg compatibility with complex noise image.
-///
-/// This test replicates the issue where djpeg reports "bad Huffman code" or
-/// "extraneous bytes before marker" errors on our progressive output.
-///
-/// NOTE: This test is marked as ignored because it currently fails.
-/// Verify djpeg (libjpeg-turbo) can decode our progressive AC refinement output.
+// Shared unchanged witness: native oracle validates its golden RGB hash;
+// 32-bit and 64-bit ordinary builds must reproduce that identity in process.
+#[path = "../support/progressive_decode_hashes.rs"]
+mod progressive_decode_hashes;
+
+/// Verify progressive AC-refinement output through a libjpeg-validated hash.
+/// The same identity is required on i686, without spawning external programs.
 #[test]
 fn test_libjpeg_compatibility_noise() {
-    let width = 64u32;
-    let height = 64u32;
-
-    // Generate deterministic noise pattern that triggers AC refinement
-    let data: Vec<u8> = (0..height)
-        .flat_map(|y| {
-            (0..width).flat_map(move |x| {
-                let r = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) % 256) as u8;
-                let g = ((x.wrapping_mul(13) ^ y.wrapping_mul(23)) % 256) as u8;
-                let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(19)) % 256) as u8;
-                [r, g, b]
-            })
-        })
-        .collect();
-
-    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-        .quality(50.0)
-        .progressive(true)
-        .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Encoding should succeed");
-
-    // Verify the file decodes with our test decoders
+    let jpeg_data = progressive_decode_hashes::encode_noise();
     let zune_decoded = decode_with_zune(&jpeg_data).expect("zune-jpeg should decode");
-
-    // Basic sanity check
     assert_eq!(
         zune_decoded.len(),
-        (width * height * 3) as usize,
+        (progressive_decode_hashes::WIDTH * progressive_decode_hashes::HEIGHT * 3) as usize,
         "Decoded size should match"
     );
-
-    // Now test with djpeg if available
-
-    // Write JPEG to temp file
-    let temp_path = std::env::temp_dir().join("test_libjpeg_compat.jpg");
-    std::fs::write(&temp_path, &jpeg_data).expect("Failed to write temp file");
-
-    // Run djpeg
-    let output = Command::new("djpeg")
-        .arg(&temp_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .output();
-
-    match output {
-        Ok(result) => {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            if !stderr.is_empty() {
-                eprintln!("djpeg stderr: {}", stderr);
-            }
-            assert!(
-                result.status.success(),
-                "djpeg should decode without errors. stderr: {}",
-                stderr
-            );
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("djpeg not found, skipping libjpeg compatibility check");
-        }
-        Err(e) => {
-            panic!("Failed to run djpeg: {}", e);
-        }
-    }
-
-    // Clean up
-    let _ = std::fs::remove_file(&temp_path);
+    progressive_decode_hashes::check_noise_decode(&jpeg_data);
 }
 
 /// Test that we match C++ jpegli decoded output pixel-for-pixel.

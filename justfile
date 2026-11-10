@@ -976,3 +976,14 @@ strip-padding-hash-oracle:
 strip-padding-hash-candidate output:
     test -n "$ZENJPEG_TURBO_BIN"
     ZENJPEG_PADDING_HASH_CANDIDATE='{{output}}' cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes regenerate_padding_decode_hashes -- --ignored --nocapture
+
+# Same native/turbo-validated RGB identity on 32-bit and 64-bit builds.
+progressive-decode-check:
+    cargo test --locked -p zenjpeg --test bundled progressive_encoding:: -- --nocapture
+
+progressive-decode-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes independent_progressive_decode_hashes -- --ignored --exact --nocapture
+
+progressive-decode-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --test bundled progressive_encoding:: -- --nocapture

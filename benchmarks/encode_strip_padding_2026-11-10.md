@@ -243,3 +243,21 @@ Linux. The scalar hash check passes locally both with and without `parallel`. Th
 pinned-turbo check passes with `parallel`; the same committed 109-group manifest
 also passes under i686 `cross` with `parallel` (1,194 library tests, eight
 synthetic integration tests and the versioned hash check).
+
+
+## Progressive compatibility checks across word sizes
+
+The progressive noise regression now compares an in-process RGB decode with a
+versioned SHA-256 identity shared by 32-bit and 64-bit builds. The original
+64×64 Q50/420 progressive fixture and zune-jpeg size assertion remain. The
+16×16 grayscale-gradient regression likewise checks an independently validated
+RGB hash, replacing an optional subprocess that never supplied its JPEG input
+or checked the exit status. Existing marker assertions remain unchanged.
+
+`tests/support/progressive_decode_hashes.rs` owns both fixtures, explicit Libjpeg
+IDCT/nearest-chroma/RGB8 decode settings and expected hashes. The native Linux
+oracle job compares these exact JPEGs pixel-for-pixel with pinned libjpeg-turbo
+before checking their hashes (`just progressive-decode-oracle`). Ordinary native
+and i686 tests enforce the same hashes without invoking external tools
+(`just progressive-decode-check`, `just progressive-decode-i686`). No fixture,
+quality expectation or encoder/decoder production code changes are needed.

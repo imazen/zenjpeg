@@ -357,3 +357,28 @@ fn check(actual: &serde_json::Value, expected: &serde_json::Value) {
             .sum::<u64>()
     );
 }
+
+#[path = "support/progressive_decode_hashes.rs"]
+mod progressive_decode_hashes;
+
+#[test]
+#[ignore = "explicit pinned turbo validation; run just progressive-decode-oracle"]
+fn independent_progressive_decode_hashes() {
+    let jpeg = progressive_decode_hashes::encode_noise();
+    // Validate pixels independently before checking the versioned identity.
+    compare_turbo(
+        &jpeg,
+        progressive_decode_hashes::WIDTH as usize,
+        progressive_decode_hashes::HEIGHT as usize,
+        "progressive AC-refinement noise",
+    );
+    progressive_decode_hashes::check_noise_decode(&jpeg);
+    let jpeg = progressive_decode_hashes::encode_gradient();
+    compare_turbo(
+        &jpeg,
+        progressive_decode_hashes::GRADIENT_SIZE as usize,
+        progressive_decode_hashes::GRADIENT_SIZE as usize,
+        "progressive grayscale gradient",
+    );
+    progressive_decode_hashes::check_gradient_decode(&jpeg);
+}
