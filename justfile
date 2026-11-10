@@ -928,3 +928,51 @@ zeroed-alloc-check:
 # Native 12/16-bit CMYK remains float unless eight-bit is explicitly named.
 deep-cmyk-check:
     cargo test --locked -p zenjpeg --features zencodec,extended-jpeg --test zencodec_native_depth deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named
+
+# Synthetic edge/stride/partition oracles; no corpus or C++ jpegli required.
+strip-padding-check:
+    cargo test --locked -p zenjpeg --features parallel --lib padding_tests -- --nocapture
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding -- --nocapture
+
+# Explicit selection: missing pinned tools is a failure, never a graceful skip.
+strip-padding-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding -- --ignored --nocapture
+
+strip-padding-lint:
+    cargo fmt -p zenjpeg -- --check
+    cargo clippy --locked -p zenjpeg --features parallel --lib --test strip_padding --test strip_padding_hashes -- -D warnings
+
+strip-padding-regressions:
+    cargo test --locked -p zenjpeg --lib --tests
+    cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test strip_padding --test strip_padding_hashes --test streaming_encode --test grayscale_geometry --test encode_stop_reasons
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
+
+strip-padding-oracle-build root:
+    bash scripts/build-native-oracle.sh '{{root}}'
+
+# Exact existing changed-line/branch gates, restricted to encoder witnesses.
+strip-padding-coverage:
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report --locked -p zenjpeg --features parallel --lib -- padding_tests
+    cargo +nightly-2026-10-12 llvm-cov --branch --no-report --locked -p zenjpeg --features parallel --test strip_padding
+    cargo +nightly-2026-10-12 llvm-cov report --lcov --output-path "$ZENJPEG_PADDING_LCOV"
+    cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_PADDING_BRANCHES"
+    python3 scripts/check-component-coverage.py main "$ZENJPEG_PADDING_LCOV"
+    python3 scripts/check-native-branches.py main "$ZENJPEG_PADDING_BRANCHES" --require-complete
+
+strip-padding-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib --test strip_padding --test strip_padding_hashes
+
+# Versioned, fixed-settings scalar decode hashes; independent planes remain the oracle.
+strip-padding-hashes:
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes versioned_padding_decode_hashes
+
+strip-padding-hash-oracle:
+    test -n "$ZENJPEG_TURBO_BIN"
+    cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes independent_padding_decode_hashes -- --ignored --nocapture
+
+# Writes a review candidate only; never replaces committed expectations automatically.
+strip-padding-hash-candidate output:
+    test -n "$ZENJPEG_TURBO_BIN"
+    ZENJPEG_PADDING_HASH_CANDIDATE='{{output}}' cargo test --locked -p zenjpeg --features parallel --test strip_padding_hashes regenerate_padding_decode_hashes -- --ignored --nocapture
