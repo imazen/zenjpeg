@@ -173,6 +173,8 @@ impl StripProcessor {
                 self.cb_down[i] = cb_row[i] + 128.0;
                 self.cr_down[i] = cr_row[i] + 128.0;
             }
+            // DCT and vertical edge replication consume padded chroma rows.
+            self.pad_chroma_down_strip(chroma_height, chroma_width);
         }
 
         Ok(())
@@ -180,7 +182,7 @@ impl StripProcessor {
 
     /// Pads chroma downsampled buffers vertically for partial bottom strips.
     pub(super) fn pad_chroma_down_vertically(&mut self, actual_height: usize) -> Result<()> {
-        let chroma_width = self.layout.c_width;
+        let stride = self.layout.padded_c_width;
         let target_height = self.layout.c_strip_height;
         let actual_chroma_height = self.layout.c_strip_height_for(actual_height);
 
@@ -188,17 +190,14 @@ impl StripProcessor {
             return Ok(());
         }
 
-        // Replicate last row - copy to temp first to avoid borrow conflict
-        let last_row_start = (actual_chroma_height - 1) * chroma_width;
-        let cb_last_row: Vec<f32> =
-            self.cb_down[last_row_start..last_row_start + chroma_width].to_vec();
-        let cr_last_row: Vec<f32> =
-            self.cr_down[last_row_start..last_row_start + chroma_width].to_vec();
-        for row in actual_chroma_height..target_height {
-            let dst_start = row * chroma_width;
-            self.cb_down[dst_start..dst_start + chroma_width].copy_from_slice(&cb_last_row);
-            self.cr_down[dst_start..dst_start + chroma_width].copy_from_slice(&cr_last_row);
-        }
+        PlaneStripMut::new(&mut self.cb_down, stride).replicate_row_down(
+            actual_chroma_height - 1,
+            actual_chroma_height..target_height,
+        );
+        PlaneStripMut::new(&mut self.cr_down, stride).replicate_row_down(
+            actual_chroma_height - 1,
+            actual_chroma_height..target_height,
+        );
 
         Ok(())
     }

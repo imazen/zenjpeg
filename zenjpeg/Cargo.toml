@@ -91,6 +91,9 @@ zenresize = { workspace = true, optional = true }
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 spin = { version = "0.12.3", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
 
+# Repair policy/inference stays in the codec-independent zensr dependency.
+zensr = { git = "https://github.com/imazen/zensr", rev = "0bb29cf63a4ab8fa8864994acc659e61c890c5e6", optional = true }
+
 [dev-dependencies]
 # The unit tests' `for_each_token_permutation` needs `testable_dispatch` to
 # disable tokens the build guarantees at compile time (SSE2 on x86-64, NEON on
@@ -177,6 +180,8 @@ zensim-regress = { git = "https://github.com/imazen/zensimx", rev = "85577588091
 zensim = { workspace = true, features = ["classification"] }
 
 [features]
+restoration = ["dep:zensr"]
+
 # Qualified whole-source controlled decoding with admitted byte/row storage.
 controlled-decode = ["zencodec", "dep:zencodec-coroutine", "metadata"]
 metadata-rewrite = ["metadata", "zenmeta/rewrite"]
