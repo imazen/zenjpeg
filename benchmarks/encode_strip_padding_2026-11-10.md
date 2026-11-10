@@ -84,7 +84,10 @@ All counts below are emitted by tests, not inferred quality claims:
 | Byte source stride/partition/entropy equality | 5,940 comparisons |
 | Planar full/pre-sampled, packed/padded, partition equality | 16,224 comparisons |
 | Neutral RGB qualities / methods / sampling | 1,320 encodes |
-| RGB/gray/XYB explicit extension | 21,090 visible coefficient blocks |
+| RGB/gray/XYB format controls, explicit extension | 21,090 visible coefficient blocks |
+| RGB/gray/XYB Full complete residues, explicit extension | 2,664 geometries; 42,672 visible coefficient blocks |
+| Both XYB layouts, independently sampled planes | 2,664 geometries, three planes each |
+| Explicit automatic parallel entropy / row partitions | 192 configurations |
 | Quantization / trellis / 16-bit quant allowance controls | 480 comparisons |
 | Public fused parallel segment/edge neutrality | 192 encodes |
 | Independent libjpeg-turbo strip RGB equality | 1,728 encodes |
@@ -108,6 +111,12 @@ optimization and the 16-bit-table allowance. No assertion depends on a lossy
 source round-trip being exact. Byte equality uses identical configuration and
 input operation; explicit frame extension disables AQ/deringing and compares
 only visible blocks, excluding entropy dummy blocks outside the image.
+For subsampled XYB, explicit RGB extension is equivalent only when the final
+sample already replicates the edge (the format-control witnesses use odd
+widths/heights). Even partial tails require replication AFTER sampling: their
+complete residue matrix uses independently sampled XYB planes, rather than
+assuming source RGB extension is equivalent. The unsampled RGB/gray/XYB Full
+paths additionally compare coefficients across every residue class.
 
 The coordinate oracles share color conversion with production but independently
 construct sample addressing, box averages, right/bottom replication and AQ grid
@@ -133,8 +142,8 @@ Windows ARM64, macOS ARM64 and Linux CI run the synthetic suite with and without
 parallel kernels; i686 additionally runs it through `cross` with parallel.
 
 A controlled replay attached these same tests to otherwise unchanged base
-production code: all 19 focused library tests failed. The fixed revision passes
-all 19. Distinct witnesses expose packed chroma stride, full-resolution output
+production code: all 19 regression library tests failed. The fixed revision passes
+all 19; an additional complete-residue XYB control also passes. Distinct witnesses expose packed chroma stride, full-resolution output
 storage, missing downsampled bottom padding, standard even-height averaging,
 AQ grid size and the 440 AQ input stride separately.
 
@@ -153,8 +162,9 @@ that guard the combined parallel/zencodec library suite exposed an AQ-oracle
 race, despite isolated focused runs passing. Assertions and expected samples
 remain unchanged.
 
-Local regression gates pass: 2,483 default library/integration tests, the
-parallel/zencodec library plus strip/streaming/grayscale/cancellation targets,
+The complete regression run at `3236b601` passes 2,483 default
+library/integration tests and 1,305 parallel/zencodec library plus
+strip/streaming/grayscale/cancellation tests,
 15 doctests, scoped formatting, and strict Clippy for library and all tests
 with `parallel`. Existing external/corpus test gates retain their prior state.
 The two new turbo gates were explicitly run using a fresh SHA-verified release

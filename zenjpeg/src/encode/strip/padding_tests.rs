@@ -574,3 +574,95 @@ fn reachable_dispatch_padding_oracles() {
     );
     eprintln!("padding dispatch report: {report:?}");
 }
+
+#[test]
+fn xyb_plane_padding_all_residues() {
+    use crate::encode::XybSubsampling;
+    let _dispatch = archmage::testing::lock_token_testing();
+    let mut cells = 0;
+    for (sub, sh, factor) in [
+        (XybSubsampling::Full, 8, 1),
+        (XybSubsampling::BQuarter, 16, 2),
+    ] {
+        for w in (1usize..=33).chain([63, 64, 65, 129]) {
+            for prefix in 0..=2 {
+                for h in 1..=sh {
+                    let mut p = StripProcessor::with_color_modes(
+                        w,
+                        prefix * sh + h,
+                        Subsampling::S444,
+                        PixelFormat::Rgb,
+                        DownsamplingMethod::Box,
+                        0,
+                        true,
+                        sub,
+                        false,
+                        QuantContext::default_for_tests(),
+                        false,
+                    )
+                    .unwrap();
+                    for i in 0..prefix {
+                        p.process_strip(&source(w, sh, PixelFormat::Rgb, i + 1), i * sh)
+                            .unwrap();
+                    }
+                    if prefix == 0 {
+                        poison(&mut p);
+                    }
+                    let src = source(w, h, PixelFormat::Rgb, 3);
+                    let mut x = vec![0.; w * h];
+                    let mut y = x.clone();
+                    let mut b = x.clone();
+                    // Only the row color kernel is shared. No strip rearrangement,
+                    // subsampling or padding helper participates in this reference.
+                    for row in 0..h {
+                        crate::color::xyb::srgb_to_scaled_xyb_planes_simd_inplace(
+                            &src[row * w * 3..(row + 1) * w * 3],
+                            &mut x[row * w..(row + 1) * w],
+                            &mut y[row * w..(row + 1) * w],
+                            &mut b[row * w..(row + 1) * w],
+                            w,
+                        );
+                    }
+                    for plane in [&mut x, &mut y, &mut b] {
+                        for v in plane.iter_mut() {
+                            *v *= 255.;
+                        }
+                    }
+                    let bw = w.div_ceil(factor);
+                    let bh = h.div_ceil(factor);
+                    let mut sampled = vec![0.; bw * bh];
+                    for by in 0..bh {
+                        for bx in 0..bw {
+                            let a = b[(by * factor).min(h - 1) * w + (bx * factor).min(w - 1)];
+                            if factor == 1 {
+                                sampled[by * bw + bx] = a;
+                            } else {
+                                let c = b[(by * 2).min(h - 1) * w + (bx * 2 + 1).min(w - 1)];
+                                let d = b[(by * 2 + 1).min(h - 1) * w + (bx * 2).min(w - 1)];
+                                let e = b[(by * 2 + 1).min(h - 1) * w + (bx * 2 + 1).min(w - 1)];
+                                sampled[by * bw + bx] = (a + c + d + e) * 0.25;
+                            }
+                        }
+                    }
+                    p.process_strip(&src, prefix * sh).unwrap();
+                    let ctx = format!("XYB {sub:?} prefix {prefix}");
+                    assert_plane(&p.y_strip, p.layout.padded_width, sh, &x, w, h, &ctx);
+                    assert_plane(&p.cb_strip, p.layout.padded_width, sh, &y, w, h, &ctx);
+                    assert_plane(
+                        &p.cr_down,
+                        p.layout.padded_b_width,
+                        p.layout.b_strip_height,
+                        &sampled,
+                        bw,
+                        bh,
+                        &ctx,
+                    );
+                    cells += 1;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "XYB independently sampled plane coordinate oracle: {cells} geometries, 3 planes each"
+    );
+}

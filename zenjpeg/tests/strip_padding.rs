@@ -327,7 +327,6 @@ fn color_modes_replicated_source_coefficients() {
             if mode == 0 && index >= 6 {
                 continue;
             }
-            let bpp = layout.bytes_per_pixel();
             for (w, h) in [
                 (1usize, 1usize),
                 (7, 9),
@@ -337,54 +336,7 @@ fn color_modes_replicated_source_coefficients() {
                 (33, 49),
                 (129, 65),
             ] {
-                // No AQ/deringing: changing frame dimensions must not change
-                // quantization, so explicit source extension is an exact oracle.
-                let cfg = cfg.clone().aq_enabled(false).deringing(false);
-                let pw = w.div_ceil(16) * 16;
-                let ph = h.div_ceil(16) * 16;
-                let src = pixels(w, h, layout, 3);
-                let mut extended = vec![0; pw * ph * bpp];
-                for y in 0..ph {
-                    for x in 0..pw {
-                        extended[(y * pw + x) * bpp..(y * pw + x + 1) * bpp].copy_from_slice(
-                            &src[(y.min(h - 1) * w + x.min(w - 1)) * bpp
-                                ..(y.min(h - 1) * w + x.min(w - 1) + 1) * bpp],
-                        );
-                    }
-                }
-                let a = cfg.encode_bytes(&src, w as u32, h as u32, layout).unwrap();
-                let b = cfg
-                    .encode_bytes(&extended, pw as u32, ph as u32, layout)
-                    .unwrap();
-                let a = Decoder::new().decode_coefficients(&a, Unstoppable).unwrap();
-                let b = Decoder::new().decode_coefficients(&b, Unstoppable).unwrap();
-                let max_h = a
-                    .components
-                    .iter()
-                    .map(|c| c.h_samp as usize)
-                    .max()
-                    .unwrap();
-                let max_v = a
-                    .components
-                    .iter()
-                    .map(|c| c.v_samp as usize)
-                    .max()
-                    .unwrap();
-                for (ca, cb) in a.components.iter().zip(&b.components) {
-                    // Entropy padding may use dummy blocks outside the visible
-                    // component. Only visible DCT blocks carry pixel semantics.
-                    for by in 0..(h * ca.v_samp as usize).div_ceil(max_v * 8) {
-                        for bx in 0..(w * ca.h_samp as usize).div_ceil(max_h * 8) {
-                            assert_eq!(
-                                ca.block_at(bx, by),
-                                cb.block_at(bx, by),
-                                "{w}x{h} component {} block {bx},{by}",
-                                ca.id
-                            );
-                            cells += 1;
-                        }
-                    }
-                }
+                cells += extension_coefficients(&cfg, layout, w, h);
             }
         }
     }
@@ -557,4 +509,148 @@ fn quantization_and_optimization_edge_controls() {
         }
     }
     eprintln!("quantization/trellis/16-bit-table allowance byte parity: {cells} comparisons");
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn automatic_parallel_entropy_preserves_edge_coefficients() {
+    use zenjpeg::encoder::{ParallelEncoding, XybSubsampling};
+    let mut cells = 0;
+    let mut configs = Vec::new();
+    for sub in SUBS {
+        for method in [Method::Box, Method::GammaAware, Method::GammaAwareIterative] {
+            configs.push(EncoderConfig::ycbcr(40, sub).downsampling_method(method));
+        }
+    }
+    configs.extend([
+        EncoderConfig::rgb(40),
+        EncoderConfig::grayscale(40),
+        EncoderConfig::xyb(40, XybSubsampling::Full),
+        EncoderConfig::xyb(40, XybSubsampling::BQuarter),
+    ]);
+    for cfg in configs {
+        for (w, h) in [(1, 1), (9, 2), (17, 33), (33, 49), (257, 513), (513, 519)] {
+            for optimized in [false, true] {
+                let cfg = cfg.clone().progressive(false).optimize_huffman(optimized);
+                let src = pixels(w, h, Layout::Rgb8Srgb, 3);
+                let expected = cfg
+                    .encode_bytes(&src, w as u32, h as u32, Layout::Rgb8Srgb)
+                    .unwrap();
+                let parallel = cfg
+                    .clone()
+                    .parallel(ParallelEncoding::Auto)
+                    .encode_bytes(&src, w as u32, h as u32, Layout::Rgb8Srgb)
+                    .unwrap();
+                let expected = Decoder::new()
+                    .decode_coefficients(&expected, Unstoppable)
+                    .unwrap();
+                let actual = Decoder::new()
+                    .decode_coefficients(&parallel, Unstoppable)
+                    .unwrap();
+                assert_eq!(actual.quant_tables, expected.quant_tables);
+                assert_eq!(actual.components.len(), expected.components.len());
+                for (a, b) in actual.components.iter().zip(&expected.components) {
+                    assert_eq!(
+                        a.coeffs, b.coeffs,
+                        "{w}x{h} optimized {optimized} component {}",
+                        a.id
+                    );
+                }
+                assert_eq!(
+                    streamed(
+                        &cfg.parallel(ParallelEncoding::Auto),
+                        &src,
+                        w,
+                        h,
+                        Layout::Rgb8Srgb,
+                        13,
+                        &[1, 7, 19]
+                    ),
+                    parallel
+                );
+                cells += 1;
+            }
+        }
+    }
+    eprintln!("explicit automatic parallel entropy coefficient/partition parity: {cells} encodes");
+}
+
+fn extension_coefficients(cfg: &EncoderConfig, layout: Layout, w: usize, h: usize) -> usize {
+    let bpp = layout.bytes_per_pixel();
+    let mut blocks = 0;
+    // No AQ/deringing: changing frame dimensions must not change
+    // quantization. For subsampled XYB, callers use odd dimensions so the
+    // final chroma sample is already a replicated source pixel; even tails
+    // instead need the independently sampled plane oracle in padding_tests.
+    let cfg = cfg.clone().aq_enabled(false).deringing(false);
+    let pw = w.div_ceil(16) * 16;
+    let ph = h.div_ceil(16) * 16;
+    let src = pixels(w, h, layout, 3);
+    let mut extended = vec![0; pw * ph * bpp];
+    for y in 0..ph {
+        for x in 0..pw {
+            extended[(y * pw + x) * bpp..(y * pw + x + 1) * bpp].copy_from_slice(
+                &src[(y.min(h - 1) * w + x.min(w - 1)) * bpp
+                    ..(y.min(h - 1) * w + x.min(w - 1) + 1) * bpp],
+            );
+        }
+    }
+    let a = cfg.encode_bytes(&src, w as u32, h as u32, layout).unwrap();
+    let b = cfg
+        .encode_bytes(&extended, pw as u32, ph as u32, layout)
+        .unwrap();
+    let a = Decoder::new().decode_coefficients(&a, Unstoppable).unwrap();
+    let b = Decoder::new().decode_coefficients(&b, Unstoppable).unwrap();
+    let max_h = a
+        .components
+        .iter()
+        .map(|c| c.h_samp as usize)
+        .max()
+        .unwrap();
+    let max_v = a
+        .components
+        .iter()
+        .map(|c| c.v_samp as usize)
+        .max()
+        .unwrap();
+    for (ca, cb) in a.components.iter().zip(&b.components) {
+        // Entropy padding may use dummy blocks outside the visible
+        // component. Only visible DCT blocks carry pixel semantics.
+        for by in 0..(h * ca.v_samp as usize).div_ceil(max_v * 8) {
+            for bx in 0..(w * ca.h_samp as usize).div_ceil(max_h * 8) {
+                assert_eq!(
+                    ca.block_at(bx, by),
+                    cb.block_at(bx, by),
+                    "{w}x{h} component {} block {bx},{by}",
+                    ca.id
+                );
+                blocks += 1;
+            }
+        }
+    }
+    blocks
+}
+
+#[test]
+fn color_mode_padding_all_residues() {
+    use zenjpeg::encoder::XybSubsampling;
+    let mut blocks = 0;
+    let mut cells = 0;
+    for (cfg, sh) in [
+        (EncoderConfig::rgb(40), 8),
+        (EncoderConfig::grayscale(40), 8),
+        (EncoderConfig::xyb(40, XybSubsampling::Full), 8),
+    ] {
+        for w in (1usize..=33).chain([63, 64, 65, 129]) {
+            for prefix in 0..=2 {
+                for tail in 1..=sh {
+                    blocks += extension_coefficients(&cfg, Layout::Rgb8Srgb, w, prefix * sh + tail);
+                    cells += 1;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "RGB/gray/XYB Full complete residue extension oracle: {cells} geometries, {blocks} visible blocks"
+    );
 }
