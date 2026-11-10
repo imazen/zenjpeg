@@ -7,7 +7,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
-- Buffer arbitrary pre-sampled planar row pushes, preserve chroma phase across odd row boundaries, and validate layouts before consuming input. Full-resolution/pre-sampled modes may alternate at complete-strip boundaries.
+- Buffer arbitrary pre-sampled planar row pushes, preserve chroma phase across odd row boundaries, and validate layouts before consuming input. Full-resolution/pre-sampled modes may alternate at complete-strip boundaries. (`ed37e5ed`)
 
 ### Fixed: zencodec decoder keeps depths above 8 bits
 
