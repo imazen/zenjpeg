@@ -706,6 +706,8 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
+- Fixed pre-sampled planar streaming (2026-11-10): `YCbCrPlanarEncoder::push_subsampled` buffers arbitrary row counts and retains vertical chroma phase. Odd-start 420/440 pushes repeat the shared first chroma row; conflicting values and mid-strip sampling-mode switches are rejected before consuming input. Packed complete strips retain direct consumption; buffered/strided input reuses one-strip storage. Gates: `just planar-streaming-check`, `just planar-streaming-i686`.
+
 - Fixed progressive compatibility test portability (2026-11-10): ordinary 32-bit/64-bit tests use the same native-oracle-validated RGB hashes for the unchanged noise and grayscale-gradient witnesses. They no longer spawn optional `djpeg` processes; native CI explicitly revalidates both fixtures with pinned turbo. Gates: `just progressive-decode-check`, `just progressive-decode-i686`, `just progressive-decode-oracle`.
 
 - Fixed in focused strip-padding PR (2026-11-10): downsampled chroma must be padded at padded chroma stride, after subsampling real rows. The separate fused parallel encoder also needs padded planes, full-resolution 422/440 conversion scratch and AQ grid extension. See [encoder edge qualification](benchmarks/encode_strip_padding_2026-11-10.md); gates: `just strip-padding-check`, `just strip-padding-oracle`.

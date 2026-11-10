@@ -5,6 +5,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### Fixed
+
+- Buffer arbitrary pre-sampled planar row pushes, preserve chroma phase across odd row boundaries, and validate layouts before consuming input. Full-resolution/pre-sampled modes may alternate at complete-strip boundaries.
+
 ### Fixed: zencodec decoder keeps depths above 8 bits
 
 - The zencodec decoder advertises and honors `RGB16_SRGB`, `RGBA16_SRGB` and `GRAY16_SRGB` on one-shot, push and streaming paths. A frame above 8 bits with no supported preference, or a preference list offering U16 or F32 anywhere, now leaves deep instead of narrowing to U8; a list offering only U8 still gets U8. Samples are canonical U16 (nearest `code * 65535 / max`, every code recoverable) with `ExactDepth` on the one-shot and streaming results. Deep raw CMYK leaves as `CmykF32Inverted`, since no U16 CMYK descriptor exists, unless `CMYK8` is named. Eight-bit frames widen by exactly 257 when U16 is asked for and are otherwise unchanged.

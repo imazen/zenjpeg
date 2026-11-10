@@ -65,10 +65,9 @@ therefore tested at its internal segment boundary, while public tests use
 admitted frame sizes. This does not establish unrelated config semantics for
 that older convenience entry point.
 
-`push_subsampled` explicitly does not buffer partial strips. Its tests use
-one, two, or all complete strips per push, followed by a final partial strip.
-Arbitrary row partitions are covered by byte and full-resolution planar pushes;
-nonfinal partial pre-sampled pushes are not claimed as supported or qualified.
+The initial qualification used one, two, or all complete strips per pre-sampled
+push, followed by a final partial strip. The planar streaming follow-up below
+extends this to arbitrary row partitions, including odd chroma boundaries.
 
 ## Measured focused coverage
 
@@ -263,3 +262,39 @@ before checking their hashes (`just progressive-decode-oracle`). Ordinary native
 and i686 tests enforce the same hashes without invoking external tools
 (`just progressive-decode-check`, `just progressive-decode-i686`). No fixture,
 quality expectation or encoder/decoder production code changes are needed.
+
+
+## Arbitrary pre-sampled planar streaming
+
+On base `a2835975`, both one-row and uneven pre-sampled pushes fail immediately
+with an internal "Y plane too small for strip" error. The public wrapper passed
+partial input to an inner function that consumes a complete MCU strip (or the
+image's actual final partial strip).
+
+Full-resolution and pre-sampled pushes now share the existing one-strip staging
+buffers. Complete packed strips keep a direct consumption path. No per-push
+frame-sized staging allocation is needed. Horizontal and vertical sampling
+factors determine compact chroma addressing. For a push starting at global luma
+row `y`, its first chroma row is `floor(y/v)`, with `ceil((y%v+rows)/v)` rows.
+Odd-start 420/440 pushes repeat the shared first chroma row; it must match the
+buffered samples. This makes one-row and arbitrary uneven partitions equivalent
+to one push without changing the public signatures.
+
+Switching full/pre-sampled methods inside a buffered strip is rejected without
+consuming input; methods can alternate at complete-strip boundaries. Plane
+strides, final visible-row lengths, address arithmetic and row counts are
+validated before copying. Invalid inputs can be corrected and retried. Zero-row
+pushes preserve state; incomplete finish still errors. Cancellation retains its
+reason and the accepted-row count, so callers can resume at `rows_pushed()`.
+
+Measured native checks: 22,200 complete-residue/stride/partition byte comparisons;
+792 aggressive/high-quality and entropy-mode comparisons; 1,252 injected deadline
+checkpoints with exact output after resume. The matrix spans all four sampling
+modes, widths1–33 and63/64/65/129, heights1–49 and65, distinct sentinel-padded
+Y/Cb/Cr strides, shared chroma conflicts, mixed modes, invalid lengths/strides/
+overflows, tight last rows and all three finish variants. Existing 109-group
+SHA-256 decode identities remain unchanged after their planar witnesses switch
+to partial row partitions; pinned native turbo equality still passes.
+
+Reproduce with `just planar-streaming-check`, `just planar-streaming-lint`,
+`just planar-streaming-i686` and `just planar-streaming-regressions`.

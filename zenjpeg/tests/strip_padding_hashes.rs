@@ -236,10 +236,10 @@ fn manifest(independent: bool) -> serde_json::Value {
                 );
                 let cfg = EncoderConfig::ycbcr(40, sub);
                 let mut enc = cfg.encode_from_ycbcr_planar(w as u32, h as u32).unwrap();
-                let strip = sub.v_factor() as usize * 8;
                 let mut row = 0;
+                let mut part = 0;
                 while row < h {
-                    let rows = strip.min(h - row);
+                    let rows = [1, 3, 7, 19][part % 4].min(h - row);
                     let planes = YCbCrPlanes {
                         y: &y[row * (w + 3)..],
                         y_stride: w + 3,
@@ -254,6 +254,7 @@ fn manifest(independent: bool) -> serde_json::Value {
                         enc.push(&planes, rows, Unstoppable).unwrap();
                     }
                     row += rows;
+                    part += 1;
                 }
                 group.add(
                     &format!("geometry{i}"),

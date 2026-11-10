@@ -203,7 +203,7 @@ jobs:
       - name: Encoder strip padding with parallel kernels (i686)
         run: |
           cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --lib padding_tests
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test strip_padding --test strip_padding_hashes
+          cross test -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test strip_padding --test strip_padding_hashes --test planar_streaming
 
       - name: Test (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests

@@ -995,3 +995,12 @@ planar-streaming-check:
 planar-streaming-lint:
     cargo fmt -p zenjpeg -- --check
     cargo clippy --locked -p zenjpeg --features parallel --lib --test planar_streaming -- -D warnings
+
+planar-streaming-i686:
+    cross test --offline --locked -p zenjpeg --target i686-unknown-linux-gnu --features parallel --test planar_streaming --test strip_padding_hashes
+
+planar-streaming-regressions:
+    cargo test --locked -p zenjpeg --lib --tests
+    cargo test --locked -p zenjpeg --features parallel,zencodec --lib --test planar_streaming --test strip_padding --test strip_padding_hashes --test streaming_encode --test encode_stop_reasons
+    cargo test --locked -p zenjpeg --doc
+    cargo clippy --locked -p zenjpeg --features parallel --lib --tests -- -D warnings
