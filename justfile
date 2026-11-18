@@ -1105,3 +1105,21 @@ depth-vector-coverage-check:
     cargo +nightly-2026-10-12 llvm-cov report --json --output-path "$ZENJPEG_DEPTH_COV_DIR/branches.json"
     python3 scripts/check-component-coverage.py origin/main "$ZENJPEG_DEPTH_COV_DIR/lcov.info"
     python3 scripts/check-native-branches.py origin/main "$ZENJPEG_DEPTH_COV_DIR/branches.json" --require-complete
+
+# The caller registers the exact test source in an owned frozen encoder closure.
+jbrd-frozen-consumer-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test zenjpeg_baseline_metadata_contract
+
+jbrd-metadata-coverage manifest output:
+    python3 scripts/jbrd_metadata_coverage.py {{quote(manifest)}} {{quote(output)}}
+
+jbrd-metadata-mutations manifest output:
+    python3 scripts/jbrd_metadata_mutations.py {{quote(manifest)}} {{quote(output)}}
+
+jbrd-metadata-current-consumer output:
+    python3 scripts/prepare_jbrd_consumer.py {{quote(output)}}
+
+jbrd-metadata-consumer-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} --no-default-features -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} --features parallel,cms -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --all-targets --all-features -- -D warnings

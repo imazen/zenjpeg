@@ -754,12 +754,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> ScanResult<u8> {
-        self.decode_block_impl::<false>(
+        self.decode_block_impl::<false, false>(
             coeffs,
             prev_coeff_count,
             component,
             dc_table_idx,
             ac_table_idx,
+            None,
         )
     }
 
@@ -783,23 +784,58 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> ScanResult<u8> {
-        self.decode_block_impl::<true>(
+        self.decode_block_impl::<true, false>(
             coeffs,
             prev_coeff_count,
             component,
             dc_table_idx,
             ac_table_idx,
+            None,
         )
     }
 
+    /// Keep trailing ZRL tokens only for explicit reconstruction-metadata callers.
     #[inline(always)]
-    fn decode_block_impl<const NATURAL: bool>(
+    pub(crate) fn decode_block_into_maybe_tracked(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
         prev_coeff_count: u8,
         component: usize,
         dc_table_idx: usize,
         ac_table_idx: usize,
+        metadata: Option<&mut (JbrdScanInfo, u32)>,
+    ) -> ScanResult<u8> {
+        if let Some((scan, index)) = metadata {
+            let result = self.decode_block_impl::<false, true>(
+                coeffs,
+                prev_coeff_count,
+                component,
+                dc_table_idx,
+                ac_table_idx,
+                Some((scan, *index)),
+            );
+            *index += 1;
+            result
+        } else {
+            self.decode_block_into(
+                coeffs,
+                prev_coeff_count,
+                component,
+                dc_table_idx,
+                ac_table_idx,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn decode_block_impl<const NATURAL: bool, const TRACK_ZRL: bool>(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        prev_coeff_count: u8,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+        metadata: Option<(&mut JbrdScanInfo, u32)>,
     ) -> ScanResult<u8> {
         // Get table references once (tables are borrowed, no copying)
         let dc_table =
@@ -879,6 +915,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
         let mut last_nonzero: u8 = 1;
         let mut i = 1;
+        let mut trailing_zrl = 0_u32;
 
         while i < DCT_BLOCK_SIZE {
             if let Some(bits9) = self
@@ -891,6 +928,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 if let Some(fast_ac_arr) = fast_ac {
                     let fast_ac_entry = fast_ac_arr[idx];
                     if fast_ac_entry != 0 {
+                        if TRACK_ZRL {
+                            trailing_zrl = 0;
+                        }
                         let value = fast_ac_entry >> 8;
                         let run = ((fast_ac_entry >> 4) & 0xF) as usize;
                         let total_bits = (fast_ac_entry & 0xF) as u8;
@@ -933,10 +973,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     if ac_cat == 0 {
                         if run == 15 {
                             i += 16; // ZRL
+                            if TRACK_ZRL {
+                                trailing_zrl += 1;
+                            }
                         } else {
                             break;
                         }
                     } else {
+                        if TRACK_ZRL {
+                            trailing_zrl = 0;
+                        }
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
                             // Run past the block. Consume the value bits the way
@@ -996,10 +1042,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             if ac_cat == 0 {
                 if run == 15 {
                     i += 16; // ZRL
+                    if TRACK_ZRL {
+                        trailing_zrl += 1;
+                    }
                 } else {
                     break;
                 }
             } else {
+                if TRACK_ZRL {
+                    trailing_zrl = 0;
+                }
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
                     // Run past the block. Consume the value bits the way
@@ -1035,6 +1087,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
         }
 
+        if TRACK_ZRL && trailing_zrl != 0 {
+            let (scan, index) = metadata.expect("tracked baseline block metadata");
+            scan.extra_zero_runs.try_reserve(1).map_err(|_| {
+                Error::allocation_failed(
+                    core::mem::size_of::<(u32, u32)>(),
+                    "baseline JPEG extra zero runs",
+                )
+            })?;
+            scan.extra_zero_runs.push((index, trailing_zrl));
+        }
         Ok(ScanRead::Value(last_nonzero))
     }
 

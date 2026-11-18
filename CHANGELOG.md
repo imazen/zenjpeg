@@ -7,6 +7,10 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Retain baseline Huffman scan records and trailing ZRL positions for optional
+  JPEG reconstruction metadata without changing ordinary coefficients
+  (`00a00b0f`).
+
 - Validate limits and native geometry before ICC conversion-row allocation; preserve resource error categories for CMS buffer allocation failures.
 
 - Keep float-plane YCbCr conversion identical for partial and complete SIMD batches by using the same arithmetic for tails.

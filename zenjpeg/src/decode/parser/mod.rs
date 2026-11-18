@@ -326,9 +326,9 @@ pub(super) struct JpegParser<'a> {
 
     /// JBRD per-scan metadata accumulator. Set to `Some(Vec::new())` by
     /// [`Decoder::decode_coefficients_with_jbrd_metadata`] before decode;
-    /// each SOS that runs through `decode_progressive_scan` pushes a new
-    /// `JbrdScanInfo` and tracks `reset_points`/`extra_zero_runs` during
-    /// AC entropy decode. `None` keeps the legacy zero-overhead path.
+    /// baseline and progressive scans each retain one `JbrdScanInfo`. Baseline
+    /// scans track trailing ZRL tokens; progressive AC scans also track EOB-run
+    /// reset points. `None` keeps reconstruction tracking disabled.
     ///
     /// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
     pub(super) jbrd_scans: Option<Vec<crate::decode::image::JbrdScanInfo>>,

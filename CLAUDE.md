@@ -1967,3 +1967,25 @@ allocating its conversion row. Unknown-height feeding checks each accumulated
 height before changing color state. Pixel-buffer allocation/capacity failures
 retain resource error categories instead of becoming ICC failures; deterministic
 capacity-overflow and invalid-geometry controls require no large allocation.
+
+## Known Bugs: baseline JPEG reconstruction metadata (issue 144)
+
+A legal baseline scan can contain trailing ZRL symbols before EOB. The ordinary
+coefficient decode retains the right samples, but reconstruction metadata has
+no baseline scan entry, losing those entropy bytes. The explicit two-block
+baseline controls in `zenjpeg/tests/jbrd_baseline_metadata.rs` fail through the
+public metadata API. The encoder's pinned v0.12 source controls rebuild exact
+originals, while its old transcode loses them through both reconstruction
+decoders. Progressive controls already report the corresponding scan signals.
+
+The frozen-cohort candidate now retains one baseline record and trailing ZRL
+counts in global scan-block order. Its direct public regression passes for
+noninterleaved/interleaved blocks, restart boundaries, padding bits and a
+nonzero coefficient after ZRL. Ordinary and metadata coefficient outputs
+remain identical on those controls. Thirteen native long-code, edge and
+restart controls and all four strictness settings now pass the frozen consumer;
+source regions and eight restored fault replays are recorded in
+[the owning contract](docs/JPEG_RECONSTRUCTION_METADATA.md). Current-main
+minimal/default/parallel/CMS consumer checks, direct minimal library Clippy
+and scoped formatting pass as recorded there. Full current-main workspace
+qualification remains separate.
