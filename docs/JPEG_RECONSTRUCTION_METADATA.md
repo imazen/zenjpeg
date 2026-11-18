@@ -25,3 +25,25 @@ coefficient buffers equal the ordinary API. Log `zenjpeg-baseline-consumer-after
 23 seconds, peak RSS 1.06 GiB, minimum available 18,897 MiB. This is the frozen
 encoder source graph. It does not qualify newer dependency cohorts, all
 arithmetic/truncation modes or the full decoder.
+
+Thirteen native v0.12 source controls also cover 10- and 11-bit Huffman codes,
+nonzero AC before and after ZRL, multiple runs, exact block completion, gray
+absolute sampling, restart markers and odd interleaved component grids. Their
+ordinary and tracked coefficient buffers agree under Strict, Balanced, Lenient
+and Permissive settings. Truncated scan prefixes retain the ordinary API's
+acceptance/error policy and coefficients.
+
+Frozen consumer coverage observes 23/23 dispatch regions, all three reset sites
+and both increment sites (3/3 each), and 7/7 scan-record construction/emission
+regions. Trailing-run storage is 13/18: five allocation-error regions remain
+unexecuted. Four caller windows observe 11/12, 12/14, 12/12 and 14/15; missing
+regions are error propagation and the strict missing-padding return. This is
+selected baseline metadata coverage, not complete JPEG or decoder coverage.
+The final capture is `zenjpeg-baseline-metadata-restored.log` (25 seconds;
+peak RSS 1.05 GiB, minimum available 19,034 MiB).
+
+Eight independent faults fail at runtime and restore the exact source: removing
+each reset or run increment, holding the block index fixed, shifting stored
+indices, and discarding the scan record. Retained objects, fault sources and
+full logs are bound in `zenjpeg-baseline-metadata-faults` (199 seconds; peak RSS
+1.06 GiB, minimum available 18,953 MiB).

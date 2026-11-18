@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -25,6 +26,18 @@ for relative in sources:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
     identity['sources'].append({'path': relative, 'sha256': sha(src)})
+consumer = a.manifest.resolve().parent
+for relative in ['Cargo.toml', 'Cargo.lock', 'jxl-encoder/Cargo.toml',
+                 'jxl-encoder/tests/zenjpeg_baseline_metadata_contract.rs']:
+    src = consumer / relative
+    dst = a.output / 'consumer' / relative
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+for src in (consumer / 'jxl-encoder/tests/testdata').glob('jpeg_scan_v012_*.jpg.hex'):
+    dst = a.output / 'consumer/jxl-encoder/tests/testdata' / src.name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src,dst)
+assert (consumer / 'jxl-encoder/tests/zenjpeg_baseline_metadata_contract.rs').read_bytes() == (root / 'zenjpeg/tests/jbrd_baseline_metadata.rs').read_bytes()
 command = ['cargo', 'test', '--locked', '--manifest-path', str(a.manifest), '-p', 'jxl-encoder', '--features', '__expert,parallel,jpeg-reencoding', '--test', 'zenjpeg_baseline_metadata_contract', '--no-run', '--message-format=json']
 identity['command'] = command
 with (a.output / 'build.jsonl').open('x') as out:
@@ -39,7 +52,7 @@ profile = a.output.resolve() / 'test.profraw'
 run = [str(binary), '--nocapture', '--test-threads=1']
 with (a.output / 'runtime.log').open('x') as out:
     result = subprocess.run(run, stdout=out, stderr=subprocess.STDOUT, env=dict(os.environ, LLVM_PROFILE_FILE=str(profile)))
-assert result.returncode == 0 and '2 passed; 0 failed' in (a.output / 'runtime.log').read_text()
+assert result.returncode == 0 and re.search(r'test result: ok\. [1-9][0-9]* passed; 0 failed', (a.output / 'runtime.log').read_text())
 assert profile.is_file()
 identity['run'] = run
 identity['profile_sha256'] = sha(profile)

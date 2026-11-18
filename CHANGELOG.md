@@ -7,6 +7,13 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Retain baseline Huffman scan records and trailing ZRL positions for optional
+  JPEG reconstruction metadata without changing ordinary coefficients
+  (`00a00b0f`).
+
+
+### Fixed
+
 - Controlled decoding now returns final owned details through `take_details`,
   preserving configured metadata, native extras and embedded MPF image bytes
   without a second pixel decode. Details remain unavailable before success.

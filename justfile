@@ -857,3 +857,14 @@ jbrd-frozen-consumer-check manifest:
 
 jbrd-metadata-coverage manifest output:
     python3 scripts/jbrd_metadata_coverage.py {{quote(manifest)}} {{quote(output)}}
+
+jbrd-metadata-mutations manifest output:
+    python3 scripts/jbrd_metadata_mutations.py {{quote(manifest)}} {{quote(output)}}
+
+jbrd-metadata-current-consumer output:
+    python3 scripts/prepare_jbrd_consumer.py {{quote(output)}}
+
+jbrd-metadata-consumer-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} --no-default-features -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} --features parallel,cms -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --all-targets --all-features -- -D warnings
