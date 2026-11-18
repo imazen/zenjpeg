@@ -1858,3 +1858,13 @@ The shared one-shot adapter formerly enabled F32 when any ranked preference was
 float, overriding an earlier supported U8 format. Precision now uses the same
 first-supported selector as layout, after parsing source component count.
 The controlled-decode target retains mixed precision ordering regressions.
+
+## Known Bugs: baseline JPEG reconstruction metadata (issue 144)
+
+A legal baseline scan can contain trailing ZRL symbols before EOB. The ordinary
+coefficient decode retains the right samples, but reconstruction metadata has
+no baseline scan entry, losing those entropy bytes. The explicit two-block
+baseline controls in `zenjpeg/tests/jbrd_baseline_metadata.rs` fail through the
+public metadata API. The encoder's pinned v0.12 source controls rebuild exact
+originals, while its old transcode loses them through both reconstruction
+decoders. Progressive controls already report the corresponding scan signals.

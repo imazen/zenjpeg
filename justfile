@@ -850,3 +850,7 @@ completion-details-check:
     cargo test -p zenjpeg --locked --features controlled-decode --test controlled_decode --test mpf_bounds
     cargo clippy -p zenjpeg --locked --features controlled-decode --lib --test controlled_decode --test mpf_bounds -- -D warnings
     cargo check -p zenjpeg --locked --no-default-features --features controlled-decode
+
+# The caller registers the exact test source in an owned frozen encoder closure.
+jbrd-frozen-consumer-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test zenjpeg_baseline_metadata_contract
