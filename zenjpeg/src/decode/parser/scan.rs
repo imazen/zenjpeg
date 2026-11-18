@@ -355,6 +355,15 @@ impl<'a> JpegParser<'a> {
         // immutable borrow of `self.dc_tables`/`self.ac_tables` held by the
         // entropy decoder.
         let mut jbrd_padding_bits = self.jbrd_padding_bits.as_mut();
+        let mut jbrd_scan = self.jbrd_scans.as_ref().map(|_| {
+            (
+                crate::decode::image::JbrdScanInfo {
+                    se: 63,
+                    ..Default::default()
+                },
+                0_u32,
+            )
+        });
 
         // Track previous coefficient count per component for smart zeroing (zero-copy optimization).
         // Start with 64 to force full zeroing on first block of each component.
@@ -410,12 +419,13 @@ impl<'a> JpegParser<'a> {
                     }
 
                     let block_idx = block_y * grid.padded_blocks_h + block_x;
-                    match decoder.decode_block_into(
+                    match decoder.decode_block_into_maybe_tracked(
                         &mut self.coeffs[comp_idx][block_idx],
                         prev_coeff_counts[0],
                         0,
                         dc_table,
                         ac_table,
+                        jbrd_scan.as_mut(),
                     )? {
                         ScanRead::Value(count) => {
                             self.coeff_counts[comp_idx][block_idx] = count;
@@ -544,12 +554,13 @@ impl<'a> JpegParser<'a> {
 
                                     if self.strictness.is_strict() {
                                         // Strict: require padding blocks, propagate errors
-                                        let count = match decoder.decode_block_into(
+                                        let count = match decoder.decode_block_into_maybe_tracked(
                                             &mut self.coeffs[info.comp_idx][block_idx],
                                             prev_coeff_counts[info.slot],
                                             info.slot,
                                             info.dc_table,
                                             info.ac_table,
+                                            jbrd_scan.as_mut(),
                                         )? {
                                             ScanRead::Value(c) => c,
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
@@ -563,12 +574,13 @@ impl<'a> JpegParser<'a> {
                                     } else {
                                         // Balanced/Lenient: speculative decoding with recovery
                                         let saved_state = decoder.save_state();
-                                        match decoder.decode_block_into(
+                                        match decoder.decode_block_into_maybe_tracked(
                                             &mut self.coeffs[info.comp_idx][block_idx],
                                             prev_coeff_counts[info.slot],
                                             info.slot,
                                             info.dc_table,
                                             info.ac_table,
+                                            jbrd_scan.as_mut(),
                                         ) {
                                             Ok(ScanRead::Value(count)) => {
                                                 self.coeff_counts[info.comp_idx][block_idx] = count;
@@ -607,12 +619,13 @@ impl<'a> JpegParser<'a> {
                                     }
                                 } else {
                                     // Non-padding block: decode with strictness-aware truncation handling
-                                    let count = match decoder.decode_block_into(
+                                    let count = match decoder.decode_block_into_maybe_tracked(
                                         &mut self.coeffs[info.comp_idx][block_idx],
                                         prev_coeff_counts[info.slot],
                                         info.slot,
                                         info.dc_table,
                                         info.ac_table,
+                                        jbrd_scan.as_mut(),
                                     )? {
                                         ScanRead::Value(c) => c,
                                         ScanRead::EndOfScan | ScanRead::Truncated => {
@@ -646,6 +659,17 @@ impl<'a> JpegParser<'a> {
         // when JBRD tracking is disabled.
         if let Some(buf) = jbrd_padding_bits {
             buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+        }
+
+        if let Some((scan, _)) = jbrd_scan {
+            let scans = self.jbrd_scans.as_mut().expect("baseline metadata enabled");
+            scans.try_reserve(1).map_err(|_| {
+                Error::allocation_failed(
+                    core::mem::size_of::<crate::decode::image::JbrdScanInfo>(),
+                    "baseline JPEG scan metadata",
+                )
+            })?;
+            scans.push(scan);
         }
 
         // Extract warning flags (decoder borrows self.dc_tables/ac_tables)

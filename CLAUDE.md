@@ -1868,3 +1868,10 @@ baseline controls in `zenjpeg/tests/jbrd_baseline_metadata.rs` fail through the
 public metadata API. The encoder's pinned v0.12 source controls rebuild exact
 originals, while its old transcode loses them through both reconstruction
 decoders. Progressive controls already report the corresponding scan signals.
+
+The frozen-cohort candidate now retains one baseline record and trailing ZRL
+counts in global scan-block order. Its direct public regression passes for
+noninterleaved/interleaved blocks, restart boundaries, padding bits and a
+nonzero coefficient after ZRL. Ordinary and metadata coefficient outputs
+remain identical on those controls. Broader long-code, edge, reconstruction
+and source-region qualification remains separate.
