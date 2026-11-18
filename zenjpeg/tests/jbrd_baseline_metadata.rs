@@ -117,3 +117,89 @@ fn baseline_metadata_tracks_only_trailing_zrls_in_scan_order() {
         }
     }
 }
+
+#[test]
+fn native_nonzero_long_code_and_edge_scan_order_matches_metadata() {
+    let rows = [
+        (
+            "nonzero-before-zrl",
+            include_str!("testdata/jpeg_scan_v012_nonzero-before-zrl.jpg.hex"),
+            Some((0, 1)),
+        ),
+        (
+            "zrl-before-nonzero",
+            include_str!("testdata/jpeg_scan_v012_zrl-before-nonzero.jpg.hex"),
+            None,
+        ),
+        (
+            "three-zrl",
+            include_str!("testdata/jpeg_scan_v012_three-zrl.jpg.hex"),
+            Some((0, 3)),
+        ),
+        (
+            "zrl-finishes-block",
+            include_str!("testdata/jpeg_scan_v012_zrl-finishes-block.jpg.hex"),
+            Some((0, 3)),
+        ),
+        (
+            "long-codes-nonzero-before",
+            include_str!("testdata/jpeg_scan_v012_long-codes-nonzero-before.jpg.hex"),
+            Some((1, 2)),
+        ),
+        (
+            "long-codes-zrl-before-nonzero",
+            include_str!("testdata/jpeg_scan_v012_long-codes-zrl-before-nonzero.jpg.hex"),
+            None,
+        ),
+        (
+            "gray-absolute22",
+            include_str!("testdata/jpeg_scan_v012_gray-absolute22.jpg.hex"),
+            Some((1, 1)),
+        ),
+        (
+            "interleaved-last",
+            include_str!("testdata/jpeg_scan_v012_interleaved-last.jpg.hex"),
+            Some((5, 2)),
+        ),
+        (
+            "interleaved-first-long",
+            include_str!("testdata/jpeg_scan_v012_interleaved-first-long.jpg.hex"),
+            Some((0, 1)),
+        ),
+        (
+            "edge-padding-luma",
+            include_str!("testdata/jpeg_scan_v012_edge-padding-luma.jpg.hex"),
+            Some((7, 1)),
+        ),
+        (
+            "edge-visible-chroma-long",
+            include_str!("testdata/jpeg_scan_v012_edge-visible-chroma-long.jpg.hex"),
+            Some((11, 2)),
+        ),
+    ];
+    for (label, text, expected) in rows {
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let input: Vec<u8> = compact
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|p| u8::from_str_radix(std::str::from_utf8(p).unwrap(), 16).unwrap())
+            .collect();
+        let original = Decoder::new()
+            .decode_coefficients(&input, Unstoppable)
+            .unwrap();
+        let (decoded, metadata) = Decoder::new()
+            .decode_coefficients_with_jbrd_metadata(&input, Unstoppable)
+            .unwrap();
+        assert_eq!(decoded.components.len(), original.components.len());
+        for (a, b) in decoded.components.iter().zip(&original.components) {
+            assert_eq!(a.coeffs, b.coeffs, "{label} coefficient identity");
+        }
+        assert_eq!(metadata.scans.len(), 1, "{label}");
+        assert!(metadata.scans[0].reset_points.is_empty());
+        assert_eq!(
+            metadata.scans[0].extra_zero_runs,
+            expected.into_iter().collect::<Vec<_>>(),
+            "{label} global scan-block index"
+        );
+    }
+}

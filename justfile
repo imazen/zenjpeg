@@ -854,3 +854,6 @@ completion-details-check:
 # The caller registers the exact test source in an owned frozen encoder closure.
 jbrd-frozen-consumer-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test zenjpeg_baseline_metadata_contract
+
+jbrd-metadata-coverage manifest output:
+    python3 scripts/jbrd_metadata_coverage.py {{quote(manifest)}} {{quote(output)}}
