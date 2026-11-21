@@ -87,7 +87,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # Dev-only quality regression and measurement tooling; not a library dependency.
-zensim = { git = "https://github.com/imazen/zensimx", rev = "952fc1860933ac17a0b71ceaa2256f3b4fb07546" }
+zensim = { git = "https://github.com/imazen/zensimx", rev = "f3bc01a9ac8fd664c4798250aab628c6e050243c" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
@@ -118,9 +118,9 @@ linear-srgb = "0.6.12"
 # member inherits workspace dependency features as a normal dependency, so it
 # would reach every downstream build and turn each archmage `summon()` there
 # into a cache read. Tests get it as a dev-dependency, tier benches via `_dev`.
-archmage = { version = ">=0.9.31, <0.10.0", features = ["macros", "avx512"] }
+archmage = { version = "0.9.32", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
-magetypes = { version = ">=0.9.31, <0.10.0", features = ["avx512"] }
+magetypes = { version = "0.9.32", features = ["avx512"] }
 
 # Error tracing with location tracking
 whereat = "0.1.5"
