@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade `archmage` and `magetypes` to `0.9.33`.
+
 ### Fixed
 - No longer enables archmage's `testable_dispatch` for consumers through the
   workspace dependency, which turned each archmage `summon()` in downstream

@@ -37,6 +37,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- Upgrade `archmage` and `magetypes` to `0.9.33` and advance patched sibling revisions (`zenresize`, `zenflate`, `zenpixels`, `zenpixels-convert`, `linear-srgb`, `zensim`/`zensim-regress`) to Wave A `main`.
 - Refresh codec, pixel, resize, color and metric git pins to current main revisions in root and fuzz graphs; use current associated ICC helpers with stable SIMD dependencies.
 
 - Accept the archmage and magetypes 0.9.31 stable release.
