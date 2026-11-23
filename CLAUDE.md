@@ -1989,3 +1989,29 @@ source regions and eight restored fault replays are recorded in
 minimal/default/parallel/CMS consumer checks, direct minimal library Clippy
 and scoped formatting pass as recorded there. Full current-main workspace
 qualification remains separate.
+
+
+## Internal JPEG dispatch and tables (2026-11-23)
+
+The baked Huffman families are indexed literal descriptors with one shared
+constructor. Preserve the 90-set raw-table fingerprints and the independent
+legal-symbol coverage guard when regenerating them. The fingerprint guard was
+watched fail after swapping two legal DC symbols before restoring the tables.
+StripProcessor caches the linear-conversion tier once; its methods retain the
+original scalar/V3/NEON arithmetic and tails. The standalone conversion wrappers remain available to tests and `__test-utils`
+with their existing signatures and dispatch behavior. Ordinary entropy decode
+keeps its inline hot path: outlining the entire body slowed the dense-noise
+witness by 6.8%. Only optional reconstruction-metadata blocks are outlined. Fixed bounded measurement/parity consumers
+are `benches/leaf_dispatch.rs`, `examples/leaf_dispatch_probe.rs`, and the
+`ZENJPEG_BENCH_FIXTURES=leaf` mode of `benches/huffman_decode.rs`.
+Qualification: [dispatch and size](benchmarks/dispatch_and_size_2026-11-23.md).
+
+## Known Bugs: bounded cross-target XYB witness (2026-11-23)
+
+The unmodified 7628fd46 baseline's `leaf_dispatch_probe` emits identical JPEG
+streams on x86_64 and wasm32-wasip1, but its `srgb8_fixed_xyb` decoded RGB raster
+has five differing samples out of 589824, each by one level. Three jpeg-decoder
+0.3.2 oracle rasters also have cross-target differences: linear_rgb16 (23 samples),
+linear_rgbf32 (29), and srgb8_fixed420 (3), all one level. These pre-existing
+cross-target differences are separate from the exact per-target before/after
+contract; no tolerance or expected output was changed in this optimization.
