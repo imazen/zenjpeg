@@ -211,6 +211,7 @@ impl StripProcessor {
         rgb_strip: &[u8],
         strip_height: usize,
     ) -> Result<()> {
+        let linear_dispatch = self.linear_dispatch;
         let width = self.layout.width;
         let padded_width = self.layout.padded_width;
         let num_pixels = strip_height * width;
@@ -312,7 +313,7 @@ impl StripProcessor {
             // Uses optimized LUT conversion: linear -> sRGB -> YCbCr
             // For HDR (values > 1.0), applies Reinhard tone mapping
             PixelFormat::Gray16 => {
-                use super::super::linear_lut::{linear_u16_to_srgb_255, linear_u16_to_srgb_255_x8};
+                use super::super::linear_lut::linear_u16_to_srgb_255;
 
                 // Gray16: 2 bytes per pixel, native endian, linear
                 for row in 0..strip_height {
@@ -326,7 +327,7 @@ impl StripProcessor {
                         // Single unaligned load of 8 u16 values (16 bytes)
                         let values: [u16; 8] =
                             bytemuck::pod_read_unaligned(&rgb_strip[idx..idx + 16]);
-                        let srgb = linear_u16_to_srgb_255_x8(&values);
+                        let srgb = linear_dispatch.linear_u16_to_srgb_255_x8(&values);
                         self.y_strip[dst_start + x..dst_start + x + 8].copy_from_slice(&srgb);
                     }
 
@@ -342,7 +343,7 @@ impl StripProcessor {
                 }
             }
             PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
-                use super::super::linear_lut::{linear_rgb16_to_ycbcr, linear_rgb16_to_ycbcr_x8};
+                use super::super::linear_lut::linear_rgb16_to_ycbcr;
 
                 // RGB16/RGBA16: 6/8 bytes per pixel, native endian, linear
                 // Uses SIMD for fast linear -> YCbCr conversion
@@ -370,7 +371,8 @@ impl StripProcessor {
                             b_arr[i] = rgb[2];
                         }
 
-                        let (y, cb, cr) = linear_rgb16_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
+                        let (y, cb, cr) =
+                            linear_dispatch.linear_rgb16_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
 
                         self.y_strip[y_row_start + x..y_row_start + x + 8].copy_from_slice(&y);
                         self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
@@ -396,9 +398,7 @@ impl StripProcessor {
                 }
             }
             PixelFormat::GrayF32 => {
-                use super::super::linear_lut::{
-                    linear_f32_to_srgb_255_fast, linear_to_srgb_255_x8,
-                };
+                use super::super::linear_lut::linear_f32_to_srgb_255_fast;
 
                 // GrayF32: 4 bytes per pixel, linear
                 for row in 0..strip_height {
@@ -411,7 +411,7 @@ impl StripProcessor {
                         let idx = src_start + x * 4;
                         let values: [f32; 8] =
                             bytemuck::pod_read_unaligned(&rgb_strip[idx..idx + 32]);
-                        let srgb = linear_to_srgb_255_x8(&values);
+                        let srgb = linear_dispatch.linear_to_srgb_255_x8(&values);
                         self.y_strip[dst_start + x..dst_start + x + 8].copy_from_slice(&srgb);
                     }
 
@@ -427,9 +427,7 @@ impl StripProcessor {
                 }
             }
             PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
-                use super::super::linear_lut::{
-                    linear_rgbf32_to_ycbcr_fast, linear_rgbf32_to_ycbcr_x8,
-                };
+                use super::super::linear_lut::linear_rgbf32_to_ycbcr_fast;
 
                 // RgbF32/RgbaF32: 12/16 bytes per pixel, linear
                 let bpp = self.pixel_format.bytes_per_pixel();
@@ -456,7 +454,8 @@ impl StripProcessor {
                             b_arr[i] = rgb[2];
                         }
 
-                        let (y, cb, cr) = linear_rgbf32_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
+                        let (y, cb, cr) =
+                            linear_dispatch.linear_rgbf32_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
 
                         self.y_strip[y_row_start + x..y_row_start + x + 8].copy_from_slice(&y);
                         self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]

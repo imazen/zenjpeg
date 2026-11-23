@@ -391,26 +391,106 @@ mod simd_fused_neon {
     }
 }
 
+/// Constructor-selected conversion tier, reused across all strip rows and batches.
+/// The methods call the original kernels, preserving their arithmetic graph.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum LinearDispatch {
+    Scalar,
+    #[cfg(target_arch = "x86_64")]
+    V3(archmage::X64V3Token),
+    #[cfg(target_arch = "aarch64")]
+    Neon(archmage::NeonToken),
+}
+
+impl LinearDispatch {
+    pub(crate) fn summon() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return Self::V3(token);
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            use archmage::SimdToken as _;
+            if let Some(token) = archmage::NeonToken::summon() {
+                return Self::Neon(token);
+            }
+        }
+        Self::Scalar
+    }
+
+    #[inline(always)]
+    pub(crate) fn linear_to_srgb_255_x8(self, x: &[f32; 8]) -> [f32; 8] {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            Self::V3(token) => simd_fused::linear_to_srgb_255_x8_v3(token, x),
+            #[cfg(target_arch = "aarch64")]
+            Self::Neon(token) => simd_fused_neon::linear_to_srgb_255_x8_neon(token, x),
+            Self::Scalar => linear_to_srgb_255_x8_scalar(x),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn linear_u16_to_srgb_255_x8(self, values: &[u16; 8]) -> [f32; 8] {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            Self::V3(token) => simd_fused::linear_u16_to_srgb_255_x8_v3(token, values),
+            #[cfg(target_arch = "aarch64")]
+            Self::Neon(token) => simd_fused_neon::linear_u16_to_srgb_255_x8_neon(token, values),
+            Self::Scalar => linear_u16_to_srgb_255_x8_scalar(values),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn linear_rgb16_to_ycbcr_x8(
+        self,
+        r: &[u16; 8],
+        g: &[u16; 8],
+        b: &[u16; 8],
+    ) -> ([f32; 8], [f32; 8], [f32; 8]) {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            Self::V3(token) => simd_fused::linear_rgb16_to_ycbcr_x8_v3(token, r, g, b),
+            #[cfg(target_arch = "aarch64")]
+            Self::Neon(token) => simd_fused_neon::linear_rgb16_to_ycbcr_x8_neon(token, r, g, b),
+            Self::Scalar => {
+                let r = linear_u16_to_srgb_255_x8_scalar(r);
+                let g = linear_u16_to_srgb_255_x8_scalar(g);
+                let b = linear_u16_to_srgb_255_x8_scalar(b);
+                rgb_to_ycbcr_x8_scalar(&r, &g, &b)
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn linear_rgbf32_to_ycbcr_x8(
+        self,
+        r: &[f32; 8],
+        g: &[f32; 8],
+        b: &[f32; 8],
+    ) -> ([f32; 8], [f32; 8], [f32; 8]) {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            Self::V3(token) => simd_fused::linear_rgbf32_to_ycbcr_x8_v3(token, r, g, b),
+            #[cfg(target_arch = "aarch64")]
+            Self::Neon(token) => simd_fused_neon::linear_rgbf32_to_ycbcr_x8_neon(token, r, g, b),
+            Self::Scalar => {
+                let r = linear_to_srgb_255_x8_scalar(r);
+                let g = linear_to_srgb_255_x8_scalar(g);
+                let b = linear_to_srgb_255_x8_scalar(b);
+                rgb_to_ycbcr_x8_scalar(&r, &g, &b)
+            }
+        }
+    }
+}
+
 /// Convert 8 linear f32 values [0,infinity) to sRGB [0, 255].
 ///
 /// Values > 1.0 are tone-mapped with Reinhard: x / (1 + x).
 /// Uses fused SIMD on x86_64 (archmage + linear-srgb tokens), scalar elsewhere.
+#[cfg(any(test, feature = "__test-utils"))]
 #[inline(always)]
 pub fn linear_to_srgb_255_x8(x: &[f32; 8]) -> [f32; 8] {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return simd_fused::linear_to_srgb_255_x8_v3(token, x);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken as _;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return simd_fused_neon::linear_to_srgb_255_x8_neon(token, x);
-        }
-    }
-    linear_to_srgb_255_x8_scalar(x)
+    LinearDispatch::summon().linear_to_srgb_255_x8(x)
 }
 
 /// Scalar fallback for linear f32->sRGB x255.
@@ -431,22 +511,10 @@ fn linear_to_srgb_255_x8_scalar(x: &[f32; 8]) -> [f32; 8] {
 /// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255].
 ///
 /// Uses fused SIMD on x86_64 (archmage + linear-srgb tokens), scalar elsewhere.
+#[cfg(any(test, feature = "__test-utils"))]
 #[inline(always)]
 pub fn linear_u16_to_srgb_255_x8(values: &[u16; 8]) -> [f32; 8] {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return simd_fused::linear_u16_to_srgb_255_x8_v3(token, values);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken as _;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return simd_fused_neon::linear_u16_to_srgb_255_x8_neon(token, values);
-        }
-    }
-    linear_u16_to_srgb_255_x8_scalar(values)
+    LinearDispatch::summon().linear_u16_to_srgb_255_x8(values)
 }
 
 /// Scalar fallback for linear u16->sRGB x255.
@@ -468,30 +536,14 @@ fn linear_u16_to_srgb_255_x8_scalar(values: &[u16; 8]) -> [f32; 8] {
 /// Takes R, G, B as separate arrays of 8 u16 values.
 /// Returns (Y, Cb, Cr) as [f32; 8] arrays.
 /// Uses a single SIMD dispatch on x86_64 for the entire u16->sRGB->YCbCr pipeline.
+#[cfg(any(test, feature = "__test-utils"))]
 #[inline(always)]
 pub fn linear_rgb16_to_ycbcr_x8(
     r: &[u16; 8],
     g: &[u16; 8],
     b: &[u16; 8],
 ) -> ([f32; 8], [f32; 8], [f32; 8]) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return simd_fused::linear_rgb16_to_ycbcr_x8_v3(token, r, g, b);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken as _;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return simd_fused_neon::linear_rgb16_to_ycbcr_x8_neon(token, r, g, b);
-        }
-    }
-    // Scalar fallback
-    let r = linear_u16_to_srgb_255_x8_scalar(r);
-    let g = linear_u16_to_srgb_255_x8_scalar(g);
-    let b = linear_u16_to_srgb_255_x8_scalar(b);
-    rgb_to_ycbcr_x8_scalar(&r, &g, &b)
+    LinearDispatch::summon().linear_rgb16_to_ycbcr_x8(r, g, b)
 }
 
 /// Convert 8 linear RGB f32 pixels to 8 Y, 8 Cb, 8 Cr values.
@@ -499,30 +551,14 @@ pub fn linear_rgb16_to_ycbcr_x8(
 /// Takes R, G, B as separate [f32; 8] arrays (structure-of-arrays layout).
 /// Returns (Y, Cb, Cr) as [f32; 8] arrays.
 /// Uses a single SIMD dispatch on x86_64 for the entire f32->sRGB->YCbCr pipeline.
+#[cfg(any(test, feature = "__test-utils"))]
 #[inline(always)]
 pub fn linear_rgbf32_to_ycbcr_x8(
     r: &[f32; 8],
     g: &[f32; 8],
     b: &[f32; 8],
 ) -> ([f32; 8], [f32; 8], [f32; 8]) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return simd_fused::linear_rgbf32_to_ycbcr_x8_v3(token, r, g, b);
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken as _;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return simd_fused_neon::linear_rgbf32_to_ycbcr_x8_neon(token, r, g, b);
-        }
-    }
-    // Scalar fallback
-    let r = linear_to_srgb_255_x8_scalar(r);
-    let g = linear_to_srgb_255_x8_scalar(g);
-    let b = linear_to_srgb_255_x8_scalar(b);
-    rgb_to_ycbcr_x8_scalar(&r, &g, &b)
+    LinearDispatch::summon().linear_rgbf32_to_ycbcr_x8(r, g, b)
 }
 
 /// BT.601 RGB->YCbCr matrix multiply for 8 pixels (SoA layout). Scalar fallback.

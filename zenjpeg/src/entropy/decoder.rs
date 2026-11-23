@@ -806,13 +806,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         metadata: Option<&mut (JbrdScanInfo, u32)>,
     ) -> ScanResult<u8> {
         if let Some((scan, index)) = metadata {
-            let result = self.decode_block_impl::<false, true>(
+            let result = self.decode_block_tracked(
                 coeffs,
                 prev_coeff_count,
                 component,
                 dc_table_idx,
                 ac_table_idx,
-                Some((scan, *index)),
+                (scan, *index),
             );
             *index += 1;
             result
@@ -825,6 +825,28 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 ac_table_idx,
             )
         }
+    }
+
+    // Ordinary decode needs its inline hot path (measured on dense AC input).
+    // Share the optional metadata variant instead of replicating it per scan arm.
+    #[inline(never)]
+    fn decode_block_tracked(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        prev_coeff_count: u8,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+        metadata: (&mut JbrdScanInfo, u32),
+    ) -> ScanResult<u8> {
+        self.decode_block_impl::<false, true>(
+            coeffs,
+            prev_coeff_count,
+            component,
+            dc_table_idx,
+            ac_table_idx,
+            Some(metadata),
+        )
     }
 
     #[inline(always)]

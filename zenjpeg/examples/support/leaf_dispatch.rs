@@ -34,6 +34,8 @@ pub fn decode_cases() -> Vec<(&'static str, &'static [u8])> {
 }
 
 pub struct EncodeCase {
+    // Labels are used by native file/benchmark output; the unknown target only retains code.
+    #[cfg_attr(target_os = "unknown", allow(dead_code))]
     pub name: &'static str,
     pub input: Vec<u8>,
     pub width: u32,

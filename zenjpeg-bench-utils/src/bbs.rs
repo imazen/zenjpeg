@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn bbs_small_image_no_panic() {
         // 1-pixel image has no seams, no interior. Must not panic.
-        let one = vec![rgb(0, 0, 0)];
+        let one = [rgb(0, 0, 0)];
         let img = Img::new(&one[..], 1, 1);
         let bbs = bbs_rgb8(img, img);
         assert_eq!(bbs.total, 0.0);

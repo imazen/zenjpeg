@@ -601,6 +601,9 @@ pub struct StripProcessor {
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
     trellis_ctx: Option<TrellisContext>,
 
+    // Linear conversion dispatch is selected once, outside strip/pixel loops.
+    linear_dispatch: super::linear_lut::LinearDispatch,
+
     // === Archmage SIMD token (feature-gated) ===
     /// Desktop64 token for zero-dispatch SIMD operations.
     /// Obtained once at construction, reused for all blocks.
@@ -903,6 +906,8 @@ impl StripProcessor {
 
             // Trellis quantization (disabled by default)
             trellis_ctx: None,
+
+            linear_dispatch: super::linear_lut::LinearDispatch::summon(),
 
             // Archmage SIMD token (obtained once, reused for all blocks)
             #[cfg(target_arch = "x86_64")]
