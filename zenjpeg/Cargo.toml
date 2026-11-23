@@ -593,3 +593,7 @@ required-features = ["inventory"]
 [[test]]
 name = "inventory_oracle"
 required-features = ["inventory"]
+
+[[bench]]
+name = "leaf_dispatch"
+harness = false

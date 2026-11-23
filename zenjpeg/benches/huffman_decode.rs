@@ -13,6 +13,10 @@
 //! cargo bench -p zenjpeg --bench huffman_decode
 //! ```
 
+#[path = "../examples/support/leaf_dispatch.rs"]
+#[allow(dead_code)]
+mod leaf_workload;
+
 use enough::Unstoppable;
 use std::path::{Path, PathBuf};
 use zenbench::prelude::*;
@@ -280,6 +284,18 @@ fn bench_set(suite: &mut Suite, set: &'static EncodedSet) {
 }
 
 fn bench_all(suite: &mut Suite) {
+    if std::env::var("ZENJPEG_BENCH_FIXTURES").as_deref() == Ok("leaf") {
+        for (name, bytes) in leaf_workload::decode_cases() {
+            assert!(!leaf_workload::decode(bytes).is_empty());
+            suite.group(format!("huffdec/leaf/{name}"), |g| {
+                g.throughput(Throughput::Bytes(bytes.len() as u64));
+                g.bench("zenjpeg", move |b| {
+                    b.iter(|| black_box(leaf_workload::decode(black_box(bytes))))
+                });
+            });
+        }
+        return;
+    }
     let ts = get_test_set();
     bench_set(suite, &ts.baseline_q85);
     bench_set(suite, &ts.baseline_q50);
