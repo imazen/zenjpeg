@@ -1,8 +1,9 @@
 //! Resident-input XYB decode driver for perf and zenbench.
 //! prepare <P6.ppm> <directory> writes Q85 XYB/YCbCr fixtures using zenjpeg.
 //! run <jpeg> <iterations> profiles repeated fresh-output, one-thread decodes.
+//! progressive <input.jpg> <output.jpg> changes scan structure without requantizing.
 //! dump <jpeg> <prefix> writes RGB8 and little-endian sRGB f32 for exact A/B.
-//! bench <directory> interleaves all six fixtures with zenbench.
+//! bench <directory> interleaves all seven fixtures with zenbench.
 use enough::Unstoppable;
 use std::{hint::black_box, path::Path};
 use zenjpeg::{
@@ -10,13 +11,14 @@ use zenjpeg::{
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling},
 };
 
-const NAMES: [&str; 6] = [
+const NAMES: [&str; 7] = [
     "xyb-bquarter-baseline",
     "xyb-bquarter-progressive",
     "xyb-full-baseline",
     "xyb-full-progressive",
     "ycbcr-420-baseline",
     "ycbcr-444-baseline",
+    "ycbcr-420-progressive",
 ];
 
 fn main() {
@@ -38,9 +40,10 @@ fn main() {
                     0..=1 => EncoderConfig::xyb(85.0, XybSubsampling::BQuarter),
                     2..=3 => EncoderConfig::xyb(85.0, XybSubsampling::Full),
                     4 => EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
-                    _ => EncoderConfig::ycbcr(85.0, ChromaSubsampling::None),
+                    5 => EncoderConfig::ycbcr(85.0, ChromaSubsampling::None),
+                    _ => EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
                 }
-                .progressive(i == 1 || i == 3);
+                .progressive(i == 1 || i == 3 || i == 6);
                 let mut enc = config
                     .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                     .unwrap();
@@ -59,6 +62,15 @@ fn main() {
             for _ in 0..iterations {
                 black_box(decoder.decode(black_box(&jpeg), Unstoppable).unwrap());
             }
+        }
+        "progressive" => {
+            use zenjpeg::lossless::{OutputMode, RestructureConfig, restructure};
+            let jpeg = std::fs::read(&args[2]).unwrap();
+            let config = RestructureConfig {
+                output_mode: OutputMode::Progressive,
+                ..Default::default()
+            };
+            std::fs::write(&args[3], restructure(&jpeg, &config, Unstoppable).unwrap()).unwrap();
         }
         "dump" => {
             let jpeg = std::fs::read(&args[2]).unwrap();
@@ -87,7 +99,10 @@ fn main() {
                 .map(|name| std::fs::read(Path::new(&args[2]).join(format!("{name}.jpg"))).unwrap())
                 .collect();
             suite.group("xyb-decode-q85", |g| {
-                g.throughput(zenbench::Throughput::Elements(1024 * 1024));
+                let info = Decoder::new().read_info(&files[0]).unwrap();
+                g.throughput(zenbench::Throughput::Elements(
+                    u64::from(info.dimensions.width) * u64::from(info.dimensions.height),
+                ));
                 for (name, jpeg) in NAMES.iter().zip(files) {
                     g.bench(*name, move |b| {
                         b.iter(|| {
@@ -104,6 +119,6 @@ fn main() {
             let result = zenbench::engine_new(suite).run();
             zenbench::postprocess_result(&result);
         }
-        _ => panic!("expected prepare, run or bench"),
+        _ => panic!("expected prepare, progressive, run, dump or bench"),
     }
 }

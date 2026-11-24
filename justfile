@@ -1123,3 +1123,10 @@ jbrd-metadata-consumer-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} --no-default-features -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} --features parallel,cms -- --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} --all-targets --all-features -- -D warnings
+
+# Production XYB kernels, without native C++ oracle dev-dependencies.
+xyb-kernel-check:
+    cargo test --release --manifest-path tools/xyb-kernel-check/Cargo.toml --lib
+
+xyb-kernel-check-wasm:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime RUSTFLAGS='-C target-feature=+simd128' cargo test --release --target wasm32-wasip1 --manifest-path tools/xyb-kernel-check/Cargo.toml --lib

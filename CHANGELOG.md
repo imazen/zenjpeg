@@ -37,6 +37,11 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- Vectorize XYB decoding's existing f64 sRGB transfer and exact u8 packing,
+  skip unused bias statistics, and reuse full-resolution component planes
+  (`385eb776`, `0eb37bef`). Preserve u8/f32 output; see
+  [measurement and verification](benchmarks/xyb_decode_2026-11-24.md).
+
 - Share built-in Huffman construction and entropy block code, and cache linear conversion dispatch outside strip loops (`07c0dd0f`). [Size, throughput and exact-output qualification](benchmarks/dispatch_and_size_2026-11-23.md).
 
 - Upgrade `archmage` and `magetypes` to `0.9.33` and advance patched sibling revisions (`zenresize`, `zenflate`, `zenpixels`, `zenpixels-convert`, `linear-srgb`, `zensim`/`zensim-regress`) to Wave A `main`.

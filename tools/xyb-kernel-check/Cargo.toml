@@ -1,0 +1,18 @@
+[package]
+name = "zenjpeg-xyb-kernel-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Build the production kernels directly, without native codec oracle dev-deps,
+# so the same exactness tests can execute in WASI with and without SIMD128.
+[workspace]
+
+[dependencies]
+archmage = { version = "=0.9.33", features = ["macros", "avx512"] }
+magetypes = { version = "=0.9.33", features = ["avx512"] }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c103c1ceae0a31b18e596545534c0800e3b22d19" }
+
+[features]
+__test-utils = []
+avx512 = []

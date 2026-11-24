@@ -1071,6 +1071,7 @@ where
     let zero = GenericF32x8::splat_t(token, 0.0);
     let one = GenericF32x8::splat_t(token, 1.0);
     let a = linear.max(zero).min(one);
+    let a = GenericF32x8::blend(linear.simd_eq(zero), linear, a);
     let roots = a.sqrt().to_array();
     let mut power = [0.0f32; 8];
     for (src, dst) in roots
@@ -1099,6 +1100,26 @@ where
     let result = GenericF32x8::blend(a.simd_ge(one), one, result);
     // Scalar clamp retains NaN, unlike a backend's min/max instructions.
     GenericF32x8::blend(linear.simd_eq(linear), result, linear)
+}
+
+/// Match positive f32::round exactly, including values immediately below a
+/// half-integer (adding 0.5 before truncation would round those up too early).
+#[inline(always)]
+fn srgb_u8_codes<T: magetypes::simd::backends::F32x8Convert>(
+    token: T,
+    srgb: GenericF32x8<T>,
+) -> [u8; 8] {
+    let codes = srgb * GenericF32x8::splat_t(token, 255.0);
+    let integral = codes.floor();
+    let up = GenericF32x8::blend(
+        (codes - integral).simd_ge(GenericF32x8::splat_t(token, 0.5)),
+        GenericF32x8::splat_t(token, 1.0),
+        GenericF32x8::splat_t(token, 0.0),
+    );
+    (integral + up)
+        .to_i32_saturating()
+        .to_array()
+        .map(|v| v as u8)
 }
 
 /// Core SIMD kernel: 8 lanes of scaled-XYB planes → linear RGB f32x8.
@@ -1210,14 +1231,14 @@ fn xyb_planes_to_srgb_u8_impl(
         let p2 = f32x8::load_t(token, plane2[base..].first_chunk::<8>().unwrap());
 
         let (r, g, b) = scaled_xyb_planes_to_linear_rgb_v8(token, p0, p1, p2);
-        let r = (linear_to_srgb_v8(token, r) * f32x8::splat_t(token, 255.0)).to_array();
-        let g = (linear_to_srgb_v8(token, g) * f32x8::splat_t(token, 255.0)).to_array();
-        let b = (linear_to_srgb_v8(token, b) * f32x8::splat_t(token, 255.0)).to_array();
+        let r = srgb_u8_codes(token, linear_to_srgb_v8(token, r));
+        let g = srgb_u8_codes(token, linear_to_srgb_v8(token, g));
+        let b = srgb_u8_codes(token, linear_to_srgb_v8(token, b));
         let dst: &mut [u8; 24] = (&mut rgb[base * 3..base * 3 + 24]).try_into().unwrap();
         for j in 0..8 {
-            dst[j * 3] = r[j].round() as u8;
-            dst[j * 3 + 1] = g[j].round() as u8;
-            dst[j * 3 + 2] = b[j].round() as u8;
+            dst[j * 3] = r[j];
+            dst[j * 3 + 1] = g[j];
+            dst[j * 3 + 2] = b[j];
         }
     }
 
@@ -1313,15 +1334,17 @@ mod tests {
     #[attune(_*_t)]
     fn check_transfer_exact(token: Token, input: &[f32]) {
         for chunk in input.as_chunks::<8>().0 {
-            let actual = linear_to_srgb_v8(token, GenericF32x8::load_t(token, chunk)).to_array();
-            for (&v, &got) in chunk.iter().zip(&actual) {
+            let vector = linear_to_srgb_v8(token, GenericF32x8::load_t(token, chunk));
+            let actual = vector.to_array();
+            let codes = srgb_u8_codes(token, vector);
+            for (lane, (&v, &got)) in chunk.iter().zip(&actual).enumerate() {
                 let expected = linear_to_srgb(v.clamp(0.0, 1.0));
                 if v.is_nan() {
                     assert!(got.is_nan());
                 } else {
                     assert_eq!(got.to_bits(), expected.to_bits(), "linear={v:?}");
                 }
-                assert_eq!((got * 255.0).round() as u8, linear_to_srgb_u8(v));
+                assert_eq!(codes[lane], linear_to_srgb_u8(v));
             }
         }
     }
@@ -1391,6 +1414,7 @@ mod tests {
     fn vector_transfer_is_bit_exact_to_scalar_dependency() {
         let mut values = vec![
             f32::NEG_INFINITY,
+            -0.0,
             -1.0,
             0.0,
             f32::MIN_POSITIVE,
@@ -1400,7 +1424,7 @@ mod tests {
             f32::NAN,
         ];
         // A logarithmic sweep of binary32, plus linear values, covers the toe,
-        // darks, highlights and clamp. Every input appears in every lane.
+        // darks, highlights and clamp.
         for bits in (0..=1.0f32.to_bits()).step_by(1021) {
             values.push(f32::from_bits(bits));
         }
@@ -1420,6 +1444,12 @@ mod tests {
                 }
             }
             for bits in lo.saturating_sub(8)..=lo + 8 {
+                values.push(f32::from_bits(bits));
+            }
+        }
+        for code in 0..255 {
+            let mid = ((code as f32 + 0.5) / 255.0).to_bits();
+            for bits in mid - 2..=mid + 2 {
                 values.push(f32::from_bits(bits));
             }
         }
