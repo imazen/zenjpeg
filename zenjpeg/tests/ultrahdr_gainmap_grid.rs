@@ -51,7 +51,7 @@ fn fused_gainmap_metadata_declares_config_grid_and_roundtrips_peak() {
         data,
         width,
         height,
-        UhdrPixelFormat::RgbaF32,
+        UhdrPixelFormat::RGBAF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
     )
@@ -106,7 +106,7 @@ fn fused_gainmap_metadata_declares_config_grid_and_roundtrips_peak() {
     .expect("decode_ultrahdr_hdr should succeed");
     assert_eq!(hdr_back.width(), width);
     assert_eq!(hdr_back.height(), height);
-    let slice = hdr_back.as_slice();
+    let slice = hdr_back.as_view();
     let mut peak = 0.0f32;
     for y in 0..height {
         let row = slice.row(y);

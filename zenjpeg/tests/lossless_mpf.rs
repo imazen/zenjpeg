@@ -411,7 +411,7 @@ fn ultrahdr_hdr_reconstruction_survives_lossless_rotation() {
         data,
         width,
         height,
-        UhdrPixelFormat::RgbaF32,
+        UhdrPixelFormat::RGBAF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
     )
@@ -515,7 +515,7 @@ fn ultrahdr_hdr_reconstruction_survives_lossless_rotation() {
     );
     // RGBA f32 rows (16 bytes per pixel).
     let px = |buf: &zenjpeg::ultrahdr::UhdrRawImage, x: u32, y: u32| -> [f32; 3] {
-        let slice = buf.as_slice();
+        let slice = buf.as_view();
         let row = slice.row(y);
         let p = &row[(x as usize) * 16..(x as usize) * 16 + 12];
         [

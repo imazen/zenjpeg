@@ -254,3 +254,35 @@ fn adobe_cmyk_and_ycck_passthrough_declare_inverted_ink() {
         }
     }
 }
+
+#[test]
+fn linear_gray_codes_keep_their_gray_icc_carrier() {
+    use std::sync::Arc;
+
+    use zenpixels::{AlphaMode, Cicp, RenderingIntent, SampleLayout};
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+
+    let SynthesizedIcc::Profile(profile) = SynthesizedIcc::for_gray_cicp(Cicp::new(1, 8, 0, true))
+    else {
+        panic!("the pinned database must supply the linear GRAY profile");
+    };
+    let spec = ImageSpec::new(
+        SampleLayout::GRAY8,
+        ColorSpace::Icc {
+            profile: Arc::from(profile.as_ref()),
+            channels: 1,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let samples = [72u8; 64];
+    let jpeg = JpegEncoderConfig::grayscale(90.0)
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(PixelView::from_packed(&samples, 8, 8, spec).unwrap())
+        .unwrap();
+    let mut oracle = jpeg_decoder::Decoder::new(jpeg.data());
+    assert_eq!(oracle.decode().unwrap(), samples);
+    assert_eq!(oracle.icc_profile().as_deref(), Some(profile.as_ref()));
+}

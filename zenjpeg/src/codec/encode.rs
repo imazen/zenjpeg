@@ -1186,19 +1186,26 @@ impl JpegEncoder {
         if let Some(layout) = srgb16_layout(desc) {
             return Ok(layout);
         }
+        let profile = profile_of(desc);
         if desc.layout.sample != SampleType::U8
-            || (profile_of(desc).is_none()
+            || (profile.is_none()
                 && pixel_transfer(desc) != Transfer::Unknown
                 && pixel_transfer(desc) != Transfer::Gamma(zenpixels::Gamma::GAMMA_2_2))
-            || !matches!(
+            || !(matches!(
                 self.effective_config.color_mode,
                 crate::encode::encoder_types::ColorMode::YCbCr { .. }
-            )
+            ) || profile.is_some()
+                && desc.layout.order == ChannelOrder::Gray
+                && matches!(
+                    self.effective_config.color_mode,
+                    crate::encode::encoder_types::ColorMode::Grayscale
+                ))
         {
             return Err(zencodec::UnsupportedOperation::PixelFormat.into());
         }
-        if profile_of(desc).is_some() {
+        if profile.is_some() {
             return match desc.layout.order {
+                ChannelOrder::Gray => Ok(PixelLayout::Gray8Srgb),
                 ChannelOrder::Rgb => Ok(PixelLayout::Rgb8Srgb),
                 ChannelOrder::Rgba => Ok(PixelLayout::Rgba8Srgb),
                 ChannelOrder::Bgra => Ok(PixelLayout::Bgra8Srgb),
@@ -1285,7 +1292,6 @@ impl JpegEncoder {
     fn stored_color(
         &self,
         descriptor: &ImageSpec,
-
         layout: PixelLayout,
     ) -> Result<StoredColor, Error> {
         let gray = layout.is_grayscale();
@@ -1344,7 +1350,6 @@ impl JpegEncoder {
     fn bind_color(
         &self,
         descriptor: &ImageSpec,
-
         layout: PixelLayout,
     ) -> Result<ColorBinding, Error> {
         if is_profile_tagged(descriptor) && profile_of(descriptor).is_none() {
@@ -1504,13 +1509,9 @@ impl JpegEncoder {
                     // `Profile` → embed; `NotNeeded` (sRGB default) →
                     // nothing. Every other outcome is an ERROR, not a
                     // silent skip: JPEG has NO CICP carrier, so an
-                    // embedded APP2 ICC is the ONLY way this color
-                    // survives — emitting without it would misrepresent
-                    // the image as sRGB. The `zencodec` feature carries
-                    // zenpixels-convert's icc-db blob (full ITU-T H.273
-                    // grid incl PQ/HLG, no moxcms), so the only
-                    // unsynthesizable CICPs are outside the assigned
-                    // H.273 grid (reserved / unassigned code points).
+                    // embedded APP2 ICC carries the explicit color. The
+                    // synthesizer can refuse valid code points such as HLG
+                    // when the display rendering target is unspecified.
                     match SynthesizedIcc::for_cicp(cicp) {
                         SynthesizedIcc::Profile(bytes) => {
                             req = req.icc_profile_owned(bytes.into_owned());
@@ -1521,9 +1522,7 @@ impl JpegEncoder {
                             return Err(Error::icc_error(alloc::format!(
                                 "this image's color (CICP primaries {} / transfer {}) \
                                  needs a synthesized ICC profile that cannot be \
-                                 produced ({outcome:?}) — the CICP is outside the \
-                                 assigned H.273 grid; supply an ICC profile in the \
-                                 metadata or drop the CICP",
+                                 produced ({outcome:?}); supply a matching ICC profile",
                                 cicp.color_primaries,
                                 cicp.transfer_characteristics
                             )));
