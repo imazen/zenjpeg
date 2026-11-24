@@ -140,7 +140,7 @@ pub(super) fn start(
             let mut full = to_image_info(&full_header);
             super::super::info::populate_complete_container_scope(data, &mut full);
             let mut output = job.output_info(data)?;
-            output.native_format = decode_descriptor(&formats, &header, None);
+            output.native_format = decode_descriptor(&formats, &header, None)?;
             let output_bytes = u64::from(output.width)
                 .checked_mul(u64::from(output.height))
                 .and_then(|n| n.checked_mul(output.native_format.layout.bytes_per_pixel() as u64))

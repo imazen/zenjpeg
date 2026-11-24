@@ -5,7 +5,21 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+- Adopt the zenpixels 0.5 and zencodec 0.3 pixel contracts. Gain-map XMP
+  writing returns a typed error when the parameters cannot be represented.
+
 ### Fixed
+
+- Preserve original ICC and EXIF across HDR orientation baking. Report the
+  active linear gamut and diffuse white on the pixels, and measure content
+  light in native-gamut MaxRGB for both float output precisions.
+- Decode ISO gain map sample arity from the JPEG frame. A gray map can drive
+  three different parameter records in full-frame and streaming readers.
+- Refuse a retained ICC that conflicts with explicit pixel primaries before
+  writing a JPEG header. Honor inverted CMYK8 preferences on deep raw exits.
+
 
 - Retain baseline Huffman scan records and trailing ZRL positions for optional
   JPEG reconstruction metadata without changing ordinary coefficients
@@ -25,7 +39,7 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed: zencodec decoder keeps depths above 8 bits
 
-- The zencodec decoder advertises and honors `RGB16_SRGB`, `RGBA16_SRGB` and `GRAY16_SRGB` on one-shot, push and streaming paths. A frame above 8 bits with no supported preference, or a preference list offering U16 or F32 anywhere, now leaves deep instead of narrowing to U8; a list offering only U8 still gets U8. Samples are canonical U16 (nearest `code * 65535 / max`, every code recoverable) with `ExactDepth` on the one-shot and streaming results. Deep raw CMYK leaves as `CmykF32Inverted`, since no U16 CMYK descriptor exists, unless `CMYK8` is named. Eight-bit frames widen by exactly 257 when U16 is asked for and are otherwise unchanged.
+- The zencodec decoder advertises and honors `RGB16_SRGB`, `RGBA16_SRGB` and `GRAY16_SRGB` on one-shot, push and streaming paths. A frame above 8 bits with no supported preference, or a preference list offering U16 or F32 anywhere, now leaves deep instead of narrowing to U8; a list offering only U8 still gets U8. Samples are canonical U16 (nearest `code * 65535 / max`, every code recoverable) with `ExactDepth` on the one-shot and streaming results. Deep raw CMYK leaves as `CmykF32Inverted`, since no U16 CMYK descriptor exists, unless inverted CMYK8 is named. Eight-bit frames widen by exactly 257 when U16 is asked for and are otherwise unchanged.
 - Behavior change for callers passing no preference: 12-bit and lossless deep JPEG now returns U16 from `decode`, `push_decoder` and `streaming_decoder`, and `output_info` says so.
 
 - Concrete zeroed byte, f32 and DCT-block buffers request allocator-zeroed storage in every policy. Preserve helper-specific overflow/allocation errors and arbitrary Default/Clone fill contracts; correct reserve/fill implementation comments.

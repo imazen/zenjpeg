@@ -753,7 +753,7 @@ mod lossy_gain_map {
             d,
             w,
             h,
-            UhdrPixelFormat::RgbaF32,
+            UhdrPixelFormat::RGBAF32,
             UhdrColorGamut::Bt709,
             UhdrColorTransfer::Linear,
         )
@@ -857,7 +857,7 @@ mod lossy_gain_map {
                 d,
                 64,
                 64,
-                UhdrPixelFormat::Rgba8,
+                UhdrPixelFormat::RGBA8,
                 UhdrColorGamut::Bt709,
                 UhdrColorTransfer::Srgb,
             )

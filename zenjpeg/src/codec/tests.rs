@@ -78,8 +78,8 @@ mod api_tests {
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
         let img = Img::new(pixels.as_slice(), 4, 4);
 
-        let icc = b"fake icc profile data";
-        let meta = Metadata::default().with_icc(icc.as_slice());
+        let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        let meta = Metadata::default().with_icc(icc);
         let output = enc
             .job()
             .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
@@ -87,7 +87,9 @@ mod api_tests {
             .unwrap()
             .encode(view(img.as_ref()))
             .unwrap();
-        assert!(!output.data().is_empty());
+        let mut independent = jpeg_decoder::Decoder::new(output.data());
+        independent.decode().unwrap();
+        assert_eq!(independent.icc_profile().as_deref(), Some(icc));
     }
 
     #[test]
@@ -155,8 +157,8 @@ mod api_tests {
         let slice: PixelView<'_> = view(img.as_ref());
 
         let mut encoder = enc.job().encoder().unwrap();
-        let top = slice.sub_rows(0, 4);
-        let bottom = slice.sub_rows(4, 4);
+        let top = slice.sub_rows(0, 4).unwrap();
+        let bottom = slice.sub_rows(4, 4).unwrap();
         encoder.push_rows(top).unwrap();
         encoder.push_rows(bottom).unwrap();
         let output = encoder.finish().unwrap();
@@ -197,11 +199,11 @@ mod api_tests {
         assert!(header.is_xyb);
         assert!(header.icc_profile.is_some());
         assert_eq!(
-            decode_descriptor(&[], &header, None),
+            decode_descriptor(&[], &header, None).unwrap(),
             ImageSpec::rgb8_srgb()
         );
         assert_eq!(
-            decode_descriptor(&[ImageSpec::rgbaf32_linear()], &header, None),
+            decode_descriptor(&[ImageSpec::rgbaf32_linear()], &header, None).unwrap(),
             ImageSpec::rgbaf32_linear()
         );
         let decoded = JpegDecoderConfig::new().decode(&encoded).unwrap();
@@ -214,7 +216,7 @@ mod api_tests {
         header.is_xyb = false;
         header.icc_profile = Some(b"invalid unconverted ICC".to_vec());
         assert!(matches!(
-            decode_descriptor(&[], &header, None).color,
+            decode_descriptor(&[], &header, None).unwrap().color,
             zenpixels::ColorSpace::Rgb {
                 transfer: zenpixels::Transfer::Unknown,
                 ..
@@ -357,7 +359,7 @@ mod api_tests {
             .decode()
             .unwrap();
         // Output should be RGB8 — the native format
-        assert_eq!(output.spec().clone(), ImageSpec::rgb8_srgb());
+        assert_eq!(output.pixels().spec().clone(), ImageSpec::rgb8_srgb());
         let pixel_data = output.pixels();
         assert_eq!(pixel_data.width(), 8);
         assert_eq!(pixel_data.rows(), 8);
@@ -1248,7 +1250,9 @@ mod cmyk_tests {
             64
         ];
         let img = Img::new(pixels, 8, 8);
-        let encoded = enc.encode(view(img.as_ref())).unwrap();
+        let encoded = enc
+            .encode(PixelView::from_pixels(img.buf(), 8, 8, ImageSpec::rgb8_srgb().color).unwrap())
+            .unwrap();
         let jpeg_data = encoded.into_vec();
 
         // Both CMYK handling modes should produce identical output for a

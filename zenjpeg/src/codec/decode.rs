@@ -466,7 +466,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             self.check_input_size(data)?;
             let info = read_job_info(&self.limit_adjusted_inner(), data, self.policy.as_ref())?;
             let native_format =
-                decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref());
+                decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref())?;
             let mut w = info.dimensions.width;
             let mut h = info.dimensions.height;
 
@@ -556,7 +556,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             }
 
             let descriptor =
-                decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
+                decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref())?;
 
             let cfg = if descriptor.layout.sample == zenpixels::SampleType::F32 {
                 cfg.output_target(crate::decode::OutputTarget::LinearF32)
@@ -579,6 +579,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 
             Ok(JpegStreamingDecoder {
                 reader,
+                origin: info.source_color.color_origin(),
                 info,
                 descriptor,
                 row_buf: aligned_vec::AVec::new(4),
@@ -751,7 +752,8 @@ fn push_decoder_native<'a>(
     //   - ScanlineReader's `buffered_rgb` Vec allocation (~width*height*3 B)
     //   - The bulk memcpy from buffered_rgb into the sink (~3-4 ms at 4K)
     //   - The duplicate header parse inside `cfg.scanline_reader()`
-    let descriptor = decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
+    let descriptor =
+        decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref())?;
     let mut begun = false;
     if let Some(direct_format) = direct_path_pixel_format(&descriptor, header.num_components)
         && job.crop_hint.is_none()
@@ -1529,13 +1531,13 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 false
             };
             // CMYK has no U16 descriptor. A deeper frame leaves as normalized F32,
-            // which holds every code, unless the caller asked for CMYK8 by name.
+            // which holds every code, unless the caller explicitly requested inverted CMYK8.
             let raw_cmyk_f32 = is_raw_cmyk
                 && header.precision > 8
                 && !wants_f32
                 && !preferred
                     .iter()
-                    .any(|d| d.layout == zenpixels::SampleLayout::CMYK8);
+                    .any(|d| d.layout == zenpixels::SampleLayout::CMYK8_INVERTED);
             if raw_cmyk_f32 {
                 cfg = cfg.output_target(OutputTarget::SrgbF32);
             }
@@ -1555,8 +1557,11 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             // Hint the internal decoder to produce BGRA/RGBA/etc. directly in
             // the streaming path, eliminating the post-decode full-buffer swizzle.
             if !wants_f32 && !is_raw_cmyk {
-                let descriptor =
-                    decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
+                let descriptor = decode_descriptor(
+                    preferred,
+                    &header,
+                    self.config.inner.correct_color.as_ref(),
+                )?;
                 if let Some(pf) = direct_path_pixel_format(&descriptor, header.num_components) {
                     cfg = cfg.output_format(pf);
                 }
@@ -1628,7 +1633,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 } else {
                     zenpixels::SampleLayout::RGBAF32
                 };
-                PixelBuf::from_vec(samples, w, h, describe(layout)).map_err(buffer_error)?
+                PixelBuf::from_vec(samples, w, h, describe(layout)?).map_err(buffer_error)?
             } else if raw_cmyk_f32 || is_raw_cmyk {
                 let sample = if raw_cmyk_f32 {
                     SampleType::F32
@@ -1636,7 +1641,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     SampleType::U8
                 };
                 let layout = zenpixels::SampleLayout::new(sample, ChannelOrder::CmykInverted);
-                let desc = describe(layout);
+                let desc = describe(layout)?;
                 info.has_alpha = false;
                 info.source_color.channel_count = Some(4);
                 if raw_cmyk_f32 {
@@ -1647,7 +1652,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         .map_err(buffer_error)?
                 }
             } else if wants_u16 {
-                let desc = describe(selected.layout);
+                let desc = describe(selected.layout)?;
                 let bytes = match result.pixels_u16() {
                     Some(codes) => canonical_u16_samples(
                         codes.iter().copied(),
@@ -1665,9 +1670,8 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     )?,
                 };
                 let mut buffer = PixelBuf::from_vec(bytes, w, h, desc).map_err(buffer_error)?;
-                let evidence = u16_exact_depth(header.precision)?
-                    .attach_verified(buffer.as_view())
-                    .facts();
+                let mut evidence = buffer.facts();
+                evidence.depth = Some(u16_exact_depth(header.precision)?);
                 buffer.set_facts(evidence);
                 buffer
             } else {
@@ -1684,11 +1688,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     result.into_pixels_u8().unwrap_or_default(),
                     w,
                     h,
-                    describe(pf),
+                    describe(pf)?,
                 )
                 .map_err(buffer_error)?
             };
 
+            let buf = buf.with_origin(info.source_color.color_origin());
             let mut output = DecodeOutput::new(buf, info);
 
             // GainMapRender::Components: surface the decoded gain map (pixels
@@ -1820,9 +1825,12 @@ impl JpegDecoder<'_> {
                 "ReconstructHdr requested but no gain-map parameters are readable",
             )
         })??;
-        let gainmap = extras.decode_gainmap().ok_or_else(|| {
-            Error::unsupported_feature("ReconstructHdr requested but the MPF has no gain-map image")
-        })??;
+        let gainmap = crate::ultrahdr::decode_gainmap_with_xmp(&extras, cfg.preserve.xmp)
+            .ok_or_else(|| {
+                Error::unsupported_feature(
+                    "ReconstructHdr requested but the MPF has no gain-map image",
+                )
+            })??;
 
         let pixels_u8 = result
             .into_pixels_u8()
@@ -1908,15 +1916,10 @@ impl JpegDecoder<'_> {
         let mut info = ImageInfo::new(hdr.width(), hdr.height(), ImageFormat::Jpeg);
         info = populate_info_from_jpeg_extras(info, &extras, self.orientation);
 
-        // Keep the established native-gamut MaxRGB measurement. The shared
-        // 0.5 measure_cll converts to BT.2020 before reducing the channels.
-        let capacity_nits = SDR_WHITE_NITS * capacity_max.min(display_boost);
-        info.source_color.content_light_level =
-            Some(if hdr.spec().layout.sample == SampleType::F32 {
-                reconstructed_max_rgb(&hdr.as_view())?
-            } else {
-                zenpixels::hdr::ContentLightLevel::new(capacity_nits as u16, 0)
-            });
+        // Content light uses the reconstructed native-gamut MaxRGB.
+        // Mastering peak describes the encoded alternate capacity.
+        let capacity_nits = SDR_WHITE_NITS * capacity_max;
+        info.source_color.content_light_level = Some(reconstructed_max_rgb(&hdr.as_view())?);
         let zenpixels::ColorSpace::Rgb { primaries, .. } = hdr.spec().color else {
             return Err(Error::unsupported_feature(
                 "unknown reconstructed HDR primaries",
@@ -1932,6 +1935,12 @@ impl JpegDecoder<'_> {
             0.005,
         ));
 
+        let hdr =
+            hdr.with_origin(info.source_color.color_origin())
+                .with_hdr(zenpixels::HdrMetadata {
+                    cll: info.source_color.content_light_level,
+                    mastering: info.source_color.mastering_display,
+                });
         let mut output = DecodeOutput::new(hdr, info).with_extras(extras);
         #[cfg(feature = "metadata")]
         if let Ok(probe) = crate::detect::probe(&self.data) {
@@ -1960,17 +1969,24 @@ fn reconstructed_max_rgb(
 ) -> Result<zenpixels::ContentLightLevel, Error> {
     let mut max = 0.0f32;
     let mut sum = 0.0f64;
+    let mut measure = |r: f32, g: f32, b: f32| {
+        let v = r.max(g).max(b).max(0.0);
+        max = max.max(v);
+        sum += f64::from(v);
+    };
+    let buffer_error = || crate::color::icc::pixel_buffer_error(0, "JPEG HDR light level");
     for y in 0..view.rows() {
-        let row = view
-            .row_as::<f32>(y)
-            .map_err(crate::color::icc::pixel_buffer_error(
-                0,
-                "JPEG HDR light level",
-            ))?;
-        for px in row.as_chunks::<4>().0 {
-            let v = px[0].max(px[1]).max(px[2]).max(0.0);
-            max = max.max(v);
-            sum += f64::from(v);
+        if view.spec().layout.sample == SampleType::F16 {
+            let row = view.row_as::<u16>(y).map_err(buffer_error())?;
+            let to_f32 = |bits| half::f16::from_bits(bits).to_f32();
+            for &[r, g, b, _] in row.as_chunks::<4>().0 {
+                measure(to_f32(r), to_f32(g), to_f32(b));
+            }
+        } else {
+            let row = view.row_as::<f32>(y).map_err(buffer_error())?;
+            for &[r, g, b, _] in row.as_chunks::<4>().0 {
+                measure(r, g, b);
+            }
         }
     }
     let scale = f64::from(zenpixels::DiffuseWhite::BT2408.nits());
@@ -2105,13 +2121,11 @@ fn decode_gain_map_components(
     base_transform: crate::lossless::LosslessTransform,
     allow_xmp: bool,
 ) -> Result<Option<zencodec::decode::DecodedGainMap>, Error> {
-    use crate::ultrahdr::UltraHdrExtras;
-
     let Some(metadata) = crate::ultrahdr::metadata_with_xmp(extras, allow_xmp) else {
         return Ok(None);
     };
     let (metadata, _) = metadata?;
-    let Some(gainmap) = extras.decode_gainmap() else {
+    let Some(gainmap) = crate::ultrahdr::decode_gainmap_with_xmp(extras, allow_xmp) else {
         return Ok(None);
     };
     let gainmap = orient_gain_map(gainmap?, base_transform);
@@ -2132,5 +2146,7 @@ fn decode_gain_map_components(
         .map_err(|_| Error::internal("gain-map pixel buffer creation failed"))?;
     let gm_info =
         zencodec::GainMapInfo::new(metadata, gainmap.width, gainmap.height, gainmap.channels);
-    Ok(Some(zencodec::decode::DecodedGainMap::new(pixels, gm_info)))
+    zencodec::decode::DecodedGainMap::try_new(pixels, gm_info)
+        .map(Some)
+        .map_err(|err| Error::decode_error(alloc::format!("gain-map components: {err}")))
 }

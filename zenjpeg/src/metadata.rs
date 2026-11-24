@@ -343,6 +343,7 @@ fn gain_map<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
         raw.to_vec()
     } else {
         serialize_iso21496_fmt(&params, Iso21496Format::JpegApp2BodyWithUrn)
+            .map_err(|_| Error::Malformed("gain-map parameters cannot be represented in ISO"))?
     };
     inject(
         &mut gain_plan,
@@ -356,7 +357,9 @@ fn gain_map<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
         edited_gain_xmp(
             req,
             gain_signals.xmp,
-            &xmp::generate_gainmap_xmp(&params),
+            &xmp::generate_gainmap_xmp(&params).map_err(|_| {
+                Error::Malformed("gain-map parameters cannot be represented in XMP")
+            })?,
             Some(&params),
         )?,
         "regenerated gain-map XMP",

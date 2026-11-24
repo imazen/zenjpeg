@@ -10,7 +10,7 @@ use std::hint::black_box;
 use zencodec::encode::{EncodeDeclaration, EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::output_patch::OutputAccess;
 use zenjpeg::JpegEncoderConfig;
-use zenpixels::{ColorContext, ColorPrimaries, PixelDescriptor};
+use zenpixels::{ColorSpace, ImageSpec, Primaries};
 
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 2048;
@@ -38,24 +38,23 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .with_huffman(true),
         _ => return Err("expected fixed or progressive".into()),
     };
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-    let (descriptor, context) = match colour.as_str() {
-        "srgb" => (PixelDescriptor::RGB8_SRGB, None),
-        "p3-icc" => (
-            p3,
-            Some(ColorContext::from_icc(
-                zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
-            )),
+    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let descriptor = match colour.as_str() {
+        "srgb" => ImageSpec::rgb8_srgb(),
+        "p3-icc" => ImageSpec::new(
+            p3.layout,
+            ColorSpace::Icc {
+                profile: zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into(),
+                channels: 3,
+                alpha: zenpixels::AlphaMode::None,
+                intent: zenpixels::RenderingIntent::RelativeColorimetric,
+            },
         ),
-        "p3-descriptor" => (p3, None),
+        "p3-descriptor" => p3,
         _ => return Err("expected srgb, p3-icc or p3-descriptor".into()),
     };
     let declaration =
         EncodeDeclaration::new(WIDTH, HEIGHT, descriptor).with_access(OutputAccess::Forward);
-    let declaration = match &context {
-        Some(context) => declaration.with_color(context),
-        None => declaration,
-    };
     let jobs: Vec<_> = (0..count).map(|_| config.clone().job()).collect();
     match stage.as_str() {
         "prepare" => {

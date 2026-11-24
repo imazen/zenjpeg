@@ -584,9 +584,9 @@ pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuf, &
 pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuf, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuf, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_with_gainmap_metadata(&zenpixels::buffer::PixelBuf, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, &zencodec::metadata::Metadata, &zencodec::metadata::MetadataPolicy, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String
+pub fn ultrahdr::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> core::result::Result<alloc::string::String, container::xmp::XmpError>
 pub fn ultrahdr::generate_primary_xmp(usize) -> alloc::string::String
-pub fn ultrahdr::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String
+pub fn ultrahdr::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> core::result::Result<alloc::string::String, container::xmp::XmpError>
 pub fn ultrahdr::parse_xmp(&str) -> core::result::Result<(zencodec::gainmap::GainMapParams, core::option::Option<usize>), container::xmp::XmpError>
 pub fn ultrahdr::tonemapper_from_ultrahdr(&decoder::DecodedExtras) -> encoder::Result<ultrahdr_core::color::tonemap::AdaptiveTonemapper>
 #[non_exhaustive] pub enum CmykHandling

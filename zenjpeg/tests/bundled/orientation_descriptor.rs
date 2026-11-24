@@ -1,11 +1,11 @@
-//! Regression tests for orientation reporting and PixelDescriptor accuracy
+//! Regression tests for orientation reporting and ImageSpec accuracy
 //! across all zencodec decode paths.
 //!
 //! Creates 4x2 test JPEGs with every EXIF orientation (1-8) and verifies:
 //! - Dimensions are correct (swapped for orientations 5-8 when auto-orienting)
 //! - `ImageInfo.orientation` is Identity when auto-orient was applied
 //! - `ImageInfo.orientation` is the source EXIF value when preserved
-//! - `PixelDescriptor` reflects source color metadata (not hardcoded sRGB)
+//! - `ImageSpec` reflects source color metadata (not hardcoded sRGB)
 //! - `OutputInfo.orientation_applied` matches what was actually applied
 
 #![cfg(feature = "zencodec")]
@@ -16,10 +16,10 @@ use zenjpeg::JpegDecoderConfig;
 use zenjpeg::encode::encoder_config::EncoderConfig;
 use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 use zenjpeg::encode::exif::{Exif, Orientation};
+use zenpixels::ImageSpec;
 
 use zencodec::OrientationHint;
 use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-use zenpixels::{ColorPrimaries, TransferFunction};
 
 /// All 8 EXIF orientation values.
 const ALL_ORIENTATIONS: &[Orientation] = &[
@@ -179,7 +179,7 @@ fn output_info_preserve_no_orientation_applied() {
     }
 }
 
-// ── PixelDescriptor: no ICC → sRGB ─────────────────────────────────────
+// ── ImageSpec: no ICC → sRGB ─────────────────────────────────────
 
 #[test]
 fn descriptor_srgb_for_plain_jpeg() {
@@ -187,9 +187,7 @@ fn descriptor_srgb_for_plain_jpeg() {
     let config = JpegDecoderConfig::new();
     let output = config.decode(&jpeg).expect("decode failed");
 
-    let desc = output.pixels().descriptor();
-    assert_eq!(desc.transfer, TransferFunction::Srgb);
-    assert_eq!(desc.primaries, ColorPrimaries::Bt709);
+    assert_eq!(output.pixels().spec(), &ImageSpec::rgb8_srgb());
 }
 
 #[test]
@@ -199,27 +197,21 @@ fn descriptor_srgb_across_subsampling_modes() {
         let config = JpegDecoderConfig::new();
         let output = config.decode(&jpeg).expect("decode failed");
 
-        let desc = output.pixels().descriptor();
         assert_eq!(
-            desc.transfer,
-            TransferFunction::Srgb,
-            "ss={ss:?}: expected sRGB transfer"
-        );
-        assert_eq!(
-            desc.primaries,
-            ColorPrimaries::Bt709,
-            "ss={ss:?}: expected BT.709 primaries"
+            output.pixels().spec(),
+            &ImageSpec::rgb8_srgb(),
+            "sampling {ss:?}"
         );
     }
 }
 
-// ── PixelDescriptor: with ICC profile ──────────────────────────────────
+// ── ImageSpec: with ICC profile ──────────────────────────────────
 
 #[test]
-fn descriptor_unknown_for_non_srgb_icc() {
+fn descriptor_keeps_display_p3_icc() {
     // Encode a JPEG with a fake (non-sRGB) ICC profile
     let pixels: Vec<u8> = vec![128u8; 4 * 2 * 3];
-    let fake_icc = vec![0u8; 256]; // Not a known sRGB profile
+    let fake_icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let config = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
     let jpeg = config
         .request()
@@ -230,17 +222,11 @@ fn descriptor_unknown_for_non_srgb_icc() {
     let decoder_config = JpegDecoderConfig::new();
     let output = decoder_config.decode(&jpeg).expect("decode failed");
 
-    let desc = output.pixels().descriptor();
-    assert_eq!(
-        desc.transfer,
-        TransferFunction::Unknown,
-        "non-sRGB ICC should yield Unknown transfer"
-    );
-    assert_eq!(
-        desc.primaries,
-        ColorPrimaries::Unknown,
-        "non-sRGB ICC should yield Unknown primaries"
-    );
+    assert!(matches!(
+        &output.pixels().spec().color,
+        zenpixels::ColorSpace::Icc { profile, channels: 3, .. }
+            if profile.as_ref() == fake_icc
+    ));
 
     // ICC profile should still be preserved in source_color
     assert!(
@@ -360,7 +346,7 @@ fn streaming_decoder_preserve_reports_source() {
 
 // ── Push decoder orientation ───────────────────────────────────────────
 
-/// Simple sink that uses PixelSliceMut from a backing buffer.
+/// Simple sink that uses PixelViewMut from a backing buffer.
 struct CollectSink {
     data: Vec<u8>,
     stride: usize,
@@ -380,9 +366,9 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::PixelDescriptor,
+        descriptor: zenpixels::ImageSpec,
     ) -> Result<(), zencodec::decode::SinkError> {
-        let bpp = descriptor.bytes_per_pixel();
+        let bpp = descriptor.layout.bytes_per_pixel();
         self.stride = width as usize * bpp;
         self.data.resize(self.stride * height as usize, 0);
         Ok(())
@@ -393,11 +379,11 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         y: u32,
         height: u32,
         width: u32,
-        descriptor: zenpixels::PixelDescriptor,
-    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
+        descriptor: zenpixels::ImageSpec,
+    ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let start = y as usize * self.stride;
         let end = start + height as usize * self.stride;
-        zenpixels::PixelSliceMut::new(
+        zenpixels::PixelViewMut::new(
             &mut self.data[start..end],
             width,
             height,

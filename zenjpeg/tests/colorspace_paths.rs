@@ -4288,3 +4288,67 @@ fn rgb_and_ycbcr_entry_points_agree_under_jpegli_idct() {
     }
     f.finish("Jpegli IDCT entry-point parity");
 }
+
+/// A DCT block with only DC reconstructs a constant code of 128 + DC/8.
+/// Integer output rounds half up before clamping. Floating output keeps the
+/// fractional code and its overshoot, scaled by the f32 reciprocal of 255.
+#[test]
+fn gray_dc_ramp_resolves_integer_half_steps_exactly() {
+    let dc = [
+        -1028, -1021, -1020, -1019, -13, -12, -11, -5, -4, -3, 3, 4, 5, 1011, 1012, 1013,
+    ];
+    let width = (dc.len() * 8) as u32;
+    let jpeg = jpeg_writer::write(&Spec {
+        width,
+        height: 8,
+        comps: vec![Comp { id: 1, h: 1, v: 1 }],
+        block: &|_, x, _| {
+            let mut block = [0; 64];
+            block[0] = dc[x];
+            block
+        },
+        restart_interval: 0,
+        quant: 1,
+        segments: vec![],
+    });
+    let decoder = Decoder::new().output_format(PixelFormat::Gray);
+    let bytes = decoder
+        .decode(&jpeg, Unstoppable)
+        .unwrap()
+        .into_pixels_u8()
+        .unwrap();
+    let mut direct = vec![0; bytes.len()];
+    decoder
+        .decode_into(&jpeg, PixelFormat::Gray, &mut direct, Unstoppable)
+        .unwrap();
+    let float = decoder
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
+        .unwrap()
+        .into_pixels_f32()
+        .unwrap();
+    let mut f = Failures(Vec::new());
+    for (x, &coefficient) in dc.iter().enumerate() {
+        let code = 128.0 + f32::from(coefficient) / 8.0;
+        let rounded = (code + 0.5).floor().clamp(0.0, 255.0) as u8;
+        for y in 0..8 {
+            for col in x * 8..x * 8 + 8 {
+                let i = y * width as usize + col;
+                f.check(bytes[i] == rounded && direct[i] == rounded, || {
+                    format!(
+                        "DC {coefficient} at ({col},{y}): integer {}/{}, expected {rounded}",
+                        bytes[i], direct[i]
+                    )
+                });
+                let expected = code * (1.0_f32 / 255.0);
+                f.check(float[i].to_bits() == expected.to_bits(), || {
+                    format!(
+                        "DC {coefficient} at ({col},{y}): float {}, expected {expected}",
+                        float[i]
+                    )
+                });
+            }
+        }
+    }
+    f.finish("gray DC half steps");
+}

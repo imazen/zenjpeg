@@ -17,7 +17,7 @@ use zencodec::{
     UnsupportedOperation,
 };
 use zenjpeg::{JpegEncodeJob, JpegEncoderConfig};
-use zenpixels::{Cicp, ColorContext, ColorModel, ColorPrimaries, PixelDescriptor, PixelSlice};
+use zenpixels::{Cicp, ColorSpace, IccColorSpace, ImageSpec, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 
 const W: u32 = 16;
@@ -40,7 +40,7 @@ fn encode(
     meta: &Metadata,
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
-    encode_as(rows, meta, policy, PixelDescriptor::RGB8_SRGB, None)
+    encode_as(rows, meta, policy, ImageSpec::rgb8_srgb(), None)
 }
 
 /// `policy` goes through the legacy setter.
@@ -48,8 +48,8 @@ fn encode_as(
     rows: bool,
     meta: &Metadata,
     policy: Option<EncodePolicy>,
-    descriptor: PixelDescriptor,
-    context: Option<Arc<ColorContext>>,
+    descriptor: ImageSpec,
+    context: Option<Arc<ColorSpace>>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let mut job = job(meta);
     if let Some(policy) = policy {
@@ -63,22 +63,20 @@ fn encode_as(
 fn run(
     job: JpegEncodeJob,
     rows: bool,
-    descriptor: PixelDescriptor,
-    context: Option<Arc<ColorContext>>,
+    descriptor: ImageSpec,
+    context: Option<Arc<ColorSpace>>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let data: Vec<u8> = (0..W * H * 3).map(|i| (i * 13 % 251) as u8).collect();
-    let mut pixels = PixelSlice::new(&data, W, H, W as usize * 3, descriptor).unwrap();
-    if let Some(context) = &context {
-        pixels = pixels.with_color_context(Arc::clone(context));
+    let mut descriptor = descriptor;
+    if let Some(context) = context {
+        descriptor.color = (*context).clone();
     }
+    let pixels = PixelView::new(&data, W, H, W as usize * 3, descriptor.clone()).unwrap();
     let mut encoder = job.encoder()?;
     if !rows {
         return Ok(encoder.encode(pixels)?.into_vec());
     }
-    let mut declaration = EncodeDeclaration::new(W, H, descriptor);
-    if let Some(context) = &context {
-        declaration = declaration.with_color(context);
-    }
+    let declaration = EncodeDeclaration::new(W, H, descriptor);
     if let Err(error) = encoder.begin_declared(&declaration) {
         assert!(
             encoder.pending_output().is_empty(),
@@ -108,15 +106,20 @@ fn icc(jpeg: &[u8]) -> Option<Vec<u8>> {
 
 /// An RGB profile zenpixels cannot identify (identification hashes the bytes
 /// after the header): Display P3 with its last byte changed.
+fn icc_color(bytes: Vec<u8>) -> ColorSpace {
+    ColorSpace::Icc {
+        profile: bytes.into(),
+        channels: 3,
+        alpha: zenpixels::AlphaMode::None,
+        intent: zenpixels::RenderingIntent::RelativeColorimetric,
+    }
+}
+
 fn unidentified() -> Vec<u8> {
     let mut profile = DISPLAY_P3_V4.to_vec();
     let last = profile.len() - 1;
     profile[last] ^= 1;
-    assert!(
-        zenpixels::ColorProfileSource::Icc(&profile)
-            .resolve()
-            .is_none()
-    );
+    assert!(zenpixels::icc::IccIdentification::from_icc(&profile).is_none());
     profile
 }
 
@@ -134,8 +137,8 @@ fn lcms_2_17_rejects() -> Vec<(&'static str, Vec<u8>)> {
     let truncated = p3[..100].to_vec();
     // The header's colour-space field alone does not make a profile.
     assert_eq!(
-        zenpixels::ColorModel::from_icc(&truncated),
-        Some(ColorModel::Rgb)
+        IccColorSpace::from_icc(&truncated),
+        Some(IccColorSpace::Rgb)
     );
     vec![
         (
@@ -218,13 +221,13 @@ fn the_legacy_setter_drops_a_job_profile_it_cannot_identify() {
 
 #[test]
 fn the_legacy_setter_keeps_a_colour_it_can_identify() {
-    let display_p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+    let display_p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
     for (what, bytes) in not_identified() {
         for rows in [false, true] {
             // Display P3 pixels keep needing a carrier once the profile goes.
             let meta = Metadata::none().with_icc(bytes.clone());
             assert_policy_refusal(
-                encode_as(rows, &meta, forbid(), display_p3, None),
+                encode_as(rows, &meta, forbid(), display_p3.clone(), None),
                 &format!("{what} over Display P3 pixels, rows {rows}"),
             );
             // So do the Display P3 code points beside it.
@@ -239,16 +242,22 @@ fn the_legacy_setter_keeps_a_colour_it_can_identify() {
 
 #[test]
 fn forbidding_a_colour_context_profile_refuses() {
-    let rgb8 = PixelDescriptor::RGB8_SRGB;
+    let rgb8 = ImageSpec::rgb8_srgb();
     for (what, bytes) in not_identified() {
-        let context = Some(Arc::new(ColorContext::from_icc(bytes.clone())));
+        let context = Some(Arc::new(icc_color(bytes.clone())));
         for rows in [false, true] {
             // The context is the pixels' own, authoritative description.
-            let alone = encode_as(rows, &Metadata::none(), forbid(), rgb8, context.clone());
+            let alone = encode_as(
+                rows,
+                &Metadata::none(),
+                forbid(),
+                rgb8.clone(),
+                context.clone(),
+            );
             assert!(alone.is_err(), "{what}, rows {rows}: dropped the context");
             // Repeated as job metadata, it is still the context.
             let meta = Metadata::none().with_icc(bytes.clone());
-            let both = encode_as(rows, &meta, forbid(), rgb8, context.clone());
+            let both = encode_as(rows, &meta, forbid(), rgb8.clone(), context.clone());
             assert!(
                 both.is_err(),
                 "{what}, rows {rows}: dropped the context repeated as metadata"
@@ -257,28 +266,28 @@ fn forbidding_a_colour_context_profile_refuses() {
     }
     // A complete RGB profile reaches the carrier decision: a policy refusal,
     // which planning reports too.
-    let context = Arc::new(ColorContext::from_icc(unidentified()));
+    let context = Arc::new(icc_color(unidentified()));
     for rows in [false, true] {
         assert_policy_refusal(
             encode_as(
                 rows,
                 &Metadata::none(),
                 forbid(),
-                rgb8,
+                rgb8.clone(),
                 Some(Arc::clone(&context)),
             ),
             &format!("unidentified context profile, rows {rows}"),
         );
     }
     let job = legacy(job(&Metadata::none()), forbid().unwrap());
-    let declaration = EncodeDeclaration::new(W, H, rgb8).with_color(&context);
+    let declaration = EncodeDeclaration::new(W, H, rgb8).with_color((*context).clone());
     assert!(job.plan_encode(&declaration).is_err());
 }
 
 #[test]
 fn setter_order_decides_whether_the_legacy_behaviour_applies() {
     let meta = Metadata::none().with_icc(unidentified());
-    let rgb8 = PixelDescriptor::RGB8_SRGB;
+    let rgb8 = ImageSpec::rgb8_srgb();
     let strip = EncodePolicy::strip_all();
     let verbatim = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     let refused = EncodePolicy::none().with_strict(true);
@@ -287,7 +296,7 @@ fn setter_order_decides_whether_the_legacy_behaviour_applies() {
         // A checked `none()` specifies nothing: the legacy policy stays.
         let mut checked = legacy(job(&meta), strip);
         checked.try_set_policy(EncodePolicy::none()).unwrap();
-        let file = run(checked, rows, rgb8, None).unwrap();
+        let file = run(checked, rows, rgb8.clone(), None).unwrap();
         assert_eq!(file, absent, "legacy, then checked none(), rows {rows}");
         // A refused checked policy leaves the job unchanged.
         let mut checked = legacy(job(&meta), strip);
@@ -295,7 +304,7 @@ fn setter_order_decides_whether_the_legacy_behaviour_applies() {
             checked.try_set_policy(refused),
             Err(UnsupportedOperation::EncodePolicy)
         );
-        let file = run(checked, rows, rgb8, None).unwrap();
+        let file = run(checked, rows, rgb8.clone(), None).unwrap();
         assert_eq!(
             file, absent,
             "legacy, then a refused checked policy, rows {rows}"
@@ -303,7 +312,7 @@ fn setter_order_decides_whether_the_legacy_behaviour_applies() {
         // An admitted checked policy replaces it: Verbatim writes the profile.
         let mut checked = legacy(job(&meta), strip);
         checked.try_set_policy(verbatim).unwrap();
-        let file = run(checked, rows, rgb8, None).unwrap();
+        let file = run(checked, rows, rgb8.clone(), None).unwrap();
         assert_eq!(
             icc(&file),
             Some(unidentified()),
@@ -312,7 +321,7 @@ fn setter_order_decides_whether_the_legacy_behaviour_applies() {
         // The legacy setter after a checked policy replaces it in turn.
         let mut checked = job(&meta);
         checked.try_set_policy(verbatim).unwrap();
-        let file = run(legacy(checked, strip), rows, rgb8, None).unwrap();
+        let file = run(legacy(checked, strip), rows, rgb8.clone(), None).unwrap();
         assert_eq!(file, absent, "checked Verbatim, then legacy, rows {rows}");
     }
 }

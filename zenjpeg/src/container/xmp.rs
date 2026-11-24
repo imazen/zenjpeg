@@ -40,7 +40,7 @@ pub const ITEM_NAMESPACE: &str = zenmeta::xmp::gainmap::ITEM_NAMESPACE;
 /// so a generous cap is appropriate.
 pub const MAX_XMP_LENGTH: usize = zenmeta::xmp::gainmap::MAX_XMP_LENGTH;
 
-/// Errors from [`parse_xmp`].
+/// Errors in parsing or writing gain-map XMP.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum XmpError {
@@ -55,6 +55,9 @@ pub enum XmpError {
     /// XMP does not carry the `hdrgm` namespace — not Ultra HDR.
     #[error("XMP is not an Ultra HDR packet (no hdrgm:Version and no hdrgm:GainMapMax)")]
     NotUltraHdr,
+    /// The packet describes a gain map without providing rendering parameters.
+    #[error("gain-map rendering parameters are absent")]
+    ParametersAbsent,
     /// Malformed, ambiguous or unsupported XML/RDF.
     #[error("invalid gain-map XMP: {0}")]
     Invalid(String),
@@ -83,14 +86,16 @@ pub enum XmpError {
 ///     c.max = 2.0;
 ///     c.gamma = 1.0;
 /// }
-/// let xmp = generate_xmp(&params, 5_000);
+/// let xmp = generate_xmp(&params, 5_000).unwrap();
 /// let (parsed, length) = parse_xmp(&xmp).expect("parse");
 /// assert_eq!(length, Some(5_000));
 /// assert!((parsed.channels[0].max - 2.0).abs() < 1e-5);
 /// ```
-#[must_use]
-pub fn generate_xmp(metadata: &zencodec::GainMapParams, gainmap_length: usize) -> String {
-    zenmeta::xmp::gainmap::generate_xmp(metadata, gainmap_length)
+pub fn generate_xmp(
+    metadata: &zencodec::GainMapParams,
+    gainmap_length: usize,
+) -> Result<String, XmpError> {
+    zenmeta::xmp::gainmap::generate_xmp(metadata, gainmap_length).map_err(map_xmp_error)
 }
 
 /// Generate XMP for the primary JPEG: `Container:Directory` only.
@@ -120,23 +125,22 @@ pub fn generate_primary_xmp_with_items(items: &[ContainerItem]) -> String {
 /// Goes in the gain-map JPEG's APP1 marker. Together with the primary's
 /// `Container:Directory` XMP, this matches libultrahdr's canonical
 /// output.
-#[must_use]
-pub fn generate_gainmap_xmp(metadata: &zencodec::GainMapParams) -> String {
-    zenmeta::xmp::gainmap::generate_gainmap_xmp(metadata)
+pub fn generate_gainmap_xmp(metadata: &zencodec::GainMapParams) -> Result<String, XmpError> {
+    zenmeta::xmp::gainmap::generate_gainmap_xmp(metadata).map_err(map_xmp_error)
 }
 
 /// Generate XMP with both numeric metadata and a custom container
 /// directory. Used when carrying depth / confidence maps alongside the
 /// gain map.
-#[must_use]
 pub fn generate_xmp_with_items(
     metadata: &zencodec::GainMapParams,
     items: &[ContainerItem],
-) -> String {
+) -> Result<String, XmpError> {
     zenmeta::xmp::gainmap::generate_xmp_with_items(
         metadata,
         &items.iter().map(to_shared_item).collect::<Vec<_>>(),
     )
+    .map_err(map_xmp_error)
 }
 
 /// Parse Ultra HDR XMP numeric metadata + optional `Item:Length` for
@@ -146,14 +150,19 @@ pub fn generate_xmp_with_items(
 /// `Container:Directory` (depth maps, confidence maps, vendor items),
 /// use [`parse_xmp_full`] instead.
 pub fn parse_xmp(xmp: &str) -> Result<(zencodec::GainMapParams, Option<usize>), XmpError> {
-    zenmeta::xmp::gainmap::parse_xmp(xmp).map_err(|error| match error {
+    zenmeta::xmp::gainmap::parse_xmp(xmp).map_err(map_xmp_error)
+}
+
+fn map_xmp_error(error: zenmeta::xmp::gainmap::XmpError) -> XmpError {
+    match error {
         zenmeta::xmp::gainmap::XmpError::LengthLimit { got, max } => {
             XmpError::LengthLimit { got, max }
         }
         zenmeta::xmp::gainmap::XmpError::NotUltraHdr => XmpError::NotUltraHdr,
         zenmeta::xmp::gainmap::XmpError::Invalid(message) => XmpError::Invalid(message),
+        zenmeta::xmp::gainmap::XmpError::ParametersAbsent => XmpError::ParametersAbsent,
         other => XmpError::Invalid(other.to_string()),
-    })
+    }
 }
 /// Parse numeric parameters and container items. Invalid packets yield no
 /// metadata; use [`parse_xmp`] when a diagnostic error is required.
@@ -208,7 +217,7 @@ mod tests {
 
     #[test]
     fn generate_xmp_contains_version_and_length() {
-        let xmp = generate_xmp(&test_metadata(), 10_000);
+        let xmp = generate_xmp(&test_metadata(), 10_000).unwrap();
         assert!(xmp.contains("hdrgm:Version=\"1.0\""));
         assert!(xmp.contains("hdrgm:GainMapMax"));
         assert!(xmp.contains("Item:Length=\"10000\""));
@@ -223,7 +232,7 @@ mod tests {
     #[test]
     fn parse_xmp_roundtrips_scalar_values() {
         let original = test_metadata();
-        let xmp = generate_xmp(&original, 5_000);
+        let xmp = generate_xmp(&original, 5_000).unwrap();
         let (parsed, length) = parse_xmp(&xmp).unwrap();
         assert_eq!(length, Some(5_000));
         // Verify every numeric field roundtrips, not just .max.
@@ -249,7 +258,7 @@ mod tests {
     #[test]
     fn parse_xmp_roundtrips_multi_channel_values() {
         let original = multi_channel_metadata();
-        let xmp = generate_xmp(&original, 5_000);
+        let xmp = generate_xmp(&original, 5_000).unwrap();
         let (parsed, _) = parse_xmp(&xmp).unwrap();
         // All three channels must differ — a regression that replicated
         // channel-0 to 1/2 would have channels[0].min == channels[1].min.
@@ -301,7 +310,7 @@ mod tests {
     #[test]
     fn parse_xmp_accepts_1_mib_input() {
         let mut big = String::with_capacity(1024 * 1024 + 100);
-        big.push_str(&generate_gainmap_xmp(&test_metadata()));
+        big.push_str(&generate_gainmap_xmp(&test_metadata()).unwrap());
         while big.len() <= 1024 * 1024 {
             big.push_str("                                   ");
         }
@@ -384,7 +393,8 @@ mod tests {
     #[test]
     fn malformed_numbers_refuse_instead_of_changing_rendering() {
         let xml = generate_gainmap_xmp(&test_metadata())
-            .replace("hdrgm:Gamma=\"1.000000\"", "hdrgm:Gamma=\"oops\"");
+            .unwrap()
+            .replace("hdrgm:Gamma=\"1\"", "hdrgm:Gamma=\"oops\"");
         assert!(matches!(parse_xmp(&xml), Err(XmpError::Invalid(_))));
     }
 
@@ -396,6 +406,7 @@ mod tests {
             ContainerItem::secondary(ItemSemantic::GainMap, "image/jpeg", 123)
         ];
         let xml = generate_xmp_with_items(&test_metadata(), &items)
+            .unwrap()
             .replace("hdrgm:", "gain:")
             .replace("xmlns:hdrgm=", "xmlns:gain=");
         assert_eq!(parse_xmp(&xml).unwrap().1, Some(123));
@@ -416,14 +427,15 @@ mod tests {
         ];
         let xmp = generate_primary_xmp_with_items(&items);
         let (meta, parsed) = parse_xmp_full(&xmp);
-        assert!(meta.is_some()); // primary_xmp has hdrgm:Version
+        assert!(meta.is_none());
+        assert!(matches!(parse_xmp(&xmp), Err(XmpError::ParametersAbsent)));
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[1].length, Some(123));
     }
 
     #[test]
     fn generate_gainmap_xmp_has_only_numeric_attrs() {
-        let xmp = generate_gainmap_xmp(&test_metadata());
+        let xmp = generate_gainmap_xmp(&test_metadata()).unwrap();
         assert!(xmp.contains("hdrgm:Version=\"1.0\""));
         assert!(xmp.contains("hdrgm:GainMapMax"));
         // Gain-map XMP should NOT carry Container:Directory.
@@ -506,6 +518,13 @@ mod tests {
         #[test]
         fn gainmap_xmp_roundtrip(params in arb_gainmap_params(), length in 1usize..10_000_000) {
             let xmp = generate_xmp(&params, length);
+            if !params.use_base_color_space
+                || params.base_hdr_headroom > params.alternate_hdr_headroom
+            {
+                prop_assert!(matches!(xmp, Err(XmpError::Invalid(_))));
+                return Ok(());
+            }
+            let xmp = xmp.unwrap();
             let (parsed, parsed_length) = parse_xmp(&xmp)
                 .expect("parse should succeed on self-generated XMP");
             prop_assert_eq!(parsed_length, Some(length));

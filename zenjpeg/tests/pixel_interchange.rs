@@ -159,14 +159,23 @@ fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
 #[cfg(feature = "ultrahdr")]
 #[test]
 fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
+    use img_parts::{ImageEXIF, ImageICC};
     use zencodec::{GainMapRender, Metadata, MetadataPolicy, Orientation, OrientationHint};
     use zenjpeg::ultrahdr::{
         GainMap, GainMapEncodingFormat, GainMapMetadata, encode_with_gainmap_metadata,
     };
-    use zenpixels::PixelBuf;
+    use zenpixels::{DiffuseWhite, PixelBuf, Transfer};
+    use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 
     let (w, h) = (17, 19);
-    let base = PixelBuf::from_bytes(pattern(w, h), w, h, ImageSpec::rgb8_srgb()).unwrap();
+    let base_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let base = PixelBuf::from_bytes(pattern(w, h), w, h, base_spec).unwrap();
+    let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
+    exif.set_orientation(Orientation::Rotate90);
+    let exif = zenmeta::exif::serialize(&exif);
+    let source = Metadata::none()
+        .with_exif(exif.as_slice())
+        .with_icc(DISPLAY_P3_V4);
     let gain = GainMap {
         width: 5,
         height: 6,
@@ -185,7 +194,7 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
         &NativeEncoder::ycbcr(90, ChromaSubsampling::Quarter),
         90.0,
         GainMapEncodingFormat::Both,
-        &Metadata::none().with_orientation(Orientation::Rotate90),
+        &source,
         &MetadataPolicy::PreserveExact,
         Unstoppable,
     )
@@ -193,6 +202,9 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
 
     let mut oracle = jpeg_decoder::Decoder::new(jpeg.as_slice());
     oracle.decode().unwrap();
+    assert_eq!(oracle.icc_profile().as_deref(), Some(DISPLAY_P3_V4));
+    let source_jpeg = img_parts::jpeg::Jpeg::from_bytes(jpeg.clone().into()).unwrap();
+    assert_eq!(source_jpeg.exif().as_deref(), Some(exif.as_slice()));
     let config = JpegDecoderConfig::new();
     let decode = |orient| {
         config
@@ -211,6 +223,27 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
     assert_eq!(stored.info().orientation, Orientation::Rotate90);
     let corrected = decode(OrientationHint::Correct);
     assert_eq!(corrected.info().orientation, Orientation::Identity);
+    for output in [&stored, &corrected] {
+        assert_eq!(
+            output.info().embedded_metadata.exif.as_deref(),
+            Some(exif.as_slice())
+        );
+        assert_eq!(
+            output.info().source_color.icc_profile.as_deref(),
+            Some(DISPLAY_P3_V4)
+        );
+        let pixels = output.pixels();
+        assert_eq!(pixels.origin().unwrap().icc.as_deref(), Some(DISPLAY_P3_V4));
+        assert!(matches!(pixels.spec().color, ColorSpace::Rgb {
+            primaries: Primaries::DisplayP3, transfer: Transfer::Linear,
+            white: Some(white), .. } if white == DiffuseWhite::BT2408));
+        let sc = &output.info().source_color;
+        assert!(sc.content_light_level.is_some());
+        assert!(sc.mastering_display.is_some());
+        assert_eq!(pixels.hdr().cll, sc.content_light_level);
+        assert_eq!(pixels.hdr().mastering, sc.mastering_display);
+    }
+    assert_eq!(corrected.pixels().hdr(), stored.pixels().hdr());
     assert_eq!(
         (corrected.pixels().width(), corrected.pixels().rows()),
         (h, w)
@@ -221,6 +254,36 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
         corrected.pixels().as_strided_bytes(),
         reference.as_view().as_strided_bytes()
     );
+
+    // Re-encode the already-oriented SDR base with the source metadata
+    // provenance. The checked metadata path reconciles the orientation tag.
+    let base = config
+        .job()
+        .with_orientation(OrientationHint::Correct)
+        .decoder(Cow::Borrowed(&jpeg), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let mut metadata = base.info().metadata();
+    metadata.xmp = None;
+    let mut job = JpegEncoderConfig::new().job();
+    job.try_set_metadata_policy(metadata, MetadataPolicy::PreserveExact)
+        .unwrap();
+    let output = job.encoder().unwrap().encode(base.pixels()).unwrap();
+    let mut reader = jpeg_decoder::Decoder::new(output.data());
+    reader.decode().unwrap();
+    let info = reader.info().unwrap();
+    assert_eq!((u32::from(info.width), u32::from(info.height)), (h, w));
+    assert_eq!(reader.icc_profile().as_deref(), Some(DISPLAY_P3_V4));
+    let parsed = img_parts::jpeg::Jpeg::from_bytes(output.data().to_vec().into()).unwrap();
+    assert_eq!(parsed.icc_profile().as_deref(), Some(DISPLAY_P3_V4));
+    let exif = exif::Reader::new()
+        .read_raw(parsed.exif().unwrap().to_vec())
+        .unwrap();
+    let orientation = exif
+        .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+        .unwrap();
+    assert_eq!(orientation.value.get_uint(0), Some(1));
 }
 
 #[path = "support/jpeg_writer.rs"]

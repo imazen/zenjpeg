@@ -35,45 +35,7 @@ bincode = "1.3"
 
 # Color management
 lcms2 = "6.0"
-# zenjpeg's own moxcms usage resolves to 0.9.0 (verified 2026-07-23 via
-# `cargo tree -p zenjpeg` — moxcms is a direct child, not unified with any
-# older instance). The `image` crate that used to force-cap this whole
-# workspace at 0.8.1 is gone (see zenjpeg/Cargo.toml's dev-dependencies).
-#
-# UPDATE 2026-07-24: the 3-hop chain (zenpixels-convert -> ultrahdr-core ->
-# ultrahdr-rs) that used to force an isolated moxcms 0.8.1 instance is now
-# published for real, not just locally patched: zenpixels 0.2.16,
-# zenpixels-convert 0.2.16 (crates.io), ultrahdr-core 0.6.0 (crates.io,
-# see below). `cargo tree -i moxcms` inside ~/work/zen/ultrahdr now shows a
-# single unified moxcms 0.9.0 instance.
-#
-# One ISOLATED moxcms 0.8.1 instance remains here in zenjpeg specifically,
-# entirely contained within the ultrahdr-rs *dev*-dependency subtree (used
-# only by our own test suite as a black-box HDR comparison tool — dev-deps
-# never ship in the published zenjpeg crate). Root cause is now circular
-# rather than unpublished-sibling: ultrahdr-rs's own next release (0.4.1,
-# tagged + GitHub-released, see imazen/ultrahdr) requires zenjpeg 0.9.0
-# published on crates.io first (workspace pin `zenjpeg = { path =
-# "../zenjpeg/zenjpeg", version = "0.9.0" }`), and zenjpeg 0.9.0 itself is
-# pre-bumped but gated on explicit owner sign-off before `cargo publish`
-# (same zencodec-0.1.26-driven release batch as zenpng 0.2.0 — see
-# CHANGELOG.md's `[Unreleased]` section). So crates.io ultrahdr-rs stays at
-# 0.3.5 (hard-pinning moxcms = "0.8.1") until that publish happens. As
-# before: zenjpeg's own code never crosses a moxcms type across the
-# ultrahdr-rs boundary, so the isolated instance is harmless, not just
-# unfixed. Revisit by publishing zenjpeg 0.9.0 (unblocks ultrahdr-rs 0.4.1,
-# which then unblocks this).
-#
-# RESOLVED 2026-07-24: a second, unrelated isolated moxcms 0.7.11 instance
-# via `codec-eval` (our own crate at ~/work/codec-eval, a dev-dependency for
-# corpus comparison tests) is now gone for real. Root cause wasn't moxcms:
-# codec-eval's published 0.3.1/0.3.2 both required `fast-ssim2 = "^0.7.2"`,
-# and fast-ssim2 0.7.2 + 0.7.3 are BOTH YANKED with no 0.7.4 — codec-eval
-# >0.3.0 was unresolvable from crates.io at all, so this workspace stuck on
-# the last resolvable version, 0.3.0. Fixed by publishing codec-eval 0.3.3
-# (bumps fast-ssim2 to 0.8.0+ and widens its own moxcms range to cover
-# 0.9.0). `cargo update -p codec-eval@0.3.0` picked it up; only the
-# ultrahdr-rs 0.8.1 instance documented above remains.
+# The pinned Ultra HDR and pixel-conversion crates share moxcms 0.9 with JPEG.
 moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 
 # Image I/O (for testing)
@@ -131,10 +93,10 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-# A version edge: each root resolves the zencodec 0.2 family through its own
-# patch table (dependency patches do not propagate). The 0.2 floor prevents
-# resolving this edge to the incompatible published 0.1 contract.
-zencodec = { version = ">=0.2.0, <0.3.0" }
+# A version edge: each root resolves the zencodec 0.3 family through its own
+# patch table (dependency patches do not propagate). The 0.3 floor prevents
+# resolving this edge to the incompatible published 0.2 contract.
+zencodec = { version = "0.3.0" }
 zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false, features = ["icc", "imgref"] }
 zenpixels-convert = { version = ">=0.5.0, <0.6.0", default-features = false }
 garb = { version = "0.2.9", default-features = false }
@@ -155,7 +117,7 @@ half = { version = "2.7.1", default-features = false }
 zentone = { version = ">=0.1.0, <0.3.0", default-features = false }
 
 # Our ultrahdr crates
-ultrahdr-rs = ">=0.3.5, <0.5"
+ultrahdr-rs = "0.4.1"
 ultrahdr-core = { version = "0.6.0", default-features = false }
 
 # Resize pipeline. Constraint solver (FitMode) and EXIF-orientation bridge
@@ -233,23 +195,28 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 zenresize = { git = "https://github.com/imazen/zenresize", rev = "b5afc8adac77b1800c26e6747faac670c0cd34dd" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdbae793938fa229d40ac4fe4c39" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "b6e759468691c8906b686a8d64732136f5a63518" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "1dd8248fa6683d5c3e22eb946a97b1f93996371a" }
 
 # Legacy development tools and the optional resize pipeline still use 0.3.
 zenpixels-03 = { package = "zenpixels", git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
 
 # Pixel and codec interchange cohort for this migration.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "607614ce9b1027edac600b52e61c99fe18f5cb46" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "a9e3eabc0884b03d2d0ef22627b1b41c03b09589" }
+ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr", rev = "a9e3eabc0884b03d2d0ef22627b1b41c03b09589" }
 
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 
 zentone = { git = "https://github.com/imazen/zentone", rev = "d640ee4b8b84017b9ea39c132bf86aa3745e09df" }
+
+# The Ultra HDR integration tests exercise this workspace's JPEG codec.
+[patch."https://github.com/imazen/zenjpeg"]
+zenjpeg = { path = "zenjpeg" }

@@ -64,17 +64,26 @@ impl UltraHdrExtras for DecodedExtras {
     }
 
     fn decode_gainmap(&self) -> Option<Result<GainMap>> {
-        // Get the gain map JPEG from secondary images
-        let gainmap_jpeg = self.gainmap()?;
-
-        // Channel form comes from the hdrgm/ISO metadata, not pixel
-        // inspection (the ultrahdr-rs#27 model; zenjpeg#152).
-        let single_channel = self
-            .ultrahdr_metadata()
-            .and_then(|m| m.ok())
-            .map(|(m, _)| m.is_single_channel());
-        Some(decode_gainmap_jpeg(gainmap_jpeg, single_channel))
+        decode_gainmap_with_xmp(self, true)
     }
+}
+
+/// ISO parameter arity and JPEG sample arity are independent. The legacy
+/// XMP path also supports maps that store luma in a three-component JPEG.
+pub(crate) fn decode_gainmap_with_xmp(
+    extras: &DecodedExtras,
+    allow_xmp: bool,
+) -> Option<Result<GainMap>> {
+    let jpeg = extras.gainmap()?;
+    let iso = iso21496_from_gainmap_jpeg(jpeg).is_some_and(|record| record.is_ok());
+    let xmp_channels = if iso {
+        None
+    } else {
+        metadata_with_xmp(extras, allow_xmp)
+            .and_then(core::result::Result::ok)
+            .map(|(params, _)| params.is_single_channel())
+    };
+    Some(decode_gainmap_jpeg(jpeg, xmp_channels))
 }
 
 /// Resolve gain-map metadata without consulting XMP when extraction is denied.
@@ -118,7 +127,10 @@ fn xmp_metadata(extras: &DecodedExtras) -> Option<Result<(GainMapMetadata, Optio
 /// Preserve that distinction through the optional metadata API.
 fn optional_gainmap_xmp(xmp: &str) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
     match parse_xmp(xmp) {
-        Err(crate::container::xmp::XmpError::NotUltraHdr) => None,
+        Err(
+            crate::container::xmp::XmpError::NotUltraHdr
+            | crate::container::xmp::XmpError::ParametersAbsent,
+        ) => None,
         result => Some(result.map_err(xmp_to_zenjpeg_error)),
     }
 }
@@ -395,13 +407,21 @@ fn rgb_to_rgba8(rgb: &[u8]) -> Vec<u8> {
 
 /// Decode a gain map JPEG to GainMap struct (#152).
 ///
-/// `single_channel` is the metadata's channel form (`None` when no metadata
-/// parsed). Single (or unknown): decode with native Gray output — the exact
-/// luma plane (RGB-then-take-R rounds ±1 differently and promotes 4:2:0
-/// chroma noise on color-encoded maps). Multi-channel: decode RGB. The map
-/// decodes in stored orientation; callers orient it to the base (#151).
-fn decode_gainmap_jpeg(jpeg_data: &[u8], single_channel: Option<bool>) -> Result<GainMap> {
-    if single_channel != Some(false) {
+/// The SOF selects native sample arity unless legacy XMP explicitly asks
+/// for the luma plane of a color JPEG. Native Gray keeps exact luma codes.
+/// The map decodes in stored orientation; callers orient it to the base.
+pub(crate) fn decode_gainmap_jpeg(jpeg_data: &[u8], xmp_channels: Option<bool>) -> Result<GainMap> {
+    let info = Decoder::new().read_info(jpeg_data)?;
+    let single_channel = match info.num_components {
+        1 => true,
+        3 => xmp_channels.unwrap_or(false),
+        _ => {
+            return Err(Error::unsupported_feature(
+                "gain-map JPEG must contain one or three components",
+            ));
+        }
+    };
+    if single_channel {
         // Some color encodings can't produce Gray output ("unsupported color
         // conversion"); those fall through to the RGB path below.
         if let Ok(decoded) = Decoder::new()
@@ -429,20 +449,7 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8], single_channel: Option<bool>) -> Result
         .pixels_u8()
         .ok_or_else(|| Error::decode_error("gain-map decode produced no u8 pixels".into()))?
         .to_vec();
-    let collapse = match single_channel {
-        // Metadata says luma-only: collapse regardless of decode noise.
-        Some(true) => true,
-        // Metadata says per-channel: keep all three.
-        Some(false) => false,
-        // No metadata: collapse only when provably achromatic (full scan,
-        // no sampling).
-        None => rgb
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .all(|px| px[0] == px[1] && px[1] == px[2]),
-    };
-    let (data, channels) = if collapse {
+    let (data, channels) = if single_channel {
         // BT.709 luma — the same weighting the Gray decode applies.
         (
             rgb.as_chunks::<3>()
@@ -651,7 +658,7 @@ mod tests {
 
     #[test]
     fn denied_xmp_is_not_used_for_gainmap_parameters() {
-        let xmp = crate::container::xmp::generate_xmp(&metadata(2.0, 3.0), 12);
+        let xmp = crate::container::xmp::generate_xmp(&metadata(2.0, 3.0), 12).unwrap();
         let extras = make_test_extras_with_xmp(&xmp);
         assert!(metadata_with_xmp(&extras, true).unwrap().is_ok());
         assert!(metadata_with_xmp(&extras, false).is_none());
@@ -698,6 +705,7 @@ mod tests {
             m,
             ultrahdr_core::Iso21496Format::JpegApp2BodyWithUrn,
         )
+        .unwrap()
     }
 
     /// What the ISO 21496-1 record of `m` decodes to (its fractions round).
@@ -715,7 +723,7 @@ mod tests {
     ) -> DecodedExtras {
         let mut extras = DecodedExtras::new();
         if let Some(m) = primary_xmp {
-            let xmp = crate::container::xmp::generate_gainmap_xmp(m);
+            let xmp = crate::container::xmp::generate_gainmap_xmp(m).unwrap();
             extras.add_segment(
                 0xE1,
                 [&b"http://ns.adobe.com/xap/1.0/\0"[..], xmp.as_bytes()].concat(),

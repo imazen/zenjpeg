@@ -493,7 +493,7 @@ dependencies = [
  "fast-ssim2",
  "imgref",
  "jpeg-decoder",
- "moxcms 0.9.2",
+ "moxcms",
  "rayon",
  "rgb",
  "serde",
@@ -1291,16 +1291,6 @@ dependencies = [
  "adler2",
  "serde",
  "simd-adler32",
-]
-
-[[package]]
-name = "moxcms"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
-dependencies = [
- "num-traits",
- "pxfm",
 ]
 
 [[package]]
@@ -2204,24 +2194,8 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ultrahdr-core"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "964a038e0f75524ef9bd01ee6bda6d2457a3b6c1ca8df22478b9bb94b3547669"
-dependencies = [
- "archmage 0.9.33",
- "bytemuck",
- "enough",
- "half",
- "linear-srgb",
- "magetypes",
- "thiserror 2.0.21",
- "wide",
-]
-
-[[package]]
-name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=607614ce9b1027edac600b52e61c99fe18f5cb46#607614ce9b1027edac600b52e61c99fe18f5cb46"
+source = "git+https://github.com/imazen/ultrahdr?rev=a9e3eabc0884b03d2d0ef22627b1b41c03b09589#a9e3eabc0884b03d2d0ef22627b1b41c03b09589"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -2241,19 +2215,21 @@ dependencies = [
 
 [[package]]
 name = "ultrahdr-rs"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04d23de1da522be7d8abe8e7ebba3b99f08ac9ed0fcb1b16d01c60cfa96addbe"
+version = "0.4.1"
+source = "git+https://github.com/imazen/ultrahdr?rev=a9e3eabc0884b03d2d0ef22627b1b41c03b09589#a9e3eabc0884b03d2d0ef22627b1b41c03b09589"
 dependencies = [
  "bytemuck",
  "enough",
- "half",
  "imgref",
- "moxcms 0.8.1",
+ "moxcms",
  "rgb",
  "thiserror 2.0.21",
- "ultrahdr-core 0.4.1",
- "wide",
+ "ultrahdr-core",
+ "whereat",
+ "zencodec",
+ "zenjpeg",
+ "zenmeta",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -2871,8 +2847,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
+version = "0.3.0"
+source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
 dependencies = [
  "almost-enough",
  "bytemuck",
@@ -2886,8 +2862,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec-coroutine"
-version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
 dependencies = [
  "enough",
  "spin",
@@ -2897,8 +2873,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec-io"
-version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
 dependencies = [
  "enough",
  "how-far",
@@ -2908,8 +2884,8 @@ dependencies = [
 
 [[package]]
 name = "zencodec-testkit"
-version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
+version = "0.3.0"
+source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
 dependencies = [
  "enough",
  "how-far-along",
@@ -2971,7 +2947,7 @@ dependencies = [
  "linear-srgb",
  "magetypes",
  "memchr",
- "moxcms 0.9.2",
+ "moxcms",
  "mozjpeg-rs",
  "mozjpeg-sys",
  "png",
@@ -2988,7 +2964,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.21",
  "tinyvec",
- "ultrahdr-core 0.6.0",
+ "ultrahdr-core",
  "ultrahdr-rs",
  "wasm-bindgen",
  "wasm-bindgen-test",
@@ -3025,7 +3001,7 @@ dependencies = [
  "imgref",
  "jpegli-internals-sys",
  "libc",
- "moxcms 0.9.2",
+ "moxcms",
  "png",
  "rgb",
  "zenjpeg",
@@ -3036,8 +3012,8 @@ dependencies = [
 
 [[package]]
 name = "zenmeta"
-version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
 dependencies = [
  "roxmltree",
  "zencodec",
@@ -3057,7 +3033,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
+source = "git+https://github.com/imazen/zenpixels?rev=e0dba0052a839ecfe17e4c911a3761e793605adf#e0dba0052a839ecfe17e4c911a3761e793605adf"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -3068,7 +3044,7 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
+source = "git+https://github.com/imazen/zenpixels?rev=e0dba0052a839ecfe17e4c911a3761e793605adf#e0dba0052a839ecfe17e4c911a3761e793605adf"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -3079,7 +3055,7 @@ dependencies = [
  "lz4_flex",
  "magemath",
  "magetypes",
- "moxcms 0.9.2",
+ "moxcms",
  "once_cell",
  "pastey",
  "rgb",
@@ -3090,7 +3066,7 @@ dependencies = [
 [[package]]
 name = "zenpng"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenpng?rev=b6e759468691c8906b686a8d64732136f5a63518#b6e759468691c8906b686a8d64732136f5a63518"
+source = "git+https://github.com/imazen/zenpng?rev=1dd8248fa6683d5c3e22eb946a97b1f93996371a#1dd8248fa6683d5c3e22eb946a97b1f93996371a"
 dependencies = [
  "almost-enough",
  "archmage 0.9.33",

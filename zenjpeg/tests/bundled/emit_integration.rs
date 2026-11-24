@@ -11,7 +11,7 @@
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::{Metadata, MetadataPolicy};
 use zenjpeg::JpegEncoderConfig;
-use zenpixels::{Orientation as ZpOrientation, PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, Orientation as ZpOrientation, PixelView};
 
 /// 4×4 RGB8 checkerboard, tightly packed.
 fn rgb_4x4() -> Vec<u8> {
@@ -29,8 +29,7 @@ fn rgb_4x4() -> Vec<u8> {
 #[allow(deprecated)] // Exercises the legacy metadata setter.
 fn encode_with_meta(meta: Metadata) -> Vec<u8> {
     let pixels = rgb_4x4();
-    let slice =
-        PixelSlice::new(&pixels, 4, 4, 4 * 3, PixelDescriptor::RGB8_SRGB).expect("pixel slice");
+    let slice = PixelView::new(&pixels, 4, 4, 4 * 3, ImageSpec::rgb8_srgb()).expect("pixel slice");
     let enc = JpegEncoderConfig::new()
         .job()
         .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
@@ -47,8 +46,7 @@ fn has_marker(jpeg: &[u8], needle: &[u8]) -> bool {
 /// (`IccDisposition::KeepSource`) via the color-emit plan.
 #[test]
 fn emit_embeds_source_icc() {
-    // 132-byte minimal-length ICC-ish blob (not recognized as sRGB → kept).
-    let icc = vec![0u8; 132];
+    let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let meta = Metadata::none().with_icc(icc);
     let jpeg = encode_with_meta(meta);
     assert!(
@@ -100,6 +98,16 @@ fn emit_cicp_only_display_p3_synthesizes_icc() {
     );
 }
 
+#[test]
+fn emit_rgb_cicp_preserves_the_exact_transfer_code() {
+    let cicp = zencodec::Cicp::new(12, 6, 0, true);
+    let jpeg = encode_with_meta(Metadata::none().with_cicp(cicp));
+    let mut oracle = jpeg_decoder::Decoder::new(jpeg.as_slice());
+    oracle.decode().unwrap();
+    let icc = oracle.icc_profile().expect("ICC-only JPEG color carrier");
+    assert_eq!(zenpixels::Cicp::from_icc(&icc), Some(cicp));
+}
+
 /// A CICP-only source on a grayscale encode must NOT synthesize an RGB ICC —
 /// an RGB profile over gray pixels would recolor them (the resolver's
 /// grayscale terminal state).
@@ -107,8 +115,7 @@ fn emit_cicp_only_display_p3_synthesizes_icc() {
 #[allow(deprecated)] // Exercises the legacy metadata setter.
 fn emit_gray_cicp_only_synthesizes_nothing() {
     let pixels: Vec<u8> = (0..16u8).map(|i| i * 16).collect();
-    let slice =
-        PixelSlice::new(&pixels, 4, 4, 4, PixelDescriptor::GRAY8_SRGB).expect("pixel slice");
+    let slice = PixelView::new(&pixels, 4, 4, 4, ImageSpec::gray8_srgb()).expect("pixel slice");
     let meta = Metadata::none().with_cicp(zencodec::Cicp::DISPLAY_P3);
     let enc = JpegEncoderConfig::new()
         .job()
@@ -130,12 +137,51 @@ fn emit_gray_cicp_only_synthesizes_nothing() {
 /// image as sRGB.
 #[test]
 fn emit_cicp_pq_synthesizes_icc() {
-    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+    let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ_RGB);
     let jpeg = encode_with_meta(meta);
-    assert!(
-        has_marker(&jpeg, b"ICC_PROFILE\0"),
-        "PQ CICP must embed a synthesized ICC via APP2"
+    let mut oracle = jpeg_decoder::Decoder::new(jpeg.as_slice());
+    oracle
+        .decode()
+        .expect("independent decode of PQ-tagged JPEG");
+    let icc = oracle.icc_profile().expect("embedded PQ profile");
+    assert_eq!(&icc[12..16], b"mntr", "ICC display-device class");
+    assert_eq!(&icc[16..20], b"RGB ", "ICC data colour space");
+    assert_eq!(
+        zenpixels::Cicp::from_icc(&icc),
+        Some(zenpixels::Cicp::BT2100_PQ_RGB)
     );
+    let id = zenpixels::icc::IccIdentification::from_icc(&icc).expect("identify PQ ICC");
+    assert_eq!(
+        (id.primaries, id.transfer),
+        (zenpixels::Primaries::Bt2020, zenpixels::Transfer::Pq)
+    );
+
+    // Confirm the actual r/g/b tone curves against ST 2084, using the code
+    // coordinate in each sampled ICC curve rather than relying on its label.
+    let be_u32 = |bytes: &[u8]| u32::from_be_bytes(bytes.try_into().unwrap()) as usize;
+    let count = be_u32(&icc[128..132]);
+    for signature in [b"rTRC", b"gTRC", b"bTRC"] {
+        let entry = icc[132..132 + count * 12]
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .find(|entry| &entry[..4] == signature)
+            .expect("RGB transfer curve");
+        let offset = be_u32(&entry[4..8]);
+        let size = be_u32(&entry[8..12]);
+        let curve = &icc[offset..offset + size];
+        assert_eq!(&curve[..4], b"curv");
+        let samples = be_u32(&curve[8..12]);
+        assert!(samples >= 256);
+        for i in [samples / 4, samples / 2, 3 * samples / 4] {
+            let encoded = i as f64 / (samples - 1) as f64;
+            let p = encoded.powf(32.0 / 2523.0);
+            let expected = ((p - 3424.0 / 4096.0).max(0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * p))
+                .powf(16384.0 / 2610.0);
+            let actual = u16::from_be_bytes(curve[12 + i * 2..14 + i * 2].try_into().unwrap());
+            assert!((f64::from(actual) - expected * 65535.0).abs() <= 1.0);
+        }
+    }
 }
 
 /// A CICP outside the assigned H.273 grid (reserved code points) cannot be
@@ -145,8 +191,7 @@ fn emit_cicp_pq_synthesizes_icc() {
 #[allow(deprecated)] // Exercises the legacy metadata setter.
 fn emit_cicp_offgrid_unsynthesizable_is_an_encode_error() {
     let pixels = rgb_4x4();
-    let slice =
-        PixelSlice::new(&pixels, 4, 4, 4 * 3, PixelDescriptor::RGB8_SRGB).expect("pixel slice");
+    let slice = PixelView::new(&pixels, 4, 4, 4 * 3, ImageSpec::rgb8_srgb()).expect("pixel slice");
     // Primaries 3 / transfer 3 are "reserved" in H.273 — never assigned, so
     // no profile exists in the bundled consts or the icc-db blob.
     let meta = Metadata::none().with_cicp(zencodec::Cicp::new(3, 3, 0, true));
@@ -183,7 +228,7 @@ fn emit_carries_exif_with_orientation() {
 /// ICC + EXIF together both survive the color-emit-driven encode.
 #[test]
 fn emit_icc_and_exif_together() {
-    let icc = vec![1u8; 200];
+    let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let exif = exif_orientation_blob(1);
     let meta = Metadata::none().with_icc(icc).with_exif(exif);
     let jpeg = encode_with_meta(meta);

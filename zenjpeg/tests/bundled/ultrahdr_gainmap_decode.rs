@@ -102,7 +102,7 @@ fn create_test_hdr_with_range(width: u32, height: u32, max_r: f32, max_g: f32) -
         data,
         width,
         height,
-        UhdrPixelFormat::RgbaF32,
+        UhdrPixelFormat::RGBAF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
     )
@@ -1293,38 +1293,27 @@ fn test_reader_gainmap_jpeg_access() {
 
 #[test]
 fn test_reader_with_sample_file() {
-    let sample_path = std::path::Path::new("tests/images/ultrahdr_sample.jpg");
-    if !sample_path.exists() {
-        eprintln!(
-            "Skipping: test image not found at {}",
-            sample_path.display()
-        );
-        return;
-    }
-
-    let data = std::fs::read(sample_path).expect("Failed to read test file");
+    let data: &[u8] = include_bytes!("../images/ultrahdr_sample.jpg");
 
     // Full decode path should detect UltraHDR
     let decoded = Decoder::new()
-        .decode(&data, Unstoppable)
+        .decode(data, Unstoppable)
         .expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
-    if extras.is_ultrahdr() {
-        let (metadata, _) = extras
-            .ultrahdr_metadata()
-            .expect("Should have metadata")
-            .expect("Metadata parsing should succeed");
-
-        // Verify metadata is reasonable
-        assert!(metadata.alternate_hdr_headroom.is_finite());
-        assert!(metadata.base_hdr_headroom.is_finite());
-
-        if let Some(Ok(gainmap)) = extras.decode_gainmap() {
-            assert!(gainmap.width > 0 && gainmap.height > 0);
-            assert!(gainmap.channels == 1 || gainmap.channels == 3);
-        }
-    }
+    assert!(
+        extras.is_ultrahdr(),
+        "bundled sample must have Ultra HDR metadata"
+    );
+    let (metadata, _) = extras
+        .ultrahdr_metadata()
+        .expect("sample metadata")
+        .unwrap();
+    assert!(metadata.alternate_hdr_headroom.is_finite());
+    assert!(metadata.base_hdr_headroom.is_finite());
+    let gainmap = extras.decode_gainmap().expect("sample gain map").unwrap();
+    assert!(gainmap.width > 0 && gainmap.height > 0);
+    assert!(matches!(gainmap.channels, 1 | 3));
 }
 
 // ---------------------------------------------------------------------------
@@ -1421,4 +1410,76 @@ fn test_decode_gainmap_matches_native_gray_decode() {
         gray.pixels_u8().expect("gray pixels"),
         "decode_gainmap must be the exact luma plane (native Gray decode)"
     );
+}
+
+#[path = "../support/ultrahdr_iso.rs"]
+mod ultrahdr_iso;
+
+#[test]
+fn iso_mono_samples_use_three_records_and_preserve_zero_weight_base() {
+    use zenjpeg::ultrahdr::{GainMapMemory, HdrOutputFormat, decode_ultrahdr_hdr};
+    let codes = [70, 100, 150];
+    let jpeg = ultrahdr_iso::fixture(
+        &[codes],
+        None,
+        128,
+        2,
+        [[0, 8, 8, 1, 2], [0, 16, 8, 2, 1], [0, 24, 8, 3, 4]],
+    );
+
+    let primary = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    let extras = primary.extras().unwrap();
+    let (metadata, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+    assert_eq!(metadata.iso_channel_count(), Some(3));
+    let map = extras.decode_gainmap().unwrap().unwrap();
+    assert_eq!(map.channels, 1);
+    assert_eq!(map.data, [128; 64]);
+
+    let linear = codes.map(|code| {
+        let encoded = f32::from(code) / 255.0;
+        ((encoded + 0.055) / 1.055).powf(2.4)
+    });
+    let zero = codes.map(|code| linear_srgb::default::srgb_to_linear(f32::from(code) / 255.0));
+    let native = |boost| decode_ultrahdr_hdr(&jpeg, boost, HdrOutputFormat::LinearFloat).unwrap();
+    let sdr = native(1.0);
+    let hdr = native(4.0);
+    for y in 0..8 {
+        for rgba in sdr.as_view().row_as::<f32>(y).unwrap().as_chunks::<4>().0 {
+            assert_eq!(*rgba, [zero[0], zero[1], zero[2], 1.0]);
+        }
+        for rgba in hdr.as_view().row_as::<f32>(y).unwrap().as_chunks::<4>().0 {
+            for (c, (stops, base_offset, alt_offset)) in
+                [(1.0, 0.125, 0.25), (2.0, 0.25, 0.125), (3.0, 0.375, 0.5)]
+                    .into_iter()
+                    .enumerate()
+            {
+                let multiplier = (stops * 128.0 / 255.0_f32).exp2();
+                let expected = (linear[c] + base_offset) * multiplier - alt_offset;
+                assert!(
+                    (rgba[c] - expected).abs() <= 0.000_2,
+                    "channel {c}: {} versus {expected}",
+                    rgba[c]
+                );
+            }
+            assert_eq!(rgba[3], 1.0);
+        }
+    }
+    for (boost, reference) in [(1.0, sdr), (4.0, hdr)] {
+        for memory in [GainMapMemory::Full, GainMapMemory::Streaming] {
+            let config = UltraHdrReaderConfig::new()
+                .mode(UltraHdrMode::Hdr)
+                .display_boost(boost)
+                .memory_strategy(memory);
+            let mut reader = Decoder::new().ultrahdr_reader(&jpeg, config).unwrap();
+            for y in 0..8 {
+                let mut row = [0.0; 8 * 4];
+                assert_eq!(reader.read_rows(1, None, Some(&mut row), None).unwrap(), 1);
+                assert_eq!(
+                    &row,
+                    reference.as_view().row_as::<f32>(y).unwrap(),
+                    "{memory:?} row {y}"
+                );
+            }
+        }
+    }
 }

@@ -851,6 +851,15 @@ fn profile_of(spec: &ImageSpec) -> Option<&Arc<[u8]>> {
     }
 }
 
+fn icc_carrier(profile: &Arc<[u8]>, gray: bool) -> ColorSpace {
+    ColorSpace::Icc {
+        profile: Arc::clone(profile),
+        channels: if gray { 1 } else { 3 },
+        alpha: zenpixels::AlphaMode::None,
+        intent: zenpixels::RenderingIntent::RelativeColorimetric,
+    }
+}
+
 fn identify_icc(profile: &[u8]) -> Option<(Primaries, Transfer)> {
     zenpixels::icc::IccIdentification::from_icc_substitutable(profile)
         .map(|id| (id.primaries, id.transfer))
@@ -1189,8 +1198,7 @@ impl JpegEncoder {
         let profile = profile_of(desc);
         if desc.layout.sample != SampleType::U8
             || (profile.is_none()
-                && pixel_transfer(desc) != Transfer::Unknown
-                && pixel_transfer(desc) != Transfer::Gamma(zenpixels::Gamma::GAMMA_2_2))
+                && !matches!(pixel_transfer(desc), Transfer::Unknown | Transfer::AdobeRgb))
             || !(matches!(
                 self.effective_config.color_mode,
                 crate::encode::encoder_types::ColorMode::YCbCr { .. }
@@ -1257,9 +1265,11 @@ impl JpegEncoder {
         if !matches!(
             zencodec::resolve_color_emit(
                 &source,
+                &icc_carrier(icc, false),
                 &JPEG_ENCODE_CAPS,
                 policy.resolve_color(zencodec::ColorEmitPolicy::Balanced)
             )
+            .map_err(cms_error)?
             .icc,
             zencodec::IccDisposition::KeepSource
         ) {
@@ -1340,13 +1350,9 @@ impl JpegEncoder {
 
     /// Decide which description the colour carrier is written from.
     ///
-    /// Job metadata labels pixels without an explicit colour context, even when
-    /// their descriptor names other primaries (the established contract, also
-    /// zenpng's `explicit_icc_is_not_overridden_by_descriptor_derived_cicp`).
-    /// It must agree with an explicit context: a profile kept after a
-    /// conversion is a stale carrier. Without colour metadata the stored
-    /// samples' own interpretation is written, so a checked request, which
-    /// carries no metadata, keeps the pixels' colour.
+    /// Job metadata can supply a carrier for default-labelled samples. A
+    /// known profile must agree with explicit non-default sample color.
+    /// Without metadata, keep the stored samples' own interpretation.
     fn bind_color(
         &self,
         descriptor: &ImageSpec,
@@ -1378,6 +1384,19 @@ impl JpegEncoder {
         };
         let explicit = profile_of(descriptor).is_some();
         if !explicit {
+            if let (Some(icc), Some(asserted)) = (
+                metadata.0,
+                match stored {
+                    StoredColor::Cicp(cicp) => identify_cicp(cicp),
+                    _ => None,
+                },
+            ) && zenpixels::icc::IccIdentification::from_icc(icc)
+                .is_some_and(|id| (id.primaries, id.transfer) != asserted)
+            {
+                return Err(Error::icc_error(
+                    "the supplied ICC contradicts the pixels' current colour".into(),
+                ));
+            }
             let metadata_transfer = metadata
                 .0
                 .and_then(zenpixels::icc::IccIdentification::from_icc)
@@ -1481,8 +1500,7 @@ impl JpegEncoder {
                 zencodec::ColorEmitPolicy::Balanced
             };
             let color_policy = policy.resolve_color(default_color);
-            // The channel count lets the resolver suppress ICC synthesis for
-            // grayscale, where an RGB profile would recolor the image.
+            // Gray synthesis uses its own profile class and transfer.
             let mut src =
                 zencodec::SourceColor::default().with_channel_count(layout.channels() as u8);
             if let Some(c) = cicp {
@@ -1491,7 +1509,49 @@ impl JpegEncoder {
             if let Some(icc) = icc {
                 src = src.with_icc_profile(Arc::clone(icc));
             }
-            let plan = zencodec::resolve_color_emit(&src, &JPEG_ENCODE_CAPS, color_policy);
+            let color = if let Some(icc) = icc {
+                let expected = if gray {
+                    IccColorSpace::Gray
+                } else {
+                    IccColorSpace::Rgb
+                };
+                if IccColorSpace::from_icc(icc) != Some(expected) {
+                    return Err(Error::icc_error(
+                        "the ICC carrier does not describe the stored JPEG channels".into(),
+                    ));
+                }
+                icc_carrier(icc, gray)
+            } else {
+                let c = cicp.ok_or_else(|| Error::internal("JPEG colour carrier missing CICP"))?;
+                if c.matrix_coefficients != 0 || !c.full_range {
+                    return Err(Error::icc_error(
+                        "JPEG ICC synthesis requires full-range identity-matrix input".into(),
+                    ));
+                }
+                if c.primaries_name().is_none() || c.transfer_name().is_none() {
+                    return Err(Error::icc_error(
+                        "JPEG ICC synthesis requires assigned H.273 code points".into(),
+                    ));
+                }
+                let primaries =
+                    Primaries::from_cicp(c.color_primaries).unwrap_or(Primaries::Unknown);
+                // Some H.273 codes map to a shared Transfer variant that
+                // projects back to a different code. Let the RGB resolver
+                // carry the exact source tuple in that case.
+                let transfer = Transfer::from_cicp(c.transfer_characteristics)
+                    .filter(|transfer| transfer.to_cicp() == Some(c.transfer_characteristics))
+                    .unwrap_or(Transfer::Unknown);
+                if gray {
+                    ImageSpec::gray8_srgb().with_transfer(transfer).color
+                } else {
+                    ImageSpec::rgb8_srgb()
+                        .with_primaries(primaries)
+                        .with_transfer(transfer)
+                        .color
+                }
+            };
+            let plan = zencodec::resolve_color_emit(&src, &color, &JPEG_ENCODE_CAPS, color_policy)
+                .map_err(cms_error)?;
             match plan.icc {
                 zencodec::IccDisposition::KeepSource => {
                     if let Some(icc) = icc {
@@ -1504,7 +1564,8 @@ impl JpegEncoder {
                             .is_some_and(|required| required.as_ref() == icc.as_ref());
                     }
                 }
-                zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+                zencodec::IccDisposition::SynthesizeFrom(cicp)
+                | zencodec::IccDisposition::SynthesizeGrayFrom(cicp) => {
                     use zenpixels_convert::icc_profiles::SynthesizedIcc;
                     // `Profile` → embed; `NotNeeded` (sRGB default) →
                     // nothing. Every other outcome is an ERROR, not a
@@ -1512,7 +1573,12 @@ impl JpegEncoder {
                     // embedded APP2 ICC carries the explicit color. The
                     // synthesizer can refuse valid code points such as HLG
                     // when the display rendering target is unspecified.
-                    match SynthesizedIcc::for_cicp(cicp) {
+                    let synthesized = if gray {
+                        SynthesizedIcc::for_gray_cicp(cicp)
+                    } else {
+                        SynthesizedIcc::for_cicp(cicp)
+                    };
+                    match synthesized {
                         SynthesizedIcc::Profile(bytes) => {
                             req = req.icc_profile_owned(bytes.into_owned());
                             wrote_icc = true;
@@ -2413,7 +2479,7 @@ mod tests {
         use zenpixels_convert::icc_profiles::ADOBE_RGB;
         let desc = ImageSpec::rgb8_srgb()
             .with_primaries(Primaries::AdobeRgb)
-            .with_transfer(Transfer::Gamma(zenpixels::Gamma::GAMMA_2_2));
+            .with_transfer(Transfer::AdobeRgb);
         let good = JpegEncoderConfig::new()
             .job()
             .try_with_metadata_policy(

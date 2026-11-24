@@ -6,7 +6,7 @@ use std::{io::Cursor, sync::Arc};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::{Metadata, MetadataPolicy, UnsupportedOperation};
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{ColorContext, ColorProfileSource, PixelDescriptor, PixelSlice};
+use zenpixels::{AlphaMode, ColorSpace, ImageSpec, PixelView, RenderingIntent};
 use zenpixels_convert::icc_profiles::ADOBE_RGB;
 
 fn record() -> Metadata {
@@ -16,16 +16,17 @@ fn record() -> Metadata {
         .with_xmp(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>".as_slice())
         .with_icc(ADOBE_RGB)
 }
-fn pixels(data: &[u8]) -> PixelSlice<'_> {
-    let (p, t) = ColorProfileSource::Icc(ADOBE_RGB).resolve().unwrap();
-    let desc = PixelDescriptor::RGB8_SRGB
-        .with_primaries(p)
-        .with_transfer(t);
-    PixelSlice::new(data, 16, 17, 48, desc)
-        .unwrap()
-        .with_color_context(Arc::new(ColorContext::from_icc(Arc::<[u8]>::from(
-            ADOBE_RGB,
-        ))))
+fn pixels(data: &[u8]) -> PixelView<'_> {
+    let desc = ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: Arc::from(ADOBE_RGB),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::RelativeColorimetric,
+        },
+    );
+    PixelView::new(data, 16, 17, 48, desc).unwrap()
 }
 fn assert_retained(bytes: &[u8], expected: &Metadata) {
     let info = JpegDecoderConfig::new().probe_full_metadata(bytes).unwrap();
@@ -98,9 +99,9 @@ fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
         );
         let mut encoder = job().encoder().unwrap();
         let px = pixels(&data);
-        encoder.begin(16, 17, px.descriptor()).unwrap();
+        encoder.begin(16, 17, px.spec().clone()).unwrap();
         for y in 0..17 {
-            encoder.push_rows(px.sub_rows(y, 1)).unwrap();
+            encoder.push_rows(px.sub_rows(y, 1).unwrap()).unwrap();
         }
         let streamed = encoder.finish().unwrap();
         assert_retained(streamed.data(), &expected);
@@ -162,7 +163,7 @@ fn unsupported_hdr_is_atomic_and_checked_clear_replaces_old_record() {
     assert_retained(output.data(), &expected);
     job.try_set_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
         .unwrap();
-    let plain = PixelSlice::new(&data, 16, 17, 48, PixelDescriptor::RGB8_SRGB).unwrap();
+    let plain = PixelView::new(&data, 16, 17, 48, ImageSpec::rgb8_srgb()).unwrap();
     let output = job.encoder().unwrap().encode(plain).unwrap();
     let info = JpegDecoderConfig::new()
         .probe_full_metadata(output.data())
@@ -189,7 +190,7 @@ fn later_legacy_setters_cannot_discard_checked_requirements() {
         EncodePolicy::none().with_embed_icc(false),
     ] {
         let mut encoder = make().with_policy(policy).encoder().unwrap();
-        assert!(encoder.begin(16, 17, pixels(&data).descriptor()).is_err());
+        assert!(encoder.begin(16, 17, pixels(&data).spec().clone()).is_err());
         assert!(encoder.pending_output().is_empty());
         assert!(
             make()
@@ -264,7 +265,7 @@ fn later_dynamic_replacement_and_policy_conflict_refuse_before_output() {
     job.set_policy(EncodePolicy::none().with_embed_xmp(false));
     let mut encoder = job.into_encoder().unwrap();
     let data = vec![0; 16 * 17 * 3];
-    assert!(encoder.begin(16, 17, pixels(&data).descriptor()).is_err());
+    assert!(encoder.begin(16, 17, pixels(&data).spec().clone()).is_err());
     assert!(encoder.pending_output().is_empty());
 }
 
@@ -304,7 +305,7 @@ fn checked_exif_xmp_reach_pull_and_srgba_paths() {
         .with_canvas_size(16, 17)
         .encoder()
         .unwrap()
-        .encode_from(&mut |y, mut out: zenpixels::PixelSliceMut<'_>| {
+        .encode_from(&mut |y, mut out: zenpixels::PixelViewMut<'_>| {
             for row in 0..out.rows() {
                 let offset = (y + row) as usize * 48;
                 out.row_mut(row).copy_from_slice(&raw[offset..offset + 48]);
@@ -331,7 +332,7 @@ fn conflicts_refuse_plan_and_pull_before_source_access() {
         .try_with_metadata_policy(record(), MetadataPolicy::PreserveExact)
         .unwrap()
         .with_policy(EncodePolicy::none().with_embed_xmp(false));
-    let desc = pixels(&vec![0; 16 * 17 * 3]).descriptor();
+    let desc = pixels(&vec![0; 16 * 17 * 3]).spec().clone();
     assert!(
         job.plan_encode(&EncodeDeclaration::new(16, 17, desc))
             .is_err()
@@ -358,9 +359,14 @@ fn later_conflicting_color_declaration_refuses_before_header() {
         .job()
         .try_with_metadata_policy(record(), MetadataPolicy::PreserveExact)
         .unwrap();
-    let conflicting = ColorContext::from_icc(Arc::<[u8]>::from(DISPLAY_P3_V4));
+    let conflicting = ColorSpace::Icc {
+        profile: Arc::from(DISPLAY_P3_V4),
+        channels: 3,
+        alpha: AlphaMode::None,
+        intent: RenderingIntent::RelativeColorimetric,
+    };
     let declaration =
-        EncodeDeclaration::new(16, 17, PixelDescriptor::RGB8_SRGB).with_color(&conflicting);
+        EncodeDeclaration::new(16, 17, ImageSpec::rgb8_srgb()).with_color(conflicting);
     assert!(job.plan_encode(&declaration).is_err());
     let mut encoder = job.encoder().unwrap();
     assert!(encoder.begin_declared(&declaration).is_err());
@@ -392,16 +398,13 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     let input = img_parts::jpeg::Jpeg::from_bytes(sample.as_slice().to_vec().into()).unwrap();
     let icc = input.icc_profile().expect("fixture contains the sRGB ICC");
     assert_eq!(
-        ColorProfileSource::Icc(&icc).resolve(),
-        Some((
-            zenpixels::ColorPrimaries::Bt709,
-            zenpixels::TransferFunction::Srgb
-        ))
+        zenpixels::icc::IccIdentification::from_icc(&icc).map(|id| (id.primaries, id.transfer)),
+        Some((zenpixels::Primaries::Bt709, zenpixels::Transfer::Srgb))
     );
     let meta = Metadata::none().with_icc(icc.as_ref());
     let expected = meta.filtered(&MetadataPolicy::PreserveExact);
     let data = vec![51u8; 16 * 17 * 3];
-    let px = || PixelSlice::new(&data, 16, 17, 48, PixelDescriptor::RGB8_SRGB).unwrap();
+    let px = || PixelView::new(&data, 16, 17, 48, ImageSpec::rgb8_srgb()).unwrap();
     let job = || {
         JpegEncoderConfig::new()
             .with_huffman(false)
@@ -427,7 +430,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
         "sRGB checked one-shot vs legacy Verbatim"
     );
     let mut encoder = job().encoder().unwrap();
-    encoder.begin(16, 17, PixelDescriptor::RGB8_SRGB).unwrap();
+    encoder.begin(16, 17, ImageSpec::rgb8_srgb()).unwrap();
     encoder.push_rows(px()).unwrap();
     let streamed = encoder.finish().unwrap();
     assert_retained(streamed.data(), &expected);
@@ -442,7 +445,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     ));
     let conflicting = EncodePolicy::none().with_color(drop_icc);
     let mut encoder = job().with_policy(conflicting).encoder().unwrap();
-    assert!(encoder.begin(16, 17, PixelDescriptor::RGB8_SRGB).is_err());
+    assert!(encoder.begin(16, 17, ImageSpec::rgb8_srgb()).is_err());
     assert!(encoder.pending_output().is_empty());
     assert!(
         job()
@@ -468,6 +471,6 @@ fn required_field_only_orientation_cannot_be_discarded_later() {
         .unwrap()
         .with_policy(EncodePolicy::none().with_embed_exif(false));
     let mut encoder = job.encoder().unwrap();
-    assert!(encoder.begin(16, 17, PixelDescriptor::RGB8_SRGB).is_err());
+    assert!(encoder.begin(16, 17, ImageSpec::rgb8_srgb()).is_err());
     assert!(encoder.pending_output().is_empty());
 }

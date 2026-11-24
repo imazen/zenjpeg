@@ -16,6 +16,7 @@ pub struct JpegStreamingDecoder<'a> {
     pub(super) reader: crate::decode::ScanlineReader<'a>,
     pub(super) info: ImageInfo,
     pub(super) descriptor: ImageSpec,
+    pub(super) origin: zenpixels::ColorOrigin,
     /// Reusable row buffer for decoded pixel data (sized for MCU-row batches).
     /// 4-byte aligned so bytemuck casts to &mut [f32] are safe.
     pub(super) row_buf: aligned_vec::AVec<u8, aligned_vec::ConstAlign<4>>,
@@ -159,9 +160,12 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                 stride,
                 self.descriptor.clone(),
             )
-            .map_err(|_| Error::internal("streaming decode: pixel slice construction failed"))?;
+            .map_err(|_| Error::internal("streaming decode: pixel slice construction failed"))?
+            .with_origin(&self.origin);
             let slice = if ch_type == SampleType::U16 {
-                super::decode::u16_exact_depth(self.precision)?.attach_verified(slice)
+                let mut facts = slice.facts();
+                facts.depth = Some(super::decode::u16_exact_depth(self.precision)?);
+                slice.with_facts(facts)
             } else {
                 slice
             };

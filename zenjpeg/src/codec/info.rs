@@ -105,7 +105,7 @@ pub(super) fn decode_descriptor(
     preferred: &[ImageSpec],
     header: &crate::decode::JpegInfo,
     correct_color: Option<&crate::color::icc::TargetColorSpace>,
-) -> ImageSpec {
+) -> Result<ImageSpec, crate::error::Error> {
     let base = select_decode_descriptor(preferred, header.num_components, header.precision);
     let sc = source_color_from_header(header);
     // XYB inversion produces sRGB. Native float reconstruction returns linear values.
@@ -113,16 +113,16 @@ pub(super) fn decode_descriptor(
 }
 
 pub(super) fn decoded_pixel_spec(
-    mut base: ImageSpec,
+    base: ImageSpec,
     source: &zencodec::decode::SourceColor,
     xyb: bool,
     corrected: Option<&crate::color::icc::TargetColorSpace>,
-) -> ImageSpec {
+) -> Result<ImageSpec, crate::error::Error> {
     use crate::color::icc::TargetColorSpace;
     use zenpixels::{Primaries, SampleType, Transfer};
 
     if xyb {
-        return base;
+        return Ok(base);
     }
     if cfg!(feature = "moxcms")
         && source.icc_profile.is_some()
@@ -134,7 +134,7 @@ pub(super) fn decoded_pixel_spec(
             Some(TargetColorSpace::Rec2020) => Primaries::Bt2020,
             _ => Primaries::Bt709,
         };
-        return base.with_primaries(primaries);
+        return Ok(base.with_primaries(primaries));
     }
     if base.layout.sample == SampleType::F32 {
         let origin = source.authoritative_origin();
@@ -146,12 +146,12 @@ pub(super) fn decoded_pixel_spec(
         } else {
             Primaries::Bt709
         };
-        return base
+        return Ok(base
             .with_primaries(primaries)
-            .with_transfer(Transfer::Linear);
+            .with_transfer(Transfer::Linear));
     }
-    base = zencodec::helpers::descriptor_for_decoded_pixels_v2(base.layout, source, None);
-    base
+    zencodec::helpers::descriptor_for_decoded_pixels_v2(base.layout, source, None)
+        .map_err(|error| crate::error::Error::icc_error(alloc::format!("{error}")))
 }
 
 /// Populate [`ImageInfo`] metadata (ICC / EXIF + orientation / XMP / JFIF

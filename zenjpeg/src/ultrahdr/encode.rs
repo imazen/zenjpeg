@@ -609,7 +609,7 @@ pub fn encode_with_gainmap_format(
     let gainmap_jpeg = encode_gainmap_jpeg(gainmap, gainmap_quality, &stop)?;
     stop.check()?;
 
-    let metadata_markers = build_gainmap_metadata_markers(metadata, metadata_format);
+    let metadata_markers = build_gainmap_metadata_markers(metadata, metadata_format)?;
     let mut gainmap_final = gainmap_jpeg;
     for marker in metadata_markers.iter().rev() {
         gainmap_final = inject_marker_after_soi(&gainmap_final, marker)?;
@@ -763,23 +763,24 @@ fn tonemap_to_pixel_buffer(hdr: &PixelBuffer, target_gamut: ColorPrimaries) -> R
 fn build_gainmap_metadata_markers(
     metadata: &GainMapMetadata,
     format: GainMapEncodingFormat,
-) -> Vec<Vec<u8>> {
+) -> Result<Vec<Vec<u8>>> {
     let mut markers = Vec::with_capacity(2);
     if matches!(
         format,
         GainMapEncodingFormat::Xmp | GainMapEncodingFormat::Both
     ) {
-        let xmp = generate_gainmap_xmp(metadata);
+        let xmp = generate_gainmap_xmp(metadata).map_err(ultrahdr_to_zenjpeg_error)?;
         markers.push(create_xmp_app1_marker(&xmp));
     }
     if matches!(
         format,
         GainMapEncodingFormat::Iso21496 | GainMapEncodingFormat::Both
     ) {
-        let iso_body = serialize_iso21496_fmt(metadata, Iso21496Format::JpegApp2BodyWithUrn);
+        let iso_body = serialize_iso21496_fmt(metadata, Iso21496Format::JpegApp2BodyWithUrn)
+            .map_err(ultrahdr_to_zenjpeg_error)?;
         markers.push(wrap_app2(&iso_body));
     }
-    markers
+    Ok(markers)
 }
 
 /// Wrap a body in a JPEG APP2 marker (`FF E2` + big-endian length-with-self
@@ -1081,7 +1082,7 @@ mod tests {
         let curve = Bt2446C::new(203.0, 100.0);
         let white = curve.map_luma(1.0);
         assert!((white - 0.9).abs() < 0.02, "SDR diffuse white: {white}");
-        let hlg_white = linear_srgb::tf::linear_to_hlg(hlg_ootf_inv(203.0, 1000.0));
+        let hlg_white = linear_srgb::default::linear_to_hlg(hlg_ootf_inv(203.0, 1000.0));
         for (transfer, encoded) in [
             (TransferFunction::Linear, 1.0),
             (TransferFunction::Srgb, 1.0),

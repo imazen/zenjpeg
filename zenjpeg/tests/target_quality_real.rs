@@ -16,11 +16,9 @@
 use std::borrow::Cow;
 
 use fast_ssim2::{LinearRgbImage, compute_ssimulacra2, srgb_u8_to_linear};
-use imgref::Img;
-use rgb::Rgb;
 use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 
-use zenpixels::PixelDescriptor;
+use zenpixels::ImageSpec;
 
 use zenjpeg::target_quality::{TargetOptions, encode_with_target};
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
@@ -66,29 +64,17 @@ fn to_linear(bytes: &[u8], w: usize, h: usize) -> LinearRgbImage {
 }
 
 fn encode_at(rgb8: &[u8], w: usize, h: usize, q: f32) -> Vec<u8> {
-    let pixels: Vec<Rgb<u8>> = rgb8
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|c| Rgb {
-            r: c[0],
-            g: c[1],
-            b: c[2],
-        })
-        .collect();
-    let img = Img::new(pixels, w, h);
     let enc = JpegEncoderConfig::new().with_calibrated_quality(q.round().clamp(1.0, 100.0));
-    enc.encode(zenpixels::PixelSlice::from(img.as_ref()).into())
-        .expect("encode jpeg")
-        .data()
-        .to_vec()
+    let view = zenpixels::PixelView::from_packed(rgb8, w as u32, h as u32, ImageSpec::rgb8_srgb())
+        .unwrap();
+    enc.encode(view).expect("encode jpeg").data().to_vec()
 }
 
 /// Decode a JPEG to packed RGB8 bytes (+ dims).
 fn decode_rgb8(bytes: &[u8]) -> (Vec<u8>, usize, usize) {
     let out = JpegDecoderConfig::new()
         .job()
-        .decoder(Cow::Borrowed(bytes), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(bytes), &[ImageSpec::rgb8_srgb()])
         .expect("build decoder")
         .decode()
         .expect("decode jpeg");

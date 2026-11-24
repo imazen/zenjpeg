@@ -1865,6 +1865,16 @@ float, overriding an earlier supported U8 format. Precision now uses the same
 first-supported selector as layout, after parsing source component count.
 The controlled-decode target retains mixed precision ordering regressions.
 
+## Known Bugs: zenpixels 0.5 dev dependency resolution
+
+The Wave 3 PNG pin returns zenpixels 0.5 `PixelBuf`. The checked-in
+`zensim-regress` revision `abec986d` still passes those PNG results to two
+helpers taking zenpixels 0.3 `PixelBuffer` in `src/pixel_ops/mod.rs` (calls
+at lines 228 and 577). The optional resize pipeline and metric font resizer
+also keep zenpixels 0.3 through `zenresize`. Align those consumers before
+requiring a single-version all-features graph. Native JPEG and its codec/HDR
+interchange use the Wave 3 zenpixels 0.5 source.
+
 ## Known Bugs: shared sibling cohort test dependency (2026-11-05)
 
 The unlanded sibling cohort update cannot compile the Rust tests: two E0308
