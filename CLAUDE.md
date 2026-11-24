@@ -639,6 +639,17 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 
 ## Investigation Notes
 
+**XYB decode throughput (2026-11-24, investigation):** On main `311e39ba`,
+resident 1024² photo Q85 decoding on AVX2 spends 38% of sampled cycles in
+XYB→sRGB, 10% in coefficient-to-plane decoding, and 3% in f32 upsampling;
+allocation/page faults also matter. The f32 IDCT already dispatches to AVX2.
+The output OETF calls linear-srgb's f64 fused rational polynomial per lane:
+substituting its f32 SIMD transfer or an IMI quartic changes rounding. Preserve
+the f32 sqrt → f64 fused Horner → f32 graph when vectorizing. Bias statistics
+are gathered even for XYB (which never applies them), and full-resolution
+planes are copied during upsampling. Optimize these without changing output.
+
+
 **Cross-backend dispatch parity tolerance (2026-04-21):**
 
 `test_dispatch_parity` (zenjpeg/tests/encoder_regression.rs) tolerates up to

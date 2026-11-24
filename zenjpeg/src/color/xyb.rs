@@ -1022,10 +1022,8 @@ pub fn srgb_to_xyb_batch(input: &[[u8; 3]], output: &mut [[f32; 3]]) {
 //   4. Inverse opsin:      linear_rgb = INV_OPSIN * (opsin - bias)
 //   5. Linear → sRGB OETF
 //
-// Steps 1-4 are pure arithmetic that fold into f32x8. Step 5 (the OETF)
-// uses the scalar `linear_to_srgb` rational polynomial per lane — it's
-// already branch-light and cheap without a powf call, and matches the
-// encode side's scalar LUT pattern (per-lane gather / scatter).
+// Steps 1-4 use f32x8. The OETF preserves the scalar dependency's f64
+// polynomial precision, evaluated four lanes at a time.
 
 /// Inverse opsin absorbance matrix (3x3 row-major), from
 /// `xyb_to_linear_rgb`. Inverse of `XYB_OPSIN_ABSORBANCE_MATRIX`.
@@ -1045,22 +1043,62 @@ fn mixed_cube_v8<T: magetypes::simd::backends::F32x8Convert>(
     v * v * v
 }
 
-/// Interleaves & stores 8 pixels worth of linear RGB to an interleaved
-/// output buffer, applying the sRGB OETF per lane and converting to u8.
+/// Vector form of `linear_srgb::default::linear_to_srgb` (linear-srgb
+/// c103c1ce, rational_poly.rs). Keep the f32 sqrt, f64 fused Horner evaluation,
+/// f32 narrowing and C0-continuous toe: an f32 polynomial changes pixel rounding.
+/// The tests compare the complete float result with that scalar dependency.
 #[inline(always)]
-fn store_linear_rgb_as_srgb_u8_8(
-    r_arr: [f32; 8],
-    g_arr: [f32; 8],
-    b_arr: [f32; 8],
-    rgb: &mut [u8],
-    base_pixel: usize,
-) {
-    for j in 0..8 {
-        let idx = (base_pixel + j) * 3;
-        rgb[idx] = linear_to_srgb_u8(r_arr[j]);
-        rgb[idx + 1] = linear_to_srgb_u8(g_arr[j]);
-        rgb[idx + 2] = linear_to_srgb_u8(b_arr[j]);
+fn linear_to_srgb_v8<T>(token: T, linear: GenericF32x8<T>) -> GenericF32x8<T>
+where
+    T: magetypes::simd::backends::F32x8Convert + magetypes::simd::backends::F64x4Backend,
+{
+    use magetypes::simd::generic::f64x4;
+    // Coefficients are f32 in the dependency, promoted exactly to f64.
+    let p = [
+        -1.356_440_97e-2f32,
+        9.336_896_24e-2,
+        1.157_270_53e1,
+        5.002_124_79e1,
+        2.792_420_96e1,
+    ];
+    let q = [
+        2.633_812_73e-1f32,
+        8.998_917_58,
+        4.477_739_72e1,
+        3.455_830_76e1,
+        1.0,
+    ];
+    let zero = GenericF32x8::splat_t(token, 0.0);
+    let one = GenericF32x8::splat_t(token, 1.0);
+    let a = linear.max(zero).min(one);
+    let roots = a.sqrt().to_array();
+    let mut power = [0.0f32; 8];
+    for (src, dst) in roots
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(power.as_chunks_mut::<4>().0)
+    {
+        let x = f64x4::from_array_t(token, src.map(f64::from));
+        let splat = |v: f32| f64x4::splat_t(token, f64::from(v));
+        let mut yp = splat(p[4]);
+        let mut yq = splat(q[4]);
+        for i in (0..4).rev() {
+            yp = yp.mul_add_fused(x, splat(p[i]));
+            yq = yq.mul_add_fused(x, splat(q[i]));
+        }
+        *dst = (yp / yq).to_array().map(|v| v as f32);
     }
+    let power = GenericF32x8::from_array_t(token, power);
+    let toe = a * GenericF32x8::splat_t(token, 12.92);
+    let result = GenericF32x8::blend(
+        a.simd_le(GenericF32x8::splat_t(token, 0.003_041_282_6)),
+        toe,
+        power,
+    );
+    let result = GenericF32x8::blend(a.simd_ge(one), one, result);
+    // Scalar clamp retains NaN, unlike a backend's min/max instructions.
+    GenericF32x8::blend(linear.simd_eq(linear), result, linear)
 }
 
 /// Core SIMD kernel: 8 lanes of scaled-XYB planes → linear RGB f32x8.
@@ -1147,11 +1185,11 @@ pub fn xyb_planes_to_srgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
 
-    incant!(xyb_planes_to_srgb_u8_impl(plane0, plane1, plane2, rgb));
+    attuned!(xyb_planes_to_srgb_u8_impl(plane0, plane1, plane2, rgb));
 }
 
-#[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[attune(_*, _*_t)]
+#[inline]
 fn xyb_planes_to_srgb_u8_impl(
     token: Token,
     plane0: &[f32],
@@ -1167,48 +1205,20 @@ fn xyb_planes_to_srgb_u8_impl(
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let p0 = f32x8::from_array_t(
-            token,
-            [
-                plane0[base],
-                plane0[base + 1],
-                plane0[base + 2],
-                plane0[base + 3],
-                plane0[base + 4],
-                plane0[base + 5],
-                plane0[base + 6],
-                plane0[base + 7],
-            ],
-        );
-        let p1 = f32x8::from_array_t(
-            token,
-            [
-                plane1[base],
-                plane1[base + 1],
-                plane1[base + 2],
-                plane1[base + 3],
-                plane1[base + 4],
-                plane1[base + 5],
-                plane1[base + 6],
-                plane1[base + 7],
-            ],
-        );
-        let p2 = f32x8::from_array_t(
-            token,
-            [
-                plane2[base],
-                plane2[base + 1],
-                plane2[base + 2],
-                plane2[base + 3],
-                plane2[base + 4],
-                plane2[base + 5],
-                plane2[base + 6],
-                plane2[base + 7],
-            ],
-        );
+        let p0 = f32x8::load_t(token, plane0[base..].first_chunk::<8>().unwrap());
+        let p1 = f32x8::load_t(token, plane1[base..].first_chunk::<8>().unwrap());
+        let p2 = f32x8::load_t(token, plane2[base..].first_chunk::<8>().unwrap());
 
         let (r, g, b) = scaled_xyb_planes_to_linear_rgb_v8(token, p0, p1, p2);
-        store_linear_rgb_as_srgb_u8_8(r.to_array(), g.to_array(), b.to_array(), rgb, base);
+        let r = (linear_to_srgb_v8(token, r) * f32x8::splat_t(token, 255.0)).to_array();
+        let g = (linear_to_srgb_v8(token, g) * f32x8::splat_t(token, 255.0)).to_array();
+        let b = (linear_to_srgb_v8(token, b) * f32x8::splat_t(token, 255.0)).to_array();
+        let dst: &mut [u8; 24] = (&mut rgb[base * 3..base * 3 + 24]).try_into().unwrap();
+        for j in 0..8 {
+            dst[j * 3] = r[j].round() as u8;
+            dst[j * 3 + 1] = g[j].round() as u8;
+            dst[j * 3 + 2] = b[j].round() as u8;
+        }
     }
 
     // Scalar remainder — reference path. Matches the SIMD kernel:
@@ -1241,11 +1251,11 @@ pub fn xyb_planes_to_srgb_f32_simd(
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
 
-    incant!(xyb_planes_to_srgb_f32_impl(plane0, plane1, plane2, rgb));
+    attuned!(xyb_planes_to_srgb_f32_impl(plane0, plane1, plane2, rgb));
 }
 
-#[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[attune(_*, _*_t)]
+#[inline]
 fn xyb_planes_to_srgb_f32_impl(
     token: Token,
     plane0: &[f32],
@@ -1261,55 +1271,19 @@ fn xyb_planes_to_srgb_f32_impl(
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let p0 = f32x8::from_array_t(
-            token,
-            [
-                plane0[base],
-                plane0[base + 1],
-                plane0[base + 2],
-                plane0[base + 3],
-                plane0[base + 4],
-                plane0[base + 5],
-                plane0[base + 6],
-                plane0[base + 7],
-            ],
-        );
-        let p1 = f32x8::from_array_t(
-            token,
-            [
-                plane1[base],
-                plane1[base + 1],
-                plane1[base + 2],
-                plane1[base + 3],
-                plane1[base + 4],
-                plane1[base + 5],
-                plane1[base + 6],
-                plane1[base + 7],
-            ],
-        );
-        let p2 = f32x8::from_array_t(
-            token,
-            [
-                plane2[base],
-                plane2[base + 1],
-                plane2[base + 2],
-                plane2[base + 3],
-                plane2[base + 4],
-                plane2[base + 5],
-                plane2[base + 6],
-                plane2[base + 7],
-            ],
-        );
+        let p0 = f32x8::load_t(token, plane0[base..].first_chunk::<8>().unwrap());
+        let p1 = f32x8::load_t(token, plane1[base..].first_chunk::<8>().unwrap());
+        let p2 = f32x8::load_t(token, plane2[base..].first_chunk::<8>().unwrap());
 
         let (r, g, b) = scaled_xyb_planes_to_linear_rgb_v8(token, p0, p1, p2);
-        let r_arr = r.to_array();
-        let g_arr = g.to_array();
-        let b_arr = b.to_array();
+        let r_arr = linear_to_srgb_v8(token, r).to_array();
+        let g_arr = linear_to_srgb_v8(token, g).to_array();
+        let b_arr = linear_to_srgb_v8(token, b).to_array();
         for j in 0..8 {
             let idx = (base + j) * 3;
-            rgb[idx] = linear_to_srgb(r_arr[j].clamp(0.0, 1.0));
-            rgb[idx + 1] = linear_to_srgb(g_arr[j].clamp(0.0, 1.0));
-            rgb[idx + 2] = linear_to_srgb(b_arr[j].clamp(0.0, 1.0));
+            rgb[idx] = r_arr[j];
+            rgb[idx + 1] = g_arr[j];
+            rgb[idx + 2] = b_arr[j];
         }
     }
 
@@ -1335,6 +1309,131 @@ fn xyb_planes_to_srgb_f32_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[attune(_*_t)]
+    fn check_transfer_exact(token: Token, input: &[f32]) {
+        for chunk in input.as_chunks::<8>().0 {
+            let actual = linear_to_srgb_v8(token, GenericF32x8::load_t(token, chunk)).to_array();
+            for (&v, &got) in chunk.iter().zip(&actual) {
+                let expected = linear_to_srgb(v.clamp(0.0, 1.0));
+                if v.is_nan() {
+                    assert!(got.is_nan());
+                } else {
+                    assert_eq!(got.to_bits(), expected.to_bits(), "linear={v:?}");
+                }
+                assert_eq!((got * 255.0).round() as u8, linear_to_srgb_u8(v));
+            }
+        }
+    }
+
+    #[attune(_*_t)]
+    fn check_inverse_legacy_pixels(token: Token) {
+        // Same inverse arithmetic and scalar OETF as the pre-optimization
+        // kernel, including its scalar tail. Compare floats by bits, u8 exactly.
+        for len in (0..40).chain([127, 255, 1027]) {
+            let mut state = 0x725c_a113u32;
+            let mut planes = [vec![0.0; len], vec![0.0; len], vec![0.0; len]];
+            for plane in &mut planes {
+                for v in plane {
+                    state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                    *v = (state >> 8) as f32 * (350.0 / 16777216.0) - 160.0;
+                }
+            }
+            let [p0, p1, p2] = &planes;
+            let mut expected8 = vec![0; len * 3];
+            let mut expectedf = vec![0.0f32; len * 3];
+            for i in (0..len / 8 * 8).step_by(8) {
+                let (r, g, b) = scaled_xyb_planes_to_linear_rgb_v8(
+                    token,
+                    GenericF32x8::load_t(token, p0[i..].first_chunk().unwrap()),
+                    GenericF32x8::load_t(token, p1[i..].first_chunk().unwrap()),
+                    GenericF32x8::load_t(token, p2[i..].first_chunk().unwrap()),
+                );
+                let channels = [r.to_array(), g.to_array(), b.to_array()];
+                for j in 0..8 {
+                    for c in 0..3 {
+                        let v = channels[c][j];
+                        expected8[(i + j) * 3 + c] = linear_to_srgb_u8(v);
+                        expectedf[(i + j) * 3 + c] = linear_to_srgb(v.clamp(0.0, 1.0));
+                    }
+                }
+            }
+            for i in len / 8 * 8..len {
+                let (x, y, b) = unscale_xyb(
+                    (p0[i] + 128.0) / 255.0,
+                    (p1[i] + 128.0) / 255.0,
+                    (p2[i] + 128.0) / 255.0,
+                );
+                let (r, g, b) = xyb_to_linear_rgb(x, y, b);
+                for (c, v) in [r, g, b].into_iter().enumerate() {
+                    expected8[i * 3 + c] = linear_to_srgb_u8(v);
+                    expectedf[i * 3 + c] = linear_to_srgb(v.clamp(0.0, 1.0));
+                }
+            }
+            let mut actual8 = vec![0; len * 3];
+            let mut actualf = vec![0.0f32; len * 3];
+            attuned!(xyb_planes_to_srgb_u8_impl(token, p0, p1, p2, &mut actual8));
+            attuned!(xyb_planes_to_srgb_f32_impl(token, p0, p1, p2, &mut actualf));
+            assert_eq!(actual8, expected8, "legacy u8 len={len}");
+            for (a, e) in actualf.iter().zip(expectedf) {
+                assert_eq!(a.to_bits(), e.to_bits(), "legacy f32 len={len}");
+            }
+        }
+    }
+
+    #[test]
+    fn inverse_xyb_preserves_legacy_pixels_in_each_tier() {
+        check_inverse_legacy_pixels_scalar_t(ScalarToken::summon().unwrap());
+        attuned!(check_inverse_legacy_pixels());
+    }
+
+    #[test]
+    fn vector_transfer_is_bit_exact_to_scalar_dependency() {
+        let mut values = vec![
+            f32::NEG_INFINITY,
+            -1.0,
+            0.0,
+            f32::MIN_POSITIVE,
+            1.0,
+            2.0,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        // A logarithmic sweep of binary32, plus linear values, covers the toe,
+        // darks, highlights and clamp. Every input appears in every lane.
+        for bits in (0..=1.0f32.to_bits()).step_by(1021) {
+            values.push(f32::from_bits(bits));
+        }
+        for i in 0..65536 {
+            values.push(i as f32 / 65535.0);
+        }
+        // Search each *actual* scalar rounding boundary, then test its nearby
+        // representable inputs. A merely close OETF fails these witnesses.
+        for code in 1..=255 {
+            let (mut lo, mut hi) = (0, 1.0f32.to_bits());
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if u32::from(linear_to_srgb_u8(f32::from_bits(mid))) < code {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            for bits in lo.saturating_sub(8)..=lo + 8 {
+                values.push(f32::from_bits(bits));
+            }
+        }
+        let toe = 0.003_041_282_6f32.to_bits();
+        for bits in toe - 8..=toe + 8 {
+            values.push(f32::from_bits(bits));
+        }
+        while values.len() % 8 != 0 {
+            values.push(0.5);
+        }
+        // Test both native and software fused multiply-add implementations.
+        check_transfer_exact_scalar_t(ScalarToken::summon().unwrap(), &values);
+        attuned!(check_transfer_exact(&values));
+    }
 
     // ------------------------------------------------------------------------
     // Gamma Conversion Tests
