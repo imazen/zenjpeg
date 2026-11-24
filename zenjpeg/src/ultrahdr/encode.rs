@@ -1,7 +1,7 @@
 //! UltraHDR encoding workflow helpers.
 //!
 //! Provides high-level functions for encoding UltraHDR JPEGs from HDR
-//! source images. Inputs are [`zenpixels::PixelBuffer`] (re-exported here
+//! source images. Inputs are [`zenpixels::PixelBuf`] (re-exported here
 //! as [`super::UhdrRawImage`] for back-compat).
 
 use crate::container::xmp::{create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp};
@@ -184,7 +184,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
 ) -> Result<(PixelBuffer, GainMap, GainMapMetadata)> {
     let width = hdr.width();
     let height = hdr.height();
-    let hdr_gamut = hdr.descriptor().primaries;
+    let hdr_gamut = primaries(hdr.spec());
 
     let split_cfg = SplitConfig {
         luma_weights: luma_weights_for(hdr_gamut),
@@ -200,7 +200,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
     let mut sdr_buffer = ultrahdr_core::new_pixel_buffer(
         width,
         height,
-        PixelFormat::RgbaF32,
+        PixelFormat::RGBAF32,
         hdr_gamut,
         TransferFunction::Linear,
     )
@@ -246,7 +246,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
         // Copy the splitter's SDR row into the RgbaF32 output buffer. Stride
         // is exactly width*16 here (new_pixel_buffer hands back tight rows),
         // but go through row_mut to stay generic over future stride changes.
-        let mut sdr_slice = sdr_buffer.as_slice_mut();
+        let mut sdr_slice = sdr_buffer.as_view_mut();
         let dst = sdr_slice.row_mut(y);
         let row_bytes: &[u8] = bytemuck::cast_slice(&sdr_row[..w * 4]);
         dst[..row_bytes.len()].copy_from_slice(row_bytes);
@@ -350,10 +350,10 @@ fn luma_weights_for(primaries: ColorPrimaries) -> [f32; 3] {
 fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
     use ultrahdr_core::color::transfer::{hlg_eotf, pq_eotf, srgb_eotf};
 
-    let slice = hdr.as_slice();
-    let desc = slice.descriptor();
-    let format = desc.pixel_format();
-    let transfer = desc.transfer();
+    let slice = hdr.as_view();
+    let desc = slice.spec();
+    let format = desc.layout;
+    let transfer = transfer(desc);
     let stride = slice.stride();
     let data = slice.as_strided_bytes();
     let width = slice.width() as usize;
@@ -366,14 +366,14 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
             TransferFunction::Pq => pq_eotf(c),
             // HLG with default display peak (1000 nits) — same fallback as
             // ultrahdr-core's `apply_transfer_to_linear`.
-            TransferFunction::Hlg => hlg_eotf(c, 1000.0),
+            TransferFunction::Hlg(_) => hlg_eotf(c, 1000.0),
             _ => srgb_eotf(c),
         }
     };
 
     for x in 0..width {
         let (r, g, b) = match format {
-            PixelFormat::Rgba8 => {
+            PixelFormat::RGBA8 => {
                 let i = row_off + x * 4;
                 (
                     data[i] as f32 / 255.0,
@@ -381,7 +381,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
                     data[i + 2] as f32 / 255.0,
                 )
             }
-            PixelFormat::Rgb8 => {
+            PixelFormat::RGB8 => {
                 let i = row_off + x * 3;
                 (
                     data[i] as f32 / 255.0,
@@ -389,7 +389,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
                     data[i + 2] as f32 / 255.0,
                 )
             }
-            PixelFormat::RgbaF32 => {
+            PixelFormat::RGBAF32 => {
                 let i = row_off + x * 16;
                 (
                     f32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]),
@@ -397,7 +397,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
                     f32::from_le_bytes([data[i + 8], data[i + 9], data[i + 10], data[i + 11]]),
                 )
             }
-            PixelFormat::RgbaF16 => {
+            PixelFormat::RGBAF16 => {
                 let i = row_off + x * 8;
                 (
                     half::f16::from_le_bytes([data[i], data[i + 1]]).to_f32(),
@@ -405,7 +405,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
                     half::f16::from_le_bytes([data[i + 4], data[i + 5]]).to_f32(),
                 )
             }
-            PixelFormat::RgbF16 => {
+            PixelFormat::RGBF16 => {
                 let i = row_off + x * 6;
                 (
                     half::f16::from_le_bytes([data[i], data[i + 1]]).to_f32(),
@@ -413,7 +413,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
                     half::f16::from_le_bytes([data[i + 4], data[i + 5]]).to_f32(),
                 )
             }
-            PixelFormat::Gray8 => {
+            PixelFormat::GRAY8 => {
                 let i = row_off + x;
                 let v = data[i] as f32 / 255.0;
                 (v, v, v)
@@ -424,7 +424,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
         let (lr, lg, lb) = match format {
             // f32/f16 paths already store linear (or PQ/HLG/sRGB-encoded
             // float values) — apply the transfer if present.
-            PixelFormat::RgbaF32 | PixelFormat::RgbaF16 | PixelFormat::RgbF16 => {
+            PixelFormat::RGBAF32 | PixelFormat::RGBAF16 | PixelFormat::RGBF16 => {
                 (linearize(r), linearize(g), linearize(b))
             }
             // 8-bit paths: 8-bit linear isn't really a thing in practice; if
@@ -502,9 +502,9 @@ pub fn encode_ultrahdr_luma(hdr: &PixelBuffer) -> Result<Vec<u8>> {
 /// - HLG rows come out of `hlg_eotf(·, 1000.0)` in absolute display nits
 ///   at the BT.2100 1000-nit reference (scale `1.0`).
 fn curve_input_scale_nits(hdr: &PixelBuffer) -> f32 {
-    match hdr.as_slice().descriptor().transfer() {
+    match transfer(hdr.spec()) {
         TransferFunction::Pq => 10_000.0,
-        TransferFunction::Hlg => 1.0,
+        TransferFunction::Hlg(_) => 1.0,
         _ => 203.0,
     }
 }
@@ -513,7 +513,7 @@ fn curve_input_scale_nits(hdr: &PixelBuffer) -> f32 {
 /// Rgba8 `PixelBuffer`. Uses the `linear-srgb` crate's OETF directly so
 /// we don't need a private duplicate (#71).
 fn linear_f32_to_srgb_rgba8(sdr_linear: &PixelBuffer) -> Result<PixelBuffer> {
-    let slice = sdr_linear.as_slice();
+    let slice = sdr_linear.as_view();
     let stride = slice.stride();
     let width = slice.width();
     let height = slice.rows();
@@ -555,8 +555,8 @@ fn linear_f32_to_srgb_rgba8(sdr_linear: &PixelBuffer) -> Result<PixelBuffer> {
         out,
         width,
         height,
-        PixelFormat::Rgba8,
-        sdr_linear.descriptor().primaries,
+        PixelFormat::RGBA8,
+        primaries(sdr_linear.spec()),
         TransferFunction::Srgb,
     )
     .map_err(ultrahdr_to_zenjpeg_error)
@@ -692,7 +692,7 @@ pub fn encode_with_gainmap_metadata(
         let cicp = if let Some(cicp) = retained.cicp {
             cicp
         } else {
-            let primaries = sdr.descriptor().primaries.to_cicp().ok_or_else(|| {
+            let primaries = primaries(sdr.spec()).to_cicp().ok_or_else(|| {
                 Error::unsupported_feature("unknown base primaries require an ICC profile")
             })?;
             zencodec::Cicp::new(primaries, 13, 0, true)
@@ -749,7 +749,7 @@ fn tonemap_to_pixel_buffer(hdr: &PixelBuffer, target_gamut: ColorPrimaries) -> R
         bytes,
         hdr.width(),
         hdr.height(),
-        PixelFormat::Rgba8,
+        PixelFormat::RGBA8,
         target_gamut,
         TransferFunction::Srgb,
     )
@@ -848,10 +848,10 @@ fn encode_sdr_base(
     gainmap_segments: EncoderSegments,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
-    let format = sdr.descriptor().pixel_format();
+    let format = sdr.spec().layout;
     let layout = match format {
-        PixelFormat::Rgba8 => PixelLayout::Rgba8Srgb,
-        PixelFormat::Rgb8 => PixelLayout::Rgb8Srgb,
+        PixelFormat::RGBA8 => PixelLayout::Rgba8Srgb,
+        PixelFormat::RGB8 => PixelLayout::Rgb8Srgb,
         _ => {
             return Err(Error::unsupported_feature(
                 "SDR PixelBuffer must be Rgba8 or Rgb8 for UltraHDR encoding",
@@ -907,8 +907,29 @@ fn encode_sdr_base(
     let config_with_segments = config.clone().with_segments(segments);
     let mut encoder = config_with_segments.encode_from_bytes(sdr.width(), sdr.height(), layout)?;
 
-    encoder.push_packed(sdr.as_slice().as_strided_bytes(), stop)?;
+    let view = sdr.as_view();
+    encoder.push(
+        view.as_strided_bytes(),
+        view.rows() as usize,
+        view.stride(),
+        stop,
+    )?;
     encoder.finish()
+}
+
+fn primaries(spec: &zenpixels::ImageSpec) -> ColorPrimaries {
+    match spec.color {
+        zenpixels::ColorSpace::Rgb { primaries, .. } => primaries,
+        _ => ColorPrimaries::Unknown,
+    }
+}
+
+fn transfer(spec: &zenpixels::ImageSpec) -> TransferFunction {
+    match spec.color {
+        zenpixels::ColorSpace::Rgb { transfer, .. }
+        | zenpixels::ColorSpace::Gray { transfer, .. } => transfer,
+        _ => TransferFunction::Unknown,
+    }
 }
 
 /// The ICC profile an SDR base needs so readers do not take it for sRGB:
@@ -920,22 +941,30 @@ fn encode_sdr_base(
 /// profile in the `EncoderConfig` segments instead.
 fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    let desc = sdr.descriptor();
+    let desc = sdr.spec();
+    if let zenpixels::ColorSpace::Icc {
+        profile,
+        channels: 3,
+        ..
+    } = &desc.color
+    {
+        return Ok(Some(Cow::Owned(profile.to_vec())));
+    }
     // Untagged means sRGB to every reader: right for BT.709 primaries with
     // the sRGB (or unstated) transfer, and for unknown primaries (nothing to
     // state). BT.709 primaries with another transfer (BT.709, linear, gamma
     // 2.2, PQ, HLG) need a profile like any other colour: the BT.709 OETF is
     // not the sRGB curve (zenpixels#88).
     let srgb_like_transfer = matches!(
-        desc.transfer,
+        transfer(desc),
         TransferFunction::Srgb | TransferFunction::Unknown
     );
-    if desc.primaries == ColorPrimaries::Unknown
-        || (desc.primaries == ColorPrimaries::Bt709 && srgb_like_transfer)
+    if primaries(desc) == ColorPrimaries::Unknown
+        || (primaries(desc) == ColorPrimaries::Bt709 && srgb_like_transfer)
     {
         return Ok(None);
     }
-    let synthesized = zenpixels::Cicp::from_descriptor(&desc).map(SynthesizedIcc::for_cicp);
+    let synthesized = desc.color.to_cicp().map(SynthesizedIcc::for_cicp);
     match synthesized {
         Some(SynthesizedIcc::Profile(icc)) => Ok(Some(icc)),
         Some(SynthesizedIcc::NotNeeded) => Ok(None),
@@ -943,8 +972,8 @@ fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
             "UltraHDR SDR base in {:?} primaries with {:?} transfer: no ICC profile \
              describes it here; supply one in the EncoderConfig's segments (an APP2 \
              ICC_PROFILE segment)",
-            desc.primaries,
-            desc.transfer
+            primaries(desc),
+            transfer(desc)
         ))),
     }
 }
@@ -988,8 +1017,8 @@ mod tests {
     fn buf_with_transfer(transfer: TransferFunction) -> PixelBuffer {
         let px: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
         let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
-        let desc = zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer);
-        PixelBuffer::from_vec(bytes, 1, 1, desc).expect("fixture")
+        let desc = zenpixels::ImageSpec::rgbaf32_linear().with_transfer(transfer);
+        PixelBuffer::from_bytes(bytes, 1, 1, desc).expect("fixture")
     }
 
     /// BT.709 primaries: the sRGB transfer stays untagged (every reader
@@ -998,10 +1027,10 @@ mod tests {
     #[test]
     fn bt709_base_is_tagged_only_when_its_curve_is_not_srgb() {
         let base = |transfer| {
-            let desc = zenpixels::PixelDescriptor::RGBA8_SRGB
+            let desc = zenpixels::ImageSpec::rgba8_srgb()
                 .with_primaries(ColorPrimaries::Bt709)
                 .with_transfer(transfer);
-            PixelBuffer::from_vec(alloc::vec![128u8; 4], 1, 1, desc).expect("fixture")
+            PixelBuffer::from_bytes(alloc::vec![128u8; 4], 1, 1, desc).expect("fixture")
         };
         assert!(
             base_icc_profile(&base(TransferFunction::Srgb))
@@ -1037,7 +1066,9 @@ mod tests {
             10_000.0
         );
         assert_eq!(
-            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Hlg)),
+            curve_input_scale_nits(&buf_with_transfer(TransferFunction::Hlg(
+                zenpixels::HlgMode::Scene
+            ))),
             1.0
         );
     }
@@ -1055,12 +1086,12 @@ mod tests {
             (TransferFunction::Linear, 1.0),
             (TransferFunction::Srgb, 1.0),
             (TransferFunction::Pq, pq_oetf(203.0 / 10_000.0)),
-            (TransferFunction::Hlg, hlg_white),
+            (TransferFunction::Hlg(zenpixels::HlgMode::Scene), hlg_white),
         ] {
             let samples = [encoded, encoded, encoded, 1.0];
             let bytes = samples.iter().flat_map(|f| f.to_ne_bytes()).collect();
-            let desc = zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer);
-            let hdr = PixelBuffer::from_vec(bytes, 1, 1, desc).unwrap();
+            let desc = zenpixels::ImageSpec::rgbaf32_linear().with_transfer(transfer);
+            let hdr = PixelBuffer::from_bytes(bytes, 1, 1, desc).unwrap();
             let mut row = [0.0; 4];
             extract_hdr_row_rgba_linear(&hdr, 0, &mut row);
             let scale = curve_input_scale_nits(&hdr);

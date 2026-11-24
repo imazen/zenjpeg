@@ -30,10 +30,14 @@ default = ["console_error_panic_hook"]
 
 # Match the current main source pins in the parent and fuzz workspaces.
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "607614ce9b1027edac600b52e61c99fe18f5cb46" }
+
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

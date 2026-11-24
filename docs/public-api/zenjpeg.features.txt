@@ -573,17 +573,17 @@ pub trait ultrahdr::UltraHdrExtras
 pub fn ultrahdr::UltraHdrExtras::decode_gainmap(&self) -> core::option::Option<encoder::Result<ultrahdr_core::types::GainMap>>
 pub fn ultrahdr::UltraHdrExtras::is_ultrahdr(&self) -> bool
 pub fn ultrahdr::UltraHdrExtras::ultrahdr_metadata(&self) -> core::option::Option<encoder::Result<(ultrahdr_core::types::GainMapMetadata, core::option::Option<usize>)>>
-pub fn ultrahdr::create_gainmap_computer(u32, u32, &ultrahdr_core::gainmap::compute::GainMapConfig, zenpixels::descriptor::ColorPrimaries) -> encoder::Result<ultrahdr_core::gainmap::streaming::RowEncoder>
+pub fn ultrahdr::create_gainmap_computer(u32, u32, &ultrahdr_core::gainmap::compute::GainMapConfig, zenpixels::color::Primaries) -> encoder::Result<ultrahdr_core::gainmap::streaming::RowEncoder>
 pub fn ultrahdr::create_hdr_reconstructor(u32, u32, &decoder::DecodedExtras, f32) -> encoder::Result<ultrahdr_core::gainmap::streaming::RowDecoder>
-pub fn ultrahdr::decode_ultrahdr(&[u8]) -> encoder::Result<zenpixels::buffer::PixelBuffer>
-pub fn ultrahdr::decode_ultrahdr_hdr(&[u8], f32, ultrahdr_core::gainmap::apply::HdrOutputFormat) -> encoder::Result<zenpixels::buffer::PixelBuffer>
-pub fn ultrahdr::encode_ultrahdr(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::gainmap::compute::GainMapConfig, &ultrahdr_core::color::tonemap::ToneMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::encode_ultrahdr_luma(&zenpixels::buffer::PixelBuffer) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&zenpixels::buffer::PixelBuffer, &C, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
-pub fn ultrahdr::encode_with_gainmap_metadata(&zenpixels::buffer::PixelBuffer, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, &zencodec::metadata::Metadata, &zencodec::metadata::MetadataPolicy, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::decode_ultrahdr(&[u8]) -> encoder::Result<zenpixels::buffer::PixelBuf>
+pub fn ultrahdr::decode_ultrahdr_hdr(&[u8], f32, ultrahdr_core::gainmap::apply::HdrOutputFormat) -> encoder::Result<zenpixels::buffer::PixelBuf>
+pub fn ultrahdr::encode_ultrahdr(&zenpixels::buffer::PixelBuf, &ultrahdr_core::gainmap::compute::GainMapConfig, &ultrahdr_core::color::tonemap::ToneMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_ultrahdr_luma(&zenpixels::buffer::PixelBuf) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&zenpixels::buffer::PixelBuf, &C, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_ultrahdr_with_tonemapper(&zenpixels::buffer::PixelBuf, &ultrahdr_core::color::tonemap::AdaptiveTonemapper, &ultrahdr_core::gainmap::compute::GainMapConfig, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap(&zenpixels::buffer::PixelBuf, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap_format(&zenpixels::buffer::PixelBuf, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
+pub fn ultrahdr::encode_with_gainmap_metadata(&zenpixels::buffer::PixelBuf, &ultrahdr_core::types::GainMap, &ultrahdr_core::types::GainMapMetadata, &encoder::EncoderConfig, f32, ultrahdr_core::types::GainMapEncodingFormat, &zencodec::metadata::Metadata, &zencodec::metadata::MetadataPolicy, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String
 pub fn ultrahdr::generate_primary_xmp(usize) -> alloc::string::String
 pub fn ultrahdr::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String
@@ -608,7 +608,7 @@ pub fn JpegDecoderConfig::probe_header(&self, &[u8]) -> core::result::Result<zen
 pub struct JpegEncodeJob
 pub struct JpegEncoder
 pub struct JpegEncoderConfig
-pub fn JpegEncoderConfig::encode(&self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zencodec::output::EncodeOutput, whereat::at::At<zencodec::error::CodecError>>
+pub fn JpegEncoderConfig::encode(&self, zenpixels::buffer::PixelView<'_>) -> core::result::Result<zencodec::output::EncodeOutput, whereat::at::At<zencodec::error::CodecError>>
 pub fn JpegEncoderConfig::from_preset(&str, f32) -> core::option::Option<Self>
 pub fn JpegEncoderConfig::grayscale(f32) -> Self
 pub fn JpegEncoderConfig::inner(&self) -> &encoder::EncoderConfig
@@ -713,6 +713,6 @@ JpegDecodeJob: !RefUnwindSafe !UnwindSafe
 JpegDecoder<'a>: !RefUnwindSafe !UnwindSafe
 JpegDecoderConfig: !RefUnwindSafe !UnwindSafe
 JpegEncodeJob: !RefUnwindSafe !UnwindSafe
-JpegEncoder: !Freeze !RefUnwindSafe !Sync !UnwindSafe
+JpegEncoder: !RefUnwindSafe !Sync !UnwindSafe
 JpegStreamingDecoder<'a>: !RefUnwindSafe !UnwindSafe
 ultrahdr::UltraHdrReader<'a>: !Freeze !RefUnwindSafe !UnwindSafe

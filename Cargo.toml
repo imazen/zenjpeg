@@ -112,7 +112,7 @@ spin = "0.9"
 tinyvec = { version = "1.10", features = ["alloc"] }
 
 # Fast linear-sRGB conversion
-linear-srgb = "0.6.12"
+linear-srgb = "0.6.13"
 
 # Token-based safe SIMD intrinsics. Never add `testable_dispatch` here: every
 # member inherits workspace dependency features as a normal dependency, so it
@@ -135,9 +135,9 @@ almost-enough = { version = "0.4", features = ["std"] }
 # patch table (dependency patches do not propagate). The 0.2 floor prevents
 # resolving this edge to the incompatible published 0.1 contract.
 zencodec = { version = ">=0.2.0, <0.3.0" }
-zenpixels = { version = ">=0.3.1, <0.4.0", default-features = false, features = ["imgref"] }
-zenpixels-convert = { version = ">=0.3.1, <0.4.0", default-features = false }
-garb = { version = "0.2.6", default-features = false }
+zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false, features = ["icc", "imgref"] }
+zenpixels-convert = { version = ">=0.5.0, <0.6.0", default-features = false }
+garb = { version = "0.2.9", default-features = false }
 
 # Published crates
 butteraugli = "0.9.0"
@@ -233,30 +233,23 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 zenresize = { git = "https://github.com/imazen/zenresize", rev = "b5afc8adac77b1800c26e6747faac670c0cd34dd" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdbae793938fa229d40ac4fe4c39" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "dceae9c1bcd403ca6b60386de8be39ee3ee29d5a" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "b6e759468691c8906b686a8d64732136f5a63518" }
 
-# Unpublished ICC recognition fix for the existing Ultra HDR corpus profile.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
-# The zencodec 0.2 family, all from one optional-control revision.
-# zencodec-io, zencodec-coroutine and zenmeta are not on crates.io: these
-# patches resolve them for local builds; releases stay gated on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-# Native PNG tests and metric dev-dependencies share the same core family.
-# Their formerly separate 0.1 core fails with the paired pixel representation.
-# zenjpeg depends on ultrahdr-core unconditionally (container/MPF types), and
-# crates.io ultrahdr-core 0.6.0 requires zencodec ^0.1: every feature set would
-# resolve a second zencodec, and with `ultrahdr` the two GainMapParams collide
-# (E0308). This review revision of imazen/ultrahdr (branch
-# review/zencodec-0.2-family) takes the family through version edges too.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
+# Legacy development tools and the optional resize pipeline still use 0.3.
+zenpixels-03 = { package = "zenpixels", git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
 
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c103c1ceae0a31b18e596545534c0800e3b22d19" }
+# Pixel and codec interchange cohort for this migration.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "607614ce9b1027edac600b52e61c99fe18f5cb46" }
 
-garb = { git = "https://github.com/imazen/garb", rev = "7356e8f17776bf408b73bb958982e79aa2b9cac1" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
+
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 
 zentone = { git = "https://github.com/imazen/zentone", rev = "d640ee4b8b84017b9ea39c132bf86aa3745e09df" }

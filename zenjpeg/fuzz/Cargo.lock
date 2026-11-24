@@ -141,11 +141,10 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 [[package]]
 name = "garb"
 version = "0.2.9"
-source = "git+https://github.com/imazen/garb?rev=7356e8f17776bf408b73bb958982e79aa2b9cac1#7356e8f17776bf408b73bb958982e79aa2b9cac1"
+source = "git+https://github.com/imazen/garb?rev=457ff8b9153e9d675a39dc098052b2ffeb6206fa#457ff8b9153e9d675a39dc098052b2ffeb6206fa"
 dependencies = [
  "archmage",
- "bytemuck",
- "pastey",
+ "magetypes",
 ]
 
 [[package]]
@@ -209,10 +208,11 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "linear-srgb"
 version = "0.6.13"
-source = "git+https://github.com/imazen/linear-srgb?rev=c103c1ceae0a31b18e596545534c0800e3b22d19#c103c1ceae0a31b18e596545534c0800e3b22d19"
+source = "git+https://github.com/imazen/linear-srgb?rev=ae83f19426737635fee3dd16f228681019f52585#ae83f19426737635fee3dd16f228681019f52585"
 dependencies = [
  "archmage",
  "bytemuck",
+ "magemath",
  "magetypes",
  "num-traits",
 ]
@@ -222,6 +222,16 @@ name = "lz4_flex"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f56455fff36934a9500d69062aec1c77037179b6f0669e4d5d6b72b84722d6a3"
+
+[[package]]
+name = "magemath"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f25cb4021b6804927a86171a7263361f19bfce90440967c712c042ce444780"
+dependencies = [
+ "archmage",
+ "magetypes",
+]
 
 [[package]]
 name = "magetypes"
@@ -394,11 +404,12 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=aadf102169086fc232205bdb3b92572cfda07032#aadf102169086fc232205bdb3b92572cfda07032"
+source = "git+https://github.com/imazen/ultrahdr?rev=607614ce9b1027edac600b52e61c99fe18f5cb46#607614ce9b1027edac600b52e61c99fe18f5cb46"
 dependencies = [
  "bytemuck",
  "enough",
  "linear-srgb",
+ "num-traits",
  "thiserror",
  "whereat",
  "zencodec",
@@ -427,24 +438,16 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "almost-enough",
+ "bytemuck",
  "enough",
  "how-far",
  "libm",
  "spin",
  "whereat",
  "zenpixels",
-]
-
-[[package]]
-name = "zenhash"
-version = "0.1.0"
-source = "git+https://github.com/imazen/zenhash?rev=98c385a4e54a#98c385a4e54a1d41870610e13a614295c538275c"
-dependencies = [
- "archmage",
- "whereat",
 ]
 
 [[package]]
@@ -493,7 +496,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "roxmltree",
  "zencodec",
@@ -502,20 +505,19 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=7badb1478ec27888a51a2f1a403630a1560aa7a1#7badb1478ec27888a51a2f1a403630a1560aa7a1"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
 dependencies = [
  "bytemuck",
  "imgref",
  "rgb",
  "whereat",
- "zenhash",
 ]
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=7badb1478ec27888a51a2f1a403630a1560aa7a1#7badb1478ec27888a51a2f1a403630a1560aa7a1"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -524,6 +526,7 @@ dependencies = [
  "libm",
  "linear-srgb",
  "lz4_flex",
+ "magemath",
  "magetypes",
  "moxcms",
  "once_cell",
@@ -562,17 +565,17 @@ dependencies = [
 [[patch.unused]]
 name = "zencodec-coroutine"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 
 [[patch.unused]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 
 [[patch.unused]]
 name = "zencodec-testkit"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 
 [[patch.unused]]
 name = "zentone"

@@ -263,12 +263,9 @@ ultrahdr = [
     "ultrahdr-core/f16",
     "dep:half",
     "dep:zentone",
-    # Measured content-light-level for the ReconstructHdr envelope (appendix
-    # AA): the zenpixels measurement owner (`CllMeasure::measure_max`) lives
-    # behind zenpixels-convert's `hdr-experimental` gate (stable math; the
-    # gate covers pre-0.3.0 surface churn).
+    # Content light level comes from the reconstructed samples.
     "dep:zenpixels-convert",
-    "zenpixels-convert/hdr-experimental",
+    "zenpixels-convert/hdr-transfers",
     # ICC recognition may identify metadata without permitting matrix/TRC substitution.
     "zenpixels-convert/cms-moxcms",
     # The SDR base's ICC profile comes from `synthesize_icc_for_cicp`, which
@@ -280,15 +277,8 @@ ultrahdr = [
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.).
 # zenpixels-convert supplies `synthesize_icc_for_cicp` for the color-emit
 # path (JPEG has no CICP carrier, so a CICP-only source synthesizes an ICC).
-# Includes zenpixels-convert's `icc-db` (a bundled ~36 KB LZ4 profile blob +
-# pure-Rust lz4_flex, no moxcms): full ITU-T H.273 grid coverage incl PQ/HLG,
-# so a CICP-described color always gets a real embedded ICC. Only a CICP
-# outside the assigned H.273 grid is an encode error (never a silently
-# mislabeled image). icc-db is unconditional because feature unification made
-# the old `cms` opt-in untestable and environment-dependent: zenpixels-convert
-# 0.2.13 ships icc-db in its defaults, so any default-features consumer
-# anywhere in a build graph flipped the capability on regardless of zenjpeg's
-# flag.
+# The ICC database handles supported H.273 pairs without a CMS. HLG requires
+# a display rendering target and is refused when it has no usable ICC.
 # `fast-transpose` unlocks zenpixels-convert's AVX2 / NEON orientation
 # kernels, which the decoder's auto-orient permute delegates to (#150); it
 # adds no dependency (archmage + magetypes are already mandatory here).

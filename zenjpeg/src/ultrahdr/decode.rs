@@ -311,9 +311,9 @@ fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result
     })?;
 
     let (bytes, zp_format) = match format {
-        JpegPixelFormat::Rgb => (rgb_to_rgba8(&data), PixelFormat::Rgba8),
-        JpegPixelFormat::Rgba => (data, PixelFormat::Rgba8),
-        JpegPixelFormat::Gray => (data, PixelFormat::Gray8),
+        JpegPixelFormat::Rgb => (rgb_to_rgba8(&data), PixelFormat::RGBA8),
+        JpegPixelFormat::Rgba => (data, PixelFormat::RGBA8),
+        JpegPixelFormat::Gray => (data, PixelFormat::GRAY8),
         other => {
             return Err(Error::decode_error(format!(
                 "decode_ultrahdr: codec returned {other:?}; expected Rgb / Rgba / Gray"
@@ -335,11 +335,8 @@ pub(crate) fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, Transfer
     if crate::color::icc::is_xyb_profile(icc) {
         return Ok((ColorPrimaries::Bt709, TransferFunction::Srgb));
     }
-    zenpixels::ColorProfileSource::Icc(icc)
-        .resolve()
-        .or_else(|| {
-            zenpixels::icc::IccIdentification::from_icc(icc).map(|id| (id.primaries, id.transfer))
-        })
+    zenpixels::icc::IccIdentification::from_icc(icc)
+        .map(|id| (id.primaries, id.transfer))
         .ok_or_else(|| {
             Error::unsupported_feature("Ultra HDR base ICC requires color-managed conversion")
         })
@@ -350,40 +347,37 @@ pub(crate) fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, Transfer
 pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Result<PixelBuffer> {
     let Some(icc) = icc else { return Ok(pixels) };
     if crate::color::icc::is_xyb_profile(icc)
-        || zenpixels::ColorProfileSource::Icc(icc).resolve().is_some()
+        || zenpixels::icc::IccIdentification::from_icc_substitutable(icc).is_some()
     {
         return Ok(pixels);
     }
-    use zenpixels_convert::cms::PluggableCms as _;
-    let target = pixels.descriptor();
-    let mut transform = zenpixels_convert::MoxCms
-        .build_source_transform(
-            zenpixels::ColorProfileSource::Icc(icc),
-            target.color_profile_source(),
-            target.pixel_format(),
-            target.pixel_format(),
-            &zenpixels::ConvertOptions::permissive(),
-        )
-        .ok_or(Error::unsupported_feature(
-            "Ultra HDR base ICC conversion declined",
-        ))?
+    use zenpixels_convert::CmsBackend as _;
+    let target = pixels.spec();
+    let source_spec = zenpixels::ImageSpec::new(
+        target.layout,
+        zenpixels::ColorSpace::Icc {
+            profile: alloc::sync::Arc::from(icc),
+            channels: 3,
+            alpha: target.color.alpha(),
+            intent: zenpixels::RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let transform = zenpixels_convert::MoxCms
+        .build_transform(&source_spec, target)
         .map_err(ultrahdr_to_zenjpeg_error)?;
-    transform
-        .prepare(pixels.width())
-        .map_err(ultrahdr_to_zenjpeg_error)?;
-    let mut output = PixelBuffer::try_new(pixels.width(), pixels.height(), target).map_err(
+    let mut output = PixelBuffer::new(pixels.width(), pixels.height(), target.clone()).map_err(
         crate::color::icc::pixel_buffer_error(
             (pixels.width() as usize)
                 .saturating_mul(pixels.height() as usize)
-                .saturating_mul(target.bytes_per_pixel()),
+                .saturating_mul(target.layout.bytes_per_pixel()),
             "Ultra HDR ICC output",
         ),
     )?;
-    let source = pixels.as_slice();
-    let mut destination = output.as_slice_mut();
+    let source = pixels.as_view();
+    let mut destination = output.as_view_mut();
     for y in 0..pixels.height() {
         transform
-            .try_transform_row(source.row(y), destination.row_mut(y), pixels.width())
+            .transform_row(source.row(y), destination.row_mut(y), pixels.width())
             .map_err(ultrahdr_to_zenjpeg_error)?;
     }
     Ok(output)
@@ -536,11 +530,11 @@ mod tests {
     fn p3_fixture_icc() -> Vec<u8> {
         let pixels = [0.5_f32, 0.5, 0.5, 1.0];
         let bytes = pixels.iter().flat_map(|v| v.to_ne_bytes()).collect();
-        let hdr = PixelBuffer::from_vec(
+        let hdr = PixelBuffer::from_bytes(
             bytes,
             1,
             1,
-            zenpixels::PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3),
+            zenpixels::ImageSpec::rgbaf32_linear().with_primaries(ColorPrimaries::DisplayP3),
         )
         .unwrap();
         let jpeg = crate::ultrahdr::encode_ultrahdr_luma(&hdr).unwrap();
@@ -550,7 +544,7 @@ mod tests {
 
     #[test]
     fn base_icc_cms_preserves_strided_rows_and_alpha() {
-        use zenpixels::PixelDescriptor;
+        use zenpixels::ImageSpec;
         let icc = p3_fixture_icc();
         assert_eq!(
             zenpixels::icc::IccIdentification::from_icc(&icc)
@@ -558,28 +552,36 @@ mod tests {
                 .valid_use,
             zenpixels::icc::IdentificationUse::MetadataOnly
         );
-        for desc in [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB] {
+        for desc in [ImageSpec::rgb8_srgb(), ImageSpec::rgba8_srgb()] {
             let desc = desc.with_primaries(ColorPrimaries::DisplayP3);
-            let bpp = desc.bytes_per_pixel();
+            let bpp = desc.layout.bytes_per_pixel();
             let data: Vec<u8> = (0..6 * bpp).map(|i| (i * 37) as u8).collect();
-            let mut parts = PixelBuffer::from_vec(data, 3, 2, desc)
+            let parts = PixelBuffer::from_bytes(data, 3, 2, desc.clone())
                 .unwrap()
                 .into_parts();
-            parts.width = 2; // retain one pixel of padding on each row
-            let padded = PixelBuffer::try_from_parts(parts).unwrap();
-            let slice = padded.as_slice();
+            let padded = PixelBuffer::from_parts(
+                parts.storage,
+                parts.offset,
+                2,
+                2,
+                parts.stride,
+                parts.spec,
+            )
+            .unwrap();
+            let slice = padded.as_view();
             let packed: Vec<u8> = (0..2).flat_map(|y| slice.row(y).iter().copied()).collect();
-            let tight = PixelBuffer::from_vec(packed.clone(), 2, 2, desc).unwrap();
+            let tight = PixelBuffer::from_bytes(packed.clone(), 2, 2, desc.clone()).unwrap();
             let actual = prepare_base_pixels(padded, Some(&icc)).unwrap();
             let expected = prepare_base_pixels(tight, Some(&icc)).unwrap();
-            assert_eq!(actual.descriptor(), desc);
+            assert_eq!(actual.spec().clone(), desc);
             assert_eq!(
-                actual.as_contiguous_bytes().unwrap(),
-                expected.as_contiguous_bytes().unwrap()
+                actual.as_view().as_contiguous_bytes().unwrap(),
+                expected.as_view().as_contiguous_bytes().unwrap()
             );
             if bpp == 4 {
                 for (before, after) in packed.as_chunks::<4>().0.iter().zip(
                     actual
+                        .as_view()
                         .as_contiguous_bytes()
                         .unwrap()
                         .as_chunks::<4>()
@@ -594,9 +596,9 @@ mod tests {
 
     #[test]
     fn base_icc_fast_paths_and_failed_transforms() {
-        use zenpixels::PixelDescriptor;
-        let desc = PixelDescriptor::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        let pixels = || PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, desc).unwrap();
+        use zenpixels::ImageSpec;
+        let desc = ImageSpec::rgba8_srgb().with_primaries(ColorPrimaries::DisplayP3);
+        let pixels = || PixelBuffer::from_bytes(vec![10, 20, 30, 255], 1, 1, desc.clone()).unwrap();
         for icc in [
             None,
             Some(&crate::foundation::consts::XYB_ICC_PROFILE[..]),
@@ -605,6 +607,7 @@ mod tests {
             assert_eq!(
                 prepare_base_pixels(pixels(), icc)
                     .unwrap()
+                    .as_view()
                     .as_contiguous_bytes()
                     .unwrap(),
                 &[10, 20, 30, 255]
@@ -613,11 +616,11 @@ mod tests {
         assert!(base_color(Some(b"invalid ICC")).is_err());
         assert!(prepare_base_pixels(pixels(), Some(b"invalid ICC")).is_err());
         let icc = p3_fixture_icc();
-        let unsupported = PixelBuffer::from_vec(
+        let unsupported = PixelBuffer::from_bytes(
             vec![30, 20, 10, 255],
             1,
             1,
-            PixelDescriptor::BGRA8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+            ImageSpec::bgra8_srgb().with_primaries(ColorPrimaries::DisplayP3),
         )
         .unwrap();
         assert!(prepare_base_pixels(unsupported, Some(&icc)).is_err());

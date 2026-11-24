@@ -931,11 +931,10 @@ dependencies = [
 [[package]]
 name = "garb"
 version = "0.2.9"
-source = "git+https://github.com/imazen/garb?rev=7356e8f17776bf408b73bb958982e79aa2b9cac1#7356e8f17776bf408b73bb958982e79aa2b9cac1"
+source = "git+https://github.com/imazen/garb?rev=457ff8b9153e9d675a39dc098052b2ffeb6206fa#457ff8b9153e9d675a39dc098052b2ffeb6206fa"
 dependencies = [
  "archmage 0.9.33",
- "bytemuck",
- "pastey",
+ "magetypes",
 ]
 
 [[package]]
@@ -1210,10 +1209,11 @@ dependencies = [
 [[package]]
 name = "linear-srgb"
 version = "0.6.13"
-source = "git+https://github.com/imazen/linear-srgb?rev=c103c1ceae0a31b18e596545534c0800e3b22d19#c103c1ceae0a31b18e596545534c0800e3b22d19"
+source = "git+https://github.com/imazen/linear-srgb?rev=ae83f19426737635fee3dd16f228681019f52585#ae83f19426737635fee3dd16f228681019f52585"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
+ "magemath",
  "magetypes",
  "num-traits",
 ]
@@ -1235,6 +1235,16 @@ name = "lz4_flex"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f56455fff36934a9500d69062aec1c77037179b6f0669e4d5d6b72b84722d6a3"
+
+[[package]]
+name = "magemath"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f25cb4021b6804927a86171a7263361f19bfce90440967c712c042ce444780"
+dependencies = [
+ "archmage 0.9.33",
+ "magetypes",
+]
 
 [[package]]
 name = "magetypes"
@@ -2211,7 +2221,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=aadf102169086fc232205bdb3b92572cfda07032#aadf102169086fc232205bdb3b92572cfda07032"
+source = "git+https://github.com/imazen/ultrahdr?rev=607614ce9b1027edac600b52e61c99fe18f5cb46#607614ce9b1027edac600b52e61c99fe18f5cb46"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -2219,11 +2229,12 @@ dependencies = [
  "half",
  "linear-srgb",
  "magetypes",
+ "num-traits",
  "thiserror 2.0.21",
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.5.0",
  "zenpixels-convert",
  "zentone",
 ]
@@ -2861,43 +2872,44 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "almost-enough",
+ "bytemuck",
  "enough",
  "how-far",
  "libm",
  "spin",
  "whereat",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
 name = "zencodec-coroutine"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "enough",
  "spin",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "enough",
  "how-far",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
 name = "zencodec-testkit"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "enough",
  "how-far-along",
@@ -2905,7 +2917,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zencodec-io",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -2990,7 +3002,7 @@ dependencies = [
  "zencodec-testkit",
  "zenjpeg-bench-utils",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.5.0",
  "zenpixels-convert",
  "zenpng",
  "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=b5afc8adac77b1800c26e6747faac670c0cd34dd)",
@@ -3025,11 +3037,11 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=1fb997bb88e7405e6a315bf1f0b22f71e99be272#1fb997bb88e7405e6a315bf1f0b22f71e99be272"
+source = "git+https://github.com/imazen/zencodec?rev=037ef59b57ae003f853a5b6624b173edfee22d6a#037ef59b57ae003f853a5b6624b173edfee22d6a"
 dependencies = [
  "roxmltree",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -3038,16 +3050,25 @@ version = "0.3.1"
 source = "git+https://github.com/imazen/zenpixels?rev=7badb1478ec27888a51a2f1a403630a1560aa7a1#7badb1478ec27888a51a2f1a403630a1560aa7a1"
 dependencies = [
  "bytemuck",
- "imgref",
- "rgb",
  "whereat",
  "zenhash",
 ]
 
 [[package]]
+name = "zenpixels"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
+dependencies = [
+ "bytemuck",
+ "imgref",
+ "rgb",
+ "whereat",
+]
+
+[[package]]
 name = "zenpixels-convert"
-version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=7badb1478ec27888a51a2f1a403630a1560aa7a1#7badb1478ec27888a51a2f1a403630a1560aa7a1"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -3056,19 +3077,20 @@ dependencies = [
  "libm",
  "linear-srgb",
  "lz4_flex",
+ "magemath",
  "magetypes",
  "moxcms 0.9.2",
  "once_cell",
  "pastey",
  "rgb",
  "whereat",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
 name = "zenpng"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenpng?rev=dceae9c1bcd403ca6b60386de8be39ee3ee29d5a#dceae9c1bcd403ca6b60386de8be39ee3ee29d5a"
+source = "git+https://github.com/imazen/zenpng?rev=b6e759468691c8906b686a8d64732136f5a63518#b6e759468691c8906b686a8d64732136f5a63518"
 dependencies = [
  "almost-enough",
  "archmage 0.9.33",
@@ -3086,7 +3108,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenflate",
- "zenpixels",
+ "zenpixels 0.5.0",
  "zenpixels-convert",
 ]
 
@@ -3115,7 +3137,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -3132,7 +3154,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -3171,7 +3193,7 @@ dependencies = [
  "taffy",
  "thiserror 2.0.21",
  "zenblend",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zenpng",
  "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=e3975fb9d6d6b7baa96038a0eb8e27febb37c012)",
  "zensim",

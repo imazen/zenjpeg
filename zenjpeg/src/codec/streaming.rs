@@ -2,7 +2,7 @@
 
 use whereat::At;
 use zencodec::{CodecError, ImageInfo};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 
 use crate::error::Error;
 
@@ -15,7 +15,7 @@ use crate::error::Error;
 pub struct JpegStreamingDecoder<'a> {
     pub(super) reader: crate::decode::ScanlineReader<'a>,
     pub(super) info: ImageInfo,
-    pub(super) descriptor: PixelDescriptor,
+    pub(super) descriptor: ImageSpec,
     /// Reusable row buffer for decoded pixel data (sized for MCU-row batches).
     /// 4-byte aligned so bytemuck casts to &mut [f32] are safe.
     pub(super) row_buf: aligned_vec::AVec<u8, aligned_vec::ConstAlign<4>>,
@@ -31,10 +31,10 @@ pub struct JpegStreamingDecoder<'a> {
 impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
     type Error = At<CodecError>;
 
-    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelView<'_>)>, Self::Error> {
         {
             use imgref::ImgRefMut;
-            use zenpixels::{ChannelLayout, ChannelType};
+            use zenpixels::{ChannelOrder, SampleType};
 
             // Check cooperative cancellation before doing work. `StopReason` is
             // not a `core::error::Error`, so route it through the native `Error`
@@ -50,29 +50,29 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
             }
 
             let width = self.reader.width() as usize;
-            let bpp = self.descriptor.bytes_per_pixel();
+            let bpp = self.descriptor.layout.bytes_per_pixel();
             let row_bytes = width * bpp;
             // Allocate for MCU-row batch instead of single row
             let batch_rows = self.mcu_height as usize;
             let batch_bytes = row_bytes * batch_rows;
             self.row_buf.resize(batch_bytes, 0);
 
-            let ch_type = self.descriptor.channel_type();
-            let ch_layout = self.descriptor.layout();
+            let ch_type = self.descriptor.layout.sample;
+            let ch_layout = self.descriptor.layout.order;
 
             let count = match (ch_type, ch_layout) {
-                (ChannelType::U8, ChannelLayout::Gray) => {
+                (SampleType::U8, ChannelOrder::Gray) => {
                     let out =
                         ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
                     self.reader.read_rows_gray8(out)?
                 }
-                (ChannelType::U8, ChannelLayout::Rgb) => {
+                (SampleType::U8, ChannelOrder::Rgb) => {
                     let out =
                         ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
                     self.reader.read_rows_rgb8(out)?
                 }
-                (ChannelType::U8, ChannelLayout::Rgba) => {
-                    if self.descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                (SampleType::U8, ChannelOrder::Rgba | ChannelOrder::Rgbx) => {
+                    if self.descriptor.layout.order.has_padding_slot() {
                         let out =
                             ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
                         self.reader.read_rows_rgbx8(out)?
@@ -82,8 +82,8 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                         self.reader.read_rows_rgba8(out)?
                     }
                 }
-                (ChannelType::U8, ChannelLayout::Bgra) => {
-                    if self.descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                (SampleType::U8, ChannelOrder::Bgra | ChannelOrder::Bgrx) => {
+                    if self.descriptor.layout.order.has_padding_slot() {
                         let out =
                             ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
                         self.reader.read_rows_bgrx8(out)?
@@ -93,7 +93,7 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                         self.reader.read_rows_bgra8(out)?
                     }
                 }
-                (ChannelType::F32, ChannelLayout::Gray) => {
+                (SampleType::F32, ChannelOrder::Gray) => {
                     let float_count = width * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
@@ -101,7 +101,7 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     let f_out = ImgRefMut::new(float_slice, width, batch_rows);
                     self.reader.read_rows_gray_linear_f32(f_out)?
                 }
-                (ChannelType::F32, ChannelLayout::Rgb | ChannelLayout::Rgba) => {
+                (SampleType::F32, ChannelOrder::Rgb | ChannelOrder::Rgba) => {
                     // read_rows_rgba_f32 always writes 4 channels
                     let channels = 4;
                     let float_count = width * channels * batch_rows;
@@ -110,7 +110,7 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width * channels, batch_rows);
                     let count = self.reader.read_rows_rgba_f32(f_out)?;
-                    if ch_layout == ChannelLayout::Rgb {
+                    if ch_layout == ChannelOrder::Rgb {
                         // Compact RGBA to RGB in the same allocation, across all
                         // returned rows. Publishing it as RGB without compaction
                         // would expose alpha as the next pixel's red component.
@@ -120,17 +120,16 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     }
                     count
                 }
-                (
-                    ChannelType::U16,
-                    ChannelLayout::Gray | ChannelLayout::Rgb | ChannelLayout::Rgba,
-                ) => super::decode::read_canonical_u16_rows(
-                    &mut self.reader,
-                    &mut self.row_buf[..batch_bytes],
-                    row_bytes,
-                    batch_rows,
-                    ch_layout,
-                    self.precision,
-                )?,
+                (SampleType::U16, ChannelOrder::Gray | ChannelOrder::Rgb | ChannelOrder::Rgba) => {
+                    super::decode::read_canonical_u16_rows(
+                        &mut self.reader,
+                        &mut self.row_buf[..batch_bytes],
+                        row_bytes,
+                        batch_rows,
+                        ch_layout,
+                        self.precision,
+                    )?
+                }
                 _ => {
                     // A caller-requested pixel format/descriptor this codec
                     // doesn't negotiate — the dedicated
@@ -153,18 +152,16 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
 
             let actual_bytes = row_bytes * count;
             let stride = row_bytes;
-            let slice = PixelSlice::new(
+            let slice = PixelView::new(
                 &self.row_buf[..actual_bytes],
                 width as u32,
                 count as u32,
                 stride,
-                self.descriptor,
+                self.descriptor.clone(),
             )
             .map_err(|_| Error::internal("streaming decode: pixel slice construction failed"))?;
-            let slice = if ch_type == ChannelType::U16 {
-                slice
-                    .with_exact_depth(super::decode::u16_exact_depth(self.precision)?)
-                    .map_err(|_| Error::internal("streaming decode: U16 depth refused"))?
+            let slice = if ch_type == SampleType::U16 {
+                super::decode::u16_exact_depth(self.precision)?.attach_verified(slice)
             } else {
                 slice
             };

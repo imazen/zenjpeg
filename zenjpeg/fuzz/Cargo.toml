@@ -18,7 +18,7 @@ enough = "0.4.3"
 zune-jpeg = "0.5"
 zune-core = "0.5"
 
-zenpixels = { version = ">=0.3.1, <0.4.0", default-features = false }
+zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false }
 
 [dependencies.zenjpeg]
 path = ".."
@@ -30,21 +30,21 @@ members = ["."]
 
 # This standalone workspace repeats the root's zencodec 0.2 family patches.
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
 # zenjpeg depends on ultrahdr-core unconditionally, and crates.io ultrahdr-core
 # 0.6.0 requires zencodec ^0.1 (a second zencodec); use the review revision,
 # which takes the family through version edges.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "aadf102169086fc232205bdb3b92572cfda07032" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "607614ce9b1027edac600b52e61c99fe18f5cb46" }
 
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c103c1ceae0a31b18e596545534c0800e3b22d19" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 
-garb = { git = "https://github.com/imazen/garb", rev = "7356e8f17776bf408b73bb958982e79aa2b9cac1" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 
 zentone = { git = "https://github.com/imazen/zentone", rev = "d640ee4b8b84017b9ea39c132bf86aa3745e09df" }
 

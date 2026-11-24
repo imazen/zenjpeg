@@ -1629,17 +1629,17 @@ fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
     ch: usize,
     transform: LosslessTransform,
 ) -> Option<Vec<T>> {
-    use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+    use zenpixels::{ImageSpec, PixelView, PixelViewMut};
     if w == 0 || h == 0 || src.len() != w * h * ch {
         return None;
     }
     let bpp = ch * core::mem::size_of::<T>();
     let descriptor = match bpp {
-        1 => PixelDescriptor::GRAY8,
-        3 => PixelDescriptor::RGB8,
-        4 => PixelDescriptor::RGBA8,
-        12 => PixelDescriptor::RGBF32,
-        16 => PixelDescriptor::RGBAF32,
+        1 => ImageSpec::gray8_srgb(),
+        3 => ImageSpec::rgb8_srgb(),
+        4 => ImageSpec::rgba8_srgb(),
+        12 => ImageSpec::rgbf32_linear(),
+        16 => ImageSpec::rgbaf32_linear(),
         _ => return None,
     };
     let (ow, oh) = if transform.swaps_dimensions() {
@@ -1653,10 +1653,16 @@ fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
         u32::try_from(ow).ok()?,
         u32::try_from(oh).ok()?,
     );
-    let src_slice =
-        PixelSlice::new(bytemuck::cast_slice(src), w32, h32, w * bpp, descriptor).ok()?;
+    let src_slice = PixelView::new(
+        bytemuck::cast_slice(src),
+        w32,
+        h32,
+        w * bpp,
+        descriptor.clone(),
+    )
+    .ok()?;
     let mut dst: Vec<T> = vec![T::zeroed(); src.len()];
-    let dst_slice = PixelSliceMut::new(
+    let mut dst_slice = PixelViewMut::new(
         bytemuck::cast_slice_mut(&mut dst),
         ow32,
         oh32,
@@ -1664,10 +1670,10 @@ fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
         descriptor,
     )
     .ok()?;
-    zenpixels_convert::PixelSliceConvertExt::oriented_into(
+    zenpixels_convert::apply_orientation_into(
         &src_slice,
         transform.as_orientation(),
-        dst_slice,
+        &mut dst_slice,
     )
     .ok()?;
     Some(dst)

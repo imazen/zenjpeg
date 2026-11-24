@@ -2015,3 +2015,28 @@ has five differing samples out of 589824, each by one level. Three jpeg-decoder
 linear_rgbf32 (29), and srgb8_fixed420 (3), all one level. These pre-existing
 cross-target differences are separate from the exact per-target before/after
 contract; no tolerance or expected output was changed in this optimization.
+
+## zenpixels 0.5 integration qualification
+
+The JPEG and zencodec interchange uses `ImageSpec`, `PixelView`, and
+`PixelBuf`. Preserve Adobe CMYK polarity on both the sample order and color
+space. Store the source XYB profile as provenance, while the inverted RGB
+samples carry their current sRGB interpretation. JPEG gain bytes are numeric.
+Reconstruct in stored coordinates before baking EXIF orientation, and measure
+MaxRGB in the reconstructed gamut. The shared 0.5 CLL helper first converts to
+BT.2020 and yields 153 nits for a pure linear Display P3 red at white 203,
+where the native-gamut measurement yields 203 nits.
+
+The ordinary sink now reads its row allowance after `begin`. Padded sinks
+with one to sixteen rows of capacity receive exact baseline and progressive
+pixels across all four sampling modes. The JPEG plane pipeline retains
+absolute strip phase and centered chroma reconstruction. A local-origin
+planar view cannot describe two luma rows straddling a vertical chroma
+boundary.
+
+Open qualification blockers are `zensim-regress` at `abec986d`, whose two
+PNG input helpers still expect a 0.3 buffer, and `zenresize` at `b5afc8ad`,
+whose version bound retains zenpixels 0.3 for the optional layout feature.
+The default production graph resolves one zenpixels and one zencodec.
+The full development graph requires both pixel versions until those
+dependencies migrate.

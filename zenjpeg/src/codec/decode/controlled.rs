@@ -57,7 +57,7 @@ impl From<Error> for ControlledError {
 
 pub(super) fn start(
     job: JpegDecodeJob,
-    preferred: &[PixelDescriptor],
+    preferred: &[ImageSpec],
     storage: StorageBudget,
 ) -> Result<Box<DynControlledDecoder>, BoxedError> {
     // Existing implicit CMS, crop and gain-map routes require their own
@@ -143,7 +143,7 @@ pub(super) fn start(
             output.native_format = decode_descriptor(&formats, &header, None);
             let output_bytes = u64::from(output.width)
                 .checked_mul(u64::from(output.height))
-                .and_then(|n| n.checked_mul(output.native_format.bytes_per_pixel() as u64))
+                .and_then(|n| n.checked_mul(output.native_format.layout.bytes_per_pixel() as u64))
                 .ok_or(StorageError::SizeOverflow)?;
             job.limits
                 .check_output_size(output_bytes)
@@ -177,7 +177,7 @@ pub(super) fn start(
                 || header.is_xyb
             {
                 Some(InterpretationUnavailable::UnsupportedColor)
-            } else if output.native_format.channel_type() != zenpixels::ChannelType::U8 {
+            } else if output.native_format.layout.sample != zenpixels::SampleType::U8 {
                 // Integer strip reconstruction and whole-image float IDCT differ.
                 Some(InterpretationUnavailable::UnqualifiedOutput)
             } else {
@@ -201,11 +201,11 @@ pub(super) fn start(
                 details.source_encoding = source_encoding.map(|probe| Box::new(probe) as _);
             }
             ctx.set_info(full);
-            ctx.set_output_descriptor(output.native_format);
+            ctx.set_output_descriptor(output.native_format.clone());
             let mut facts = InterpretationFacts::new(
                 output.width,
                 output.height,
-                Some(output.native_format),
+                Some(output.native_format.clone()),
                 InterpretationState::Final,
             );
             if let Some(reason) = unavailable {
