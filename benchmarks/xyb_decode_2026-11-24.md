@@ -42,7 +42,7 @@ No public API, encoder behavior, test expectation or threshold changed.
 | ycbcr-420-progressive | 57,651 | 283.59 | 318.28 | 1.12× | 10,972 → 10,896 | 0.01 → 0.01 |
 
 Before: archived main `311e39ba9a89096912839e35efd51b8ca3370946`, after: this
-optimization series. Release, rustc 1.99.1, default compiler CPU target,
+optimization series (`385eb776`, `0eb37bef`, `bc3a3046`). Release, rustc 1.99.1, default compiler CPU target,
 archmage/magetypes 0.9.33, pinned linear-srgb c103c1ce, no moxcms/parallel in the
 measurement executable, `num_threads(1)`. Same hashed JPEG input in each A/B.
 Zenbench 0.1.11 interleaved seven modes, 30 rounds, fresh output per call;

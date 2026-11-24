@@ -643,7 +643,7 @@ migrated to `docs/TUNING_HISTORY.md` (2026-07-13):
 linear-srgb f64 rational OETF without changing its f32 sqrt, fused Horner
 operations, toe or narrowing. `0eb37bef` skips unused XYB bias statistics and
 moves/compacts full-resolution planes during upsampling. Exact rounding and
-packing follow in the same optimization series. AVX2/scalar and WASM SIMD128
+packing are in `bc3a3046`. AVX2/scalar and WASM SIMD128
 kernel tests compare float bits and u8 output with the prior scalar transfer;
 full-image A/B output is unchanged. Measurements and limits:
 `benchmarks/xyb_decode_2026-11-24.md`. Reproduce portable kernel gates with
