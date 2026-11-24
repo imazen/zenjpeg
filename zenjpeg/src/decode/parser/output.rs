@@ -430,19 +430,17 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             } else {
-                let comp_plane = &comp_planes_f32[comp_idx];
-                // Full resolution — clip to image dimensions
-                let mut plane = try_alloc_zeroed_f32_pref(
-                    self.alloc_pref,
-                    true,
-                    output_size,
-                    "f32 full-res output plane",
-                )?;
-                for py in 0..height {
-                    let src = &comp_plane[py * info.comp_width..py * info.comp_width + width];
-                    let dst = &mut plane[py * width..py * width + width];
-                    dst.copy_from_slice(src);
+                // Full-resolution planes need only lose their block padding.
+                // Move ownership instead of allocating/zeroing/copying another
+                // full image. Forward row compaction is safe even with overlap.
+                let mut plane = core::mem::take(&mut comp_planes_f32[comp_idx]);
+                if info.comp_width != width {
+                    for py in 0..height {
+                        let src = py * info.comp_width;
+                        plane.copy_within(src..src + width, py * width);
+                    }
                 }
+                plane.truncate(output_size);
                 plane
             };
 
@@ -590,9 +588,13 @@ impl<'a> JpegParser<'a> {
                     .as_ref()
                     .ok_or(Error::internal("missing quantization table"))?;
 
-                self.gather_bias_stats(imcu_row, comp_idx, info, bias_stats);
-                if info.is_full_res && imcu_row % 4 == 3 {
-                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                // XYB never applies dequantization bias. Do not walk its
+                // coefficient grids a second time to compute unused statistics.
+                if dequant_bias && !is_xyb {
+                    self.gather_bias_stats(imcu_row, comp_idx, info, bias_stats);
+                    if info.is_full_res && imcu_row % 4 == 3 {
+                        component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                    }
                 }
 
                 let biases = &component_biases[comp_idx];
@@ -1080,9 +1082,11 @@ impl<'a> JpegParser<'a> {
                     .as_ref()
                     .ok_or(Error::internal("missing quantization table"))?;
 
-                self.gather_bias_stats(imcu_row, comp_idx, info, &mut bias_stats);
-                if info.is_full_res && imcu_row % 4 == 3 {
-                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                if !is_xyb {
+                    self.gather_bias_stats(imcu_row, comp_idx, info, &mut bias_stats);
+                    if info.is_full_res && imcu_row % 4 == 3 {
+                        component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                    }
                 }
 
                 // IDCT for this component — always f32 for f32 output

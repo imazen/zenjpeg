@@ -1,11 +1,12 @@
 //! Resident-input XYB decode driver for perf and zenbench.
 //! prepare <P6.ppm> <directory> writes Q85 XYB/YCbCr fixtures using zenjpeg.
 //! run <jpeg> <iterations> profiles repeated fresh-output, one-thread decodes.
+//! dump <jpeg> <prefix> writes RGB8 and little-endian sRGB f32 for exact A/B.
 //! bench <directory> interleaves all six fixtures with zenbench.
 use enough::Unstoppable;
 use std::{hint::black_box, path::Path};
 use zenjpeg::{
-    decoder::Decoder,
+    decoder::{Decoder, OutputTarget},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling},
 };
 
@@ -57,6 +58,26 @@ fn main() {
             let decoder = Decoder::new().num_threads(1);
             for _ in 0..iterations {
                 black_box(decoder.decode(black_box(&jpeg), Unstoppable).unwrap());
+            }
+        }
+        "dump" => {
+            let jpeg = std::fs::read(&args[2]).unwrap();
+            let decoded = Decoder::new()
+                .num_threads(1)
+                .decode(&jpeg, Unstoppable)
+                .unwrap();
+            std::fs::write(format!("{}.rgb8", args[3]), decoded.pixels_u8().unwrap()).unwrap();
+            let decoded = Decoder::new()
+                .num_threads(1)
+                .output_target(OutputTarget::SrgbF32)
+                .decode(&jpeg, Unstoppable)
+                .unwrap();
+            use std::io::Write;
+            let mut file = std::io::BufWriter::new(
+                std::fs::File::create(format!("{}.rgbf32", args[3])).unwrap(),
+            );
+            for &v in decoded.pixels_f32().unwrap() {
+                file.write_all(&v.to_le_bytes()).unwrap();
             }
         }
         "bench" => {
