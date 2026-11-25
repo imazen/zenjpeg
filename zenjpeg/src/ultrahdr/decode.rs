@@ -541,7 +541,7 @@ mod tests {
             bytes,
             1,
             1,
-            zenpixels::ImageSpec::rgbaf32_linear().with_primaries(ColorPrimaries::DisplayP3),
+            zenpixels::ImageSpec::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3),
         )
         .unwrap();
         let jpeg = crate::ultrahdr::encode_ultrahdr_luma(&hdr).unwrap();
@@ -559,22 +559,15 @@ mod tests {
                 .valid_use,
             zenpixels::icc::IdentificationUse::MetadataOnly
         );
-        for desc in [ImageSpec::rgb8_srgb(), ImageSpec::rgba8_srgb()] {
+        for desc in [ImageSpec::RGB8_SRGB, ImageSpec::RGBA8_SRGB] {
             let desc = desc.with_primaries(ColorPrimaries::DisplayP3);
             let bpp = desc.layout.bytes_per_pixel();
             let data: Vec<u8> = (0..6 * bpp).map(|i| (i * 37) as u8).collect();
-            let parts = PixelBuffer::from_bytes(data, 3, 2, desc.clone())
+            let mut parts = PixelBuffer::from_bytes(data, 3, 2, desc.clone())
                 .unwrap()
                 .into_parts();
-            let padded = PixelBuffer::from_parts(
-                parts.storage,
-                parts.offset,
-                2,
-                2,
-                parts.stride,
-                parts.spec,
-            )
-            .unwrap();
+            parts.width = 2;
+            let padded = PixelBuffer::from_parts(parts).unwrap();
             let slice = padded.as_view();
             let packed: Vec<u8> = (0..2).flat_map(|y| slice.row(y).iter().copied()).collect();
             let tight = PixelBuffer::from_bytes(packed.clone(), 2, 2, desc.clone()).unwrap();
@@ -604,7 +597,7 @@ mod tests {
     #[test]
     fn base_icc_fast_paths_and_failed_transforms() {
         use zenpixels::ImageSpec;
-        let desc = ImageSpec::rgba8_srgb().with_primaries(ColorPrimaries::DisplayP3);
+        let desc = ImageSpec::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
         let pixels = || PixelBuffer::from_bytes(vec![10, 20, 30, 255], 1, 1, desc.clone()).unwrap();
         for icc in [
             None,
@@ -627,7 +620,7 @@ mod tests {
             vec![30, 20, 10, 255],
             1,
             1,
-            ImageSpec::bgra8_srgb().with_primaries(ColorPrimaries::DisplayP3),
+            ImageSpec::BGRA8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
         )
         .unwrap();
         assert!(prepare_base_pixels(unsupported, Some(&icc)).is_err());

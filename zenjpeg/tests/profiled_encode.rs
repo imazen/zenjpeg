@@ -32,11 +32,11 @@ fn active_icc(spec: ImageSpec, profile: impl Into<Arc<[u8]>>) -> ImageSpec {
 #[allow(deprecated)] // Exercises the legacy metadata setter.
 fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
     for base in [
-        ImageSpec::rgb8_srgb(),
-        ImageSpec::rgba8_srgb(),
-        ImageSpec::bgra8_srgb(),
-        ImageSpec::rgbx8_srgb(),
-        ImageSpec::bgrx8_srgb(),
+        ImageSpec::RGB8_SRGB,
+        ImageSpec::RGBA8_SRGB,
+        ImageSpec::BGRA8_SRGB,
+        ImageSpec::RGBX8_SRGB,
+        ImageSpec::BGRX8_SRGB,
     ] {
         let width = 97;
         let height = 65;
@@ -54,7 +54,7 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
         }
         let profile: Arc<[u8]> = Arc::from(ADOBE_RGB);
         let desc = active_icc(base.clone(), profile.clone());
-        let pixels = || PixelView::new(&raw, width, height, stride, desc.clone()).unwrap();
+        let pixels = || PixelView::new(&raw, width, height, stride, &desc).unwrap();
         for progressive in [false, true] {
             for huffman in [false, true] {
                 let config = JpegEncoderConfig::new()
@@ -70,7 +70,7 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
                 let legacy = job()
                     .encoder()
                     .unwrap()
-                    .encode(PixelView::new(&raw, width, height, stride, base.clone()).unwrap())
+                    .encode(PixelView::new(&raw, width, height, stride, &base).unwrap())
                     .unwrap();
                 let direct = job().encoder().unwrap().encode(pixels()).unwrap();
                 assert_eq!(direct.data(), legacy.data());
@@ -112,9 +112,11 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
 #[test]
 #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation() {
-    let desc = descriptor(ImageSpec::rgb8_srgb(), ADOBE_RGB);
+    let desc = descriptor(ImageSpec::RGB8_SRGB, ADOBE_RGB);
     let raw = [17, 31, 61].repeat(16);
-    let pixels = |d| PixelView::new(&raw, 4, 4, 12, d).unwrap();
+    let pixels = |d| {
+        PixelView::new_with_spec_cow(&raw, 4, 4, 12, zenpixels::SpecCow::from_owned(d)).unwrap()
+    };
     let job = || {
         JpegEncoderConfig::new().job().with_metadata_policy(
             Metadata::none().with_icc(ADOBE_RGB),
@@ -206,8 +208,8 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
     let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     for icc in [ADOBE_RGB, DISPLAY_P3_V4] {
         let raw = [17, 31, 61, 7, 11, 13, 0xee, 0xee, 0xee].repeat(9);
-        let desc = active_icc(ImageSpec::rgb8_srgb(), icc);
-        let pixels = || PixelView::new(&raw, 2, 9, 9, desc.clone()).unwrap();
+        let desc = active_icc(ImageSpec::RGB8_SRGB, icc);
+        let pixels = || PixelView::new(&raw, 2, 9, 9, &desc).unwrap();
         for progressive in [false, true] {
             let config = JpegEncoderConfig::new().with_progressive(progressive);
             let metadata = Metadata::none().with_icc(icc);
@@ -256,13 +258,14 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
 #[test]
 #[allow(deprecated)] // Exercises the legacy metadata setter.
 fn profile_descriptor_admission_checks_each_interpretation_guard() {
-    let known = descriptor(ImageSpec::rgb8_srgb(), ADOBE_RGB);
+    let known = descriptor(ImageSpec::RGB8_SRGB, ADOBE_RGB);
     let unknown = known
         .clone()
         .with_primaries(Primaries::Unknown)
         .with_transfer(Transfer::Unknown);
     let mut opaque = vec![0u8; 132];
     opaque[..4].copy_from_slice(&132u32.to_be_bytes());
+    opaque[12..16].copy_from_slice(b"mntr");
     opaque[16..20].copy_from_slice(b"RGB ");
     opaque[20..24].copy_from_slice(b"XYZ ");
     opaque[36..40].copy_from_slice(b"acsp");
@@ -292,18 +295,18 @@ fn profile_descriptor_admission_checks_each_interpretation_guard() {
         ),
         (
             ADOBE_RGB,
-            descriptor(ImageSpec::rgba8_srgb(), ADOBE_RGB)
+            descriptor(ImageSpec::RGBA8_SRGB, ADOBE_RGB)
                 .with_alpha(zenpixels::AlphaMode::Premultiplied),
             false,
         ),
         (
             ADOBE_RGB,
-            descriptor(ImageSpec::rgbf32_linear(), ADOBE_RGB),
+            descriptor(ImageSpec::RGBF32_LINEAR, ADOBE_RGB),
             false,
         ),
         (
             ADOBE_RGB,
-            descriptor(ImageSpec::gray8_srgb(), ADOBE_RGB),
+            descriptor(ImageSpec::GRAY8_SRGB, ADOBE_RGB),
             false,
         ),
     ] {
@@ -332,7 +335,7 @@ fn profile_descriptor_admission_checks_each_interpretation_guard() {
 #[test]
 #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn profile_bytes_refuse_color_carrier_removal_and_cicp_override() {
-    let desc = descriptor(ImageSpec::rgb8_srgb(), ADOBE_RGB);
+    let desc = descriptor(ImageSpec::RGB8_SRGB, ADOBE_RGB);
     let job = || {
         JpegEncoderConfig::new().job().with_metadata_policy(
             Metadata::none().with_icc(ADOBE_RGB),
@@ -353,6 +356,6 @@ fn profile_bytes_refuse_color_carrier_removal_and_cicp_override() {
     assert!(encoder.begin(4, 4, desc.clone()).is_err());
     let raw = [17, 31, 61].repeat(16);
     let spec = active_icc(desc, DISPLAY_P3_V4);
-    let pixels = PixelView::new(&raw, 4, 4, 12, spec).unwrap();
+    let pixels = PixelView::new(&raw, 4, 4, 12, &spec).unwrap();
     assert!(job().encoder().unwrap().encode(pixels).is_err());
 }

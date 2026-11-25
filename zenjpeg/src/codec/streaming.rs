@@ -158,14 +158,14 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                 width as u32,
                 count as u32,
                 stride,
-                self.descriptor.clone(),
+                &self.descriptor,
             )
             .map_err(|_| Error::internal("streaming decode: pixel slice construction failed"))?
             .with_origin(&self.origin);
             let slice = if ch_type == SampleType::U16 {
                 let mut facts = slice.facts();
                 facts.depth = Some(super::decode::u16_exact_depth(self.precision)?);
-                slice.with_facts(facts)
+                slice.with_assumed_facts(facts)
             } else {
                 slice
             };

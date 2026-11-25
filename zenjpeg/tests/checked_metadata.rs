@@ -26,7 +26,7 @@ fn pixels(data: &[u8]) -> PixelView<'_> {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    PixelView::new(data, 16, 17, 48, desc).unwrap()
+    PixelView::new_with_spec_cow(data, 16, 17, 48, zenpixels::SpecCow::from_owned(desc)).unwrap()
 }
 fn assert_retained(bytes: &[u8], expected: &Metadata) {
     let info = JpegDecoderConfig::new().probe_full_metadata(bytes).unwrap();
@@ -163,7 +163,7 @@ fn unsupported_hdr_is_atomic_and_checked_clear_replaces_old_record() {
     assert_retained(output.data(), &expected);
     job.try_set_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
         .unwrap();
-    let plain = PixelView::new(&data, 16, 17, 48, ImageSpec::rgb8_srgb()).unwrap();
+    let plain = PixelView::new(&data, 16, 17, 48, &zenpixels::specs::RGB8_SRGB).unwrap();
     let output = job.encoder().unwrap().encode(plain).unwrap();
     let info = JpegDecoderConfig::new()
         .probe_full_metadata(output.data())
@@ -365,8 +365,7 @@ fn later_conflicting_color_declaration_refuses_before_header() {
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     };
-    let declaration =
-        EncodeDeclaration::new(16, 17, ImageSpec::rgb8_srgb()).with_color(conflicting);
+    let declaration = EncodeDeclaration::new(16, 17, ImageSpec::RGB8_SRGB).with_color(conflicting);
     assert!(job.plan_encode(&declaration).is_err());
     let mut encoder = job.encoder().unwrap();
     assert!(encoder.begin_declared(&declaration).is_err());
@@ -404,7 +403,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     let meta = Metadata::none().with_icc(icc.as_ref());
     let expected = meta.filtered(&MetadataPolicy::PreserveExact);
     let data = vec![51u8; 16 * 17 * 3];
-    let px = || PixelView::new(&data, 16, 17, 48, ImageSpec::rgb8_srgb()).unwrap();
+    let px = || PixelView::new(&data, 16, 17, 48, &zenpixels::specs::RGB8_SRGB).unwrap();
     let job = || {
         JpegEncoderConfig::new()
             .with_huffman(false)
@@ -430,7 +429,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
         "sRGB checked one-shot vs legacy Verbatim"
     );
     let mut encoder = job().encoder().unwrap();
-    encoder.begin(16, 17, ImageSpec::rgb8_srgb()).unwrap();
+    encoder.begin(16, 17, ImageSpec::RGB8_SRGB).unwrap();
     encoder.push_rows(px()).unwrap();
     let streamed = encoder.finish().unwrap();
     assert_retained(streamed.data(), &expected);
@@ -445,7 +444,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     ));
     let conflicting = EncodePolicy::none().with_color(drop_icc);
     let mut encoder = job().with_policy(conflicting).encoder().unwrap();
-    assert!(encoder.begin(16, 17, ImageSpec::rgb8_srgb()).is_err());
+    assert!(encoder.begin(16, 17, ImageSpec::RGB8_SRGB).is_err());
     assert!(encoder.pending_output().is_empty());
     assert!(
         job()
@@ -471,6 +470,6 @@ fn required_field_only_orientation_cannot_be_discarded_later() {
         .unwrap()
         .with_policy(EncodePolicy::none().with_embed_exif(false));
     let mut encoder = job.encoder().unwrap();
-    assert!(encoder.begin(16, 17, ImageSpec::rgb8_srgb()).is_err());
+    assert!(encoder.begin(16, 17, ImageSpec::RGB8_SRGB).is_err());
     assert!(encoder.pending_output().is_empty());
 }

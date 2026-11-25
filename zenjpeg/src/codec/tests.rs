@@ -43,12 +43,12 @@ mod api_tests {
                 zenpixels::Transfer::Linear
             },
         );
-        PixelView::new(
+        PixelView::new_with_spec_cow(
             bytemuck::cast_slice(img.buf()),
             img.width() as u32,
             img.height() as u32,
             img.stride() * P::LAYOUT.bytes_per_pixel(),
-            spec,
+            zenpixels::SpecCow::from_owned(spec),
         )
         .unwrap()
     }
@@ -200,14 +200,14 @@ mod api_tests {
         assert!(header.icc_profile.is_some());
         assert_eq!(
             decode_descriptor(&[], &header, None).unwrap(),
-            ImageSpec::rgb8_srgb()
+            ImageSpec::RGB8_SRGB
         );
         assert_eq!(
-            decode_descriptor(&[ImageSpec::rgbaf32_linear()], &header, None).unwrap(),
-            ImageSpec::rgbaf32_linear()
+            decode_descriptor(&[ImageSpec::RGBAF32_LINEAR], &header, None).unwrap(),
+            ImageSpec::RGBAF32_LINEAR
         );
         let decoded = JpegDecoderConfig::new().decode(&encoded).unwrap();
-        assert_eq!(decoded.pixels().spec().clone(), ImageSpec::rgb8_srgb());
+        assert_eq!(decoded.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
         assert_eq!(
             decoded.info().source_color.icc_profile.as_deref(),
             header.icc_profile.as_deref()
@@ -354,12 +354,12 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let output = dec
             .job()
-            .decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::rgb8_srgb()])
+            .decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap()
             .decode()
             .unwrap();
         // Output should be RGB8 — the native format
-        assert_eq!(output.pixels().spec().clone(), ImageSpec::rgb8_srgb());
+        assert_eq!(output.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
         let pixel_data = output.pixels();
         assert_eq!(pixel_data.width(), 8);
         assert_eq!(pixel_data.rows(), 8);
@@ -400,7 +400,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::rgb8_srgb()])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(stream.info().width, 16);
@@ -437,7 +437,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::rgb8_srgb()])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         let mut batch_count = 0;
@@ -476,7 +476,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut borrowed_stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::rgb8_srgb()])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         let mut borrowed_pixels = Vec::new();
@@ -489,7 +489,7 @@ mod api_tests {
         let dec2 = JpegDecoderConfig::new();
         let mut owned_stream = dec2
             .job()
-            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::rgb8_srgb()])
+            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(owned_stream.info().width, 32);
@@ -534,7 +534,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::rgb8_srgb()])
+            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         // The stream should work after the owned_data variable is consumed
@@ -1065,7 +1065,7 @@ mod streaming_test {
         // enc borrows stop, both in same scope — compiles fine
         let pixels = vec![128u8; 64 * 64 * 4];
         let slice =
-            zenpixels::PixelView::new(&pixels, 64, 64, 64 * 4, zenpixels::ImageSpec::rgba8_srgb())
+            zenpixels::PixelView::new(&pixels, 64, 64, 64 * 4, &zenpixels::specs::RGBA8_SRGB)
                 .unwrap();
         enc.push_rows(slice).unwrap();
         let _output = enc.finish().unwrap();
@@ -1251,7 +1251,7 @@ mod cmyk_tests {
         ];
         let img = Img::new(pixels, 8, 8);
         let encoded = enc
-            .encode(PixelView::from_pixels(img.buf(), 8, 8, ImageSpec::rgb8_srgb().color).unwrap())
+            .encode(PixelView::from_pixels(img.buf(), 8, 8, ImageSpec::RGB8_SRGB.color).unwrap())
             .unwrap();
         let jpeg_data = encoded.into_vec();
 
@@ -1462,8 +1462,14 @@ mod push_decode_stride_tests {
                 0
             };
             let slice = &mut self.data[row_start..row_start + needed];
-            zenpixels::PixelViewMut::new(slice, width, height, self.stride, descriptor)
-                .map_err(|e| -> SinkError { format!("{e}").into() })
+            zenpixels::PixelViewMut::new_with_spec_cow(
+                slice,
+                width,
+                height,
+                self.stride,
+                zenpixels::SpecCow::from_owned(descriptor),
+            )
+            .map_err(|e| -> SinkError { format!("{e}").into() })
         }
     }
 
@@ -1477,7 +1483,7 @@ mod push_decode_stride_tests {
             .collect();
         let jpeg = config.encode(&pixels, 64, 64).unwrap();
 
-        let preferred = [ImageSpec::bgra8_srgb()];
+        let preferred = [ImageSpec::BGRA8_SRGB];
         let cfg = JpegDecoderConfig::new();
         let job = cfg.dyn_job();
         let mut sink = StridedSink {
@@ -1513,7 +1519,7 @@ mod push_decode_stride_tests {
         let jpeg = config.encode(&pixels, 64, 64).unwrap();
 
         // Buffered decode
-        let preferred = [ImageSpec::bgra8_srgb()];
+        let preferred = [ImageSpec::BGRA8_SRGB];
         let cfg1 = JpegDecoderConfig::new();
         let job1 = cfg1.dyn_job();
         let dec = job1.into_decoder(Cow::Borrowed(&jpeg), &preferred).unwrap();
@@ -1637,8 +1643,8 @@ mod push_decode_stride_tests {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
 
         let compute = ComputeEnvironment::conservative();
-        let small = ImageCharacteristics::new(256, 256, ImageSpec::rgb8_srgb());
-        let large = ImageCharacteristics::new(2048, 2048, ImageSpec::rgb8_srgb());
+        let small = ImageCharacteristics::new(256, 256, ImageSpec::RGB8_SRGB);
+        let large = ImageCharacteristics::new(2048, 2048, ImageSpec::RGB8_SRGB);
 
         let cfg = JpegDecoderConfig::new();
         // Qualify the trait: zencodec 0.1.25's blanket `DynDecoderConfig` also

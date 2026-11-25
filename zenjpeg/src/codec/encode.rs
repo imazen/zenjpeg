@@ -295,18 +295,18 @@ impl Default for JpegEncoderConfig {
 /// sRGB-encoded 16-bit samples are decoded to linear f32 on the way in
 /// ([`srgb16_layout`]); the linear 16-bit descriptors need no conversion.
 static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::bgra8_srgb(),
-    ImageSpec::rgbx8_srgb(),
-    ImageSpec::bgrx8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::BGRA8_SRGB,
+    ImageSpec::RGBX8_SRGB,
+    ImageSpec::BGRX8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
     ImageSpec::new(zenpixels::SampleLayout::RGB16, ColorSpace::LINEAR_SRGB),
     ImageSpec::new(
         zenpixels::SampleLayout::RGBA16,
@@ -1542,9 +1542,9 @@ impl JpegEncoder {
                     .filter(|transfer| transfer.to_cicp() == Some(c.transfer_characteristics))
                     .unwrap_or(Transfer::Unknown);
                 if gray {
-                    ImageSpec::gray8_srgb().with_transfer(transfer).color
+                    ImageSpec::GRAY8_SRGB.with_transfer(transfer).color
                 } else {
-                    ImageSpec::rgb8_srgb()
+                    ImageSpec::RGB8_SRGB
                         .with_primaries(primaries)
                         .with_transfer(transfer)
                         .color
@@ -1938,7 +1938,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let contiguous =
             pixels
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .map_err(crate::color::icc::pixel_buffer_error(
                     0,
                     "packed JPEG input",
@@ -1963,7 +1963,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let layout = PixelLayout::Rgba8Srgb;
         self.check_limits(width, height, layout)?;
-        let binding = self.bind_color(&ImageSpec::rgba8_srgb(), layout)?;
+        let binding = self.bind_color(&ImageSpec::RGBA8_SRGB, layout)?;
         let req = self.build_request(layout, &binding)?;
         let stop = self.stop_ref();
         let stride_bytes = stride_pixels as usize * 4;
@@ -2156,7 +2156,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
             &self.srgb16_rows
         } else {
             contiguous = rows
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .map_err(crate::color::icc::pixel_buffer_error(0, "packed JPEG rows"))?;
             &contiguous
         };
@@ -2227,7 +2227,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // The source fills the buffer; we discover the actual format from
         // what it produces. For now, use the descriptor from the config's
         // supported list — JPEG always wants RGB8 or RGBA8.
-        let desc = ImageSpec::rgb8_srgb();
+        let desc = ImageSpec::RGB8_SRGB;
         let layout = self.pixel_layout(&desc)?;
         self.check_row_filters(layout)?;
         self.check_limits(img_w, img_h, layout)?;
@@ -2257,17 +2257,12 @@ impl zencodec::encode::Encoder for JpegEncoder {
             // failure here means that internal sizing is inconsistent, i.e. a
             // bug in this function, not an unsupported feature (caterr
             // Pattern-B follow-up finding #1 investigation).
-            let pixel_buf = PixelViewMut::new(
-                &mut buf[..slice_size],
-                img_w,
-                rows_wanted,
-                stride,
-                desc.clone(),
-            )
-            .map_err(|e| {
-                let _ = e;
-                Error::internal("encode_from: internal pixel buffer construction failed")
-            })?;
+            let pixel_buf =
+                PixelViewMut::new(&mut buf[..slice_size], img_w, rows_wanted, stride, &desc)
+                    .map_err(|e| {
+                        let _ = e;
+                        Error::internal("encode_from: internal pixel buffer construction failed")
+                    })?;
 
             let rows_provided = source(y, pixel_buf);
             if rows_provided == 0 {
@@ -2424,9 +2419,9 @@ mod tests {
             width: 1,
             total_rows: u32::MAX,
             layout: PixelLayout::Rgb8Srgb,
-            descriptor: ImageSpec::rgb8_srgb(),
+            descriptor: ImageSpec::RGB8_SRGB,
         });
-        let pixels = PixelView::new(&[1, 2, 3], 1, 1, 3, ImageSpec::rgb8_srgb()).unwrap();
+        let pixels = PixelView::new(&[1, 2, 3], 1, 1, 3, &zenpixels::specs::RGB8_SRGB).unwrap();
         let error = encoder.push_rows(pixels).unwrap_err();
         assert!(error.to_string().contains("push_rows height"));
         assert_eq!(encoder.accumulator.as_ref().unwrap().total_rows, u32::MAX);
@@ -2477,7 +2472,7 @@ mod tests {
     #[test]
     fn profile_tagged_admission_checks_rgb_channel_model() {
         use zenpixels_convert::icc_profiles::ADOBE_RGB;
-        let desc = ImageSpec::rgb8_srgb()
+        let desc = ImageSpec::RGB8_SRGB
             .with_primaries(Primaries::AdobeRgb)
             .with_transfer(Transfer::AdobeRgb);
         let good = JpegEncoderConfig::new()

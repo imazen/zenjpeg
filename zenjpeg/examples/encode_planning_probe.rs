@@ -38,9 +38,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .with_huffman(true),
         _ => return Err("expected fixed or progressive".into()),
     };
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let descriptor = match colour.as_str() {
-        "srgb" => ImageSpec::rgb8_srgb(),
+        "srgb" => ImageSpec::RGB8_SRGB,
         "p3-icc" => ImageSpec::new(
             p3.layout,
             ColorSpace::Icc {

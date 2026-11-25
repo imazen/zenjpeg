@@ -104,7 +104,8 @@ fn rgb(stride: usize) -> Vec<u8> {
 #[test]
 fn zencodec_one_shot_and_row_encodes_keep_the_deadline_reason() {
     let data = rgb(W as usize * 3);
-    let pixels = || PixelView::new(&data, W, H, W as usize * 3, ImageSpec::rgb8_srgb()).unwrap();
+    let pixels =
+        || PixelView::new(&data, W, H, W as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
     for (name, config) in [
         (
             "baseline",
@@ -139,7 +140,7 @@ fn zencodec_one_shot_and_row_encodes_keep_the_deadline_reason() {
                     .job()
                     .with_pulse(SharedPulse::new(stop))
                     .encoder()?;
-                encoder.begin(W, H, ImageSpec::rgb8_srgb())?;
+                encoder.begin(W, H, ImageSpec::RGB8_SRGB)?;
                 for y in (0..H).step_by(16) {
                     let rows = (H - y).min(16);
                     let start = y as usize * W as usize * 3;
@@ -149,7 +150,7 @@ fn zencodec_one_shot_and_row_encodes_keep_the_deadline_reason() {
                         W,
                         rows,
                         W as usize * 3,
-                        ImageSpec::rgb8_srgb(),
+                        &zenpixels::specs::RGB8_SRGB,
                     )
                     .unwrap();
                     encoder.push_rows(strip)?;

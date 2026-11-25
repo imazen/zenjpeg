@@ -499,7 +499,7 @@ fn decode_f32(data: &[u8]) -> Vec<u8> {
     let out = job()
         .decoder(
             Cow::Owned(data.to_vec()),
-            &[zenpixels::ImageSpec::rgbf32_linear()],
+            &[zenpixels::ImageSpec::RGBF32_LINEAR],
         )
         .unwrap()
         .decode()

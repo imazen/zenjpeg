@@ -17,7 +17,7 @@
 
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::PixelView;
 
 /// A small, valid baseline JPEG produced through the zencodec trait chain.
 /// 8×8 tightly-packed RGB8 sRGB checkerboard (one full MCU) — big enough to
@@ -32,8 +32,14 @@ fn valid_jpeg() -> Vec<u8> {
             pixels.extend_from_slice(&[r, g, b]);
         }
     }
-    let slice = PixelView::new(&pixels, w, h, (w * 3) as usize, ImageSpec::rgb8_srgb())
-        .expect("rgb8 slice");
+    let slice = PixelView::new(
+        &pixels,
+        w,
+        h,
+        (w * 3) as usize,
+        &zenpixels::specs::RGB8_SRGB,
+    )
+    .expect("rgb8 slice");
     JpegEncoderConfig::new()
         .job()
         .encoder()

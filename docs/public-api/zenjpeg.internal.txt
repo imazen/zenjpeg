@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)       305
 #   pub consts/statics                        314
 #   free functions                            366
-#   inherent methods                         1208
+#   inherent methods                         1143
 #   struct fields                             792
 #   enum variants                             498
 #   re-exports                                 18
@@ -22,29 +22,29 @@
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                           71
+#   (root)                           70
 #   alloc                             1
-#   color                           110
-#   container                        31
+#   color                           109
+#   container                        28
 #   decode                          456
-#   decoder                          55
-#   detect                           46
-#   encode                         1456
+#   decoder                          43
+#   detect                           40
+#   encode                         1438
 #   encoder                         164
 #   entropy                         100
-#   foundation                      352
+#   foundation                      351
 #   heuristics                        3
-#   huffman                         306
-#   layout                            3
-#   lossless                          4
-#   quant                           159
-#   recompress                       12
+#   huffman                         305
+#   layout                            1
+#   lossless                          1
+#   quant                           158
+#   recompress                        5
 #   rgb                              11
-#   test_utils                       95
-#   types                           138
-#   ultrahdr                         13
+#   test_utils                       94
+#   types                           132
+#   ultrahdr                         11
 
-## items (3402 lines)
+## items (3337 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -401,7 +401,6 @@ pub enum foundation::aligned_alloc::AllocError
 pub enum huffman::types::HuffmanAlgorithm
 pub enum test_utils::TestPattern
 pub fn alloc::vec::Vec<T>::from(foundation::instrumented_vec::InstrumentedVec<T>) -> alloc::vec::Vec<T>
-pub fn CmykHandling::assert_fields_are_eq(&self)
 pub fn JpegEncoderConfig::inner(&self) -> &encode::encoder_config::EncoderConfig
 pub fn JpegEncoderConfig::inner_mut(&mut self) -> &mut encode::encoder_config::EncoderConfig
 pub fn JpegEncoderConfig::with_huffman(self, impl core::convert::Into<encode::encoder_types::HuffmanStrategy>) -> Self
@@ -420,10 +419,9 @@ pub fn color::gray_f32_to_gray_f32(&[f32], &mut [f32]) [also: color::ycbcr]
 pub fn color::gray_f32_to_gray_u8(&[f32], &mut [u8]) [also: color::ycbcr]
 pub fn color::gray_f32_to_rgb_f32(&[f32], &mut [f32]) [also: color::ycbcr]
 pub fn color::gray_f32_to_rgb_u8(&[f32], &mut [u8]) [also: color::ycbcr]
-pub fn color::icc::TargetColorSpace::assert_fields_are_eq(&self)
-pub fn color::icc::TargetColorSpace::clone(&self) -> color::icc::TargetColorSpace
-pub fn color::icc::TargetColorSpace::default() -> color::icc::TargetColorSpace
-pub fn color::icc::TargetColorSpace::eq(&self, &color::icc::TargetColorSpace) -> bool
+pub fn color::icc::TargetColorSpace::clone(&self) -> Self
+pub fn color::icc::TargetColorSpace::default() -> Self
+pub fn color::icc::TargetColorSpace::eq(&self, &Self) -> bool
 pub fn color::icc::TargetColorSpace::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn color::icc::apply_icc_transform(&[u8], usize, usize, &[u8], color::icc::TargetColorSpace) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn color::icc::apply_icc_transform_f32(&[f32], usize, usize, &[u8], color::icc::TargetColorSpace) -> encoder::Result<alloc::vec::Vec<f32>>
@@ -491,7 +489,6 @@ pub fn container::metadata::Avi1::assert_fields_are_eq(&self)
 pub fn container::metadata::Ducky<'a>::assert_fields_are_eq(&self)
 pub fn container::metadata::DuckyRecord<'a>::assert_fields_are_eq(&self)
 pub fn container::metadata::Eppim<'a>::assert_fields_are_eq(&self)
-pub fn container::metadata::Error::assert_fields_are_eq(&self)
 pub fn container::metadata::ExtendedXmpChunk<'a>::assert_fields_are_eq(&self)
 pub fn container::metadata::FrameComponent::assert_fields_are_eq(&self)
 pub fn container::metadata::IccChunk<'a>::assert_fields_are_eq(&self)
@@ -506,32 +503,30 @@ pub fn container::metadata::ScanComponent::assert_fields_are_eq(&self)
 pub fn container::metadata::Sof<'a>::assert_fields_are_eq(&self)
 pub fn container::metadata::Sos<'a>::assert_fields_are_eq(&self)
 pub fn container::metadata::Spiff::assert_fields_are_eq(&self)
-pub fn container::metadata::Unparsed::assert_fields_are_eq(&self)
 pub fn container::metadata::Utf16Be<'a>::assert_fields_are_eq(&self)
 pub fn container::mpf::MpfError::assert_fields_are_eq(&self)
-pub fn container::probe::GainMapPresence::assert_fields_are_eq(&self)
 pub fn container::probe::ProbeSof::assert_fields_are_eq(&self)
 pub fn container::probe::Wants::assert_fields_are_eq(&self)
 pub fn container::types::ContainerItem::assert_fields_are_eq(&self)
 pub fn container::types::ItemSemantic::assert_fields_are_eq(&self)
 pub fn container::types::MpImageType::assert_fields_are_eq(&self)
 pub fn container::types::MpfEntry::assert_fields_are_eq(&self)
-pub fn decode::CoefficientComparison::clone(&self) -> decode::CoefficientComparison
+pub fn decode::CoefficientComparison::clone(&self) -> Self
 pub fn decode::CoefficientComparison::dc_diff_pct(&self) -> f64
 pub fn decode::CoefficientComparison::diff_block_pct(&self) -> f64
 pub fn decode::CoefficientComparison::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::ComponentCoefficients::block(&self, usize) -> &[i16]
 pub fn decode::ComponentCoefficients::block_at(&self, usize, usize) -> &[i16]
-pub fn decode::ComponentCoefficients::clone(&self) -> decode::ComponentCoefficients
+pub fn decode::ComponentCoefficients::clone(&self) -> Self
 pub fn decode::ComponentCoefficients::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::ComponentCoefficients::num_blocks(&self) -> usize
-pub fn decode::DecodedPixels<'a>::clone(&self) -> decode::DecodedPixels<'a>
+pub fn decode::DecodedPixels<'a>::clone(&self) -> Self
 pub fn decode::DecodedPixels<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn decode::JbrdMetadata::clone(&self) -> decode::JbrdMetadata
-pub fn decode::JbrdMetadata::default() -> decode::JbrdMetadata
+pub fn decode::JbrdMetadata::clone(&self) -> Self
+pub fn decode::JbrdMetadata::default() -> Self
 pub fn decode::JbrdMetadata::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn decode::JbrdScanInfo::clone(&self) -> decode::JbrdScanInfo
-pub fn decode::JbrdScanInfo::default() -> decode::JbrdScanInfo
+pub fn decode::JbrdScanInfo::clone(&self) -> Self
+pub fn decode::JbrdScanInfo::default() -> Self
 pub fn decode::JbrdScanInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::MpfImageTypeExt::is_depth(&self) -> bool
 pub fn decode::MpfImageTypeExt::is_gainmap(&self) -> bool
@@ -539,17 +534,17 @@ pub fn decode::MpfImageTypeExt::is_multiframe(&self) -> bool
 pub fn decode::MpfImageTypeExt::is_thumbnail(&self) -> bool
 pub fn decode::MpfImageTypeExt::to_type_code(self) -> u32
 pub fn decode::OrientationHint::assert_fields_are_eq(&self)
-pub fn decode::OrientationHint::clone(&self) -> decode::OrientationHint
-pub fn decode::OrientationHint::default() -> decode::OrientationHint
-pub fn decode::OrientationHint::eq(&self, &decode::OrientationHint) -> bool
+pub fn decode::OrientationHint::clone(&self) -> Self
+pub fn decode::OrientationHint::default() -> Self
+pub fn decode::OrientationHint::eq(&self, &Self) -> bool
 pub fn decode::OrientationHint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::OrientationHint::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn decode::OwnedDecodedPixels::clone(&self) -> decode::OwnedDecodedPixels
+pub fn decode::OwnedDecodedPixels::clone(&self) -> Self
 pub fn decode::OwnedDecodedPixels::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::ParallelStrategy::assert_fields_are_eq(&self)
-pub fn decode::ParallelStrategy::clone(&self) -> decode::ParallelStrategy
-pub fn decode::ParallelStrategy::default() -> decode::ParallelStrategy
-pub fn decode::ParallelStrategy::eq(&self, &decode::ParallelStrategy) -> bool
+pub fn decode::ParallelStrategy::clone(&self) -> Self
+pub fn decode::ParallelStrategy::default() -> Self
+pub fn decode::ParallelStrategy::eq(&self, &Self) -> bool
 pub fn decode::ParallelStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::decode_coefficients(&[u8]) -> encoder::Result<alloc::vec::Vec<alloc::vec::Vec<[i16; 64]>>>
 pub fn decode::idct::inverse_dct_8x8(&[f32; 64]) -> [f32; 64]
@@ -576,8 +571,8 @@ pub fn decode::idct_int::idct_int_tiered_unclamped(&mut [i32; 64], &mut [i16], u
 pub fn decode::idct_int::is_dc_only_int(&[i32; 64]) -> bool
 pub fn decode::idct_int::pixels_i16_to_f32_centered(&[i16; 64]) -> [f32; 64]
 pub fn decode::upsample::H2v2Bias::assert_fields_are_eq(&self)
-pub fn decode::upsample::H2v2Bias::clone(&self) -> decode::upsample::H2v2Bias
-pub fn decode::upsample::H2v2Bias::eq(&self, &decode::upsample::H2v2Bias) -> bool
+pub fn decode::upsample::H2v2Bias::clone(&self) -> Self
+pub fn decode::upsample::H2v2Bias::eq(&self, &Self) -> bool
 pub fn decode::upsample::H2v2Bias::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn decode::upsample::upsample_h1v2_i16_libjpeg(&[i16], usize, usize, &mut [i16], usize, usize)
 pub fn decode::upsample::upsample_h1v2_i16_libjpeg_strided(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize)
@@ -597,9 +592,7 @@ pub fn decode::upsample::upsample_h2v2_libjpeg_row(&[i16], &[i16], &mut [i16], u
 pub fn decode::upsample::upsample_h2v2_libjpeg_row_scalar(&[i16], &[i16], &mut [i16], usize, usize, decode::upsample::H2v2Bias)
 pub fn decode::upsample::upsample_libjpeg_f32(&[f32], usize, usize, usize, usize, usize, usize) -> alloc::vec::Vec<f32>
 pub fn decode::upsample::upsample_nearest_f32(&[f32], usize, usize, &mut [f32], usize, usize, usize, usize)
-pub fn decoder::ChromaUpsampling::assert_fields_are_eq(&self)
 pub fn decoder::Cmyk16::assert_fields_are_eq(&self)
-pub fn decoder::DeblockMode::assert_fields_are_eq(&self)
 pub fn decoder::DecodeConfig::correct_color(self, core::option::Option<color::icc::TargetColorSpace>) -> Self
 pub fn decoder::DecodeConfig::decode_coefficients_with_jbrd_metadata(&self, &[u8], impl enough::Stop) -> encoder::Result<(decoder::DecodedCoefficients, decode::JbrdMetadata)>
 pub fn decoder::DecodeConfig::decode_into(&self, &[u8], types::PixelFormat, &mut [u8], impl enough::Stop) -> encoder::Result<usize>
@@ -620,35 +613,19 @@ pub fn decoder::DecodedExtras::adobe(&self) -> core::option::Option<encode::extr
 pub fn decoder::DecodedExtras::jfif(&self) -> core::option::Option<encode::extras::JfifInfo>
 pub fn decoder::DecodedExtras::segments_by_type(&self, encode::extras::SegmentType) -> impl core::iter::traits::iterator::Iterator<Item = &decoder::PreservedSegment>
 pub fn decoder::DecodedImage::into_parts(self) -> (alloc::vec::Vec<u8>, u32, u32, types::PixelFormat, core::option::Option<decoder::DecodedExtras>)
-pub fn decoder::DepthSource::assert_fields_are_eq(&self)
-pub fn decoder::GDepthFormat::assert_fields_are_eq(&self)
-pub fn decoder::GDepthMeasureType::assert_fields_are_eq(&self)
-pub fn decoder::GDepthUnits::assert_fields_are_eq(&self)
-pub fn decoder::GainMapHandling::assert_fields_are_eq(&self)
-pub fn decoder::IccPreserve::assert_fields_are_eq(&self)
-pub fn decoder::IdctMethod::assert_fields_are_eq(&self)
-pub fn decoder::OutputTarget::assert_fields_are_eq(&self)
 pub fn decoder::RowSlice<'a>::format(&self) -> types::PixelFormat
 pub fn decoder::RowSliceF32<'a>::format(&self) -> types::PixelFormat
 pub fn decoder::ScanlineReader<'a>::subsampling(&self) -> types::Subsampling
-pub fn decoder::StandardProfile::assert_fields_are_eq(&self)
-pub fn decoder::Strictness::assert_fields_are_eq(&self)
-pub fn detect::Confidence::assert_fields_are_eq(&self)
-pub fn detect::EncoderFamily::assert_fields_are_eq(&self)
 pub fn detect::JpegProbe::quality_ceiling(f32) -> encode::encoder_types::Quality
 pub fn detect::JpegProbe::recommended_quality(&self) -> encode::encoder_types::Quality
 pub fn detect::JpegProbe::recommended_subsampling(&self) -> encode::encoder_types::ChromaSubsampling
-pub fn detect::ProbeError::assert_fields_are_eq(&self)
-pub fn detect::QualityScale::assert_fields_are_eq(&self)
-pub fn detect::content::ContentType::assert_fields_are_eq(&self)
-pub fn detect::content::ContentType::clone(&self) -> detect::content::ContentType
-pub fn detect::content::ContentType::eq(&self, &detect::content::ContentType) -> bool
+pub fn detect::content::ContentType::clone(&self) -> Self
+pub fn detect::content::ContentType::eq(&self, &Self) -> bool
 pub fn detect::content::ContentType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn detect::content::DeblockAction::assert_fields_are_eq(&self)
-pub fn detect::content::DeblockAction::clone(&self) -> detect::content::DeblockAction
-pub fn detect::content::DeblockAction::eq(&self, &detect::content::DeblockAction) -> bool
+pub fn detect::content::DeblockAction::clone(&self) -> Self
+pub fn detect::content::DeblockAction::eq(&self, &Self) -> bool
 pub fn detect::content::DeblockAction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn detect::content::DeblockRecommendation::clone(&self) -> detect::content::DeblockRecommendation
+pub fn detect::content::DeblockRecommendation::clone(&self) -> Self
 pub fn detect::content::DeblockRecommendation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn detect::content::classify_from_luma_coefficients(&[i16], usize) -> (detect::content::ContentType, f32)
 pub fn detect::content::classify_from_probe(&detect::JpegProbe) -> detect::content::ContentType
@@ -661,15 +638,15 @@ pub fn detect::record::EncoderId::assert_fields_are_eq(&self)
 pub fn detect::record::SubsamplingCode::assert_fields_are_eq(&self)
 pub fn detect::record::TableSource::assert_fields_are_eq(&self)
 pub fn encode::HuffmanSymbolFrequencies::add(&mut self, &encode::HuffmanSymbolFrequencies)
-pub fn encode::HuffmanSymbolFrequencies::clone(&self) -> encode::HuffmanSymbolFrequencies
+pub fn encode::HuffmanSymbolFrequencies::clone(&self) -> Self
 pub fn encode::HuffmanSymbolFrequencies::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::HuffmanSymbolFrequencies::generate_tables(&self) -> encoder::Result<huffman::optimize::frequency::HuffmanTableSet>
 pub fn encode::HuffmanSymbolFrequencies::generate_tables_with_method(&self, types::HuffmanMethod) -> encoder::Result<huffman::optimize::frequency::HuffmanTableSet>
-pub fn encode::bdrd_trace::BdrdBlockEntry::clone(&self) -> encode::bdrd_trace::BdrdBlockEntry
+pub fn encode::bdrd_trace::BdrdBlockEntry::clone(&self) -> Self
 pub fn encode::bdrd_trace::BdrdBlockEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::bdrd_trace::BoundaryRdTrace::blocks_h(&self) -> u32
 pub fn encode::bdrd_trace::BoundaryRdTrace::blocks_w(&self) -> u32
-pub fn encode::bdrd_trace::BoundaryRdTrace::default() -> encode::bdrd_trace::BoundaryRdTrace
+pub fn encode::bdrd_trace::BoundaryRdTrace::default() -> Self
 pub fn encode::bdrd_trace::BoundaryRdTrace::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::bdrd_trace::BoundaryRdTrace::new() -> Self
 pub fn encode::bdrd_trace::install_trace()
@@ -718,7 +695,7 @@ pub fn encode::chroma::convert_gamma_aware_iterative_440(&[u8], usize, usize, ty
 pub fn encode::chroma::gamma_aware_strip_420(&[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, usize, usize, usize, bool)
 pub fn encode::chroma::gamma_aware_strip_422(&[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, usize, bool)
 pub fn encode::chroma::gamma_aware_strip_440(&[u8], &mut [f32], &mut [f32], &mut [f32], usize, usize, usize, bool)
-pub fn encode::config::ComputedConfig::clone(&self) -> encode::config::ComputedConfig
+pub fn encode::config::ComputedConfig::clone(&self) -> Self
 pub fn encode::config::ComputedConfig::default() -> Self
 pub fn encode::config::ComputedConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::dct::aan_forward_dct_8x8(&[f32; 64]) -> [f32; 64]
@@ -728,20 +705,20 @@ pub fn encode::dct::forward_dct_8x8_u8(&[u8; 64]) -> [f32; 64]
 pub fn encode::dct::forward_dct_blocks(&[[f32; 64]]) -> alloc::vec::Vec<[f32; 64]>
 pub fn encode::deringing::preprocess_deringing_block(&mut foundation::simd_types::Block8x8f, u16)
 pub fn encode::deringing::preprocess_deringing_f32(&mut [f32; 64], u16)
-pub fn encode::diagnostics::BlockDiagnostics::clone(&self) -> encode::diagnostics::BlockDiagnostics
+pub fn encode::diagnostics::BlockDiagnostics::clone(&self) -> Self
 pub fn encode::diagnostics::BlockDiagnostics::default() -> Self
 pub fn encode::diagnostics::BlockDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::diagnostics::ComponentDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::diagnostics::DiagnosticsHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::diagnostics::DiagnosticsHandle::try_take(self) -> core::result::Result<encode::diagnostics::EncodeDiagnostics, Self>
 pub fn encode::diagnostics::EncodeDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_config::BoundaryRd::clone(&self) -> encode::encoder_config::BoundaryRd
-pub fn encode::encoder_config::BoundaryRd::default() -> encode::encoder_config::BoundaryRd
-pub fn encode::encoder_config::BoundaryRd::eq(&self, &encode::encoder_config::BoundaryRd) -> bool
+pub fn encode::encoder_config::BoundaryRd::clone(&self) -> Self
+pub fn encode::encoder_config::BoundaryRd::default() -> Self
+pub fn encode::encoder_config::BoundaryRd::eq(&self, &Self) -> bool
 pub fn encode::encoder_config::BoundaryRd::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_config::BoundaryRdConfig::clone(&self) -> encode::encoder_config::BoundaryRdConfig
-pub fn encode::encoder_config::BoundaryRdConfig::default() -> encode::encoder_config::BoundaryRdConfig
-pub fn encode::encoder_config::BoundaryRdConfig::eq(&self, &encode::encoder_config::BoundaryRdConfig) -> bool
+pub fn encode::encoder_config::BoundaryRdConfig::clone(&self) -> Self
+pub fn encode::encoder_config::BoundaryRdConfig::default() -> Self
+pub fn encode::encoder_config::BoundaryRdConfig::eq(&self, &Self) -> bool
 pub fn encode::encoder_config::BoundaryRdConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_config::BoundaryRdConfig::neighbors(&self) -> encode::encoder_config::NeighborScope
 pub fn encode::encoder_config::BoundaryRdConfig::new() -> Self
@@ -762,7 +739,7 @@ pub fn encode::encoder_config::EncoderConfig::allow_16bit_quant_tables(self, boo
 pub fn encode::encoder_config::EncoderConfig::aq_enabled(self, bool) -> Self
 pub fn encode::encoder_config::EncoderConfig::auto_optimize(self, bool) -> Self
 pub fn encode::encoder_config::EncoderConfig::boundary_rd(self, encode::encoder_config::BoundaryRd) -> Self
-pub fn encode::encoder_config::EncoderConfig::clone(&self) -> encode::encoder_config::EncoderConfig
+pub fn encode::encoder_config::EncoderConfig::clone(&self) -> Self
 pub fn encode::encoder_config::EncoderConfig::color_mode(self, encode::encoder_types::ColorMode) -> Self
 pub fn encode::encoder_config::EncoderConfig::custom_huffman_tables(self, huffman::optimize::frequency::HuffmanTableSet) -> Self
 pub fn encode::encoder_config::EncoderConfig::deringing(self, bool) -> Self
@@ -826,15 +803,14 @@ pub fn encode::encoder_config::EncoderConfig::xyb(impl core::convert::Into<encod
 pub fn encode::encoder_config::EncoderConfig::xyb_effort(impl core::convert::Into<encode::encoder_types::Quality>, encode::encoder_types::XybSubsampling, encode::encoder_types::Effort) -> Self
 pub fn encode::encoder_config::EncoderConfig::ycbcr(impl core::convert::Into<encode::encoder_types::Quality>, encode::encoder_types::ChromaSubsampling) -> Self
 pub fn encode::encoder_config::EncoderConfig::ycbcr_effort(impl core::convert::Into<encode::encoder_types::Quality>, encode::encoder_types::ChromaSubsampling, encode::encoder_types::Effort) -> Self
-pub fn encode::encoder_config::NeighborScope::assert_fields_are_eq(&self)
-pub fn encode::encoder_config::NeighborScope::clone(&self) -> encode::encoder_config::NeighborScope
-pub fn encode::encoder_config::NeighborScope::default() -> encode::encoder_config::NeighborScope
-pub fn encode::encoder_config::NeighborScope::eq(&self, &encode::encoder_config::NeighborScope) -> bool
+pub fn encode::encoder_config::NeighborScope::clone(&self) -> Self
+pub fn encode::encoder_config::NeighborScope::default() -> Self
+pub fn encode::encoder_config::NeighborScope::eq(&self, &Self) -> bool
 pub fn encode::encoder_config::NeighborScope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_config::NeighborScope::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn encode::encoder_config::RetryPolicy::clone(&self) -> encode::encoder_config::RetryPolicy
+pub fn encode::encoder_config::RetryPolicy::clone(&self) -> Self
 pub fn encode::encoder_config::RetryPolicy::default() -> Self
-pub fn encode::encoder_config::RetryPolicy::eq(&self, &encode::encoder_config::RetryPolicy) -> bool
+pub fn encode::encoder_config::RetryPolicy::eq(&self, &Self) -> bool
 pub fn encode::encoder_config::RetryPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_config::RetryPolicy::max_retries(&self) -> u8
 pub fn encode::encoder_config::RetryPolicy::new() -> Self
@@ -842,10 +818,10 @@ pub fn encode::encoder_config::RetryPolicy::shrink(&self) -> f32
 pub fn encode::encoder_config::RetryPolicy::with_max_retries(self, u8) -> Self
 pub fn encode::encoder_config::RetryPolicy::with_shrink(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::alpha(&self) -> f32
-pub fn encode::encoder_config::SeamPenalty::clone(&self) -> encode::encoder_config::SeamPenalty
+pub fn encode::encoder_config::SeamPenalty::clone(&self) -> Self
 pub fn encode::encoder_config::SeamPenalty::default() -> Self
 pub fn encode::encoder_config::SeamPenalty::drift_gain(&self) -> f32
-pub fn encode::encoder_config::SeamPenalty::eq(&self, &encode::encoder_config::SeamPenalty) -> bool
+pub fn encode::encoder_config::SeamPenalty::eq(&self, &Self) -> bool
 pub fn encode::encoder_config::SeamPenalty::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_config::SeamPenalty::new() -> Self
 pub fn encode::encoder_config::SeamPenalty::retry_beta(&self) -> f32
@@ -854,56 +830,49 @@ pub fn encode::encoder_config::SeamPenalty::with_alpha(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::with_drift_gain(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::with_retry_beta(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::with_threshold(self, f32) -> Self
-pub fn encode::encoder_types::ChromaSubsampling::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::ChromaSubsampling::clone(&self) -> encode::encoder_types::ChromaSubsampling
-pub fn encode::encoder_types::ChromaSubsampling::eq(&self, &encode::encoder_types::ChromaSubsampling) -> bool
+pub fn encode::encoder_types::ChromaSubsampling::clone(&self) -> Self
+pub fn encode::encoder_types::ChromaSubsampling::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::ChromaSubsampling::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::ChromaSubsampling::from(types::Subsampling) -> Self
 pub fn encode::encoder_types::ColorMode::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::ColorMode::clone(&self) -> encode::encoder_types::ColorMode
+pub fn encode::encoder_types::ColorMode::clone(&self) -> Self
 pub fn encode::encoder_types::ColorMode::default() -> Self
-pub fn encode::encoder_types::ColorMode::eq(&self, &encode::encoder_types::ColorMode) -> bool
+pub fn encode::encoder_types::ColorMode::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::ColorMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::DownsamplingMethod::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::DownsamplingMethod::clone(&self) -> encode::encoder_types::DownsamplingMethod
-pub fn encode::encoder_types::DownsamplingMethod::default() -> encode::encoder_types::DownsamplingMethod
-pub fn encode::encoder_types::DownsamplingMethod::eq(&self, &encode::encoder_types::DownsamplingMethod) -> bool
+pub fn encode::encoder_types::DownsamplingMethod::clone(&self) -> Self
+pub fn encode::encoder_types::DownsamplingMethod::default() -> Self
+pub fn encode::encoder_types::DownsamplingMethod::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::DownsamplingMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::Effort::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::Effort::clone(&self) -> encode::encoder_types::Effort
-pub fn encode::encoder_types::Effort::eq(&self, &encode::encoder_types::Effort) -> bool
+pub fn encode::encoder_types::Effort::clone(&self) -> Self
+pub fn encode::encoder_types::Effort::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::Effort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::Effort::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn encode::encoder_types::HuffmanStrategy::clone(&self) -> encode::encoder_types::HuffmanStrategy
-pub fn encode::encoder_types::HuffmanStrategy::default() -> encode::encoder_types::HuffmanStrategy
+pub fn encode::encoder_types::HuffmanStrategy::clone(&self) -> Self
+pub fn encode::encoder_types::HuffmanStrategy::default() -> Self
 pub fn encode::encoder_types::HuffmanStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::HuffmanStrategy::from(bool) -> Self
 pub fn encode::encoder_types::HuffmanStrategy::from(huffman::optimize::frequency::HuffmanTableSet) -> Self
 pub fn encode::encoder_types::OptimizationPreset::all() -> impl core::iter::traits::iterator::Iterator<Item = Self>
-pub fn encode::encoder_types::OptimizationPreset::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::OptimizationPreset::clone(&self) -> encode::encoder_types::OptimizationPreset
-pub fn encode::encoder_types::OptimizationPreset::eq(&self, &encode::encoder_types::OptimizationPreset) -> bool
+pub fn encode::encoder_types::OptimizationPreset::clone(&self) -> Self
+pub fn encode::encoder_types::OptimizationPreset::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::OptimizationPreset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::OptimizationPreset::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn encode::encoder_types::ParallelEncoding::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::ParallelEncoding::clone(&self) -> encode::encoder_types::ParallelEncoding
-pub fn encode::encoder_types::ParallelEncoding::default() -> encode::encoder_types::ParallelEncoding
-pub fn encode::encoder_types::ParallelEncoding::eq(&self, &encode::encoder_types::ParallelEncoding) -> bool
+pub fn encode::encoder_types::ParallelEncoding::clone(&self) -> Self
+pub fn encode::encoder_types::ParallelEncoding::default() -> Self
+pub fn encode::encoder_types::ParallelEncoding::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::ParallelEncoding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::PixelLayout::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::PixelLayout::clone(&self) -> encode::encoder_types::PixelLayout
-pub fn encode::encoder_types::PixelLayout::eq(&self, &encode::encoder_types::PixelLayout) -> bool
+pub fn encode::encoder_types::PixelLayout::clone(&self) -> Self
+pub fn encode::encoder_types::PixelLayout::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::PixelLayout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::PixelLayout::from(types::PixelFormat) -> Self
-pub fn encode::encoder_types::ProgressiveScanMode::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::ProgressiveScanMode::clone(&self) -> encode::encoder_types::ProgressiveScanMode
-pub fn encode::encoder_types::ProgressiveScanMode::default() -> encode::encoder_types::ProgressiveScanMode
-pub fn encode::encoder_types::ProgressiveScanMode::eq(&self, &encode::encoder_types::ProgressiveScanMode) -> bool
+pub fn encode::encoder_types::ProgressiveScanMode::clone(&self) -> Self
+pub fn encode::encoder_types::ProgressiveScanMode::default() -> Self
+pub fn encode::encoder_types::ProgressiveScanMode::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::ProgressiveScanMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::ProgressiveScanMode::from(bool) -> Self
-pub fn encode::encoder_types::Quality::clone(&self) -> encode::encoder_types::Quality
+pub fn encode::encoder_types::Quality::clone(&self) -> Self
 pub fn encode::encoder_types::Quality::default() -> Self
-pub fn encode::encoder_types::Quality::eq(&self, &encode::encoder_types::Quality) -> bool
+pub fn encode::encoder_types::Quality::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::Quality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::Quality::for_mozjpeg_tables(&self) -> u8
 pub fn encode::encoder_types::Quality::from(f32) -> Self
@@ -913,71 +882,64 @@ pub fn encode::encoder_types::Quality::to_distance(&self) -> f32
 pub fn encode::encoder_types::Quality::to_internal(&self) -> f32
 pub fn encode::encoder_types::QuantTableConfig::chroma_distance_scales(&self) -> core::option::Option<[f32; 2]>
 pub fn encode::encoder_types::QuantTableConfig::chroma_quality(&self) -> core::option::Option<u8>
-pub fn encode::encoder_types::QuantTableConfig::clone(&self) -> encode::encoder_types::QuantTableConfig
+pub fn encode::encoder_types::QuantTableConfig::clone(&self) -> Self
 pub fn encode::encoder_types::QuantTableConfig::default() -> Self
-pub fn encode::encoder_types::QuantTableConfig::eq(&self, &encode::encoder_types::QuantTableConfig) -> bool
+pub fn encode::encoder_types::QuantTableConfig::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::QuantTableConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::QuantTableSource::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::QuantTableSource::clone(&self) -> encode::encoder_types::QuantTableSource
-pub fn encode::encoder_types::QuantTableSource::default() -> encode::encoder_types::QuantTableSource
-pub fn encode::encoder_types::QuantTableSource::eq(&self, &encode::encoder_types::QuantTableSource) -> bool
+pub fn encode::encoder_types::QuantTableSource::clone(&self) -> Self
+pub fn encode::encoder_types::QuantTableSource::default() -> Self
+pub fn encode::encoder_types::QuantTableSource::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::QuantTableSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::ScanStrategy::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::ScanStrategy::clone(&self) -> encode::encoder_types::ScanStrategy
-pub fn encode::encoder_types::ScanStrategy::default() -> encode::encoder_types::ScanStrategy
-pub fn encode::encoder_types::ScanStrategy::eq(&self, &encode::encoder_types::ScanStrategy) -> bool
+pub fn encode::encoder_types::ScanStrategy::clone(&self) -> Self
+pub fn encode::encoder_types::ScanStrategy::default() -> Self
+pub fn encode::encoder_types::ScanStrategy::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::ScanStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::TinyFileMode::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::TinyFileMode::clone(&self) -> encode::encoder_types::TinyFileMode
-pub fn encode::encoder_types::TinyFileMode::default() -> encode::encoder_types::TinyFileMode
-pub fn encode::encoder_types::TinyFileMode::eq(&self, &encode::encoder_types::TinyFileMode) -> bool
+pub fn encode::encoder_types::TinyFileMode::clone(&self) -> Self
+pub fn encode::encoder_types::TinyFileMode::default() -> Self
+pub fn encode::encoder_types::TinyFileMode::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::TinyFileMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::XybSubsampling::assert_fields_are_eq(&self)
-pub fn encode::encoder_types::XybSubsampling::clone(&self) -> encode::encoder_types::XybSubsampling
-pub fn encode::encoder_types::XybSubsampling::default() -> encode::encoder_types::XybSubsampling
-pub fn encode::encoder_types::XybSubsampling::eq(&self, &encode::encoder_types::XybSubsampling) -> bool
+pub fn encode::encoder_types::XybSubsampling::clone(&self) -> Self
+pub fn encode::encoder_types::XybSubsampling::default() -> Self
+pub fn encode::encoder_types::XybSubsampling::eq(&self, &Self) -> bool
 pub fn encode::encoder_types::XybSubsampling::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::encoder_types::YCbCrPlanes<'a>::clone(&self) -> encode::encoder_types::YCbCrPlanes<'a>
+pub fn encode::encoder_types::YCbCrPlanes<'a>::clone(&self) -> Self
 pub fn encode::encoder_types::YCbCrPlanes<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_types::should_activate_tiny_file_mode(u32, u32, bool) -> bool
 pub fn encode::exif::Exif::build() -> encode::exif::ExifFields
-pub fn encode::exif::Exif::clone(&self) -> encode::exif::Exif
+pub fn encode::exif::Exif::clone(&self) -> Self
 pub fn encode::exif::Exif::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::exif::Exif::from(encode::exif::ExifFields) -> Self
 pub fn encode::exif::Exif::raw(impl core::convert::Into<alloc::vec::Vec<u8>>) -> Self
 pub fn encode::exif::Exif::to_bytes(&self) -> core::option::Option<alloc::vec::Vec<u8>>
-pub fn encode::exif::ExifFields::clone(&self) -> encode::exif::ExifFields
+pub fn encode::exif::ExifFields::clone(&self) -> Self
 pub fn encode::exif::ExifFields::copyright(self, impl core::convert::Into<alloc::string::String>) -> Self
-pub fn encode::exif::ExifFields::default() -> encode::exif::ExifFields
+pub fn encode::exif::ExifFields::default() -> Self
 pub fn encode::exif::ExifFields::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::exif::ExifFields::orientation(self, encode::exif::Orientation) -> Self
 pub fn encode::exif::ExifFields::to_bytes(&self) -> core::option::Option<alloc::vec::Vec<u8>>
-pub fn encode::exif::Orientation::assert_fields_are_eq(&self)
-pub fn encode::exif::Orientation::clone(&self) -> encode::exif::Orientation
-pub fn encode::exif::Orientation::default() -> encode::exif::Orientation
-pub fn encode::exif::Orientation::eq(&self, &encode::exif::Orientation) -> bool
+pub fn encode::exif::Orientation::clone(&self) -> Self
+pub fn encode::exif::Orientation::default() -> Self
+pub fn encode::exif::Orientation::eq(&self, &Self) -> bool
 pub fn encode::exif::Orientation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::expert::ExpertConfig::blend_zero_bias(&mut self)
-pub fn encode::expert::ExpertConfig::clone(&self) -> encode::expert::ExpertConfig
+pub fn encode::expert::ExpertConfig::clone(&self) -> Self
 pub fn encode::expert::ExpertConfig::default_ycbcr(impl core::convert::Into<encode::encoder_types::Quality>) -> Self
 pub fn encode::expert::ExpertConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::expert::ExpertConfig::from_preset(encode::encoder_types::OptimizationPreset, impl core::convert::Into<encode::encoder_types::Quality>) -> Self
 pub fn encode::expert::ExpertConfig::to_encoder_config(&self, encode::encoder_types::ColorMode) -> encode::encoder_config::EncoderConfig
 pub fn encode::expert::ExpertConfig::uses_quality_scaling(&self) -> bool
-pub fn encode::extras::AdobeColorTransform::assert_fields_are_eq(&self)
-pub fn encode::extras::AdobeColorTransform::clone(&self) -> encode::extras::AdobeColorTransform
-pub fn encode::extras::AdobeColorTransform::default() -> encode::extras::AdobeColorTransform
-pub fn encode::extras::AdobeColorTransform::eq(&self, &encode::extras::AdobeColorTransform) -> bool
+pub fn encode::extras::AdobeColorTransform::clone(&self) -> Self
+pub fn encode::extras::AdobeColorTransform::default() -> Self
+pub fn encode::extras::AdobeColorTransform::eq(&self, &Self) -> bool
 pub fn encode::extras::AdobeColorTransform::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::extras::AdobeInfo::clone(&self) -> encode::extras::AdobeInfo
-pub fn encode::extras::AdobeInfo::default() -> encode::extras::AdobeInfo
+pub fn encode::extras::AdobeInfo::clone(&self) -> Self
+pub fn encode::extras::AdobeInfo::default() -> Self
 pub fn encode::extras::AdobeInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::extras::DensityUnits::assert_fields_are_eq(&self)
-pub fn encode::extras::DensityUnits::clone(&self) -> encode::extras::DensityUnits
-pub fn encode::extras::DensityUnits::default() -> encode::extras::DensityUnits
-pub fn encode::extras::DensityUnits::eq(&self, &encode::extras::DensityUnits) -> bool
+pub fn encode::extras::DensityUnits::clone(&self) -> Self
+pub fn encode::extras::DensityUnits::default() -> Self
+pub fn encode::extras::DensityUnits::eq(&self, &Self) -> bool
 pub fn encode::extras::DensityUnits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::extras::EncoderSegment::clone(&self) -> encode::extras::EncoderSegment
+pub fn encode::extras::EncoderSegment::clone(&self) -> Self
 pub fn encode::extras::EncoderSegment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::extras::EncoderSegments::add(self, u8, alloc::vec::Vec<u8>, encode::extras::SegmentType) -> Self
 pub fn encode::extras::EncoderSegments::add_comment(self, &str) -> Self
@@ -991,8 +953,8 @@ pub fn encode::extras::EncoderSegments::add_raw_mut(&mut self, u8, alloc::vec::V
 pub fn encode::extras::EncoderSegments::clear(self) -> Self
 pub fn encode::extras::EncoderSegments::clear_mpf_images(self) -> Self
 pub fn encode::extras::EncoderSegments::clear_segments(self) -> Self
-pub fn encode::extras::EncoderSegments::clone(&self) -> encode::extras::EncoderSegments
-pub fn encode::extras::EncoderSegments::default() -> encode::extras::EncoderSegments
+pub fn encode::extras::EncoderSegments::clone(&self) -> Self
+pub fn encode::extras::EncoderSegments::default() -> Self
 pub fn encode::extras::EncoderSegments::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::extras::EncoderSegments::get(&self, encode::extras::SegmentType) -> core::option::Option<&[u8]>
 pub fn encode::extras::EncoderSegments::get_all(&self, encode::extras::SegmentType) -> alloc::vec::Vec<&[u8]>
@@ -1019,27 +981,26 @@ pub fn encode::extras::EncoderSegments::set_iptc(self, alloc::vec::Vec<u8>) -> S
 pub fn encode::extras::EncoderSegments::set_jfif(self, encode::extras::JfifInfo) -> Self
 pub fn encode::extras::EncoderSegments::set_printer_dpi(self, u16) -> Self
 pub fn encode::extras::EncoderSegments::set_xmp(self, &str) -> Self
-pub fn encode::extras::JfifInfo::clone(&self) -> encode::extras::JfifInfo
-pub fn encode::extras::JfifInfo::default() -> encode::extras::JfifInfo
+pub fn encode::extras::JfifInfo::clone(&self) -> Self
+pub fn encode::extras::JfifInfo::default() -> Self
 pub fn encode::extras::JfifInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::extras::MpfImage::clone(&self) -> encode::extras::MpfImage
+pub fn encode::extras::MpfImage::clone(&self) -> Self
 pub fn encode::extras::MpfImage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::extras::MpfImageTypeExt::is_depth(&self) -> bool
 pub fn encode::extras::MpfImageTypeExt::is_gainmap(&self) -> bool
 pub fn encode::extras::MpfImageTypeExt::is_multiframe(&self) -> bool
 pub fn encode::extras::MpfImageTypeExt::is_thumbnail(&self) -> bool
 pub fn encode::extras::MpfImageTypeExt::to_type_code(self) -> u32
-pub fn encode::extras::SegmentType::assert_fields_are_eq(&self)
-pub fn encode::extras::SegmentType::clone(&self) -> encode::extras::SegmentType
-pub fn encode::extras::SegmentType::eq(&self, &encode::extras::SegmentType) -> bool
+pub fn encode::extras::SegmentType::clone(&self) -> Self
+pub fn encode::extras::SegmentType::eq(&self, &Self) -> bool
 pub fn encode::extras::SegmentType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::extras::SegmentType::hash<__H: core::hash::Hasher>(&self, &mut __H)
 pub fn encode::internal_params::ColorPath::assert_fields_are_eq(&self)
-pub fn encode::internal_params::ColorPath::clone(&self) -> encode::internal_params::ColorPath
-pub fn encode::internal_params::ColorPath::eq(&self, &encode::internal_params::ColorPath) -> bool
+pub fn encode::internal_params::ColorPath::clone(&self) -> Self
+pub fn encode::internal_params::ColorPath::eq(&self, &Self) -> bool
 pub fn encode::internal_params::ColorPath::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::internal_params::InternalParams::clone(&self) -> encode::internal_params::InternalParams
-pub fn encode::internal_params::InternalParams::default() -> encode::internal_params::InternalParams
+pub fn encode::internal_params::InternalParams::clone(&self) -> Self
+pub fn encode::internal_params::InternalParams::default() -> Self
 pub fn encode::internal_params::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::linear_lut::linear_f32_to_srgb_255_fast(f32) -> f32
 pub fn encode::linear_lut::linear_f32_to_srgb_255_reference(f32) -> f32
@@ -1069,7 +1030,7 @@ pub fn encode::mage_simd::mage_ratio_of_derivatives_inv_x8(archmage::tokens::gen
 pub fn encode::mage_simd::mage_ratio_of_derivatives_x8(archmage::tokens::generated::x86::X64V3Token, core::core_arch::x86::__m256) -> core::core_arch::x86::__m256
 pub fn encode::mage_simd::mage_rgb_to_ycbcr_8px(archmage::tokens::generated::x86::X64V3Token, &[f32; 8], &[f32; 8], &[f32; 8], &mut [f32; 8], &mut [f32; 8], &mut [f32; 8])
 pub fn encode::mage_simd::mage_transpose_8x8_inplace(archmage::tokens::generated::x86::X64V3Token, &mut [core::core_arch::x86::__m256; 8])
-pub fn encode::parallel::ParallelEntropyConfig::clone(&self) -> encode::parallel::ParallelEntropyConfig
+pub fn encode::parallel::ParallelEntropyConfig::clone(&self) -> Self
 pub fn encode::parallel::ParallelEntropyConfig::standard() -> Self
 pub fn encode::parallel::parallel_dct_chroma_blocks(&[f32], &[f32], usize, usize, usize, &mut alloc::vec::Vec<foundation::simd_types::Block8x8f>, &mut alloc::vec::Vec<foundation::simd_types::Block8x8f>)
 pub fn encode::parallel::parallel_dct_y_blocks(&[f32], usize, usize, usize, core::option::Option<u16>, &mut alloc::vec::Vec<foundation::simd_types::Block8x8f>)
@@ -1077,11 +1038,10 @@ pub fn encode::parallel::parallel_entropy_encode_444(&[[i16; 64]], &[[i16; 64]],
 pub fn encode::parallel::parallel_entropy_encode_subsampled(&[[i16; 64]], &[[i16; 64]], &[[i16; 64]], usize, usize, usize, usize, bool, u16, &encode::parallel::ParallelEntropyConfig) -> alloc::vec::Vec<u8>
 pub fn encode::parallel::recommended_threads(u32, u32, usize) -> usize
 pub fn encode::parallel::should_use_parallel(u32, u32, usize) -> bool
-pub fn encode::plan::EncodePlan::clone(&self) -> encode::plan::EncodePlan
+pub fn encode::plan::EncodePlan::clone(&self) -> Self
 pub fn encode::plan::EncodePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::plan::SofMarker::assert_fields_are_eq(&self)
-pub fn encode::plan::SofMarker::clone(&self) -> encode::plan::SofMarker
-pub fn encode::plan::SofMarker::eq(&self, &encode::plan::SofMarker) -> bool
+pub fn encode::plan::SofMarker::clone(&self) -> Self
+pub fn encode::plan::SofMarker::eq(&self, &Self) -> bool
 pub fn encode::plan::SofMarker::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::request::EncodeRequest<'a>::encode<P: encode::byte_encoders::Pixel>(self, &[P], u32, u32) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn encode::request::EncodeRequest<'a>::encode_bytes(self, &[u8], u32, u32, encode::encoder_types::PixelLayout) -> encoder::Result<alloc::vec::Vec<u8>>
@@ -1099,8 +1059,8 @@ pub fn encode::request::EncodeRequest<'a>::stop(self, &'a dyn enough::Stop) -> S
 pub fn encode::request::EncodeRequest<'a>::xmp(self, &'a [u8]) -> Self
 pub fn encode::request::EncodeRequest<'a>::xmp_owned(self, alloc::vec::Vec<u8>) -> Self
 pub fn encode::scan_script::ScanInfo::assert_fields_are_eq(&self)
-pub fn encode::scan_script::ScanInfo::clone(&self) -> encode::scan_script::ScanInfo
-pub fn encode::scan_script::ScanInfo::eq(&self, &encode::scan_script::ScanInfo) -> bool
+pub fn encode::scan_script::ScanInfo::clone(&self) -> Self
+pub fn encode::scan_script::ScanInfo::eq(&self, &Self) -> bool
 pub fn encode::scan_script::ScanInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::scan_script::ScanInfo::is_ac_scan(&self) -> bool
 pub fn encode::scan_script::ScanInfo::is_dc_scan(&self) -> bool
@@ -1109,7 +1069,7 @@ pub fn encode::scan_script::ScanInfo::is_refinement(&self) -> bool
 pub fn encode::scan_script::ScanInfo::new(u8, [u8; 4], u8, u8, u8, u8) -> Self
 pub fn encode::scan_script::parse_scan_script_text(&str) -> encoder::Result<alloc::vec::Vec<encode::scan_script::ScanInfo>>
 pub fn encode::scan_script::validate_scan_script(&[encode::scan_script::ScanInfo], u8) -> encoder::Result<()>
-pub fn encode::strip::QuantContext::clone(&self) -> encode::strip::QuantContext
+pub fn encode::strip::QuantContext::clone(&self) -> Self
 pub fn encode::strip::QuantContext::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::strip::QuantContext::new(types::QuantTable, types::QuantTable, types::QuantTable, quant::ZeroBiasParams, quant::ZeroBiasParams, quant::ZeroBiasParams) -> Self
 pub fn encode::strip::StripProcessor::cb_blocks(&self) -> &[[i16; 64]]
@@ -1132,26 +1092,26 @@ pub fn encode::strip::StripProcessor::with_color_modes(usize, usize, types::Subs
 pub fn encode::strip::StripProcessor::with_color_modes_streaming(usize, usize, types::Subsampling, types::PixelFormat, encode::encoder_types::DownsamplingMethod, u16, bool, encode::encoder_types::XybSubsampling, bool, encode::strip::QuantContext, bool) -> encoder::Result<Self>
 pub fn encode::strip::StripProcessor::y_blocks(&self) -> &[[i16; 64]]
 pub fn encode::strip::StripProcessorOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::sweep::DroppedAxis::clone(&self) -> encode::sweep::DroppedAxis
+pub fn encode::sweep::DroppedAxis::clone(&self) -> Self
 pub fn encode::sweep::DroppedAxis::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::sweep::QualityGrid::clone(&self) -> encode::sweep::QualityGrid
+pub fn encode::sweep::QualityGrid::clone(&self) -> Self
 pub fn encode::sweep::QualityGrid::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::QualityGrid::points(&self) -> alloc::vec::Vec<f32>
-pub fn encode::sweep::SweepAxes::clone(&self) -> encode::sweep::SweepAxes
+pub fn encode::sweep::SweepAxes::clone(&self) -> Self
 pub fn encode::sweep::SweepAxes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::SweepAxes::modes_full() -> Self
 pub fn encode::sweep::SweepAxes::rd_core() -> Self
 pub fn encode::sweep::SweepAxes::scalar_dense() -> Self
-pub fn encode::sweep::SweepBuilder::clone(&self) -> encode::sweep::SweepBuilder
+pub fn encode::sweep::SweepBuilder::clone(&self) -> Self
 pub fn encode::sweep::SweepBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::SweepBuilder::new(encode::sweep::SweepAxes, encode::sweep::QualityGrid) -> Self
 pub fn encode::sweep::SweepBuilder::plan(&self) -> encode::sweep::SweepPlan
 pub fn encode::sweep::SweepBuilder::with_budget(self, usize) -> Self
 pub fn encode::sweep::SweepBuilder::with_compute_limit(self, u8) -> Self
 pub fn encode::sweep::SweepBuilder::with_max_deviations(self, u8) -> Self
-pub fn encode::sweep::SweepCell::clone(&self) -> encode::sweep::SweepCell
+pub fn encode::sweep::SweepCell::clone(&self) -> Self
 pub fn encode::sweep::SweepCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::sweep::SweepPlan::clone(&self) -> encode::sweep::SweepPlan
+pub fn encode::sweep::SweepPlan::clone(&self) -> Self
 pub fn encode::sweep::SweepPlan::encodes(&self, usize, usize) -> usize
 pub fn encode::sweep::SweepPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::sweep::compute_tier(&encode::encoder_config::EncoderConfig) -> u8
@@ -1170,24 +1130,23 @@ pub fn encode::tables::presets::MozjpegTables::chrominance_base(encode::tables::
 pub fn encode::tables::presets::MozjpegTables::generate(u8, encode::tables::presets::QuantTablePreset) -> alloc::boxed::Box<encode::tuning::EncodingTables>
 pub fn encode::tables::presets::MozjpegTables::generate_ex(u8, encode::tables::presets::QuantTablePreset, bool) -> alloc::boxed::Box<encode::tuning::EncodingTables>
 pub fn encode::tables::presets::MozjpegTables::luminance_base(encode::tables::presets::QuantTablePreset) -> &'static [u16; 64]
-pub fn encode::tables::presets::QuantTablePreset::assert_fields_are_eq(&self)
-pub fn encode::tables::presets::QuantTablePreset::clone(&self) -> encode::tables::presets::QuantTablePreset
-pub fn encode::tables::presets::QuantTablePreset::default() -> encode::tables::presets::QuantTablePreset
-pub fn encode::tables::presets::QuantTablePreset::eq(&self, &encode::tables::presets::QuantTablePreset) -> bool
+pub fn encode::tables::presets::QuantTablePreset::clone(&self) -> Self
+pub fn encode::tables::presets::QuantTablePreset::default() -> Self
+pub fn encode::tables::presets::QuantTablePreset::eq(&self, &Self) -> bool
 pub fn encode::tables::presets::QuantTablePreset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn encode::trellis::compat::AqCoupling::clone(&self) -> encode::trellis::compat::AqCoupling
+pub fn encode::trellis::compat::AqCoupling::clone(&self) -> Self
 pub fn encode::trellis::compat::AqCoupling::compute_adjustment(&self, f32, bool) -> f32
 pub fn encode::trellis::compat::AqCoupling::default() -> Self
-pub fn encode::trellis::compat::AqCoupling::eq(&self, &encode::trellis::compat::AqCoupling) -> bool
+pub fn encode::trellis::compat::AqCoupling::eq(&self, &Self) -> bool
 pub fn encode::trellis::compat::AqCoupling::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::trellis::compat::AqCoupling::is_active(&self) -> bool
 pub fn encode::trellis::compat::TrellisConfig::ac_trellis(self, bool) -> Self
 pub fn encode::trellis::compat::TrellisConfig::aq_coupling(self, encode::trellis::compat::AqCoupling) -> Self
-pub fn encode::trellis::compat::TrellisConfig::clone(&self) -> encode::trellis::compat::TrellisConfig
+pub fn encode::trellis::compat::TrellisConfig::clone(&self) -> Self
 pub fn encode::trellis::compat::TrellisConfig::dc_trellis(self, bool) -> Self
 pub fn encode::trellis::compat::TrellisConfig::default() -> Self
 pub fn encode::trellis::compat::TrellisConfig::delta_dc_weight(self, f32) -> Self
-pub fn encode::trellis::compat::TrellisConfig::eq(&self, &encode::trellis::compat::TrellisConfig) -> bool
+pub fn encode::trellis::compat::TrellisConfig::eq(&self, &Self) -> bool
 pub fn encode::trellis::compat::TrellisConfig::favor_quality() -> Self
 pub fn encode::trellis::compat::TrellisConfig::favor_size() -> Self
 pub fn encode::trellis::compat::TrellisConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1203,9 +1162,9 @@ pub fn encode::trellis::compat::TrellisConfig::new() -> Self
 pub fn encode::trellis::compat::TrellisConfig::rd_factor(self, f32) -> Self
 pub fn encode::trellis::compat::TrellisConfig::speed_mode(self, encode::trellis::compat::TrellisSpeedMode) -> Self
 pub fn encode::trellis::compat::TrellisConfig::thorough() -> Self
-pub fn encode::trellis::compat::TrellisSpeedMode::clone(&self) -> encode::trellis::compat::TrellisSpeedMode
-pub fn encode::trellis::compat::TrellisSpeedMode::default() -> encode::trellis::compat::TrellisSpeedMode
-pub fn encode::trellis::compat::TrellisSpeedMode::eq(&self, &encode::trellis::compat::TrellisSpeedMode) -> bool
+pub fn encode::trellis::compat::TrellisSpeedMode::clone(&self) -> Self
+pub fn encode::trellis::compat::TrellisSpeedMode::default() -> Self
+pub fn encode::trellis::compat::TrellisSpeedMode::eq(&self, &Self) -> bool
 pub fn encode::trellis::compat::TrellisSpeedMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::trellis::compat::TrellisSpeedMode::get_limits(&self, i32) -> (usize, usize)
 pub fn encode::trellis::dc_trellis_optimize(&[[i32; 64]], &mut [[i16; 64]], u16, &encode::trellis::rate::RateTable, i16, f32, f32) -> i16 [also: encode::trellis::dc]
@@ -1214,7 +1173,7 @@ pub fn encode::trellis::hybrid::StandardRateTables::default() -> Self
 pub fn encode::trellis::hybrid::StandardRateTables::new() -> Self
 pub fn encode::trellis::hybrid::dct_f32_to_i32(&[f32; 64]) -> [i32; 64]
 pub fn encode::trellis::hybrid::hybrid_quantize_block(&[f32; 64], &[u16; 64], &encode::trellis::rate::RateTable, &encode::trellis::compat::TrellisConfig) -> [i16; 64]
-pub fn encode::trellis::rate::RateTable::clone(&self) -> encode::trellis::rate::RateTable
+pub fn encode::trellis::rate::RateTable::clone(&self) -> Self
 pub fn encode::trellis::rate::RateTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::trellis::rate::RateTable::from_bits_values(&[u8; 16], &[u8]) -> Self
 pub fn encode::trellis::rate::RateTable::get_code(&self, u8) -> (u32, u8)
@@ -1227,10 +1186,10 @@ pub fn encode::trellis::simple_quantize_block(&[i32; 64], &mut [i16; 64], &[u16;
 pub fn encode::trellis::trellis_quantize_block(&[i32; 64], &mut [i16; 64], &[u16; 64], &encode::trellis::rate::RateTable, &encode::trellis::compat::TrellisConfig) [also: encode::trellis::ac]
 pub fn encode::tuning::EncodingTables::blend(&self, &Self, f32) -> Self
 pub fn encode::tuning::EncodingTables::blend_zero_bias_mul(&mut self, &encode::tuning::PerComponent<[f32; 64]>, f32)
-pub fn encode::tuning::EncodingTables::clone(&self) -> encode::tuning::EncodingTables
+pub fn encode::tuning::EncodingTables::clone(&self) -> Self
 pub fn encode::tuning::EncodingTables::default_xyb() -> Self
 pub fn encode::tuning::EncodingTables::default_ycbcr() -> Self
-pub fn encode::tuning::EncodingTables::eq(&self, &encode::tuning::EncodingTables) -> bool
+pub fn encode::tuning::EncodingTables::eq(&self, &Self) -> bool
 pub fn encode::tuning::EncodingTables::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::tuning::EncodingTables::generate_quant_table(&self, usize, f32, bool) -> types::QuantTable
 pub fn encode::tuning::EncodingTables::generate_quant_tables(&self, [f32; 3], bool) -> (types::QuantTable, types::QuantTable, types::QuantTable)
@@ -1251,10 +1210,10 @@ pub fn encode::tuning::PerComponent<T>::b(&self) -> &T
 pub fn encode::tuning::PerComponent<T>::b_mut(&mut self) -> &mut T
 pub fn encode::tuning::PerComponent<T>::cb(&self) -> &T
 pub fn encode::tuning::PerComponent<T>::cb_mut(&mut self) -> &mut T
-pub fn encode::tuning::PerComponent<T>::clone(&self) -> encode::tuning::PerComponent<T>
+pub fn encode::tuning::PerComponent<T>::clone(&self) -> Self
 pub fn encode::tuning::PerComponent<T>::cr(&self) -> &T
 pub fn encode::tuning::PerComponent<T>::cr_mut(&mut self) -> &mut T
-pub fn encode::tuning::PerComponent<T>::eq(&self, &encode::tuning::PerComponent<T>) -> bool
+pub fn encode::tuning::PerComponent<T>::eq(&self, &Self) -> bool
 pub fn encode::tuning::PerComponent<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::tuning::PerComponent<T>::get(&self, usize) -> &T
 pub fn encode::tuning::PerComponent<T>::get_mut(&mut self, usize) -> &mut T
@@ -1272,16 +1231,16 @@ pub fn encode::tuning::PerComponent<[f32; 64]>::blend(&self, &Self, f32) -> Self
 pub fn encode::tuning::PerComponent<[f32; 64]>::scale_all(&mut self, f32)
 pub fn encode::tuning::PerComponent<[f32; 64]>::scale_coeff(&mut self, usize, usize, f32)
 pub fn encode::tuning::PerComponent<[f32; 64]>::scale_component(&mut self, usize, f32)
-pub fn encode::tuning::ScalingParams::clone(&self) -> encode::tuning::ScalingParams
+pub fn encode::tuning::ScalingParams::clone(&self) -> Self
 pub fn encode::tuning::ScalingParams::default_xyb() -> Self
 pub fn encode::tuning::ScalingParams::default_ycbcr() -> Self
-pub fn encode::tuning::ScalingParams::eq(&self, &encode::tuning::ScalingParams) -> bool
+pub fn encode::tuning::ScalingParams::eq(&self, &Self) -> bool
 pub fn encode::tuning::ScalingParams::exact() -> Self
 pub fn encode::tuning::ScalingParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encoder::Error::from(foundation::aligned_alloc::AllocError) -> Self
 pub fn encoder::Error::unsupported_pixel_format(types::PixelFormat) -> Self
 pub fn encoder::should_activate_tiny_file_mode_for_subsampling(u32, u32, bool, types::Subsampling) -> bool [also: encode::encoder_types]
-pub fn entropy::StreamingEntropyState::clone(&self) -> entropy::StreamingEntropyState
+pub fn entropy::StreamingEntropyState::clone(&self) -> Self
 pub fn entropy::StreamingEntropyState::default() -> Self
 pub fn entropy::StreamingEntropyState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn entropy::StreamingEntropyState::new() -> Self
@@ -1334,7 +1293,7 @@ pub fn entropy::decoder::EntropyDecoder<'data, 'tables>::set_dc_table(&mut self,
 pub fn entropy::decoder::EntropyDecoder<'data, 'tables>::set_lenient(&mut self, bool)
 pub fn entropy::decoder::EntropyDecoder<'data, 'tables>::set_permissive_rst(&mut self, bool)
 pub fn entropy::decoder::EntropyDecoder<'data, 'tables>::set_prev_dc(&mut self, &[i16; 4])
-pub fn entropy::decoder::EntropyDecoderState::clone(&self) -> entropy::decoder::EntropyDecoderState
+pub fn entropy::decoder::EntropyDecoderState::clone(&self) -> Self
 pub fn entropy::encode_block_to_writer(&[i16; 64], &huffman::encode::HuffmanEncodeTable, &huffman::encode::HuffmanEncodeTable, i16, &mut foundation::bitstream::BitWriter) -> encoder::Result<()>
 pub fn entropy::encode_blocks_mcu_order(&[[i16; 64]], &[[i16; 64]], &[[i16; 64]], &huffman::optimize::frequency::HuffmanTableSet, &mut foundation::bitstream::BitWriter, bool, &mut entropy::StreamingEntropyState, types::Subsampling, usize, u16, usize) -> encoder::Result<()>
 pub fn entropy::encoder::EntropyEncoder<'_>::default() -> Self
@@ -1361,19 +1320,18 @@ pub fn entropy::encoder::EntropyEncoder<'a>::write_bits(&mut self, u32, u8)
 pub fn entropy::encoder::EntropyEncoder<'a>::write_dc_tokens(&mut self, &[huffman::optimize::tokens::Token], &[usize], &[usize]) -> encoder::Result<()>
 pub fn entropy::encoder::EntropyEncoder<'a>::write_restart_marker(&mut self)
 pub fn entropy::huff_extend(i32, i32) -> i32
-pub fn foundation::aligned_alloc::AllocError::assert_fields_are_eq(&self)
-pub fn foundation::aligned_alloc::AllocError::clone(&self) -> foundation::aligned_alloc::AllocError
-pub fn foundation::aligned_alloc::AllocError::eq(&self, &foundation::aligned_alloc::AllocError) -> bool
+pub fn foundation::aligned_alloc::AllocError::clone(&self) -> Self
+pub fn foundation::aligned_alloc::AllocError::eq(&self, &Self) -> bool
 pub fn foundation::aligned_alloc::AllocError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::aligned_alloc::try_alloc<T: core::marker::Copy + core::default::Default>(usize) -> core::result::Result<foundation::aligned_alloc::AlignedVec<T>, foundation::aligned_alloc::AllocError>
 pub fn foundation::aligned_alloc::try_alloc_image(usize, usize) -> core::result::Result<(foundation::aligned_alloc::AlignedVec<f32>, usize), foundation::aligned_alloc::AllocError>
 pub fn foundation::aligned_alloc::try_alloc_zeroed(usize) -> core::result::Result<foundation::aligned_alloc::AlignedVec<f32>, foundation::aligned_alloc::AllocError>
-pub fn foundation::alloc::AllocationInfo::clone(&self) -> foundation::alloc::AllocationInfo
+pub fn foundation::alloc::AllocationInfo::clone(&self) -> Self
 pub fn foundation::alloc::AllocationInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::alloc::AllocationInfo::summary(&self) -> alloc::string::String
 pub fn foundation::alloc::EncodeStats::by_context_summary(&self) -> alloc::string::String
-pub fn foundation::alloc::EncodeStats::clone(&self) -> foundation::alloc::EncodeStats
-pub fn foundation::alloc::EncodeStats::default() -> foundation::alloc::EncodeStats
+pub fn foundation::alloc::EncodeStats::clone(&self) -> Self
+pub fn foundation::alloc::EncodeStats::default() -> Self
 pub fn foundation::alloc::EncodeStats::detailed_report(&self) -> alloc::string::String
 pub fn foundation::alloc::EncodeStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::alloc::EncodeStats::merge(&mut self, &foundation::alloc::EncodeStats)
@@ -1386,7 +1344,7 @@ pub fn foundation::alloc::EncodeStats::record_dealloc(&mut self, usize)
 pub fn foundation::alloc::EncodeStats::reset(&mut self)
 pub fn foundation::alloc::EncodeStats::summary(&self) -> alloc::string::String
 pub fn foundation::alloc::EncodeStats::with_detailed_tracking() -> Self
-pub fn foundation::alloc::MemoryTracker::clone(&self) -> foundation::alloc::MemoryTracker
+pub fn foundation::alloc::MemoryTracker::clone(&self) -> Self
 pub fn foundation::alloc::MemoryTracker::current(&self) -> usize
 pub fn foundation::alloc::MemoryTracker::default() -> Self
 pub fn foundation::alloc::MemoryTracker::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1455,7 +1413,7 @@ pub fn foundation::bitstream::BitReader<'a>::save_state(&self) -> foundation::bi
 pub fn foundation::bitstream::BitReader<'a>::set_permissive_rst(&mut self, bool)
 pub fn foundation::bitstream::BitReader<'a>::skip_bits(&mut self, u8)
 pub fn foundation::bitstream::BitReader<'a>::skip_bits_fast(&mut self, u8)
-pub fn foundation::bitstream::BitReaderState::clone(&self) -> foundation::bitstream::BitReaderState
+pub fn foundation::bitstream::BitReaderState::clone(&self) -> Self
 pub fn foundation::bitstream::BitWriter::as_bytes(&self) -> &[u8]
 pub fn foundation::bitstream::BitWriter::default() -> Self
 pub fn foundation::bitstream::BitWriter::discard_front(&mut self, usize)
@@ -1496,14 +1454,14 @@ pub fn foundation::instrumented_vec::ProfiledVec<T>::new_profiled(&'static str) 
 pub fn foundation::instrumented_vec::ProfiledVec<T>::with_capacity_profiled(usize, &'static str) -> Self
 pub fn foundation::instrumented_vec::ProfiledVecExt::new_profiled(&'static str) -> Self
 pub fn foundation::instrumented_vec::ProfiledVecExt::with_capacity_profiled(usize, &'static str) -> Self
-pub fn foundation::instrumented_vec::VecStats::clone(&self) -> foundation::instrumented_vec::VecStats
+pub fn foundation::instrumented_vec::VecStats::clone(&self) -> Self
 pub fn foundation::instrumented_vec::VecStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::instrumented_vec::VecStats::utilization_pct(&self) -> f32
 pub fn foundation::instrumented_vec::VecStats::wasted_bytes(&self) -> usize
 pub fn foundation::instrumented_vec::set_min_waste_report(usize)
 pub fn foundation::instrumented_vec::set_stats_enabled(bool)
 pub fn foundation::simd_types::Block8x8f::add(&self, &Self) -> Self
-pub fn foundation::simd_types::Block8x8f::clone(&self) -> foundation::simd_types::Block8x8f
+pub fn foundation::simd_types::Block8x8f::clone(&self) -> Self
 pub fn foundation::simd_types::Block8x8f::default() -> Self
 pub fn foundation::simd_types::Block8x8f::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::Block8x8f::from_array(&[f32; 64]) -> Self
@@ -1512,18 +1470,18 @@ pub fn foundation::simd_types::Block8x8f::mul(&self, &Self) -> Self
 pub fn foundation::simd_types::Block8x8f::scale(&self, f32) -> Self
 pub fn foundation::simd_types::Block8x8f::set(&mut self, usize, usize, f32)
 pub fn foundation::simd_types::Block8x8f::to_array(self) -> [f32; 64]
-pub fn foundation::simd_types::Block8x8i16::clone(&self) -> foundation::simd_types::Block8x8i16
+pub fn foundation::simd_types::Block8x8i16::clone(&self) -> Self
 pub fn foundation::simd_types::Block8x8i16::default() -> Self
 pub fn foundation::simd_types::Block8x8i16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::Block8x8i16::from_array(&[i16; 64]) -> Self
 pub fn foundation::simd_types::Block8x8i16::get(&self, usize, usize) -> i16
 pub fn foundation::simd_types::Block8x8i16::to_array(self) -> [i16; 64]
-pub fn foundation::simd_types::Block8x8i32::clone(&self) -> foundation::simd_types::Block8x8i32
+pub fn foundation::simd_types::Block8x8i32::clone(&self) -> Self
 pub fn foundation::simd_types::Block8x8i32::default() -> Self
 pub fn foundation::simd_types::Block8x8i32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::Block8x8i32::to_i16(self) -> foundation::simd_types::Block8x8i16
 pub fn foundation::simd_types::Block8x8i32::to_i16_array(self) -> [i16; 64]
-pub fn foundation::simd_types::QuantTableSimd::clone(&self) -> foundation::simd_types::QuantTableSimd
+pub fn foundation::simd_types::QuantTableSimd::clone(&self) -> Self
 pub fn foundation::simd_types::QuantTableSimd::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::QuantTableSimd::from_f32_values(&[f32; 64]) -> Self
 pub fn foundation::simd_types::QuantTableSimd::from_values(&[u16; 64]) -> Self
@@ -1531,7 +1489,7 @@ pub fn foundation::simd_types::QuantTableSimd::quantize(&self, &foundation::simd
 pub fn foundation::simd_types::QuantTableSimd::quantize_array_with_zero_bias(&self, &[f32; 64], &foundation::simd_types::ZeroBiasSimd, f32) -> [i16; 64]
 pub fn foundation::simd_types::QuantTableSimd::quantize_with_zero_bias(&self, &foundation::simd_types::Block8x8f, &foundation::simd_types::ZeroBiasSimd, f32) -> [i16; 64]
 pub fn foundation::simd_types::QuantTableSimd::quantize_with_zero_bias_zigzag(&self, &foundation::simd_types::Block8x8f, &foundation::simd_types::ZeroBiasSimd, f32) -> [i16; 64]
-pub fn foundation::simd_types::ZeroBiasSimd::clone(&self) -> foundation::simd_types::ZeroBiasSimd
+pub fn foundation::simd_types::ZeroBiasSimd::clone(&self) -> Self
 pub fn foundation::simd_types::ZeroBiasSimd::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn foundation::simd_types::ZeroBiasSimd::from_params(&crate::quant::ZeroBiasParams) -> Self
 pub fn foundation::simd_types::ZeroBiasSimd::from_params(&quant::ZeroBiasParams) -> Self
@@ -1542,7 +1500,7 @@ pub fn huffman::build_code_lengths(&[u64], u8) -> alloc::vec::Vec<u8> [also: huf
 pub fn huffman::classic::depths_to_bits_values(&[u8]) -> ([u8; 16], alloc::vec::Vec<u8>)
 pub fn huffman::classic::generate_code_lengths(&mut [i64; 257]) -> encoder::Result<[u8; 256]>
 pub fn huffman::classic::generate_optimal_table(&mut [i64; 257]) -> encoder::Result<([u8; 16], alloc::vec::Vec<u8>)>
-pub fn huffman::encode::HuffmanDecodeTable::clone(&self) -> huffman::encode::HuffmanDecodeTable
+pub fn huffman::encode::HuffmanDecodeTable::clone(&self) -> Self
 pub fn huffman::encode::HuffmanDecodeTable::decode_slow(&self, i32) -> core::option::Option<(u8, u8)>
 pub fn huffman::encode::HuffmanDecodeTable::default() -> Self
 pub fn huffman::encode::HuffmanDecodeTable::fast_ac_array(&self) -> core::option::Option<&[i16; 1024]>
@@ -1558,7 +1516,7 @@ pub fn huffman::encode::HuffmanDecodeTable::std_ac_luminance() -> &'static Self
 pub fn huffman::encode::HuffmanDecodeTable::std_dc_chrominance() -> &'static Self
 pub fn huffman::encode::HuffmanDecodeTable::std_dc_luminance() -> &'static Self
 pub fn huffman::encode::HuffmanDecodeTable::to_bits_values(&self) -> ([u8; 16], &[u8])
-pub fn huffman::encode::HuffmanEncodeTable::clone(&self) -> huffman::encode::HuffmanEncodeTable
+pub fn huffman::encode::HuffmanEncodeTable::clone(&self) -> Self
 pub fn huffman::encode::HuffmanEncodeTable::default() -> Self
 pub fn huffman::encode::HuffmanEncodeTable::encode(&self, u8) -> (u32, u8)
 pub fn huffman::encode::HuffmanEncodeTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1568,13 +1526,13 @@ pub fn huffman::encode::HuffmanEncodeTable::std_ac_luminance() -> &'static Self
 pub fn huffman::encode::HuffmanEncodeTable::std_dc_chrominance() -> &'static Self
 pub fn huffman::encode::HuffmanEncodeTable::std_dc_luminance() -> &'static Self
 pub fn huffman::encode::lengths_to_bits_values(&[u8]) -> ([u8; 16], alloc::vec::Vec<u8>)
-pub fn huffman::optimize::cluster::ClusterResult::clone(&self) -> huffman::optimize::cluster::ClusterResult
+pub fn huffman::optimize::cluster::ClusterResult::clone(&self) -> Self
 pub fn huffman::optimize::cluster::ClusterResult::dump_merge_log(&self, &str) -> core::io::error::Result<()>
 pub fn huffman::optimize::cluster::ClusterResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::cluster::ClusterResult::get_slot(&self, usize) -> usize
 pub fn huffman::optimize::cluster::ClusterResult::new(usize) -> Self
 pub fn huffman::optimize::cluster::ContextConfig::ac_context(&self, usize, usize) -> usize
-pub fn huffman::optimize::cluster::ContextConfig::clone(&self) -> huffman::optimize::cluster::ContextConfig
+pub fn huffman::optimize::cluster::ContextConfig::clone(&self) -> Self
 pub fn huffman::optimize::cluster::ContextConfig::dc_context(&self, usize) -> usize
 pub fn huffman::optimize::cluster::ContextConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::cluster::ContextConfig::for_progressive<I>(usize, I) -> Self where I: core::iter::traits::iterator::Iterator<Item = (u8, u8, usize)>
@@ -1583,7 +1541,7 @@ pub fn huffman::optimize::cluster::ContextConfig::num_ac_contexts(&self) -> usiz
 pub fn huffman::optimize::cluster::ContextConfig::num_dc_contexts(&self) -> usize
 pub fn huffman::optimize::cluster::cluster_histograms(&[huffman::optimize::frequency::FrequencyCounter], usize, bool) -> huffman::optimize::cluster::ClusterResult
 pub fn huffman::optimize::frequency::FrequencyCounter::add(&mut self, &huffman::optimize::frequency::FrequencyCounter)
-pub fn huffman::optimize::frequency::FrequencyCounter::clone(&self) -> huffman::optimize::frequency::FrequencyCounter
+pub fn huffman::optimize::frequency::FrequencyCounter::clone(&self) -> Self
 pub fn huffman::optimize::frequency::FrequencyCounter::combined(&self, &huffman::optimize::frequency::FrequencyCounter) -> huffman::optimize::frequency::FrequencyCounter
 pub fn huffman::optimize::frequency::FrequencyCounter::count(&mut self, u8)
 pub fn huffman::optimize::frequency::FrequencyCounter::default() -> Self
@@ -1603,15 +1561,15 @@ pub fn huffman::optimize::frequency::FrequencyCounter::set_count(&mut self, u8, 
 pub fn huffman::optimize::frequency::FrequencyCounter::subtract(&mut self, &huffman::optimize::frequency::FrequencyCounter)
 pub fn huffman::optimize::frequency::FrequencyCounter::total(&self) -> i64
 pub fn huffman::optimize::frequency::HuffmanTableSet::annex_k() -> encoder::Result<Self>
-pub fn huffman::optimize::frequency::HuffmanTableSet::clone(&self) -> huffman::optimize::frequency::HuffmanTableSet
+pub fn huffman::optimize::frequency::HuffmanTableSet::clone(&self) -> Self
 pub fn huffman::optimize::frequency::HuffmanTableSet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::frequency::HuffmanTableSet::from_standard() -> encoder::Result<Self>
-pub fn huffman::optimize::frequency::OptimizedTable::clone(&self) -> huffman::optimize::frequency::OptimizedTable
+pub fn huffman::optimize::frequency::OptimizedTable::clone(&self) -> Self
 pub fn huffman::optimize::frequency::OptimizedTable::encode(&self, u8) -> (u32, u8)
 pub fn huffman::optimize::frequency::OptimizedTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::frequency::OptimizedTable::from_bits_values([u8; 16], alloc::vec::Vec<u8>) -> encoder::Result<Self>
 pub fn huffman::optimize::frequency::OptimizedTable::from_bits_values_static([u8; 16], &[u8]) -> Self
-pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::clone(&self) -> huffman::optimize::progressive::ProgressiveTokenBuffer
+pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::clone(&self) -> Self
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::counter(&self, usize) -> core::option::Option<&huffman::optimize::frequency::FrequencyCounter>
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dc_pred(&self, usize) -> i16
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::dump_histograms(&self, &str) -> core::io::error::Result<()>
@@ -1638,29 +1596,29 @@ pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::tokenize_ac_refin
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::tokenize_dc_scan(&mut self, &[&[[i16; 64]]], &[usize], u8, u8, u16)
 pub fn huffman::optimize::progressive::ProgressiveTokenBuffer::with_capacity(usize, usize, usize) -> Self
 pub fn huffman::optimize::tokens::RefToken::assert_fields_are_eq(&self)
-pub fn huffman::optimize::tokens::RefToken::clone(&self) -> huffman::optimize::tokens::RefToken
-pub fn huffman::optimize::tokens::RefToken::default() -> huffman::optimize::tokens::RefToken
+pub fn huffman::optimize::tokens::RefToken::clone(&self) -> Self
+pub fn huffman::optimize::tokens::RefToken::default() -> Self
 pub fn huffman::optimize::tokens::RefToken::eob(u16, u8) -> Self
-pub fn huffman::optimize::tokens::RefToken::eq(&self, &huffman::optimize::tokens::RefToken) -> bool
+pub fn huffman::optimize::tokens::RefToken::eq(&self, &Self) -> bool
 pub fn huffman::optimize::tokens::RefToken::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::tokens::RefToken::to_debug_json(&self) -> alloc::string::String
-pub fn huffman::optimize::tokens::ScanTokenInfo::clone(&self) -> huffman::optimize::tokens::ScanTokenInfo
+pub fn huffman::optimize::tokens::ScanTokenInfo::clone(&self) -> Self
 pub fn huffman::optimize::tokens::ScanTokenInfo::debug_dump(&self, usize)
-pub fn huffman::optimize::tokens::ScanTokenInfo::default() -> huffman::optimize::tokens::ScanTokenInfo
+pub fn huffman::optimize::tokens::ScanTokenInfo::default() -> Self
 pub fn huffman::optimize::tokens::ScanTokenInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::tokens::ScanTokenInfo::is_dc(&self) -> bool
 pub fn huffman::optimize::tokens::ScanTokenInfo::is_refinement(&self) -> bool
 pub fn huffman::optimize::tokens::ScanTokenInfo::new(u8, u8, u8, u8, u8) -> Self
 pub fn huffman::optimize::tokens::ScanTokenInfo::with_capacity_refinement(u8, u8, u8, u8, u8, usize) -> encoder::Result<Self>
 pub fn huffman::optimize::tokens::Token::ac(u8, u8, i16) -> Self
-pub fn huffman::optimize::tokens::Token::clone(&self) -> huffman::optimize::tokens::Token
+pub fn huffman::optimize::tokens::Token::clone(&self) -> Self
 pub fn huffman::optimize::tokens::Token::dc(u8, i16) -> Self
 pub fn huffman::optimize::tokens::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::tokens::Token::to_debug_json(&self) -> alloc::string::String
 pub fn huffman::optimize::tokens::TokenBuffer::clear(&mut self)
-pub fn huffman::optimize::tokens::TokenBuffer::clone(&self) -> huffman::optimize::tokens::TokenBuffer
+pub fn huffman::optimize::tokens::TokenBuffer::clone(&self) -> Self
 pub fn huffman::optimize::tokens::TokenBuffer::counter(&self, usize) -> core::option::Option<&huffman::optimize::frequency::FrequencyCounter>
-pub fn huffman::optimize::tokens::TokenBuffer::default() -> huffman::optimize::tokens::TokenBuffer
+pub fn huffman::optimize::tokens::TokenBuffer::default() -> Self
 pub fn huffman::optimize::tokens::TokenBuffer::estimate_size(&self, &[huffman::encode::HuffmanEncodeTable]) -> u64
 pub fn huffman::optimize::tokens::TokenBuffer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::optimize::tokens::TokenBuffer::generate_tables(&self) -> encoder::Result<alloc::vec::Vec<huffman::encode::HuffmanEncodeTable>>
@@ -1670,7 +1628,7 @@ pub fn huffman::optimize::tokens::TokenBuffer::len(&self) -> usize
 pub fn huffman::optimize::tokens::TokenBuffer::new(usize) -> Self
 pub fn huffman::optimize::tokens::TokenBuffer::push(&mut self, huffman::optimize::tokens::Token)
 pub fn huffman::types::CodeLengths::as_slice(&self) -> &[u8; 256]
-pub fn huffman::types::CodeLengths::clone(&self) -> huffman::types::CodeLengths
+pub fn huffman::types::CodeLengths::clone(&self) -> Self
 pub fn huffman::types::CodeLengths::default() -> Self
 pub fn huffman::types::CodeLengths::estimate_cost(&self, &huffman::types::SymbolFrequencies) -> u64
 pub fn huffman::types::CodeLengths::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1681,16 +1639,15 @@ pub fn huffman::types::CodeLengths::kraft_sum(&self) -> u64
 pub fn huffman::types::CodeLengths::max_length(&self) -> u8
 pub fn huffman::types::CodeLengths::new() -> Self
 pub fn huffman::types::CodeLengths::to_bits_values(&self) -> ([u8; 16], alloc::vec::Vec<u8>)
-pub fn huffman::types::HuffmanAlgorithm::assert_fields_are_eq(&self)
-pub fn huffman::types::HuffmanAlgorithm::clone(&self) -> huffman::types::HuffmanAlgorithm
-pub fn huffman::types::HuffmanAlgorithm::default() -> huffman::types::HuffmanAlgorithm
-pub fn huffman::types::HuffmanAlgorithm::eq(&self, &huffman::types::HuffmanAlgorithm) -> bool
+pub fn huffman::types::HuffmanAlgorithm::clone(&self) -> Self
+pub fn huffman::types::HuffmanAlgorithm::default() -> Self
+pub fn huffman::types::HuffmanAlgorithm::eq(&self, &Self) -> bool
 pub fn huffman::types::HuffmanAlgorithm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::types::HuffmanAlgorithm::generate_code_lengths(&self, &huffman::types::SymbolFrequencies) -> encoder::Result<huffman::types::CodeLengths>
 pub fn huffman::types::HuffmanAlgorithm::generate_table(&self, &huffman::types::SymbolFrequencies) -> encoder::Result<huffman::optimize::frequency::OptimizedTable>
 pub fn huffman::types::SymbolFrequencies::add(&mut self, u8, u64)
 pub fn huffman::types::SymbolFrequencies::as_slice(&self) -> &[u64; 256]
-pub fn huffman::types::SymbolFrequencies::clone(&self) -> huffman::types::SymbolFrequencies
+pub fn huffman::types::SymbolFrequencies::clone(&self) -> Self
 pub fn huffman::types::SymbolFrequencies::count(&mut self, u8)
 pub fn huffman::types::SymbolFrequencies::default() -> Self
 pub fn huffman::types::SymbolFrequencies::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1703,20 +1660,15 @@ pub fn huffman::types::SymbolFrequencies::num_symbols(&self) -> usize
 pub fn huffman::types::SymbolFrequencies::reset(&mut self)
 pub fn huffman::types::SymbolFrequencies::total(&self) -> u64
 pub fn huffman::types::compare_algorithms(&huffman::types::SymbolFrequencies) -> encoder::Result<(huffman::types::CodeLengths, huffman::types::CodeLengths, u64, u64)>
-pub fn layout::FlipAxis::assert_fields_are_eq(&self)
 pub fn layout::LayoutConfig::with_subsampling(self, encode::encoder_types::ChromaSubsampling) -> Self
-pub fn layout::Rotation::assert_fields_are_eq(&self)
-pub fn lossless::EdgeHandling::assert_fields_are_eq(&self)
-pub fn lossless::LosslessTransform::assert_fields_are_eq(&self)
-pub fn lossless::OutputMode::assert_fields_are_eq(&self)
 pub fn lossless::RestartInterval::assert_fields_are_eq(&self)
-pub fn quant::DequantBiasStats::clone(&self) -> quant::DequantBiasStats
+pub fn quant::DequantBiasStats::clone(&self) -> Self
 pub fn quant::DequantBiasStats::compute_biases(&self, usize) -> [f32; 64]
 pub fn quant::DequantBiasStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn quant::DequantBiasStats::gather_block(&mut self, usize, &[i16; 64])
 pub fn quant::DequantBiasStats::new(usize) -> Self
 pub fn quant::ZeroBiasParams::apply(&self, f32, usize, f32) -> f32
-pub fn quant::ZeroBiasParams::clone(&self) -> quant::ZeroBiasParams
+pub fn quant::ZeroBiasParams::clone(&self) -> Self
 pub fn quant::ZeroBiasParams::default() -> Self
 pub fn quant::ZeroBiasParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn quant::ZeroBiasParams::for_rgb() -> Self
@@ -1724,7 +1676,7 @@ pub fn quant::ZeroBiasParams::for_xyb(f32, usize) -> Self
 pub fn quant::ZeroBiasParams::for_xyb_flat() -> Self
 pub fn quant::ZeroBiasParams::for_ycbcr(f32, usize) -> Self
 pub fn quant::ZeroBiasParams::for_ycbcr_simple(usize) -> Self
-pub fn quant::aq::AQStrengthMap::clone(&self) -> quant::aq::AQStrengthMap
+pub fn quant::aq::AQStrengthMap::clone(&self) -> Self
 pub fn quant::aq::AQStrengthMap::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn quant::aq::AQStrengthMap::get(&self, usize, usize) -> f32
 pub fn quant::aq::AQStrengthMap::mean(&self) -> f32
@@ -1779,21 +1731,20 @@ pub fn quant::generate_quant_table_with_distance(f32, usize, types::ColorSpace, 
 pub fn quant::generate_rgb_quant_table(f32, bool) -> types::QuantTable
 pub fn quant::generate_standard_jpeg_table(f32, bool) -> types::QuantTable
 pub fn quant::generate_standard_jpeg_table_ex(f32, bool, bool) -> types::QuantTable
-pub fn quant::identify::TableId::clone(&self) -> quant::identify::TableId
-pub fn quant::identify::TableId::eq(&self, &quant::identify::TableId) -> bool
+pub fn quant::identify::TableId::clone(&self) -> Self
+pub fn quant::identify::TableId::eq(&self, &Self) -> bool
 pub fn quant::identify::TableId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn quant::identify::distance_from_luma_table(&[u16; 64]) -> core::option::Option<f32>
 pub fn quant::identify::identify_luma_table(&[u16; 64], u16) -> quant::identify::TableId
 pub fn quant::identify::ijg_preset_table(usize, u8, bool) -> [u16; 64]
 pub fn quant::identify::ijg_scale_for_quality(u8) -> u32
 pub fn quant::identify::jpegli_luma_table(f32, bool) -> [u16; 64]
-pub fn quant::quality_conversion::QualityComparisonMetric::assert_fields_are_eq(&self)
-pub fn quant::quality_conversion::QualityComparisonMetric::clone(&self) -> quant::quality_conversion::QualityComparisonMetric
-pub fn quant::quality_conversion::QualityComparisonMetric::default() -> quant::quality_conversion::QualityComparisonMetric
-pub fn quant::quality_conversion::QualityComparisonMetric::eq(&self, &quant::quality_conversion::QualityComparisonMetric) -> bool
+pub fn quant::quality_conversion::QualityComparisonMetric::clone(&self) -> Self
+pub fn quant::quality_conversion::QualityComparisonMetric::default() -> Self
+pub fn quant::quality_conversion::QualityComparisonMetric::eq(&self, &Self) -> bool
 pub fn quant::quality_conversion::QualityComparisonMetric::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn quant::quality_conversion::QualityComparisonMetric::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn quant::quality_conversion::QualityConversion::clone(&self) -> quant::quality_conversion::QualityConversion
+pub fn quant::quality_conversion::QualityConversion::clone(&self) -> Self
 pub fn quant::quality_conversion::QualityConversion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn quant::quality_conversion::QualityConversion::mozjpeg_equivalent(u8, types::Subsampling, quant::quality_conversion::QualityComparisonMetric) -> Self
 pub fn quant::quality_conversion::QualityConversion::to_jpegli_quality(self) -> encode::encoder_types::Quality
@@ -1806,25 +1757,17 @@ pub fn quant::quantize_block_with_zero_bias(&[f32; 64], &[u16; 64], &quant::Zero
 pub fn quant::quantize_block_with_zero_bias_simd(&[f32; 64], &[u16; 64], &quant::ZeroBiasParams, f32) -> [i16; 64]
 pub fn quant::scale_to_distance(f32, usize) -> f32
 pub fn recompress::Budget::assert_fields_are_eq(&self)
-pub fn recompress::LosslessReason::assert_fields_are_eq(&self)
-pub fn recompress::NoOpReason::assert_fields_are_eq(&self)
-pub fn recompress::StrategyKind::assert_fields_are_eq(&self)
-pub fn recompress::expert::ActivityTier::assert_fields_are_eq(&self)
 pub fn recompress::expert::CalibrationLookup::estimate_all(&self, recompress::expert::EncoderClass, types::Subsampling, f32, f32) -> [recompress::expert::StrategyChoice; 4]
-pub fn recompress::expert::CellCi::assert_fields_are_eq(&self)
-pub fn recompress::expert::EncoderClass::assert_fields_are_eq(&self)
-pub fn recompress::expert::TableId::assert_fields_are_eq(&self)
 pub fn recompress::expert::emit_preserved(&decoder::DecodedCoefficients, types::Subsampling, &recompress::expert::EmitConfig) -> core::result::Result<alloc::vec::Vec<u8>, recompress::Error>
-pub fn test_utils::TestImage::clone(&self) -> test_utils::TestImage
+pub fn test_utils::TestImage::clone(&self) -> Self
 pub fn test_utils::TestImage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn test_utils::TestImage::from_pixels(u32, u32, u32, alloc::vec::Vec<u8>) -> Self
 pub fn test_utils::TestImage::get_pixel(&self, u32, u32, u32) -> u8
 pub fn test_utils::TestImage::new(u32, u32, u32) -> Self
 pub fn test_utils::TestImage::set_pixel(&mut self, u32, u32, u32, u8)
 pub fn test_utils::TestImage::to_grayscale(&self) -> Self
-pub fn test_utils::TestPattern::assert_fields_are_eq(&self)
-pub fn test_utils::TestPattern::clone(&self) -> test_utils::TestPattern
-pub fn test_utils::TestPattern::eq(&self, &test_utils::TestPattern) -> bool
+pub fn test_utils::TestPattern::clone(&self) -> Self
+pub fn test_utils::TestPattern::eq(&self, &Self) -> bool
 pub fn test_utils::TestPattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn test_utils::distance_rms(&[u8], &[u8]) -> f64
 pub fn test_utils::distance_rms_images(&test_utils::TestImage, &test_utils::TestImage) -> f64
@@ -1858,81 +1801,73 @@ pub fn test_utils::require_testdata_dir() -> std::path::PathBuf
 pub fn test_utils::thresholds::max_rms_for_quality(u8, u8, u8) -> f64
 pub fn test_utils::verify_output(&[u8], &[u8], f64, u8)
 pub fn test_utils::verify_output_images(&test_utils::TestImage, &test_utils::TestImage, f64, u8)
-pub fn types::ColorSpace::assert_fields_are_eq(&self)
-pub fn types::ColorSpace::clone(&self) -> types::ColorSpace
-pub fn types::ColorSpace::default() -> types::ColorSpace
-pub fn types::ColorSpace::eq(&self, &types::ColorSpace) -> bool
+pub fn types::ColorSpace::clone(&self) -> Self
+pub fn types::ColorSpace::default() -> Self
+pub fn types::ColorSpace::eq(&self, &Self) -> bool
 pub fn types::ColorSpace::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::ColorSpace::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn types::Component::clone(&self) -> types::Component
+pub fn types::Component::clone(&self) -> Self
 pub fn types::Component::default() -> Self
 pub fn types::Component::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::Dimensions::assert_fields_are_eq(&self)
-pub fn types::Dimensions::clone(&self) -> types::Dimensions
-pub fn types::Dimensions::default() -> types::Dimensions
-pub fn types::Dimensions::eq(&self, &types::Dimensions) -> bool
+pub fn types::Dimensions::clone(&self) -> Self
+pub fn types::Dimensions::default() -> Self
+pub fn types::Dimensions::eq(&self, &Self) -> bool
 pub fn types::Dimensions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::Dimensions::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn types::EdgePadding::assert_fields_are_eq(&self)
-pub fn types::EdgePadding::clone(&self) -> types::EdgePadding
-pub fn types::EdgePadding::default() -> types::EdgePadding
-pub fn types::EdgePadding::eq(&self, &types::EdgePadding) -> bool
+pub fn types::EdgePadding::clone(&self) -> Self
+pub fn types::EdgePadding::default() -> Self
+pub fn types::EdgePadding::eq(&self, &Self) -> bool
 pub fn types::EdgePadding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::EdgePadding::hash<__H: core::hash::Hasher>(&self, &mut __H)
 pub fn types::EdgePaddingConfig::assert_fields_are_eq(&self)
-pub fn types::EdgePaddingConfig::clone(&self) -> types::EdgePaddingConfig
+pub fn types::EdgePaddingConfig::clone(&self) -> Self
 pub fn types::EdgePaddingConfig::default() -> Self
-pub fn types::EdgePaddingConfig::eq(&self, &types::EdgePaddingConfig) -> bool
+pub fn types::EdgePaddingConfig::eq(&self, &Self) -> bool
 pub fn types::EdgePaddingConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::EdgePaddingConfig::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn types::HuffmanMethod::assert_fields_are_eq(&self)
-pub fn types::HuffmanMethod::clone(&self) -> types::HuffmanMethod
-pub fn types::HuffmanMethod::default() -> types::HuffmanMethod
-pub fn types::HuffmanMethod::eq(&self, &types::HuffmanMethod) -> bool
+pub fn types::HuffmanMethod::clone(&self) -> Self
+pub fn types::HuffmanMethod::default() -> Self
+pub fn types::HuffmanMethod::eq(&self, &Self) -> bool
 pub fn types::HuffmanMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::HuffmanMethod::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn types::HuffmanTable::clone(&self) -> types::HuffmanTable
+pub fn types::HuffmanTable::clone(&self) -> Self
 pub fn types::HuffmanTable::default() -> Self
 pub fn types::HuffmanTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn types::JpegMode::assert_fields_are_eq(&self)
-pub fn types::JpegMode::clone(&self) -> types::JpegMode
-pub fn types::JpegMode::default() -> types::JpegMode
-pub fn types::JpegMode::eq(&self, &types::JpegMode) -> bool
+pub fn types::JpegMode::clone(&self) -> Self
+pub fn types::JpegMode::default() -> Self
+pub fn types::JpegMode::eq(&self, &Self) -> bool
 pub fn types::JpegMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::JpegMode::hash<__H: core::hash::Hasher>(&self, &mut __H)
 pub fn types::Limits::assert_fields_are_eq(&self)
-pub fn types::Limits::clone(&self) -> types::Limits
-pub fn types::Limits::default() -> types::Limits
+pub fn types::Limits::clone(&self) -> Self
+pub fn types::Limits::default() -> Self
 pub fn types::Limits::effective_max_memory(&self) -> u64
 pub fn types::Limits::effective_max_output(&self) -> u64
 pub fn types::Limits::effective_max_pixels(&self) -> u64
-pub fn types::Limits::eq(&self, &types::Limits) -> bool
+pub fn types::Limits::eq(&self, &Self) -> bool
 pub fn types::Limits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::Limits::max_memory(self, u64) -> Self
 pub fn types::Limits::max_output(self, u64) -> Self
 pub fn types::Limits::max_pixels(self, u64) -> Self
-pub fn types::PixelFormat::assert_fields_are_eq(&self)
-pub fn types::PixelFormat::clone(&self) -> types::PixelFormat
-pub fn types::PixelFormat::default() -> types::PixelFormat
-pub fn types::PixelFormat::eq(&self, &types::PixelFormat) -> bool
+pub fn types::PixelFormat::clone(&self) -> Self
+pub fn types::PixelFormat::default() -> Self
+pub fn types::PixelFormat::eq(&self, &Self) -> bool
 pub fn types::PixelFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::PixelFormat::from(encode::encoder_types::PixelLayout) -> Self
 pub fn types::PixelFormat::hash<__H: core::hash::Hasher>(&self, &mut __H)
 pub fn types::QuantTable::clamp_to_baseline(self) -> Self
-pub fn types::QuantTable::clone(&self) -> types::QuantTable
+pub fn types::QuantTable::clone(&self) -> Self
 pub fn types::QuantTable::default() -> Self
 pub fn types::QuantTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::QuantTable::from_natural_order(&[u16; 64]) -> Self
 pub fn types::QuantTable::to_natural_order(&self) -> [u16; 64]
-pub fn types::Subsampling::assert_fields_are_eq(&self)
-pub fn types::Subsampling::clone(&self) -> types::Subsampling
-pub fn types::Subsampling::default() -> types::Subsampling
-pub fn types::Subsampling::eq(&self, &types::Subsampling) -> bool
+pub fn types::Subsampling::clone(&self) -> Self
+pub fn types::Subsampling::default() -> Self
+pub fn types::Subsampling::eq(&self, &Self) -> bool
 pub fn types::Subsampling::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn types::Subsampling::from(encode::encoder_types::ChromaSubsampling) -> Self
 pub fn types::Subsampling::hash<__H: core::hash::Hasher>(&self, &mut __H)
-pub fn ultrahdr::GainMapMemory::assert_fields_are_eq(&self)
-pub fn ultrahdr::UltraHdrMode::assert_fields_are_eq(&self)
 pub fn ultrahdr::UltraHdrReader<'a>::dimensions(&self) -> types::Dimensions
 pub fn ultrahdr::encode_ultrahdr(&zenpixels::buffer::PixelBuf, &ultrahdr_core::gainmap::compute::GainMapConfig, &ultrahdr_core::color::tonemap::ToneMapConfig, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
 pub fn ultrahdr::encode_ultrahdr_with_curve<C: zentone::gainmap::LumaToneMap>(&zenpixels::buffer::PixelBuf, &C, &ultrahdr_core::gainmap::compute::GainMapConfig, &encode::encoder_config::EncoderConfig, f32, impl enough::Stop) -> encoder::Result<alloc::vec::Vec<u8>>
@@ -2413,7 +2348,7 @@ pub decode::PreserveConfig::icc: decoder::IccPreserve
 pub decode::PreserveConfig::iptc: bool
 pub decode::PreserveConfig::jfif: bool
 pub decode::PreserveConfig::mpf_depth: bool
-pub decode::PreserveConfig::mpf_filter: core::option::Option<alloc::sync::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
+pub decode::PreserveConfig::mpf_filter: core::option::Option<alloc::rcs::arc::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
 pub decode::PreserveConfig::mpf_gainmaps: bool
 pub decode::PreserveConfig::mpf_multiframe: bool
 pub decode::PreserveConfig::mpf_thumbnails: bool
@@ -3681,10 +3616,10 @@ ultrahdr::UltraHdrMode: TrivialClone
 
 130 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 encode::byte_encoders::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
-encode::byte_encoders::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+encode::byte_encoders::RgbEncoder<P>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encode::byte_encoders::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encode::diagnostics::DiagnosticsHandle: !RefUnwindSafe !UnwindSafe
 encode::request::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 encode::strip::StripProcessor: !RefUnwindSafe !Sync !UnwindSafe
 encode::tuning::PerComponent<T>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-foundation::instrumented_vec::InstrumentedVec<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+foundation::instrumented_vec::InstrumentedVec<T>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

@@ -1018,7 +1018,7 @@ mod tests {
     fn buf_with_transfer(transfer: TransferFunction) -> PixelBuffer {
         let px: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
         let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
-        let desc = zenpixels::ImageSpec::rgbaf32_linear().with_transfer(transfer);
+        let desc = zenpixels::ImageSpec::RGBAF32_LINEAR.with_transfer(transfer);
         PixelBuffer::from_bytes(bytes, 1, 1, desc).expect("fixture")
     }
 
@@ -1028,7 +1028,7 @@ mod tests {
     #[test]
     fn bt709_base_is_tagged_only_when_its_curve_is_not_srgb() {
         let base = |transfer| {
-            let desc = zenpixels::ImageSpec::rgba8_srgb()
+            let desc = zenpixels::ImageSpec::RGBA8_SRGB
                 .with_primaries(ColorPrimaries::Bt709)
                 .with_transfer(transfer);
             PixelBuffer::from_bytes(alloc::vec![128u8; 4], 1, 1, desc).expect("fixture")
@@ -1091,7 +1091,7 @@ mod tests {
         ] {
             let samples = [encoded, encoded, encoded, 1.0];
             let bytes = samples.iter().flat_map(|f| f.to_ne_bytes()).collect();
-            let desc = zenpixels::ImageSpec::rgbaf32_linear().with_transfer(transfer);
+            let desc = zenpixels::ImageSpec::RGBAF32_LINEAR.with_transfer(transfer);
             let hdr = PixelBuffer::from_bytes(bytes, 1, 1, desc).unwrap();
             let mut row = [0.0; 4];
             extract_hdr_row_rgba_linear(&hdr, 0, &mut row);

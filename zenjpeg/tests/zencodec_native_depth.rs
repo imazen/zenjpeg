@@ -111,7 +111,14 @@ impl DecodeRowSink for Sink {
         let start = y as usize * stride;
         let end = start + height as usize * stride;
         let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut self.buffer[start..end]);
-        Ok(PixelViewMut::new(bytes, width, height, stride * 2, descriptor).unwrap())
+        Ok(PixelViewMut::new_with_spec_cow(
+            bytes,
+            width,
+            height,
+            stride * 2,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap())
     }
 
     fn finish(&mut self) -> Result<(), SinkError> {
@@ -181,7 +188,7 @@ fn check_job_paths(
 fn corpus_twelve_bit_keeps_its_depth_by_default() {
     let data = corpus_12_bit();
     let (descriptor, samples) = check_paths(&data, &[]);
-    assert_eq!(descriptor, ImageSpec::rgb16_srgb());
+    assert_eq!(descriptor, ImageSpec::RGB16_SRGB);
     let codes = native_codes(&data, false, false);
     let expected: Vec<u16> = codes.iter().map(|&c| nearest_16(c, 12)).collect();
     assert_eq!(samples, expected);
@@ -204,13 +211,13 @@ fn output_info_and_advertised_exits_name_the_depth() {
     let job = JpegDecoderConfig::new().job();
     assert_eq!(
         job.output_info(&data).unwrap().native_format,
-        ImageSpec::rgb16_srgb()
+        ImageSpec::RGB16_SRGB
     );
     let advertised = JpegDecoderConfig::supported_descriptors();
     for descriptor in [
-        ImageSpec::rgb16_srgb(),
-        ImageSpec::rgba16_srgb(),
-        ImageSpec::gray16_srgb(),
+        ImageSpec::RGB16_SRGB,
+        ImageSpec::RGBA16_SRGB,
+        ImageSpec::GRAY16_SRGB,
     ] {
         assert!(advertised.contains(&descriptor), "{descriptor:?}");
     }
@@ -237,9 +244,9 @@ fn every_seed_above_eight_bits_keeps_its_depth() {
         assert_eq!(
             descriptor,
             if gray {
-                ImageSpec::gray16_srgb()
+                ImageSpec::GRAY16_SRGB
             } else {
-                ImageSpec::rgb16_srgb()
+                ImageSpec::RGB16_SRGB
             },
             "{name}"
         );
@@ -301,9 +308,9 @@ fn orientation_applies_to_u16_exits_on_every_path() {
 #[test]
 fn rgba_exit_adds_opaque_alpha_without_touching_color() {
     let data = corpus_12_bit();
-    let (descriptor, rgba) = check_paths(&data, &[ImageSpec::rgba16_srgb()]);
-    assert_eq!(descriptor, ImageSpec::rgba16_srgb());
-    let (_, rgb) = check_paths(&data, &[ImageSpec::rgb16_srgb()]);
+    let (descriptor, rgba) = check_paths(&data, &[ImageSpec::RGBA16_SRGB]);
+    assert_eq!(descriptor, ImageSpec::RGBA16_SRGB);
+    let (_, rgb) = check_paths(&data, &[ImageSpec::RGB16_SRGB]);
     for (px, expected) in rgba.as_chunks::<4>().0.iter().zip(rgb.as_chunks::<3>().0) {
         assert_eq!(&px[..3], expected);
         assert_eq!(px[3], 65535);
@@ -314,35 +321,35 @@ fn rgba_exit_adds_opaque_alpha_without_touching_color() {
 fn a_list_offering_more_than_u8_does_not_narrow() {
     let data = corpus_12_bit();
     for preferred in [
-        vec![ImageSpec::rgb8_srgb(), ImageSpec::rgb16_srgb()],
+        vec![ImageSpec::RGB8_SRGB, ImageSpec::RGB16_SRGB],
         JpegDecoderConfig::supported_descriptors().to_vec(),
     ] {
         let (descriptor, samples) = check_paths(&data, &preferred);
-        assert_eq!(descriptor, ImageSpec::rgb16_srgb());
+        assert_eq!(descriptor, ImageSpec::RGB16_SRGB);
         assert_eq!(samples, output_words(&decode(&data, &[])));
     }
     // A later float offer holds the samples too, ahead of U8.
     let output = decode(
         &data,
         &[
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::rgbf32_linear(),
-            ImageSpec::rgb16_srgb(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::RGBF32_LINEAR,
+            ImageSpec::RGB16_SRGB,
         ],
     );
     assert_eq!(output.pixels().spec().layout.sample, SampleType::F32);
     // Eight-bit frames keep plain first-supported ranking.
     let eight = seed("10-p8-c3-sof30-mode0-s1");
-    let output = decode(&eight, &[ImageSpec::rgb8_srgb(), ImageSpec::rgb16_srgb()]);
-    assert_eq!(output.pixels().spec(), &ImageSpec::rgb8_srgb());
+    let output = decode(&eight, &[ImageSpec::RGB8_SRGB, ImageSpec::RGB16_SRGB]);
+    assert_eq!(output.pixels().spec(), &ImageSpec::RGB8_SRGB);
 }
 
 #[test]
 fn an_explicit_u8_request_is_honored_on_every_path() {
     let data = corpus_12_bit();
-    let preferred = [ImageSpec::rgb8_srgb()];
+    let preferred = [ImageSpec::RGB8_SRGB];
     let one_shot = decode(&data, &preferred);
-    assert_eq!(one_shot.pixels().spec(), &ImageSpec::rgb8_srgb());
+    assert_eq!(one_shot.pixels().spec(), &ImageSpec::RGB8_SRGB);
     assert_eq!(one_shot.pixels().facts().depth, None);
     let bytes: Vec<u8> = (0..one_shot.pixels().rows())
         .flat_map(|y| one_shot.pixels().row(y).to_vec())
@@ -381,9 +388,9 @@ fn eight_bit_frames_widen_exactly_when_asked_and_stay_u8_otherwise() {
             "{name}"
         );
         let preferred = [if gray {
-            ImageSpec::gray16_srgb()
+            ImageSpec::GRAY16_SRGB
         } else {
-            ImageSpec::rgb16_srgb()
+            ImageSpec::RGB16_SRGB
         }];
         let (descriptor, samples) = check_paths(&data, &preferred);
         assert_eq!(descriptor, preferred[0], "{name}");
@@ -400,7 +407,7 @@ fn lossless_below_eight_bits_widens_from_its_codes() {
     let data = seed("30-p2-c1-sof31-mode0-s1");
     let plain = decode(&data, &[]);
     assert_eq!(plain.pixels().spec().layout.sample, SampleType::U8);
-    let (_, samples) = check_paths(&data, &[ImageSpec::gray16_srgb()]);
+    let (_, samples) = check_paths(&data, &[ImageSpec::GRAY16_SRGB]);
     let expected: Vec<u16> = native_codes(&data, true, false)
         .iter()
         .map(|&c| nearest_16(c, 2))
@@ -468,7 +475,7 @@ fn deep_cmyk_converted_to_rgb_keeps_its_depth() {
         .unwrap()
         .decode()
         .unwrap();
-    assert_eq!(output.pixels().spec(), &ImageSpec::rgb16_srgb());
+    assert_eq!(output.pixels().spec(), &ImageSpec::RGB16_SRGB);
 }
 
 // ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ fn hdr_fixture() -> PixelBuf {
             px.extend_from_slice(&[v, v, v, 1.0]);
         }
     }
-    PixelBuf::from_vec(px, w, h, ImageSpec::rgbaf32_linear()).expect("fixture buffer")
+    PixelBuf::from_samples(px, w, h, ImageSpec::RGBAF32_LINEAR).expect("fixture buffer")
 }
 
 fn ultrahdr_jpeg() -> Vec<u8> {
@@ -68,7 +68,7 @@ fn plain_jpeg_reports_no_gain_map_supplement() {
         .take(64)
         .flatten()
         .collect();
-    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, ImageSpec::rgb8_srgb())
+    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::specs::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()
         .job()
@@ -147,7 +147,7 @@ fn reconstruct_on_plain_jpeg_decodes_base() {
         .take(64)
         .flatten()
         .collect();
-    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, ImageSpec::rgb8_srgb())
+    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::specs::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()
         .job()
@@ -188,7 +188,7 @@ fn hdr_quadrant_fixture() -> PixelBuf {
             px.extend_from_slice(&[v, v, v, 1.0]);
         }
     }
-    PixelBuf::from_vec(px, w, h, ImageSpec::rgbaf32_linear()).expect("fixture buffer")
+    PixelBuf::from_samples(px, w, h, ImageSpec::RGBAF32_LINEAR).expect("fixture buffer")
 }
 
 /// Insert a minimal EXIF APP1 (TIFF carrying only the orientation tag)
@@ -486,7 +486,7 @@ fn display_p3_content_light_reports_measured_native_maxrgb() {
         [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]]
     );
     assert_eq!(mastering.white_point_xy, [0.3127, 0.3290]);
-    let fp16 = render(&[ImageSpec::rgbaf16_linear()], None);
+    let fp16 = render(&[ImageSpec::RGBAF16_LINEAR], None);
     assert_eq!(fp16.pixels().spec().layout.sample, SampleType::F16);
     assert_eq!(fp16.info().source_color.content_light_level, Some(native));
     let at_base = render(&[], Some(1.0));

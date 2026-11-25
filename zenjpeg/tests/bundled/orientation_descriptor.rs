@@ -187,7 +187,7 @@ fn descriptor_srgb_for_plain_jpeg() {
     let config = JpegDecoderConfig::new();
     let output = config.decode(&jpeg).expect("decode failed");
 
-    assert_eq!(output.pixels().spec(), &ImageSpec::rgb8_srgb());
+    assert_eq!(output.pixels().spec(), &ImageSpec::RGB8_SRGB);
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn descriptor_srgb_across_subsampling_modes() {
 
         assert_eq!(
             output.pixels().spec(),
-            &ImageSpec::rgb8_srgb(),
+            &ImageSpec::RGB8_SRGB,
             "sampling {ss:?}"
         );
     }
@@ -383,12 +383,12 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let start = y as usize * self.stride;
         let end = start + height as usize * self.stride;
-        zenpixels::PixelViewMut::new(
+        zenpixels::PixelViewMut::new_with_spec_cow(
             &mut self.data[start..end],
             width,
             height,
             self.stride,
-            descriptor,
+            zenpixels::SpecCow::from_owned(descriptor),
         )
         .map_err(|e| -> zencodec::decode::SinkError { e.to_string().into() })
     }

@@ -988,9 +988,9 @@ pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
 ///
 /// Decodes via `zenpng`; any source depth/channel layout (gray, gray+alpha,
 /// RGB, RGBA, 16-bit) is normalized to RGB8 via
-/// [`zenpixels_convert::convert_buf`].
+/// [`zenpixels_convert::convert_to_buf`].
 pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
-    use zenpixels_convert::{AlphaPolicy, ConvertPolicy, ImageSpec, PeakSource, convert_buf};
+    use zenpixels_convert::{AlphaPolicy, ConvertPolicy, ImageSpec, convert_to_buf};
 
     let output = zenpng::decode(
         data,
@@ -998,14 +998,13 @@ pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
         &enough::Unstoppable,
     )
     .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    let rgb8 = convert_buf(
+    let rgb8 = convert_to_buf(
         &output.pixels.as_view(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::default().with_alpha(AlphaPolicy::DiscardUnchecked),
-        PeakSource::Measured,
     )
     .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    rgb8.try_into_imgvec::<RGB8>()
+    rgb8.into_imgvec::<RGB8>()
         .map_err(|e| PngLoadError::Decode(e.to_string()))
 }
 

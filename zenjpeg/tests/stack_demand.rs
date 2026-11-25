@@ -21,7 +21,7 @@ use zencodec::storage::StorageBudget;
 use zencodec_io::{CollectSink, PolicyDecoder, drive_from_slice};
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::PixelView;
 
 fn stack_bytes() -> usize {
     std::env::var("ZENJPEG_DECODE_STACK")
@@ -69,11 +69,12 @@ fn fixtures() -> Vec<(String, Arc<Vec<u8>>)> {
             JpegEncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).with_progressive(true),
         ),
     ] {
-        let pixels = PixelView::new(&rgb, w, h, w as usize * 3, ImageSpec::rgb8_srgb()).unwrap();
+        let pixels =
+            PixelView::new(&rgb, w, h, w as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
         let encoded = config.job().encoder().unwrap().encode(pixels).unwrap();
         out.push((format!("{name} RGB"), Arc::new(encoded.into_vec())));
     }
-    let pixels = PixelView::new(&gray, w, h, w as usize, ImageSpec::gray8_srgb()).unwrap();
+    let pixels = PixelView::new(&gray, w, h, w as usize, &zenpixels::specs::GRAY8_SRGB).unwrap();
     let encoded = JpegEncoderConfig::new()
         .job()
         .encoder()

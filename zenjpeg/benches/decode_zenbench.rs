@@ -735,10 +735,14 @@ impl DecodeRowSink for ReuseSink {
         if self.buf.len() < needed {
             self.buf.resize(needed, 0);
         }
-        Ok(
-            PixelViewMut::new(&mut self.buf[..needed], width, height, stride, descriptor)
-                .expect("buffer sized correctly"),
+        Ok(PixelViewMut::new_with_spec_cow(
+            &mut self.buf[..needed],
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
         )
+        .expect("buffer sized correctly"))
     }
 }
 
@@ -786,7 +790,7 @@ fn bench_decode_sink(suite: &mut Suite) {
         // zencodec sink, BGRA8 sRGB pref
         g.bench("zencodec sink, BGRA8 sRGB", |b| {
             let mut sink = ReuseSink::new();
-            let prefs = [ImageSpec::bgra8_srgb()];
+            let prefs = [ImageSpec::BGRA8_SRGB];
             b.iter(|| {
                 for img in get_images() {
                     let job = JpegDecoderConfig::new().job();
@@ -799,7 +803,7 @@ fn bench_decode_sink(suite: &mut Suite) {
         // zencodec sink, RGBA8 sRGB pref
         g.bench("zencodec sink, RGBA8 sRGB", |b| {
             let mut sink = ReuseSink::new();
-            let prefs = [ImageSpec::rgba8_srgb()];
+            let prefs = [ImageSpec::RGBA8_SRGB];
             b.iter(|| {
                 for img in get_images() {
                     let job = JpegDecoderConfig::new().job();

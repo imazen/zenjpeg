@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1819 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3636 lines (1031 hidden + 7098 excluded-feature)
+# files: zenjpeg.txt 1819 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3571 lines (966 hidden + 7098 excluded-feature)
 
 ## summary
 #
@@ -877,7 +877,7 @@ pub decoder::PreserveConfig::icc: decoder::IccPreserve
 pub decoder::PreserveConfig::iptc: bool
 pub decoder::PreserveConfig::jfif: bool
 pub decoder::PreserveConfig::mpf_depth: bool
-pub decoder::PreserveConfig::mpf_filter: core::option::Option<alloc::sync::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
+pub decoder::PreserveConfig::mpf_filter: core::option::Option<alloc::rcs::arc::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
 pub decoder::PreserveConfig::mpf_gainmaps: bool
 pub decoder::PreserveConfig::mpf_multiframe: bool
 pub decoder::PreserveConfig::mpf_thumbnails: bool
@@ -1861,5 +1861,5 @@ decoder::ScanlineReader<'a>: !RefUnwindSafe !UnwindSafe
 encoder::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encoder::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 encoder::Error: !RefUnwindSafe !UnwindSafe
-encoder::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+encoder::RgbEncoder<P>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encoder::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe

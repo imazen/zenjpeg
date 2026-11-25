@@ -40,7 +40,7 @@ fn encode(
     meta: &Metadata,
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
-    encode_as(rows, meta, policy, ImageSpec::rgb8_srgb(), None)
+    encode_as(rows, meta, policy, ImageSpec::RGB8_SRGB, None)
 }
 
 /// `policy` goes through the legacy setter.
@@ -71,12 +71,13 @@ fn run(
     if let Some(context) = context {
         descriptor.color = (*context).clone();
     }
-    let pixels = PixelView::new(&data, W, H, W as usize * 3, descriptor.clone()).unwrap();
+    let pixels = PixelView::new(&data, W, H, W as usize * 3, &descriptor)
+        .map_err(|e| zenjpeg::encoder::Error::icc_error(e.to_string()))?;
     let mut encoder = job.encoder()?;
     if !rows {
         return Ok(encoder.encode(pixels)?.into_vec());
     }
-    let declaration = EncodeDeclaration::new(W, H, descriptor);
+    let declaration = EncodeDeclaration::new(W, H, descriptor.clone());
     if let Err(error) = encoder.begin_declared(&declaration) {
         assert!(
             encoder.pending_output().is_empty(),
@@ -221,7 +222,7 @@ fn the_legacy_setter_drops_a_job_profile_it_cannot_identify() {
 
 #[test]
 fn the_legacy_setter_keeps_a_colour_it_can_identify() {
-    let display_p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let display_p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     for (what, bytes) in not_identified() {
         for rows in [false, true] {
             // Display P3 pixels keep needing a carrier once the profile goes.
@@ -242,7 +243,7 @@ fn the_legacy_setter_keeps_a_colour_it_can_identify() {
 
 #[test]
 fn forbidding_a_colour_context_profile_refuses() {
-    let rgb8 = ImageSpec::rgb8_srgb();
+    let rgb8 = ImageSpec::RGB8_SRGB;
     for (what, bytes) in not_identified() {
         let context = Some(Arc::new(icc_color(bytes.clone())));
         for rows in [false, true] {
@@ -287,7 +288,7 @@ fn forbidding_a_colour_context_profile_refuses() {
 #[test]
 fn setter_order_decides_whether_the_legacy_behaviour_applies() {
     let meta = Metadata::none().with_icc(unidentified());
-    let rgb8 = ImageSpec::rgb8_srgb();
+    let rgb8 = ImageSpec::RGB8_SRGB;
     let strip = EncodePolicy::strip_all();
     let verbatim = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     let refused = EncodePolicy::none().with_strict(true);

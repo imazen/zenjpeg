@@ -35,9 +35,17 @@ fn pixels(w: u32, h: u32, ch: usize) -> Vec<u8> {
 
 fn desc(ch: usize) -> ImageSpec {
     match ch {
-        1 => ImageSpec::gray8_srgb(),
-        3 => ImageSpec::rgb8_srgb(),
-        _ => ImageSpec::rgba8_srgb(),
+        1 => ImageSpec::GRAY8_SRGB,
+        3 => ImageSpec::RGB8_SRGB,
+        _ => ImageSpec::RGBA8_SRGB,
+    }
+}
+
+fn desc_ref(ch: usize) -> &'static ImageSpec {
+    match ch {
+        1 => &zenpixels::specs::GRAY8_SRGB,
+        3 => &zenpixels::specs::RGB8_SRGB,
+        _ => &zenpixels::specs::RGBA8_SRGB,
     }
 }
 
@@ -50,7 +58,7 @@ fn meta() -> Metadata {
 
 #[allow(deprecated)] // Exercises the legacy metadata setter.
 fn one_shot(cfg: &E, px: &[u8], w: u32, h: u32, ch: usize, m: &Metadata) -> Vec<u8> {
-    let s = PixelView::new(px, w, h, w as usize * ch, desc(ch)).unwrap();
+    let s = PixelView::new(px, w, h, w as usize * ch, desc_ref(ch)).unwrap();
     cfg.clone()
         .job()
         .with_metadata_policy(m.clone(), MetadataPolicy::PreserveExact)
@@ -96,7 +104,7 @@ fn streamed(
             w,
             n,
             stride,
-            desc(ch),
+            desc_ref(ch),
         )
         .unwrap();
         enc.push_rows(s).unwrap();
@@ -267,7 +275,7 @@ fn canvas_size_push_rows_keeps_the_configuration() {
             w,
             16,
             w as usize * 3,
-            desc(3),
+            desc_ref(3),
         )
         .unwrap();
         enc.push_rows(s).unwrap();
@@ -282,7 +290,7 @@ fn row_protocol_errors() {
     let (w, h) = (32u32, 32u32);
     let px = pixels(w, h, 3);
     let cfg = fixed(ChromaSubsampling::Quarter);
-    let all = || PixelView::new(&px, w, h, w as usize * 3, desc(3)).unwrap();
+    let all = || PixelView::new(&px, w, h, w as usize * 3, desc_ref(3)).unwrap();
     // More rows than declared.
     let mut enc = cfg.clone().job().encoder().unwrap();
     enc.begin(w, h - 8, desc(3)).unwrap();
@@ -293,13 +301,13 @@ fn row_protocol_errors() {
     assert!(enc.push_rows(all()).is_err());
     // begin after rows.
     let mut enc = cfg.clone().job().with_canvas_size(w, h).encoder().unwrap();
-    enc.push_rows(PixelView::new(&px, w, 8, w as usize * 3, desc(3)).unwrap())
+    enc.push_rows(PixelView::new(&px, w, 8, w as usize * 3, desc_ref(3)).unwrap())
         .unwrap();
     assert!(enc.begin(w, h, desc(3)).is_err());
     // Fewer rows than declared.
     let mut enc = cfg.clone().job().encoder().unwrap();
     enc.begin(w, h, desc(3)).unwrap();
-    enc.push_rows(PixelView::new(&px, w, 8, w as usize * 3, desc(3)).unwrap())
+    enc.push_rows(PixelView::new(&px, w, 8, w as usize * 3, desc_ref(3)).unwrap())
         .unwrap();
     assert!(enc.finish().is_err());
 }
@@ -327,7 +335,7 @@ fn output_limit_counts_streamed_bytes() {
                 w,
                 n,
                 stride,
-                desc(3),
+                desc_ref(3),
             )
             .unwrap();
             enc.push_rows(s)?;
@@ -392,7 +400,7 @@ fn strided_crops_push_without_a_trailing_stride() {
     let crop = |y: u32, n: u32| {
         let start = y as usize * stride;
         let end = start + (n as usize - 1) * stride + w as usize * 3;
-        PixelView::new(&wide[start..end], w, n, stride, desc(3)).unwrap()
+        PixelView::new(&wide[start..end], w, n, stride, desc_ref(3)).unwrap()
     };
     let mut enc = cfg.clone().job().encoder().unwrap();
     enc.begin(w, h, desc(3)).unwrap();
@@ -416,7 +424,7 @@ fn a_failed_begin_leaves_the_encoder_as_it_was() {
     let cfg = fixed(ChromaSubsampling::Quarter);
     let mut enc = cfg.clone().job().encoder().unwrap();
     // Gray+alpha is not an encode layout: refused, nothing declared.
-    assert!(enc.begin(w, h, ImageSpec::graya8_srgb()).is_err());
+    assert!(enc.begin(w, h, ImageSpec::GRAYA8_SRGB).is_err());
     assert!(enc.pending_output().is_empty());
     // The same encoder then declares and streams normally.
     assert!(enc.begin(w, h, desc(3)).unwrap().streams());
@@ -424,7 +432,8 @@ fn a_failed_begin_leaves_the_encoder_as_it_was() {
     let n = got.len();
     enc.consume_output(n);
     for y in (0..h).step_by(16) {
-        let s = PixelView::new(&px[y as usize * 192..][..16 * 192], w, 16, 192, desc(3)).unwrap();
+        let s =
+            PixelView::new(&px[y as usize * 192..][..16 * 192], w, 16, 192, desc_ref(3)).unwrap();
         enc.push_rows(s).unwrap();
         let n = enc.pending_output().len();
         got.extend_from_slice(enc.pending_output());
@@ -440,7 +449,7 @@ fn one_shot_paths_are_refused_after_begin() {
     let cfg = fixed(ChromaSubsampling::Quarter);
     let mut enc = cfg.clone().job().encoder().unwrap();
     enc.begin(32, 32, desc(3)).unwrap();
-    let s = PixelView::new(&px, 32, 32, 96, desc(3)).unwrap();
+    let s = PixelView::new(&px, 32, 32, 96, desc_ref(3)).unwrap();
     assert!(enc.encode(s).is_err());
     let mut enc = cfg.job().encoder().unwrap();
     enc.begin(32, 32, desc(3)).unwrap();
@@ -539,7 +548,7 @@ fn finish_after_a_cancelled_push_reports_the_cancellation() {
             w,
             16,
             stride,
-            desc(3),
+            desc_ref(3),
         )
         .unwrap()
     };

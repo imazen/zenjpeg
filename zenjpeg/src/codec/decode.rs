@@ -195,18 +195,18 @@ impl Default for JpegDecoderConfig {
 
 /// Supported decode pixel formats (native, zero-conversion output).
 static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::bgra8_srgb(),
-    ImageSpec::rgbx8_srgb(),
-    ImageSpec::bgrx8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::BGRA8_SRGB,
+    ImageSpec::RGBX8_SRGB,
+    ImageSpec::BGRX8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
 ];
 
 impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
@@ -1275,18 +1275,18 @@ fn build_decode_config(
 /// A decode exit for a preference, if this frame shape has one.
 fn supported_exit(desc: &ImageSpec, is_gray: bool) -> Option<ImageSpec> {
     Some(match (is_gray, desc.layout.sample, desc.layout.order) {
-        (true, SampleType::U8, ChannelOrder::Gray) => ImageSpec::gray8_srgb(),
-        (true, SampleType::U16, ChannelOrder::Gray) => ImageSpec::gray16_srgb(),
-        (true, SampleType::F32, ChannelOrder::Gray) => ImageSpec::grayf32_linear(),
-        (false, SampleType::U8, ChannelOrder::Rgb) => ImageSpec::rgb8_srgb(),
-        (false, SampleType::U8, ChannelOrder::Rgbx) => ImageSpec::rgbx8_srgb(),
-        (false, SampleType::U8, ChannelOrder::Rgba) => ImageSpec::rgba8_srgb(),
-        (false, SampleType::U8, ChannelOrder::Bgrx) => ImageSpec::bgrx8_srgb(),
-        (false, SampleType::U8, ChannelOrder::Bgra) => ImageSpec::bgra8_srgb(),
-        (false, SampleType::U16, ChannelOrder::Rgb) => ImageSpec::rgb16_srgb(),
-        (false, SampleType::U16, ChannelOrder::Rgba) => ImageSpec::rgba16_srgb(),
-        (false, SampleType::F32, ChannelOrder::Rgb) => ImageSpec::rgbf32_linear(),
-        (false, SampleType::F32, ChannelOrder::Rgba) => ImageSpec::rgbaf32_linear(),
+        (true, SampleType::U8, ChannelOrder::Gray) => ImageSpec::GRAY8_SRGB,
+        (true, SampleType::U16, ChannelOrder::Gray) => ImageSpec::GRAY16_SRGB,
+        (true, SampleType::F32, ChannelOrder::Gray) => ImageSpec::GRAYF32_LINEAR,
+        (false, SampleType::U8, ChannelOrder::Rgb) => ImageSpec::RGB8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Rgbx) => ImageSpec::RGBX8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Rgba) => ImageSpec::RGBA8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Bgrx) => ImageSpec::BGRX8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Bgra) => ImageSpec::BGRA8_SRGB,
+        (false, SampleType::U16, ChannelOrder::Rgb) => ImageSpec::RGB16_SRGB,
+        (false, SampleType::U16, ChannelOrder::Rgba) => ImageSpec::RGBA16_SRGB,
+        (false, SampleType::F32, ChannelOrder::Rgb) => ImageSpec::RGBF32_LINEAR,
+        (false, SampleType::F32, ChannelOrder::Rgba) => ImageSpec::RGBAF32_LINEAR,
         _ => return None,
     })
 }
@@ -1316,10 +1316,10 @@ pub(super) fn select_decode_descriptor(
     }
 
     match (is_gray, precision > 8) {
-        (true, false) => ImageSpec::gray8_srgb(),
-        (false, false) => ImageSpec::rgb8_srgb(),
-        (true, true) => ImageSpec::gray16_srgb(),
-        (false, true) => ImageSpec::rgb16_srgb(),
+        (true, false) => ImageSpec::GRAY8_SRGB,
+        (false, false) => ImageSpec::RGB8_SRGB,
+        (true, true) => ImageSpec::GRAY16_SRGB,
+        (false, true) => ImageSpec::RGB16_SRGB,
     }
 }
 
@@ -1633,7 +1633,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 } else {
                     zenpixels::SampleLayout::RGBAF32
                 };
-                PixelBuf::from_vec(samples, w, h, describe(layout)?).map_err(buffer_error)?
+                PixelBuf::from_samples(samples, w, h, describe(layout)?).map_err(buffer_error)?
             } else if raw_cmyk_f32 || is_raw_cmyk {
                 let sample = if raw_cmyk_f32 {
                     SampleType::F32
@@ -1645,7 +1645,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 info.has_alpha = false;
                 info.source_color.channel_count = Some(4);
                 if raw_cmyk_f32 {
-                    PixelBuf::from_vec(result.into_pixels_f32().unwrap_or_default(), w, h, desc)
+                    PixelBuf::from_samples(result.into_pixels_f32().unwrap_or_default(), w, h, desc)
                         .map_err(buffer_error)?
                 } else {
                     PixelBuf::from_bytes(result.into_pixels_u8().unwrap_or_default(), w, h, desc)
@@ -1669,10 +1669,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         "U16 output",
                     )?,
                 };
-                let mut buffer = PixelBuf::from_vec(bytes, w, h, desc).map_err(buffer_error)?;
+                let mut buffer = PixelBuf::from_samples(bytes, w, h, desc).map_err(buffer_error)?;
                 let mut evidence = buffer.facts();
                 evidence.depth = Some(u16_exact_depth(header.precision)?);
-                buffer.set_facts(evidence);
+                buffer.assume_facts(evidence);
                 buffer
             } else {
                 let filler = selected.layout.order.has_padding_slot();
@@ -1847,10 +1847,10 @@ impl JpegDecoder<'_> {
             ));
         }
         let (primaries, transfer) = crate::ultrahdr::base_color(extras.icc_profile())?;
-        let descriptor = zenpixels::ImageSpec::rgba8_srgb()
+        let descriptor = zenpixels::ImageSpec::RGBA8_SRGB
             .with_primaries(primaries)
             .with_transfer(transfer);
-        let sdr = PixelBuf::from_vec(pixels_u8, w, h, descriptor)
+        let sdr = PixelBuf::from_bytes(pixels_u8, w, h, descriptor)
             .map_err(|_| Error::internal("pixel buffer creation failed"))?;
 
         let sdr = crate::ultrahdr::prepare_base_pixels(sdr, extras.icc_profile())?;
@@ -2048,22 +2048,14 @@ fn orient_reconstructed_hdr(
         }
     }
 
-    let parts = image.into_parts();
-    let mut oriented = PixelBuf::from_parts(
-        parts.storage,
-        parts.offset,
-        ow,
-        oh,
-        ow as usize * bpp,
-        parts.spec,
-    )
-    .map_err(crate::color::icc::pixel_buffer_error(
+    let mut parts = image.into_parts();
+    parts.width = ow;
+    parts.height = oh;
+    parts.stride = ow as usize * bpp;
+    let oriented = PixelBuf::from_parts(parts).map_err(crate::color::icc::pixel_buffer_error(
         pixels * bpp,
         "JPEG HDR orientation",
-    ))?
-    .with_hdr(parts.hdr)
-    .with_origin(parts.origin);
-    oriented.set_facts(parts.facts);
+    ))?;
     Ok(oriented)
 }
 

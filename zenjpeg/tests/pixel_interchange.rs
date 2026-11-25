@@ -49,12 +49,12 @@ impl DecodeRowSink for BoundedSink {
         assert_eq!(self.spec.as_ref(), Some(&spec));
         let start = self.stride * y as usize;
         let end = start + self.stride * height as usize;
-        Ok(PixelViewMut::new(
+        Ok(PixelViewMut::new_with_spec_cow(
             &mut self.image[start..end],
             width,
             height,
             self.stride,
-            spec,
+            zenpixels::SpecCow::from_owned(spec),
         )?)
     }
 }
@@ -104,8 +104,8 @@ fn bounded_padded_sink_matches_one_shot_at_odd_edges() {
                     .push_decoder(Cow::Borrowed(&jpeg), &mut sink, &[])
                     .unwrap();
                 assert_eq!(sink.next, h);
-                let actual =
-                    PixelView::new(&sink.image, w, h, sink.stride, sink.spec.unwrap()).unwrap();
+                let sink_spec = sink.spec.unwrap();
+                let actual = PixelView::new(&sink.image, w, h, sink.stride, &sink_spec).unwrap();
                 for y in 0..h {
                     assert_eq!(
                         actual.row(y),
@@ -124,12 +124,12 @@ fn bounded_padded_sink_matches_one_shot_at_odd_edges() {
 fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
     let (w, h) = (17, 19);
     let rgb = pattern(w, h);
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let jpeg = JpegEncoderConfig::new()
         .job()
         .encoder()
         .unwrap()
-        .encode(PixelView::from_packed(&rgb, w, h, p3).unwrap())
+        .encode(PixelView::from_bytes(&rgb, w, h, &p3).unwrap())
         .unwrap();
     let mut oracle = jpeg_decoder::Decoder::new(jpeg.data());
     oracle.decode().unwrap();
@@ -152,7 +152,7 @@ fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
     encoder.push_packed(&rgb, Unstoppable).unwrap();
     let jpeg = encoder.finish().unwrap();
     let decoded = JpegDecoderConfig::new().decode(&jpeg).unwrap();
-    assert_eq!(decoded.pixels().spec(), &ImageSpec::rgb8_srgb());
+    assert_eq!(decoded.pixels().spec(), &ImageSpec::RGB8_SRGB);
     assert!(decoded.info().source_color.icc_profile.is_some());
 }
 
@@ -168,7 +168,7 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
     use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 
     let (w, h) = (17, 19);
-    let base_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let base_spec = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let base = PixelBuf::from_bytes(pattern(w, h), w, h, base_spec).unwrap();
     let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
     exif.set_orientation(Orientation::Rotate90);
@@ -343,7 +343,7 @@ fn linear_gray_codes_keep_their_gray_icc_carrier() {
         .job()
         .encoder()
         .unwrap()
-        .encode(PixelView::from_packed(&samples, 8, 8, spec).unwrap())
+        .encode(PixelView::from_bytes(&samples, 8, 8, &spec).unwrap())
         .unwrap();
     let mut oracle = jpeg_decoder::Decoder::new(jpeg.data());
     assert_eq!(oracle.decode().unwrap(), samples);

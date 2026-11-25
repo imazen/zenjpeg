@@ -28,7 +28,9 @@ fn base(progressive: bool) -> Vec<u8> {
     JpegEncoderConfig::new()
         .with_calibrated_quality(87.0)
         .with_progressive(progressive)
-        .encode(PixelView::new(&bytes, WIDTH, HEIGHT, stride, ImageSpec::rgb8_srgb()).unwrap())
+        .encode(
+            PixelView::new(&bytes, WIDTH, HEIGHT, stride, &zenpixels::specs::RGB8_SRGB).unwrap(),
+        )
         .unwrap()
         .into_vec()
 }
@@ -102,11 +104,11 @@ fn generic_erased_and_registered_paths_match_native_pixels() {
         let base = base(progressive);
         for bytes in [base.clone(), with_profile(&base, false, false)] {
             for descriptor in [
-                ImageSpec::rgb8_srgb(),
-                ImageSpec::rgba8_srgb(),
-                ImageSpec::bgra8_srgb(),
-                ImageSpec::rgbx8_srgb(),
-                ImageSpec::bgrx8_srgb(),
+                ImageSpec::RGB8_SRGB,
+                ImageSpec::RGBA8_SRGB,
+                ImageSpec::BGRA8_SRGB,
+                ImageSpec::RGBX8_SRGB,
+                ImageSpec::BGRX8_SRGB,
             ] {
                 let config = JpegDecoderConfig::new();
                 let direct = config
@@ -247,7 +249,7 @@ fn late_orientation_is_bound_before_adoption_and_matches_direct_decode() {
                 WIDTH,
                 HEIGHT,
                 WIDTH as usize * 3,
-                ImageSpec::rgb8_srgb(),
+                &zenpixels::specs::RGB8_SRGB,
             )
             .unwrap(),
         )
@@ -395,7 +397,7 @@ fn unqualified_native_float_rows_refuse_before_effects() {
     // Until qualified, neither descriptor equality nor a callback may bless it.
     for progressive in [false, true] {
         let bytes = base(progressive);
-        for descriptor in [ImageSpec::rgbf32_linear(), ImageSpec::rgbaf32_linear()] {
+        for descriptor in [ImageSpec::RGBF32_LINEAR, ImageSpec::RGBAF32_LINEAR] {
             let storage = budget();
             let native = JpegDecoderConfig::new()
                 .job()
@@ -432,17 +434,17 @@ fn ordinary_float_rgb_strips_compact_rgba_and_keep_linear_labels() {
         let bytes = base(progressive);
         let mut rgb = JpegDecoderConfig::new()
             .job()
-            .streaming_decoder(Cow::Borrowed(&bytes), &[ImageSpec::rgbf32_linear()])
+            .streaming_decoder(Cow::Borrowed(&bytes), &[ImageSpec::RGBF32_LINEAR])
             .unwrap();
         let mut rgba = JpegDecoderConfig::new()
             .job()
-            .streaming_decoder(Cow::Borrowed(&bytes), &[ImageSpec::rgbaf32_linear()])
+            .streaming_decoder(Cow::Borrowed(&bytes), &[ImageSpec::RGBAF32_LINEAR])
             .unwrap();
         while let Some((y, rgb)) = rgb.next_batch().unwrap() {
             let (ry, rgba) = rgba.next_batch().unwrap().unwrap();
             assert_eq!(y, ry);
-            assert_eq!(rgb.spec(), &ImageSpec::rgbf32_linear());
-            assert_eq!(rgba.spec(), &ImageSpec::rgbaf32_linear());
+            assert_eq!(rgb.spec(), &ImageSpec::RGBF32_LINEAR);
+            assert_eq!(rgba.spec(), &ImageSpec::RGBAF32_LINEAR);
             assert_eq!(rgb.rows(), rgba.rows());
             for row in 0..rgb.rows() {
                 for (rgb, rgba) in rgb
@@ -470,13 +472,15 @@ fn grayscale_byte_rows_match_the_native_decoder() {
     for progressive in [false, true] {
         let bytes = JpegEncoderConfig::new()
             .with_progressive(progressive)
-            .encode(PixelView::new(&raw, WIDTH, HEIGHT, stride, ImageSpec::gray8_srgb()).unwrap())
+            .encode(
+                PixelView::new(&raw, WIDTH, HEIGHT, stride, &zenpixels::specs::GRAY8_SRGB).unwrap(),
+            )
             .unwrap();
         let mut oracle = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes.data()));
         let oracle_pixels = oracle.decode().expect("independent grayscale decoder");
         assert_eq!(oracle_pixels.len(), WIDTH as usize * HEIGHT as usize);
         let direct = JpegDecoderConfig::new().decode(bytes.data()).unwrap();
-        assert_eq!(direct.pixels().spec(), &ImageSpec::gray8_srgb());
+        assert_eq!(direct.pixels().spec(), &ImageSpec::GRAY8_SRGB);
         let native = JpegDecoderConfig::new()
             .job()
             .dyn_controlled_decoder(&[], budget())
@@ -726,13 +730,13 @@ fn controlled_grayscale_fixtures_match_reference_raster_hashes() {
         let data = std::fs::read(root.join(format!("{name}.jpg"))).unwrap();
         let native = JpegDecoderConfig::new()
             .job()
-            .dyn_controlled_decoder(&[ImageSpec::gray8_srgb()], budget())
+            .dyn_controlled_decoder(&[ImageSpec::GRAY8_SRGB], budget())
             .unwrap();
         let mut session = PolicyDecoder::new(native, PolicySet::new());
         let mut sink = CollectSink::new();
         drive_from_slice(&mut session, &data, &mut sink, None, 7).unwrap();
         let pixels = sink.as_pixel_slice().unwrap();
-        assert_eq!(pixels.spec(), &ImageSpec::gray8_srgb());
+        assert_eq!(pixels.spec(), &ImageSpec::GRAY8_SRGB);
         let mut hash = Sha256::new();
         for y in 0..pixels.rows() {
             for &sample in pixels.row(y) {
@@ -813,7 +817,7 @@ fn controlled_xyb_refusal_precedes_output() {
         zenjpeg::encode::EncoderConfig::xyb(87.0, zenjpeg::encode::XybSubsampling::Full);
     let raw = [17, 31, 61].repeat(16);
     let bytes = config
-        .encode(PixelView::new(&raw, 4, 4, 12, ImageSpec::rgb8_srgb()).unwrap())
+        .encode(PixelView::new(&raw, 4, 4, 12, &zenpixels::specs::RGB8_SRGB).unwrap())
         .unwrap();
     let native = JpegDecoderConfig::new()
         .job()
@@ -834,8 +838,14 @@ fn linear_grayscale_streaming_rows_match_native_samples() {
         let bytes = JpegEncoderConfig::new()
             .with_progressive(progressive)
             .encode(
-                PixelView::new(&raw, WIDTH, HEIGHT, WIDTH as usize, ImageSpec::gray8_srgb())
-                    .unwrap(),
+                PixelView::new(
+                    &raw,
+                    WIDTH,
+                    HEIGHT,
+                    WIDTH as usize,
+                    &zenpixels::specs::GRAY8_SRGB,
+                )
+                .unwrap(),
             )
             .unwrap()
             .into_vec();
@@ -855,11 +865,11 @@ fn linear_grayscale_streaming_rows_match_native_samples() {
         );
         let mut reader = JpegDecoderConfig::new()
             .job()
-            .streaming_decoder(Cow::Borrowed(&bytes), &[ImageSpec::grayf32_linear()])
+            .streaming_decoder(Cow::Borrowed(&bytes), &[ImageSpec::GRAYF32_LINEAR])
             .unwrap();
         let mut count = 0;
         while let Some((y, pixels)) = reader.next_batch().unwrap() {
-            assert_eq!(pixels.spec(), &ImageSpec::grayf32_linear());
+            assert_eq!(pixels.spec(), &ImageSpec::GRAYF32_LINEAR);
             for row in 0..pixels.rows() {
                 assert_eq!(
                     pixels.row(row),
@@ -881,18 +891,18 @@ fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
         let config = JpegDecoderConfig::new();
         assert!(
             <JpegDecoderConfig as DecoderConfig>::supported_descriptors()
-                .contains(&ImageSpec::rgbaf32_linear())
+                .contains(&ImageSpec::RGBAF32_LINEAR)
         );
         let rgb = config
             .clone()
             .job()
-            .decoder(Cow::Borrowed(&bytes), &[ImageSpec::rgbf32_linear()])
+            .decoder(Cow::Borrowed(&bytes), &[ImageSpec::RGBF32_LINEAR])
             .unwrap()
             .decode()
             .unwrap();
         for preferred in [
-            vec![ImageSpec::rgbaf32_linear()],
-            vec![ImageSpec::rgbaf32_linear(), ImageSpec::rgbf32_linear()],
+            vec![ImageSpec::RGBAF32_LINEAR],
+            vec![ImageSpec::RGBAF32_LINEAR, ImageSpec::RGBF32_LINEAR],
         ] {
             let rgba = config
                 .clone()
@@ -901,7 +911,7 @@ fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
                 .unwrap()
                 .decode()
                 .unwrap();
-            assert_eq!(rgba.pixels().spec(), &ImageSpec::rgbaf32_linear());
+            assert_eq!(rgba.pixels().spec(), &ImageSpec::RGBAF32_LINEAR);
             assert_eq!((rgba.width(), rgba.height()), (rgb.width(), rgb.height()));
             assert_eq!(rgba.metadata(), rgb.metadata());
             for y in 0..rgba.height() {
@@ -920,10 +930,10 @@ fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
         }
         let codecs = CodecSet::new().with_decoder(config);
         let checked = DecodeRequest::new()
-            .with_output(ImageSpec::rgbaf32_linear())
+            .with_output(ImageSpec::RGBAF32_LINEAR)
             .decode(&codecs, &bytes)
             .unwrap();
-        assert_eq!(checked.pixels().spec(), &ImageSpec::rgbaf32_linear());
+        assert_eq!(checked.pixels().spec(), &ImageSpec::RGBAF32_LINEAR);
     }
 }
 
@@ -932,10 +942,10 @@ fn ranked_native_output_does_not_promote_a_later_float_preference() {
     for progressive in [false, true] {
         let bytes = base(progressive);
         for preferred in [
-            [ImageSpec::rgb8_srgb(), ImageSpec::rgbf32_linear()],
-            [ImageSpec::rgba8_srgb(), ImageSpec::rgbaf32_linear()],
-            [ImageSpec::rgbf32_linear(), ImageSpec::rgb8_srgb()],
-            [ImageSpec::rgbaf32_linear(), ImageSpec::rgba8_srgb()],
+            [ImageSpec::RGB8_SRGB, ImageSpec::RGBF32_LINEAR],
+            [ImageSpec::RGBA8_SRGB, ImageSpec::RGBAF32_LINEAR],
+            [ImageSpec::RGBF32_LINEAR, ImageSpec::RGB8_SRGB],
+            [ImageSpec::RGBAF32_LINEAR, ImageSpec::RGBA8_SRGB],
         ] {
             let config = JpegDecoderConfig::new();
             let expected = config
@@ -977,13 +987,13 @@ fn completion_retains_native_metadata_and_ancillary_owners() {
         let direct = config
             .clone()
             .job()
-            .decoder(Cow::Borrowed(&bytes), &[ImageSpec::rgb8_srgb()])
+            .decoder(Cow::Borrowed(&bytes), &[ImageSpec::RGB8_SRGB])
             .unwrap()
             .decode()
             .unwrap();
         let native = config
             .job()
-            .dyn_controlled_decoder(&[ImageSpec::rgb8_srgb()], budget())
+            .dyn_controlled_decoder(&[ImageSpec::RGB8_SRGB], budget())
             .unwrap();
         let mut resolver =
             |_q: Question<'_>| -> Result<Decision, At<Infallible>> { Ok(Decision::UsePreset) };

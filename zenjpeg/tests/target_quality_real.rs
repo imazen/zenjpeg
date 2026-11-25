@@ -65,8 +65,9 @@ fn to_linear(bytes: &[u8], w: usize, h: usize) -> LinearRgbImage {
 
 fn encode_at(rgb8: &[u8], w: usize, h: usize, q: f32) -> Vec<u8> {
     let enc = JpegEncoderConfig::new().with_calibrated_quality(q.round().clamp(1.0, 100.0));
-    let view = zenpixels::PixelView::from_packed(rgb8, w as u32, h as u32, ImageSpec::rgb8_srgb())
-        .unwrap();
+    let view =
+        zenpixels::PixelView::from_bytes(rgb8, w as u32, h as u32, &zenpixels::specs::RGB8_SRGB)
+            .unwrap();
     enc.encode(view).expect("encode jpeg").data().to_vec()
 }
 
@@ -74,7 +75,7 @@ fn encode_at(rgb8: &[u8], w: usize, h: usize, q: f32) -> Vec<u8> {
 fn decode_rgb8(bytes: &[u8]) -> (Vec<u8>, usize, usize) {
     let out = JpegDecoderConfig::new()
         .job()
-        .decoder(Cow::Borrowed(bytes), &[ImageSpec::rgb8_srgb()])
+        .decoder(Cow::Borrowed(bytes), &[ImageSpec::RGB8_SRGB])
         .expect("build decoder")
         .decode()
         .expect("decode jpeg");
