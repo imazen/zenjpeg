@@ -474,6 +474,8 @@ pub struct EncoderConfig {
     /// Trellis quantization configuration (mozjpeg-compatible API).
     /// When Some, enables trellis quantization for rate-distortion optimization.
     pub(crate) trellis: Option<TrellisConfig>,
+    /// Internal empirical/perceptual trellis RDO mode (set by hybrid presets & `auto_optimize`).
+    pub(crate) trellis_rdo: super::trellis::TrellisRdoMode,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
     /// Gaussian blur sigma applied before encoding (0.0 = disabled).
@@ -688,6 +690,7 @@ impl EncoderConfig {
             aq_enabled: true,
             allow_16bit_quant_tables: false,
             trellis: None,
+            trellis_rdo: super::trellis::TrellisRdoMode::Legacy,
             segments: None,
             pre_blur: 0.0,
             encode_record: true,
@@ -882,6 +885,18 @@ impl EncoderConfig {
             }
         };
 
+        let trellis_rdo = match preset {
+            HybridBaseline | HybridMaxCompression => {
+                super::trellis::TrellisRdoMode::EmpiricalTwoPass
+            }
+            HybridProgressive => super::trellis::TrellisRdoMode::EmpiricalFast,
+            JpegliBaseline
+            | JpegliProgressive
+            | MozjpegBaseline
+            | MozjpegProgressive
+            | MozjpegMaxCompression => super::trellis::TrellisRdoMode::Legacy,
+        };
+
         // Deringing: independent of AQ. C mozjpeg enables overshoot deringing
         // only for JCP_MAX_COMPRESSION profile. All jpegli/hybrid presets use it
         // (quality win, negligible cost). Mozjpeg baseline/progressive skip it
@@ -900,6 +915,7 @@ impl EncoderConfig {
             deringing,
             aq_enabled: preset.uses_aq(),
             trellis,
+            trellis_rdo,
             // Presets force baseline quant tables (matching cjpegli CLI and C
             // mozjpeg behavior). XYB SOF1 is handled by force_sof1, not this flag.
             allow_16bit_quant_tables: false,
@@ -1164,6 +1180,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn trellis(mut self, config: TrellisConfig) -> Self {
         self.trellis = Some(config);
+        self.trellis_rdo = super::trellis::TrellisRdoMode::Legacy;
         self
     }
 
@@ -1269,14 +1286,16 @@ impl EncoderConfig {
             _ => false,
         };
 
-        // Fixed-lambda AC trellis, λ1=14.5 (best R-D tradeoff from benchmarks;
-        // DC trellis off, matching historical auto_optimize behaviour).
+        // Fixed-lambda AC trellis, λ1=14.5 with fast empirical progressive rate pricing
+        // (ZeroBias pilot -> 1-pass empirical progressive trellis; DC trellis off,
+        // matching historical auto_optimize behaviour).
         if should_use_trellis {
             self.trellis = Some(TrellisConfig {
                 lambda_log_scale1: 14.5,
                 dc_enabled: false,
                 ..TrellisConfig::default()
             });
+            self.trellis_rdo = super::trellis::TrellisRdoMode::EmpiricalFast;
         }
 
         // Enable progressive for better compression
@@ -1946,10 +1965,14 @@ impl EncoderConfig {
             ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
-        StreamingEncoder::new(width, height)
+        let mut builder = StreamingEncoder::new(width, height)
             .subsampling(subsampling)
             .huffman(self.huffman.clone())
-            .estimate_memory_usage()
+            .trellis_rdo(self.trellis_rdo);
+        if let Some(t) = self.trellis {
+            builder = builder.trellis(t);
+        }
+        builder.estimate_memory_usage()
     }
 
     /// Returns an absolute ceiling on memory usage.
@@ -1986,9 +2009,14 @@ impl EncoderConfig {
             ColorMode::Rgb => crate::types::Subsampling::S444,
         };
 
-        StreamingEncoder::new(width, height)
+        let mut builder = StreamingEncoder::new(width, height)
             .subsampling(subsampling)
-            .estimate_memory_ceiling()
+            .huffman(self.huffman.clone())
+            .trellis_rdo(self.trellis_rdo);
+        if let Some(t) = self.trellis {
+            builder = builder.trellis(t);
+        }
+        builder.estimate_memory_ceiling()
     }
 
     // === Accessors ===

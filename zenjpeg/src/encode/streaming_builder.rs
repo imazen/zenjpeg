@@ -64,6 +64,8 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) parallel: bool,
     /// Trellis quantization config (mozjpeg-compat API)
     pub(crate) trellis: Option<super::trellis::TrellisConfig>,
+    /// Internal empirical/perceptual trellis RDO mode (preset-selected)
+    pub(crate) trellis_rdo: super::trellis::TrellisRdoMode,
     /// Tiny-file optimization mode (default: Auto).
     pub(crate) tiny_file_mode: TinyFileMode,
     /// Exact smallest-entropy selection (ProgressiveScanMode::Smallest).
@@ -105,6 +107,7 @@ impl StreamingEncoderBuilder {
             #[cfg(feature = "parallel")]
             parallel: false,
             trellis: None,
+            trellis_rdo: super::trellis::TrellisRdoMode::Legacy,
             tiny_file_mode: TinyFileMode::default(),
             smallest_scan: false,
             smallest_seq_restart_interval: 0,
@@ -317,6 +320,13 @@ impl StreamingEncoderBuilder {
         self
     }
 
+    /// Sets the internal empirical/perceptual trellis RDO mode.
+    #[must_use]
+    pub(crate) fn trellis_rdo(mut self, mode: super::trellis::TrellisRdoMode) -> Self {
+        self.trellis_rdo = mode;
+        self
+    }
+
     /// Sets the quantization table configuration (family + live knobs).
     #[must_use]
     pub(crate) fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
@@ -507,6 +517,34 @@ impl StreamingEncoderBuilder {
         // 8. Output buffer estimate (grows during encoding)
         let output_estimate = lp.width * lp.height / 8;
 
+        // 9. Optional retained raw f32 DCT blocks for two-pass empirical trellis RDO
+        // (capped at MAX_RDO_RAW_DCT_BYTES; freed before progressive tokenization).
+        let rdo_raw_dct = if !self.streams_output()
+            && self.trellis_rdo != super::trellis::TrellisRdoMode::Legacy
+            && self.trellis.is_some_and(|t| t.is_enabled())
+        {
+            let is_color = !self.pixel_format.is_grayscale() && !self.gray_output;
+            let raw_blocks = y_block_count
+                + if is_color {
+                    c_block_count
+                        + if lp.use_xyb {
+                            lp.b_blocks_w * lp.b_blocks_h
+                        } else {
+                            c_block_count
+                        }
+                } else {
+                    0
+                };
+            let bytes = raw_blocks.saturating_mul(256);
+            if bytes <= super::trellis::MAX_RDO_RAW_DCT_BYTES {
+                bytes
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
         // Total estimate
         row_buffer
             + strip_y
@@ -522,6 +560,7 @@ impl StreamingEncoderBuilder {
             + aq_strengths
             + entropy_output
             + output_estimate
+            + rdo_raw_dct
     }
 
     /// Returns an absolute ceiling on memory usage.
@@ -579,6 +618,22 @@ impl StreamingEncoderBuilder {
         let huffman_tables = 4 * 256 * 8;
         let scan_overhead = 64 * 8;
 
+        let rdo_raw_dct = if !self.streams_output()
+            && self.trellis_rdo != super::trellis::TrellisRdoMode::Legacy
+            && self.trellis.is_some_and(|t| t.is_enabled())
+        {
+            let is_color = !self.pixel_format.is_grayscale() && !self.gray_output;
+            let raw_blocks = y_block_count + if is_color { c_block_count * 2 } else { 0 };
+            let bytes = raw_blocks.saturating_mul(256);
+            if bytes <= super::trellis::MAX_RDO_RAW_DCT_BYTES {
+                bytes
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
         let subtotal = row_buffer
             + strip_y
             + strip_cb
@@ -594,7 +649,8 @@ impl StreamingEncoderBuilder {
             + entropy_output
             + output_ceiling
             + huffman_tables
-            + scan_overhead;
+            + scan_overhead
+            + rdo_raw_dct;
 
         // Add 5% allocator overhead ceiling
         subtotal + subtotal / 20

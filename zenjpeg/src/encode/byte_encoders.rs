@@ -197,6 +197,7 @@ impl BytesEncoder {
         if let Some(ref trellis) = config.trellis {
             builder = builder.trellis(*trellis);
         }
+        builder = builder.trellis_rdo(config.trellis_rdo);
 
         builder
     }

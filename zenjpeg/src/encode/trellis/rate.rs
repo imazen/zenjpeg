@@ -41,6 +41,19 @@ impl RateTable {
         Self { sizes }
     }
 
+    /// Build a rate table directly from Huffman code lengths (0 = unseen),
+    /// assigning `unseen_len` bits to any symbol not present in the table.
+    #[inline]
+    pub(crate) fn from_lengths_with_fallback(lengths: &[u8; 256], unseen_len: u8) -> Self {
+        let mut sizes = [unseen_len; 256];
+        for (dst, &len) in sizes.iter_mut().zip(lengths.iter()) {
+            if len > 0 {
+                *dst = len;
+            }
+        }
+        Self { sizes }
+    }
+
     /// Standard AC luminance rate table.
     pub fn standard_luma_ac() -> Self {
         Self::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
@@ -126,5 +139,19 @@ mod tests {
         let size = table.get_code_length(0xFF);
         // May or may not be 0 depending on the table, but shouldn't panic
         let _ = size;
+    }
+
+    #[test]
+    fn test_from_lengths_with_fallback() {
+        let mut lengths = [0u8; 256];
+        lengths[0x00] = 3;
+        lengths[0x01] = 2;
+        lengths[0xF0] = 11;
+        let rt = RateTable::from_lengths_with_fallback(&lengths, 16);
+        assert_eq!(rt.get_code_length(0x00), 3);
+        assert_eq!(rt.get_code_length(0x01), 2);
+        assert_eq!(rt.get_code_length(0xF0), 11);
+        assert_eq!(rt.get_code_length(0x11), 16);
+        assert_eq!(rt.get_code_length(0xFF), 16);
     }
 }

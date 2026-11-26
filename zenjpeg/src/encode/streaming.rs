@@ -329,8 +329,42 @@ impl StreamingEncoder {
         #[cfg(feature = "boundary-rd")]
         processor.set_boundary_rd(builder.boundary_rd_flat);
 
-        // Enable trellis quantization if configured
-        if let Some(ref trellis) = builder.trellis {
+        // Determine whether post-strip empirical/perceptual trellis RDO can run.
+        // Requires buffered mode, enabled trellis, and retained raw DCT within the
+        // 128 MiB cap; larger images gracefully fall back to single-pass trellis.
+        let active_rdo_mode = if !enable_streaming
+            && builder.trellis_rdo != super::trellis::TrellisRdoMode::Legacy
+            && builder.trellis.is_some_and(|t| t.is_enabled())
+        {
+            let lp = &processor.layout;
+            let is_color = !builder.pixel_format.is_grayscale() && !builder.gray_output;
+            let raw_blocks = lp.total_y_blocks
+                + if is_color {
+                    lp.total_c_blocks
+                        + if lp.use_xyb {
+                            lp.b_blocks_w * lp.b_blocks_h
+                        } else {
+                            lp.total_c_blocks
+                        }
+                } else {
+                    0
+                };
+            let raw_bytes = raw_blocks
+                .saturating_mul(core::mem::size_of::<crate::foundation::simd_types::Block8x8f>());
+            if raw_bytes <= super::trellis::MAX_RDO_RAW_DCT_BYTES {
+                builder.trellis_rdo
+            } else {
+                super::trellis::TrellisRdoMode::Legacy
+            }
+        } else {
+            super::trellis::TrellisRdoMode::Legacy
+        };
+
+        if active_rdo_mode != super::trellis::TrellisRdoMode::Legacy {
+            let skip_initial_quant =
+                active_rdo_mode != super::trellis::TrellisRdoMode::EmpiricalFast;
+            processor.set_retain_raw_dct(true, skip_initial_quant)?;
+        } else if let Some(ref trellis) = builder.trellis {
             processor.set_trellis(*trellis);
         }
 
@@ -383,6 +417,7 @@ impl StreamingEncoder {
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
             trellis: builder.trellis,
+            trellis_rdo: active_rdo_mode,
             edge_padding: crate::types::EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,
@@ -1131,8 +1166,23 @@ impl StreamingEncoder {
             let cr_quant = self.cr_quant;
             let width = self.width;
             let height = self.height;
+            let layout = self.processor.layout.clone();
 
-            let strip_output = self.processor.finalize()?;
+            #[cfg(feature = "__diagnostics")]
+            let diagnostics_sink = self.processor.diagnostics_sink();
+            let mut strip_output = self.processor.finalize()?;
+            let cached_scans = Self::apply_trellis_rdo(
+                &config,
+                &y_quant,
+                &cb_quant,
+                &cr_quant,
+                &layout,
+                &mut strip_output,
+                #[cfg(feature = "__diagnostics")]
+                diagnostics_sink.as_ref(),
+            )?;
+            #[cfg(feature = "__diagnostics")]
+            drop(diagnostics_sink);
 
             Self::build_jpeg_from_blocks_into(
                 &config,
@@ -1142,6 +1192,7 @@ impl StreamingEncoder {
                 width,
                 height,
                 strip_output,
+                cached_scans.as_deref(),
                 output,
                 stop,
             )
@@ -1200,7 +1251,22 @@ impl StreamingEncoder {
             let y_quant = self.y_quant;
             let cb_quant = self.cb_quant;
             let cr_quant = self.cr_quant;
-            let strip_output = self.processor.finalize()?;
+            let layout = self.processor.layout.clone();
+            #[cfg(feature = "__diagnostics")]
+            let diagnostics_sink = self.processor.diagnostics_sink();
+            let mut strip_output = self.processor.finalize()?;
+            let cached_scans = Self::apply_trellis_rdo(
+                &config,
+                &y_quant,
+                &cb_quant,
+                &cr_quant,
+                &layout,
+                &mut strip_output,
+                #[cfg(feature = "__diagnostics")]
+                diagnostics_sink.as_ref(),
+            )?;
+            #[cfg(feature = "__diagnostics")]
+            drop(diagnostics_sink);
 
             if config.smallest_scan {
                 let is_color = !config.writes_gray();
@@ -1216,6 +1282,7 @@ impl StreamingEncoder {
                     &cb_quant,
                     &cr_quant,
                     &strip_output,
+                    cached_scans.as_deref(),
                     output,
                 )?;
                 return Ok(Some(counts));
@@ -1240,13 +1307,14 @@ impl StreamingEncoder {
                         is_color,
                     ));
 
-                    config.encode_progressive_from_blocks_into(
+                    config.encode_progressive_from_blocks_with_cached_scans_into(
                         &strip_output.y_blocks,
                         &strip_output.cb_blocks,
                         &strip_output.cr_blocks,
                         &y_quant,
                         &cb_quant,
                         &cr_quant,
+                        cached_scans.as_deref(),
                         output,
                     )?;
                     Ok(Some(counts))
@@ -1298,6 +1366,39 @@ impl StreamingEncoder {
         Ok(())
     }
 
+    /// Run post-strip empirical/perceptual trellis RDO if active, release raw DCT
+    /// buffers immediately before progressive tokenization, and refresh diagnostics.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_trellis_rdo(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        layout: &super::layout::LayoutParams,
+        strip_output: &mut crate::encode::strip::StripProcessorOutput,
+        #[cfg(feature = "__diagnostics")] diagnostics_sink: Option<
+            &alloc::sync::Arc<spin::Mutex<super::diagnostics::EncodeDiagnostics>>,
+        >,
+    ) -> Result<Option<Vec<super::config::ProgressiveScan>>> {
+        if config.trellis_rdo == super::trellis::TrellisRdoMode::Legacy
+            || strip_output.y_raw_dct.is_empty()
+        {
+            return Ok(None);
+        }
+        let cached_scans = super::trellis::progressive_rdo::run_trellis_rdo(
+            config,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            layout,
+            strip_output,
+        )?;
+        strip_output.drop_raw_dct();
+        #[cfg(feature = "__diagnostics")]
+        strip_output.update_diagnostics_levels(diagnostics_sink);
+        Ok(cached_scans)
+    }
+
     #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// Builds JPEG output from processed blocks.
     fn build_jpeg_from_blocks(
@@ -1319,6 +1420,7 @@ impl StreamingEncoder {
             width,
             height,
             strip_output,
+            None,
             &mut output,
             stop,
         )?;
@@ -1326,6 +1428,7 @@ impl StreamingEncoder {
     }
 
     /// Builds JPEG output from processed blocks into provided buffer.
+    #[allow(clippy::too_many_arguments)]
     fn build_jpeg_from_blocks_into(
         config: &ComputedConfig,
         y_quant: &QuantTable,
@@ -1334,6 +1437,7 @@ impl StreamingEncoder {
         _width: usize,
         _height: usize,
         strip_output: crate::encode::strip::StripProcessorOutput,
+        cached_scans: Option<&[super::config::ProgressiveScan]>,
         output: &mut Vec<u8>,
         stop: impl Stop,
     ) -> Result<()> {
@@ -1362,6 +1466,7 @@ impl StreamingEncoder {
                 cb_quant,
                 cr_quant,
                 &strip_output,
+                cached_scans,
                 output,
             );
         }
@@ -1375,14 +1480,15 @@ impl StreamingEncoder {
                         "Progressive mode requires optimized Huffman tables",
                     ));
                 }
-                // Use progressive encoding path
-                config.encode_progressive_from_blocks_into(
+                // Use progressive encoding path (reusing cached winning scan script if present)
+                config.encode_progressive_from_blocks_with_cached_scans_into(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
                     y_quant,
                     cb_quant,
                     cr_quant,
+                    cached_scans,
                     output,
                 )
             }
@@ -1511,6 +1617,7 @@ impl StreamingEncoder {
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
         strip_output: &crate::encode::strip::StripProcessorOutput,
+        cached_scans: Option<&[super::config::ProgressiveScan]>,
         output: &mut Vec<u8>,
     ) -> Result<()> {
         if !matches!(config.huffman, HuffmanStrategy::Optimize) {
@@ -1528,13 +1635,14 @@ impl StreamingEncoder {
         prog_cfg.mode = JpegMode::Progressive;
         prog_cfg.tiny_file_active = false;
         let mut prog = Vec::new();
-        prog_cfg.encode_progressive_from_blocks_into(
+        prog_cfg.encode_progressive_from_blocks_with_cached_scans_into(
             &strip_output.y_blocks,
             &strip_output.cb_blocks,
             &strip_output.cr_blocks,
             y_quant,
             cb_quant,
             cr_quant,
+            cached_scans,
             &mut prog,
         )?;
 

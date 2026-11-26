@@ -52,13 +52,16 @@ impl<'a> ScanHistogramCache<'a> {
     ///
     /// Scans all blocks exactly once per unique key. Additional keys requested
     /// later via `get()` are computed on-demand and cached.
+    #[allow(clippy::too_many_arguments)]
     pub fn warm(
         trial_scans: &[TrialScan],
         scripts: &[Vec<super::super::config::ProgressiveScan>],
+        extra_scripts: &[Vec<super::super::config::ProgressiveScan>],
         y_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
         cb_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
         cr_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
         num_components: u8,
+        #[cfg(feature = "parallel")] use_parallel: bool,
     ) -> Self {
         let mut keys = alloc::collections::BTreeSet::<ScanKey>::new();
 
@@ -79,7 +82,7 @@ impl<'a> ScanHistogramCache<'a> {
         }
 
         // Collect keys from candidate scripts
-        for script in scripts {
+        for script in scripts.iter().chain(extra_scripts.iter()) {
             for scan in script {
                 if scan.ss == 0 && scan.se == 0 {
                     for &comp in &scan.components {
@@ -91,15 +94,13 @@ impl<'a> ScanHistogramCache<'a> {
             }
         }
 
-        // Compute histogram for each unique key
-        let mut cache = BTreeMap::new();
-        for key in keys {
+        let compute_key = |key: ScanKey| -> Option<(ScanKey, CachedHistogram)> {
             let (comp, ss, se, ah, al) = key;
             let blocks = match comp {
                 0 => y_blocks,
                 1 => cb_blocks,
                 2 => cr_blocks,
-                _ => continue,
+                _ => return None,
             };
 
             let entry = if ss == 0 && se == 0 {
@@ -109,9 +110,23 @@ impl<'a> ScanHistogramCache<'a> {
             } else {
                 estimate_ac_refinement_scan_detailed(blocks, ss, se, ah, al)
             };
+            Some((key, entry))
+        };
 
-            cache.insert(key, entry);
-        }
+        // Compute histogram for each unique key (parallel across keys when enabled;
+        // collecting into BTreeMap keeps iteration order 100% deterministic).
+        #[cfg(feature = "parallel")]
+        let cache: BTreeMap<ScanKey, CachedHistogram> = if use_parallel && y_blocks.len() >= 512 {
+            use rayon::prelude::*;
+            let keys_vec: Vec<ScanKey> = keys.into_iter().collect();
+            keys_vec.into_par_iter().filter_map(compute_key).collect()
+        } else {
+            keys.into_iter().filter_map(compute_key).collect()
+        };
+
+        #[cfg(not(feature = "parallel"))]
+        let cache: BTreeMap<ScanKey, CachedHistogram> =
+            keys.into_iter().filter_map(compute_key).collect();
 
         Self {
             cache,

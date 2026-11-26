@@ -19,6 +19,7 @@ pub mod rate;
 
 pub mod compat;
 pub mod hybrid;
+pub(crate) mod progressive_rdo;
 
 // Re-export main trellis types
 pub use ac::trellis_quantize_block;
@@ -32,3 +33,4 @@ pub use compat::{AqCoupling, TrellisConfig, TrellisSpeedMode};
 
 // Encoder integration helpers (pub(crate) only)
 pub(crate) use hybrid::TrellisContext;
+pub(crate) use progressive_rdo::{MAX_RDO_RAW_DCT_BYTES, TrellisRdoMode};

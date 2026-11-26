@@ -162,6 +162,9 @@ pub struct ComputedConfig {
     /// [`TrellisConfig::aq_coupling`](super::trellis::TrellisConfig::aq_coupling).
     pub trellis: Option<super::trellis::TrellisConfig>,
 
+    /// Internal empirical/perceptual trellis RDO mode (preset-selected).
+    pub(crate) trellis_rdo: super::trellis::TrellisRdoMode,
+
     /// Exact smallest-entropy selection: serialize sequential (+tiny)
     /// and progressive candidates from the same coefficients, emit the
     /// smallest. See `ProgressiveScanMode::Smallest`.
@@ -318,6 +321,7 @@ impl Default for ComputedConfig {
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
             trellis: None,
+            trellis_rdo: super::trellis::TrellisRdoMode::Legacy,
             smallest_scan: false,
             smallest_seq_restart_interval: 0,
             tiny_file_mode: super::encoder_types::TinyFileMode::Auto,

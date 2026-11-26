@@ -359,6 +359,7 @@ impl ComputedConfig {
     /// Encodes progressive JPEG from pre-processed blocks into provided buffer.
     ///
     /// Same as `encode_progressive_from_blocks` but writes directly to provided buffer.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_progressive_from_blocks_into(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -369,26 +370,96 @@ impl ComputedConfig {
         cr_quant: &QuantTable,
         output: &mut Vec<u8>,
     ) -> Result<()> {
+        self.encode_progressive_from_blocks_with_cached_scans_into(
+            y_blocks, cb_blocks, cr_blocks, y_quant, cb_quant, cr_quant, None, output,
+        )
+    }
+
+    /// Encodes progressive JPEG from pre-processed blocks, reusing a pre-selected
+    /// progressive scan script when `cached_scans` is `Some` (e.g. from scan-matched
+    /// empirical progressive trellis).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_progressive_from_blocks_with_cached_scans_into(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        cached_scans: Option<&[ProgressiveScan]>,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
         let is_color = !self.writes_gray();
         let num_components = if is_color { 3 } else { 1 };
+
+        if let Some(scans) = cached_scans {
+            return self.encode_progressive_with_scans(
+                scans, y_blocks, cb_blocks, cr_blocks, y_quant, cb_quant, cr_quant, output,
+                is_color,
+            );
+        }
 
         if self.scan_strategy == ScanStrategy::Search && !self.use_xyb && !self.use_rgb {
             // Generate multiple candidate scan scripts and trial-encode each.
             // The frequency estimator can't accurately compare scripts with
             // different numbers of scans (Huffman clustering effects), so we
             // use actual encoding for the final selection.
+            let interleave_dc_444 = is_color && matches!(self.subsampling, Subsampling::S444);
             let mut candidates = super::scan_optimize::generate_candidate_scripts(
                 y_blocks,
                 cb_blocks,
                 cr_blocks,
                 num_components as u8,
+                interleave_dc_444,
+                #[cfg(feature = "parallel")]
+                self.parallel,
             )?;
             // The canonical mozjpeg script is a known-good shape the
-            // generated candidates don't cover; trialing it makes Search
+            // generated candidates may not cover; trialing it makes Search
             // a byte-superset of `ScanStrategy::Mozjpeg` (sweep_validate
             // 2026-06-10 caught it beating the search winner by 0.09 %
             // on a CID22 photo at q70).
-            candidates.push(self.get_mozjpeg_scan_script(is_color));
+            let mozjpeg_script = self.get_mozjpeg_scan_script(is_color);
+            if !candidates
+                .iter()
+                .any(|c| super::scan_optimize::scripts_equivalent(c, &mozjpeg_script))
+            {
+                candidates.push(mozjpeg_script);
+            }
+
+            #[cfg(feature = "parallel")]
+            if self.parallel && candidates.len() > 1 {
+                use rayon::prelude::*;
+                let trials: Vec<Result<Vec<u8>>> = candidates
+                    .par_iter()
+                    .map(|candidate| {
+                        let mut trial_output = Vec::new();
+                        self.encode_progressive_with_scans(
+                            candidate,
+                            y_blocks,
+                            cb_blocks,
+                            cr_blocks,
+                            y_quant,
+                            cb_quant,
+                            cr_quant,
+                            &mut trial_output,
+                            is_color,
+                        )?;
+                        Ok(trial_output)
+                    })
+                    .collect();
+
+                let mut best_output = Vec::new();
+                for (i, trial_res) in trials.into_iter().enumerate() {
+                    let trial_output = trial_res?;
+                    if i == 0 || trial_output.len() < best_output.len() {
+                        best_output = trial_output;
+                    }
+                }
+                *output = best_output;
+                return Ok(());
+            }
 
             let mut best_output = Vec::new();
             for (i, candidate) in candidates.iter().enumerate() {
@@ -424,7 +495,7 @@ impl ComputedConfig {
     ///
     /// Takes an explicit scan script and produces a complete progressive JPEG.
     #[allow(clippy::too_many_arguments)]
-    fn encode_progressive_with_scans(
+    pub(crate) fn encode_progressive_with_scans(
         &self,
         scans: &[ProgressiveScan],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],

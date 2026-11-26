@@ -614,6 +614,16 @@ pub struct StripProcessor {
     /// Cr channel raw DC coefficients (scaled by 64 for trellis compatibility).
     cr_dc_raw: Vec<i32>,
 
+    // === Retained raw f32 DCT blocks (empirical / perceptual two-pass trellis RDO) ===
+    /// Retain raw f32 DCT blocks across all strips for post-strip two-pass RDO.
+    retain_raw_dct: bool,
+    /// Skip initial quantization inside `quantize_prev_pending_imcu` (when Pass-1
+    /// trellis runs over retained raw DCT blocks in `progressive_rdo`).
+    skip_initial_quant: bool,
+    y_raw_dct: Vec<Block8x8f>,
+    cb_raw_dct: Vec<Block8x8f>,
+    cr_raw_dct: Vec<Block8x8f>,
+
     // === Pending iMCU DCT blocks (wide-native, double-buffered) ===
     pending: PendingBuffers,
 
@@ -913,6 +923,11 @@ impl StripProcessor {
             y_dc_raw: Vec::new(),
             cb_dc_raw: Vec::new(),
             cr_dc_raw: Vec::new(),
+            retain_raw_dct: false,
+            skip_initial_quant: false,
+            y_raw_dct: Vec::new(),
+            cb_raw_dct: Vec::new(),
+            cr_raw_dct: Vec::new(),
 
             // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
             pending: PendingBuffers {
@@ -1151,11 +1166,11 @@ impl StripProcessor {
             },
         ];
         for (c, component) in data.components.iter_mut().enumerate() {
-            for (i, (dct, level)) in pending[c]
-                .iter()
-                .zip(levels[c][starts[c]..].iter())
-                .enumerate()
-            {
+            for (i, dct) in pending[c].iter().enumerate() {
+                let level = levels[c]
+                    .get(starts[c] + i)
+                    .copied()
+                    .unwrap_or([0i16; DCT_BLOCK_SIZE]);
                 let strength = if c == 0 {
                     self.all_aq_strengths
                         .get(aq_start + i)
@@ -1173,7 +1188,7 @@ impl StripProcessor {
                 };
                 if let Some(slot) = component.blocks.get_mut(self.diagnostics_cursor[c] + i) {
                     slot.coef_pre_quant = dct.to_array();
-                    slot.coef_levels = *level;
+                    slot.coef_levels = level;
                     slot.aq_strength = strength;
                 }
             }
@@ -1231,6 +1246,9 @@ impl StripProcessor {
         self.y_dc_raw.clear();
         self.cb_dc_raw.clear();
         self.cr_dc_raw.clear();
+        self.y_raw_dct.clear();
+        self.cb_raw_dct.clear();
+        self.cr_raw_dct.clear();
     }
 
     #[must_use]
@@ -1244,7 +1262,18 @@ impl StripProcessor {
             y_dc_raw: core::mem::take(&mut self.y_dc_raw),
             cb_dc_raw: core::mem::take(&mut self.cb_dc_raw),
             cr_dc_raw: core::mem::take(&mut self.cr_dc_raw),
+            y_raw_dct: core::mem::take(&mut self.y_raw_dct),
+            cb_raw_dct: core::mem::take(&mut self.cb_raw_dct),
+            cr_raw_dct: core::mem::take(&mut self.cr_raw_dct),
         }
+    }
+
+    /// Clones the internal diagnostics sink, if diagnostics capture is enabled.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn diagnostics_sink(
+        &self,
+    ) -> Option<alloc::sync::Arc<spin::Mutex<super::diagnostics::EncodeDiagnostics>>> {
+        self.diagnostics.clone()
     }
 
     /// Returns the archmage SIMD token if available.
@@ -1330,6 +1359,39 @@ impl StripProcessor {
     #[cfg(feature = "parallel")]
     pub(crate) fn set_parallel(&mut self, enable: bool) {
         self.parallel = enable;
+    }
+
+    /// Enable retaining raw f32 DCT blocks across all strips for post-strip two-pass
+    /// empirical/perceptual trellis RDO. Pre-allocates with fallible capacity reservation.
+    pub(crate) fn set_retain_raw_dct(
+        &mut self,
+        retain: bool,
+        skip_initial_quant: bool,
+    ) -> Result<()> {
+        self.retain_raw_dct = retain;
+        self.skip_initial_quant = retain && skip_initial_quant;
+        if retain {
+            let is_color = !self.pixel_format.is_grayscale();
+            self.y_raw_dct = try_with_capacity_tracked(
+                self.layout.total_y_blocks,
+                "y_raw_dct",
+                &mut self.stats,
+            )?;
+            if is_color {
+                self.cb_raw_dct = try_with_capacity_tracked(
+                    self.layout.total_c_blocks,
+                    "cb_raw_dct",
+                    &mut self.stats,
+                )?;
+                let cr_cap = if self.layout.use_xyb {
+                    self.layout.b_blocks_w * self.layout.b_blocks_h
+                } else {
+                    self.layout.total_c_blocks
+                };
+                self.cr_raw_dct = try_with_capacity_tracked(cr_cap, "cr_raw_dct", &mut self.stats)?;
+            }
+        }
+        Ok(())
     }
 
     /// Returns whether XYB mode is enabled.
@@ -1907,6 +1969,30 @@ impl StripProcessor {
         ];
         #[cfg(feature = "__diagnostics")]
         let aq_start = self.all_aq_strengths.len();
+
+        if self.retain_raw_dct {
+            self.y_raw_dct
+                .extend_from_slice(&self.pending.y[buffer_idx]);
+            if !self.pending.cb[buffer_idx].is_empty() {
+                self.cb_raw_dct
+                    .extend_from_slice(&self.pending.cb[buffer_idx]);
+            }
+            if !self.pending.cr[buffer_idx].is_empty() {
+                self.cr_raw_dct
+                    .extend_from_slice(&self.pending.cr[buffer_idx]);
+            }
+            if self.skip_initial_quant {
+                let n_y = self.pending.y[buffer_idx].len();
+                self.all_aq_strengths.reserve(n_y);
+                for i in 0..n_y {
+                    self.all_aq_strengths
+                        .push(aq_strengths.get(i).copied().unwrap_or(0.08));
+                }
+                #[cfg(feature = "__diagnostics")]
+                self.capture_quantized_imcu(buffer_idx, starts, aq_start);
+                return;
+            }
+        }
 
         // Check if we have trellis context for R-D optimization
         let use_trellis = self.trellis_ctx.is_some();
@@ -2510,6 +2596,9 @@ impl StripProcessor {
             y_dc_raw: self.y_dc_raw,
             cb_dc_raw: self.cb_dc_raw,
             cr_dc_raw: self.cr_dc_raw,
+            y_raw_dct: self.y_raw_dct,
+            cb_raw_dct: self.cb_raw_dct,
+            cr_raw_dct: self.cr_raw_dct,
         })
     }
 
@@ -2705,6 +2794,38 @@ pub struct StripProcessorOutput {
     pub cb_dc_raw: Vec<i32>,
     /// Cr channel raw DC coefficients.
     pub cr_dc_raw: Vec<i32>,
+    /// Retained raw f32 DCT blocks (non-empty only for post-strip trellis RDO).
+    pub(crate) y_raw_dct: Vec<Block8x8f>,
+    pub(crate) cb_raw_dct: Vec<Block8x8f>,
+    pub(crate) cr_raw_dct: Vec<Block8x8f>,
+}
+
+impl StripProcessorOutput {
+    /// Immediately release retained raw f32 DCT buffers (called right after
+    /// post-strip trellis RDO finishes, before progressive tokenization allocates).
+    pub(crate) fn drop_raw_dct(&mut self) {
+        self.y_raw_dct = Vec::new();
+        self.cb_raw_dct = Vec::new();
+        self.cr_raw_dct = Vec::new();
+    }
+
+    /// Update captured diagnostics with final quantized levels after post-strip RDO.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn update_diagnostics_levels(
+        &self,
+        sink: Option<&alloc::sync::Arc<spin::Mutex<super::diagnostics::EncodeDiagnostics>>>,
+    ) {
+        let Some(data) = sink else {
+            return;
+        };
+        let mut data = data.lock();
+        let levels = [&self.y_blocks, &self.cb_blocks, &self.cr_blocks];
+        for (c, component) in data.components.iter_mut().enumerate() {
+            for (block, level) in component.blocks.iter_mut().zip(levels[c].iter()) {
+                block.coef_levels = *level;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
