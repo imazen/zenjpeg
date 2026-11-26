@@ -306,6 +306,12 @@ impl EncoderConfig {
             // quant_table_config axis directly.
             let s = scale.clamp(0.1, 5.0);
             self.quant_table_config = match self.quant_table_config {
+                QuantTableConfig::Zen { .. } => QuantTableConfig::Zen {
+                    chroma_distance_scales: [s, s],
+                },
+                QuantTableConfig::ZenSharedChroma { .. } => QuantTableConfig::ZenSharedChroma {
+                    chroma_distance_scales: [s, s],
+                },
                 QuantTableConfig::Jpegli { .. } => QuantTableConfig::Jpegli {
                     chroma_distance_scales: [s, s],
                 },

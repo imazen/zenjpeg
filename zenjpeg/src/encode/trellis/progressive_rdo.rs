@@ -2769,9 +2769,11 @@ mod tests {
         let rgb = make_patterned_rgb(w as usize, h as usize);
 
         for sub in [ChromaSubsampling::Quarter, ChromaSubsampling::None] {
-            let def_cfg = EncoderConfig::ycbcr(80.0, sub).progressive(true);
-            let srch_cfg =
-                EncoderConfig::ycbcr(80.0, sub).progressive(ProgressiveScanMode::ProgressiveSearch);
+            let def_cfg =
+                EncoderConfig::ycbcr(80.0, sub).optimization(OptimizationPreset::ZenProgressive);
+            let srch_cfg = EncoderConfig::ycbcr(80.0, sub)
+                .optimization(OptimizationPreset::ZenProgressive)
+                .progressive(ProgressiveScanMode::ProgressiveSearch);
 
             let def = def_cfg
                 .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)

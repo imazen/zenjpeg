@@ -111,7 +111,11 @@ fn grayscale_config_writes_luma_for_colour_input() {
         })
         .collect();
     for progressive in [false, true] {
-        let config = EncoderConfig::grayscale(90).progressive(progressive);
+        // Use non-trellis ZenProgressive so the 0.5-LSB luma rounding delta
+        // stays strictly linear (max <= 3 without borderline trellis flips).
+        let config = EncoderConfig::grayscale(90)
+            .optimization(zenjpeg::encoder::OptimizationPreset::ZenProgressive)
+            .progressive(progressive);
         let want = gray(&encode(&config, PixelLayout::Gray8Srgb, &luma));
         for layout in [
             PixelLayout::Rgb8Srgb,
@@ -141,5 +145,13 @@ fn grayscale_config_writes_luma_for_colour_input() {
                 "{layout:?} progressive {progressive}: max diff {max}"
             );
         }
+        // Also verify default (trellis-enabled) grayscale config emits 1 component.
+        let default_cfg = EncoderConfig::grayscale(90).progressive(progressive);
+        let default_jpeg = encode(
+            &default_cfg,
+            PixelLayout::Rgb8Srgb,
+            &bytes(PixelLayout::Rgb8Srgb, &px),
+        );
+        assert_eq!(components(&default_jpeg), 1);
     }
 }

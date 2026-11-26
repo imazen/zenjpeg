@@ -15,12 +15,18 @@
 //!      because the per-component scaling is applied only to Cb/Cr.
 
 use enough::Unstoppable;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, QuantTableConfig};
+use zenjpeg::encode::{
+    ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, QuantTableConfig,
+};
 
 /// Sharp-chroma test image: gradient stripes that stress Cb and Cr.
 /// `width` and `height` both divisible by 16 so chroma 4:2:0 lines up.
 fn jpegli_scale(scale: f32) -> QuantTableConfig {
     QuantTableConfig::jpegli_chroma_scale(scale)
+}
+
+fn zen_scale(scale: f32) -> QuantTableConfig {
+    QuantTableConfig::zen_chroma_scale(scale)
 }
 
 fn sharp_chroma_rgb(w: u32, h: u32) -> Vec<u8> {
@@ -74,21 +80,34 @@ fn chroma_scale_default_identity() {
             ChromaSubsampling::HalfHorizontal,
         ] {
             let cfg_default = EncoderConfig::ycbcr(q, sub);
-            let cfg_one = EncoderConfig::ycbcr(q, sub).quant_table_config(jpegli_scale(1.0));
+            let cfg_one = EncoderConfig::ycbcr(q, sub).quant_table_config(zen_scale(1.0));
 
             let a = encode(&cfg_default, &rgb, w, h);
             let b = encode(&cfg_one, &rgb, w, h);
             assert_eq!(
                 a.len(),
                 b.len(),
-                "q={}, sub={:?}: byte length differs between default and scale(1.0)",
+                "q={}, sub={:?}: byte length differs between default and zen_scale(1.0)",
                 q,
                 sub as u8,
             );
             assert_eq!(
                 a, b,
-                "q={}, sub={:?}: payload differs between default and scale(1.0)",
+                "q={}, sub={:?}: payload differs between default and zen_scale(1.0)",
                 q, sub as u8,
+            );
+
+            let cfg_jpegli =
+                EncoderConfig::ycbcr(q, sub).optimization(OptimizationPreset::JpegliProgressive);
+            let cfg_jpegli_one = EncoderConfig::ycbcr(q, sub)
+                .optimization(OptimizationPreset::JpegliProgressive)
+                .quant_table_config(jpegli_scale(1.0));
+            assert_eq!(
+                encode(&cfg_jpegli, &rgb, w, h),
+                encode(&cfg_jpegli_one, &rgb, w, h),
+                "q={}, sub={:?}: payload differs between JpegliProgressive and jpegli_scale(1.0)",
+                q,
+                sub as u8,
             );
         }
     }

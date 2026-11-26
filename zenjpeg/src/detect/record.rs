@@ -132,6 +132,10 @@ pub enum TableSource {
     PiecewiseV4,
     /// zenjpeg Glassa low-bpp tables.
     GlassaLowBpp,
+    /// zenjpeg tuned perceptual tables, three (Y, Cb, Cr).
+    Zen,
+    /// zenjpeg tuned perceptual tables, shared chroma (two tables).
+    ZenSharedChroma,
     /// A value this reader does not know.
     Unknown(u8),
 }
@@ -518,6 +522,8 @@ codes!(TableSource {
     Custom = 3,
     PiecewiseV4 = 4,
     GlassaLowBpp = 5,
+    Zen = 6,
+    ZenSharedChroma = 7,
 });
 codes!(ColorFront { YCbCr = 0, Xyb = 1, Grayscale = 2, Rgb = 3 });
 codes!(SubsamplingCode {

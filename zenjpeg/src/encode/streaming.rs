@@ -322,6 +322,27 @@ impl StreamingEncoder {
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
 
+        // Configure zenjpeg AQ refinements (distance tapering on 4:2:0 YCbCr,
+        // 5-pt cross spatial smoothing on 4:4:4 YCbCr) when `AqMode::Zen` is selected.
+        if builder.aq_enabled
+            && builder.aq_mode == super::encoder_types::AqMode::Zen
+            && !builder.use_xyb
+            && !builder.use_rgb
+            && !builder.pixel_format.is_grayscale()
+            && !builder.gray_output
+        {
+            match builder.subsampling {
+                Subsampling::S420 => {
+                    let taper = (builder.quality.to_distance() * 0.5).clamp(0.0, 1.0);
+                    processor.set_aq_tuning(taper, false)?;
+                }
+                Subsampling::S444 => {
+                    processor.set_aq_tuning(1.0, true)?;
+                }
+                _ => {}
+            }
+        }
+
         // Set boundary-RD config (off by default; #91). `None` keeps the
         // refinement module out of the hot path entirely.
         // Feature-gated: only wire the flat knobs through when
@@ -651,7 +672,12 @@ impl StreamingEncoder {
     /// later, once adaptive quantization has seen the rows below it.
     #[cfg(feature = "zencodec")]
     pub(crate) fn output_lag_rows(&self) -> u32 {
-        (2 * self.strip_height - 1) as u32
+        let pending_strips = if self.processor.has_extra_aq_lookahead() {
+            3
+        } else {
+            2
+        };
+        (pending_strips * self.strip_height - 1) as u32
     }
 
     /// Pushes a single row of pixel data.

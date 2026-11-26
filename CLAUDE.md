@@ -2062,4 +2062,41 @@ parity changes:
 - **Pre-existing debug-mode note:** `huffman::builtin_tables::coverage_tests::baked_table_descriptors_are_exact`
   triggers a `debug_assert!` at `huffman/encode.rs:230` (`0x0c`) in debug builds
   (passes in `--release`); `encode::strip::padding_tests::standard_downsample_even_partial_bottom_witness`
-  differs by 1 ULP (`199.87268` vs `199.87267`) in debug builds with `--features parallel`.
+  differs by 1 ULP (`199.87268` vs `199.87267`) when racing concurrently with
+  token-permutation tests under `--features parallel`.
+
+## Optimal Zen Defaults & Jpegli-Compat Enums (2026-11-26)
+
+Default `EncoderConfig::ycbcr`, `xyb`, and `grayscale` now ship Zen's optimal
+compression settings (`QuantTableConfig::Zen` + `AqMode::Zen` + `HybridProgressive`
+with `EmpiricalFast` trellis and DC trellis ON), while `EncoderConfig::rgb`
+passthrough remains non-trellis exact jpegli/Annex-K and
+`OptimizationPreset::JpegliBaseline` / `JpegliProgressive` preserve exact C++
+jpegli parity (`0.00%` delta across all 30 held-out images).
+
+- **Split DC-exponent DQT (`QuantTableConfig::Zen`):** YCbCr uses `luma_dc = 0.90`,
+  `chroma_dc = 0.70`; XYB uses `luma_dc = 1.00`, `X/B_dc = 0.70` (all 63 AC
+  exponents match jpegli). Keep `quant_vals_to_distance` /
+  `quant_table_to_distance_component` inverting with plain `FREQUENCY_EXPONENT[k]`
+  (never skip `k == 0`, because `k == 0` anchors `dist_max` before 4:2:0
+  `K420_RESCALE` AC terms and skipping it clamps Q75 4:2:0 zero-bias to `DIST_LQ`).
+- **Streaming `AqMode::Zen`:** 4:2:0 YCbCr applies distance taper
+  `(distance * 0.5).clamp(0.0, 1.0)` on AQ strength; 4:4:4 YCbCr applies an exact
+  O(width) streaming 5-point cross smooth `(4*c + L + R + U + D) * 0.125` with a
+  1-block-row vertical lookahead (`PendingBuffers` lazily expands from 2 to 3
+  slots only when 5-pt smooth is active). `StreamingEncoderBuilder::planned_output_lag`,
+  `estimate_memory_usage`, `estimate_memory_ceiling`, and `JpegEncoder::timing`
+  must stay aligned with this 3-strip lag (`23` rows on 4:4:4 `AqMode::Zen`, `15`
+  rows on `AqMode::Jpegli`).
+- **Harvested Huffman table invariant:** `StreamingEncoderBuilder::streams_output()`
+  forces buffered mode for `HuffmanStrategy::Custom(_)` whenever two-pass
+  `trellis_rdo` is active so re-encoding with harvested baseline tables runs the
+  exact same `T3a` quantizer (pixel-identical and guaranteed symbol-covered).
+  `HuffmanStrategy::Fixed` keeps streaming single-pass.
+- **Locked golden files:** C++ parity tests (`cpp_parity_locked`,
+  `parity_reference_locked`, `strip_padding_hashes`, `progressive_decode_hashes`)
+  pin `OptimizationPreset::Jpegli*`. Default locked references (`values_archmage.csv`,
+  x86_64 `ycbcr_locked.rs`, `encoder_regression.rs`) were re-locked for optimal
+  defaults (old `values_archmage.csv` archived in `tests/locked_values/history/`);
+  non-x86_64 `values_wide.csv` stays `#[ignore]`d and untouched until regenerated
+  on ARM64.

@@ -6,37 +6,37 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1817 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3636 lines (1031 hidden + 7098 excluded-feature)
+# files: zenjpeg.txt 1833 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3662 lines (1033 hidden + 7165 excluded-feature)
 
 ## summary
 #
 #   pub modules                                20
-#   pub types (struct/enum/trait/alias)       158
-#   pub consts/statics                        105
+#   pub types (struct/enum/trait/alias)       159
+#   pub consts/statics                        107
 #   pub macros                                  2
 #   free functions                             68
-#   inherent methods                          520
-#   struct fields                             421
-#   enum variants                             432
+#   inherent methods                          522
+#   struct fields                             423
+#   enum variants                             440
 #   re-exports                                  2
-#   trait roster entries (type × trait)       551
-#   auto-trait-complete types                 115
+#   trait roster entries (type × trait)       558
+#   auto-trait-complete types                 116
 #   auto-trait exceptions                      14
 #
 # per-module pub lines:
-#   (root)                           68
+#   (root)                           70
 #   blur                              1
 #   container                       295
 #   deblock                          16
 #   decoder                         577
-#   detect                          143
-#   encoder                         536
+#   detect                          145
+#   encoder                         547
 #   heuristics                       24
 #   lossless                         43
 #   profile                           7
 #   target_quality                   18
 
-## items (1670 lines)
+## items (1685 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -996,6 +996,8 @@ pub detect::record::TableSource::JpegliSharedChroma
 pub detect::record::TableSource::MozjpegRobidoux
 pub detect::record::TableSource::PiecewiseV4
 pub detect::record::TableSource::Unknown(u8)
+pub detect::record::TableSource::Zen
+pub detect::record::TableSource::ZenSharedChroma
 pub detect::record::EncodeEntry::color_front: detect::record::ColorFront
 pub detect::record::EncodeEntry::dqt_crc32: u32
 pub detect::record::EncodeEntry::encoder: detect::record::EncoderId
@@ -1108,6 +1110,9 @@ pub fn detect::probe(&[u8]) -> core::result::Result<detect::JpegProbe, detect::P
 pub mod encoder
 pub use encoder::Stop
 pub use encoder::Unstoppable
+#[non_exhaustive] pub enum encoder::AqMode
+pub encoder::AqMode::Jpegli
+pub encoder::AqMode::Zen
 #[non_exhaustive] pub enum encoder::ChromaSubsampling
 pub encoder::ChromaSubsampling::HalfHorizontal
 pub encoder::ChromaSubsampling::HalfVertical
@@ -1227,6 +1232,8 @@ pub encoder::OptimizationPreset::JpegliProgressive
 pub encoder::OptimizationPreset::MozjpegBaseline
 pub encoder::OptimizationPreset::MozjpegMaxCompression
 pub encoder::OptimizationPreset::MozjpegProgressive
+pub encoder::OptimizationPreset::ZenBaseline
+pub encoder::OptimizationPreset::ZenProgressive
 pub fn encoder::OptimizationPreset::all() -> impl core::iter::traits::iterator::Iterator<Item = Self>
 pub const fn encoder::OptimizationPreset::is_progressive(self) -> bool
 pub const fn encoder::OptimizationPreset::name(self) -> &'static str
@@ -1287,11 +1294,17 @@ pub encoder::QuantTableConfig::JpegliSharedChroma::chroma_distance_scales: [f32;
 pub encoder::QuantTableConfig::MozjpegRobidoux
 pub encoder::QuantTableConfig::MozjpegRobidoux::chroma_quality: core::option::Option<u8>
 pub encoder::QuantTableConfig::PiecewiseV4
+pub encoder::QuantTableConfig::Zen
+pub encoder::QuantTableConfig::Zen::chroma_distance_scales: [f32; 2]
+pub encoder::QuantTableConfig::ZenSharedChroma
+pub encoder::QuantTableConfig::ZenSharedChroma::chroma_distance_scales: [f32; 2]
 pub fn encoder::QuantTableConfig::chroma_distance_scales(&self) -> core::option::Option<[f32; 2]>
 pub fn encoder::QuantTableConfig::chroma_quality(&self) -> core::option::Option<u8>
+pub const fn encoder::QuantTableConfig::is_zen(&self) -> bool
 pub const fn encoder::QuantTableConfig::jpegli_chroma_scale(f32) -> Self
 pub const fn encoder::QuantTableConfig::quant_source(&self) -> encode::encoder_types::QuantTableSource
 pub const fn encoder::QuantTableConfig::separate_chroma_tables(&self) -> bool
+pub const fn encoder::QuantTableConfig::zen_chroma_scale(f32) -> Self
 #[non_exhaustive] pub enum encoder::QuantTablePreset
 pub encoder::QuantTablePreset::Ahumada
 pub encoder::QuantTablePreset::Flat
@@ -1409,6 +1422,7 @@ pub fn encoder::EncoderConfig::add_mpf_image(self, alloc::vec::Vec<u8>, containe
 pub fn encoder::EncoderConfig::add_segment(self, u8, alloc::vec::Vec<u8>) -> Self
 pub fn encoder::EncoderConfig::allow_16bit_quant_tables(self, bool) -> Self
 pub fn encoder::EncoderConfig::aq_enabled(self, bool) -> Self
+pub fn encoder::EncoderConfig::aq_mode(self, encoder::AqMode) -> Self
 pub fn encoder::EncoderConfig::auto_optimize(self, bool) -> Self
 pub fn encoder::EncoderConfig::color_mode(self, encoder::ColorMode) -> Self
 pub fn encoder::EncoderConfig::deringing(self, bool) -> Self
@@ -1425,6 +1439,7 @@ pub fn encoder::EncoderConfig::estimate_memory(&self, u32, u32) -> usize
 pub fn encoder::EncoderConfig::estimate_memory_ceiling(&self, u32, u32) -> usize
 pub fn encoder::EncoderConfig::force_baseline(self) -> Self
 pub fn encoder::EncoderConfig::force_restart_markers(self, bool) -> Self
+pub fn encoder::EncoderConfig::get_aq_mode(&self) -> encoder::AqMode
 pub fn encoder::EncoderConfig::get_color_mode(&self) -> encoder::ColorMode
 pub fn encoder::EncoderConfig::get_quality(&self) -> encoder::Quality
 pub fn encoder::EncoderConfig::get_quant_table_config(&self) -> &encoder::QuantTableConfig
@@ -1709,7 +1724,7 @@ pub fn target_quality::search_target<E, Err>(f64, &target_quality::TargetOptions
 pub macro profile_block!
 pub macro profile_scope!
 
-## trait impls (132 types)
+## trait impls (133 types)
 
 container::marker::MarkerIter<'a>: Iterator
 container::marker::MarkerKind: Clone, Copy, Debug, Eq, PartialEq
@@ -1789,6 +1804,7 @@ detect::record::EncoderId: Clone, Copy, Debug, Eq, Hash, PartialEq
 detect::record::SubsamplingCode: Clone, Copy, Debug, Eq, Hash, PartialEq
 detect::record::TableSource: Clone, Copy, Debug, Eq, Hash, PartialEq
 encoder::AqCoupling: Clone, Copy, Debug, Default, PartialEq
+encoder::AqMode: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 encoder::ChromaSubsampling: Clone, Copy, Debug, Eq, From<decoder::Subsampling>, PartialEq
 encoder::ColorMode: Clone, Copy, Debug, Default, Eq, PartialEq
 encoder::DownsamplingMethod: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -1846,7 +1862,7 @@ whereat::at::At<zencodec::error::CodecError>: From<encoder::Error>, From<encoder
 
 ## auto traits
 
-115 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+116 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 decoder::DecodeConfig: !RefUnwindSafe !UnwindSafe
 decoder::DecodeInfo: !Freeze
 decoder::DecodePool: !Freeze

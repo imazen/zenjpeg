@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn test_optimization_preset_all_variants() {
         let all: Vec<_> = OptimizationPreset::all().collect();
-        assert_eq!(all.len(), 8);
+        assert_eq!(all.len(), 10);
         // No duplicates
         let mut set = std::collections::HashSet::new();
         for p in &all {
@@ -847,14 +847,23 @@ mod tests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum OptimizationPreset {
+    // === Zen lineage (fast non-trellis zenjpeg defaults) ===
+    /// Baseline JPEG, optimized Huffman, zenjpeg AQ and quant tables. No trellis.
+    /// Fastest zenjpeg mode (1x speed) with tuned DC scaling and AQ.
+    ZenBaseline,
+
+    /// Progressive JPEG, optimized Huffman, zenjpeg AQ and quant tables. No trellis.
+    /// Fast progressive zenjpeg mode (1x speed) with tuned DC scaling and AQ.
+    ZenProgressive,
+
     // === Jpegli lineage (matches C cjpegli) ===
-    /// Baseline JPEG, optimized Huffman, jpegli AQ. No trellis.
+    /// Baseline JPEG, optimized Huffman, exact jpegli AQ and tables. No trellis.
     /// Matches `cjpegli --jpeg_type baseline`.
     JpegliBaseline,
 
     /// Progressive JPEG with jpegli scan script (freq split at 2/3,
-    /// SA for all). Optimized Huffman. Jpegli AQ. No trellis.
-    /// Matches default `cjpegli` output. This is the encoder default.
+    /// SA for all). Optimized Huffman. Exact jpegli AQ and tables. No trellis.
+    /// Matches default `cjpegli` output.
     JpegliProgressive,
 
     // === Mozjpeg lineage (matches C cjpeg/mozjpeg) ===
@@ -896,15 +905,15 @@ pub enum OptimizationPreset {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Effort {
-    /// Fast encoding: jpegli baseline, no trellis.
-    /// Maps to [`OptimizationPreset::JpegliBaseline`].
+    /// Fast encoding: zenjpeg baseline, no trellis.
+    /// Maps to [`OptimizationPreset::ZenBaseline`].
     Fast,
 
-    /// Balanced quality/speed: AQ + adaptive trellis + progressive.
+    /// Balanced quality/speed: AQ + empirical progressive trellis.
     /// Maps to [`OptimizationPreset::HybridProgressive`].
     Balanced,
 
-    /// Maximum compression: thorough trellis + scan optimization.
+    /// Maximum compression: perceptual seam/activity trellis + scan optimization.
     /// Maps to [`OptimizationPreset::HybridMaxCompression`].
     Max,
 }
@@ -914,7 +923,7 @@ impl Effort {
     #[must_use]
     pub const fn to_preset(self) -> OptimizationPreset {
         match self {
-            Self::Fast => OptimizationPreset::JpegliBaseline,
+            Self::Fast => OptimizationPreset::ZenBaseline,
             Self::Balanced => OptimizationPreset::HybridProgressive,
             Self::Max => OptimizationPreset::HybridMaxCompression,
         }
@@ -922,7 +931,9 @@ impl Effort {
 }
 
 /// All preset variants in a fixed array for iteration.
-const ALL_PRESETS: [OptimizationPreset; 8] = [
+const ALL_PRESETS: [OptimizationPreset; 10] = [
+    OptimizationPreset::ZenBaseline,
+    OptimizationPreset::ZenProgressive,
     OptimizationPreset::JpegliBaseline,
     OptimizationPreset::JpegliProgressive,
     OptimizationPreset::MozjpegBaseline,
@@ -944,6 +955,8 @@ impl OptimizationPreset {
     #[must_use]
     pub const fn is_progressive(self) -> bool {
         match self {
+            Self::ZenBaseline => false,
+            Self::ZenProgressive => true,
             Self::JpegliBaseline => false,
             Self::JpegliProgressive => true,
             Self::MozjpegBaseline => false,
@@ -959,7 +972,10 @@ impl OptimizationPreset {
     #[must_use]
     pub const fn uses_trellis(self) -> bool {
         match self {
-            Self::JpegliBaseline | Self::JpegliProgressive => false,
+            Self::ZenBaseline
+            | Self::ZenProgressive
+            | Self::JpegliBaseline
+            | Self::JpegliProgressive => false,
             Self::MozjpegBaseline
             | Self::MozjpegProgressive
             | Self::MozjpegMaxCompression
@@ -969,11 +985,14 @@ impl OptimizationPreset {
         }
     }
 
-    /// Returns true if this preset uses jpegli AQ (adaptive quantization).
+    /// Returns true if this preset uses adaptive quantization.
     #[must_use]
     pub const fn uses_aq(self) -> bool {
         match self {
-            Self::JpegliBaseline | Self::JpegliProgressive => true,
+            Self::ZenBaseline
+            | Self::ZenProgressive
+            | Self::JpegliBaseline
+            | Self::JpegliProgressive => true,
             Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => false,
             Self::HybridBaseline | Self::HybridProgressive | Self::HybridMaxCompression => true,
         }
@@ -994,6 +1013,7 @@ impl OptimizationPreset {
     #[must_use]
     pub const fn scan_strategy(self) -> ScanStrategy {
         match self {
+            Self::ZenBaseline | Self::ZenProgressive => ScanStrategy::Default,
             Self::JpegliBaseline => ScanStrategy::Default,
             Self::JpegliProgressive => ScanStrategy::Default,
             Self::MozjpegBaseline | Self::HybridBaseline => ScanStrategy::Default,
@@ -1007,6 +1027,8 @@ impl OptimizationPreset {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::ZenBaseline => "zen-baseline",
+            Self::ZenProgressive => "zen-progressive",
             Self::JpegliBaseline => "jpegli-baseline",
             Self::JpegliProgressive => "jpegli-progressive",
             Self::MozjpegBaseline => "mozjpeg-baseline",
@@ -1017,6 +1039,27 @@ impl OptimizationPreset {
             Self::HybridMaxCompression => "hybrid-max",
         }
     }
+}
+
+/// Adaptive quantization tuning profile.
+///
+/// Controls whether adaptive quantization applies zenjpeg's tuned AQ
+/// refinements or reproduces C++ jpegli's exact AQ field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AqMode {
+    /// Zenjpeg's tuned AQ profile (default).
+    ///
+    /// Applies high-quality distance tapering on 4:2:0 YCbCr and 5-point cross
+    /// spatial smoothing on 4:4:4 YCbCr for improved perceptual quality across
+    /// Zensim, SSIMULACRA2, and Butteraugli at negligible cost.
+    #[default]
+    Zen,
+
+    /// Exact C++ jpegli adaptive quantization field without zenjpeg refinements.
+    ///
+    /// Use when matching C++ `cjpegli` output.
+    Jpegli,
 }
 
 impl core::fmt::Display for OptimizationPreset {
@@ -1313,7 +1356,27 @@ pub enum QuantTableSource {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum QuantTableConfig {
-    /// Jpegli perceptual defaults with 3 separate quantization tables
+    /// Zenjpeg perceptual defaults with 3 separate quantization tables
+    /// (Y, Cb, Cr or X, Y, B).
+    ///
+    /// Builds on jpegli's base perceptual matrices with moderated DC scaling
+    /// exponents (YCbCr: luma 0.90, chroma 0.70; XYB: luma 1.00, X/B 0.70) to
+    /// improve low/mid-quality color fidelity and reduce flat-region seams.
+    Zen {
+        /// Per-channel multipliers on the butteraugli distance for the two
+        /// chroma-like channels (`[Cb, Cr]` in YCbCr, `[X, B]` in XYB).
+        /// `[1.0, 1.0]` = neutral. Clamped to `[0.1, 5.0]` at resolution.
+        chroma_distance_scales: [f32; 2],
+    },
+
+    /// Zenjpeg perceptual defaults with 2 quantization tables (Y, shared
+    /// chroma using the Cr base matrix). YCbCr only.
+    ZenSharedChroma {
+        /// Same semantics as [`Zen`](Self::Zen)'s field.
+        chroma_distance_scales: [f32; 2],
+    },
+
+    /// Exact C++ jpegli perceptual defaults with 3 separate quantization tables
     /// (Y, Cb, Cr). Matches C++ jpegli's `jpegli_set_distance()` behavior.
     Jpegli {
         /// Per-channel multipliers on the butteraugli distance for the two
@@ -1389,10 +1452,9 @@ pub enum QuantTableConfig {
 }
 
 impl Default for QuantTableConfig {
-    /// Jpegli 3-table with neutral chroma scale — matches
-    /// `jpegli_set_distance()`.
+    /// Zenjpeg 3-table perceptual defaults with neutral chroma scale.
     fn default() -> Self {
-        Self::Jpegli {
+        Self::Zen {
             chroma_distance_scales: [1.0, 1.0],
         }
     }
@@ -1403,7 +1465,9 @@ impl QuantTableConfig {
     #[must_use]
     pub const fn quant_source(&self) -> QuantTableSource {
         match self {
-            Self::Jpegli { .. }
+            Self::Zen { .. }
+            | Self::ZenSharedChroma { .. }
+            | Self::Jpegli { .. }
             | Self::JpegliSharedChroma { .. }
             | Self::Custom(_)
             | Self::PiecewiseV4
@@ -1412,21 +1476,37 @@ impl QuantTableConfig {
         }
     }
 
+    /// Returns whether this table family uses zenjpeg's tuned DC scaling.
+    #[must_use]
+    pub const fn is_zen(&self) -> bool {
+        matches!(self, Self::Zen { .. } | Self::ZenSharedChroma { .. })
+    }
+
     /// Returns whether Cb and Cr use separate quantization tables.
     #[must_use]
     pub const fn separate_chroma_tables(&self) -> bool {
         match self {
-            Self::Jpegli { .. } | Self::PiecewiseV4 => true,
-            Self::JpegliSharedChroma { .. } | Self::MozjpegRobidoux { .. } | Self::GlassaLowBpp => {
-                false
-            }
+            Self::Zen { .. } | Self::Jpegli { .. } | Self::PiecewiseV4 => true,
+            Self::ZenSharedChroma { .. }
+            | Self::JpegliSharedChroma { .. }
+            | Self::MozjpegRobidoux { .. }
+            | Self::GlassaLowBpp => false,
             // Custom tables define their own layout; default to separate.
             Self::Custom(_) => true,
         }
     }
 
+    /// Zenjpeg family with one uniform chroma scale applied to both
+    /// chroma-like channels.
+    #[must_use]
+    pub const fn zen_chroma_scale(scale: f32) -> Self {
+        Self::Zen {
+            chroma_distance_scales: [scale, scale],
+        }
+    }
+
     /// Jpegli family with one uniform chroma scale applied to both
-    /// chroma-like channels — the common case.
+    /// chroma-like channels — the common case for C++ jpegli parity.
     #[must_use]
     pub const fn jpegli_chroma_scale(scale: f32) -> Self {
         Self::Jpegli {
@@ -1435,11 +1515,17 @@ impl QuantTableConfig {
     }
 
     /// The per-channel chroma distance scales, when this family has them
-    /// (jpegli families only).
+    /// (Zen and Jpegli families).
     #[must_use]
     pub fn chroma_distance_scales(&self) -> Option<[f32; 2]> {
         match self {
-            Self::Jpegli {
+            Self::Zen {
+                chroma_distance_scales,
+            }
+            | Self::ZenSharedChroma {
+                chroma_distance_scales,
+            }
+            | Self::Jpegli {
                 chroma_distance_scales,
             }
             | Self::JpegliSharedChroma {

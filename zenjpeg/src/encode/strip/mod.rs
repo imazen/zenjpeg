@@ -316,48 +316,52 @@ fn forward_dct_dispatch(_token: (), block: &Block8x8f) -> Block8x8f {
 
 // StreamingAQ uses rolling buffers for low memory (~2.5 MB for 4K vs 33 MB).
 
-/// Double-buffered pending DCT blocks for iMCU overlap.
+/// Ring-buffered pending DCT blocks for iMCU overlap.
 ///
 /// Holds raw f32 DCT coefficients until AQ strengths are available.
-/// Two buffers: current (being filled) and previous (awaiting quantization).
-/// Using `bool` for the index since there are exactly 2 states.
+/// Uses 2 slots normally (1-iMCU AQ lookahead) or 3 slots when 5-point cross
+/// spatial AQ smoothing adds 1 block-row of vertical lookahead on 4:4:4.
 #[derive(Debug)]
 struct PendingBuffers {
-    y: [Vec<Block8x8f>; 2],
-    cb: [Vec<Block8x8f>; 2],
-    cr: [Vec<Block8x8f>; 2],
-    current: bool,
+    y: [Vec<Block8x8f>; 3],
+    cb: [Vec<Block8x8f>; 3],
+    cr: [Vec<Block8x8f>; 3],
+    ring_len: usize,
+    write_idx: usize,
+    read_idx: usize,
 }
 
 impl PendingBuffers {
     /// Index of the buffer currently being filled.
     #[inline]
     fn current_idx(&self) -> usize {
-        self.current as usize
+        self.write_idx
     }
 
-    /// Index of the previous buffer (awaiting quantization).
+    /// Index of the oldest pending buffer (next to quantize).
     #[inline]
     fn prev_idx(&self) -> usize {
-        (!self.current) as usize
+        self.read_idx
     }
 
-    /// Swap current and previous buffers.
+    /// Advance write slot to the next ring entry after completing an iMCU.
     #[inline]
     fn swap(&mut self) {
-        self.current = !self.current;
+        self.write_idx = (self.write_idx + 1) % self.ring_len;
     }
 
-    /// Clear the previous buffer for reuse.
+    /// Clear the oldest pending buffer after quantization and advance read slot.
     fn clear_prev(&mut self) {
-        let idx = self.prev_idx();
+        let idx = self.read_idx;
         self.y[idx].clear();
         self.cb[idx].clear();
         self.cr[idx].clear();
+        self.read_idx = (self.read_idx + 1) % self.ring_len;
     }
 
     /// Current Y buffer (being filled).
     #[inline]
+    #[allow(dead_code)]
     fn current_y(&self) -> &Vec<Block8x8f> {
         &self.y[self.current_idx()]
     }
@@ -929,29 +933,34 @@ impl StripProcessor {
             cb_raw_dct: Vec::new(),
             cr_raw_dct: Vec::new(),
 
-            // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
+            // Pending f32 DCT blocks (2-slot ring normally; slot 2 allocated lazily if 5-pt AQ smooth enabled)
             pending: PendingBuffers {
                 y: [
                     try_with_capacity_tracked(pending_y_capacity, "pending_y[0]", &mut stats)?,
                     try_with_capacity_tracked(pending_y_capacity, "pending_y[1]", &mut stats)?,
+                    Vec::new(),
                 ],
                 cb: if is_color {
                     [
                         try_with_capacity_tracked(pending_c_capacity, "pending_cb[0]", &mut stats)?,
                         try_with_capacity_tracked(pending_c_capacity, "pending_cb[1]", &mut stats)?,
+                        Vec::new(),
                     ]
                 } else {
-                    [Vec::new(), Vec::new()]
+                    [Vec::new(), Vec::new(), Vec::new()]
                 },
                 cr: if is_color {
                     [
                         try_with_capacity_tracked(pending_c_capacity, "pending_cr[0]", &mut stats)?,
                         try_with_capacity_tracked(pending_c_capacity, "pending_cr[1]", &mut stats)?,
+                        Vec::new(),
                     ]
                 } else {
-                    [Vec::new(), Vec::new()]
+                    [Vec::new(), Vec::new(), Vec::new()]
                 },
-                current: false,
+                ring_len: 2,
+                write_idx: 0,
+                read_idx: 0,
             },
 
             quant,
@@ -1340,6 +1349,44 @@ impl StripProcessor {
             ctrl.adjust(strengths, self.aq_controller_imcu_idx);
             self.aq_controller_imcu_idx += 1;
         }
+    }
+
+    /// Configure zenjpeg AQ refinements (distance tapering and/or 5-pt cross spatial smooth).
+    ///
+    /// Must be called before any strips are processed. When 5-pt cross smooth is
+    /// activated on 4:4:4 (`v_samp == 1`), expands the pending DCT ring to 3 slots
+    /// to accommodate the 1-block-row vertical lookahead.
+    pub(crate) fn set_aq_tuning(&mut self, taper_scale: f32, smooth_5pt: bool) -> Result<()> {
+        self.aq_state.set_tuning(taper_scale, smooth_5pt)?;
+        if self.aq_state.has_smooth_lookahead() && self.pending.ring_len < 3 {
+            let is_color = !self.pixel_format.is_grayscale();
+            self.pending.y[2] = try_with_capacity_tracked(
+                self.layout.pending_y_capacity,
+                "pending_y[2]",
+                &mut self.stats,
+            )?;
+            if is_color {
+                self.pending.cb[2] = try_with_capacity_tracked(
+                    self.layout.pending_c_capacity,
+                    "pending_cb[2]",
+                    &mut self.stats,
+                )?;
+                self.pending.cr[2] = try_with_capacity_tracked(
+                    self.layout.pending_c_capacity,
+                    "pending_cr[2]",
+                    &mut self.stats,
+                )?;
+            }
+            self.pending.ring_len = 3;
+        }
+        Ok(())
+    }
+
+    /// Whether 5-pt AQ spatial smoothing adds one extra iMCU strip of lookahead.
+    #[cfg(feature = "zencodec")]
+    #[inline]
+    pub(crate) fn has_extra_aq_lookahead(&self) -> bool {
+        self.aq_state.has_smooth_lookahead()
     }
 
     /// Sets trellis quantization configuration.
@@ -2551,32 +2598,26 @@ impl StripProcessor {
     /// With incremental quantization, most blocks are already quantized.
     /// This method only handles the last pending iMCU.
     pub fn finalize(mut self) -> Result<StripProcessorOutput> {
-        // Flush AQ to get the last iMCU's strengths
-        // Use flush_into to write to reusable buffer (zero allocation)
-        let flush_count = self.aq_state.flush_into(&mut self.aq_strengths_buffer);
-        if let Some(count) = flush_count {
-            // Quantize the last pending iMCU
+        // Flush AQ to get any remaining pending iMCUs' strengths
+        // (1 iMCU normally, up to 2 when 5-pt cross spatial AQ smoothing is active).
+        while let Some(count) = self.aq_state.flush_into(&mut self.aq_strengths_buffer) {
             if !self.pending.prev_y().is_empty() {
                 let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
                 self.adjust_aq(&mut temp_buffer[..count]);
                 self.quantize_prev_pending_imcu(&temp_buffer[..count]);
                 self.aq_strengths_buffer = temp_buffer;
+                self.pending.clear_prev();
             }
         }
 
-        // Also quantize any blocks remaining in the current pending buffer
-        // (for edge cases where we have blocks but no AQ was returned)
-        if !self.pending.current_y().is_empty() {
-            // Use default AQ strength for remaining blocks
-            let mut default_aq = try_alloc_filled(
-                self.pending.current_y().len(),
-                0.08f32,
-                "default_aq_strengths",
-            )?;
-            // Swap so current becomes prev, then quantize
-            self.pending.swap();
+        // Also quantize any blocks still remaining in the pending ring
+        // (for edge cases where blocks were pushed without completing an AQ boundary).
+        while !self.pending.prev_y().is_empty() {
+            let mut default_aq =
+                try_alloc_filled(self.pending.prev_y().len(), 0.08f32, "default_aq_strengths")?;
             self.adjust_aq(&mut default_aq);
             self.quantize_prev_pending_imcu(&default_aq);
+            self.pending.clear_prev();
         }
 
         // Apply DC trellis optimization if enabled

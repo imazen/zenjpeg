@@ -7,7 +7,8 @@
 
 use enough::Unstoppable;
 use zenjpeg::encoder::{
-    ChromaSubsampling, EncoderConfig, PixelLayout, ProgressiveScanMode, TinyFileMode,
+    ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, ProgressiveScanMode,
+    TinyFileMode,
 };
 
 fn photo_ish_rgb(w: u32, h: u32) -> Vec<u8> {
@@ -87,7 +88,10 @@ fn candidates(base: &EncoderConfig, rgb: &[u8], w: u32, h: u32) -> Vec<(&'static
 
 fn assert_smallest_is_exact_min(w: u32, h: u32, q: f32, sub: ChromaSubsampling) {
     let rgb = photo_ish_rgb(w, h);
-    let base = EncoderConfig::ycbcr(q, sub);
+    // Use non-trellis ZenProgressive so standalone Baseline and standalone
+    // Progressive share identical quantized coefficients (trellis RDO tunes
+    // coefficients specifically for sequential vs progressive scans).
+    let base = EncoderConfig::ycbcr(q, sub).optimization(OptimizationPreset::ZenProgressive);
 
     let smallest = encode(
         &base.clone().progressive(ProgressiveScanMode::Smallest),
@@ -138,8 +142,9 @@ fn smallest_respects_tiny_off() {
     // With TinyFileMode::Off the tiny candidate must not participate.
     let (w, h) = (48u32, 48u32);
     let rgb = photo_ish_rgb(w, h);
-    let base =
-        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).tiny_file_mode(TinyFileMode::Off);
+    let base = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .optimization(OptimizationPreset::ZenProgressive)
+        .tiny_file_mode(TinyFileMode::Off);
 
     let smallest = encode(
         &base.clone().progressive(ProgressiveScanMode::Smallest),
@@ -201,7 +206,8 @@ fn smallest_search_equals_min_with_searched_progressive_below_gate() {
     // winner; below the byte gate the sequential (+tiny) trials run too.
     let (w, h) = (200u32, 160u32);
     let rgb = photo_ish_rgb(w, h);
-    let base = EncoderConfig::ycbcr(10.0, ChromaSubsampling::Quarter);
+    let base = EncoderConfig::ycbcr(10.0, ChromaSubsampling::Quarter)
+        .optimization(OptimizationPreset::ZenProgressive);
 
     let smallest_search = encode(
         &base
@@ -313,4 +319,42 @@ fn smallest_force_restart_markers_keeps_rst_in_sequential_winner() {
     assert!(!has_dri(&plain), "default Smallest must be restart-free");
     assert!(has_dri(&forced), "forced Smallest must carry DRI");
     assert!(forced.len() >= plain.len());
+}
+
+#[test]
+fn smallest_with_default_trellis_is_le_progressive_and_pixel_identical() {
+    // Under the default trellis-enabled config (HybridProgressive), Smallest
+    // computes progressive-tuned trellis coefficients once and compares
+    // progressive vs sequential serializations of those exact coefficients.
+    for (w, h, q, sub) in [
+        (48, 48, 85.0, ChromaSubsampling::Quarter),
+        (32, 24, 50.0, ChromaSubsampling::None),
+        (200, 160, 85.0, ChromaSubsampling::Quarter),
+    ] {
+        let rgb = photo_ish_rgb(w, h);
+        let base = EncoderConfig::ycbcr(q, sub);
+        let smallest = encode(
+            &base.clone().progressive(ProgressiveScanMode::Smallest),
+            &rgb,
+            w,
+            h,
+        );
+        let prog = encode(
+            &base.clone().progressive(ProgressiveScanMode::Progressive),
+            &rgb,
+            w,
+            h,
+        );
+        assert!(
+            smallest.len() <= prog.len(),
+            "{w}x{h} q={q}: Smallest ({}) must be <= Progressive ({})",
+            smallest.len(),
+            prog.len(),
+        );
+        assert_eq!(
+            decode(&smallest),
+            decode(&prog),
+            "{w}x{h} q={q}: Smallest must decode identically to Progressive"
+        );
+    }
 }

@@ -10,26 +10,26 @@
 ## summary
 #
 #   pub modules                                85
-#   pub types (struct/enum/trait/alias)       305
-#   pub consts/statics                        314
+#   pub types (struct/enum/trait/alias)       306
+#   pub consts/statics                        316
 #   free functions                            366
-#   inherent methods                         1208
-#   struct fields                             792
-#   enum variants                             498
+#   inherent methods                         1216
+#   struct fields                             796
+#   enum variants                             508
 #   re-exports                                 18
-#   trait roster entries (type × trait)       658
-#   auto-trait-complete types                 130
+#   trait roster entries (type × trait)       666
+#   auto-trait-complete types                 131
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                           71
+#   (root)                           73
 #   alloc                             1
 #   color                           110
 #   container                        31
 #   decode                          456
 #   decoder                          55
 #   detect                           46
-#   encode                         1456
+#   encode                         1479
 #   encoder                         164
 #   entropy                         100
 #   foundation                      352
@@ -44,7 +44,7 @@
 #   types                           138
 #   ultrahdr                         13
 
-## items (3402 lines)
+## items (3427 lines)
 
 #[non_exhaustive] #[repr(u8)] pub enum types::ColorSpace [also: decode]
 #[non_exhaustive] pub enum color::icc::TargetColorSpace
@@ -79,6 +79,7 @@
 #[non_exhaustive] pub enum encode::ScanStrategy [also: encode::encoder_types]
 #[non_exhaustive] pub enum encode::SofMarker [also: encode::plan]
 #[non_exhaustive] pub enum encode::XybSubsampling [also: encode::encoder_types, encode::v2]
+#[non_exhaustive] pub enum encode::encoder_types::AqMode
 #[non_exhaustive] pub enum encode::encoder_types::TinyFileMode
 #[non_exhaustive] pub enum quant::Quality [also: encode, encode::encoder_types, encode::v2]
 #[non_exhaustive] pub enum quant::identify::TableId
@@ -131,9 +132,11 @@ pub const fn encode::encoder_types::PixelLayout::is_grayscale(&self) -> bool
 pub const fn encode::encoder_types::PixelLayout::is_ycbcr(&self) -> bool
 pub const fn encode::encoder_types::ProgressiveScanMode::is_progressive(self) -> bool
 pub const fn encode::encoder_types::ProgressiveScanMode::scan_strategy(self) -> encode::encoder_types::ScanStrategy
+pub const fn encode::encoder_types::QuantTableConfig::is_zen(&self) -> bool
 pub const fn encode::encoder_types::QuantTableConfig::jpegli_chroma_scale(f32) -> Self
 pub const fn encode::encoder_types::QuantTableConfig::quant_source(&self) -> encode::encoder_types::QuantTableSource
 pub const fn encode::encoder_types::QuantTableConfig::separate_chroma_tables(&self) -> bool
+pub const fn encode::encoder_types::QuantTableConfig::zen_chroma_scale(f32) -> Self
 pub const fn encode::tables::glassa::quality_for_target_bpp(f32) -> u8
 pub const fn encode::trellis::compat::TrellisConfig::disabled() -> Self
 pub const fn encode::tuning::dct::freq_distance(usize) -> usize
@@ -760,6 +763,7 @@ pub fn encode::encoder_config::EncoderConfig::add_mpf_image(self, alloc::vec::Ve
 pub fn encode::encoder_config::EncoderConfig::add_segment(self, u8, alloc::vec::Vec<u8>) -> Self
 pub fn encode::encoder_config::EncoderConfig::allow_16bit_quant_tables(self, bool) -> Self
 pub fn encode::encoder_config::EncoderConfig::aq_enabled(self, bool) -> Self
+pub fn encode::encoder_config::EncoderConfig::aq_mode(self, encode::encoder_types::AqMode) -> Self
 pub fn encode::encoder_config::EncoderConfig::auto_optimize(self, bool) -> Self
 pub fn encode::encoder_config::EncoderConfig::boundary_rd(self, encode::encoder_config::BoundaryRd) -> Self
 pub fn encode::encoder_config::EncoderConfig::clone(&self) -> encode::encoder_config::EncoderConfig
@@ -782,6 +786,7 @@ pub fn encode::encoder_config::EncoderConfig::estimate_memory_ceiling(&self, u32
 pub fn encode::encoder_config::EncoderConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn encode::encoder_config::EncoderConfig::force_baseline(self) -> Self
 pub fn encode::encoder_config::EncoderConfig::force_restart_markers(self, bool) -> Self
+pub fn encode::encoder_config::EncoderConfig::get_aq_mode(&self) -> encode::encoder_types::AqMode
 pub fn encode::encoder_config::EncoderConfig::get_color_mode(&self) -> encode::encoder_types::ColorMode
 pub fn encode::encoder_config::EncoderConfig::get_edge_padding(&self) -> types::EdgePaddingConfig
 pub fn encode::encoder_config::EncoderConfig::get_quality(&self) -> encode::encoder_types::Quality
@@ -854,6 +859,12 @@ pub fn encode::encoder_config::SeamPenalty::with_alpha(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::with_drift_gain(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::with_retry_beta(self, f32) -> Self
 pub fn encode::encoder_config::SeamPenalty::with_threshold(self, f32) -> Self
+pub fn encode::encoder_types::AqMode::assert_fields_are_eq(&self)
+pub fn encode::encoder_types::AqMode::clone(&self) -> encode::encoder_types::AqMode
+pub fn encode::encoder_types::AqMode::default() -> encode::encoder_types::AqMode
+pub fn encode::encoder_types::AqMode::eq(&self, &encode::encoder_types::AqMode) -> bool
+pub fn encode::encoder_types::AqMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn encode::encoder_types::AqMode::hash<__H: core::hash::Hasher>(&self, &mut __H)
 pub fn encode::encoder_types::ChromaSubsampling::assert_fields_are_eq(&self)
 pub fn encode::encoder_types::ChromaSubsampling::clone(&self) -> encode::encoder_types::ChromaSubsampling
 pub fn encode::encoder_types::ChromaSubsampling::eq(&self, &encode::encoder_types::ChromaSubsampling) -> bool
@@ -2609,6 +2620,8 @@ pub encode::OptimizationPreset::JpegliProgressive
 pub encode::OptimizationPreset::MozjpegBaseline
 pub encode::OptimizationPreset::MozjpegMaxCompression
 pub encode::OptimizationPreset::MozjpegProgressive
+pub encode::OptimizationPreset::ZenBaseline
+pub encode::OptimizationPreset::ZenProgressive
 pub encode::Orientation::FlipHorizontal = 2
 pub encode::Orientation::FlipVertical = 4
 pub encode::Orientation::Normal = 1
@@ -2654,6 +2667,10 @@ pub encode::QuantTableConfig::JpegliSharedChroma::chroma_distance_scales: [f32; 
 pub encode::QuantTableConfig::MozjpegRobidoux
 pub encode::QuantTableConfig::MozjpegRobidoux::chroma_quality: core::option::Option<u8>
 pub encode::QuantTableConfig::PiecewiseV4
+pub encode::QuantTableConfig::Zen
+pub encode::QuantTableConfig::Zen::chroma_distance_scales: [f32; 2]
+pub encode::QuantTableConfig::ZenSharedChroma
+pub encode::QuantTableConfig::ZenSharedChroma::chroma_distance_scales: [f32; 2]
 pub encode::QuantTablePreset::Ahumada
 pub encode::QuantTablePreset::Flat
 pub encode::QuantTablePreset::JpegAnnexK
@@ -2738,6 +2755,8 @@ pub encode::encoder_config::BoundaryRd::Off
 pub encode::encoder_config::BoundaryRd::On(encode::encoder_config::BoundaryRdConfig)
 pub encode::encoder_config::NeighborScope::LeftAndAbove
 pub encode::encoder_config::NeighborScope::LeftOnly
+pub encode::encoder_types::AqMode::Jpegli
+pub encode::encoder_types::AqMode::Zen
 pub encode::encoder_types::ChromaSubsampling::HalfHorizontal
 pub encode::encoder_types::ChromaSubsampling::HalfVertical
 pub encode::encoder_types::ChromaSubsampling::None
@@ -2766,6 +2785,8 @@ pub encode::encoder_types::OptimizationPreset::JpegliProgressive
 pub encode::encoder_types::OptimizationPreset::MozjpegBaseline
 pub encode::encoder_types::OptimizationPreset::MozjpegMaxCompression
 pub encode::encoder_types::OptimizationPreset::MozjpegProgressive
+pub encode::encoder_types::OptimizationPreset::ZenBaseline
+pub encode::encoder_types::OptimizationPreset::ZenProgressive
 pub encode::encoder_types::ParallelEncoding::Auto
 pub encode::encoder_types::PixelLayout::Bgr8Srgb
 pub encode::encoder_types::PixelLayout::Bgra8Srgb
@@ -2803,6 +2824,10 @@ pub encode::encoder_types::QuantTableConfig::JpegliSharedChroma::chroma_distance
 pub encode::encoder_types::QuantTableConfig::MozjpegRobidoux
 pub encode::encoder_types::QuantTableConfig::MozjpegRobidoux::chroma_quality: core::option::Option<u8>
 pub encode::encoder_types::QuantTableConfig::PiecewiseV4
+pub encode::encoder_types::QuantTableConfig::Zen
+pub encode::encoder_types::QuantTableConfig::Zen::chroma_distance_scales: [f32; 2]
+pub encode::encoder_types::QuantTableConfig::ZenSharedChroma
+pub encode::encoder_types::QuantTableConfig::ZenSharedChroma::chroma_distance_scales: [f32; 2]
 pub encode::encoder_types::QuantTableSource::Jpegli
 pub encode::encoder_types::QuantTableSource::MozjpegDefault
 pub encode::encoder_types::ScanStrategy::Default
@@ -3449,7 +3474,7 @@ pub types::Subsampling::S422
 pub types::Subsampling::S440
 pub types::Subsampling::S444
 
-## trait impls (225 types)
+## trait impls (226 types)
 
 CmykHandling: TrivialClone
 alloc::vec::Vec<T>: From<foundation::instrumented_vec::InstrumentedVec<T>>
@@ -3531,6 +3556,7 @@ encode::encoder_config::EncoderConfig: Clone, Debug
 encode::encoder_config::NeighborScope: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, TrivialClone
 encode::encoder_config::RetryPolicy: Clone, Copy, Debug, Default, PartialEq, TrivialClone
 encode::encoder_config::SeamPenalty: Clone, Copy, Debug, Default, PartialEq, TrivialClone
+encode::encoder_types::AqMode: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, TrivialClone
 encode::encoder_types::ChromaSubsampling: Clone, Copy, Debug, Eq, From<types::Subsampling>, PartialEq, TrivialClone
 encode::encoder_types::ColorMode: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 encode::encoder_types::DownsamplingMethod: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
@@ -3679,7 +3705,7 @@ ultrahdr::UltraHdrMode: TrivialClone
 
 ## auto traits
 
-130 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+131 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 encode::byte_encoders::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encode::byte_encoders::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encode::byte_encoders::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe

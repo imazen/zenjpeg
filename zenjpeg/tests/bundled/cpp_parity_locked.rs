@@ -22,7 +22,7 @@ use dssim_core::Dssim;
 use rgb::RGBA8;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 
 // =============================================================================
 // C++ REFERENCE VALUES
@@ -323,7 +323,13 @@ fn encode_jpeg(
 ) -> Vec<u8> {
     // Note: progressive mode requires optimized huffman, so we enable progressive
     // when optimize_huffman=true to match C++ cjpegli --progressive_level=2
+    let preset = if optimize_huffman {
+        OptimizationPreset::JpegliProgressive
+    } else {
+        OptimizationPreset::JpegliBaseline
+    };
     let config = EncoderConfig::ycbcr(quality, subsampling)
+        .optimization(preset)
         .progressive(optimize_huffman) // progressive when optimized
         .optimize_huffman(optimize_huffman)
         .restart_mcu_rows(0); // Disable restart markers for parity comparison with C++

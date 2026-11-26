@@ -162,7 +162,7 @@ pub use crate::encode::encoder_config::{
     BoundaryRd, BoundaryRdConfig, NeighborScope, RetryPolicy, SeamPenalty,
 };
 pub use crate::encode::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset,
+    AqMode, ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset,
     PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, TinyFileMode, XybSubsampling,
     YCbCrPlanes,
 };

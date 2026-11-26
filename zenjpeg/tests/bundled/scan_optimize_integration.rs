@@ -223,8 +223,14 @@ fn test_optimize_scans_lossless_roundtrip() {
     let height = 128u32;
     let pixels = generate_test_image(width, height);
 
-    let config_normal = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).progressive(true);
-    let config_opt = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).optimize_scans(true);
+    // Use non-trellis ZenProgressive so optimize_scans only changes the scan
+    // script (under default EmpiricalFast trellis, scan search intentionally
+    // re-optimizes coefficients for the chosen scan script).
+    let config_normal = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
+        .optimization(zenjpeg::encoder::OptimizationPreset::ZenProgressive);
+    let config_opt = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
+        .optimization(zenjpeg::encoder::OptimizationPreset::ZenProgressive)
+        .optimize_scans(true);
 
     let jpeg_normal = encode_image(&config_normal, width, height, &pixels);
     let jpeg_opt = encode_image(&config_opt, width, height, &pixels);

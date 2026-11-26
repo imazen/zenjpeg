@@ -580,10 +580,13 @@ mod tests {
     /// raises the estimated working set; the model must reflect both.
     #[test]
     fn trellis_dominates_encode_cost() {
+        use crate::encode::encoder_types::OptimizationPreset;
         use crate::encode::trellis::TrellisConfig;
-        let base = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
-        let trellis =
-            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(TrellisConfig::default());
+        let base = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::ZenProgressive);
+        let trellis = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::ZenProgressive)
+            .trellis(TrellisConfig::default());
         let b = estimate_encode(1024, 1024, &base);
         let t = estimate_encode(1024, 1024, &trellis);
         let time_ratio = t.time_ms / b.time_ms;
@@ -601,9 +604,12 @@ mod tests {
     #[cfg(feature = "boundary-rd")]
     #[test]
     fn boundary_rd_adds_time() {
+        use crate::encode::encoder_types::OptimizationPreset;
         use crate::encode::{BoundaryRd, BoundaryRdConfig};
-        let base = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+        let base = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::ZenProgressive);
         let brd = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::ZenProgressive)
             .boundary_rd(BoundaryRd::On(BoundaryRdConfig::new()));
         let b = estimate_encode(1024, 1024, &base).time_ms;
         let r = estimate_encode(1024, 1024, &brd).time_ms;

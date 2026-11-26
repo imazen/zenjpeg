@@ -449,11 +449,16 @@ fn automatic_parallel_entropy_preserves_edge_coefficients() {
 fn extension_coefficients(cfg: &EncoderConfig, layout: Layout, w: usize, h: usize) -> usize {
     let bpp = layout.bytes_per_pixel();
     let mut blocks = 0;
-    // No AQ/deringing: changing frame dimensions must not change
-    // quantization. For subsampled XYB, callers use odd dimensions so the
-    // final chroma sample is already a replicated source pixel; even tails
-    // instead need the independently sampled plane oracle in padding_tests.
-    let cfg = cfg.clone().aq_enabled(false).deringing(false);
+    // No AQ/deringing/trellis: changing frame dimensions must not change
+    // quantization (empirical trellis builds a frame-global symbol histogram).
+    // For subsampled XYB, callers use odd dimensions so the final chroma
+    // sample is already a replicated source pixel; even tails instead need the
+    // independently sampled plane oracle in padding_tests.
+    let cfg = cfg
+        .clone()
+        .aq_enabled(false)
+        .deringing(false)
+        .trellis(zenjpeg::encode::trellis::TrellisConfig::disabled());
     let pw = w.div_ceil(16) * 16;
     let ph = h.div_ceil(16) * 16;
     let src = pixels(w, h, layout, 3);

@@ -1,7 +1,7 @@
 //! Tests verifying that TrellisConfig actually affects encoder output.
 
 use zenjpeg::encode::trellis::{TrellisConfig, TrellisSpeedMode};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 
 /// Generate a simple test image (gradient with some texture)
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -40,13 +40,15 @@ fn test_trellis_changes_output() {
     let height = 128u32;
     let pixels = generate_test_image(width as usize, height as usize);
 
-    // Encode without trellis (default)
-    let config_no_trellis = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
+    // Encode without trellis (ZenProgressive)
+    let config_no_trellis = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
+        .optimization(OptimizationPreset::ZenProgressive);
     let jpeg_no_trellis = encode_with_config(&config_no_trellis, &pixels, width, height);
 
     // Encode with trellis enabled
-    let config_with_trellis =
-        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).trellis(TrellisConfig::default());
+    let config_with_trellis = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
+        .optimization(OptimizationPreset::ZenProgressive)
+        .trellis(TrellisConfig::default());
     let jpeg_with_trellis = encode_with_config(&config_with_trellis, &pixels, width, height);
 
     // The outputs should be different
@@ -70,19 +72,20 @@ fn test_trellis_disabled_matches_default() {
     let height = 64u32;
     let pixels = generate_test_image(width as usize, height as usize);
 
-    // Encode without trellis config
-    let config_default = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
-    let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
+    // Encode without trellis (ZenProgressive)
+    let config_no_trellis = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
+        .optimization(OptimizationPreset::ZenProgressive);
+    let jpeg_no_trellis = encode_with_config(&config_no_trellis, &pixels, width, height);
 
-    // Encode with trellis explicitly disabled
+    // Encode with trellis explicitly disabled from default config
     let config_disabled =
         EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).trellis(TrellisConfig::disabled());
     let jpeg_disabled = encode_with_config(&config_disabled, &pixels, width, height);
 
     // Should produce identical output
     assert_eq!(
-        jpeg_default, jpeg_disabled,
-        "Disabled trellis should produce same output as no trellis config"
+        jpeg_no_trellis, jpeg_disabled,
+        "Disabled trellis should produce same output as non-trellis ZenProgressive"
     );
 }
 

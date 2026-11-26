@@ -112,11 +112,12 @@ fn streamed(
 fn fixed_tables_stream_byte_identical_to_one_shot() {
     let cases = [
         (ChromaSubsampling::Quarter, 3usize, 31u32),
-        (ChromaSubsampling::None, 3, 15),
+        // Zen 4:4:4 uses 5-pt AQ cross smoothing (one extra 8-row strip of lookahead).
+        (ChromaSubsampling::None, 3, 23),
         (ChromaSubsampling::Quarter, 4, 31),
-        // Gray input keeps the configuration's 16-row strips.
+        // Gray input keeps the configuration's conservative lag bound.
         (ChromaSubsampling::Quarter, 1, 31),
-        (ChromaSubsampling::None, 1, 15),
+        (ChromaSubsampling::None, 1, 23),
     ];
     for (sub, ch, lag) in cases {
         let cfg = fixed(sub);
@@ -142,6 +143,17 @@ fn fixed_tables_stream_byte_identical_to_one_shot() {
             }
         }
     }
+
+    // Jpegli AQ mode keeps 15-row lag on 4:4:4 (no 5-pt cross smooth lookahead).
+    let jpegli_444 = E::from_preset("jpegli_baseline", 85.0)
+        .unwrap()
+        .with_subsampling(ChromaSubsampling::None)
+        .with_huffman(false);
+    let px = pixels(64, 48, 3);
+    let want = one_shot(&jpegli_444, &px, 64, 48, 3, &Metadata::none());
+    let (timing, got, _) = streamed(&jpegli_444, &px, (64, 48, 3), 7, &Metadata::none());
+    assert_eq!(timing, OutputTiming::streaming(15));
+    assert_eq!(got, want);
 }
 
 #[test]

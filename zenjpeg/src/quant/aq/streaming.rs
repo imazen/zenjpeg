@@ -161,9 +161,36 @@ pub struct StreamingAQ {
     // Pending AQ: iMCU row waiting for lookahead before finalization
     pending_imcu_row: Option<usize>,
 
+    /// Optional multiplicative AQ taper (`1.0` = disabled / exact C++ jpegli).
+    /// Used by `AqMode::Zen` on 4:2:0 YCbCr: `(distance * 0.5).clamp(0.0, 1.0)`.
+    aq_taper_scale: f32,
+    /// Optional exact 5-point cross spatial AQ smooth (`(4*c + L + R + U + D) / 8`)
+    /// with 1-block-row vertical lookahead (active only on `v_samp == 1`, e.g. 4:4:4).
+    smooth_5pt: bool,
+    /// Previous raw AQ block row (`r - 2`) for 5-point vertical smoothing.
+    smooth_prev_row: Vec<f32>,
+    /// Buffered current raw AQ block row (`r - 1`) awaiting row `r` before emission.
+    smooth_curr_row: Vec<f32>,
+    /// True once `smooth_curr_row` holds a valid un-emitted raw AQ row.
+    smooth_has_curr: bool,
+    /// True once `smooth_prev_row` holds the row immediately above `smooth_curr_row`.
+    smooth_has_prev: bool,
+    /// Scratch buffer holding the freshly computed raw AQ row when `smooth_5pt` is active.
+    smooth_raw_scratch: Vec<f32>,
+
     // Archmage token for optimized SIMD (when feature enabled)
     #[cfg(target_arch = "x86_64")]
     archmage_token: Option<X64V3Token>,
+}
+
+#[inline]
+fn smooth_5pt_row(up: &[f32], cur: &[f32], dn: &[f32], out: &mut [f32]) {
+    let w = cur.len();
+    for x in 0..w {
+        let l = cur[x.saturating_sub(1)];
+        let r = cur[(x + 1).min(w - 1)];
+        out[x] = (4.0 * cur[x] + l + r + up[x] + dn[x]) * 0.125;
+    }
 }
 
 impl StreamingAQ {
@@ -249,9 +276,58 @@ impl StreamingAQ {
             total_imcu_rows,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
+            aq_taper_scale: 1.0,
+            smooth_5pt: false,
+            smooth_prev_row: Vec::new(),
+            smooth_curr_row: Vec::new(),
+            smooth_has_curr: false,
+            smooth_has_prev: false,
+            smooth_raw_scratch: Vec::new(),
             #[cfg(target_arch = "x86_64")]
             archmage_token: X64V3Token::summon(),
         })
+    }
+
+    /// Configure zenjpeg AQ refinements (distance tapering and/or 5-pt cross smooth).
+    ///
+    /// Must be called before pushing any strips. `smooth_5pt` is only activated when
+    /// AQ is enabled, image dimensions are non-zero, and each iMCU is a single block
+    /// row (`y_imcu_height == 8`, e.g., 4:4:4).
+    pub(crate) fn set_tuning(&mut self, taper_scale: f32, smooth_5pt: bool) -> Result<()> {
+        self.aq_taper_scale = taper_scale;
+        let enable_smooth =
+            smooth_5pt && self.aq_enabled && self.blocks_w > 0 && self.y_imcu_height == 8;
+        self.smooth_5pt = enable_smooth;
+        self.smooth_has_curr = false;
+        self.smooth_has_prev = false;
+        if enable_smooth {
+            self.smooth_prev_row = crate::foundation::alloc::try_alloc_filled(
+                self.blocks_w,
+                0.0f32,
+                "aq smooth_prev_row",
+            )?;
+            self.smooth_curr_row = crate::foundation::alloc::try_alloc_filled(
+                self.blocks_w,
+                0.0f32,
+                "aq smooth_curr_row",
+            )?;
+            self.smooth_raw_scratch = crate::foundation::alloc::try_alloc_filled(
+                self.blocks_w,
+                0.0f32,
+                "aq smooth_raw_scratch",
+            )?;
+        } else {
+            self.smooth_prev_row = Vec::new();
+            self.smooth_curr_row = Vec::new();
+            self.smooth_raw_scratch = Vec::new();
+        }
+        Ok(())
+    }
+
+    /// Whether 5-point cross smoothing adds one extra iMCU row of streaming lookahead.
+    #[inline]
+    pub(crate) fn has_smooth_lookahead(&self) -> bool {
+        self.smooth_5pt
     }
 
     /// Creates a bypass-mode AQ state that skips computation.
@@ -299,6 +375,13 @@ impl StreamingAQ {
             total_imcu_rows,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
+            aq_taper_scale: 1.0,
+            smooth_5pt: false,
+            smooth_prev_row: Vec::new(),
+            smooth_curr_row: Vec::new(),
+            smooth_has_curr: false,
+            smooth_has_prev: false,
+            smooth_raw_scratch: Vec::new(),
             #[cfg(target_arch = "x86_64")]
             archmage_token: None,
         })
@@ -336,6 +419,13 @@ impl StreamingAQ {
             total_imcu_rows: 0,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
+            aq_taper_scale: 1.0,
+            smooth_5pt: false,
+            smooth_prev_row: Vec::new(),
+            smooth_curr_row: Vec::new(),
+            smooth_has_curr: false,
+            smooth_has_prev: false,
+            smooth_raw_scratch: Vec::new(),
             #[cfg(target_arch = "x86_64")]
             archmage_token: None,
         }
@@ -480,10 +570,7 @@ impl StreamingAQ {
             let valid_count = if let Some(pending) = self.pending_imcu_row.take() {
                 let prev_buffer = 1 - self.y_imcu_current;
                 let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
-                // Accumulate for batch mode - only the valid portion
-                self.all_aq_strengths
-                    .extend_from_slice(&self.imcu_aq_strengths[..count]);
-                Some(count)
+                self.emit_or_buffer_imcu_aq(count)
             } else {
                 None
             };
@@ -587,12 +674,13 @@ impl StreamingAQ {
             let valid_count = if let Some(pending) = self.pending_imcu_row.take() {
                 let prev_buffer = 1 - self.y_imcu_current;
                 let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
-                // Copy to caller's buffer instead of accumulating
-                out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
-                // Also accumulate for batch mode
-                self.all_aq_strengths
-                    .extend_from_slice(&self.imcu_aq_strengths[..count]);
-                Some(count)
+                if let Some(emitted) = self.emit_or_buffer_imcu_aq(count) {
+                    // Copy to caller's buffer instead of accumulating
+                    out_buffer[..emitted].copy_from_slice(&self.imcu_aq_strengths[..emitted]);
+                    Some(emitted)
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -608,10 +696,46 @@ impl StreamingAQ {
         None
     }
 
-    /// Flush any pending iMCU AQ at end of image.
+    /// Push a freshly computed raw iMCU AQ row through optional 5-pt cross smoothing.
     ///
-    /// Call after all strips have been processed to get the last iMCU's AQ.
-    pub fn flush(&mut self) -> Option<&[f32]> {
+    /// When `smooth_5pt` is false, records `imcu_aq_strengths[..count]` directly and returns `Some(count)`.
+    /// When `smooth_5pt` is true (single block row per iMCU), buffers the first row (`None`), and on
+    /// subsequent rows emits the smoothed previous row (`(4*c + L + R + U + D) / 8`).
+    fn emit_or_buffer_imcu_aq(&mut self, count: usize) -> Option<usize> {
+        if !self.smooth_5pt {
+            self.all_aq_strengths
+                .extend_from_slice(&self.imcu_aq_strengths[..count]);
+            return Some(count);
+        }
+        let w = count;
+        if !self.smooth_has_curr {
+            self.smooth_curr_row[..w].copy_from_slice(&self.imcu_aq_strengths[..w]);
+            self.smooth_has_curr = true;
+            return None;
+        }
+        self.smooth_raw_scratch[..w].copy_from_slice(&self.imcu_aq_strengths[..w]);
+        let up = if self.smooth_has_prev {
+            &self.smooth_prev_row[..w]
+        } else {
+            &self.smooth_curr_row[..w]
+        };
+        smooth_5pt_row(
+            up,
+            &self.smooth_curr_row[..w],
+            &self.smooth_raw_scratch[..w],
+            &mut self.imcu_aq_strengths[..w],
+        );
+        self.smooth_prev_row[..w].copy_from_slice(&self.smooth_curr_row[..w]);
+        self.smooth_curr_row[..w].copy_from_slice(&self.smooth_raw_scratch[..w]);
+        self.smooth_has_prev = true;
+        self.all_aq_strengths
+            .extend_from_slice(&self.imcu_aq_strengths[..w]);
+        Some(w)
+    }
+
+    /// Flush one remaining pending iMCU AQ row into `self.imcu_aq_strengths`.
+    /// Call repeatedly until `None` when 5-point smoothing is enabled (may yield up to 2 rows).
+    fn flush_one_internal(&mut self) -> Option<usize> {
         if let Some(pending) = self.pending_imcu_row.take() {
             let count = if self.aq_enabled {
                 let prev_buffer = 1 - self.y_imcu_current;
@@ -619,45 +743,65 @@ impl StreamingAQ {
             } else {
                 self.compute_imcu_block_count(pending)
             };
-            // Only append the valid portion for partial iMCU rows
-            self.all_aq_strengths
-                .extend_from_slice(&self.imcu_aq_strengths[..count]);
-            return Some(&self.imcu_aq_strengths[..count]);
+            if !self.smooth_5pt {
+                self.all_aq_strengths
+                    .extend_from_slice(&self.imcu_aq_strengths[..count]);
+                return Some(count);
+            }
+            // If we already have a buffered row, emit it using this last row as its bottom neighbor,
+            // and buffer this last row for the next flush call.
+            if let Some(emitted) = self.emit_or_buffer_imcu_aq(count) {
+                return Some(emitted);
+            }
+            // Single-row image (N == 1): smooth_curr_row now holds row 0; fall through to emit it now.
         }
+
+        if self.smooth_5pt && self.smooth_has_curr {
+            let w = self.blocks_w;
+            let up = if self.smooth_has_prev {
+                &self.smooth_prev_row[..w]
+            } else {
+                &self.smooth_curr_row[..w]
+            };
+            smooth_5pt_row(
+                up,
+                &self.smooth_curr_row[..w],
+                &self.smooth_curr_row[..w],
+                &mut self.imcu_aq_strengths[..w],
+            );
+            self.smooth_has_curr = false;
+            self.smooth_has_prev = false;
+            self.all_aq_strengths
+                .extend_from_slice(&self.imcu_aq_strengths[..w]);
+            return Some(w);
+        }
+
         None
+    }
+
+    /// Flush any pending iMCU AQ at end of image.
+    ///
+    /// Call repeatedly until `None` after all strips have been processed.
+    pub fn flush(&mut self) -> Option<&[f32]> {
+        let count = self.flush_one_internal()?;
+        Some(&self.imcu_aq_strengths[..count])
     }
 
     /// Flush pending iMCU AQ into provided buffer (zero allocation).
     ///
-    /// Same as `flush` but writes to an external buffer.
-    ///
-    /// # Arguments
-    /// * `out_buffer` - Buffer to write AQ strengths into
-    ///
-    /// # Returns
-    /// Number of AQ values written, or `None` if nothing pending.
+    /// Call repeatedly until `None` after all strips have been processed.
     pub fn flush_into(&mut self, out_buffer: &mut [f32]) -> Option<usize> {
-        if let Some(pending) = self.pending_imcu_row.take() {
-            let count = if self.aq_enabled {
-                let prev_buffer = 1 - self.y_imcu_current;
-                self.finalize_imcu_aq_with_buffer(pending, prev_buffer)
-            } else {
-                self.compute_imcu_block_count(pending)
-            };
-            // Copy to caller's buffer (imcu_aq_strengths is 0.0 in bypass mode)
-            out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
-            // Also accumulate for batch mode
-            self.all_aq_strengths
-                .extend_from_slice(&self.imcu_aq_strengths[..count]);
+        let count = self.flush_one_internal()?;
+        out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
 
-            // Debug: dump AQ map when image processing is complete
-            if self.rows_received >= self.height && self.pending_imcu_row.is_none() {
-                self.dump_aq_map_if_requested();
-            }
-
-            return Some(count);
+        if self.rows_received >= self.height
+            && self.pending_imcu_row.is_none()
+            && !self.smooth_has_curr
+        {
+            self.dump_aq_map_if_requested();
         }
-        None
+
+        Some(count)
     }
 
     /// Debug: dump AQ map to file if DUMP_AQ_MAP env var is set.
@@ -694,8 +838,8 @@ impl StreamingAQ {
             return Ok(Vec::new());
         }
 
-        // Flush any remaining pending iMCU
-        self.flush();
+        // Flush any remaining pending iMCUs
+        while self.flush().is_some() {}
 
         // Debug: dump AQ map if requested
         self.dump_aq_map_if_requested();
@@ -929,8 +1073,15 @@ impl StreamingAQ {
             // Convert to AQ strength - use slice iteration to eliminate bounds checks
             let qf_slice = &self.fuzzy_erosion_out[row_start..row_end];
             let aq_slice = &mut self.imcu_aq_strengths[row_start..row_end];
-            for (qf, aq) in qf_slice.iter().zip(aq_slice.iter_mut()) {
-                *aq = quant_field_to_aq_strength(*qf);
+            if self.aq_taper_scale == 1.0 {
+                for (qf, aq) in qf_slice.iter().zip(aq_slice.iter_mut()) {
+                    *aq = quant_field_to_aq_strength(*qf);
+                }
+            } else {
+                let scale = self.aq_taper_scale;
+                for (qf, aq) in qf_slice.iter().zip(aq_slice.iter_mut()) {
+                    *aq = quant_field_to_aq_strength(*qf) * scale;
+                }
             }
         }
 
@@ -1161,6 +1312,81 @@ mod tests {
         // All values should be in valid range
         for &v in &collected {
             assert!((0.0..1.0).contains(&v), "Invalid AQ value: {}", v);
+        }
+    }
+
+    #[test]
+    fn test_streaming_5pt_smooth_matches_full_plane_bit_exact() {
+        // Verify exact 5-point cross smooth ((4*c + L + R + U + D) / 8, edge-clamped)
+        // across single-row, two-row, odd-dimension, and multi-row 4:4:4 images.
+        for &(w, h) in &[(8, 8), (16, 8), (8, 16), (24, 16), (56, 40), (73, 51)] {
+            let layout = LayoutParams::new(w, h, crate::types::Subsampling::S444, false);
+            let pw = layout.padded_width;
+            let ph = layout.blocks_h * 8;
+            let mut y_plane = vec![0.0f32; pw * ph];
+            for y in 0..h {
+                for x in 0..w {
+                    let v = ((x * 37 + y * 53 + (x ^ y) * 19) % 256) as f32;
+                    y_plane[y * pw + x] = v;
+                }
+                let edge = y_plane[y * pw + w - 1];
+                for x in w..pw {
+                    y_plane[y * pw + x] = edge;
+                }
+            }
+
+            let run = |smooth: bool, taper: f32| -> Vec<f32> {
+                let mut aq = StreamingAQ::new(&layout, 6, true).unwrap();
+                aq.set_tuning(taper, smooth).unwrap();
+                let mut out = Vec::new();
+                let mut buf = vec![0.0f32; layout.pending_y_capacity];
+                let strip_h = layout.strip_height;
+                for strip_y in (0..h).step_by(strip_h) {
+                    let ah = strip_h.min(h - strip_y);
+                    let start = strip_y * pw;
+                    let end = start + ah * pw;
+                    if let Some(n) =
+                        aq.process_y_strip_into(&y_plane[start..end], strip_y, ah, &mut buf)
+                    {
+                        out.extend_from_slice(&buf[..n]);
+                    }
+                }
+                while let Some(n) = aq.flush_into(&mut buf) {
+                    out.extend_from_slice(&buf[..n]);
+                }
+                let batch = aq.finalize().unwrap();
+                assert_eq!(out, batch, "incremental vs batch mismatch for {w}x{h}");
+                out
+            };
+
+            let raw = run(false, 1.0);
+            let smoothed = run(true, 1.0);
+            let bw = layout.blocks_w;
+            let bh = layout.blocks_h;
+            assert_eq!(raw.len(), bw * bh);
+            assert_eq!(smoothed.len(), bw * bh);
+
+            for by in 0..bh {
+                for bx in 0..bw {
+                    let c = raw[by * bw + bx];
+                    let l = raw[by * bw + bx.saturating_sub(1)];
+                    let r = raw[by * bw + (bx + 1).min(bw - 1)];
+                    let u = raw[by.saturating_sub(1) * bw + bx];
+                    let d = raw[(by + 1).min(bh - 1) * bw + bx];
+                    let expected = (4.0 * c + l + r + u + d) * 0.125;
+                    assert_eq!(
+                        smoothed[by * bw + bx].to_bits(),
+                        expected.to_bits(),
+                        "bit mismatch at ({bx},{by}) for {w}x{h}"
+                    );
+                }
+            }
+
+            // Also verify multiplicative taper
+            let tapered = run(false, 0.375);
+            for (i, (&r, &t)) in raw.iter().zip(tapered.iter()).enumerate() {
+                assert_eq!(t.to_bits(), (r * 0.375).to_bits(), "taper mismatch at {i}");
+            }
         }
     }
 }

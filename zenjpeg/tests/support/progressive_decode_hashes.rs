@@ -3,7 +3,9 @@
 //! ordinary builds, including i686, verify the same JPEG and RGB bytes in process.
 use sha2::{Digest, Sha256};
 use zenjpeg::decoder::{ChromaUpsampling, Decoder, IdctMethod, OutputTarget, PixelFormat};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
+use zenjpeg::encoder::{
+    ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, Unstoppable,
+};
 
 pub const NOISE_JPEG_SHA256: &str =
     "b81b28f6b1eb89e7e6c12d94704e58b8ba2e10c3ac7472b7bf5fd4ab00252cc6";
@@ -29,6 +31,7 @@ pub fn encode_noise() -> Vec<u8> {
         })
         .collect();
     let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
+        .optimization(OptimizationPreset::JpegliProgressive)
         .quality(50.0)
         .encode_record(false)
         .progressive(true)
@@ -72,6 +75,7 @@ pub fn encode_gradient() -> Vec<u8> {
         .flat_map(|_| (0..GRADIENT_SIZE).map(|x| (x * 16) as u8))
         .collect();
     let config = EncoderConfig::grayscale(90.0)
+        .optimization(OptimizationPreset::JpegliProgressive)
         .encode_record(false)
         .progressive(true);
     let mut enc = config

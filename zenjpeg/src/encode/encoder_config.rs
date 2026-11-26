@@ -2,7 +2,7 @@
 
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
+    AqMode, ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
     ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, TinyFileMode,
     XybSubsampling,
 };
@@ -464,10 +464,12 @@ pub struct EncoderConfig {
     pub(crate) parallel: Option<super::encoder_types::ParallelEncoding>,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
-    /// Enable adaptive quantization (jpegli AQ). On by default.
+    /// Enable adaptive quantization. On by default.
     /// When disabled, AQ computation is skipped entirely and all blocks
     /// receive neutral AQ strength (0.0).
     pub(crate) aq_enabled: bool,
+    /// Adaptive quantization tuning profile (`AqMode::Zen` default vs exact `AqMode::Jpegli`).
+    pub(crate) aq_mode: AqMode,
     /// Allow 16-bit quantization tables (extended JPEG, SOF1).
     /// When false, quant values are clamped to 255 for baseline compatibility.
     pub(crate) allow_16bit_quant_tables: bool,
@@ -633,6 +635,12 @@ impl EncoderConfig {
         Self {
             quality: quality.into(),
             color_mode: ColorMode::Rgb,
+            quant_table_config: QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 1.0],
+            },
+            aq_mode: AqMode::Jpegli,
+            trellis: None,
+            trellis_rdo: super::trellis::TrellisRdoMode::Legacy,
             ..Self::default_internal()
         }
     }
@@ -673,10 +681,17 @@ impl EncoderConfig {
     }
 
     /// Internal default for non-required fields only.
+    ///
+    /// Uses optimal zenjpeg defaults: `QuantTableConfig::Zen`, `AqMode::Zen`,
+    /// progressive scans, optimized Huffman tables, and `EmpiricalFast` trellis
+    /// quantization (equivalent to `OptimizationPreset::HybridProgressive`).
+    /// For fast non-trellis encoding use `OptimizationPreset::ZenBaseline` or
+    /// `ZenProgressive`; for exact C++ jpegli parity use `JpegliBaseline` or
+    /// `JpegliProgressive`.
     fn default_internal() -> Self {
         Self {
             quality: Quality::default(),
-            quant_table_config: QuantTableConfig::default(), // Jpegli, 3 tables
+            quant_table_config: QuantTableConfig::default(), // Zen, 3 tables
             scan_mode: ProgressiveScanMode::Progressive,     // Progressive gives 3-7% smaller
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
@@ -688,9 +703,10 @@ impl EncoderConfig {
             parallel: None,
             deringing: true,
             aq_enabled: true,
+            aq_mode: AqMode::default(),
             allow_16bit_quant_tables: false,
-            trellis: None,
-            trellis_rdo: super::trellis::TrellisRdoMode::Legacy,
+            trellis: Some(TrellisConfig::default()),
+            trellis_rdo: super::trellis::TrellisRdoMode::EmpiricalFast,
             segments: None,
             pre_blur: 0.0,
             encode_record: true,
@@ -846,35 +862,49 @@ impl EncoderConfig {
 
         // Scan mode: bundles progressive + script strategy
         let scan_mode = match preset {
-            JpegliBaseline => ProgressiveScanMode::Baseline,
-            JpegliProgressive => ProgressiveScanMode::Progressive,
-            MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
-            HybridProgressive => ProgressiveScanMode::Progressive,
+            ZenBaseline | JpegliBaseline | MozjpegBaseline | HybridBaseline => {
+                ProgressiveScanMode::Baseline
+            }
+            ZenProgressive | JpegliProgressive | HybridProgressive => {
+                ProgressiveScanMode::Progressive
+            }
             MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
             MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
         };
 
         // Quant table config: bundles source + chroma layout
         let quant_table_config = match preset {
-            JpegliBaseline | JpegliProgressive => QuantTableConfig::default(),
+            ZenBaseline | ZenProgressive | HybridBaseline | HybridProgressive
+            | HybridMaxCompression => QuantTableConfig::default(),
+            JpegliBaseline | JpegliProgressive => QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 1.0],
+            },
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
                 QuantTableConfig::MozjpegRobidoux {
                     chroma_quality: None,
                 }
             }
-            HybridBaseline | HybridProgressive | HybridMaxCompression => {
-                QuantTableConfig::default()
-            }
+        };
+
+        // AQ profile: Zen refinements for Zen/Hybrid presets, exact jpegli for Jpegli/Mozjpeg
+        let aq_mode = match preset {
+            ZenBaseline | ZenProgressive | HybridBaseline | HybridProgressive
+            | HybridMaxCompression => AqMode::Zen,
+            JpegliBaseline
+            | JpegliProgressive
+            | MozjpegBaseline
+            | MozjpegProgressive
+            | MozjpegMaxCompression => AqMode::Jpegli,
         };
 
         // Trellis configuration depends on preset lineage:
-        // - Jpegli: no trellis (AQ-driven quality, no rate-distortion opt)
+        // - Zen/Jpegli: no trellis (1x fast AQ-driven quality)
         // - Mozjpeg: Thorough (full search, matching C mozjpeg default)
-        // - Hybrid: Adaptive (zenjpeg heuristic, good speed/quality balance)
+        // - Hybrid: Adaptive (empirical progressive/sequential RDO) or Thorough (perceptual RDO)
         let trellis = {
             use super::trellis::{TrellisConfig, TrellisSpeedMode};
             match preset {
-                JpegliBaseline | JpegliProgressive => None,
+                ZenBaseline | ZenProgressive | JpegliBaseline | JpegliProgressive => None,
                 MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
                     Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
                 }
@@ -889,7 +919,9 @@ impl EncoderConfig {
             HybridBaseline => super::trellis::TrellisRdoMode::EmpiricalTwoPass,
             HybridProgressive => super::trellis::TrellisRdoMode::EmpiricalFast,
             HybridMaxCompression => super::trellis::TrellisRdoMode::PerceptualFull,
-            JpegliBaseline
+            ZenBaseline
+            | ZenProgressive
+            | JpegliBaseline
             | JpegliProgressive
             | MozjpegBaseline
             | MozjpegProgressive
@@ -897,14 +929,19 @@ impl EncoderConfig {
         };
 
         // Deringing: independent of AQ. C mozjpeg enables overshoot deringing
-        // only for JCP_MAX_COMPRESSION profile. All jpegli/hybrid presets use it
+        // only for JCP_MAX_COMPRESSION profile. All zen/jpegli/hybrid presets use it
         // (quality win, negligible cost). Mozjpeg baseline/progressive skip it
         // to match C mozjpeg's default profile.
         let deringing = match preset {
-            JpegliBaseline | JpegliProgressive => true,
             MozjpegBaseline | MozjpegProgressive => false,
-            MozjpegMaxCompression => true,
-            HybridBaseline | HybridProgressive | HybridMaxCompression => true,
+            ZenBaseline
+            | ZenProgressive
+            | JpegliBaseline
+            | JpegliProgressive
+            | MozjpegMaxCompression
+            | HybridBaseline
+            | HybridProgressive
+            | HybridMaxCompression => true,
         };
 
         Self {
@@ -913,6 +950,7 @@ impl EncoderConfig {
             huffman: HuffmanStrategy::Optimize,
             deringing,
             aq_enabled: preset.uses_aq(),
+            aq_mode,
             trellis,
             trellis_rdo,
             // Presets force baseline quant tables (matching cjpegli CLI and C
@@ -1026,6 +1064,22 @@ impl EncoderConfig {
                     // which isn't a valid combo — switch to Jpegli
                     self.quant_table_config = QuantTableConfig::default();
                 }
+            }
+            QuantTableConfig::Zen {
+                chroma_distance_scales,
+            }
+            | QuantTableConfig::ZenSharedChroma {
+                chroma_distance_scales,
+            } => {
+                self.quant_table_config = if enable {
+                    QuantTableConfig::Zen {
+                        chroma_distance_scales,
+                    }
+                } else {
+                    QuantTableConfig::ZenSharedChroma {
+                        chroma_distance_scales,
+                    }
+                };
             }
             QuantTableConfig::Jpegli {
                 chroma_distance_scales,
@@ -1276,24 +1330,11 @@ impl EncoderConfig {
             return self;
         }
 
-        let distance = self.quality.to_distance();
-
-        // Determine if we're in the quality range where trellis wins
-        // (q50+ for both 4:2:0 and 4:4:4 based on R-D benchmarks)
-        let should_use_trellis = match self.color_mode {
-            ColorMode::YCbCr { .. } => distance < 5.0, // q50+
-            _ => false,
-        };
-
-        // Fixed-lambda AC trellis, λ1=14.5 with fast empirical progressive rate pricing
-        // (ZeroBias pilot -> 1-pass empirical progressive trellis; DC trellis off,
-        // matching historical auto_optimize behaviour).
+        // Empirical progressive trellis RDO (T3b + T4) wins across the full
+        // quality range (q10-95) on YCbCr, XYB, and Grayscale.
+        let should_use_trellis = !matches!(self.color_mode, ColorMode::Rgb);
         if should_use_trellis {
-            self.trellis = Some(TrellisConfig {
-                lambda_log_scale1: 14.5,
-                dc_enabled: false,
-                ..TrellisConfig::default()
-            });
+            self.trellis = Some(TrellisConfig::default());
             self.trellis_rdo = super::trellis::TrellisRdoMode::EmpiricalFast;
         }
 
@@ -1367,6 +1408,23 @@ impl EncoderConfig {
         self
     }
 
+    /// Select the adaptive quantization tuning profile (`AqMode::Zen` default vs `AqMode::Jpegli`).
+    ///
+    /// - [`AqMode::Zen`] (default): applies high-quality distance tapering on 4:2:0 YCbCr
+    ///   and 5-point cross spatial smoothing on 4:4:4 YCbCr.
+    /// - [`AqMode::Jpegli`]: exact C++ jpegli AQ field without zenjpeg refinements.
+    #[must_use]
+    pub fn aq_mode(mut self, mode: AqMode) -> Self {
+        self.aq_mode = mode;
+        self
+    }
+
+    /// Get the configured adaptive quantization tuning profile.
+    #[must_use]
+    pub fn get_aq_mode(&self) -> AqMode {
+        self.aq_mode
+    }
+
     /// Set Gaussian blur sigma applied before encoding (0.0 = disabled).
     ///
     /// A mild blur (σ ≈ 0.4) before JPEG encoding reduces file size ~5% with
@@ -1436,6 +1494,8 @@ impl EncoderConfig {
             Quality::ApproxButteraugli(d) => (DialScale::Butteraugli, d),
         };
         let table_source = match &self.quant_table_config {
+            QuantTableConfig::Zen { .. } => TableSource::Zen,
+            QuantTableConfig::ZenSharedChroma { .. } => TableSource::ZenSharedChroma,
             QuantTableConfig::Jpegli { .. } => TableSource::Jpegli,
             QuantTableConfig::JpegliSharedChroma { .. } => TableSource::JpegliSharedChroma,
             QuantTableConfig::MozjpegRobidoux { .. } => TableSource::MozjpegRobidoux,
@@ -1653,24 +1713,25 @@ impl EncoderConfig {
         // X,Y,B channels.
         if matches!(self.color_mode, ColorMode::Xyb { .. }) {
             match self.quant_table_config {
-                QuantTableConfig::JpegliSharedChroma { .. } => {
+                QuantTableConfig::ZenSharedChroma { .. }
+                | QuantTableConfig::JpegliSharedChroma { .. } => {
                     return Err(crate::error::Error::invalid_config(
                         "XYB color mode requires per-component quant tables; \
-                         QuantTableConfig::JpegliSharedChroma is YCbCr-only"
+                         shared-chroma tables are YCbCr-only"
                             .into(),
                     ));
                 }
                 QuantTableConfig::MozjpegRobidoux { .. } => {
                     return Err(crate::error::Error::invalid_config(
                         "MozjpegRobidoux tables are YCbCr psychovisual tables; \
-                         use QuantTableConfig::Jpegli (default) or Custom for XYB"
+                         use QuantTableConfig::Zen (default), Jpegli, or Custom for XYB"
                             .into(),
                     ));
                 }
                 QuantTableConfig::PiecewiseV4 => {
                     return Err(crate::error::Error::invalid_config(
                         "PiecewiseV4 anchors are YCbCr-trained; \
-                         use QuantTableConfig::Jpegli (default) or Custom for XYB"
+                         use QuantTableConfig::Zen (default), Jpegli, or Custom for XYB"
                             .into(),
                     ));
                 }
@@ -2287,12 +2348,18 @@ mod tests {
     }
     #[test]
     fn test_trellis_config() {
-        // Default config has no trellis
+        // Default config enables optimal hybrid trellis
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
-        assert!(config.trellis.is_none());
-        assert!(config.get_trellis().is_none());
+        assert!(config.trellis.is_some());
+        assert!(config.get_trellis().is_some());
 
-        // Enable trellis with defaults
+        // Fast ZenProgressive / JpegliProgressive presets have no trellis
+        let fast = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(crate::encode::OptimizationPreset::ZenProgressive);
+        assert!(fast.trellis.is_none());
+        assert!(fast.get_trellis().is_none());
+
+        // Enable trellis with defaults explicitly
         let config =
             EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(TrellisConfig::default());
         assert!(config.trellis.is_some());
@@ -2330,15 +2397,28 @@ mod tests {
     #[test]
     fn test_optimization_preset_jpegli_baseline() {
         use crate::encode::encoder_types::{
-            OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
+            AqMode, OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
         };
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::JpegliBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(config.deringing);
-        assert_eq!(config.quant_table_config, QuantTableConfig::default());
+        assert_eq!(
+            config.quant_table_config,
+            QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 1.0]
+            }
+        );
+        assert_eq!(config.aq_mode, AqMode::Jpegli);
         assert!(config.trellis.is_none());
         assert!(!config.allow_16bit_quant_tables);
+
+        let zen_fast = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::ZenBaseline);
+        assert_eq!(zen_fast.scan_mode, ProgressiveScanMode::Baseline);
+        assert_eq!(zen_fast.quant_table_config, QuantTableConfig::default());
+        assert_eq!(zen_fast.aq_mode, AqMode::Zen);
+        assert!(zen_fast.trellis.is_none());
     }
     #[test]
     fn test_optimization_preset_mozjpeg_baseline() {

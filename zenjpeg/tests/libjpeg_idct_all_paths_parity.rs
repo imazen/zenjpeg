@@ -33,7 +33,7 @@
 
 use enough::Unstoppable;
 use zenjpeg::decode::{ChromaUpsampling, Decoder, IdctMethod, OutputTarget};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 
 /// Block-banded RGB with saturated red/blue (stresses clamping + chroma) and
 /// a high-frequency green ramp (stresses interpolation/IDCT).
@@ -96,6 +96,7 @@ const IMAGE_KINDS: [(&str, fn(usize, usize) -> Vec<u8>); 2] = [
 
 fn encode(px: &[u8], w: u32, h: u32, sub: ChromaSubsampling, progressive: bool) -> Vec<u8> {
     let mut e = EncoderConfig::ycbcr(85.0, sub)
+        .optimization(OptimizationPreset::JpegliProgressive)
         .progressive(progressive)
         .allow_16bit_quant_tables(false)
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)

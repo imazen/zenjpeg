@@ -121,15 +121,11 @@ pub struct SweepAxes {
     pub boundary_rd: Vec<super::encoder_config::BoundaryRd>,
 }
 
-/// Trellis config matching `auto_optimize`'s tuned point (λ₁ = 14.5,
-/// DC off, no coupling).
+/// Trellis config matching `auto_optimize`'s tuned point (λ₁ = 14.75,
+/// DC enabled, no coupling).
 #[must_use]
 pub fn trellis_auto_shape() -> TrellisConfig {
-    TrellisConfig {
-        lambda_log_scale1: 14.5,
-        dc_enabled: false,
-        ..TrellisConfig::default()
-    }
+    TrellisConfig::default()
 }
 
 /// AQ-coupled trellis with the given coupling scale (DC off, defaults
@@ -855,6 +851,9 @@ impl Stratum<'_> {
             .pre_blur(self.blur);
         if let Some(t) = self.coeff {
             cfg = cfg.trellis(*t);
+        } else {
+            cfg.trellis = None;
+            cfg.trellis_rdo = super::trellis::TrellisRdoMode::Legacy;
         }
         #[cfg(feature = "boundary-rd")]
         {
@@ -865,6 +864,24 @@ impl Stratum<'_> {
 
     fn id(&self) -> String {
         let fam = match self.family {
+            QuantTableConfig::Zen {
+                chroma_distance_scales: [a, b],
+            } => {
+                if *a == 1.0 && *b == 1.0 {
+                    "zn3".to_string()
+                } else {
+                    format!("zn3[{a},{b}]")
+                }
+            }
+            QuantTableConfig::ZenSharedChroma {
+                chroma_distance_scales: [a, b],
+            } => {
+                if *a == 1.0 && *b == 1.0 {
+                    "zn2".to_string()
+                } else {
+                    format!("zn2[{a},{b}]")
+                }
+            }
             QuantTableConfig::Jpegli {
                 chroma_distance_scales: [a, b],
             } => {
@@ -1109,6 +1126,9 @@ pub fn config_from_cell_id(base_id: &str, quality: f32) -> Result<EncoderConfig,
         .pre_blur(blur);
     if let Some(t) = coeff {
         cfg = cfg.trellis(t);
+    } else {
+        cfg.trellis = None;
+        cfg.trellis_rdo = super::trellis::TrellisRdoMode::Legacy;
     }
     Ok(cfg)
 }
@@ -1146,7 +1166,15 @@ fn parse_family(s: &str, quality: f32) -> Result<QuantTableConfig, String> {
         ])
     }
     match s {
-        "jp3" => Ok(QuantTableConfig::default()),
+        "zn3" => Ok(QuantTableConfig::Zen {
+            chroma_distance_scales: [1.0, 1.0],
+        }),
+        "zn2" => Ok(QuantTableConfig::ZenSharedChroma {
+            chroma_distance_scales: [1.0, 1.0],
+        }),
+        "jp3" => Ok(QuantTableConfig::Jpegli {
+            chroma_distance_scales: [1.0, 1.0],
+        }),
         "jp2" => Ok(QuantTableConfig::JpegliSharedChroma {
             chroma_distance_scales: [1.0, 1.0],
         }),
@@ -1157,7 +1185,15 @@ fn parse_family(s: &str, quality: f32) -> Result<QuantTableConfig, String> {
         "gls" => Ok(QuantTableConfig::GlassaLowBpp),
         "custom" => Err("custom quant tables are not self-describing".to_string()),
         _ => {
-            if let Some(inner) = s.strip_prefix("jp3[").and_then(|r| r.strip_suffix(']')) {
+            if let Some(inner) = s.strip_prefix("zn3[").and_then(|r| r.strip_suffix(']')) {
+                Ok(QuantTableConfig::Zen {
+                    chroma_distance_scales: scales(inner)?,
+                })
+            } else if let Some(inner) = s.strip_prefix("zn2[").and_then(|r| r.strip_suffix(']')) {
+                Ok(QuantTableConfig::ZenSharedChroma {
+                    chroma_distance_scales: scales(inner)?,
+                })
+            } else if let Some(inner) = s.strip_prefix("jp3[").and_then(|r| r.strip_suffix(']')) {
                 Ok(QuantTableConfig::Jpegli {
                     chroma_distance_scales: scales(inner)?,
                 })
@@ -1652,7 +1688,7 @@ mod tests {
     #[test]
     fn compute_tier_orders_cost() {
         let cheap = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .scan_mode(ProgressiveScanMode::Baseline)
+            .optimization(super::encoder_types::OptimizationPreset::ZenBaseline)
             .aq_enabled(false);
         let pricey = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .trellis(TrellisConfig::default())
@@ -1720,7 +1756,7 @@ mod tests {
         // The very first cell is the production-default stratum.
         assert_eq!(plan.cells[0].deviations, 0);
         assert!(
-            plan.cells[0].id.starts_with("jp3_t0_small_420"),
+            plan.cells[0].id.starts_with("zn3_t0_small_420"),
             "first cell must be the default stratum, got {}",
             plan.cells[0].id
         );

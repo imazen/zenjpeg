@@ -40,8 +40,10 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 /// didn't match the CSV it shipped — every CI run since has failed this test.
 /// The CSV bytes are unchanged from a4f5dc4e; only the constant is corrected
 /// to actually hash the committed CSV.
+/// Re-locked 2026-11-26: optimal Zen defaults (HybridProgressive + QuantTableConfig::Zen + AqMode::Zen).
+/// Previous values archived to tests/locked_values/history/2026-11-26_archmage_pre_zen_defaults.csv.
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "091a9b061ece3af287f0f9e4f4468b84378ce147e1f471f1cd70879e1fe5e7c8";
+const VALUES_FILE_HASH: &str = "25b9d89c38873f545c261e3c8da347f3993844b443cbced012fe875168b1624f";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]

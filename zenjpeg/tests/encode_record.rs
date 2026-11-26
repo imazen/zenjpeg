@@ -64,7 +64,7 @@ fn default_encode_carries_a_verified_record() {
     let e = rec.current().expect("current entry");
     assert_eq!(e.quality_scale, DialScale::Mozjpeg);
     assert_eq!(e.quality, 35.0);
-    assert_eq!(e.table_source, TableSource::Jpegli);
+    assert_eq!(e.table_source, TableSource::Zen);
     assert_eq!(e.color_front, ColorFront::YCbCr);
     assert_eq!(e.subsampling, SubsamplingCode::Quarter);
     assert!(e.flags.has(EncodeFlags::AQ));
@@ -74,6 +74,17 @@ fn default_encode_carries_a_verified_record() {
     assert_eq!(e.pre_blur, 0.375, "sigma is stored at 1/16 resolution");
     assert_eq!(Some(e.dqt_crc32), dqt_crc32(&jpeg));
     assert_ne!(e.version, (0, 0, 0));
+
+    // Explicit JpegliProgressive records TableSource::Jpegli.
+    let jpegli_cfg = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
+        .optimization(OptimizationPreset::JpegliProgressive);
+    let jpegli_bytes = encode(&jpegli_cfg, 64, 48);
+    let jpegli_rec = read_record(&jpegli_bytes).expect("jpegli record");
+    assert!(jpegli_rec.verified);
+    assert_eq!(
+        jpegli_rec.current().expect("current").table_source,
+        TableSource::Jpegli
+    );
 }
 
 #[test]
@@ -153,7 +164,7 @@ fn xyb_and_grayscale_describe_their_front_end() {
     assert_eq!(e.entries[0].subsampling, SubsamplingCode::NotApplicable);
     assert!(matches!(
         EncoderConfig::ycbcr(70.0, ChromaSubsampling::Quarter).get_quant_table_config(),
-        QuantTableConfig::Jpegli { .. }
+        QuantTableConfig::Zen { .. }
     ));
 }
 

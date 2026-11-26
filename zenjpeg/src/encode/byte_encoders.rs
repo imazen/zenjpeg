@@ -169,6 +169,7 @@ impl BytesEncoder {
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
+        builder = builder.aq_mode(config.aq_mode);
 
         // Boundary-RD (#91 / PR #102, off by default). The public composable
         // config is resolved into the flat internal knob struct here. Only

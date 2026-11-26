@@ -232,20 +232,22 @@ fn test_quality_floor() {
 
 // Expected sizes per (config, quality). Platform-independent — minor SIMD
 // rounding differences are well within the 0.3% tolerance.
+// Updated 2026-11-26: Re-locked for optimal Zen defaults (HybridProgressive +
+// QuantTableConfig::Zen + AqMode::Zen).
 // To regenerate: run with --nocapture, copy the "actual" values.
 const EXPECTED_SIZES: &[(&str, u8, usize)] = &[
-    ("baseline_444_opt", 50, 330239),
-    ("baseline_444_opt", 75, 475041),
-    ("baseline_444_opt", 90, 714036),
-    ("baseline_420_opt", 50, 271404),
-    ("baseline_420_opt", 75, 397049),
-    ("baseline_420_opt", 90, 583157),
-    ("progressive_444_opt", 50, 321396),
-    ("progressive_444_opt", 75, 460700),
-    ("progressive_444_opt", 90, 692465),
-    ("progressive_420_opt", 50, 263711),
-    ("progressive_420_opt", 75, 383673),
-    ("progressive_420_opt", 90, 562822),
+    ("baseline_444_opt", 50, 323694),
+    ("baseline_444_opt", 75, 479647),
+    ("baseline_444_opt", 90, 735673),
+    ("baseline_420_opt", 50, 261132),
+    ("baseline_420_opt", 75, 396794),
+    ("baseline_420_opt", 90, 593720),
+    ("progressive_444_opt", 50, 312214),
+    ("progressive_444_opt", 75, 461755),
+    ("progressive_444_opt", 90, 711784),
+    ("progressive_420_opt", 50, 253041),
+    ("progressive_420_opt", 75, 377870),
+    ("progressive_420_opt", 90, 568028),
 ];
 
 #[test]

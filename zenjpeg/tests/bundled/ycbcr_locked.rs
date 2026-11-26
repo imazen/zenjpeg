@@ -33,6 +33,9 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 // Updated 2026-02-01: Regenerated after defaulting allow_16bit_quant_tables=false
 //                     Q50 sizes are 128 bytes smaller (8-bit DQT instead of 16-bit)
 //
+// Updated 2026-11-26: Re-locked for optimal Zen defaults (HybridProgressive +
+//                     QuantTableConfig::Zen + AqMode::Zen).
+//
 // The archmage SIMD uses explicit SIMD intrinsics for DCT which produces
 // slightly different float rounding than the wide-crate autovectorized path.
 // Both sets are valid — they represent the same algorithm with different FP precision.
@@ -44,11 +47,11 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
-    (50, 330100),
-    (70, 437881),
-    (85, 597089),
-    (90, 713973),
-    (95, 934041),
+    (50, 323680),
+    (70, 436554),
+    (85, 612932),
+    (90, 735484),
+    (95, 959835),
 ];
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -62,11 +65,11 @@ const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
 
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
-    (50, 293954),
-    (70, 386444),
-    (85, 518544),
-    (90, 611287),
-    (95, 782238),
+    (50, 287872),
+    (70, 385546),
+    (85, 529451),
+    (90, 622205),
+    (95, 797570),
 ];
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -79,22 +82,22 @@ const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
 ];
 
 /// S420: identical between SIMD and non-SIMD
-/// Updated 2026-04-14: zenyuv integer math with exact avg_epu8 chroma parity
+/// Updated 2026-11-26: Re-locked for optimal Zen defaults
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 271379),
-    (70, 362435),
-    (85, 493918),
-    (90, 583278),
-    (95, 742384),
+    (50, 261106),
+    (70, 359579),
+    (85, 501337),
+    (90, 593594),
+    (95, 753206),
 ];
 
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 294260),
-    (70, 387012),
-    (85, 520040),
-    (90, 613143),
-    (95, 783753),
+    (50, 287827),
+    (70, 385635),
+    (85, 530538),
+    (90, 622081),
+    (95, 796917),
 ];
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -112,11 +115,11 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 320320),
-    (70, 423516),
-    (85, 577429),
-    (90, 691442),
-    (95, 902410),
+    (50, 312183),
+    (70, 420496),
+    (85, 589851),
+    (90, 711753),
+    (95, 926330),
 ];
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -130,11 +133,11 @@ const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
 
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 285948),
-    (70, 374209),
-    (85, 502181),
-    (90, 592037),
-    (95, 756373),
+    (50, 277265),
+    (70, 370299),
+    (85, 508862),
+    (90, 603211),
+    (95, 770136),
 ];
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -146,14 +149,14 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
     (95, 756381),
 ];
 
-/// Updated 2026-04-14: zenyuv integer math with exact avg_epu8 chroma parity
+/// Updated 2026-11-26: Re-locked for optimal Zen defaults
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 262175),
-    (70, 349457),
-    (85, 475521),
-    (90, 561352),
-    (95, 714874),
+    (50, 253010),
+    (70, 344190),
+    (85, 479088),
+    (90, 567997),
+    (95, 721971),
 ];
 
 /// Updated 2026-04-14: zenyuv integer math — should now match x86_64
@@ -168,11 +171,11 @@ const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
 
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 284132),
-    (70, 372519),
-    (85, 501348),
-    (90, 591552),
-    (95, 755674),
+    (50, 275148),
+    (70, 367852),
+    (85, 506569),
+    (90, 600738),
+    (95, 766927),
 ];
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -190,15 +193,15 @@ const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
 
 #[cfg(target_arch = "x86_64")]
 mod hashes {
-    pub const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x05b00d168eae7f72;
-    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x2c0a6aca998d8042;
-    pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x8491935fc04738a4;
-    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x4ac5a06df3bc5fe7;
-    // Updated 2026-04-14: zenyuv integer math
-    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xae68d13be4b55653;
-    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb96b671ab7134448;
-    pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x44a3acddda6d0591;
-    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x48d3cbff0f61e3e2;
+    pub const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0xc522d15f3b126d17;
+    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0xfbfa477e63e898fc;
+    pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x8d2cd2bb11adef47;
+    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x16e28f748a110fac;
+    // Updated 2026-11-26: Re-locked for optimal Zen defaults
+    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xd850dc46f80524ab;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x3b326ca9e32a5f52;
+    pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x4ad946c57eb9c13f;
+    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xce288a368bd28cf3;
 }
 
 #[cfg(not(target_arch = "x86_64"))]

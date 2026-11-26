@@ -4,8 +4,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use zenjpeg::decoder::{ChromaUpsampling, Decoder, IdctMethod, OutputTarget, PixelFormat};
 use zenjpeg::encoder::{
-    ChromaSubsampling as Sub, DownsamplingMethod as Method, EncoderConfig, PixelLayout as Layout,
-    Unstoppable, XybSubsampling, YCbCrPlanes,
+    ChromaSubsampling as Sub, DownsamplingMethod as Method, EncoderConfig, OptimizationPreset,
+    PixelLayout as Layout, Unstoppable, XybSubsampling, YCbCrPlanes,
 };
 #[path = "support/strip_padding_inputs.rs"]
 mod inputs;
@@ -119,12 +119,13 @@ fn manifest(independent: bool) -> serde_json::Value {
     }
     let _restore = Restore;
     let mut groups = BTreeMap::new();
-    // Defaults (AQ/deringing enabled), one canonical quality per producer group.
+    // Pin JpegliProgressive to preserve the libjpeg-turbo-verified padding goldens.
     for sub in SUBS {
         for method in [Method::Box, Method::GammaAware, Method::GammaAwareIterative] {
             for (q, progressive) in [(5, false), (40, true), (100, false)] {
                 let key = format!("ycbcr/{sub:?}/{method:?}/q{q}/progressive{progressive}");
                 let cfg = EncoderConfig::ycbcr(q, sub)
+                    .optimization(OptimizationPreset::JpegliProgressive)
                     .downsampling_method(method)
                     .progressive(progressive);
                 groups.insert(
@@ -157,7 +158,9 @@ fn manifest(independent: bool) -> serde_json::Value {
                 key.clone(),
                 byte_group(
                     &key,
-                    EncoderConfig::ycbcr(40, Sub::Quarter).downsampling_method(method),
+                    EncoderConfig::ycbcr(40, Sub::Quarter)
+                        .optimization(OptimizationPreset::JpegliProgressive)
+                        .downsampling_method(method),
                     layout,
                     true,
                     independent,
@@ -172,7 +175,7 @@ fn manifest(independent: bool) -> serde_json::Value {
                 key.clone(),
                 byte_group(
                     &key,
-                    EncoderConfig::xyb(40, sub),
+                    EncoderConfig::xyb(40, sub).optimization(OptimizationPreset::JpegliProgressive),
                     layout,
                     false,
                     independent,
@@ -182,15 +185,21 @@ fn manifest(independent: bool) -> serde_json::Value {
     }
     for (name, cfg, turbo) in [
         ("rgb", EncoderConfig::rgb(40), true),
-        ("gray", EncoderConfig::grayscale(40), true),
+        (
+            "gray",
+            EncoderConfig::grayscale(40).optimization(OptimizationPreset::JpegliProgressive),
+            true,
+        ),
         (
             "xyb-full",
-            EncoderConfig::xyb(40, XybSubsampling::Full),
+            EncoderConfig::xyb(40, XybSubsampling::Full)
+                .optimization(OptimizationPreset::JpegliProgressive),
             false,
         ),
         (
             "xyb-bquarter",
-            EncoderConfig::xyb(40, XybSubsampling::BQuarter),
+            EncoderConfig::xyb(40, XybSubsampling::BQuarter)
+                .optimization(OptimizationPreset::JpegliProgressive),
             false,
         ),
     ] {
@@ -234,7 +243,8 @@ fn manifest(independent: bool) -> serde_json::Value {
                     if sampled { 1 } else { sub.h_factor() as usize },
                     if sampled { 1 } else { sub.v_factor() as usize },
                 );
-                let cfg = EncoderConfig::ycbcr(40, sub);
+                let cfg = EncoderConfig::ycbcr(40, sub)
+                    .optimization(OptimizationPreset::JpegliProgressive);
                 let mut enc = cfg.encode_from_ycbcr_planar(w as u32, h as u32).unwrap();
                 let mut row = 0;
                 let mut part = 0;
@@ -277,7 +287,7 @@ fn manifest(independent: bool) -> serde_json::Value {
                 for pattern in 0..4 {
                     let src = pixels(w, h, Layout::Rgb8Srgb, pattern);
                     let jpeg = EncoderConfig::ycbcr(40, sub)
-                        .progressive(false)
+                        .optimization(OptimizationPreset::JpegliBaseline)
                         .encode_bytes_parallel(&src, w as u32, h as u32)
                         .unwrap();
                     group.add(
@@ -292,7 +302,7 @@ fn manifest(independent: bool) -> serde_json::Value {
             groups.insert(key, group.finish());
             let key = format!("automatic-parallel/{sub:?}/q40");
             let cfg = EncoderConfig::ycbcr(40, sub)
-                .progressive(false)
+                .optimization(OptimizationPreset::JpegliBaseline)
                 .parallel(ParallelEncoding::Auto);
             groups.insert(
                 key.clone(),

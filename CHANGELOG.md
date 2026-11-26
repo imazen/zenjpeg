@@ -43,6 +43,26 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Changed
 
+- Make zenjpeg's optimal compression settings the default for
+  `EncoderConfig::ycbcr`, `EncoderConfig::xyb`, and `EncoderConfig::grayscale`:
+  `QuantTableConfig::Zen` (split DC scaling exponents: YCbCr luma DC 0.90 /
+  chroma DC 0.70, XYB luma DC 1.00 / X,B DC 0.70), `AqMode::Zen` (4:2:0
+  distance-tapered AQ and O(width) streaming 5-point cross-smoothed AQ on
+  4:4:4), and `HybridProgressive` (`EmpiricalFast` progressive-aware trellis
+  with DC trellis). `EncoderConfig::rgb` passthrough stays non-trellis exact
+  jpegli/Annex-K. Callers wanting exact C++ jpegli parity can select
+  `OptimizationPreset::JpegliBaseline` / `OptimizationPreset::JpegliProgressive`
+  (or `QuantTableConfig::Jpegli` + `AqMode::Jpegli`); callers wanting 1× fast
+  non-trellis encoding with Zen tables/AQ can select
+  `OptimizationPreset::ZenBaseline` / `OptimizationPreset::ZenProgressive`.
+- Upgrade `Effort::Fast` and `JpegEncoderConfig` `effort = 0` to
+  `OptimizationPreset::ZenBaseline`, and upgrade `auto_optimize(true)` to match
+  `HybridProgressive` (full-Q `EmpiricalFast` trellis with DC trellis).
+- Buffer `HuffmanStrategy::Custom` when two-pass empirical trellis RDO is active
+  so harvested baseline Huffman tables remain symbol-complete and
+  pixel-identical across re-encodes, and align `zencodec` streaming lag planning
+  for 4:4:4 `AqMode::Zen` (23 rows with 5-point AQ lookahead, 15 rows for
+  `AqMode::Jpegli`).
 - Upgrade hybrid and auto-optimized trellis presets with exact progressive
   successive-approximation empirical rate modeling (`T3b`), sequential
   empirical rate modeling (`T3a`), empirical DC trellis (`T4`), per-component
@@ -78,6 +98,14 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
+- Add `encoder::AqMode` (`Zen` default vs `Jpegli`) with
+  `EncoderConfig::aq_mode` and `EncoderConfig::get_aq_mode`,
+  `QuantTableConfig::Zen` (new default) and `QuantTableConfig::ZenSharedChroma`
+  (plus `QuantTableConfig::zen_chroma_scale` and `is_zen`),
+  `detect::record::TableSource::Zen` and `TableSource::ZenSharedChroma`, and
+  `OptimizationPreset::ZenBaseline` / `OptimizationPreset::ZenProgressive`
+  (including `"zen_baseline"` / `"zen_progressive"` in
+  `JpegEncoderConfig::from_preset`).
 - Encoder parameter record (#189): every encode writes an APP15 `ZENJ` segment
   carrying the quality dial on its native scale, quant-table family, AQ /
   trellis / deringing / scan flags, pre-blur and a CRC-32 of the DQT tables, as

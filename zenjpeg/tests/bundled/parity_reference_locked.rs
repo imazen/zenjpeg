@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::process::Command;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 
 /// Reference entry for a single encoder configuration
 #[derive(Debug, Clone, Copy)]
@@ -205,9 +205,9 @@ fn encode_rust(
     subsampling: ChromaSubsampling,
     optimize_huffman: bool,
 ) -> Vec<u8> {
-    // Use baseline mode for parity tests - reference values were generated with baseline
+    // Use JpegliBaseline mode for C++ parity tests - reference values were generated with baseline jpegli
     let config = EncoderConfig::ycbcr(quality as f32, subsampling)
-        .progressive(false)
+        .optimization(OptimizationPreset::JpegliBaseline)
         .optimize_huffman(optimize_huffman);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

@@ -15,7 +15,7 @@ use enough::Unstoppable;
 use zenjpeg::decode::Decoder;
 #[cfg(target_arch = "x86_64")]
 use zenjpeg::decode::{ChromaUpsampling, OutputTarget};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 
 // ============================================================================
 // Test image generators
@@ -88,6 +88,7 @@ fn encode_jpeg(
     restart_mcu_rows: u16,
 ) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, subsampling)
+        .optimization(OptimizationPreset::JpegliProgressive)
         .progressive(progressive)
         .restart_mcu_rows(restart_mcu_rows)
         .allow_16bit_quant_tables(false);

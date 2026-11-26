@@ -43,6 +43,31 @@ pub const FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
     1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
 ];
 
+/// Zen quantization DC scaling exponent for YCbCr luma (and grayscale).
+/// Moderated from jpegli's 1.00 to reduce flat-region DC quantization error at low/mid quality.
+pub(crate) const ZEN_YCBCR_LUMA_DC_EXPONENT: f32 = 0.90;
+
+/// Zen quantization DC scaling exponent for YCbCr chroma (Cb/Cr) and XYB chroma (X/B).
+/// Moderated from jpegli's 1.00 to prevent chroma DC over-quantization at low/mid quality.
+pub(crate) const ZEN_CHROMA_DC_EXPONENT: f32 = 0.70;
+
+/// Zen quantization DC scaling exponent for a component (`0..=2`).
+#[inline]
+pub(crate) const fn zen_dc_exponent(component: usize, use_xyb: bool) -> f32 {
+    if use_xyb {
+        // XYB order: 0=X (chroma), 1=Y (luma), 2=B (chroma)
+        if component == 1 {
+            1.00
+        } else {
+            ZEN_CHROMA_DC_EXPONENT
+        }
+    } else if component == 0 {
+        ZEN_YCBCR_LUMA_DC_EXPONENT
+    } else {
+        ZEN_CHROMA_DC_EXPONENT
+    }
+}
+
 /// Optimized global scale for butteraugli-targeted encoding (4:2:0).
 ///
 /// CMA-ES optimized for best butteraugli Pareto distance.
@@ -482,25 +507,36 @@ impl ZeroBiasParams {
 /// Scale factor for quantization
 #[inline]
 #[must_use]
-pub fn distance_to_scale(distance: f32, freq_idx: usize) -> f32 {
+fn distance_to_scale_with_exp(distance: f32, exp: f32) -> f32 {
     if distance < DIST_THRESHOLD {
         return distance;
     }
-    let exp = FREQUENCY_EXPONENT[freq_idx];
     let mul = DIST_THRESHOLD.powf(1.0 - exp);
     (0.5 * distance).max(mul * distance.powf(exp))
+}
+
+#[inline]
+#[must_use]
+fn scale_to_distance_with_exp(scale: f32, exp: f32) -> f32 {
+    if scale < DIST_THRESHOLD {
+        return scale;
+    }
+    let inv_exp = 1.0 / exp;
+    let mul = DIST_THRESHOLD.powf(1.0 - inv_exp);
+    (2.0 * scale).min(mul * scale.powf(inv_exp))
+}
+
+#[inline]
+#[must_use]
+pub fn distance_to_scale(distance: f32, freq_idx: usize) -> f32 {
+    distance_to_scale_with_exp(distance, FREQUENCY_EXPONENT[freq_idx])
 }
 
 /// Inverse of distance_to_scale - converts scale back to distance.
 #[inline]
 #[must_use]
 pub fn scale_to_distance(scale: f32, freq_idx: usize) -> f32 {
-    if scale < DIST_THRESHOLD {
-        return scale;
-    }
-    let exp = 1.0 / FREQUENCY_EXPONENT[freq_idx];
-    let mul = DIST_THRESHOLD.powf(1.0 - exp);
-    (2.0 * scale).min(mul * scale.powf(exp))
+    scale_to_distance_with_exp(scale, FREQUENCY_EXPONENT[freq_idx])
 }
 
 /// Infers the butteraugli distance from quantization table values.
@@ -562,14 +598,15 @@ pub fn quant_vals_to_distance(
             let mut dmax = DIST_MAX;
             let invq = 1.0 / base_qm[k] / global_scale;
             let qval = quant.values[k];
+            let exp = FREQUENCY_EXPONENT[k];
 
             if qval > 1 {
                 let scale_min = (qval as f32 - 0.5) * invq;
-                dmin = scale_to_distance(scale_min, k);
+                dmin = scale_to_distance_with_exp(scale_min, exp);
             }
             if qval < quant_max {
                 let scale_max = (qval as f32 + 0.5) * invq;
-                dmax = scale_to_distance(scale_max, k);
+                dmax = scale_to_distance_with_exp(scale_max, exp);
             }
 
             if dmin <= dist_max {
@@ -634,14 +671,15 @@ pub fn quant_table_to_distance_component(
         let mut dmax = DIST_MAX;
         let invq = 1.0 / base_qm[k] / global_scale;
         let qval = quant.values[k];
+        let exp = FREQUENCY_EXPONENT[k];
 
         if qval > 1 {
             let scale_min = (qval as f32 - 0.5) * invq;
-            dmin = scale_to_distance(scale_min, k);
+            dmin = scale_to_distance_with_exp(scale_min, exp);
         }
         if qval < quant_max {
             let scale_max = (qval as f32 + 0.5) * invq;
-            dmax = scale_to_distance(scale_max, k);
+            dmax = scale_to_distance_with_exp(scale_max, exp);
         }
 
         if dmin <= dist_max {
@@ -742,10 +780,62 @@ pub fn generate_quant_table_with_distance(
     is_420: bool,
     allow_16bit: bool,
 ) -> QuantTable {
+    generate_quant_table_with_distance_and_dc_exp(
+        distance,
+        component,
+        color_space,
+        use_xyb,
+        is_420,
+        allow_16bit,
+        1.0,
+    )
+}
+
+/// Generates a zenjpeg-tuned quantization table from a pre-computed butteraugli distance.
+///
+/// Uses [`zen_dc_exponent`] (YCbCr luma DC 0.90, chroma DC 0.70; XYB luma DC 1.00, X/B DC 0.70)
+/// while preserving all 63 AC scaling exponents.
+#[must_use]
+pub(crate) fn generate_zen_quant_table_with_distance(
+    distance: f32,
+    component: usize,
+    color_space: ColorSpace,
+    use_xyb: bool,
+    is_420: bool,
+    allow_16bit: bool,
+) -> QuantTable {
+    let dc_exp = zen_dc_exponent(component, use_xyb);
+    generate_quant_table_with_distance_and_dc_exp(
+        distance,
+        component,
+        color_space,
+        use_xyb,
+        is_420,
+        allow_16bit,
+        dc_exp,
+    )
+}
+
+fn generate_quant_table_with_distance_and_dc_exp(
+    distance: f32,
+    component: usize,
+    color_space: ColorSpace,
+    use_xyb: bool,
+    is_420: bool,
+    allow_16bit: bool,
+    dc_exp: f32,
+) -> QuantTable {
     if use_xyb {
-        generate_xyb_quant_table(distance, component, allow_16bit)
+        generate_xyb_quant_table(distance, component, allow_16bit, dc_exp)
     } else {
-        generate_standard_quant_table(distance, component, color_space, is_420, allow_16bit)
+        generate_standard_quant_table(
+            distance,
+            component,
+            color_space,
+            is_420,
+            allow_16bit,
+            dc_exp,
+        )
     }
 }
 
@@ -753,7 +843,12 @@ pub fn generate_quant_table_with_distance(
 ///
 /// Uses per-frequency non-linear scaling via `distance_to_scale()` for
 /// better quality at the same file size compared to linear scaling.
-fn generate_xyb_quant_table(distance: f32, component: usize, allow_16bit: bool) -> QuantTable {
+fn generate_xyb_quant_table(
+    distance: f32,
+    component: usize,
+    allow_16bit: bool,
+    dc_exp: f32,
+) -> QuantTable {
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
     // Select the appropriate base matrix row
@@ -762,7 +857,12 @@ fn generate_xyb_quant_table(distance: f32, component: usize, allow_16bit: bool) 
 
     for (i, &base_val) in base.iter().enumerate() {
         // Apply per-frequency non-linear scaling
-        let scale = distance_to_scale(distance, i) * GLOBAL_SCALE_XYB;
+        let exp = if i == 0 {
+            dc_exp
+        } else {
+            FREQUENCY_EXPONENT[i]
+        };
+        let scale = distance_to_scale_with_exp(distance, exp) * GLOBAL_SCALE_XYB;
         let q = (base_val * scale).round();
         // Store unclamped value - create_quant_table will handle clamping and precision
         values[i] = q as u16;
@@ -781,6 +881,7 @@ fn generate_standard_quant_table(
     color_space: ColorSpace,
     is_420: bool,
     allow_16bit: bool,
+    dc_exp: f32,
 ) -> QuantTable {
     use crate::foundation::consts::{GLOBAL_SCALE_420, K420_RESCALE};
 
@@ -813,7 +914,12 @@ fn generate_standard_quant_table(
 
     for (i, &base_val) in base.iter().enumerate() {
         // Apply per-frequency non-linear scaling
-        let mut scale = distance_to_scale(distance, i) * global_scale;
+        let exp = if i == 0 {
+            dc_exp
+        } else {
+            FREQUENCY_EXPONENT[i]
+        };
+        let mut scale = distance_to_scale_with_exp(distance, exp) * global_scale;
 
         // Apply additional per-frequency rescale for chroma in 4:2:0 mode
         // This reduces chroma quantization to preserve color fidelity

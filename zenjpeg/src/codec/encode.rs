@@ -117,8 +117,9 @@ impl JpegEncoderConfig {
 
     /// Create from a named optimization preset.
     ///
-    /// Available presets: `"mozjpeg_baseline"`, `"mozjpeg_progressive"`,
-    /// `"mozjpeg_max"`, `"jpegli_baseline"`, `"jpegli_progressive"`,
+    /// Available presets: `"zen_baseline"`, `"zen_progressive"`,
+    /// `"mozjpeg_baseline"`, `"mozjpeg_progressive"`, `"mozjpeg_max"`,
+    /// `"jpegli_baseline"`, `"jpegli_progressive"`,
     /// `"hybrid_baseline"`, `"hybrid_progressive"`, `"hybrid_max"`.
     ///
     /// Returns `None` for unrecognized preset names.
@@ -130,6 +131,8 @@ impl JpegEncoderConfig {
         use crate::encode::expert::ExpertConfig;
 
         let preset = match preset_name {
+            "zen_baseline" => OptimizationPreset::ZenBaseline,
+            "zen_progressive" => OptimizationPreset::ZenProgressive,
             "mozjpeg_baseline" => OptimizationPreset::MozjpegBaseline,
             "mozjpeg_progressive" => OptimizationPreset::MozjpegProgressive,
             "mozjpeg_max" => OptimizationPreset::MozjpegMaxCompression,
@@ -246,7 +249,7 @@ impl JpegEncoderConfig {
     /// Apply effort level, returning a modified config.
     ///
     /// Clamps `self.effort` into zenjpeg's real 0..=2 tiers at the point of
-    /// use: `0` = `JpegliBaseline`, `2` = `HybridMaxCompression`, anything
+    /// use: `0` = `ZenBaseline`, `2` = `HybridMaxCompression`, anything
     /// else (including the default `1` and any out-of-range value accepted
     /// by [`with_generic_effort`](Self::with_generic_effort)) = `HybridProgressive`.
     fn effective_config(&self) -> EncoderConfig {
@@ -258,7 +261,7 @@ impl JpegEncoderConfig {
             .overrides
             .preset
             .unwrap_or(match self.effort.clamp(0, 2) {
-                0 => OptimizationPreset::JpegliBaseline,
+                0 => OptimizationPreset::ZenBaseline,
                 2 => OptimizationPreset::HybridMaxCompression,
                 _ => OptimizationPreset::HybridProgressive,
             });
@@ -1158,6 +1161,14 @@ impl JpegEncoder {
             crate::encode::encoder_types::ColorMode::YCbCr {
                 subsampling: ChromaSubsampling::Quarter,
             } => 31,
+            crate::encode::encoder_types::ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::None,
+            } if self.effective_config.aq_enabled
+                && self.effective_config.aq_mode == crate::encode::encoder_types::AqMode::Zen =>
+            {
+                // 5-pt AQ spatial smoothing adds one 8-row strip of vertical lookahead.
+                23
+            }
             _ => 15,
         };
         match lag.map(|lag| lag.max(configured_lag)) {

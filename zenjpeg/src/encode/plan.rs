@@ -229,7 +229,11 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
                 quality_drives_tables: true,
             }
         }
-        QuantTableConfig::Jpegli { .. } | QuantTableConfig::JpegliSharedChroma { .. } => {
+        QuantTableConfig::Zen { .. }
+        | QuantTableConfig::ZenSharedChroma { .. }
+        | QuantTableConfig::Jpegli { .. }
+        | QuantTableConfig::JpegliSharedChroma { .. } => {
+            let use_zen = table_config.is_zen();
             // Per-component distances come from ResolvedQuality (base
             // distance + the family's per-channel chroma scales).
             let distances = rq.distances;
@@ -242,43 +246,35 @@ pub(crate) fn resolve_quant_tables(inputs: TableResolveInputs<'_>) -> ResolvedTa
             } else {
                 2
             };
+            let make_table = |dist: f32, comp: usize| {
+                if use_zen {
+                    quant::generate_zen_quant_table_with_distance(
+                        dist,
+                        comp,
+                        color_space,
+                        use_xyb,
+                        is_420,
+                        allow_16bit,
+                    )
+                } else {
+                    quant::generate_quant_table_with_distance(
+                        dist,
+                        comp,
+                        color_space,
+                        use_xyb,
+                        is_420,
+                        allow_16bit,
+                    )
+                }
+            };
             let quant = (
-                quant::generate_quant_table_with_distance(
-                    distances[0],
-                    0,
-                    color_space,
-                    use_xyb,
-                    is_420,
-                    allow_16bit,
-                ),
-                quant::generate_quant_table_with_distance(
-                    distances[1],
-                    component1,
-                    color_space,
-                    use_xyb,
-                    is_420,
-                    allow_16bit,
-                ),
-                quant::generate_quant_table_with_distance(
-                    distances[2],
-                    2,
-                    color_space,
-                    use_xyb,
-                    is_420,
-                    allow_16bit,
-                ),
+                make_table(distances[0], 0),
+                make_table(distances[1], component1),
+                make_table(distances[2], 2),
             );
 
             // Zero-bias derives from the effective distance of the
-            // ACTUALLY-WRITTEN tables (post clamping/rounding), matching
-            // C++ jpegli. Two modes:
-            //
-            // - Uniform distances (neutral scales): the joint
-            //   three-component inversion — bit-identical to the
-            //   historical / C++-parity output.
-            // - Divergent distances: each channel inverts its own table,
-            //   so zero-bias follows that channel's effective distance
-            //   (per-channel zero-bias, §9.6.5).
+            // ACTUALLY-WRITTEN tables (post clamping/rounding).
             let eff = if rq.uniform {
                 let e = quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2, use_xyb);
                 [e; 3]
@@ -401,6 +397,12 @@ impl core::fmt::Display for EncodePlan {
             self.color_mode,
         )?;
         let family = match &self.table_family {
+            QuantTableConfig::Zen {
+                chroma_distance_scales: [a, b],
+            } => format!("Zen(chroma_scales=[{a:.2}, {b:.2}])"),
+            QuantTableConfig::ZenSharedChroma {
+                chroma_distance_scales: [a, b],
+            } => format!("ZenSharedChroma(chroma_scales=[{a:.2}, {b:.2}])"),
             QuantTableConfig::Jpegli {
                 chroma_distance_scales: [a, b],
             } => format!("Jpegli(chroma_scales=[{a:.2}, {b:.2}])"),
@@ -582,31 +584,53 @@ mod tests {
             .auto_optimize(true)
             .resolve_plan(512, 512);
         let t = plan.trellis.expect("auto_optimize enables trellis at q85");
-        assert!((t.lambda_log_scale1 - 14.5).abs() < 1e-6);
-        assert!(!t.dc_enabled);
+        assert!((t.lambda_log_scale1 - 14.75).abs() < 1e-6);
+        assert!(t.dc_enabled);
         assert!(!t.aq_coupling.is_active());
         assert_eq!(plan.scan_mode, ProgressiveScanMode::Progressive);
         assert_eq!(plan.sof, SofMarker::Progressive);
     }
 
     #[test]
-    fn auto_optimize_below_gate_keeps_plain_quantization() {
-        let plan = EncoderConfig::ycbcr(30, ChromaSubsampling::Quarter)
+    fn auto_optimize_enables_trellis_across_low_q_and_xyb() {
+        use crate::encode::encoder_types::XybSubsampling;
+        let low_q = EncoderConfig::ycbcr(30, ChromaSubsampling::Quarter)
             .auto_optimize(true)
             .resolve_plan(512, 512);
-        assert!(plan.trellis.is_none(), "q30 is below the d<5.0 gate");
-        // ... but the scan-mode side effect still applies.
-        assert_eq!(plan.scan_mode, ProgressiveScanMode::Progressive);
+        assert!(
+            low_q.trellis.is_some(),
+            "auto_optimize enables trellis at q30"
+        );
+        assert_eq!(low_q.scan_mode, ProgressiveScanMode::Progressive);
+
+        let xyb = EncoderConfig::xyb(75, XybSubsampling::BQuarter)
+            .auto_optimize(true)
+            .resolve_plan(512, 512);
+        assert!(
+            xyb.trellis.is_some(),
+            "auto_optimize enables trellis on XYB"
+        );
+
+        let rgb = EncoderConfig::rgb(85)
+            .auto_optimize(true)
+            .resolve_plan(512, 512);
+        assert!(rgb.trellis.is_none(), "RGB passthrough stays non-trellis");
     }
 
     #[test]
-    fn default_plan_is_progressive_no_trellis() {
+    fn default_plan_is_progressive_with_zen_trellis() {
         let plan = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).resolve_plan(512, 512);
-        assert!(plan.trellis.is_none());
+        assert!(plan.trellis.is_some());
+        assert!(matches!(plan.table_family, QuantTableConfig::Zen { .. }));
         assert!(plan.optimized_huffman);
         assert_eq!(plan.distances[1], plan.distances[0]); // chroma scale 1.0
         assert!(plan.separate_chroma_tables);
         assert_eq!(plan.restart_interval_mcus, 0); // progressive suppresses RST
+
+        let fast = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(crate::encode::encoder_types::OptimizationPreset::ZenProgressive)
+            .resolve_plan(512, 512);
+        assert!(fast.trellis.is_none());
     }
 
     #[test]
@@ -717,11 +741,13 @@ mod tests {
 
     #[test]
     fn uniform_scales_use_joint_inversion_for_zero_bias() {
-        // The uniform path must stay bit-identical to the legacy joint
+        // The uniform Jpegli path must stay bit-identical to the legacy joint
         // three-component inversion (C++ parity behaviour).
         let resolved = resolve_quant_tables(TableResolveInputs {
             quality: crate::encode::encoder_types::Quality::ApproxJpegli(75.0),
-            table_config: &QuantTableConfig::default(),
+            table_config: &QuantTableConfig::Jpegli {
+                chroma_distance_scales: [1.0, 1.0],
+            },
             use_xyb: false,
             use_rgb: false,
             is_420: true,
@@ -824,6 +850,6 @@ mod tests {
             .resolve_plan(512, 512);
         let s = format!("{plan}");
         assert!(s.contains("trellis"));
-        assert!(s.contains("λ1=14.50"));
+        assert!(s.contains("λ1=14.75"));
     }
 }

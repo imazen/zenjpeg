@@ -3,6 +3,7 @@
 //! Split from `streaming.rs` for readability. The builder configures encoding
 //! parameters; the actual encoder lives in `super::streaming::StreamingEncoder`.
 
+use super::encoder_types::AqMode;
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
@@ -42,8 +43,10 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) gray_output: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
-    /// Enable adaptive quantization (jpegli AQ). On by default.
+    /// Enable adaptive quantization. On by default.
     pub(crate) aq_enabled: bool,
+    /// Adaptive quantization tuning profile (Zen vs exact C++ Jpegli).
+    pub(crate) aq_mode: AqMode,
     /// Boundary-continuity refinement (#91 / PR #102) config. `None` (the
     /// default) disables the refinement pass entirely and keeps the hot
     /// path byte-identical to feature-disabled output. Populated from
@@ -96,6 +99,7 @@ impl StreamingEncoderBuilder {
             gray_output: false,
             deringing: true,
             aq_enabled: true,
+            aq_mode: AqMode::default(),
             // Boundary-RD defaults to `None` (feature off). When the public
             // config sets `BoundaryRd::On`, the byte_encoders bridge fills
             // this in via `.with_boundary_rd_flat(Some(...))`.
@@ -269,6 +273,13 @@ impl StreamingEncoderBuilder {
         self
     }
 
+    /// Sets the adaptive quantization tuning profile (`AqMode::Zen` vs `AqMode::Jpegli`).
+    #[must_use]
+    pub(crate) fn aq_mode(mut self, mode: AqMode) -> Self {
+        self.aq_mode = mode;
+        self
+    }
+
     /// Set the resolved boundary-RD knobs (or `None` to disable).
     ///
     /// `None` is the hot-path identity: no refinement, byte-identical to
@@ -393,8 +404,27 @@ impl StreamingEncoderBuilder {
         Ok(())
     }
 
+    /// Whether 5-pt AQ spatial smoothing adds one extra iMCU strip of lookahead
+    /// (3 pending strips instead of 2 on 4:4:4 YCbCr color with `AqMode::Zen`).
+    pub(crate) fn has_extra_aq_lookahead(&self) -> bool {
+        self.aq_enabled
+            && self.aq_mode == super::encoder_types::AqMode::Zen
+            && !self.use_xyb
+            && !self.use_rgb
+            && !self.pixel_format.is_grayscale()
+            && !self.gray_output
+            && self.subsampling == Subsampling::S444
+    }
+
     pub(crate) fn streams_output(&self) -> bool {
+        // Custom Huffman tables (e.g. harvested from an earlier optimized encode)
+        // must run the same two-pass empirical trellis RDO as `HuffmanStrategy::Optimize`
+        // so quantized coefficients and emitted symbols stay identical.
+        let custom_needs_rdo = matches!(self.huffman, HuffmanStrategy::Custom(_))
+            && self.trellis_rdo != super::trellis::TrellisRdoMode::Legacy
+            && self.trellis.is_some_and(|t| t.is_enabled());
         !matches!(self.huffman, HuffmanStrategy::Optimize)
+            && !custom_needs_rdo
             && self.mode != JpegMode::Progressive
             && !self.use_xyb
             && !self.use_rgb
@@ -413,7 +443,8 @@ impl StreamingEncoderBuilder {
             self.use_xyb,
             self.xyb_subsampling,
         );
-        Ok(Some((2 * layout.strip_height - 1) as u32))
+        let pending_strips = if self.has_extra_aq_lookahead() { 3 } else { 2 };
+        Ok(Some((pending_strips * layout.strip_height - 1) as u32))
     }
 
     /// Starts a streaming encoder for row-by-row input.
@@ -497,11 +528,11 @@ impl StreamingEncoderBuilder {
         let strip_cb_down = lp.padded_c_width * lp.c_strip_height * 4;
         let strip_cr_down = lp.padded_c_width * lp.c_strip_height * 4;
 
-        // 4. Pending f32 DCT blocks (double-buffered, 2 iMCU rows)
-        // 256 bytes per f32 block, 2 buffers (double-buffered)
-        let pending_y_f32 = 2 * lp.pending_y_capacity * 256;
-        let pending_cb_f32 = 2 * lp.pending_c_capacity * 256;
-        let pending_cr_f32 = 2 * lp.pending_c_capacity * 256;
+        // 4. Pending f32 DCT blocks (2 iMCU rows normally, 3 with 5-pt AQ smooth lookahead)
+        let pending_slots = if self.has_extra_aq_lookahead() { 3 } else { 2 };
+        let pending_y_f32 = pending_slots * lp.pending_y_capacity * 256;
+        let pending_cb_f32 = pending_slots * lp.pending_c_capacity * 256;
+        let pending_cr_f32 = pending_slots * lp.pending_c_capacity * 256;
 
         // 5. Final i16 blocks (128 bytes per block)
         let y_blocks_i16 = y_block_count * 128;
@@ -601,9 +632,10 @@ impl StreamingEncoderBuilder {
         let strip_cb_down = lp.padded_c_width * lp.c_strip_height * 4;
         let strip_cr_down = lp.padded_c_width * lp.c_strip_height * 4;
 
-        let pending_y_f32 = 2 * lp.pending_y_capacity * 256;
-        let pending_cb_f32 = 2 * lp.pending_c_capacity * 256;
-        let pending_cr_f32 = 2 * lp.pending_c_capacity * 256;
+        let pending_slots = if self.has_extra_aq_lookahead() { 3 } else { 2 };
+        let pending_y_f32 = pending_slots * lp.pending_y_capacity * 256;
+        let pending_cb_f32 = pending_slots * lp.pending_c_capacity * 256;
+        let pending_cr_f32 = pending_slots * lp.pending_c_capacity * 256;
 
         let y_blocks_i16 = y_block_count * 128;
         let c_blocks_i16 = c_block_count * 2 * 128;

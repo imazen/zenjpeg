@@ -23,7 +23,7 @@
 use enough::Unstoppable;
 use zenjpeg::decode::Decoder;
 use zenjpeg::encode::EncoderConfig;
-use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
+use zenjpeg::encode::encoder_types::{ChromaSubsampling, OptimizationPreset, PixelLayout};
 
 pub(super) fn color_noise(w: usize, h: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; w * h * 3];
@@ -110,11 +110,11 @@ fn progressive_444_ycbcr_is_native_not_lossy() {
     let rgb = color_noise(w, h);
 
     let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
-        .progressive(false)
+        .optimization(OptimizationPreset::ZenBaseline)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode baseline 4:4:4");
     let prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
-        .progressive(true)
+        .optimization(OptimizationPreset::ZenProgressive)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode progressive 4:4:4");
 
@@ -220,11 +220,11 @@ fn progressive_422_rgb_matches_baseline_upsampling() {
     let rgb = color_noise(w, h);
 
     let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
-        .progressive(false)
+        .optimization(OptimizationPreset::ZenBaseline)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode baseline 4:2:2");
     let prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
-        .progressive(true)
+        .optimization(OptimizationPreset::ZenProgressive)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode progressive 4:2:2");
 
@@ -274,11 +274,11 @@ fn progressive_420_440_vertical_upsampling_matches_baseline() {
             for (w, h) in [(64usize, 48usize), (74, 58)] {
                 let rgb = make(w, h);
                 let base = EncoderConfig::ycbcr(90.0, sub)
-                    .progressive(false)
+                    .optimization(OptimizationPreset::ZenBaseline)
                     .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
                     .expect("encode baseline");
                 let prog = EncoderConfig::ycbcr(90.0, sub)
-                    .progressive(true)
+                    .optimization(OptimizationPreset::ZenProgressive)
                     .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
                     .expect("encode progressive");
 
@@ -327,11 +327,11 @@ fn progressive_420_ycbcr_matches_baseline() {
     let rgb = smooth_chroma_bands(w, h);
 
     let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-        .progressive(false)
+        .optimization(OptimizationPreset::ZenBaseline)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode baseline 4:2:0");
     let prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-        .progressive(true)
+        .optimization(OptimizationPreset::ZenProgressive)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode progressive 4:2:0");
 
@@ -352,11 +352,11 @@ fn progressive_422_ycbcr_matches_baseline() {
     let rgb = color_noise(w, h);
 
     let base = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
-        .progressive(false)
+        .optimization(OptimizationPreset::ZenBaseline)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode baseline 4:2:2");
     let prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfHorizontal)
-        .progressive(true)
+        .optimization(OptimizationPreset::ZenProgressive)
         .encode_bytes(&rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .expect("encode progressive 4:2:2");
 

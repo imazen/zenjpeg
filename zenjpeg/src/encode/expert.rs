@@ -458,9 +458,11 @@ impl ExpertConfig {
             }
         };
 
-        // Trellis: disabled for jpegli, Thorough for mozjpeg, Adaptive for hybrid
+        // Trellis: disabled for zen/jpegli fast presets, Thorough for mozjpeg/hybrid-max, Adaptive for hybrid
         let (trellis_enabled, trellis_speed_mode) = match preset {
-            JpegliBaseline | JpegliProgressive => (false, TrellisSpeedMode::Adaptive),
+            ZenBaseline | ZenProgressive | JpegliBaseline | JpegliProgressive => {
+                (false, TrellisSpeedMode::Adaptive)
+            }
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
                 (true, TrellisSpeedMode::Thorough)
             }
@@ -470,8 +472,12 @@ impl ExpertConfig {
 
         // Scan mode: baseline, progressive, mozjpeg script, or search
         let scan_mode = match preset {
-            JpegliBaseline | MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
-            JpegliProgressive | HybridProgressive => ProgressiveScanMode::Progressive,
+            ZenBaseline | JpegliBaseline | MozjpegBaseline | HybridBaseline => {
+                ProgressiveScanMode::Baseline
+            }
+            ZenProgressive | JpegliProgressive | HybridProgressive => {
+                ProgressiveScanMode::Progressive
+            }
             MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
             MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
         };
