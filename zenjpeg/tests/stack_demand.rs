@@ -42,7 +42,7 @@ fn on_test_stack<T: Send + 'static>(what: String, f: impl FnOnce() -> T + Send +
 }
 
 fn packed_rows(pixels: &PixelView<'_>) -> Vec<u8> {
-    let row = pixels.width() as usize * pixels.spec().layout.bytes_per_pixel();
+    let row = pixels.width() as usize * pixels.format().layout.bytes_per_pixel();
     (0..pixels.rows())
         .flat_map(|y| pixels.row(y)[..row].to_vec())
         .collect()
@@ -70,11 +70,11 @@ fn fixtures() -> Vec<(String, Arc<Vec<u8>>)> {
         ),
     ] {
         let pixels =
-            PixelView::new(&rgb, w, h, w as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
+            PixelView::new(&rgb, w, h, w as usize * 3, &zenpixels::formats::RGB8_SRGB).unwrap();
         let encoded = config.job().encoder().unwrap().encode(pixels).unwrap();
         out.push((format!("{name} RGB"), Arc::new(encoded.into_vec())));
     }
-    let pixels = PixelView::new(&gray, w, h, w as usize, &zenpixels::specs::GRAY8_SRGB).unwrap();
+    let pixels = PixelView::new(&gray, w, h, w as usize, &zenpixels::formats::GRAY8_SRGB).unwrap();
     let encoded = JpegEncoderConfig::new()
         .job()
         .encoder()

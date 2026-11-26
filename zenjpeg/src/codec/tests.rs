@@ -12,7 +12,7 @@ use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{
     CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation,
 };
-use zenpixels::{ImageSpec, PixelBuf, PixelView, PixelViewMut};
+use zenpixels::{PixelBuf, PixelFormat as ZenPixelFormat, PixelView, PixelViewMut};
 
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
@@ -43,12 +43,12 @@ mod api_tests {
                 zenpixels::Transfer::Linear
             },
         );
-        PixelView::new_with_spec_cow(
+        PixelView::new_with_format_cow(
             bytemuck::cast_slice(img.buf()),
             img.width() as u32,
             img.height() as u32,
             img.stride() * P::LAYOUT.bytes_per_pixel(),
-            zenpixels::SpecCow::from_owned(spec),
+            zenpixels::FormatCow::from_owned(spec),
         )
         .unwrap()
     }
@@ -200,14 +200,14 @@ mod api_tests {
         assert!(header.icc_profile.is_some());
         assert_eq!(
             decode_descriptor(&[], &header, None).unwrap(),
-            ImageSpec::RGB8_SRGB
+            ZenPixelFormat::RGB8_SRGB
         );
         assert_eq!(
-            decode_descriptor(&[ImageSpec::RGBAF32_LINEAR], &header, None).unwrap(),
-            ImageSpec::RGBAF32_LINEAR
+            decode_descriptor(&[ZenPixelFormat::RGBAF32_LINEAR], &header, None).unwrap(),
+            ZenPixelFormat::RGBAF32_LINEAR
         );
         let decoded = JpegDecoderConfig::new().decode(&encoded).unwrap();
-        assert_eq!(decoded.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
+        assert_eq!(decoded.pixels().format().clone(), ZenPixelFormat::RGB8_SRGB);
         assert_eq!(
             decoded.info().source_color.icc_profile.as_deref(),
             header.icc_profile.as_deref()
@@ -354,12 +354,12 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let output = dec
             .job()
-            .decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
+            .decoder(Cow::Borrowed(encoded.data()), &[ZenPixelFormat::RGB8_SRGB])
             .unwrap()
             .decode()
             .unwrap();
         // Output should be RGB8 — the native format
-        assert_eq!(output.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
+        assert_eq!(output.pixels().format().clone(), ZenPixelFormat::RGB8_SRGB);
         let pixel_data = output.pixels();
         assert_eq!(pixel_data.width(), 8);
         assert_eq!(pixel_data.rows(), 8);
@@ -400,7 +400,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ZenPixelFormat::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(stream.info().width, 16);
@@ -437,7 +437,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ZenPixelFormat::RGB8_SRGB])
             .unwrap();
 
         let mut batch_count = 0;
@@ -476,7 +476,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut borrowed_stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ZenPixelFormat::RGB8_SRGB])
             .unwrap();
 
         let mut borrowed_pixels = Vec::new();
@@ -489,7 +489,7 @@ mod api_tests {
         let dec2 = JpegDecoderConfig::new();
         let mut owned_stream = dec2
             .job()
-            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::RGB8_SRGB])
+            .streaming_decoder(Cow::Owned(owned_data), &[ZenPixelFormat::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(owned_stream.info().width, 32);
@@ -534,7 +534,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::RGB8_SRGB])
+            .streaming_decoder(Cow::Owned(owned_data), &[ZenPixelFormat::RGB8_SRGB])
             .unwrap();
 
         // The stream should work after the owned_data variable is consumed
@@ -1065,7 +1065,7 @@ mod streaming_test {
         // enc borrows stop, both in same scope — compiles fine
         let pixels = vec![128u8; 64 * 64 * 4];
         let slice =
-            zenpixels::PixelView::new(&pixels, 64, 64, 64 * 4, &zenpixels::specs::RGBA8_SRGB)
+            zenpixels::PixelView::new(&pixels, 64, 64, 64 * 4, &zenpixels::formats::RGBA8_SRGB)
                 .unwrap();
         enc.push_rows(slice).unwrap();
         let _output = enc.finish().unwrap();
@@ -1122,7 +1122,7 @@ mod cmyk_tests {
         let pixels = output.pixels();
 
         // Verify 4 channels via CMYK8 descriptor
-        assert_eq!(pixels.spec().layout.bytes_per_pixel(), 4);
+        assert_eq!(pixels.format().layout.bytes_per_pixel(), 4);
 
         // source_color.channel_count should be 4 (CMYK)
         assert_eq!(info.source_color.channel_count, Some(4));
@@ -1180,8 +1180,8 @@ mod cmyk_tests {
         assert_eq!(rgb_info.height, cmyk_info.height);
 
         // BadRgb output is 3-channel RGB8, Passthrough is 4-channel CMYK8
-        assert_eq!(output_rgb.pixels().spec().layout.bytes_per_pixel(), 3);
-        assert_eq!(output_cmyk.pixels().spec().layout.bytes_per_pixel(), 4);
+        assert_eq!(output_rgb.pixels().format().layout.bytes_per_pixel(), 3);
+        assert_eq!(output_cmyk.pixels().format().layout.bytes_per_pixel(), 4);
 
         // Manual CMYK→RGB conversion on raw CMYK data should produce something
         // close to the auto-converted RGB (within the known maxDelta of ~39)
@@ -1251,7 +1251,9 @@ mod cmyk_tests {
         ];
         let img = Img::new(pixels, 8, 8);
         let encoded = enc
-            .encode(PixelView::from_pixels(img.buf(), 8, 8, ImageSpec::RGB8_SRGB.color).unwrap())
+            .encode(
+                PixelView::from_pixels(img.buf(), 8, 8, ZenPixelFormat::RGB8_SRGB.color).unwrap(),
+            )
             .unwrap();
         let jpeg_data = encoded.into_vec();
 
@@ -1273,8 +1275,8 @@ mod cmyk_tests {
             .unwrap();
 
         assert_eq!(
-            out_passthrough.pixels().spec().layout.bytes_per_pixel(),
-            out_badrgb.pixels().spec().layout.bytes_per_pixel()
+            out_passthrough.pixels().format().layout.bytes_per_pixel(),
+            out_badrgb.pixels().format().layout.bytes_per_pixel()
         );
         assert_eq!(out_passthrough.info().width, out_badrgb.info().width);
         assert_eq!(out_passthrough.info().height, out_badrgb.info().height);
@@ -1371,7 +1373,7 @@ mod cmyk_tests {
         let cmyk_info = output_cmyk.info();
         assert_eq!(cmyk_info.source_color.channel_count, Some(4));
         assert!(!cmyk_info.has_alpha);
-        assert_eq!(output_cmyk.pixels().spec().layout.bytes_per_pixel(), 4);
+        assert_eq!(output_cmyk.pixels().format().layout.bytes_per_pixel(), 4);
 
         // Same dimensions
         assert_eq!(output_rgb.info().width, cmyk_info.width);
@@ -1440,7 +1442,7 @@ mod push_decode_stride_tests {
     }
 
     impl DecodeRowSink for StridedSink {
-        fn begin(&mut self, w: u32, h: u32, _desc: ImageSpec) -> Result<(), SinkError> {
+        fn begin(&mut self, w: u32, h: u32, _desc: ZenPixelFormat) -> Result<(), SinkError> {
             self.w = w;
             self.h = h;
             self.stride = ((w as usize * 4 + 31) / 32) * 32;
@@ -1452,7 +1454,7 @@ mod push_decode_stride_tests {
             y: u32,
             height: u32,
             width: u32,
-            descriptor: ImageSpec,
+            descriptor: ZenPixelFormat,
         ) -> Result<zenpixels::PixelViewMut<'_>, SinkError> {
             let row_start = y as usize * self.stride;
             let row_bytes = width as usize * 4;
@@ -1462,12 +1464,12 @@ mod push_decode_stride_tests {
                 0
             };
             let slice = &mut self.data[row_start..row_start + needed];
-            zenpixels::PixelViewMut::new_with_spec_cow(
+            zenpixels::PixelViewMut::new_with_format_cow(
                 slice,
                 width,
                 height,
                 self.stride,
-                zenpixels::SpecCow::from_owned(descriptor),
+                zenpixels::FormatCow::from_owned(descriptor),
             )
             .map_err(|e| -> SinkError { format!("{e}").into() })
         }
@@ -1483,7 +1485,7 @@ mod push_decode_stride_tests {
             .collect();
         let jpeg = config.encode(&pixels, 64, 64).unwrap();
 
-        let preferred = [ImageSpec::BGRA8_SRGB];
+        let preferred = [ZenPixelFormat::BGRA8_SRGB];
         let cfg = JpegDecoderConfig::new();
         let job = cfg.dyn_job();
         let mut sink = StridedSink {
@@ -1519,7 +1521,7 @@ mod push_decode_stride_tests {
         let jpeg = config.encode(&pixels, 64, 64).unwrap();
 
         // Buffered decode
-        let preferred = [ImageSpec::BGRA8_SRGB];
+        let preferred = [ZenPixelFormat::BGRA8_SRGB];
         let cfg1 = JpegDecoderConfig::new();
         let job1 = cfg1.dyn_job();
         let dec = job1.into_decoder(Cow::Borrowed(&jpeg), &preferred).unwrap();
@@ -1643,8 +1645,8 @@ mod push_decode_stride_tests {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
 
         let compute = ComputeEnvironment::conservative();
-        let small = ImageCharacteristics::new(256, 256, ImageSpec::RGB8_SRGB);
-        let large = ImageCharacteristics::new(2048, 2048, ImageSpec::RGB8_SRGB);
+        let small = ImageCharacteristics::new(256, 256, ZenPixelFormat::RGB8_SRGB);
+        let large = ImageCharacteristics::new(2048, 2048, ZenPixelFormat::RGB8_SRGB);
 
         let cfg = JpegDecoderConfig::new();
         // Qualify the trait: zencodec 0.1.25's blanket `DynDecoderConfig` also

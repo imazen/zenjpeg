@@ -6,7 +6,7 @@ use std::{io::Cursor, sync::Arc};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::{Metadata, MetadataPolicy, UnsupportedOperation};
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{AlphaMode, ColorSpace, ImageSpec, PixelView, RenderingIntent};
+use zenpixels::{AlphaMode, ColorSpace, PixelFormat, PixelView, RenderingIntent};
 use zenpixels_convert::icc_profiles::ADOBE_RGB;
 
 fn record() -> Metadata {
@@ -17,7 +17,7 @@ fn record() -> Metadata {
         .with_icc(ADOBE_RGB)
 }
 fn pixels(data: &[u8]) -> PixelView<'_> {
-    let desc = ImageSpec::new(
+    let desc = PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(ADOBE_RGB),
@@ -26,7 +26,8 @@ fn pixels(data: &[u8]) -> PixelView<'_> {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    PixelView::new_with_spec_cow(data, 16, 17, 48, zenpixels::SpecCow::from_owned(desc)).unwrap()
+    PixelView::new_with_format_cow(data, 16, 17, 48, zenpixels::FormatCow::from_owned(desc))
+        .unwrap()
 }
 fn assert_retained(bytes: &[u8], expected: &Metadata) {
     let info = JpegDecoderConfig::new().probe_full_metadata(bytes).unwrap();
@@ -99,7 +100,7 @@ fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
         );
         let mut encoder = job().encoder().unwrap();
         let px = pixels(&data);
-        encoder.begin(16, 17, px.spec().clone()).unwrap();
+        encoder.begin(16, 17, px.format().clone()).unwrap();
         for y in 0..17 {
             encoder.push_rows(px.sub_rows(y, 1).unwrap()).unwrap();
         }
@@ -163,7 +164,7 @@ fn unsupported_hdr_is_atomic_and_checked_clear_replaces_old_record() {
     assert_retained(output.data(), &expected);
     job.try_set_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
         .unwrap();
-    let plain = PixelView::new(&data, 16, 17, 48, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let plain = PixelView::new(&data, 16, 17, 48, &zenpixels::formats::RGB8_SRGB).unwrap();
     let output = job.encoder().unwrap().encode(plain).unwrap();
     let info = JpegDecoderConfig::new()
         .probe_full_metadata(output.data())
@@ -190,7 +191,11 @@ fn later_legacy_setters_cannot_discard_checked_requirements() {
         EncodePolicy::none().with_embed_icc(false),
     ] {
         let mut encoder = make().with_policy(policy).encoder().unwrap();
-        assert!(encoder.begin(16, 17, pixels(&data).spec().clone()).is_err());
+        assert!(
+            encoder
+                .begin(16, 17, pixels(&data).format().clone())
+                .is_err()
+        );
         assert!(encoder.pending_output().is_empty());
         assert!(
             make()
@@ -265,7 +270,11 @@ fn later_dynamic_replacement_and_policy_conflict_refuse_before_output() {
     job.set_policy(EncodePolicy::none().with_embed_xmp(false));
     let mut encoder = job.into_encoder().unwrap();
     let data = vec![0; 16 * 17 * 3];
-    assert!(encoder.begin(16, 17, pixels(&data).spec().clone()).is_err());
+    assert!(
+        encoder
+            .begin(16, 17, pixels(&data).format().clone())
+            .is_err()
+    );
     assert!(encoder.pending_output().is_empty());
 }
 
@@ -332,7 +341,7 @@ fn conflicts_refuse_plan_and_pull_before_source_access() {
         .try_with_metadata_policy(record(), MetadataPolicy::PreserveExact)
         .unwrap()
         .with_policy(EncodePolicy::none().with_embed_xmp(false));
-    let desc = pixels(&vec![0; 16 * 17 * 3]).spec().clone();
+    let desc = pixels(&vec![0; 16 * 17 * 3]).format().clone();
     assert!(
         job.plan_encode(&EncodeDeclaration::new(16, 17, desc))
             .is_err()
@@ -365,7 +374,8 @@ fn later_conflicting_color_declaration_refuses_before_header() {
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     };
-    let declaration = EncodeDeclaration::new(16, 17, ImageSpec::RGB8_SRGB).with_color(conflicting);
+    let declaration =
+        EncodeDeclaration::new(16, 17, PixelFormat::RGB8_SRGB).with_color(conflicting);
     assert!(job.plan_encode(&declaration).is_err());
     let mut encoder = job.encoder().unwrap();
     assert!(encoder.begin_declared(&declaration).is_err());
@@ -403,7 +413,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     let meta = Metadata::none().with_icc(icc.as_ref());
     let expected = meta.filtered(&MetadataPolicy::PreserveExact);
     let data = vec![51u8; 16 * 17 * 3];
-    let px = || PixelView::new(&data, 16, 17, 48, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let px = || PixelView::new(&data, 16, 17, 48, &zenpixels::formats::RGB8_SRGB).unwrap();
     let job = || {
         JpegEncoderConfig::new()
             .with_huffman(false)
@@ -429,7 +439,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
         "sRGB checked one-shot vs legacy Verbatim"
     );
     let mut encoder = job().encoder().unwrap();
-    encoder.begin(16, 17, ImageSpec::RGB8_SRGB).unwrap();
+    encoder.begin(16, 17, PixelFormat::RGB8_SRGB).unwrap();
     encoder.push_rows(px()).unwrap();
     let streamed = encoder.finish().unwrap();
     assert_retained(streamed.data(), &expected);
@@ -444,7 +454,7 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     ));
     let conflicting = EncodePolicy::none().with_color(drop_icc);
     let mut encoder = job().with_policy(conflicting).encoder().unwrap();
-    assert!(encoder.begin(16, 17, ImageSpec::RGB8_SRGB).is_err());
+    assert!(encoder.begin(16, 17, PixelFormat::RGB8_SRGB).is_err());
     assert!(encoder.pending_output().is_empty());
     assert!(
         job()
@@ -470,6 +480,6 @@ fn required_field_only_orientation_cannot_be_discarded_later() {
         .unwrap()
         .with_policy(EncodePolicy::none().with_embed_exif(false));
     let mut encoder = job.encoder().unwrap();
-    assert!(encoder.begin(16, 17, ImageSpec::RGB8_SRGB).is_err());
+    assert!(encoder.begin(16, 17, PixelFormat::RGB8_SRGB).is_err());
     assert!(encoder.pending_output().is_empty());
 }

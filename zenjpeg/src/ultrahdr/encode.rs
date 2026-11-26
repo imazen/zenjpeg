@@ -184,7 +184,7 @@ fn split_and_compute_gainmap<C: LumaToneMap>(
 ) -> Result<(PixelBuffer, GainMap, GainMapMetadata)> {
     let width = hdr.width();
     let height = hdr.height();
-    let hdr_gamut = primaries(hdr.spec());
+    let hdr_gamut = primaries(hdr.format());
 
     let split_cfg = SplitConfig {
         luma_weights: luma_weights_for(hdr_gamut),
@@ -351,7 +351,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
     use ultrahdr_core::color::transfer::{hlg_eotf, pq_eotf, srgb_eotf};
 
     let slice = hdr.as_view();
-    let desc = slice.spec();
+    let desc = slice.format();
     let format = desc.layout;
     let transfer = transfer(desc);
     let stride = slice.stride();
@@ -502,7 +502,7 @@ pub fn encode_ultrahdr_luma(hdr: &PixelBuffer) -> Result<Vec<u8>> {
 /// - HLG rows come out of `hlg_eotf(·, 1000.0)` in absolute display nits
 ///   at the BT.2100 1000-nit reference (scale `1.0`).
 fn curve_input_scale_nits(hdr: &PixelBuffer) -> f32 {
-    match transfer(hdr.spec()) {
+    match transfer(hdr.format()) {
         TransferFunction::Pq => 10_000.0,
         TransferFunction::Hlg(_) => 1.0,
         _ => 203.0,
@@ -556,7 +556,7 @@ fn linear_f32_to_srgb_rgba8(sdr_linear: &PixelBuffer) -> Result<PixelBuffer> {
         width,
         height,
         PixelFormat::RGBA8,
-        primaries(sdr_linear.spec()),
+        primaries(sdr_linear.format()),
         TransferFunction::Srgb,
     )
     .map_err(ultrahdr_to_zenjpeg_error)
@@ -692,7 +692,7 @@ pub fn encode_with_gainmap_metadata(
         let cicp = if let Some(cicp) = retained.cicp {
             cicp
         } else {
-            let primaries = primaries(sdr.spec()).to_cicp().ok_or_else(|| {
+            let primaries = primaries(sdr.format()).to_cicp().ok_or_else(|| {
                 Error::unsupported_feature("unknown base primaries require an ICC profile")
             })?;
             zencodec::Cicp::new(primaries, 13, 0, true)
@@ -849,7 +849,7 @@ fn encode_sdr_base(
     gainmap_segments: EncoderSegments,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
-    let format = sdr.spec().layout;
+    let format = sdr.format().layout;
     let layout = match format {
         PixelFormat::RGBA8 => PixelLayout::Rgba8Srgb,
         PixelFormat::RGB8 => PixelLayout::Rgb8Srgb,
@@ -918,14 +918,14 @@ fn encode_sdr_base(
     encoder.finish()
 }
 
-fn primaries(spec: &zenpixels::ImageSpec) -> ColorPrimaries {
+fn primaries(spec: &zenpixels::PixelFormat) -> ColorPrimaries {
     match spec.color {
         zenpixels::ColorSpace::Rgb { primaries, .. } => primaries,
         _ => ColorPrimaries::Unknown,
     }
 }
 
-fn transfer(spec: &zenpixels::ImageSpec) -> TransferFunction {
+fn transfer(spec: &zenpixels::PixelFormat) -> TransferFunction {
     match spec.color {
         zenpixels::ColorSpace::Rgb { transfer, .. }
         | zenpixels::ColorSpace::Gray { transfer, .. } => transfer,
@@ -942,7 +942,7 @@ fn transfer(spec: &zenpixels::ImageSpec) -> TransferFunction {
 /// profile in the `EncoderConfig` segments instead.
 fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    let desc = sdr.spec();
+    let desc = sdr.format();
     if let zenpixels::ColorSpace::Icc {
         profile,
         channels: 3,
@@ -1018,7 +1018,7 @@ mod tests {
     fn buf_with_transfer(transfer: TransferFunction) -> PixelBuffer {
         let px: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
         let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
-        let desc = zenpixels::ImageSpec::RGBAF32_LINEAR.with_transfer(transfer);
+        let desc = zenpixels::PixelFormat::RGBAF32_LINEAR.with_transfer(transfer);
         PixelBuffer::from_bytes(bytes, 1, 1, desc).expect("fixture")
     }
 
@@ -1028,7 +1028,7 @@ mod tests {
     #[test]
     fn bt709_base_is_tagged_only_when_its_curve_is_not_srgb() {
         let base = |transfer| {
-            let desc = zenpixels::ImageSpec::RGBA8_SRGB
+            let desc = zenpixels::PixelFormat::RGBA8_SRGB
                 .with_primaries(ColorPrimaries::Bt709)
                 .with_transfer(transfer);
             PixelBuffer::from_bytes(alloc::vec![128u8; 4], 1, 1, desc).expect("fixture")
@@ -1091,7 +1091,7 @@ mod tests {
         ] {
             let samples = [encoded, encoded, encoded, 1.0];
             let bytes = samples.iter().flat_map(|f| f.to_ne_bytes()).collect();
-            let desc = zenpixels::ImageSpec::RGBAF32_LINEAR.with_transfer(transfer);
+            let desc = zenpixels::PixelFormat::RGBAF32_LINEAR.with_transfer(transfer);
             let hdr = PixelBuffer::from_bytes(bytes, 1, 1, desc).unwrap();
             let mut row = [0.0; 4];
             extract_hdr_row_rgba_linear(&hdr, 0, &mut row);

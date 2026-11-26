@@ -17,7 +17,7 @@ use zencodec::{
     UnsupportedOperation,
 };
 use zenjpeg::{JpegEncodeJob, JpegEncoderConfig};
-use zenpixels::{Cicp, ColorSpace, IccColorSpace, ImageSpec, PixelView, Primaries};
+use zenpixels::{Cicp, ColorSpace, IccColorSpace, PixelFormat, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 
 const W: u32 = 16;
@@ -40,7 +40,7 @@ fn encode(
     meta: &Metadata,
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
-    encode_as(rows, meta, policy, ImageSpec::RGB8_SRGB, None)
+    encode_as(rows, meta, policy, PixelFormat::RGB8_SRGB, None)
 }
 
 /// `policy` goes through the legacy setter.
@@ -48,7 +48,7 @@ fn encode_as(
     rows: bool,
     meta: &Metadata,
     policy: Option<EncodePolicy>,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     context: Option<Arc<ColorSpace>>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let mut job = job(meta);
@@ -63,7 +63,7 @@ fn encode_as(
 fn run(
     job: JpegEncodeJob,
     rows: bool,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     context: Option<Arc<ColorSpace>>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let data: Vec<u8> = (0..W * H * 3).map(|i| (i * 13 % 251) as u8).collect();
@@ -222,7 +222,7 @@ fn the_legacy_setter_drops_a_job_profile_it_cannot_identify() {
 
 #[test]
 fn the_legacy_setter_keeps_a_colour_it_can_identify() {
-    let display_p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let display_p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     for (what, bytes) in not_identified() {
         for rows in [false, true] {
             // Display P3 pixels keep needing a carrier once the profile goes.
@@ -243,7 +243,7 @@ fn the_legacy_setter_keeps_a_colour_it_can_identify() {
 
 #[test]
 fn forbidding_a_colour_context_profile_refuses() {
-    let rgb8 = ImageSpec::RGB8_SRGB;
+    let rgb8 = PixelFormat::RGB8_SRGB;
     for (what, bytes) in not_identified() {
         let context = Some(Arc::new(icc_color(bytes.clone())));
         for rows in [false, true] {
@@ -288,7 +288,7 @@ fn forbidding_a_colour_context_profile_refuses() {
 #[test]
 fn setter_order_decides_whether_the_legacy_behaviour_applies() {
     let meta = Metadata::none().with_icc(unidentified());
-    let rgb8 = ImageSpec::RGB8_SRGB;
+    let rgb8 = PixelFormat::RGB8_SRGB;
     let strip = EncodePolicy::strip_all();
     let verbatim = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     let refused = EncodePolicy::none().with_strict(true);

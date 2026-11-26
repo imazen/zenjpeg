@@ -10,7 +10,7 @@ use std::hint::black_box;
 use zencodec::encode::{EncodeDeclaration, EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::output_patch::OutputAccess;
 use zenjpeg::JpegEncoderConfig;
-use zenpixels::{ColorSpace, ImageSpec, Primaries};
+use zenpixels::{ColorSpace, PixelFormat, Primaries};
 
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 2048;
@@ -38,10 +38,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .with_huffman(true),
         _ => return Err("expected fixed or progressive".into()),
     };
-    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let descriptor = match colour.as_str() {
-        "srgb" => ImageSpec::RGB8_SRGB,
-        "p3-icc" => ImageSpec::new(
+        "srgb" => PixelFormat::RGB8_SRGB,
+        "p3-icc" => PixelFormat::new(
             p3.layout,
             ColorSpace::Icc {
                 profile: zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into(),

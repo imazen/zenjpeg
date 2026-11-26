@@ -12,7 +12,7 @@ use zencodec::encode::{
 use zencodec::output_patch::OutputAccess;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig as NativeConfig, XybSubsampling};
 use zenjpeg::{JpegEncodeJob, JpegEncoder, JpegEncoderConfig};
-use zenpixels::{ColorSpace, ImageSpec, PixelView, Primaries};
+use zenpixels::{ColorSpace, PixelFormat, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 
 fn p3_icc() -> ColorSpace {
@@ -27,7 +27,7 @@ fn p3_icc() -> ColorSpace {
 fn declaration(
     width: u32,
     height: u32,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     context: Option<&ColorSpace>,
     access: OutputAccess,
 ) -> EncodeDeclaration {
@@ -53,7 +53,7 @@ fn plan_rows(
     job: &JpegEncodeJob,
     width: u32,
     height: u32,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     context: Option<&ColorSpace>,
     access: OutputAccess,
 ) -> Result<OutputTiming, BoxedError> {
@@ -67,7 +67,7 @@ fn begin_declared(
     encoder: &mut JpegEncoder,
     width: u32,
     height: u32,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     context: Option<&ColorSpace>,
     access: OutputAccess,
 ) -> Result<OutputTiming, zencodec::At<zencodec::CodecError>> {
@@ -114,20 +114,20 @@ fn configurations() -> Vec<JpegEncoderConfig> {
 /// Declarations whose interpretation differs: default, Display P3 by
 /// descriptor, by context ICC and by context code points, linear input,
 /// and a contradiction.
-fn declarations() -> Vec<(&'static str, ImageSpec, Option<ColorSpace>)> {
-    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+fn declarations() -> Vec<(&'static str, PixelFormat, Option<ColorSpace>)> {
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     vec![
-        ("rgb8", ImageSpec::RGB8_SRGB, None),
-        ("gray8", ImageSpec::GRAY8_SRGB, None),
+        ("rgb8", PixelFormat::RGB8_SRGB, None),
+        ("gray8", PixelFormat::GRAY8_SRGB, None),
         ("p3 descriptor", p3.clone(), None),
         ("p3 icc", p3.clone(), Some(p3_icc())),
         ("p3 cicp", p3.clone(), Some(p3.clone().color)),
-        ("linear", ImageSpec::RGBF32_LINEAR, None),
+        ("linear", PixelFormat::RGBF32_LINEAR, None),
         (
             "narrow range",
             p3,
             Some(
-                ImageSpec::RGB8_SRGB
+                PixelFormat::RGB8_SRGB
                     .with_range(zenpixels::SignalRange::Narrow)
                     .color,
             ),
@@ -191,11 +191,11 @@ fn effective_plan_matches_native_startup_across_modes_geometry_and_colour() {
 #[test]
 fn erased_hooks_forward_the_plan_and_the_native_error() {
     use zencodec::encode::DynEncoderConfig;
-    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let context = p3_icc();
     let (mut planned, mut refused) = (0, 0);
     for config in configurations() {
-        for (descriptor, color) in [(ImageSpec::RGB8_SRGB, None), (p3.clone(), Some(&context))] {
+        for (descriptor, color) in [(PixelFormat::RGB8_SRGB, None), (p3.clone(), Some(&context))] {
             let declaration = declaration(17, 65, descriptor, color, OutputAccess::Forward);
             let typed = config.clone().job().plan_encode(&declaration);
             let erased_job = DynEncoderConfig::dyn_job(&config);
@@ -238,11 +238,11 @@ fn begin_output_matches_the_plan_without_a_context() {
             for access in [OutputAccess::Forward, OutputAccess::SeekBack] {
                 let job = config.clone().job();
                 let planned =
-                    plan_rows(&job, 17, height, ImageSpec::RGB8_SRGB, None, access).unwrap();
+                    plan_rows(&job, 17, height, PixelFormat::RGB8_SRGB, None, access).unwrap();
                 let actual = job
                     .encoder()
                     .unwrap()
-                    .begin_output(17, height, ImageSpec::RGB8_SRGB, access)
+                    .begin_output(17, height, PixelFormat::RGB8_SRGB, access)
                     .unwrap();
                 assert_eq!(planned, actual, "{config:?}");
             }
@@ -265,7 +265,7 @@ fn strided_rgb(width: usize, height: usize) -> (Vec<u8>, usize) {
 #[test]
 fn planning_is_repeatable_and_does_not_change_strided_encode_bytes() {
     let (data, stride) = strided_rgb(17, 33);
-    let pixels = || PixelView::new(&data, 17, 33, stride, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let pixels = || PixelView::new(&data, 17, 33, stride, &zenpixels::formats::RGB8_SRGB).unwrap();
     for config in configurations() {
         let expected = config
             .clone()
@@ -280,7 +280,7 @@ fn planning_is_repeatable_and_does_not_change_strided_encode_bytes() {
                 &job,
                 17,
                 33,
-                ImageSpec::RGB8_SRGB,
+                PixelFormat::RGB8_SRGB,
                 None,
                 OutputAccess::Forward,
             )
@@ -298,7 +298,7 @@ fn planning_is_repeatable_and_does_not_change_strided_encode_bytes() {
 fn declared_colour_reaches_the_header_and_streams_on_the_planned_schedule() {
     let (data, stride) = strided_rgb(17, 65);
     let context = p3_icc();
-    let p3 = ImageSpec::new(zenpixels::SampleLayout::RGB8, context.clone());
+    let p3 = PixelFormat::new(zenpixels::SampleLayout::RGB8, context.clone());
     let pixels = || PixelView::new(&data, 17, 65, stride, &p3).unwrap();
     let configs = configurations();
     // XYB (last) refuses a Display P3 declaration.
@@ -380,7 +380,7 @@ fn zencodec_io_planned_row_adapter_writes_the_one_shot_file() {
     }
     let (data, stride) = strided_rgb(97, 65);
     let context = p3_icc();
-    let p3 = ImageSpec::new(zenpixels::SampleLayout::RGB8, context.clone());
+    let p3 = PixelFormat::new(zenpixels::SampleLayout::RGB8, context.clone());
     let pixels = || PixelView::new(&data, 97, 65, stride, &p3).unwrap();
     let (mut written_files, mut refused) = (0, 0);
     for config in configurations() {
@@ -431,21 +431,26 @@ fn zencodec_io_planned_row_adapter_writes_the_one_shot_file() {
 fn rows_contradicting_the_header_refuse_before_encoding() {
     let (data, stride) = strided_rgb(17, 16);
     let rows = |context: ColorSpace| {
-        PixelView::new_with_spec_cow(
+        PixelView::new_with_format_cow(
             &data,
             17,
             16,
             stride,
-            zenpixels::SpecCow::from_owned(ImageSpec::new(zenpixels::SampleLayout::RGB8, context)),
+            zenpixels::FormatCow::from_owned(PixelFormat::new(
+                zenpixels::SampleLayout::RGB8,
+                context,
+            )),
         )
         .unwrap()
     };
     let mut encoder = JpegEncoderConfig::new().job().encoder().unwrap();
-    encoder.begin(17, 16, ImageSpec::RGB8_SRGB).unwrap();
+    encoder.begin(17, 16, PixelFormat::RGB8_SRGB).unwrap();
     assert!(encoder.push_rows(rows(p3_icc())).is_err());
     let mut encoder = JpegEncoderConfig::new().job().encoder().unwrap();
-    encoder.begin(17, 16, ImageSpec::RGB8_SRGB).unwrap();
-    encoder.push_rows(rows(ImageSpec::RGB8_SRGB.color)).unwrap();
+    encoder.begin(17, 16, PixelFormat::RGB8_SRGB).unwrap();
+    encoder
+        .push_rows(rows(PixelFormat::RGB8_SRGB.color))
+        .unwrap();
     assert!(!encoder.finish().unwrap().data().is_empty());
 }
 
@@ -458,7 +463,7 @@ fn invalid_input_limits_canvas_and_metadata_refuse_during_planning() {
             &job,
             width,
             height,
-            ImageSpec::RGB8_SRGB,
+            PixelFormat::RGB8_SRGB,
             None,
             OutputAccess::Forward,
         )
@@ -498,7 +503,7 @@ fn row_encodes_refuse_a_pre_blur_they_cannot_apply() {
         .map(|i| ((i * 7919) ^ (i >> 5)) as u8)
         .collect();
     let pixels =
-        || PixelView::new(&data, width, height, stride, &zenpixels::specs::RGB8_SRGB).unwrap();
+        || PixelView::new(&data, width, height, stride, &zenpixels::formats::RGB8_SRGB).unwrap();
     let config = |sigma: f32| {
         let mut config = JpegEncoderConfig::new()
             .with_progressive(false)
@@ -540,14 +545,14 @@ fn row_encodes_refuse_a_pre_blur_they_cannot_apply() {
         &job,
         width,
         height,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         None,
         OutputAccess::Forward,
     );
     assert!(plan.is_err(), "planning");
     let mut begun = job.clone().encoder().unwrap();
     assert!(
-        begun.begin(width, height, ImageSpec::RGB8_SRGB).is_err(),
+        begun.begin(width, height, PixelFormat::RGB8_SRGB).is_err(),
         "begin"
     );
     let mut canvas = job
@@ -589,7 +594,7 @@ fn cancelled_planning_refuses_with_its_reason() {
         &job,
         32,
         32,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         None,
         OutputAccess::Forward,
     )
@@ -613,9 +618,9 @@ fn mpf_secondary_images_plan_at_finish_and_generic_gain_maps_refuse() {
     use zenjpeg::encode::EncoderSegments;
     use zenjpeg::encoder::HuffmanStrategy;
     let (data, stride) = strided_rgb(17, 65);
-    let pixels = || PixelView::new(&data, 17, 65, stride, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let pixels = || PixelView::new(&data, 17, 65, stride, &zenpixels::formats::RGB8_SRGB).unwrap();
     let secondary = JpegEncoderConfig::new()
-        .encode(PixelView::new(&data, 8, 8, stride, &zenpixels::specs::RGB8_SRGB).unwrap())
+        .encode(PixelView::new(&data, 8, 8, stride, &zenpixels::formats::RGB8_SRGB).unwrap())
         .unwrap()
         .into_vec();
     let native = NativeConfig::ycbcr(83.0, ChromaSubsampling::Quarter)
@@ -638,7 +643,7 @@ fn mpf_secondary_images_plan_at_finish_and_generic_gain_maps_refuse() {
             &config.job(),
             17,
             65,
-            ImageSpec::RGB8_SRGB,
+            PixelFormat::RGB8_SRGB,
             None,
             OutputAccess::SeekBack,
         )
@@ -657,7 +662,7 @@ fn mpf_secondary_images_plan_at_finish_and_generic_gain_maps_refuse() {
         .unwrap();
     let mut rows = with_mpf().job().encoder().unwrap();
     let timing = rows
-        .begin_output(17, 65, ImageSpec::RGB8_SRGB, OutputAccess::SeekBack)
+        .begin_output(17, 65, PixelFormat::RGB8_SRGB, OutputAccess::SeekBack)
         .unwrap();
     assert_eq!(timing, OutputTiming::AT_FINISH);
     for y in (0..65).step_by(9) {

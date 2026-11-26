@@ -37,7 +37,7 @@ fn valid_jpeg() -> Vec<u8> {
         w,
         h,
         (w * 3) as usize,
-        &zenpixels::specs::RGB8_SRGB,
+        &zenpixels::formats::RGB8_SRGB,
     )
     .expect("rgb8 slice");
     JpegEncoderConfig::new()

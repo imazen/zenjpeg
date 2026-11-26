@@ -9,18 +9,18 @@ use zenjpeg::encoder::{
     ChromaSubsampling, EncoderConfig as NativeEncoder, PixelLayout, Unstoppable,
 };
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{ColorSpace, ImageSpec, PixelView, PixelViewMut, Primaries};
+use zenpixels::{ColorSpace, PixelFormat, PixelView, PixelViewMut, Primaries};
 
 struct BoundedSink {
     cap: u32,
     image: Vec<u8>,
     stride: usize,
-    spec: Option<ImageSpec>,
+    spec: Option<PixelFormat>,
     next: u32,
 }
 
 impl DecodeRowSink for BoundedSink {
-    fn begin(&mut self, width: u32, height: u32, spec: ImageSpec) -> Result<(), SinkError> {
+    fn begin(&mut self, width: u32, height: u32, spec: PixelFormat) -> Result<(), SinkError> {
         assert!(self.spec.is_none(), "a sink begins once");
         self.stride = width as usize * spec.layout.bytes_per_pixel() + 7;
         self.image.resize(self.stride * height as usize, 0xa5);
@@ -41,7 +41,7 @@ impl DecodeRowSink for BoundedSink {
         y: u32,
         height: u32,
         width: u32,
-        spec: ImageSpec,
+        spec: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         assert!(height <= self.cap);
         assert_eq!(self.next, y);
@@ -49,12 +49,12 @@ impl DecodeRowSink for BoundedSink {
         assert_eq!(self.spec.as_ref(), Some(&spec));
         let start = self.stride * y as usize;
         let end = start + self.stride * height as usize;
-        Ok(PixelViewMut::new_with_spec_cow(
+        Ok(PixelViewMut::new_with_format_cow(
             &mut self.image[start..end],
             width,
             height,
             self.stride,
-            zenpixels::SpecCow::from_owned(spec),
+            zenpixels::FormatCow::from_owned(spec),
         )?)
     }
 }
@@ -124,7 +124,7 @@ fn bounded_padded_sink_matches_one_shot_at_odd_edges() {
 fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
     let (w, h) = (17, 19);
     let rgb = pattern(w, h);
-    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let jpeg = JpegEncoderConfig::new()
         .job()
         .encoder()
@@ -140,7 +140,7 @@ fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
         profile,
         channels: 3,
         ..
-    } = &pixels.spec().color
+    } = &pixels.format().color
     else {
         panic!("the stored Display P3 ICC must remain authoritative for the RGB samples");
     };
@@ -152,7 +152,7 @@ fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
     encoder.push_packed(&rgb, Unstoppable).unwrap();
     let jpeg = encoder.finish().unwrap();
     let decoded = JpegDecoderConfig::new().decode(&jpeg).unwrap();
-    assert_eq!(decoded.pixels().spec(), &ImageSpec::RGB8_SRGB);
+    assert_eq!(decoded.pixels().format(), &PixelFormat::RGB8_SRGB);
     assert!(decoded.info().source_color.icc_profile.is_some());
 }
 
@@ -168,7 +168,7 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
     use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 
     let (w, h) = (17, 19);
-    let base_spec = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let base_spec = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let base = PixelBuf::from_bytes(pattern(w, h), w, h, base_spec).unwrap();
     let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
     exif.set_orientation(Orientation::Rotate90);
@@ -234,7 +234,7 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
         );
         let pixels = output.pixels();
         assert_eq!(pixels.origin().unwrap().icc.as_deref(), Some(DISPLAY_P3_V4));
-        assert!(matches!(pixels.spec().color, ColorSpace::Rgb {
+        assert!(matches!(pixels.format().color, ColorSpace::Rgb {
             primaries: Primaries::DisplayP3, transfer: Transfer::Linear,
             white: Some(white), .. } if white == DiffuseWhite::BT2408));
         let sc = &output.info().source_color;
@@ -307,9 +307,9 @@ fn adobe_cmyk_and_ycck_passthrough_declare_inverted_ink() {
         });
         let decoded = JpegDecoderConfig::new().decode(&jpeg).unwrap();
         let pixels = decoded.pixels();
-        assert_eq!(pixels.spec().layout.order, ChannelOrder::CmykInverted);
+        assert_eq!(pixels.format().layout.order, ChannelOrder::CmykInverted);
         assert!(matches!(
-            pixels.spec().color,
+            pixels.format().color,
             ColorSpace::Cmyk { inverted: true, .. }
         ));
         for y in 0..pixels.rows() {
@@ -336,7 +336,7 @@ fn linear_gray_codes_keep_their_gray_icc_carrier() {
     else {
         panic!("the pinned database must supply the linear GRAY profile");
     };
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::from(profile.as_ref()),

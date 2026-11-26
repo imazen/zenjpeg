@@ -27,7 +27,7 @@ use zenjpeg::encode::encoder_config::EncoderConfig;
 use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 use zenjpeg::encode::exif::{Exif, Orientation};
 use zenjpeg::types::PixelFormat;
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::PixelView;
 
 /// All 8 EXIF orientation values (EXIF tags 1-8).
 const ALL_ORIENTATIONS: &[Orientation] = &[
@@ -109,8 +109,14 @@ fn decode_then_bake(jpeg: &[u8], orient: Orientation) -> (u32, u32, Vec<u8>) {
     let pixels = result.into_pixels_u8().expect("u8 pixels");
     let zp_orient =
         zenpixels::Orientation::from_exif(orient as u8).expect("valid EXIF orientation");
-    let slice = PixelView::new(&pixels, w, h, w as usize * 3, &zenpixels::specs::RGB8_SRGB)
-        .expect("pixel slice");
+    let slice = PixelView::new(
+        &pixels,
+        w,
+        h,
+        w as usize * 3,
+        &zenpixels::formats::RGB8_SRGB,
+    )
+    .expect("pixel slice");
     let oriented = zenpixels_convert::apply_orientation(&slice, zp_orient).unwrap();
     let (ow, oh) = (oriented.width(), oriented.height());
     let oslice = oriented.as_view();

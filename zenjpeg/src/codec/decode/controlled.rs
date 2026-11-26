@@ -57,7 +57,7 @@ impl From<Error> for ControlledError {
 
 pub(super) fn start(
     job: JpegDecodeJob,
-    preferred: &[ImageSpec],
+    preferred: &[zenpixels::PixelFormat],
     storage: StorageBudget,
 ) -> Result<Box<DynControlledDecoder>, BoxedError> {
     // Existing implicit CMS, crop and gain-map routes require their own

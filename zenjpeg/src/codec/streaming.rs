@@ -2,7 +2,7 @@
 
 use whereat::At;
 use zencodec::{CodecError, ImageInfo};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 
 use crate::error::Error;
 
@@ -15,7 +15,7 @@ use crate::error::Error;
 pub struct JpegStreamingDecoder<'a> {
     pub(super) reader: crate::decode::ScanlineReader<'a>,
     pub(super) info: ImageInfo,
-    pub(super) descriptor: ImageSpec,
+    pub(super) descriptor: PixelFormat,
     pub(super) origin: zenpixels::ColorOrigin,
     /// Reusable row buffer for decoded pixel data (sized for MCU-row batches).
     /// 4-byte aligned so bytemuck casts to &mut [f32] are safe.

@@ -306,7 +306,7 @@ pub fn decode_ultrahdr_hdr(
 
 /// Convert a [`crate::decode::DecodeResult`] to a `PixelBuffer`, preserving
 /// the decoded primaries and transfer. Maps the codec-internal [`JpegPixelFormat`]
-/// to [`zenpixels::PixelFormat`]; expands 3-channel RGB to 4-channel Rgba8
+/// to [`ultrahdr_core::PixelFormat`]; expands 3-channel RGB to 4-channel Rgba8
 /// when the codec returned packed RGB (the common case).
 fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result<PixelBuffer> {
     let icc = decoded
@@ -364,8 +364,8 @@ pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Re
         return Ok(pixels);
     }
     use zenpixels_convert::CmsBackend as _;
-    let target = pixels.spec();
-    let source_spec = zenpixels::ImageSpec::new(
+    let target = pixels.format();
+    let source_spec = zenpixels::PixelFormat::new(
         target.layout,
         zenpixels::ColorSpace::Icc {
             profile: alloc::sync::Arc::from(icc),
@@ -541,7 +541,7 @@ mod tests {
             bytes,
             1,
             1,
-            zenpixels::ImageSpec::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3),
+            zenpixels::PixelFormat::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3),
         )
         .unwrap();
         let jpeg = crate::ultrahdr::encode_ultrahdr_luma(&hdr).unwrap();
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn base_icc_cms_preserves_strided_rows_and_alpha() {
-        use zenpixels::ImageSpec;
+        use zenpixels::PixelFormat as ZenPixelFormat;
         let icc = p3_fixture_icc();
         assert_eq!(
             zenpixels::icc::IccIdentification::from_icc(&icc)
@@ -559,7 +559,7 @@ mod tests {
                 .valid_use,
             zenpixels::icc::IdentificationUse::MetadataOnly
         );
-        for desc in [ImageSpec::RGB8_SRGB, ImageSpec::RGBA8_SRGB] {
+        for desc in [ZenPixelFormat::RGB8_SRGB, ZenPixelFormat::RGBA8_SRGB] {
             let desc = desc.with_primaries(ColorPrimaries::DisplayP3);
             let bpp = desc.layout.bytes_per_pixel();
             let data: Vec<u8> = (0..6 * bpp).map(|i| (i * 37) as u8).collect();
@@ -573,7 +573,7 @@ mod tests {
             let tight = PixelBuffer::from_bytes(packed.clone(), 2, 2, desc.clone()).unwrap();
             let actual = prepare_base_pixels(padded, Some(&icc)).unwrap();
             let expected = prepare_base_pixels(tight, Some(&icc)).unwrap();
-            assert_eq!(actual.spec().clone(), desc);
+            assert_eq!(actual.format().clone(), desc);
             assert_eq!(
                 actual.as_view().as_contiguous_bytes().unwrap(),
                 expected.as_view().as_contiguous_bytes().unwrap()
@@ -596,8 +596,8 @@ mod tests {
 
     #[test]
     fn base_icc_fast_paths_and_failed_transforms() {
-        use zenpixels::ImageSpec;
-        let desc = ImageSpec::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        use zenpixels::PixelFormat as ZenPixelFormat;
+        let desc = ZenPixelFormat::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
         let pixels = || PixelBuffer::from_bytes(vec![10, 20, 30, 255], 1, 1, desc.clone()).unwrap();
         for icc in [
             None,
@@ -620,7 +620,7 @@ mod tests {
             vec![30, 20, 10, 255],
             1,
             1,
-            ImageSpec::BGRA8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+            ZenPixelFormat::BGRA8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
         )
         .unwrap();
         assert!(prepare_base_pixels(unsupported, Some(&icc)).is_err());

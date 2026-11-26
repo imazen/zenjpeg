@@ -13,7 +13,7 @@ use zenjpeg::ultrahdr::{
 };
 
 /// Create a simple HDR test image (linear RGB float).
-fn rgb_primaries(spec: &zenpixels::ImageSpec) -> zenpixels::Primaries {
+fn rgb_primaries(spec: &zenpixels::PixelFormat) -> zenpixels::Primaries {
     let zenpixels::ColorSpace::Rgb { primaries, .. } = spec.color else {
         panic!("expected RGB layout");
     };
@@ -1255,10 +1255,10 @@ fn convenience_hdr_readers_retain_display_p3_primaries() {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_with_gainmap(&sdr, &gainmap, &metadata, &config, 75.0, Unstoppable).unwrap();
     let base = decode_ultrahdr(&jpeg).unwrap();
-    assert_eq!(rgb_primaries(base.spec()), UhdrColorGamut::DisplayP3);
+    assert_eq!(rgb_primaries(base.format()), UhdrColorGamut::DisplayP3);
     let output =
         decode_ultrahdr_hdr(&jpeg, 4.0, zenjpeg::ultrahdr::HdrOutputFormat::LinearFloat).unwrap();
-    assert_eq!(rgb_primaries(output.spec()), UhdrColorGamut::DisplayP3);
+    assert_eq!(rgb_primaries(output.format()), UhdrColorGamut::DisplayP3);
     let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
     let rows = create_hdr_reconstructor(
         decoded.width(),
@@ -1300,7 +1300,7 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
             .unwrap()
             .decode()
             .unwrap();
-        let (r, g, b) = rgb_primaries(expected.spec()).chromaticity().unwrap();
+        let (r, g, b) = rgb_primaries(expected.format()).chromaticity().unwrap();
         assert_eq!(
             actual
                 .info()
@@ -1328,7 +1328,7 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
                 "file {index}"
             );
         }
-        assert_eq!(actual.pixels().spec(), expected.spec(), "file {index}");
+        assert_eq!(actual.pixels().format(), expected.format(), "file {index}");
         assert_eq!(
             actual.pixels().as_strided_bytes(),
             expected.as_view().as_strided_bytes(),
@@ -1404,11 +1404,14 @@ fn codec_hdr_color_conversion_follows_gainmap_application() {
         .unwrap()
         .decode()
         .unwrap();
-    let descriptor = native.spec().clone().with_primaries(UhdrColorGamut::Bt709);
+    let descriptor = native
+        .format()
+        .clone()
+        .with_primaries(UhdrColorGamut::Bt709);
     let mut expected =
         zenpixels::PixelBuf::new(native.width(), native.height(), descriptor.clone()).unwrap();
     let converter = zenpixels_convert::RowPlan::build(
-        native.spec().clone(),
+        native.format().clone(),
         descriptor.clone(),
         &zenpixels_convert::ConvertPolicy::default()
             .with_gamut(zenpixels_convert::GamutPolicy::PreserveExtended),
@@ -1425,7 +1428,7 @@ fn codec_hdr_color_conversion_follows_gainmap_application() {
             )
             .unwrap();
     }
-    assert_eq!(got.pixels().spec(), &descriptor);
+    assert_eq!(got.pixels().format(), &descriptor);
     assert_eq!(
         got.pixels().as_strided_bytes(),
         expected.as_view().as_strided_bytes()

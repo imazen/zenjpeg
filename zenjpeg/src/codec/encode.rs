@@ -7,7 +7,7 @@ use whereat::At;
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, Metadata, ResourceLimits, UnsupportedOperation};
 use zenpixels::{
-    Cicp, ColorSpace, IccColorSpace, ImageSpec, PixelView, PixelViewMut, Primaries, Transfer,
+    Cicp, ColorSpace, IccColorSpace, PixelFormat, PixelView, PixelViewMut, Primaries, Transfer,
 };
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -294,25 +294,25 @@ impl Default for JpegEncoderConfig {
 /// The native 16-bit layouts hold linear light, like the f32 ones.
 /// sRGB-encoded 16-bit samples are decoded to linear f32 on the way in
 /// ([`srgb16_layout`]); the linear 16-bit descriptors need no conversion.
-static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::BGRA8_SRGB,
-    ImageSpec::RGBX8_SRGB,
-    ImageSpec::BGRX8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    ImageSpec::RGBF32_LINEAR,
-    ImageSpec::RGBAF32_LINEAR,
-    ImageSpec::GRAYF32_LINEAR,
-    ImageSpec::new(zenpixels::SampleLayout::RGB16, ColorSpace::LINEAR_SRGB),
-    ImageSpec::new(
+static ENCODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::BGRA8_SRGB,
+    PixelFormat::RGBX8_SRGB,
+    PixelFormat::BGRX8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::RGBF32_LINEAR,
+    PixelFormat::RGBAF32_LINEAR,
+    PixelFormat::GRAYF32_LINEAR,
+    PixelFormat::new(zenpixels::SampleLayout::RGB16, ColorSpace::LINEAR_SRGB),
+    PixelFormat::new(
         zenpixels::SampleLayout::RGBA16,
         ColorSpace::LINEAR_SRGB_ALPHA,
     ),
-    ImageSpec::new(zenpixels::SampleLayout::GRAY16, ColorSpace::GRAY_LINEAR),
+    PixelFormat::new(zenpixels::SampleLayout::GRAY16, ColorSpace::GRAY_LINEAR),
 ];
 
 /// Map generic quality (libjpeg-turbo scale) to jpegli native quality.
@@ -379,7 +379,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         ImageFormat::Jpeg
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         ENCODE_DESCRIPTORS
     }
 
@@ -467,12 +467,12 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     /// Set the generic-effort accept signal.
     ///
     /// zenjpeg supports exactly three real effort tiers, mapped at
-    /// point-of-use in [`effective_config`](Self::effective_config): `0` =
+    /// point-of-use in `effective_config`: `0` =
     /// `JpegliBaseline` (fastest), `1` = `HybridProgressive` (default), `2` =
     /// `HybridMaxCompression` (slowest/smallest). Out-of-tier values (e.g.
     /// `99`) are accepted and clamped into `HybridProgressive` at encode
     /// time, but the raw value passed here is stored verbatim and echoed
-    /// back by [`generic_effort`](Self::generic_effort) — fleet
+    /// back by [`generic_effort`](zencodec::encode::EncoderConfig::generic_effort) — fleet
     /// accept-signal callers that set-then-get to confirm the config
     /// accepted their input must see their own value back, not a silently
     /// clamped one.
@@ -535,7 +535,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
 
 /// Per-operation JPEG encode job.
 ///
-/// Created by [`JpegEncoderConfig::job()`]. Borrows temporary data (stop token,
+/// Created by [`EncoderConfig::job`](zencodec::encode::EncoderConfig::job). Borrows temporary data (stop token,
 /// metadata) and is consumed by creating a [`JpegEncoder`].
 #[derive(Clone)]
 pub struct JpegEncodeJob {
@@ -783,7 +783,7 @@ pub struct JpegEncoder {
     /// scans keep their blocks until `finish`.
     streaming_enc: Option<crate::encode::byte_encoders::BytesEncoder>,
     /// The descriptor rows must arrive in, once the row encoder exists.
-    row_descriptor: Option<ImageSpec>,
+    row_descriptor: Option<PixelFormat>,
     /// Bytes taken through `consume_output`, for the output-size limit.
     sent: u64,
     /// `begin` succeeded: the image is declared.
@@ -805,7 +805,7 @@ struct RowAccumulator {
     width: u32,
     total_rows: u32,
     layout: PixelLayout,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
 }
 
 /// What a row encode decides before native startup.
@@ -844,7 +844,7 @@ fn working_icc(
     }
 }
 
-fn profile_of(spec: &ImageSpec) -> Option<&Arc<[u8]>> {
+fn profile_of(spec: &PixelFormat) -> Option<&Arc<[u8]>> {
     match &spec.color {
         ColorSpace::Icc { profile, .. } => Some(profile),
         _ => None,
@@ -872,7 +872,7 @@ fn identify_cicp(cicp: Cicp) -> Option<(Primaries, Transfer)> {
     ))
 }
 
-fn pixel_transfer(spec: &ImageSpec) -> Transfer {
+fn pixel_transfer(spec: &PixelFormat) -> Transfer {
     match &spec.color {
         ColorSpace::Rgb { transfer, .. } | ColorSpace::Gray { transfer, .. } => *transfer,
         ColorSpace::Icc { profile, .. } => zenpixels::icc::IccIdentification::from_icc(profile)
@@ -881,7 +881,7 @@ fn pixel_transfer(spec: &ImageSpec) -> Transfer {
     }
 }
 
-fn pixel_primaries(spec: &ImageSpec) -> Primaries {
+fn pixel_primaries(spec: &PixelFormat) -> Primaries {
     match spec.color {
         ColorSpace::Rgb { primaries, .. } => primaries,
         _ => Primaries::Unknown,
@@ -889,13 +889,13 @@ fn pixel_primaries(spec: &ImageSpec) -> Primaries {
 }
 
 impl LinearCms {
-    fn source_icc(descriptor: &ImageSpec, layout: PixelLayout) -> Option<&Arc<[u8]>> {
+    fn source_icc(descriptor: &PixelFormat, layout: PixelLayout) -> Option<&Arc<[u8]>> {
         let icc = profile_of(descriptor)?;
         (transfer_changes(layout, descriptor) && identify_icc(icc).is_none()).then_some(icc)
     }
 
     fn prepare(
-        descriptor: &ImageSpec,
+        descriptor: &PixelFormat,
         layout: PixelLayout,
         width: u32,
     ) -> Result<Option<Self>, Error> {
@@ -905,7 +905,7 @@ impl LinearCms {
     }
 
     fn new(
-        descriptor: &ImageSpec,
+        descriptor: &PixelFormat,
         icc: &Arc<[u8]>,
         layout: PixelLayout,
         width: u32,
@@ -933,7 +933,7 @@ impl LinearCms {
             SynthesizedIcc::for_cicp(cicp)
         };
         let target_icc = working_icc(synthesized)?;
-        let target = ImageSpec::new(
+        let target = PixelFormat::new(
             descriptor.layout,
             ColorSpace::Icc {
                 profile: target_icc,
@@ -1013,12 +1013,12 @@ fn stores_linear_as_srgb(layout: PixelLayout) -> bool {
 
 /// Whether the encoder's sRGB encoding changes what the input samples mean:
 /// linear input does, 16-bit sRGB input (decoded to linear first) does not.
-fn transfer_changes(layout: PixelLayout, descriptor: &ImageSpec) -> bool {
+fn transfer_changes(layout: PixelLayout, descriptor: &PixelFormat) -> bool {
     stores_linear_as_srgb(layout) && pixel_transfer(descriptor) != Transfer::Srgb
 }
 
 /// U8 bytes whose interpretation only a retained ICC gives (`pixel_layout`).
-fn is_profile_tagged(descriptor: &ImageSpec) -> bool {
+fn is_profile_tagged(descriptor: &PixelFormat) -> bool {
     descriptor_to_layout(descriptor).is_err() && srgb16_layout(descriptor).is_none()
 }
 
@@ -1171,7 +1171,7 @@ impl JpegEncoder {
     /// conversion. Qualify profile-tagged U8 input only in YCbCr mode and only
     /// when the matching ICC will actually be retained. XYB has a separate
     /// interpretation transform and is deliberately not admitted here.
-    fn pixel_layout(&self, desc: &ImageSpec) -> Result<PixelLayout, Error> {
+    fn pixel_layout(&self, desc: &PixelFormat) -> Result<PixelLayout, Error> {
         use zenpixels::{AlphaMode, ChannelOrder, Primaries, SampleType, SignalRange, Transfer};
         desc.validate().map_err(cms_error)?;
         if !desc.layout.packing.is_full()
@@ -1301,7 +1301,7 @@ impl JpegEncoder {
     /// profile cannot be carried across that transform.
     fn stored_color(
         &self,
-        descriptor: &ImageSpec,
+        descriptor: &PixelFormat,
         layout: PixelLayout,
     ) -> Result<StoredColor, Error> {
         let gray = layout.is_grayscale();
@@ -1355,7 +1355,7 @@ impl JpegEncoder {
     /// Without metadata, keep the stored samples' own interpretation.
     fn bind_color(
         &self,
-        descriptor: &ImageSpec,
+        descriptor: &PixelFormat,
         layout: PixelLayout,
     ) -> Result<ColorBinding, Error> {
         if is_profile_tagged(descriptor) && profile_of(descriptor).is_none() {
@@ -1542,9 +1542,9 @@ impl JpegEncoder {
                     .filter(|transfer| transfer.to_cicp() == Some(c.transfer_characteristics))
                     .unwrap_or(Transfer::Unknown);
                 if gray {
-                    ImageSpec::GRAY8_SRGB.with_transfer(transfer).color
+                    PixelFormat::GRAY8_SRGB.with_transfer(transfer).color
                 } else {
-                    ImageSpec::RGB8_SRGB
+                    PixelFormat::RGB8_SRGB
                         .with_primaries(primaries)
                         .with_transfer(transfer)
                         .color
@@ -1782,7 +1782,12 @@ impl JpegEncoder {
     /// Create the native row encoder for a `width` x `height` image in
     /// `descriptor`, with the configuration as given. The first rows' colour
     /// context is the declaration when `begin` was not called.
-    fn start_rows(&mut self, width: u32, height: u32, descriptor: ImageSpec) -> Result<(), Error> {
+    fn start_rows(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: PixelFormat,
+    ) -> Result<(), Error> {
         let layout = self.pixel_layout(&descriptor)?;
         self.check_row_filters(layout)?;
         self.check_limits(width, height, layout)?;
@@ -1913,7 +1918,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
 
     fn encode(self, pixels: PixelView<'_>) -> Result<EncodeOutput, Self::Error> {
         self.check_one_shot()?;
-        let descriptor = pixels.spec().clone();
+        let descriptor = pixels.format().clone();
         let layout = self.pixel_layout(&descriptor)?;
         self.check_limits(pixels.width(), pixels.rows(), layout)?;
         let binding = self.bind_color(&descriptor, layout)?;
@@ -1963,7 +1968,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let layout = PixelLayout::Rgba8Srgb;
         self.check_limits(width, height, layout)?;
-        let binding = self.bind_color(&ImageSpec::RGBA8_SRGB, layout)?;
+        let binding = self.bind_color(&PixelFormat::RGBA8_SRGB, layout)?;
         let req = self.build_request(layout, &binding)?;
         let stop = self.stop_ref();
         let stride_bytes = stride_pixels as usize * 4;
@@ -1985,12 +1990,12 @@ impl zencodec::encode::Encoder for JpegEncoder {
     ///
     /// The header's colour carrier is decided here, before any row: rows
     /// pushed later must not carry a colour context that means something
-    /// else. Use [`begin_declared`](Self::begin_declared) to declare that context.
+    /// else. Use [`begin_declared`](zencodec::encode::Encoder::begin_declared) to declare that context.
     fn begin(
         &mut self,
         width: u32,
         height: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
     ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
         self.start_declared(&zencodec::encode::EncodeDeclaration::new(
             width, height, descriptor,
@@ -2000,7 +2005,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
     /// Declare the image and the current colour context of the rows that
     /// will follow, then start the row encoder.
     ///
-    /// The same as [`begin_output`](Self::begin_output), with the rows'
+    /// The same as [`begin_output`](zencodec::encode::Encoder::begin_output), with the rows'
     /// colour declared before the header is written. The header carries that
     /// colour: the context's ICC profile verbatim, or a profile synthesized
     /// for its code points or for the primaries the descriptor asserts. Rows
@@ -2017,12 +2022,12 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     /// JPEG never patches earlier bytes: forward and seek-back destinations
-    /// get the same layout and the same timing as [`begin`](Self::begin).
+    /// get the same layout and the same timing as [`begin`](zencodec::encode::Encoder::begin).
     fn begin_output(
         &mut self,
         width: u32,
         height: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
         access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
         self.start_declared(
@@ -2054,7 +2059,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 
     fn push_rows(&mut self, rows: PixelView<'_>) -> Result<(), Self::Error> {
-        let desc = rows.spec().clone();
+        let desc = rows.format().clone();
         let layout = self.pixel_layout(&desc)?;
 
         // Dimensions known (`begin` or `with_canvas_size`): push straight
@@ -2227,7 +2232,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
         // The source fills the buffer; we discover the actual format from
         // what it produces. For now, use the descriptor from the config's
         // supported list — JPEG always wants RGB8 or RGBA8.
-        let desc = ImageSpec::RGB8_SRGB;
+        let desc = PixelFormat::RGB8_SRGB;
         let layout = self.pixel_layout(&desc)?;
         self.check_row_filters(layout)?;
         self.check_limits(img_w, img_h, layout)?;
@@ -2285,8 +2290,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
     }
 }
 
-/// Map a ImageSpec to a zenjpeg PixelLayout.
-fn descriptor_to_layout(desc: &ImageSpec) -> Result<PixelLayout, Error> {
+/// Map a PixelFormat to a zenjpeg PixelLayout.
+fn descriptor_to_layout(desc: &PixelFormat) -> Result<PixelLayout, Error> {
     use zenpixels::{ChannelOrder, SampleType, Transfer};
 
     match (desc.layout.sample, desc.layout.order, pixel_transfer(desc)) {
@@ -2335,7 +2340,7 @@ fn descriptor_to_layout(desc: &ImageSpec) -> Result<PixelLayout, Error> {
 /// layout holds it as stored, so its rows are decoded to linear f32 on the
 /// way in ([`decode_srgb16`]); the encoder's sRGB encoding then restores
 /// them at f32 precision.
-fn srgb16_layout(desc: &ImageSpec) -> Option<PixelLayout> {
+fn srgb16_layout(desc: &PixelFormat) -> Option<PixelLayout> {
     use zenpixels::{ChannelOrder, SampleType, Transfer};
     if desc.layout.sample != SampleType::U16 || pixel_transfer(desc) != Transfer::Srgb {
         return None;
@@ -2352,7 +2357,7 @@ fn srgb16_layout(desc: &ImageSpec) -> Option<PixelLayout> {
 /// [`srgb16_layout`], packed, into `out`. Alpha is scaled, not decoded.
 fn decode_srgb16(rows: &PixelView<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
     use linear_srgb::default::{srgb_u16_to_linear_rgba_slice, srgb_u16_to_linear_slice};
-    let desc = rows.spec().clone();
+    let desc = rows.format().clone();
     let samples = rows.width() as usize * desc.layout.order.channels();
     let rgba = desc.layout.order == zenpixels::ChannelOrder::Rgba;
     let len = samples
@@ -2419,9 +2424,9 @@ mod tests {
             width: 1,
             total_rows: u32::MAX,
             layout: PixelLayout::Rgb8Srgb,
-            descriptor: ImageSpec::RGB8_SRGB,
+            descriptor: PixelFormat::RGB8_SRGB,
         });
-        let pixels = PixelView::new(&[1, 2, 3], 1, 1, 3, &zenpixels::specs::RGB8_SRGB).unwrap();
+        let pixels = PixelView::new(&[1, 2, 3], 1, 1, 3, &zenpixels::formats::RGB8_SRGB).unwrap();
         let error = encoder.push_rows(pixels).unwrap_err();
         assert!(error.to_string().contains("push_rows height"));
         assert_eq!(encoder.accumulator.as_ref().unwrap().total_rows, u32::MAX);
@@ -2453,7 +2458,7 @@ mod tests {
         assert!(!same_meaning(gray_linear, (None, None), true));
         let safe = profiles::profile("scRGB-v2.icc");
         assert!(identify_icc(&safe).is_some());
-        let spec = ImageSpec::new(
+        let spec = PixelFormat::new(
             zenpixels::SampleLayout::RGBF32,
             ColorSpace::Icc {
                 profile: Arc::from(safe),
@@ -2472,7 +2477,7 @@ mod tests {
     #[test]
     fn profile_tagged_admission_checks_rgb_channel_model() {
         use zenpixels_convert::icc_profiles::ADOBE_RGB;
-        let desc = ImageSpec::RGB8_SRGB
+        let desc = PixelFormat::RGB8_SRGB
             .with_primaries(Primaries::AdobeRgb)
             .with_transfer(Transfer::AdobeRgb);
         let good = JpegEncoderConfig::new()

@@ -11,7 +11,7 @@
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::{Metadata, MetadataPolicy};
 use zenjpeg::JpegEncoderConfig;
-use zenpixels::{ImageSpec, Orientation as ZpOrientation, PixelView};
+use zenpixels::{Orientation as ZpOrientation, PixelView};
 
 /// 4×4 RGB8 checkerboard, tightly packed.
 fn rgb_4x4() -> Vec<u8> {
@@ -30,7 +30,7 @@ fn rgb_4x4() -> Vec<u8> {
 fn encode_with_meta(meta: Metadata) -> Vec<u8> {
     let pixels = rgb_4x4();
     let slice =
-        PixelView::new(&pixels, 4, 4, 4 * 3, &zenpixels::specs::RGB8_SRGB).expect("pixel slice");
+        PixelView::new(&pixels, 4, 4, 4 * 3, &zenpixels::formats::RGB8_SRGB).expect("pixel slice");
     let enc = JpegEncoderConfig::new()
         .job()
         .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
@@ -117,7 +117,7 @@ fn emit_rgb_cicp_preserves_the_exact_transfer_code() {
 fn emit_gray_cicp_only_synthesizes_nothing() {
     let pixels: Vec<u8> = (0..16u8).map(|i| i * 16).collect();
     let slice =
-        PixelView::new(&pixels, 4, 4, 4, &zenpixels::specs::GRAY8_SRGB).expect("pixel slice");
+        PixelView::new(&pixels, 4, 4, 4, &zenpixels::formats::GRAY8_SRGB).expect("pixel slice");
     let meta = Metadata::none().with_cicp(zencodec::Cicp::DISPLAY_P3);
     let enc = JpegEncoderConfig::new()
         .job()
@@ -194,7 +194,7 @@ fn emit_cicp_pq_synthesizes_icc() {
 fn emit_cicp_offgrid_unsynthesizable_is_an_encode_error() {
     let pixels = rgb_4x4();
     let slice =
-        PixelView::new(&pixels, 4, 4, 4 * 3, &zenpixels::specs::RGB8_SRGB).expect("pixel slice");
+        PixelView::new(&pixels, 4, 4, 4 * 3, &zenpixels::formats::RGB8_SRGB).expect("pixel slice");
     // Primaries 3 / transfer 3 are "reserved" in H.273 — never assigned, so
     // no profile exists in the bundled consts or the icc-db blob.
     let meta = Metadata::none().with_cicp(zencodec::Cicp::new(3, 3, 0, true));

@@ -1,11 +1,11 @@
-//! Regression tests for orientation reporting and ImageSpec accuracy
+//! Regression tests for orientation reporting and PixelFormat accuracy
 //! across all zencodec decode paths.
 //!
 //! Creates 4x2 test JPEGs with every EXIF orientation (1-8) and verifies:
 //! - Dimensions are correct (swapped for orientations 5-8 when auto-orienting)
 //! - `ImageInfo.orientation` is Identity when auto-orient was applied
 //! - `ImageInfo.orientation` is the source EXIF value when preserved
-//! - `ImageSpec` reflects source color metadata (not hardcoded sRGB)
+//! - `PixelFormat` reflects source color metadata (not hardcoded sRGB)
 //! - `OutputInfo.orientation_applied` matches what was actually applied
 
 #![cfg(feature = "zencodec")]
@@ -16,7 +16,7 @@ use zenjpeg::JpegDecoderConfig;
 use zenjpeg::encode::encoder_config::EncoderConfig;
 use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 use zenjpeg::encode::exif::{Exif, Orientation};
-use zenpixels::ImageSpec;
+use zenpixels::PixelFormat;
 
 use zencodec::OrientationHint;
 use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
@@ -179,7 +179,7 @@ fn output_info_preserve_no_orientation_applied() {
     }
 }
 
-// ── ImageSpec: no ICC → sRGB ─────────────────────────────────────
+// ── PixelFormat: no ICC → sRGB ─────────────────────────────────────
 
 #[test]
 fn descriptor_srgb_for_plain_jpeg() {
@@ -187,7 +187,7 @@ fn descriptor_srgb_for_plain_jpeg() {
     let config = JpegDecoderConfig::new();
     let output = config.decode(&jpeg).expect("decode failed");
 
-    assert_eq!(output.pixels().spec(), &ImageSpec::RGB8_SRGB);
+    assert_eq!(output.pixels().format(), &PixelFormat::RGB8_SRGB);
 }
 
 #[test]
@@ -198,14 +198,14 @@ fn descriptor_srgb_across_subsampling_modes() {
         let output = config.decode(&jpeg).expect("decode failed");
 
         assert_eq!(
-            output.pixels().spec(),
-            &ImageSpec::RGB8_SRGB,
+            output.pixels().format(),
+            &PixelFormat::RGB8_SRGB,
             "sampling {ss:?}"
         );
     }
 }
 
-// ── ImageSpec: with ICC profile ──────────────────────────────────
+// ── PixelFormat: with ICC profile ──────────────────────────────────
 
 #[test]
 fn descriptor_keeps_display_p3_icc() {
@@ -223,7 +223,7 @@ fn descriptor_keeps_display_p3_icc() {
     let output = decoder_config.decode(&jpeg).expect("decode failed");
 
     assert!(matches!(
-        &output.pixels().spec().color,
+        &output.pixels().format().color,
         zenpixels::ColorSpace::Icc { profile, channels: 3, .. }
             if profile.as_ref() == fake_icc
     ));
@@ -366,7 +366,7 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<(), zencodec::decode::SinkError> {
         let bpp = descriptor.layout.bytes_per_pixel();
         self.stride = width as usize * bpp;
@@ -379,16 +379,16 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         y: u32,
         height: u32,
         width: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let start = y as usize * self.stride;
         let end = start + height as usize * self.stride;
-        zenpixels::PixelViewMut::new_with_spec_cow(
+        zenpixels::PixelViewMut::new_with_format_cow(
             &mut self.data[start..end],
             width,
             height,
             self.stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .map_err(|e| -> zencodec::decode::SinkError { e.to_string().into() })
     }

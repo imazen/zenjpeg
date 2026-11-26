@@ -2028,7 +2028,7 @@ contract; no tolerance or expected output was changed in this optimization.
 
 ## zenpixels 0.5 integration qualification
 
-The JPEG and zencodec interchange uses `ImageSpec`, `PixelView`, and
+The JPEG and zencodec interchange uses `PixelFormat`, `PixelView`, and
 `PixelBuf`. Preserve Adobe CMYK polarity on both the sample order and color
 space. Store the source XYB profile as provenance, while the inverted RGB
 samples carry their current sRGB interpretation. JPEG gain bytes are numeric.

@@ -1,7 +1,7 @@
 //! Shared helpers converting zenjpeg header info to zencodec types.
 
 use zencodec::{ImageFormat, ImageInfo};
-use zenpixels::ImageSpec;
+use zenpixels::PixelFormat;
 
 use super::decode::{select_decode_descriptor, will_auto_orient};
 
@@ -92,20 +92,20 @@ pub(super) fn source_color_from_header(
 
 /// Whether reads for `descriptor` need the strip's planes (gray and f32
 /// reads of YCbCr frames), which the wave-only scanline reader does not keep.
-pub(super) fn needs_plane_reads(descriptor: &ImageSpec) -> bool {
+pub(super) fn needs_plane_reads(descriptor: &PixelFormat) -> bool {
     use zenpixels::{ChannelOrder, SampleType};
     descriptor.layout.sample == SampleType::F32 || descriptor.layout.order == ChannelOrder::Gray
 }
 
-/// Derive the correct [`ImageSpec`] for decoded JPEG pixels.
+/// Derive the correct [`PixelFormat`] for decoded JPEG pixels.
 ///
 /// Uses the shared zencodec utility to map source color metadata to a
 /// descriptor that accurately reflects the pixel data's color space.
 pub(super) fn decode_descriptor(
-    preferred: &[ImageSpec],
+    preferred: &[PixelFormat],
     header: &crate::decode::JpegInfo,
     correct_color: Option<&crate::color::icc::TargetColorSpace>,
-) -> Result<ImageSpec, crate::error::Error> {
+) -> Result<PixelFormat, crate::error::Error> {
     let base = select_decode_descriptor(preferred, header.num_components, header.precision);
     let sc = source_color_from_header(header);
     // XYB inversion produces sRGB. Native float reconstruction returns linear values.
@@ -113,11 +113,11 @@ pub(super) fn decode_descriptor(
 }
 
 pub(super) fn decoded_pixel_spec(
-    base: ImageSpec,
+    base: PixelFormat,
     source: &zencodec::decode::SourceColor,
     xyb: bool,
     corrected: Option<&crate::color::icc::TargetColorSpace>,
-) -> Result<ImageSpec, crate::error::Error> {
+) -> Result<PixelFormat, crate::error::Error> {
     use crate::color::icc::TargetColorSpace;
     use zenpixels::{Primaries, SampleType, Transfer};
 

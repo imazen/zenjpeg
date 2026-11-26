@@ -993,7 +993,7 @@ pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
 /// pixel values.
 pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
     use zenpixels_convert::{
-        AlphaPolicy, ChannelOrder, ColorSpace, ConvertPolicy, ImageSpec, convert_to_buf,
+        AlphaPolicy, ChannelOrder, ColorSpace, ConvertPolicy, PixelFormat, convert_to_buf,
     };
 
     let output = zenpng::decode(
@@ -1002,9 +1002,9 @@ pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
         &enough::Unstoppable,
     )
     .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    let src_spec = output.pixels.spec();
-    let alpha = src_spec.color.alpha();
-    let raw_color = match src_spec.layout.order {
+    let src_format = output.pixels.format();
+    let alpha = src_format.color.alpha();
+    let raw_color = match src_format.layout.order {
         ChannelOrder::Gray | ChannelOrder::GrayAlpha => ColorSpace::GRAY_SRGB.with_alpha(alpha),
         _ => ColorSpace::SRGB.with_alpha(alpha),
     };
@@ -1014,7 +1014,7 @@ pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
         .map_err(|e| PngLoadError::Decode(e.to_string()))?;
     let rgb8 = convert_to_buf(
         &pixels.as_view(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         &ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardUnchecked),
     )
     .map_err(|e| PngLoadError::Decode(e.to_string()))?;

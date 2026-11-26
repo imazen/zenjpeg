@@ -11,7 +11,7 @@
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjpeg::JpegDecoderConfig;
 use zenjpeg::ultrahdr::encode_ultrahdr_luma;
-use zenpixels::{ImageSpec, PixelBuf, SampleType, Transfer};
+use zenpixels::{PixelBuf, PixelFormat, SampleType, Transfer};
 
 /// 32×32 linear HDR RGBA f32 fixture: left half SDR gray (0.25), right half
 /// 4× SDR white — enough headroom for the gain map to be meaningfully nonzero.
@@ -26,7 +26,7 @@ fn hdr_fixture() -> PixelBuf {
             px.extend_from_slice(&[v, v, v, 1.0]);
         }
     }
-    PixelBuf::from_samples(px, w, h, ImageSpec::RGBAF32_LINEAR).expect("fixture buffer")
+    PixelBuf::from_samples(px, w, h, PixelFormat::RGBAF32_LINEAR).expect("fixture buffer")
 }
 
 fn ultrahdr_jpeg() -> Vec<u8> {
@@ -50,7 +50,7 @@ fn base_only_default_decodes_sdr() {
         "BaseOnly must not surface a DecodedGainMap"
     );
     assert_eq!(
-        out.pixels().spec().layout.sample,
+        out.pixels().format().layout.sample,
         SampleType::U8,
         "BaseOnly output is the SDR base image"
     );
@@ -68,7 +68,7 @@ fn plain_jpeg_reports_no_gain_map_supplement() {
         .take(64)
         .flatten()
         .collect();
-    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::specs::RGB8_SRGB)
+    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::formats::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()
         .job()
@@ -105,8 +105,8 @@ fn reconstruct_hdr_produces_linear_hdr_with_envelope() {
         .decode()
         .unwrap();
 
-    assert_eq!(out.pixels().spec().layout.sample, SampleType::F32);
-    assert!(matches!(out.pixels().spec().color,
+    assert_eq!(out.pixels().format().layout.sample, SampleType::F32);
+    assert!(matches!(out.pixels().format().color,
         zenpixels::ColorSpace::Rgb { transfer: Transfer::Linear, white: Some(white), .. } if white == zenpixels::DiffuseWhite::BT2408));
     assert!(out.info().source_color.mastering_display.is_some());
 }
@@ -124,7 +124,7 @@ fn components_surfaces_decoded_gain_map() {
         .decode()
         .unwrap();
     assert_eq!(
-        out.pixels().spec().layout.sample,
+        out.pixels().format().layout.sample,
         SampleType::U8,
         "Components keeps the SDR base as the primary buffer"
     );
@@ -147,7 +147,7 @@ fn reconstruct_on_plain_jpeg_decodes_base() {
         .take(64)
         .flatten()
         .collect();
-    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::specs::RGB8_SRGB)
+    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::formats::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()
         .job()
@@ -166,7 +166,7 @@ fn reconstruct_on_plain_jpeg_decodes_base() {
         .decode()
         .unwrap();
     assert_eq!(out.pixels().width(), 8);
-    assert_eq!(out.pixels().spec().layout.sample, SampleType::U8);
+    assert_eq!(out.pixels().format().layout.sample, SampleType::U8);
 }
 
 // ── Orientation pairing (#151) ──────────────────────────────────────────────
@@ -188,7 +188,7 @@ fn hdr_quadrant_fixture() -> PixelBuf {
             px.extend_from_slice(&[v, v, v, 1.0]);
         }
     }
-    PixelBuf::from_samples(px, w, h, ImageSpec::RGBAF32_LINEAR).expect("fixture buffer")
+    PixelBuf::from_samples(px, w, h, PixelFormat::RGBAF32_LINEAR).expect("fixture buffer")
 }
 
 /// Insert a minimal EXIF APP1 (TIFF carrying only the orientation tag)
@@ -440,7 +440,7 @@ fn display_p3_content_light_reports_measured_native_maxrgb() {
     let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     // The nominal headroom is 8×. The actual gain of each color is 4×.
     let jpeg = ultrahdr_iso::fixture(&patches, Some(profile), 128, 3, [[16, 16, 8, 0, 0]; 3]);
-    let render = |specs: &[ImageSpec], target_headroom| {
+    let render = |specs: &[PixelFormat], target_headroom| {
         JpegDecoderConfig::new()
             .job()
             .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr { target_headroom })
@@ -451,7 +451,7 @@ fn display_p3_content_light_reports_measured_native_maxrgb() {
     };
     let out = render(&[], None);
     let pixels = out.pixels();
-    assert!(matches!(pixels.spec().color,
+    assert!(matches!(pixels.format().color,
         zenpixels::ColorSpace::Rgb { primaries: Primaries::DisplayP3,
             transfer: Transfer::Linear, white: Some(white), .. } if white == DiffuseWhite::BT2408));
     let decode_code = |code| ((f64::from(code) / 255.0 + 0.055) / 1.055).powf(2.4) * 4.0;
@@ -486,8 +486,8 @@ fn display_p3_content_light_reports_measured_native_maxrgb() {
         [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]]
     );
     assert_eq!(mastering.white_point_xy, [0.3127, 0.3290]);
-    let fp16 = render(&[ImageSpec::RGBAF16_LINEAR], None);
-    assert_eq!(fp16.pixels().spec().layout.sample, SampleType::F16);
+    let fp16 = render(&[PixelFormat::RGBAF16_LINEAR], None);
+    assert_eq!(fp16.pixels().format().layout.sample, SampleType::F16);
     assert_eq!(fp16.info().source_color.content_light_level, Some(native));
     let at_base = render(&[], Some(1.0));
     assert_eq!(

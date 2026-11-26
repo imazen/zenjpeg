@@ -15,7 +15,8 @@ fn color_configuration_gray_input_is_valid_and_matches_explicit_gray_samples() {
             .collect();
         for progressive in [false, true] {
             let pixels = || {
-                PixelView::new(&raw, width, height, stride, &zenpixels::specs::GRAY8_SRGB).unwrap()
+                PixelView::new(&raw, width, height, stride, &zenpixels::formats::GRAY8_SRGB)
+                    .unwrap()
             };
             let automatic = JpegEncoderConfig::new()
                 .with_calibrated_quality(87.0)

@@ -622,7 +622,7 @@ fn encoder_output_passes_check_inventory() {
         .with_xmp(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>".to_vec());
     for progressive in [false, true] {
         let slice =
-            PixelView::new(&px, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB).unwrap();
+            PixelView::new(&px, w, h, (w * 3) as usize, &zenpixels::formats::RGB8_SRGB).unwrap();
         let bytes = crate::JpegEncoderConfig::new()
             .with_progressive(progressive)
             .job()

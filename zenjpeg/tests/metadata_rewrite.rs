@@ -254,8 +254,9 @@ mod gain_map_scrub {
         for channel in &mut params.channels {
             channel.max = 2.0;
         }
-        let sdr = zenpixels::PixelBuf::from_bytes(pixels, 16, 16, zenpixels::ImageSpec::RGB8_SRGB)
-            .unwrap();
+        let sdr =
+            zenpixels::PixelBuf::from_bytes(pixels, 16, 16, zenpixels::PixelFormat::RGB8_SRGB)
+                .unwrap();
         zenjpeg::ultrahdr::encode_with_gainmap_format(
             &sdr,
             &gain,

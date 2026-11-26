@@ -10,7 +10,7 @@ use zencodec::{CategorizedError, ErrorCategory, Metadata, MetadataPolicy, Resour
 use zencodec_testkit as tk;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::{JpegDecoderConfig as D, JpegEncoderConfig as E};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 
 /// Fixed general-purpose tables, sequential scan: the streaming configuration.
 fn fixed(sub: ChromaSubsampling) -> E {
@@ -33,19 +33,19 @@ fn pixels(w: u32, h: u32, ch: usize) -> Vec<u8> {
     v
 }
 
-fn desc(ch: usize) -> ImageSpec {
+fn desc(ch: usize) -> PixelFormat {
     match ch {
-        1 => ImageSpec::GRAY8_SRGB,
-        3 => ImageSpec::RGB8_SRGB,
-        _ => ImageSpec::RGBA8_SRGB,
+        1 => PixelFormat::GRAY8_SRGB,
+        3 => PixelFormat::RGB8_SRGB,
+        _ => PixelFormat::RGBA8_SRGB,
     }
 }
 
-fn desc_ref(ch: usize) -> &'static ImageSpec {
+fn desc_ref(ch: usize) -> &'static PixelFormat {
     match ch {
-        1 => &zenpixels::specs::GRAY8_SRGB,
-        3 => &zenpixels::specs::RGB8_SRGB,
-        _ => &zenpixels::specs::RGBA8_SRGB,
+        1 => &zenpixels::formats::GRAY8_SRGB,
+        3 => &zenpixels::formats::RGB8_SRGB,
+        _ => &zenpixels::formats::RGBA8_SRGB,
     }
 }
 
@@ -424,7 +424,7 @@ fn a_failed_begin_leaves_the_encoder_as_it_was() {
     let cfg = fixed(ChromaSubsampling::Quarter);
     let mut enc = cfg.clone().job().encoder().unwrap();
     // Gray+alpha is not an encode layout: refused, nothing declared.
-    assert!(enc.begin(w, h, ImageSpec::GRAYA8_SRGB).is_err());
+    assert!(enc.begin(w, h, PixelFormat::GRAYA8_SRGB).is_err());
     assert!(enc.pending_output().is_empty());
     // The same encoder then declares and streams normally.
     assert!(enc.begin(w, h, desc(3)).unwrap().streams());

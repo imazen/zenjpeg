@@ -1412,7 +1412,7 @@ impl DecodeResult {
         self.pixels_f32
     }
 
-    /// Returns the decoded pixel data as a [`DecodedPixels`] enum.
+    /// Returns the decoded pixel data as a `DecodedPixels` enum.
     ///
     /// This is the preferred way to access pixels when you don't know the
     /// output target at compile time. The variant tells you whether the data
@@ -1435,7 +1435,7 @@ impl DecodeResult {
         }
     }
 
-    /// Takes ownership of the decoded pixel data as an [`OwnedDecodedPixels`] enum.
+    /// Takes ownership of the decoded pixel data as an `OwnedDecodedPixels` enum.
     ///
     /// # Panics
     ///
@@ -1629,17 +1629,17 @@ fn permute_via_zenpixels_convert<T: Copy + bytemuck::Pod>(
     ch: usize,
     transform: LosslessTransform,
 ) -> Option<Vec<T>> {
-    use zenpixels::{ImageSpec, PixelView, PixelViewMut};
+    use zenpixels::{PixelFormat, PixelView, PixelViewMut};
     if w == 0 || h == 0 || src.len() != w * h * ch {
         return None;
     }
     let bpp = ch * core::mem::size_of::<T>();
     let descriptor = match bpp {
-        1 => ImageSpec::GRAY8_SRGB,
-        3 => ImageSpec::RGB8_SRGB,
-        4 => ImageSpec::RGBA8_SRGB,
-        12 => ImageSpec::RGBF32_LINEAR,
-        16 => ImageSpec::RGBAF32_LINEAR,
+        1 => PixelFormat::GRAY8_SRGB,
+        3 => PixelFormat::RGB8_SRGB,
+        4 => PixelFormat::RGBA8_SRGB,
+        12 => PixelFormat::RGBF32_LINEAR,
+        16 => PixelFormat::RGBAF32_LINEAR,
         _ => return None,
     };
     let (ow, oh) = if transform.swaps_dimensions() {

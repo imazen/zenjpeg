@@ -9,7 +9,7 @@ use zencodec::sample::ExactDepth;
 use zencodec::{
     CodecError, ImageFormat, ImageInfo, ResourceLimits, Unsupported, UnsupportedOperation,
 };
-use zenpixels::{ChannelOrder, ImageSpec, PixelBuf, SampleType, SignalRange};
+use zenpixels::{ChannelOrder, PixelBuf, PixelFormat as ZenPixelFormat, SampleType, SignalRange};
 
 use crate::error::{Error, ErrorKind};
 use crate::types::PixelFormat;
@@ -106,7 +106,7 @@ impl JpegDecoderConfig {
 
     /// Create a decode job by consuming this config.
     ///
-    /// This is equivalent to [`DecoderConfig::job(self)`] but available
+    /// This is equivalent to [`DecoderConfig::job`](zencodec::decode::DecoderConfig::job) but available
     /// without importing the trait.
     #[must_use]
     pub fn job_static(self) -> JpegDecodeJob {
@@ -194,19 +194,19 @@ impl Default for JpegDecoderConfig {
 }
 
 /// Supported decode pixel formats (native, zero-conversion output).
-static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::BGRA8_SRGB,
-    ImageSpec::RGBX8_SRGB,
-    ImageSpec::BGRX8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    ImageSpec::RGBF32_LINEAR,
-    ImageSpec::RGBAF32_LINEAR,
-    ImageSpec::GRAYF32_LINEAR,
+static DECODE_DESCRIPTORS: &[ZenPixelFormat] = &[
+    ZenPixelFormat::RGB8_SRGB,
+    ZenPixelFormat::RGBA8_SRGB,
+    ZenPixelFormat::GRAY8_SRGB,
+    ZenPixelFormat::BGRA8_SRGB,
+    ZenPixelFormat::RGBX8_SRGB,
+    ZenPixelFormat::BGRX8_SRGB,
+    ZenPixelFormat::RGB16_SRGB,
+    ZenPixelFormat::RGBA16_SRGB,
+    ZenPixelFormat::GRAY16_SRGB,
+    ZenPixelFormat::RGBF32_LINEAR,
+    ZenPixelFormat::RGBAF32_LINEAR,
+    ZenPixelFormat::GRAYF32_LINEAR,
 ];
 
 impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
@@ -217,7 +217,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         &[ImageFormat::Jpeg]
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [ZenPixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -281,7 +281,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
 
 /// Per-operation JPEG decode job.
 ///
-/// Created by [`JpegDecoderConfig::job()`]. Consumed by creating a
+/// Created by [`DecoderConfig::job`](zencodec::decode::DecoderConfig::job). Consumed by creating a
 /// [`JpegDecoder`] or [`JpegStreamingDecoder`].
 pub struct JpegDecodeJob {
     config: JpegDecoderConfig,
@@ -492,7 +492,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        preferred: &[ImageSpec],
+        preferred: &[ZenPixelFormat],
     ) -> Result<Self::Dec, Self::Error> {
         self.check_input_size(&data)?;
         Ok(JpegDecoder {
@@ -512,7 +512,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         mut self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-        preferred: &[ImageSpec],
+        preferred: &[ZenPixelFormat],
     ) -> Result<OutputInfo, Self::Error> {
         {
             // Pre-cache the header so push_decoder_native can reuse it
@@ -529,7 +529,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     fn streaming_decoder(
         self,
         data: Cow<'a, [u8]>,
-        preferred: &[ImageSpec],
+        preferred: &[ZenPixelFormat],
     ) -> Result<Self::StreamDec, Self::Error> {
         {
             self.check_input_size(&data)?;
@@ -594,7 +594,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[ZenPixelFormat],
     ) -> Result<Self::AnimationFrameDec, Self::Error> {
         Err(ErrorKind::UnsupportedOperation(UnsupportedOperation::AnimationDecode).into())
     }
@@ -604,7 +604,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     /// file is offered (a native baseline decoder that streams MCU rows is planned; progressive, arithmetic, CMYK and transformed outputs need the whole file in any case).
     fn dyn_incremental_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[ZenPixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -617,7 +617,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     #[cfg(feature = "controlled-decode")]
     fn dyn_controlled_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[ZenPixelFormat],
         storage: zencodec::storage::StorageBudget,
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynControlledDecoder>,
@@ -703,7 +703,7 @@ fn push_decoder_native<'a>(
     mut job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
-    preferred: &[ImageSpec],
+    preferred: &[ZenPixelFormat],
 ) -> Result<OutputInfo, At<CodecError>> {
     use imgref::ImgRefMut;
     use zenpixels::{ChannelOrder, SampleType};
@@ -803,7 +803,7 @@ fn push_decoder_native<'a>(
     // read_rows_rgba_f32 always outputs 4 channels, so if caller requested
     // RGBF32 we must upgrade to RGBAF32 to match the actual output layout.
     if ch_type == SampleType::F32 && ch_layout == ChannelOrder::Rgb {
-        descriptor = ImageSpec::new(
+        descriptor = ZenPixelFormat::new(
             zenpixels::SampleLayout::RGBAF32,
             descriptor.color.with_alpha(zenpixels::AlphaMode::Straight),
         );
@@ -948,7 +948,10 @@ fn push_decoder_native<'a>(
 
 /// Returns `Some(PixelFormat)` if the descriptor + component count are eligible
 /// for the direct decode-into-sink fast path; `None` otherwise.
-fn direct_path_pixel_format(descriptor: &ImageSpec, num_components: u8) -> Option<PixelFormat> {
+fn direct_path_pixel_format(
+    descriptor: &ZenPixelFormat,
+    num_components: u8,
+) -> Option<PixelFormat> {
     use zenpixels::{ChannelOrder, SampleType};
     let ch = descriptor.layout.sample;
     let layout = descriptor.layout.order;
@@ -973,7 +976,7 @@ fn push_decoder_direct<'a>(
     job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
-    descriptor: ImageSpec,
+    descriptor: ZenPixelFormat,
     format: PixelFormat,
     header: &crate::decode::JpegInfo,
 ) -> Result<OutputInfo, At<CodecError>> {
@@ -1140,7 +1143,7 @@ fn push_decoder_via_full_decode<'a>(
     let output = decoder.decode()?;
     let info = output.info().clone();
     let pixels = output.pixels();
-    let descriptor = pixels.spec().clone();
+    let descriptor = pixels.format().clone();
     let w = pixels.width();
     let h = pixels.rows();
 
@@ -1273,20 +1276,20 @@ fn build_decode_config(
 }
 
 /// A decode exit for a preference, if this frame shape has one.
-fn supported_exit(desc: &ImageSpec, is_gray: bool) -> Option<ImageSpec> {
+fn supported_exit(desc: &ZenPixelFormat, is_gray: bool) -> Option<ZenPixelFormat> {
     Some(match (is_gray, desc.layout.sample, desc.layout.order) {
-        (true, SampleType::U8, ChannelOrder::Gray) => ImageSpec::GRAY8_SRGB,
-        (true, SampleType::U16, ChannelOrder::Gray) => ImageSpec::GRAY16_SRGB,
-        (true, SampleType::F32, ChannelOrder::Gray) => ImageSpec::GRAYF32_LINEAR,
-        (false, SampleType::U8, ChannelOrder::Rgb) => ImageSpec::RGB8_SRGB,
-        (false, SampleType::U8, ChannelOrder::Rgbx) => ImageSpec::RGBX8_SRGB,
-        (false, SampleType::U8, ChannelOrder::Rgba) => ImageSpec::RGBA8_SRGB,
-        (false, SampleType::U8, ChannelOrder::Bgrx) => ImageSpec::BGRX8_SRGB,
-        (false, SampleType::U8, ChannelOrder::Bgra) => ImageSpec::BGRA8_SRGB,
-        (false, SampleType::U16, ChannelOrder::Rgb) => ImageSpec::RGB16_SRGB,
-        (false, SampleType::U16, ChannelOrder::Rgba) => ImageSpec::RGBA16_SRGB,
-        (false, SampleType::F32, ChannelOrder::Rgb) => ImageSpec::RGBF32_LINEAR,
-        (false, SampleType::F32, ChannelOrder::Rgba) => ImageSpec::RGBAF32_LINEAR,
+        (true, SampleType::U8, ChannelOrder::Gray) => ZenPixelFormat::GRAY8_SRGB,
+        (true, SampleType::U16, ChannelOrder::Gray) => ZenPixelFormat::GRAY16_SRGB,
+        (true, SampleType::F32, ChannelOrder::Gray) => ZenPixelFormat::GRAYF32_LINEAR,
+        (false, SampleType::U8, ChannelOrder::Rgb) => ZenPixelFormat::RGB8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Rgbx) => ZenPixelFormat::RGBX8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Rgba) => ZenPixelFormat::RGBA8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Bgrx) => ZenPixelFormat::BGRX8_SRGB,
+        (false, SampleType::U8, ChannelOrder::Bgra) => ZenPixelFormat::BGRA8_SRGB,
+        (false, SampleType::U16, ChannelOrder::Rgb) => ZenPixelFormat::RGB16_SRGB,
+        (false, SampleType::U16, ChannelOrder::Rgba) => ZenPixelFormat::RGBA16_SRGB,
+        (false, SampleType::F32, ChannelOrder::Rgb) => ZenPixelFormat::RGBF32_LINEAR,
+        (false, SampleType::F32, ChannelOrder::Rgba) => ZenPixelFormat::RGBAF32_LINEAR,
         _ => return None,
     })
 }
@@ -1298,10 +1301,10 @@ fn supported_exit(desc: &ImageSpec, is_gray: bool) -> Option<ImageSpec> {
 /// doesn't narrow; a list offering only U8 asked for U8. Without a supported
 /// preference the frame's own depth decides, so it leaves as canonical U16.
 pub(super) fn select_decode_descriptor(
-    preferred: &[ImageSpec],
+    preferred: &[ZenPixelFormat],
     num_components: u8,
     precision: u8,
-) -> ImageSpec {
+) -> ZenPixelFormat {
     let is_gray = num_components == 1;
     let mut exits = preferred
         .iter()
@@ -1316,10 +1319,10 @@ pub(super) fn select_decode_descriptor(
     }
 
     match (is_gray, precision > 8) {
-        (true, false) => ImageSpec::GRAY8_SRGB,
-        (false, false) => ImageSpec::RGB8_SRGB,
-        (true, true) => ImageSpec::GRAY16_SRGB,
-        (false, true) => ImageSpec::RGB16_SRGB,
+        (true, false) => ZenPixelFormat::GRAY8_SRGB,
+        (false, false) => ZenPixelFormat::RGB8_SRGB,
+        (true, true) => ZenPixelFormat::GRAY16_SRGB,
+        (false, true) => ZenPixelFormat::RGB16_SRGB,
     }
 }
 
@@ -1328,7 +1331,7 @@ pub(super) fn select_decode_descriptor(
 /// An eight-bit frame reads the U8 rows every other exit shows and widens them,
 /// so asking for U16 cannot change which image comes out. Lossless frames below
 /// eight bits have no exact route through U8, so they read codes too.
-pub(super) fn u16_uses_native_codes(descriptor: &ImageSpec, precision: u8) -> bool {
+pub(super) fn u16_uses_native_codes(descriptor: &ZenPixelFormat, precision: u8) -> bool {
     descriptor.layout.sample == zenpixels::SampleType::U16 && precision != 8
 }
 
@@ -1442,7 +1445,7 @@ pub struct JpegDecoder<'a> {
     policy: Option<zencodec::decode::DecodePolicy>,
     gain_map_render: zencodec::GainMapRender,
     data: Cow<'a, [u8]>,
-    preferred: Vec<ImageSpec>,
+    preferred: Vec<ZenPixelFormat>,
 }
 
 impl zencodec::decode::Decode for JpegDecoder<'_> {
@@ -1731,7 +1734,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             // Check output size limits
             let output_bytes = output.pixels().rows() as u64
                 * output.pixels().width() as u64
-                * output.pixels().spec().layout.bytes_per_pixel() as u64;
+                * output.pixels().format().layout.bytes_per_pixel() as u64;
             self.limits.check_output_size(output_bytes).map_err(|_| {
                 Error::resource_limit_exceeded(
                     zencodec::LimitKind::OutputSize,
@@ -1847,7 +1850,7 @@ impl JpegDecoder<'_> {
             ));
         }
         let (primaries, transfer) = crate::ultrahdr::base_color(extras.icc_profile())?;
-        let descriptor = zenpixels::ImageSpec::RGBA8_SRGB
+        let descriptor = zenpixels::PixelFormat::RGBA8_SRGB
             .with_primaries(primaries)
             .with_transfer(transfer);
         let sdr = PixelBuf::from_bytes(pixels_u8, w, h, descriptor)
@@ -1883,12 +1886,12 @@ impl JpegDecoder<'_> {
                 TargetColorSpace::DisplayP3 => zenpixels::Primaries::DisplayP3,
                 TargetColorSpace::Rec2020 => zenpixels::Primaries::Bt2020,
             };
-            let descriptor = hdr.spec().clone().with_primaries(primaries);
-            if &descriptor == hdr.spec() {
+            let descriptor = hdr.format().clone().with_primaries(primaries);
+            if &descriptor == hdr.format() {
                 hdr
             } else {
                 let converter = zenpixels_convert::RowPlan::build(
-                    hdr.spec().clone(),
+                    hdr.format().clone(),
                     descriptor.clone(),
                     &zenpixels_convert::ConvertPolicy::default()
                         .with_gamut(zenpixels_convert::GamutPolicy::PreserveExtended),
@@ -1920,7 +1923,7 @@ impl JpegDecoder<'_> {
         // Mastering peak describes the encoded alternate capacity.
         let capacity_nits = SDR_WHITE_NITS * capacity_max;
         info.source_color.content_light_level = Some(reconstructed_max_rgb(&hdr.as_view())?);
-        let zenpixels::ColorSpace::Rgb { primaries, .. } = hdr.spec().color else {
+        let zenpixels::ColorSpace::Rgb { primaries, .. } = hdr.format().color else {
             return Err(Error::unsupported_feature(
                 "unknown reconstructed HDR primaries",
             ));
@@ -1949,7 +1952,7 @@ impl JpegDecoder<'_> {
 
         let output_bytes = output.pixels().rows() as u64
             * output.pixels().width() as u64
-            * output.pixels().spec().layout.bytes_per_pixel() as u64;
+            * output.pixels().format().layout.bytes_per_pixel() as u64;
         limits.check_output_size(output_bytes).map_err(|_| {
             Error::resource_limit_exceeded(
                 zencodec::LimitKind::OutputSize,
@@ -1976,7 +1979,7 @@ fn reconstructed_max_rgb(
     };
     let buffer_error = || crate::color::icc::pixel_buffer_error(0, "JPEG HDR light level");
     for y in 0..view.rows() {
-        if view.spec().layout.sample == SampleType::F16 {
+        if view.format().layout.sample == SampleType::F16 {
             let row = view.row_as::<u16>(y).map_err(buffer_error())?;
             let to_f32 = |bits| half::f16::from_bits(bits).to_f32();
             for &[r, g, b, _] in row.as_chunks::<4>().0 {
@@ -2008,7 +2011,7 @@ fn orient_reconstructed_hdr(
     }
     let (w, h) = (image.width(), image.height());
     let (ow, oh) = orientation.output_dimensions(w, h);
-    let bpp = image.spec().layout.bytes_per_pixel();
+    let bpp = image.format().layout.bytes_per_pixel();
     let pixels = w as usize * h as usize;
     let mut view = image.as_view_mut();
     let Some(bytes) = view.as_contiguous_bytes_mut() else {
@@ -2127,7 +2130,7 @@ fn decode_gain_map_components(
     } else {
         zenpixels::SampleLayout::GRAY8
     };
-    let desc = ImageSpec::new(
+    let desc = ZenPixelFormat::new(
         layout,
         zenpixels::ColorSpace::Untagged {
             channels: gainmap.channels,

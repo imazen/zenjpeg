@@ -708,7 +708,7 @@ fn bench_decode_matrix(suite: &mut Suite) {
 use std::borrow::Cow;
 use zencodec::decode::{DecodeJob, DecodeRowSink, DecoderConfig as _, SinkError};
 use zenjpeg::JpegDecoderConfig;
-use zenpixels::{ImageSpec, PixelViewMut};
+use zenpixels::{PixelFormat, PixelViewMut};
 
 /// Reusable sink: one heap buffer, resized on first call, returned each strip.
 struct ReuseSink {
@@ -727,7 +727,7 @@ impl DecodeRowSink for ReuseSink {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         let bpp = descriptor.layout.bytes_per_pixel();
         let stride = width as usize * bpp;
@@ -735,12 +735,12 @@ impl DecodeRowSink for ReuseSink {
         if self.buf.len() < needed {
             self.buf.resize(needed, 0);
         }
-        Ok(PixelViewMut::new_with_spec_cow(
+        Ok(PixelViewMut::new_with_format_cow(
             &mut self.buf[..needed],
             width,
             height,
             stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .expect("buffer sized correctly"))
     }
@@ -790,7 +790,7 @@ fn bench_decode_sink(suite: &mut Suite) {
         // zencodec sink, BGRA8 sRGB pref
         g.bench("zencodec sink, BGRA8 sRGB", |b| {
             let mut sink = ReuseSink::new();
-            let prefs = [ImageSpec::BGRA8_SRGB];
+            let prefs = [PixelFormat::BGRA8_SRGB];
             b.iter(|| {
                 for img in get_images() {
                     let job = JpegDecoderConfig::new().job();
@@ -803,7 +803,7 @@ fn bench_decode_sink(suite: &mut Suite) {
         // zencodec sink, RGBA8 sRGB pref
         g.bench("zencodec sink, RGBA8 sRGB", |b| {
             let mut sink = ReuseSink::new();
-            let prefs = [ImageSpec::RGBA8_SRGB];
+            let prefs = [PixelFormat::RGBA8_SRGB];
             b.iter(|| {
                 for img in get_images() {
                     let job = JpegDecoderConfig::new().job();
