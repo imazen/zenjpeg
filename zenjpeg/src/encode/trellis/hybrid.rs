@@ -6,6 +6,7 @@
 //! - Encoder integration (`TrellisContext`) — applies
 //!   [`AqCoupling`](super::compat::AqCoupling) per block when active
 
+use super::ac::trellis_quantize_block_with_max_dc;
 use super::compat::TrellisConfig;
 use super::{RateTable, trellis_quantize_block};
 use crate::encode::dct::forward_dct_8x8;
@@ -173,6 +174,19 @@ impl TrellisContext {
         aq_strength: f32,
         is_luma: bool,
     ) -> [i16; DCT_BLOCK_SIZE] {
+        self.quantize_block_with_max_dc(dct_coeffs, quant, aq_strength, is_luma, 1023)
+    }
+
+    /// Quantize a block using trellis quantization with configurable DC clamp
+    /// (`1023` for 8-bit baseline YCbCr/grayscale, `16383` for XYB SOF1).
+    pub(crate) fn quantize_block_with_max_dc(
+        &self,
+        dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+        quant: &[u16; DCT_BLOCK_SIZE],
+        aq_strength: f32,
+        is_luma: bool,
+        max_dc_val: i32,
+    ) -> [i16; DCT_BLOCK_SIZE] {
         let ac_table = if is_luma {
             &self.rate_tables.luma_ac
         } else {
@@ -180,7 +194,20 @@ impl TrellisContext {
         };
 
         let trellis_config = self.block_config(aq_strength, !is_luma);
-        hybrid_quantize_block(dct_coeffs, quant, ac_table, &trellis_config)
+        if max_dc_val == 1023 {
+            return hybrid_quantize_block(dct_coeffs, quant, ac_table, &trellis_config);
+        }
+        let dct_i32 = dct_f32_to_i32(dct_coeffs);
+        let mut quantized = [0i16; DCT_BLOCK_SIZE];
+        trellis_quantize_block_with_max_dc(
+            &dct_i32,
+            &mut quantized,
+            quant,
+            ac_table,
+            &trellis_config,
+            max_dc_val,
+        );
+        quantized
     }
 
     /// Effective per-block config: lambda adjusted by AQ coupling when active.

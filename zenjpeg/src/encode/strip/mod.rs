@@ -409,7 +409,7 @@ impl PendingBuffers {
 
 /// Quantizes a chroma component's pending DCT blocks to i16.
 ///
-/// Shared logic for both Cb and Cr (and XYB B-channel) quantization.
+/// Shared logic for both Cb and Cr (and XYB Y/B channels) quantization.
 /// Maps chroma block positions to the corresponding Y-block AQ strength.
 ///
 /// Accepts an optional `TrellisContext` for rate-distortion optimized
@@ -426,13 +426,68 @@ fn quantize_chroma_blocks(
     quant_values: &[u16; DCT_BLOCK_SIZE],
     trellis_ctx: Option<&TrellisContext>,
     use_trellis: bool,
+    is_luma: bool,
+    max_dc_val: i32,
+    #[cfg(feature = "parallel")] parallel: bool,
     chroma_blocks_h: usize,
     chroma_blocks_v: usize,
     y_blocks_w: usize,
     y_blocks_h: usize,
 ) {
     let blocks_h = chroma_blocks_h.max(1);
+    let blocks_v = chroma_blocks_v.max(1);
     let global_chroma_by = output.len() / blocks_h;
+
+    #[cfg(feature = "parallel")]
+    if use_trellis && parallel && pending.len() >= 64 {
+        use rayon::prelude::*;
+
+        if let Some(dc_raw) = dc_raw_output.as_deref_mut() {
+            dc_raw.reserve(pending.len());
+            for dct in pending {
+                let row0: [f32; 8] = dct.rows[0];
+                dc_raw.push((row0[0] * 64.0).round() as i32);
+            }
+        }
+
+        let ctx = trellis_ctx.unwrap();
+        let out_base = output.len();
+        output.resize(out_base + pending.len(), [0i16; DCT_BLOCK_SIZE]);
+        let out_slice = &mut output[out_base..];
+
+        const CHUNK: usize = 16;
+        out_slice
+            .par_chunks_mut(CHUNK)
+            .enumerate()
+            .for_each(|(chunk_idx, out_chunk)| {
+                let base_i = chunk_idx * CHUNK;
+                for (offset, dst) in out_chunk.iter_mut().enumerate() {
+                    let i = base_i + offset;
+                    let dct = &pending[i];
+                    let bx = i % blocks_h;
+                    let local_by = i / blocks_h;
+                    let y_bx = (bx * y_blocks_w) / blocks_h;
+                    let chroma_by = global_chroma_by + local_by;
+                    let y_by = (chroma_by * y_blocks_h) / blocks_v;
+                    let global_aq_idx = y_by * y_blocks_w + y_bx.min(y_blocks_w.saturating_sub(1));
+                    let aq_strength = all_aq_strengths.get(global_aq_idx).copied().unwrap_or(0.08);
+                    let dct_arr = dct.to_array();
+                    let natural = ctx.quantize_block_with_max_dc(
+                        &dct_arr,
+                        quant_values,
+                        aq_strength,
+                        is_luma,
+                        max_dc_val,
+                    );
+                    let mut result = [0i16; DCT_BLOCK_SIZE];
+                    for j in 0..DCT_BLOCK_SIZE {
+                        result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                    }
+                    *dst = result;
+                }
+            });
+        return;
+    }
 
     for (i, dct) in pending.iter().enumerate() {
         // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
@@ -446,7 +501,7 @@ fn quantize_chroma_blocks(
         let local_by = i / blocks_h;
         let y_bx = (bx * y_blocks_w) / blocks_h;
         let chroma_by = global_chroma_by + local_by;
-        let y_by = (chroma_by * y_blocks_h) / chroma_blocks_v.max(1);
+        let y_by = (chroma_by * y_blocks_h) / blocks_v;
         let global_aq_idx = y_by * y_blocks_w + y_bx.min(y_blocks_w.saturating_sub(1));
         let aq_strength = if global_aq_idx < all_aq_strengths.len() {
             all_aq_strengths[global_aq_idx]
@@ -455,11 +510,12 @@ fn quantize_chroma_blocks(
         };
         let zigzag = if use_trellis {
             let dct_arr = dct.to_array();
-            let natural = trellis_ctx.unwrap().quantize_block(
+            let natural = trellis_ctx.unwrap().quantize_block_with_max_dc(
                 &dct_arr,
                 quant_values,
                 aq_strength,
-                false, // is_chroma
+                is_luma,
+                max_dc_val,
             );
             let mut result = [0i16; DCT_BLOCK_SIZE];
             for j in 0..DCT_BLOCK_SIZE {
@@ -600,6 +656,10 @@ pub struct StripProcessor {
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
     trellis_ctx: Option<TrellisContext>,
+
+    /// Whether parallel trellis quantization is enabled for this encoder.
+    #[cfg(feature = "parallel")]
+    parallel: bool,
 
     // Linear conversion dispatch is selected once, outside strip/pixel loops.
     linear_dispatch: super::linear_lut::LinearDispatch,
@@ -906,6 +966,9 @@ impl StripProcessor {
 
             // Trellis quantization (disabled by default)
             trellis_ctx: None,
+
+            #[cfg(feature = "parallel")]
+            parallel: false,
 
             linear_dispatch: super::linear_lut::LinearDispatch::summon(),
 
@@ -1261,6 +1324,12 @@ impl StripProcessor {
         } else {
             self.trellis_ctx = None;
         }
+    }
+
+    /// Enables or disables parallel trellis quantization across blocks within each strip.
+    #[cfg(feature = "parallel")]
+    pub(crate) fn set_parallel(&mut self, enable: bool) {
+        self.parallel = enable;
     }
 
     /// Returns whether XYB mode is enabled.
@@ -1857,6 +1926,13 @@ impl StripProcessor {
         #[cfg(not(feature = "boundary-rd"))]
         let use_boundary_rd = false;
 
+        // XYB stores (X, Y, B) in (y_blocks, cb_blocks, cr_blocks) and uses SOF1
+        // where scaled DC values can exceed baseline's 10-bit limit (1023).
+        let use_xyb = self.layout.use_xyb;
+        let max_dc_val: i32 = if use_xyb { 16383 } else { 1023 };
+        let y_is_luma = !use_xyb;
+        let cb_is_luma = use_xyb;
+
         if use_boundary_rd {
             // Slower path: refinement after each luma block. The default path
             // (boundary_rd == None) still hits the fast loop below with zero
@@ -1866,44 +1942,106 @@ impl StripProcessor {
             #[cfg(not(feature = "boundary-rd"))]
             unreachable!("use_boundary_rd is always false without the boundary-rd feature");
         } else {
-            let quant = &self.quant;
-            // Default fast path — unchanged from before boundary-RD was added.
-            for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
-                // Use get() with fallback to avoid branch on common path
-                let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+            let pending_y = &self.pending.y[buffer_idx];
+            #[cfg(feature = "parallel")]
+            let run_parallel_y = use_trellis && self.parallel && pending_y.len() >= 64;
+            #[cfg(not(feature = "parallel"))]
+            let run_parallel_y = false;
 
-                // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
-                if store_dc_raw {
-                    let row0: [f32; 8] = dct.rows[0];
-                    let dc_raw = (row0[0] * 64.0).round() as i32;
-                    self.y_dc_raw.push(dc_raw);
-                }
-                let zigzag = if use_trellis {
-                    // Trellis path: convert to array, quantize with R-D, apply zigzag
-                    let dct_arr = dct.to_array();
-                    let natural = self.trellis_ctx.as_ref().unwrap().quantize_block(
-                        &dct_arr,
-                        &quant.y_quant.values,
-                        aq_strength,
-                        true, // is_luma
-                    );
-                    // Apply zigzag reordering
-                    let mut result = [0i16; DCT_BLOCK_SIZE];
-                    for j in 0..DCT_BLOCK_SIZE {
-                        result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+            if run_parallel_y {
+                #[cfg(feature = "parallel")]
+                {
+                    use rayon::prelude::*;
+
+                    if store_dc_raw {
+                        self.y_dc_raw.reserve(pending_y.len());
+                        for dct in pending_y {
+                            let row0: [f32; 8] = dct.rows[0];
+                            self.y_dc_raw.push((row0[0] * 64.0).round() as i32);
+                        }
                     }
-                    result
-                } else {
-                    // Fast SIMD path: fused quantization + zigzag reorder
-                    quant.y_quant_simd.quantize_with_zero_bias_zigzag(
-                        dct,
-                        &quant.y_zero_bias_simd,
-                        aq_strength,
-                    )
-                };
+                    self.all_aq_strengths.reserve(pending_y.len());
+                    for i in 0..pending_y.len() {
+                        self.all_aq_strengths
+                            .push(aq_strengths.get(i).copied().unwrap_or(0.08));
+                    }
 
-                self.y_blocks.push(zigzag);
-                self.all_aq_strengths.push(aq_strength);
+                    let ctx = self.trellis_ctx.as_ref().unwrap();
+                    let qvals = &self.quant.y_quant.values;
+                    let out_base = self.y_blocks.len();
+                    self.y_blocks
+                        .resize(out_base + pending_y.len(), [0i16; DCT_BLOCK_SIZE]);
+                    let out_slice = &mut self.y_blocks[out_base..];
+
+                    const CHUNK: usize = 16;
+                    out_slice.par_chunks_mut(CHUNK).enumerate().for_each(
+                        |(chunk_idx, out_chunk)| {
+                            let base_i = chunk_idx * CHUNK;
+                            for (offset, dst) in out_chunk.iter_mut().enumerate() {
+                                let i = base_i + offset;
+                                let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+                                let dct_arr = pending_y[i].to_array();
+                                let natural = ctx.quantize_block_with_max_dc(
+                                    &dct_arr,
+                                    qvals,
+                                    aq_strength,
+                                    y_is_luma,
+                                    max_dc_val,
+                                );
+                                let mut result = [0i16; DCT_BLOCK_SIZE];
+                                for j in 0..DCT_BLOCK_SIZE {
+                                    result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                                }
+                                *dst = result;
+                            }
+                        },
+                    );
+                }
+            } else {
+                let quant = &self.quant;
+                // Default fast path — unchanged from before boundary-RD was added.
+                for (i, dct) in pending_y.iter().enumerate() {
+                    // Use get() with fallback to avoid branch on common path
+                    let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+
+                    // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
+                    if store_dc_raw {
+                        let row0: [f32; 8] = dct.rows[0];
+                        let dc_raw = (row0[0] * 64.0).round() as i32;
+                        self.y_dc_raw.push(dc_raw);
+                    }
+                    let zigzag = if use_trellis {
+                        // Trellis path: convert to array, quantize with R-D, apply zigzag
+                        let dct_arr = dct.to_array();
+                        let natural = self
+                            .trellis_ctx
+                            .as_ref()
+                            .unwrap()
+                            .quantize_block_with_max_dc(
+                                &dct_arr,
+                                &quant.y_quant.values,
+                                aq_strength,
+                                y_is_luma,
+                                max_dc_val,
+                            );
+                        // Apply zigzag reordering
+                        let mut result = [0i16; DCT_BLOCK_SIZE];
+                        for j in 0..DCT_BLOCK_SIZE {
+                            result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                        }
+                        result
+                    } else {
+                        // Fast SIMD path: fused quantization + zigzag reorder
+                        quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                            dct,
+                            &quant.y_zero_bias_simd,
+                            aq_strength,
+                        )
+                    };
+
+                    self.y_blocks.push(zigzag);
+                    self.all_aq_strengths.push(aq_strength);
+                }
             }
         }
 
@@ -1915,7 +2053,7 @@ impl StripProcessor {
             let c_blocks_w = self.layout.c_blocks_w;
             let c_blocks_h = self.layout.c_blocks_h;
 
-            // Cb: always uses c_blocks dimensions
+            // Cb (or perceptual Y in XYB): uses c_blocks dimensions
             let cb_dc_raw = if store_dc_raw {
                 Some(&mut self.cb_dc_raw)
             } else {
@@ -1931,19 +2069,23 @@ impl StripProcessor {
                 &quant.cb_quant.values,
                 self.trellis_ctx.as_ref(),
                 use_trellis,
+                cb_is_luma,
+                max_dc_val,
+                #[cfg(feature = "parallel")]
+                self.parallel,
                 c_blocks_w,
                 c_blocks_h,
                 y_blocks_w,
                 y_blocks_h,
             );
 
-            // Cr: for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
-            let cr_blocks_h = if self.layout.use_xyb {
+            // Cr (or B in XYB): for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
+            let cr_blocks_h = if use_xyb {
                 self.layout.b_blocks_w
             } else {
                 c_blocks_w
             };
-            let cr_blocks_v = if self.layout.use_xyb {
+            let cr_blocks_v = if use_xyb {
                 self.layout.b_blocks_h
             } else {
                 c_blocks_h
@@ -1963,6 +2105,10 @@ impl StripProcessor {
                 &quant.cr_quant.values,
                 self.trellis_ctx.as_ref(),
                 use_trellis,
+                false,
+                max_dc_val,
+                #[cfg(feature = "parallel")]
+                self.parallel,
                 cr_blocks_h,
                 cr_blocks_v,
                 y_blocks_w,
@@ -2349,7 +2495,7 @@ impl StripProcessor {
 
         // Apply DC trellis optimization if enabled
         if !self.y_dc_raw.is_empty() {
-            self.apply_dc_trellis();
+            self.apply_dc_trellis()?;
         }
 
         #[cfg(feature = "__diagnostics")]
@@ -2376,24 +2522,30 @@ impl StripProcessor {
     /// Processes each row of blocks independently, propagating `last_dc` from
     /// one row to the next (matching C mozjpeg behavior). When `delta_dc_weight > 0`,
     /// also considers vertical DC gradients from the row above.
-    fn apply_dc_trellis(&mut self) {
+    fn apply_dc_trellis(&mut self) -> Result<()> {
         let Some(ref trellis_ctx) = self.trellis_ctx else {
-            return;
+            return Ok(());
         };
         if !trellis_ctx.is_dc_trellis_enabled() {
-            return;
+            return Ok(());
         }
 
         let config = trellis_ctx.trellis_config();
         let lambda1 = config.lambda_log_scale1();
         let lambda2 = config.lambda_log_scale2();
         let delta_dc_weight = config.get_delta_dc_weight();
+        let use_xyb = self.layout.use_xyb;
+        let max_dc_val: i32 = if use_xyb { 16383 } else { 1023 };
 
-        // Y channel DC trellis (row-by-row)
+        // Component 0 (Y in YCbCr, X in XYB) DC trellis (row-by-row)
         if !self.y_dc_raw.is_empty() && !self.y_blocks.is_empty() {
             let blocks_w = self.layout.y_blocks_w;
             let dc_quantval = self.quant.y_quant.values[0];
-            let dc_table = trellis_ctx.luma_dc_rate_table();
+            let dc_table = if use_xyb {
+                trellis_ctx.chroma_dc_rate_table()
+            } else {
+                trellis_ctx.luma_dc_rate_table()
+            };
             dc_trellis_channel_row_by_row(
                 &self.y_dc_raw,
                 &mut self.y_blocks,
@@ -2403,14 +2555,19 @@ impl StripProcessor {
                 lambda1,
                 lambda2,
                 delta_dc_weight,
-            );
+                max_dc_val,
+            )?;
         }
 
-        // Cb channel DC trellis (row-by-row)
+        // Component 1 (Cb in YCbCr, perceptual Y in XYB) DC trellis (row-by-row)
         if !self.cb_dc_raw.is_empty() && !self.cb_blocks.is_empty() {
             let blocks_w = self.layout.c_blocks_w;
             let dc_quantval = self.quant.cb_quant.values[0];
-            let dc_table = trellis_ctx.chroma_dc_rate_table();
+            let dc_table = if use_xyb {
+                trellis_ctx.luma_dc_rate_table()
+            } else {
+                trellis_ctx.chroma_dc_rate_table()
+            };
             dc_trellis_channel_row_by_row(
                 &self.cb_dc_raw,
                 &mut self.cb_blocks,
@@ -2420,12 +2577,17 @@ impl StripProcessor {
                 lambda1,
                 lambda2,
                 delta_dc_weight,
-            );
+                max_dc_val,
+            )?;
         }
 
-        // Cr channel DC trellis (row-by-row)
+        // Component 2 (Cr in YCbCr, B in XYB) DC trellis (row-by-row)
         if !self.cr_dc_raw.is_empty() && !self.cr_blocks.is_empty() {
-            let blocks_w = self.layout.c_blocks_w;
+            let blocks_w = if use_xyb {
+                self.layout.b_blocks_w
+            } else {
+                self.layout.c_blocks_w
+            };
             let dc_quantval = self.quant.cr_quant.values[0];
             let dc_table = trellis_ctx.chroma_dc_rate_table();
             dc_trellis_channel_row_by_row(
@@ -2437,20 +2599,22 @@ impl StripProcessor {
                 lambda1,
                 lambda2,
                 delta_dc_weight,
-            );
+                max_dc_val,
+            )?;
         }
+
+        Ok(())
     }
 }
 
-/// Apply DC trellis optimization to one channel, processing row-by-row.
+/// Apply DC trellis optimization to one channel, processing row-by-row in place.
 ///
 /// C mozjpeg processes DC trellis one row at a time, propagating `last_dc`
 /// from the end of each row to the start of the next. This matches that
 /// behavior and also supports `delta_dc_weight` for vertical DC gradients.
 ///
-/// Blocks are stored in raster order: block index = row * blocks_w + col.
-/// The zigzag-to-natural order conversion is done in-place for DC trellis,
-/// then converted back.
+/// Updates `blocks[i][0]` directly without copying or zigzag-reordering AC
+/// coefficients (DC is index 0 in both zigzag and natural order).
 #[allow(clippy::too_many_arguments)]
 fn dc_trellis_channel_row_by_row(
     dc_raw: &[i32],
@@ -2461,43 +2625,27 @@ fn dc_trellis_channel_row_by_row(
     lambda1: f32,
     lambda2: f32,
     delta_dc_weight: f32,
-) {
+    max_dc_val: i32,
+) -> Result<()> {
     if dc_raw.is_empty() || blocks.is_empty() || blocks_w == 0 {
-        return;
+        return Ok(());
     }
 
-    let num_blocks = blocks.len();
+    let num_blocks = blocks.len().min(dc_raw.len());
     let blocks_h = (num_blocks + blocks_w - 1) / blocks_w;
 
-    // Convert DC-only raw values to full blocks for the DC trellis API.
-    // AC coefficients are set to 0 since we've already done AC trellis.
-    let raw_blocks: Vec<[i32; DCT_BLOCK_SIZE]> = dc_raw
-        .iter()
-        .map(|&dc| {
-            let mut block = [0i32; DCT_BLOCK_SIZE];
-            block[0] = dc;
-            block
-        })
-        .collect();
-
-    // Convert zigzag blocks to natural order for DC trellis
-    let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = blocks
-        .iter()
-        .map(|zigzag| {
-            let mut natural = [0i16; DCT_BLOCK_SIZE];
-            for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                natural[i] = zigzag[zz_idx as usize];
-            }
-            natural
-        })
-        .collect();
-
-    // Double-buffered above-row data (used when delta_dc_weight > 0).
-    // We use two buffers and swap: one holds the previous row's data while
-    // the current row writes into the other.
-    let mut above_raw_dc: Vec<i32> = vec![0; blocks_w];
-    let mut above_quant_dc: Vec<i16> = vec![0; blocks_w];
-    let mut current_raw_dc: Vec<i32> = vec![0; blocks_w];
+    // Reusable per-row buffers (O(blocks_w), never O(total_blocks)).
+    let mut above_raw_dc: Vec<i32> = if delta_dc_weight > 0.0 {
+        try_alloc_filled(blocks_w, 0i32, "dc trellis above_raw")?
+    } else {
+        Vec::new()
+    };
+    let mut above_quant_dc: Vec<i16> = if delta_dc_weight > 0.0 {
+        try_alloc_filled(blocks_w, 0i16, "dc trellis above_quant")?
+    } else {
+        Vec::new()
+    };
+    let mut scratch = crate::encode::trellis::dc::DcTrellisScratch::new();
 
     let mut last_dc: i16 = 0;
 
@@ -2506,26 +2654,15 @@ fn dc_trellis_channel_row_by_row(
         let row_end = (row_start + blocks_w).min(num_blocks);
         let row_len = row_end - row_start;
 
-        let indices: Vec<usize> = (row_start..row_end).collect();
-
-        // Snapshot this row's raw DC values before trellis (for next row's above_data)
-        for col in 0..row_len {
-            current_raw_dc[col] = raw_blocks[row_start + col][0];
-        }
-
         let above_data = if delta_dc_weight > 0.0 && row > 0 {
-            Some((
-                above_raw_dc[..row_len].as_ref(),
-                above_quant_dc[..row_len].as_ref(),
-            ))
+            Some((&above_raw_dc[..row_len], &above_quant_dc[..row_len]))
         } else {
             None
         };
 
-        last_dc = crate::encode::trellis::dc_trellis_optimize_indexed(
-            &raw_blocks,
-            &mut natural_blocks,
-            &indices,
+        last_dc = crate::encode::trellis::dc::dc_trellis_optimize_row_direct(
+            &dc_raw[row_start..row_end],
+            &mut blocks[row_start..row_end],
             dc_quantval,
             dc_table,
             last_dc,
@@ -2533,21 +2670,19 @@ fn dc_trellis_channel_row_by_row(
             lambda2,
             delta_dc_weight,
             above_data,
-        );
+            max_dc_val,
+            &mut scratch,
+        )?;
 
-        // Save this row's data as "above" for the next row
-        above_raw_dc[..row_len].copy_from_slice(&current_raw_dc[..row_len]);
-        for col in 0..row_len {
-            above_quant_dc[col] = natural_blocks[row_start + col][0];
+        if delta_dc_weight > 0.0 {
+            above_raw_dc[..row_len].copy_from_slice(&dc_raw[row_start..row_end]);
+            for col in 0..row_len {
+                above_quant_dc[col] = blocks[row_start + col][0];
+            }
         }
     }
 
-    // Convert back to zigzag order
-    for (i, natural) in natural_blocks.into_iter().enumerate() {
-        for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-            blocks[i][zz_idx as usize] = natural[j];
-        }
-    }
+    Ok(())
 }
 
 /// Output from strip processing.
@@ -2797,5 +2932,107 @@ mod tests {
             assert_eq!(*idx, n, "imcu_idx must be monotonic from 0");
             assert!(*len > 0, "strength slice must not be empty");
         }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn parallel_progressive_omits_dri_and_matches_sequential_trellis_exact() {
+        use crate::encode::trellis::TrellisConfig;
+        use crate::encode::{
+            ChromaSubsampling, EncoderConfig, ParallelEncoding, PixelLayout, XybSubsampling,
+        };
+        use enough::Unstoppable;
+
+        // Wide enough that each 16-row strip has >= 64 Y blocks (exercising parallel trellis).
+        let (w, h) = (512u32, 112u32);
+        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let hash = ((x.wrapping_mul(31337) ^ y.wrapping_mul(7919)).wrapping_mul(2654435761)
+                    >> 24) as u8;
+                let r = ((x * 255 / w) as u8).saturating_add(hash & 0x3F);
+                let g = ((y * 255 / h) as u8).saturating_add((hash >> 2) & 0x3F);
+                let b = (((x + y) * 127 / (w + h)) as u8).saturating_add((hash >> 4) & 0x3F);
+                rgb.push(r);
+                rgb.push(g);
+                rgb.push(b);
+            }
+        }
+
+        let has_dri = |jpg: &[u8]| jpg.windows(2).any(|w2| w2 == [0xFF, 0xDD]);
+
+        let configs = [
+            (
+                "ycbcr420_prog_trellis",
+                EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
+                    .progressive(true)
+                    .trellis(TrellisConfig::default()),
+            ),
+            (
+                "ycbcr444_prog_trellis",
+                EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
+                    .progressive(true)
+                    .trellis(TrellisConfig::default()),
+            ),
+            (
+                "xyb_bquarter_prog_trellis",
+                EncoderConfig::xyb(75.0, XybSubsampling::BQuarter)
+                    .progressive(true)
+                    .trellis(TrellisConfig::default()),
+            ),
+        ];
+
+        for (label, base_cfg) in configs {
+            let par_cfg = base_cfg.clone().parallel(ParallelEncoding::Auto);
+
+            let seq = base_cfg
+                .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            let par = par_cfg
+                .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+                .unwrap();
+
+            assert!(
+                !has_dri(&par),
+                "{label}: parallel progressive encode must not inject DRI markers"
+            );
+            assert_eq!(
+                seq, par,
+                "{label}: parallel trellis output must be byte-identical to sequential"
+            );
+            let dec = crate::decode::Decoder::new()
+                .decode(&par, Unstoppable)
+                .unwrap_or_else(|e| panic!("{label}: decode failed: {e}"));
+            assert_eq!((dec.width, dec.height), (w, h));
+        }
+    }
+
+    #[test]
+    fn xyb_trellis_nonsquare_bquarter_and_high_dc_roundtrip() {
+        use crate::encode::trellis::TrellisConfig;
+        use crate::encode::{EncoderConfig, PixelLayout, XybSubsampling};
+        use enough::Unstoppable;
+
+        // Non-square, non-multiple-of-16 dimensions exercise BQuarter b_blocks_w != c_blocks_w
+        // in apply_dc_trellis, while black/white split stresses XYB DC range at high Q.
+        let (w, h) = (133u32, 77u32);
+        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                if (x / 16 + y / 16) % 2 == 0 {
+                    rgb.extend_from_slice(&[255, 255, 255]);
+                } else {
+                    rgb.extend_from_slice(&[0, 0, 0]);
+                }
+            }
+        }
+        let cfg = EncoderConfig::xyb(95.0, XybSubsampling::BQuarter)
+            .progressive(true)
+            .trellis(TrellisConfig::default());
+        let jpg = cfg.encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb).unwrap();
+        let dec = crate::decode::Decoder::new()
+            .decode(&jpg, Unstoppable)
+            .expect("XYB trellis decode failed");
+        assert_eq!((dec.width, dec.height), (w, h));
     }
 }

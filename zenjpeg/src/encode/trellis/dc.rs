@@ -221,6 +221,190 @@ pub fn dc_trellis_optimize_indexed(
     dc_candidate[best_final][num_blocks - 1]
 }
 
+/// Reusable flat DP scratch buffers for zero-copy row-by-row DC trellis.
+pub(crate) struct DcTrellisScratch {
+    accumulated_cost: Vec<f32>,
+    backtrack: Vec<usize>,
+    candidate: Vec<i16>,
+}
+
+impl DcTrellisScratch {
+    pub(crate) fn new() -> Self {
+        Self {
+            accumulated_cost: Vec::new(),
+            backtrack: Vec::new(),
+            candidate: Vec::new(),
+        }
+    }
+
+    fn ensure_len(&mut self, len: usize) -> crate::error::Result<()> {
+        if self.accumulated_cost.len() < len {
+            let add = len - self.accumulated_cost.len();
+            self.accumulated_cost
+                .try_reserve_exact(add)
+                .map_err(|_| crate::error::Error::allocation_failed(len * 4, "dc trellis cost"))?;
+            self.accumulated_cost.resize(len, 0.0);
+        }
+        if self.backtrack.len() < len {
+            let add = len - self.backtrack.len();
+            self.backtrack.try_reserve_exact(add).map_err(|_| {
+                crate::error::Error::allocation_failed(
+                    len * core::mem::size_of::<usize>(),
+                    "dc trellis backtrack",
+                )
+            })?;
+            self.backtrack.resize(len, 0);
+        }
+        if self.candidate.len() < len {
+            let add = len - self.candidate.len();
+            self.candidate
+                .try_reserve_exact(add)
+                .map_err(|_| crate::error::Error::allocation_failed(len * 2, "dc trellis cand"))?;
+            self.candidate.resize(len, 0);
+        }
+        Ok(())
+    }
+}
+
+/// Zero-copy DC trellis optimization over one contiguous row of quantized blocks.
+///
+/// Directly updates `blocks_row[bi][0]` in-place (DC sits at index 0 in both
+/// zigzag and natural order), eliminating the 384 B/block full-image raw+natural
+/// copy previously allocated in `strip::dc_trellis_channel_row_by_row`.
+///
+/// Uses `norm = 0.0` (`lambda = 2^scale1 / 2^scale2`) intentionally: empirical
+/// evaluation across YCbCr 4:2:0, 4:4:4, and XYB showed that substituting real
+/// AC block norm into DC trellis reduces `lambda_dc` on edges and regresses
+/// Butteraugli p3 (+1.05% on 4:4:4, +2.11% on XYB).
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn dc_trellis_optimize_row_direct(
+    dc_raw_row: &[i32],
+    blocks_row: &mut [[i16; DCT_BLOCK_SIZE]],
+    dc_quantval: u16,
+    dc_table: &RateTable,
+    last_dc: i16,
+    lambda_log_scale1: f32,
+    lambda_log_scale2: f32,
+    delta_dc_weight: f32,
+    above_row_data: Option<(&[i32], &[i16])>,
+    max_dc_val: i32,
+    scratch: &mut DcTrellisScratch,
+) -> crate::error::Result<i16> {
+    let num_blocks = blocks_row.len().min(dc_raw_row.len());
+    if num_blocks == 0 {
+        return Ok(last_dc);
+    }
+
+    let num_candidates = get_num_dc_trellis_candidates(dc_quantval);
+    let q = 8 * dc_quantval as i32;
+    let lambda_dc_weight = 1.0 / (dc_quantval as f32 * dc_quantval as f32);
+
+    // Constant per-row lambda (norm = 0.0; see doc comment above).
+    let lambda = if lambda_log_scale2 > 0.0 {
+        let scale1 = 2.0_f32.powf(lambda_log_scale1);
+        let scale2 = 2.0_f32.powf(lambda_log_scale2);
+        scale1 / scale2
+    } else {
+        2.0_f32.powf(lambda_log_scale1 - 12.0)
+    };
+    let lambda_dc = lambda * lambda_dc_weight;
+
+    scratch.ensure_len(num_candidates * num_blocks)?;
+    let acc_cost = &mut scratch.accumulated_cost;
+    let backtrack = &mut scratch.backtrack;
+    let candidate = &mut scratch.candidate;
+
+    let half_candidates = (num_candidates / 2) as i32;
+    let min_dc_val = -max_dc_val;
+
+    for bi in 0..num_blocks {
+        let raw_dc = dc_raw_row[bi];
+        let x = raw_dc.abs();
+        let sign = if raw_dc < 0 { -1i16 } else { 1i16 };
+        let qval = (x + q / 2) / q;
+
+        for k in 0..num_candidates {
+            let candidate_offset = k as i32 - half_candidates;
+            let candidate_val = (qval + candidate_offset).clamp(min_dc_val, max_dc_val);
+            let delta = candidate_val * q - x;
+            let mut candidate_dist = (delta as f32).powi(2) * lambda_dc;
+
+            let cand_signed = (candidate_val as i16) * sign;
+            let idx = k * num_blocks + bi;
+            candidate[idx] = cand_signed;
+
+            if delta_dc_weight > 0.0
+                && let Some((raw_dc_above, quantized_dc_above)) = above_row_data
+            {
+                let dc_above_orig = raw_dc_above[bi];
+                let dc_above_recon = quantized_dc_above[bi] as i32 * q;
+                let dc_recon = cand_signed as i32 * q;
+                let vdelta = (dc_above_orig - raw_dc) - (dc_above_recon - dc_recon);
+                let vertical_dist = (vdelta as f32).powi(2) * lambda_dc;
+                candidate_dist += delta_dc_weight * (vertical_dist - candidate_dist);
+            }
+
+            if bi == 0 {
+                let dc_delta = cand_signed.wrapping_sub(last_dc);
+                let bits = jpeg_nbits(dc_delta);
+                let (_, code_size) = dc_table.get_code(bits);
+                let rate = if code_size > 0 {
+                    bits as usize + code_size as usize
+                } else {
+                    bits as usize * 2 + 1
+                };
+                acc_cost[idx] = rate as f32 + candidate_dist;
+                backtrack[idx] = 0;
+            } else {
+                let mut best_cost = f32::MAX;
+                let mut best_prev = 0;
+
+                for l in 0..num_candidates {
+                    let prev_idx = l * num_blocks + (bi - 1);
+                    let dc_delta = cand_signed.wrapping_sub(candidate[prev_idx]);
+                    let bits = jpeg_nbits(dc_delta);
+                    let (_, code_size) = dc_table.get_code(bits);
+                    let rate = if code_size > 0 {
+                        bits as usize + code_size as usize
+                    } else {
+                        bits as usize * 2 + 1
+                    };
+                    let cost = rate as f32 + candidate_dist + acc_cost[prev_idx];
+
+                    if cost < best_cost {
+                        best_cost = cost;
+                        best_prev = l;
+                    }
+                }
+
+                acc_cost[idx] = best_cost;
+                backtrack[idx] = best_prev;
+            }
+        }
+    }
+
+    let mut best_final = 0;
+    for k in 1..num_candidates {
+        if acc_cost[k * num_blocks + (num_blocks - 1)]
+            < acc_cost[best_final * num_blocks + (num_blocks - 1)]
+        {
+            best_final = k;
+        }
+    }
+
+    let mut k = best_final;
+    for bi in (0..num_blocks).rev() {
+        let idx = k * num_blocks + bi;
+        blocks_row[bi][0] = candidate[idx];
+        if bi > 0 {
+            k = backtrack[idx];
+        }
+    }
+
+    Ok(candidate[best_final * num_blocks + (num_blocks - 1)])
+}
+
 /// Quantize a block with simple rounding (no trellis optimization).
 ///
 /// Used when trellis is disabled.
@@ -449,5 +633,127 @@ mod tests {
             let n = get_num_dc_trellis_candidates(q);
             assert_eq!(n % 2, 1, "Candidates should be odd for q={}", q);
         }
+    }
+
+    #[test]
+    fn test_dc_trellis_row_direct_matches_indexed_and_preserves_ac() {
+        let dc_table = create_dc_table();
+        let dc_quantval = 16u16;
+        let blocks_w = 12usize;
+        let blocks_h = 4usize;
+        let n = blocks_w * blocks_h;
+
+        let mut dc_raw = Vec::with_capacity(n);
+        let mut raw_blocks = Vec::with_capacity(n);
+        let mut blocks_ref = Vec::with_capacity(n);
+        let mut blocks_direct = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let dc = (((i as i32 * 317) % 1900) - 950) * 8;
+            dc_raw.push(dc);
+            let mut rb = [0i32; DCT_BLOCK_SIZE];
+            rb[0] = dc;
+            raw_blocks.push(rb);
+
+            let mut blk = [0i16; DCT_BLOCK_SIZE];
+            for k in 1..DCT_BLOCK_SIZE {
+                blk[k] = ((i + k) % 17) as i16 - 8;
+            }
+            blocks_ref.push(blk);
+            blocks_direct.push(blk);
+        }
+
+        for delta_w in [0.0f32, 0.5f32] {
+            let mut ref_b = blocks_ref.clone();
+            let mut dir_b = blocks_direct.clone();
+
+            let mut last_ref = 0i16;
+            let mut last_dir = 0i16;
+            let mut above_raw_ref = vec![0i32; blocks_w];
+            let mut above_q_ref = vec![0i16; blocks_w];
+            let mut above_raw_dir = vec![0i32; blocks_w];
+            let mut above_q_dir = vec![0i16; blocks_w];
+            let mut scratch = DcTrellisScratch::new();
+
+            for row in 0..blocks_h {
+                let s = row * blocks_w;
+                let e = s + blocks_w;
+                let indices: Vec<usize> = (s..e).collect();
+                let above_ref = (delta_w > 0.0 && row > 0)
+                    .then_some((above_raw_ref.as_slice(), above_q_ref.as_slice()));
+                let above_dir = (delta_w > 0.0 && row > 0)
+                    .then_some((above_raw_dir.as_slice(), above_q_dir.as_slice()));
+
+                last_ref = dc_trellis_optimize_indexed(
+                    &raw_blocks,
+                    &mut ref_b,
+                    &indices,
+                    dc_quantval,
+                    &dc_table,
+                    last_ref,
+                    14.75,
+                    16.5,
+                    delta_w,
+                    above_ref,
+                );
+                last_dir = dc_trellis_optimize_row_direct(
+                    &dc_raw[s..e],
+                    &mut dir_b[s..e],
+                    dc_quantval,
+                    &dc_table,
+                    last_dir,
+                    14.75,
+                    16.5,
+                    delta_w,
+                    above_dir,
+                    1023,
+                    &mut scratch,
+                )
+                .unwrap();
+
+                assert_eq!(last_ref, last_dir, "last_dc mismatch delta_w={delta_w}");
+                for col in 0..blocks_w {
+                    above_raw_ref[col] = dc_raw[s + col];
+                    above_q_ref[col] = ref_b[s + col][0];
+                    above_raw_dir[col] = dc_raw[s + col];
+                    above_q_dir[col] = dir_b[s + col][0];
+                }
+            }
+            assert_eq!(ref_b, dir_b, "blocks mismatch delta_w={delta_w}");
+        }
+    }
+
+    #[test]
+    fn test_dc_trellis_row_direct_allows_xyb_extended_dc() {
+        let dc_table = create_dc_table();
+        let dc_quantval = 1u16;
+        // Raw DC corresponding to quantized level 2048 (> baseline 1023 clamp).
+        let dc_raw = [2048 * 8, -2048 * 8];
+        let mut blocks = [[0i16; DCT_BLOCK_SIZE]; 2];
+        let mut scratch = DcTrellisScratch::new();
+        dc_trellis_optimize_row_direct(
+            &dc_raw,
+            &mut blocks,
+            dc_quantval,
+            &dc_table,
+            0,
+            14.75,
+            16.5,
+            0.0,
+            None,
+            16383,
+            &mut scratch,
+        )
+        .unwrap();
+        assert!(
+            blocks[0][0] > 2000,
+            "XYB DC should not clamp to 1023, got {}",
+            blocks[0][0]
+        );
+        assert!(
+            blocks[1][0] < -2000,
+            "Negative XYB DC should not clamp to -1023, got {}",
+            blocks[1][0]
+        );
     }
 }

@@ -334,6 +334,11 @@ impl StreamingEncoder {
             processor.set_trellis(*trellis);
         }
 
+        // Propagate parallel encoding flag so trellis quantization can parallelize
+        // deterministically across blocks within each iMCU strip.
+        #[cfg(feature = "parallel")]
+        processor.set_parallel(builder.parallel);
+
         let strip_height = processor.strip_height();
         let bytes_per_row = width * builder.pixel_format.bytes_per_pixel();
 
@@ -402,14 +407,20 @@ impl StreamingEncoder {
         }
 
         // Parallel entropy encoding joins segments at restart markers, so it
-        // needs a nonzero interval. Resolve the documented auto-selection
-        // ("if restart_mcu_rows is 0, the encoder auto-selects") HERE — once,
-        // before frequency counting, DRI emission, and entropy encoding — so
-        // all three agree. The pre-fix code substituted 64 inside the emitter
-        // only, producing RST markers with no DRI header and DC-prediction
-        // resets the histogram never saw (sweep issue #197).
+        // needs a nonzero interval in sequential mode. Progressive streams
+        // intentionally suppress restart markers (progressive decode is
+        // multi-pass and RST markers add ~10% overhead + hurt some third-party
+        // decoders), and `smallest_scan` manages its sequential restart
+        // interval separately via `smallest_seq_restart_interval`. Resolve the
+        // documented auto-selection ("if restart_mcu_rows is 0, the encoder
+        // auto-selects") HERE — once, before frequency counting, DRI emission,
+        // and entropy encoding — so all three agree (sweep issue #197).
         #[cfg(feature = "parallel")]
-        if config.parallel && config.restart_interval == 0 {
+        if config.parallel
+            && config.restart_interval == 0
+            && config.mode != JpegMode::Progressive
+            && !config.smallest_scan
+        {
             config.restart_interval = super::config::resolve_restart_rows(
                 4,
                 config.width,

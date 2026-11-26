@@ -42,6 +42,33 @@ pub fn trellis_quantize_block(
     ac_table: &RateTable,
     config: &TrellisConfig,
 ) {
+    // max_coef_bits = data_precision + 2 = 8 + 2 = 10 for 8-bit baseline JPEG.
+    const BASELINE_MAX_DC_VAL: i32 = (1 << 10) - 1; // 1023
+    trellis_quantize_block_with_max_dc(
+        src,
+        quantized,
+        qtable,
+        ac_table,
+        config,
+        BASELINE_MAX_DC_VAL,
+    );
+}
+
+/// Internal AC trellis entry point with configurable DC clamp.
+///
+/// Baseline 8-bit YCbCr/grayscale clamps DC to `1023` (10-bit magnitude), while
+/// XYB uses SOF1 (extended sequential/progressive) whose scaled dynamic range
+/// requires up to 14-bit DC magnitudes (`16383`). AC coefficients remain
+/// clamped to `1023` to fit standard 10-bit JPEG AC size categories.
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn trellis_quantize_block_with_max_dc(
+    src: &[i32; DCT_BLOCK_SIZE],
+    quantized: &mut [i16; DCT_BLOCK_SIZE],
+    qtable: &[u16; DCT_BLOCK_SIZE],
+    ac_table: &RateTable,
+    config: &TrellisConfig,
+    max_dc_val: i32,
+) {
     // Calculate per-coefficient lambda weights: 1/q^2
     // Note: C mozjpeg has CSF weights but mode=1 is hardcoded, which always
     // uses flat weights.
@@ -76,13 +103,11 @@ pub fn trellis_quantize_block(
     let mut run_start = [0usize; DCT_BLOCK_SIZE];
 
     // Quantize DC coefficient (simple rounding - DC trellis is optional)
-    // max_coef_bits = data_precision + 2 = 8 + 2 = 10 for 8-bit JPEG
-    const MAX_COEF_VAL: i32 = (1 << 10) - 1; // 1023
     {
         let x = src[0].abs();
         let sign = if src[0] < 0 { -1i16 } else { 1i16 };
         let q = 8 * qtable[0] as i32;
-        let qval = ((x + q / 2) / q).min(MAX_COEF_VAL);
+        let qval = ((x + q / 2) / q).min(max_dc_val);
         quantized[0] = (qval as i16) * sign;
     }
 
