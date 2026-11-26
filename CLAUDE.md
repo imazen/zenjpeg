@@ -2026,3 +2026,40 @@ has five differing samples out of 589824, each by one level. Three jpeg-decoder
 linear_rgbf32 (29), and srgb8_fixed420 (3), all one level. These pre-existing
 cross-target differences are separate from the exact per-target before/after
 contract; no tolerance or expected output was changed in this optimization.
+
+## Adaptive Progressive Trellis RDO & `scan_optimize` (2026-11-26)
+
+Landed in three stacked commits (`b330d7eb`, `503d22a1`, `a0967cfd`) with zero
+public API changes (`just api-doc-check` unchanged) and zero DQT/non-trellis
+parity changes:
+
+- **Fixed bugs (`b330d7eb`):** `streaming.rs` no longer injects automatic
+  restart markers into progressive JPEGs when `restart_interval == 0` under
+  `ParallelEncoding::Auto`; XYB trellis now maps Y to luma (`is_luma = true`)
+  and X/B to chroma, uses `b_blocks_w` for B-channel DC trellis row stride, and
+  uses `max_dc_val = 16383` for XYB SOF1 DC clamping.
+- **Exact progressive SA rate modeling (`503d22a1`):** Progressive trellis
+  must price actual progressive scans (first-pass `ah == 0` bands and
+  full-range `ah > 0` refinement bitplanes separately via
+  `ComponentProgModel { first_scans, refine_scans }`), not sequential Annex-K
+  tables. With `ProgressiveSearch`, the Pass-1 winning scan script is cached
+  and reused in both Pass-2 trellis pricing and final emission so scan choice
+  and trellis rates match. `scan_optimize` adds per-component independent and
+  3-band luma candidates (adapted from Galaxy4594/jpegli-redux, BSD-3-Clause)
+  with parallel histogram warming and trial encodes. YCbCr 4:4:4 progressive
+  trellis uses `step_ratio^(2*0.15)` distortion tilt (neutral `1/q^2` is kept
+  on 4:2:0 and XYB to preserve high-Q Zensim).
+- **DC trellis & perceptual layer (`a0967cfd`):** Keep `real_norm = false` and
+  `seam_dc = 0` in DC trellis (real AC energy regresses Butteraugli p3 on edges).
+  Do not feed jpegli `aq_strength` directly into trellis lambda. In
+  `HybridMaxCompression` (`TrellisRdoMode::PerceptualFull`), `norm` is damped
+  (`0.65`, shift `-0.2625`) before adding the 3×3 spatial-activity/saturation
+  prior (`0.18`, `sat=0.35`, `coarse_damp=true`) and gentle unified closed-loop
+  seam feedback (`w=0.15`, `seam=1.5`, `chroma=0.5`). Both T2 and T1 use
+  O(width) streaming/sliding-edge IDCT (verified bit-exact against full-plane
+  across `1T == MT`), keeping 8.06 MPx 4:4:4 `HybridMaxCompression` peak RSS
+  at ~0.20 GiB.
+- **Pre-existing debug-mode note:** `huffman::builtin_tables::coverage_tests::baked_table_descriptors_are_exact`
+  triggers a `debug_assert!` at `huffman/encode.rs:230` (`0x0c`) in debug builds
+  (passes in `--release`); `encode::strip::padding_tests::standard_downsample_even_partial_bottom_witness`
+  differs by 1 ULP (`199.87268` vs `199.87267`) in debug builds with `--features parallel`.

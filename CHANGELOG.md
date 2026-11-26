@@ -7,6 +7,12 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Fixed
 
+- Suppress automatic restart-marker injection in progressive mode when
+  `restart_interval == 0` under parallel encoding, fix XYB trellis luma/chroma
+  table mapping, B-channel DC trellis stride (`b_blocks_w`), and extended XYB
+  DC clamp (`16383`), and add zero-copy DC trellis scratch buffers plus
+  deterministic row-parallel AC trellis (`b330d7eb`).
+
 - Retain baseline Huffman scan records and trailing ZRL positions for optional
   JPEG reconstruction metadata without changing ordinary coefficients
   (`00a00b0f`).
@@ -36,6 +42,19 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 
 ### Changed
+
+- Upgrade hybrid and auto-optimized trellis presets with exact progressive
+  successive-approximation empirical rate modeling (`T3b`), sequential
+  empirical rate modeling (`T3a`), empirical DC trellis (`T4`), per-component
+  independent 3-band progressive scan search (`R8` inspired by
+  Galaxy4594/jpegli-redux, BSD-3-Clause), cached scan-matched RDO with
+  parallel scan trials, and step-ratio distortion tilt on YCbCr 4:4:4
+  (`503d22a1`).
+- Upgrade `OptimizationPreset::HybridMaxCompression` with an O(width)
+  sliding-IDCT perceptual seam/activity RDO layer (damped norm, 3×3 spatial
+  activity + chroma saturation prior, and stripe-parallel closed-loop seam
+  visibility feedback) maintaining `1T == MT` byte-exact determinism and
+  bounded ~0.20 GiB peak RSS on 8 MPx 4:4:4 (`a0967cfd`).
 
 - Vectorize XYB decoding's existing f64 sRGB transfer and exact u8 packing,
   skip unused bias statistics, and reuse full-resolution component planes
