@@ -886,10 +886,9 @@ impl EncoderConfig {
         };
 
         let trellis_rdo = match preset {
-            HybridBaseline | HybridMaxCompression => {
-                super::trellis::TrellisRdoMode::EmpiricalTwoPass
-            }
+            HybridBaseline => super::trellis::TrellisRdoMode::EmpiricalTwoPass,
             HybridProgressive => super::trellis::TrellisRdoMode::EmpiricalFast,
+            HybridMaxCompression => super::trellis::TrellisRdoMode::PerceptualFull,
             JpegliBaseline
             | JpegliProgressive
             | MozjpegBaseline

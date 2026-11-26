@@ -24,6 +24,12 @@
 
 use alloc::vec::Vec;
 
+#[cfg(target_arch = "x86_64")]
+use archmage::SimdToken;
+
+use crate::decode::idct::inverse_dct_8x8;
+#[cfg(target_arch = "x86_64")]
+use crate::decode::idct::inverse_dct_8x8_into_with_token;
 use crate::encode::config::{ComputedConfig, ProgressiveScan};
 use crate::encode::encoder_types::ScanStrategy;
 use crate::encode::layout::LayoutParams;
@@ -51,6 +57,27 @@ pub(crate) const MAX_RDO_RAW_DCT_BYTES: usize = 128 * 1024 * 1024;
 /// Default fallback code length (bits) for symbols unseen in the Pass-1 histogram.
 const UNSEEN_SYMBOL_BITS: u8 = 16;
 
+// XYB neutral-gray level-shifted offsets in [-128, 127]:
+// X_neutral = (0.015386134 * 22.995788804) * 255.0 - 128.0
+// B_neutral = (0.27770459 * 1.502141333) * 255.0 - 128.0
+const XYB_X_NEUTRAL: f32 = -37.777_46;
+const XYB_B_NEUTRAL: f32 = -21.627_144;
+
+// Validated perceptual seam/activity RDO parameters (`HybridMaxCompression`):
+// DampedNorm(0.65, -0.2625) + T2_imij(0.18, sat=0.35) + T1(0.15, seam=1.5, chroma=0.5, unified)
+const PERCEPTUAL_NORM_SCALE: f32 = 0.65;
+const PERCEPTUAL_SHIFT_S1: f32 = -0.2625;
+const T2_STRENGTH: f32 = 0.18;
+const T2_SAT_WEIGHT: f32 = 0.35;
+const T1_WEIGHT: f32 = 0.15;
+const T1_SEAM_WEIGHT: f64 = 1.5;
+const T1_CHROMA_WEIGHT: f64 = 0.5;
+
+/// Stripe height (in 8×8 block rows) for O(width) stripe-parallel T1 seam/visibility
+/// evaluation. Keeps per-worker IDCT edge scratch at O(blocks_w) while preserving
+/// bit-exact `1T == MT` IEEE-754 summation order.
+const T1_STRIPE_ROWS: usize = 16;
+
 /// Internal trellis rate-distortion mode wired by optimization presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum TrellisRdoMode {
@@ -64,8 +91,22 @@ pub(crate) enum TrellisRdoMode {
     EmpiricalFast,
     /// Two-pass empirical RDO: Annex-K trellis pilot -> exact empirical
     /// progressive/sequential trellis + cached scan-matched search + empirical DC.
-    /// Used by `HybridBaseline` and `HybridMaxCompression`.
+    /// Used by `HybridBaseline`.
     EmpiricalTwoPass,
+    /// Full perceptual multi-pass RDO: damped AC-norm lambda base + open-loop
+    /// 3×3/chroma-saturation activity prior (`T2`) + closed-loop 2D unfiltered-seam
+    /// & visibility-weighted error feedback (`T1`, streamed with O(width) sliding
+    /// IDCT) + exact empirical progressive/sequential trellis (`T3b`/`T3a`) + `R8`
+    /// cached scan-matched search + empirical DC (`T4`).
+    /// Used by `HybridMaxCompression`.
+    PerceptualFull,
+}
+
+/// Base block-level lambda formula before per-block perceptual multipliers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LambdaBaseMode {
+    MozjpegNorm,
+    DampedNorm { norm_scale: f32, shift_s1: f32 },
 }
 
 /// Fallible value-initialized `Vec` allocation.
@@ -75,6 +116,93 @@ fn try_vec<T: Clone>(len: usize, val: T, ctx: &'static str) -> Result<Vec<T>> {
         .map_err(|_| Error::allocation_failed(len * core::mem::size_of::<T>(), ctx))?;
     v.resize(len, val);
     Ok(v)
+}
+
+/// Fallible empty `Vec` with exact capacity.
+fn try_vec_cap<T>(cap: usize, ctx: &'static str) -> Result<Vec<T>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(cap)
+        .map_err(|_| Error::allocation_failed(cap * core::mem::size_of::<T>(), ctx))?;
+    Ok(v)
+}
+
+// ============================================================================
+// Fast SIMD IDCT helpers (zero-allocation stack blocks)
+// ============================================================================
+
+#[derive(Copy, Clone, Default)]
+struct IdctToken {
+    #[cfg(target_arch = "x86_64")]
+    v3: Option<archmage::X64V3Token>,
+}
+
+impl IdctToken {
+    #[inline]
+    fn summon() -> Self {
+        Self {
+            #[cfg(target_arch = "x86_64")]
+            v3: archmage::X64V3Token::summon(),
+        }
+    }
+}
+
+/// Reconstruct 8×8 level-shifted spatial pixels `[-128, 127]` from raw f32 DCT.
+#[inline]
+fn idct_raw_block(tok: IdctToken, dct: &Block8x8f) -> [f32; DCT_BLOCK_SIZE] {
+    let mut natural = [0.0f32; DCT_BLOCK_SIZE];
+    for r in 0..8 {
+        let base = r * 8;
+        for c in 0..8 {
+            natural[base + c] = dct.rows[r][c] * 8.0;
+        }
+    }
+    let mut out = [0.0f32; DCT_BLOCK_SIZE];
+    #[cfg(target_arch = "x86_64")]
+    if let Some(t) = tok.v3 {
+        inverse_dct_8x8_into_with_token(t, &natural, &mut out);
+        return out;
+    }
+    let _ = tok;
+    out = inverse_dct_8x8(&natural);
+    out
+}
+
+/// Reconstruct 8×8 level-shifted spatial pixels `[-128, 127]` from zigzag i16
+/// quantized coefficients and natural-order quantization table.
+#[inline]
+fn idct_quantized_zigzag(
+    tok: IdctToken,
+    zigzag: &[i16; DCT_BLOCK_SIZE],
+    qvals_natural: &[u16; DCT_BLOCK_SIZE],
+) -> [f32; DCT_BLOCK_SIZE] {
+    let mut any_ac = false;
+    for &c in &zigzag[1..] {
+        if c != 0 {
+            any_ac = true;
+            break;
+        }
+    }
+    if !any_ac {
+        let dc = (zigzag[0] as f32) * (qvals_natural[0] as f32) * 0.125;
+        return [dc; DCT_BLOCK_SIZE];
+    }
+
+    let mut natural = [0.0f32; DCT_BLOCK_SIZE];
+    for (nat_idx, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+        let q = zigzag[zz_idx as usize];
+        if q != 0 {
+            natural[nat_idx] = (q as f32) * (qvals_natural[nat_idx] as f32);
+        }
+    }
+    let mut out = [0.0f32; DCT_BLOCK_SIZE];
+    #[cfg(target_arch = "x86_64")]
+    if let Some(t) = tok.v3 {
+        inverse_dct_8x8_into_with_token(t, &natural, &mut out);
+        return out;
+    }
+    let _ = tok;
+    out = inverse_dct_8x8(&natural);
+    out
 }
 
 /// Build the per-coefficient distortion weight table (`w[k] / q[k]^2`).
@@ -150,16 +278,16 @@ pub(crate) fn run_trellis_rdo(
     let n_cb = strip.cb_raw_dct.len();
     let n_cr = strip.cr_raw_dct.len();
 
-    let y_bw = layout.y_blocks_w;
-    let cb_bw = if use_xyb {
-        layout.y_blocks_w
+    let (y_bw, y_bh) = (layout.y_blocks_w, layout.y_blocks_h);
+    let (cb_bw, cb_bh) = if use_xyb {
+        (layout.y_blocks_w, layout.y_blocks_h)
     } else {
-        layout.c_blocks_w
+        (layout.c_blocks_w, layout.c_blocks_h)
     };
-    let cr_bw = if use_xyb {
-        layout.b_blocks_w
+    let (cr_bw, cr_bh) = if use_xyb {
+        (layout.b_blocks_w, layout.b_blocks_h)
     } else {
-        layout.c_blocks_w
+        (layout.c_blocks_w, layout.c_blocks_h)
     };
 
     // Ensure quantized output buffers are sized when StripProcessor skipped initial quantize.
@@ -178,6 +306,16 @@ pub(crate) fn run_trellis_rdo(
     let cb_is_luma = use_xyb;
     let max_dc_val = if use_xyb { 16383 } else { 1023 };
 
+    let perceptual = config.trellis_rdo == TrellisRdoMode::PerceptualFull;
+    let base_mode = if perceptual {
+        LambdaBaseMode::DampedNorm {
+            norm_scale: PERCEPTUAL_NORM_SCALE,
+            shift_s1: PERCEPTUAL_SHIFT_S1,
+        }
+    } else {
+        LambdaBaseMode::MozjpegNorm
+    };
+
     // Step-ratio frequency weighting (0.15) generalizes strongly across all 4 metrics
     // on YCbCr 4:4:4; keep neutral 1/q^2 on 4:2:0, XYB, RGB, and grayscale.
     let step_power =
@@ -191,10 +329,52 @@ pub(crate) fn run_trellis_rdo(
     let cr_lambda_tbl = build_lambda_tbl(&cr_quant.values, step_power);
 
     // ------------------------------------------------------------------------
-    // Pass 1 (pilot): EmpiricalFast reuses StripProcessor's SIMD ZeroBias pilot;
-    // EmpiricalTwoPass runs Annex-K trellis as Pass 1.
+    // Optional Pass A (PerceptualFull): O(width) open-loop T2_imij lambda maps
     // ------------------------------------------------------------------------
-    if config.trellis_rdo == TrellisRdoMode::EmpiricalTwoPass {
+    let (mut luma_lambda_map, mut cb_lambda_map, mut cr_lambda_map) = if perceptual {
+        let luma_map = build_t2_imij_lambda_map_streaming(
+            use_xyb,
+            is_color,
+            y_bw,
+            y_bh,
+            cb_bw,
+            cb_bh,
+            cr_bw,
+            cr_bh,
+            &strip.y_raw_dct,
+            &strip.cb_raw_dct,
+            &strip.cr_raw_dct,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            T2_STRENGTH,
+            T2_SAT_WEIGHT,
+            true,
+            use_parallel,
+        )?;
+        let cb_map = if is_color {
+            map_luma_to_plane(&luma_map, y_bw, y_bh, cb_bw, cb_bh)?
+        } else {
+            Vec::new()
+        };
+        let cr_map = if is_color {
+            map_luma_to_plane(&luma_map, y_bw, y_bh, cr_bw, cr_bh)?
+        } else {
+            Vec::new()
+        };
+        (Some(luma_map), Some(cb_map), Some(cr_map))
+    } else {
+        (None, None, None)
+    };
+
+    // ------------------------------------------------------------------------
+    // Pass 1 (pilot): EmpiricalFast reuses StripProcessor's SIMD ZeroBias pilot;
+    // EmpiricalTwoPass & PerceptualFull run Annex-K trellis as Pass 1.
+    // ------------------------------------------------------------------------
+    if matches!(
+        config.trellis_rdo,
+        TrellisRdoMode::EmpiricalTwoPass | TrellisRdoMode::PerceptualFull
+    ) {
         let std_tables = StandardRateTables::new();
         quantize_plane_sequential_trellis(
             &strip.y_raw_dct,
@@ -207,6 +387,8 @@ pub(crate) fn run_trellis_rdo(
                 &std_tables.chroma_ac
             },
             &trellis_cfg,
+            base_mode,
+            luma_lambda_map.as_deref(),
             max_dc_val,
             use_parallel,
         );
@@ -222,6 +404,8 @@ pub(crate) fn run_trellis_rdo(
                     &std_tables.chroma_ac
                 },
                 &trellis_cfg,
+                base_mode,
+                cb_lambda_map.as_deref(),
                 max_dc_val,
                 use_parallel,
             );
@@ -232,10 +416,50 @@ pub(crate) fn run_trellis_rdo(
                 &cr_lambda_tbl,
                 &std_tables.chroma_ac,
                 &trellis_cfg,
+                base_mode,
+                cr_lambda_map.as_deref(),
                 max_dc_val,
                 use_parallel,
             );
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // Optional Pass B (PerceptualFull): O(width) closed-loop T1 seam/visibility
+    // ------------------------------------------------------------------------
+    if perceptual
+        && let (Some(ym), Some(cbm), Some(crm)) = (
+            luma_lambda_map.as_mut(),
+            cb_lambda_map.as_mut(),
+            cr_lambda_map.as_mut(),
+        )
+    {
+        update_t1_closed_loop_streaming(
+            use_xyb,
+            is_color,
+            y_bw,
+            y_bh,
+            cb_bw,
+            cb_bh,
+            cr_bw,
+            cr_bh,
+            &strip.y_raw_dct,
+            &strip.cb_raw_dct,
+            &strip.cr_raw_dct,
+            &strip.y_blocks,
+            &strip.cb_blocks,
+            &strip.cr_blocks,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            ym,
+            cbm,
+            crm,
+            T1_WEIGHT,
+            T1_SEAM_WEIGHT,
+            T1_CHROMA_WEIGHT,
+            use_parallel,
+        )?;
     }
 
     // ------------------------------------------------------------------------
@@ -259,6 +483,8 @@ pub(crate) fn run_trellis_rdo(
             &y_lambda_tbl,
             &prog_models[0],
             &trellis_cfg,
+            base_mode,
+            luma_lambda_map.as_deref(),
             max_dc_val,
             use_parallel,
         );
@@ -270,6 +496,8 @@ pub(crate) fn run_trellis_rdo(
                 &cb_lambda_tbl,
                 &prog_models[1],
                 &trellis_cfg,
+                base_mode,
+                cb_lambda_map.as_deref(),
                 max_dc_val,
                 use_parallel,
             );
@@ -280,6 +508,8 @@ pub(crate) fn run_trellis_rdo(
                 &cr_lambda_tbl,
                 &prog_models[2],
                 &trellis_cfg,
+                base_mode,
+                cr_lambda_map.as_deref(),
                 max_dc_val,
                 use_parallel,
             );
@@ -301,6 +531,8 @@ pub(crate) fn run_trellis_rdo(
             &y_lambda_tbl,
             &ac_tables[0],
             &trellis_cfg,
+            base_mode,
+            luma_lambda_map.as_deref(),
             max_dc_val,
             use_parallel,
         );
@@ -312,6 +544,8 @@ pub(crate) fn run_trellis_rdo(
                 &cb_lambda_tbl,
                 &ac_tables[1],
                 &trellis_cfg,
+                base_mode,
+                cb_lambda_map.as_deref(),
                 max_dc_val,
                 use_parallel,
             );
@@ -322,6 +556,8 @@ pub(crate) fn run_trellis_rdo(
                 &cr_lambda_tbl,
                 &ac_tables[2],
                 &trellis_cfg,
+                base_mode,
+                cr_lambda_map.as_deref(),
                 max_dc_val,
                 use_parallel,
             );
@@ -334,13 +570,18 @@ pub(crate) fn run_trellis_rdo(
     // ------------------------------------------------------------------------
     if trellis_cfg.is_dc_enabled() {
         let delta_dc_weight = trellis_cfg.get_delta_dc_weight();
+        let dc_lambda1 = match base_mode {
+            LambdaBaseMode::MozjpegNorm => trellis_cfg.lambda_log_scale1,
+            LambdaBaseMode::DampedNorm { shift_s1, .. } => trellis_cfg.lambda_log_scale1 + shift_s1,
+        };
         run_dc_trellis_plane(
             &strip.y_raw_dct,
             &mut strip.y_blocks,
             y_bw,
             y_quant.values[0],
             &dc_tables[0],
-            &trellis_cfg,
+            dc_lambda1,
+            trellis_cfg.lambda_log_scale2,
             delta_dc_weight,
             max_dc_val,
         )?;
@@ -351,7 +592,8 @@ pub(crate) fn run_trellis_rdo(
                 cb_bw,
                 cb_quant.values[0],
                 &dc_tables[1],
-                &trellis_cfg,
+                dc_lambda1,
+                trellis_cfg.lambda_log_scale2,
                 delta_dc_weight,
                 max_dc_val,
             )?;
@@ -361,7 +603,8 @@ pub(crate) fn run_trellis_rdo(
                 cr_bw,
                 cr_quant.values[0],
                 &dc_tables[2],
-                &trellis_cfg,
+                dc_lambda1,
+                trellis_cfg.lambda_log_scale2,
                 delta_dc_weight,
                 max_dc_val,
             )?;
@@ -369,6 +612,886 @@ pub(crate) fn run_trellis_rdo(
     }
 
     Ok(cached_scans)
+}
+
+// ============================================================================
+// Perceptual Layer: O(width) Sliding-IDCT Open-Loop (T2) & Closed-Loop (T1)
+// ============================================================================
+
+/// Map a luma-grid multiplier map `(y_bw, y_bh)` onto a (possibly subsampled)
+/// target plane grid `(dst_bw, dst_bh)` via log-space geometric mean.
+fn map_luma_to_plane(
+    luma_map: &[f32],
+    y_bw: usize,
+    y_bh: usize,
+    dst_bw: usize,
+    dst_bh: usize,
+) -> Result<Vec<f32>> {
+    let nb = dst_bw * dst_bh;
+    if dst_bw == y_bw && dst_bh == y_bh && luma_map.len() == nb {
+        let mut out = try_vec_cap(nb, "rdo plane_map_clone")?;
+        out.extend_from_slice(luma_map);
+        return Ok(out);
+    }
+    let mut out = try_vec(nb, 1.0f32, "rdo plane_map_down")?;
+    if y_bw == 0 || y_bh == 0 || dst_bw == 0 || dst_bh == 0 || luma_map.is_empty() {
+        return Ok(out);
+    }
+    let sx = (y_bw + dst_bw - 1) / dst_bw;
+    let sy = (y_bh + dst_bh - 1) / dst_bh;
+    for by in 0..dst_bh {
+        for bx in 0..dst_bw {
+            let mut sum = 0.0f64;
+            let mut cnt = 0usize;
+            for dy in 0..sy {
+                let ly = by * sy + dy;
+                if ly >= y_bh {
+                    continue;
+                }
+                for dx in 0..sx {
+                    let lx = bx * sx + dx;
+                    if lx >= y_bw {
+                        continue;
+                    }
+                    sum += (luma_map[ly * y_bw + lx] as f64).ln();
+                    cnt += 1;
+                }
+            }
+            if cnt > 0 {
+                out[by * dst_bw + bx] = (sum / cnt as f64).exp() as f32;
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[inline]
+fn coarse_damp_factor(s1_luma: f32, enabled: bool) -> f64 {
+    if !enabled || s1_luma <= 16.0 {
+        1.0
+    } else {
+        (1.0 - 0.55 * ((s1_luma - 16.0) / 48.0).clamp(0.0, 1.0)) as f64
+    }
+}
+
+#[inline]
+fn chroma_quadrant_mag_grad_from_block(
+    blk: &[f32; DCT_BLOCK_SIZE],
+    sub_x: bool,
+    sub_y: bool,
+    bx: usize,
+    by: usize,
+    neutral: f32,
+    s1_c: f32,
+) -> (f32, f32) {
+    let x0 = if sub_x { (bx & 1) * 4 } else { 0 };
+    let y0 = if sub_y { (by & 1) * 4 } else { 0 };
+    let xlen = if sub_x { 4 } else { 8 };
+    let ylen = if sub_y { 4 } else { 8 };
+    let inv_s1 = 1.0 / s1_c.max(1e-4);
+
+    let (mut mag, mut grad) = (0.0f32, 0.0f32);
+    for dy in 0..ylen {
+        let y = y0 + dy;
+        let y1 = (y + 1).min(y0 + ylen - 1);
+        for dx in 0..xlen {
+            let x = x0 + dx;
+            let x1 = (x + 1).min(x0 + xlen - 1);
+            let v = blk[y * 8 + x];
+            mag += (v - neutral).abs() * inv_s1;
+            grad += ((v - blk[y * 8 + x1]).abs() + (v - blk[y1 * 8 + x]).abs()) * inv_s1;
+        }
+    }
+    let cnt = (xlen * ylen) as f32;
+    (mag / cnt, grad / (2.0 * cnt))
+}
+
+/// Streaming open-loop 4×4-quadrant min/mean + 3×3 neighborhood + smooth chroma
+/// saturation lambda multiplier map (`T2_imij`).
+///
+/// Reconstructs raw blocks on the stack inside 2×2-block tiles (zero full-plane
+/// spatial buffers; O(1) spatial working memory per worker) and produces results
+/// bit-identical to full-plane reconstruction.
+#[allow(clippy::too_many_arguments)]
+fn build_t2_imij_lambda_map_streaming(
+    use_xyb: bool,
+    is_color: bool,
+    y_bw: usize,
+    y_bh: usize,
+    cb_bw: usize,
+    cb_bh: usize,
+    cr_bw: usize,
+    cr_bh: usize,
+    y_raw: &[Block8x8f],
+    cb_raw: &[Block8x8f],
+    cr_raw: &[Block8x8f],
+    y_quant: &QuantTable,
+    cb_quant: &QuantTable,
+    cr_quant: &QuantTable,
+    strength: f32,
+    sat_weight: f32,
+    coarse_damp: bool,
+    use_parallel: bool,
+) -> Result<Vec<f32>> {
+    let nb = y_bw * y_bh;
+    if nb == 0 {
+        return Ok(Vec::new());
+    }
+
+    let (luma_raw, c0_raw, c1_raw, luma_s1, c0_s1, c1_s1, c0_bw, c0_bh, c1_bw, c1_bh, n0, n1) =
+        if use_xyb {
+            (
+                cb_raw,
+                y_raw,
+                cr_raw,
+                cb_quant.values[1].max(1) as f32,
+                y_quant.values[1].max(1) as f32,
+                cr_quant.values[1].max(1) as f32,
+                y_bw,
+                y_bh,
+                cr_bw,
+                cr_bh,
+                XYB_X_NEUTRAL,
+                XYB_B_NEUTRAL,
+            )
+        } else {
+            (
+                y_raw,
+                cb_raw,
+                cr_raw,
+                y_quant.values[1].max(1) as f32,
+                cb_quant.values[1].max(1) as f32,
+                cr_quant.values[1].max(1) as f32,
+                cb_bw,
+                cb_bh,
+                cr_bw,
+                cr_bh,
+                0.0f32,
+                0.0f32,
+            )
+        };
+
+    let mut min_q = try_vec(nb, 0.0f32, "rdo t2_min_q")?;
+    let mut mean_q = try_vec(nb, 0.0f32, "rdo t2_mean_q")?;
+    let mut sat_smooth = try_vec(nb, 0.0f32, "rdo t2_sat")?;
+
+    let do_chroma = is_color && sat_weight != 0.0 && !c0_raw.is_empty() && !c1_raw.is_empty();
+    let c0_sub_x = c0_bw < y_bw;
+    let c0_sub_y = c0_bh < y_bh;
+    let c1_sub_x = c1_bw < y_bw;
+    let c1_sub_y = c1_bh < y_bh;
+    // Choose inner scan order inside each 2×2 tile so 4:2:2 (horizontal-only subsampling)
+    // and 4:4:0 (vertical-only subsampling) both get 100% stack cache hits.
+    let dy_outer = c0_sub_x && !c0_sub_y;
+
+    let compute_row_pair =
+        |by_pair: usize, min_pair: &mut [f32], mean_pair: &mut [f32], sat_pair: &mut [f32]| {
+            let tok = IdctToken::summon();
+            let by0 = by_pair * 2;
+            let rows_in_pair = (y_bh - by0).min(2);
+            let mut c0_cache: (usize, [f32; DCT_BLOCK_SIZE]) = (usize::MAX, [0.0; DCT_BLOCK_SIZE]);
+            let mut c1_cache: (usize, [f32; DCT_BLOCK_SIZE]) = (usize::MAX, [0.0; DCT_BLOCK_SIZE]);
+
+            for bx_pair in 0..y_bw.div_ceil(2) {
+                let bx0 = bx_pair * 2;
+                let cols_in_pair = (y_bw - bx0).min(2);
+
+                let mut visit = |dx: usize, dy: usize| {
+                    let bx = bx0 + dx;
+                    let by = by0 + dy;
+                    let local = dy * y_bw + bx;
+                    let blk = idct_raw_block(tok, &luma_raw[by * y_bw + bx]);
+
+                    let mut q_act = [0.0f32; 4];
+                    for qy in 0..2 {
+                        for qx in 0..2 {
+                            let mut sum = 0.0f32;
+                            for py in 0..4 {
+                                let y = qy * 4 + py;
+                                let y1 = (y + 1).min(7);
+                                for px in 0..4 {
+                                    let x = qx * 4 + px;
+                                    let x1 = (x + 1).min(7);
+                                    let v = blk[y * 8 + x];
+                                    let vx = blk[y * 8 + x1];
+                                    let vy = blk[y1 * 8 + x];
+                                    sum += (v - vx).abs() + (v - vy).abs();
+                                }
+                            }
+                            q_act[qy * 2 + qx] = sum * (1.0 / 32.0) / luma_s1;
+                        }
+                    }
+                    min_pair[local] = q_act[0].min(q_act[1]).min(q_act[2]).min(q_act[3]);
+                    mean_pair[local] = 0.25 * (q_act[0] + q_act[1] + q_act[2] + q_act[3]);
+
+                    if do_chroma {
+                        let cbx0 = if c0_sub_x {
+                            (bx / 2).min(c0_bw - 1)
+                        } else {
+                            bx.min(c0_bw - 1)
+                        };
+                        let cby0 = if c0_sub_y {
+                            (by / 2).min(c0_bh - 1)
+                        } else {
+                            by.min(c0_bh - 1)
+                        };
+                        let cidx0 = cby0 * c0_bw + cbx0;
+                        if c0_cache.0 != cidx0 {
+                            c0_cache = (cidx0, idct_raw_block(tok, &c0_raw[cidx0]));
+                        }
+                        let (mag0, grad0) = chroma_quadrant_mag_grad_from_block(
+                            &c0_cache.1,
+                            c0_sub_x,
+                            c0_sub_y,
+                            bx,
+                            by,
+                            n0,
+                            c0_s1,
+                        );
+
+                        let cbx1 = if c1_sub_x {
+                            (bx / 2).min(c1_bw - 1)
+                        } else {
+                            bx.min(c1_bw - 1)
+                        };
+                        let cby1 = if c1_sub_y {
+                            (by / 2).min(c1_bh - 1)
+                        } else {
+                            by.min(c1_bh - 1)
+                        };
+                        let cidx1 = cby1 * c1_bw + cbx1;
+                        if c1_cache.0 != cidx1 {
+                            c1_cache = (cidx1, idct_raw_block(tok, &c1_raw[cidx1]));
+                        }
+                        let (mag1, grad1) = chroma_quadrant_mag_grad_from_block(
+                            &c1_cache.1,
+                            c1_sub_x,
+                            c1_sub_y,
+                            bx,
+                            by,
+                            n1,
+                            c1_s1,
+                        );
+
+                        let avg_mag = 0.5 * (mag0 + mag1);
+                        let avg_grad = 0.5 * (grad0 + grad1);
+                        let smooth = 1.0 / (1.0 + avg_grad * avg_grad);
+                        sat_pair[local] = (avg_mag / (avg_mag + 8.0)) * smooth;
+                    }
+                };
+
+                if dy_outer {
+                    for dy in 0..rows_in_pair {
+                        for dx in 0..cols_in_pair {
+                            visit(dx, dy);
+                        }
+                    }
+                } else {
+                    for dx in 0..cols_in_pair {
+                        for dy in 0..rows_in_pair {
+                            visit(dx, dy);
+                        }
+                    }
+                }
+            }
+        };
+
+    let pair_stride = 2 * y_bw;
+    #[cfg(feature = "parallel")]
+    if use_parallel && y_bh >= 4 {
+        min_q
+            .par_chunks_mut(pair_stride)
+            .zip(mean_q.par_chunks_mut(pair_stride))
+            .zip(sat_smooth.par_chunks_mut(pair_stride))
+            .enumerate()
+            .for_each(|(by_pair, ((mn, me), st))| compute_row_pair(by_pair, mn, me, st));
+    } else {
+        for by_pair in 0..y_bh.div_ceil(2) {
+            let start = by_pair * pair_stride;
+            let end = (start + pair_stride).min(nb);
+            compute_row_pair(
+                by_pair,
+                &mut min_q[start..end],
+                &mut mean_q[start..end],
+                &mut sat_smooth[start..end],
+            );
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = use_parallel;
+        for by_pair in 0..y_bh.div_ceil(2) {
+            let start = by_pair * pair_stride;
+            let end = (start + pair_stride).min(nb);
+            compute_row_pair(
+                by_pair,
+                &mut min_q[start..end],
+                &mut mean_q[start..end],
+                &mut sat_smooth[start..end],
+            );
+        }
+    }
+
+    // Pass 2: 3×3 neighborhood + strict ascending f64 reduction for mean_raw
+    let mut raw = try_vec(nb, 0.0f64, "rdo t2_raw")?;
+    let mut active_sum = 0.0f64;
+    let mut active_n = 0usize;
+    let mut all_sum = 0.0f64;
+    let sw = sat_weight as f64;
+
+    for by in 0..y_bh {
+        let y0 = by.saturating_sub(1);
+        let y1 = (by + 1).min(y_bh - 1);
+        for bx in 0..y_bw {
+            let x0 = bx.saturating_sub(1);
+            let x1 = (bx + 1).min(y_bw - 1);
+            let mut s_min = f32::INFINITY;
+            let mut s_sum = 0.0f32;
+            let mut s_cnt = 0.0f32;
+            for yy in y0..=y1 {
+                let row = &mean_q[yy * y_bw..(yy + 1) * y_bw];
+                for &v in &row[x0..=x1] {
+                    if v < s_min {
+                        s_min = v;
+                    }
+                    s_sum += v;
+                    s_cnt += 1.0;
+                }
+            }
+            let idx = by * y_bw + bx;
+            let act = 0.45 * min_q[idx] + 0.30 * s_min + 0.25 * (s_sum / s_cnt);
+            let score = -((act as f64) + 0.25).ln() + sw * (sat_smooth[idx] as f64);
+            raw[idx] = score;
+            all_sum += score;
+            if mean_q[idx] > 0.05 {
+                active_sum += score;
+                active_n += 1;
+            }
+        }
+    }
+
+    let mean_raw = if active_n > 0 {
+        active_sum / active_n as f64
+    } else {
+        all_sum / nb as f64
+    };
+    let st = (strength as f64) * coarse_damp_factor(luma_s1, coarse_damp);
+    let mut out = try_vec(nb, 1.0f32, "rdo t2_lambda")?;
+    for i in 0..nb {
+        let lm = (st * (raw[i] - mean_raw)).clamp(-0.85, 0.85);
+        out[i] = lm.exp() as f32;
+    }
+    Ok(out)
+}
+
+/// Local contrast-masking visibility on an 8×8 luma patch (3×3 eroded max-neighbor gradient).
+#[inline]
+fn block_visibility(
+    orig: &[f32; DCT_BLOCK_SIZE],
+    step1: f32,
+    mask_tau: f32,
+) -> [f32; DCT_BLOCK_SIZE] {
+    let mut grad = [0.0f32; DCT_BLOCK_SIZE];
+    for y in 0..8usize {
+        let ym = y.saturating_sub(1);
+        let yp = (y + 1).min(7);
+        for x in 0..8usize {
+            let xm = x.saturating_sub(1);
+            let xp = (x + 1).min(7);
+            let v = orig[y * 8 + x];
+            grad[y * 8 + x] = (v - orig[y * 8 + xm])
+                .abs()
+                .max((v - orig[y * 8 + xp]).abs())
+                .max((v - orig[ym * 8 + x]).abs())
+                .max((v - orig[yp * 8 + x]).abs());
+        }
+    }
+    let inv_tau = 1.0 / (mask_tau * step1).max(1e-4);
+    let mut vis = [0.0f32; DCT_BLOCK_SIZE];
+    for y in 0..8usize {
+        let ym = y.saturating_sub(1);
+        let yp = (y + 1).min(7);
+        for x in 0..8usize {
+            let xm = x.saturating_sub(1);
+            let xp = (x + 1).min(7);
+            let mut mn = grad[y * 8 + x];
+            for yy in ym..=yp {
+                for xx in xm..=xp {
+                    let g = grad[yy * 8 + xx];
+                    if g < mn {
+                        mn = g;
+                    }
+                }
+            }
+            let act = 0.5 * (grad[y * 8 + x] + mn);
+            let r = act * inv_tau;
+            vis[y * 8 + x] = 1.0 / (1.0 + r * r);
+        }
+    }
+    vis
+}
+
+/// Unfiltered 1-pixel block-boundary step discontinuity cost.
+#[inline]
+fn seam_pair_cost(
+    a_orig: f32,
+    b_orig: f32,
+    e_a: f32,
+    e_b: f32,
+    inv_seam_tau_s1: f64,
+    inv_s1_sq: f64,
+) -> f64 {
+    let d_src = (b_orig - a_orig) as f64;
+    let r = d_src * inv_seam_tau_s1;
+    let gate = 1.0 / (1.0 + r * r);
+    let de = (e_b - e_a) as f64;
+    gate * (de * de) * inv_s1_sq
+}
+
+#[derive(Clone, Copy)]
+enum VisMode<'a> {
+    None,
+    SelfLuma {
+        luma_s1: f32,
+    },
+    ExternalLuma {
+        luma_raw: &'a [Block8x8f],
+        luma_s1: f32,
+    },
+}
+
+/// Edge strips exported by one T1 stripe for exact cross-stripe vertical seam fusion.
+struct T1StripeEdges {
+    top_orig: Vec<[f32; 8]>,
+    top_rec: Vec<[f32; 8]>,
+    bot_orig: Vec<[f32; 8]>,
+    bot_rec: Vec<[f32; 8]>,
+    /// Deferred vertical seam between row `r0` and row `r0 + 1` for stripes `s > 0`,
+    /// applied to row `r0` right after `(r0 - 1, r0)` so IEEE-754 summation order
+    /// is bit-identical to full-plane processing regardless of thread count.
+    first_row_bot_vs: Vec<f64>,
+}
+
+/// Compute per-block visibility-weighted interior + 2D (H+V) unfiltered seam errors
+/// using O(width) stripe-local sliding IDCT edge buffers.
+///
+/// Parallelizable across stripes with bit-exact `1T == MT` determinism and bit-exact
+/// equivalence to full-plane reconstruction.
+#[allow(clippy::too_many_arguments)]
+fn plane_closed_loop_errors_streaming(
+    raw_dct: &[Block8x8f],
+    quant_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    qvals_natural: &[u16; DCT_BLOCK_SIZE],
+    vis_mode: VisMode<'_>,
+    bw: usize,
+    bh: usize,
+    s1: f32,
+    seam_weight: f64,
+    use_parallel: bool,
+) -> Result<Vec<f64>> {
+    let nb = bw * bh;
+    if nb == 0 {
+        return Ok(Vec::new());
+    }
+    let inv_s1_sq = 1.0 / ((s1 as f64) * (s1 as f64)).max(1e-12);
+    let inv_seam_tau = 1.0 / ((1.5 * s1) as f64).max(1e-6);
+
+    let mut blk_err = try_vec(nb, 0.0f64, "rdo t1_blk_err")?;
+    let stripe_blocks = T1_STRIPE_ROWS * bw;
+
+    let run_stripe = |stripe_idx: usize, stripe_err: &mut [f64]| -> Result<T1StripeEdges> {
+        let tok = IdctToken::summon();
+        let r0 = stripe_idx * T1_STRIPE_ROWS;
+        let rows = stripe_err.len() / bw;
+
+        let mut prev_bot_orig = if seam_weight != 0.0 {
+            try_vec(bw, [0.0f32; 8], "rdo t1_prev_orig")?
+        } else {
+            Vec::new()
+        };
+        let mut prev_bot_rec = if seam_weight != 0.0 {
+            try_vec(bw, [0.0f32; 8], "rdo t1_prev_rec")?
+        } else {
+            Vec::new()
+        };
+        let mut top_orig = if seam_weight != 0.0 && stripe_idx > 0 {
+            try_vec(bw, [0.0f32; 8], "rdo t1_top_orig")?
+        } else {
+            Vec::new()
+        };
+        let mut top_rec = if seam_weight != 0.0 && stripe_idx > 0 {
+            try_vec(bw, [0.0f32; 8], "rdo t1_top_rec")?
+        } else {
+            Vec::new()
+        };
+        let mut cur_vs = if seam_weight != 0.0 {
+            try_vec(bw, 0.0f64, "rdo t1_cur_vs")?
+        } else {
+            Vec::new()
+        };
+        let mut first_row_bot_vs = if seam_weight != 0.0 && stripe_idx > 0 && rows > 1 {
+            try_vec(bw, 0.0f64, "rdo t1_defer_vs")?
+        } else {
+            Vec::new()
+        };
+
+        for local_by in 0..rows {
+            let by = r0 + local_by;
+            let row_off = local_by * bw;
+            let mut left_orig_col = [0.0f32; 8];
+            let mut left_rec_col = [0.0f32; 8];
+
+            for bx in 0..bw {
+                let idx = by * bw + bx;
+                let ob = idct_raw_block(tok, &raw_dct[idx]);
+                let rb = idct_quantized_zigzag(tok, &quant_blocks[idx], qvals_natural);
+
+                let vis_arr = match vis_mode {
+                    VisMode::None => None,
+                    VisMode::SelfLuma { luma_s1 } => Some(block_visibility(&ob, luma_s1, 2.0)),
+                    VisMode::ExternalLuma { luma_raw, luma_s1 } => {
+                        let lo = idct_raw_block(tok, &luma_raw[idx]);
+                        Some(block_visibility(&lo, luma_s1, 2.0))
+                    }
+                };
+
+                let mut acc = 0.0f64;
+                for k in 0..DCT_BLOCK_SIZE {
+                    let e = (ob[k] - rb[k]) as f64;
+                    let e2 = (e * e * inv_s1_sq).min(64.0);
+                    let vw = vis_arr.as_ref().map_or(1.0f64, |v| v[k] as f64);
+                    acc += vw * (e2 + 0.15 * e2 * e2);
+                }
+
+                if seam_weight != 0.0 && bx > 0 {
+                    let mut hs = 0.0f64;
+                    for y in 0..8 {
+                        let oa = left_orig_col[y];
+                        let ob_px = ob[y * 8];
+                        let ea = oa - left_rec_col[y];
+                        let eb = ob_px - rb[y * 8];
+                        hs += seam_pair_cost(oa, ob_px, ea, eb, inv_seam_tau, inv_s1_sq);
+                    }
+                    let term = seam_weight * hs;
+                    acc += term;
+                    stripe_err[row_off + (bx - 1)] += term;
+                }
+                stripe_err[row_off + bx] += acc;
+
+                if seam_weight != 0.0 {
+                    for y in 0..8 {
+                        left_orig_col[y] = ob[y * 8 + 7];
+                        left_rec_col[y] = rb[y * 8 + 7];
+                    }
+                    if local_by == 0 && stripe_idx > 0 {
+                        top_orig[bx].copy_from_slice(&ob[..8]);
+                        top_rec[bx].copy_from_slice(&rb[..8]);
+                    }
+                    if local_by > 0 {
+                        let mut vs = 0.0f64;
+                        for x in 0..8 {
+                            let oa = prev_bot_orig[bx][x];
+                            let ob_px = ob[x];
+                            let ea = oa - prev_bot_rec[bx][x];
+                            let eb = ob_px - rb[x];
+                            vs += seam_pair_cost(oa, ob_px, ea, eb, inv_seam_tau, inv_s1_sq);
+                        }
+                        cur_vs[bx] = seam_weight * vs;
+                    }
+                    prev_bot_orig[bx].copy_from_slice(&ob[7 * 8..7 * 8 + 8]);
+                    prev_bot_rec[bx].copy_from_slice(&rb[7 * 8..7 * 8 + 8]);
+                }
+            }
+
+            // Apply vertical seams AFTER all horizontal seams in row `local_by`
+            // completed so addition order matches full-plane bit-for-bit.
+            if seam_weight != 0.0 && local_by > 0 {
+                let prev_off = (local_by - 1) * bw;
+                if local_by == 1 && stripe_idx > 0 {
+                    first_row_bot_vs.copy_from_slice(&cur_vs);
+                    for bx in 0..bw {
+                        stripe_err[row_off + bx] += cur_vs[bx];
+                    }
+                } else {
+                    for bx in 0..bw {
+                        let term = cur_vs[bx];
+                        stripe_err[prev_off + bx] += term;
+                        stripe_err[row_off + bx] += term;
+                    }
+                }
+            }
+        }
+
+        Ok(T1StripeEdges {
+            top_orig,
+            top_rec,
+            bot_orig: prev_bot_orig,
+            bot_rec: prev_bot_rec,
+            first_row_bot_vs,
+        })
+    };
+
+    #[cfg(feature = "parallel")]
+    let boundaries_res: Vec<Result<T1StripeEdges>> = if use_parallel && bh > T1_STRIPE_ROWS {
+        blk_err
+            .par_chunks_mut(stripe_blocks)
+            .enumerate()
+            .map(|(s, chunk)| run_stripe(s, chunk))
+            .collect()
+    } else {
+        blk_err
+            .chunks_mut(stripe_blocks)
+            .enumerate()
+            .map(|(s, chunk)| run_stripe(s, chunk))
+            .collect()
+    };
+
+    #[cfg(not(feature = "parallel"))]
+    let boundaries_res: Vec<Result<T1StripeEdges>> = {
+        let _ = use_parallel;
+        blk_err
+            .chunks_mut(stripe_blocks)
+            .enumerate()
+            .map(|(s, chunk)| run_stripe(s, chunk))
+            .collect()
+    };
+
+    let mut boundaries = try_vec_cap(boundaries_res.len(), "rdo t1_bounds")?;
+    for res in boundaries_res {
+        boundaries.push(res?);
+    }
+
+    // Fuse stripe-boundary vertical seams in strict ascending order, applying
+    // `(r0 - 1, r0)` before row `r0`'s deferred `(r0, r0 + 1)` seam.
+    if seam_weight != 0.0 {
+        for s in 1..boundaries.len() {
+            let r0 = s * T1_STRIPE_ROWS;
+            let prev_bot_o = &boundaries[s - 1].bot_orig;
+            let prev_bot_r = &boundaries[s - 1].bot_rec;
+            let cur_top_o = &boundaries[s].top_orig;
+            let cur_top_r = &boundaries[s].top_rec;
+            let deferred_bot = &boundaries[s].first_row_bot_vs;
+            for bx in 0..bw {
+                let mut vs = 0.0f64;
+                for x in 0..8 {
+                    let oa = prev_bot_o[bx][x];
+                    let ob = cur_top_o[bx][x];
+                    let ea = oa - prev_bot_r[bx][x];
+                    let eb = ob - cur_top_r[bx][x];
+                    vs += seam_pair_cost(oa, ob, ea, eb, inv_seam_tau, inv_s1_sq);
+                }
+                let term = seam_weight * vs;
+                blk_err[(r0 - 1) * bw + bx] += term;
+                blk_err[r0 * bw + bx] += term;
+                if !deferred_bot.is_empty() {
+                    blk_err[r0 * bw + bx] += deferred_bot[bx];
+                }
+            }
+        }
+    }
+
+    Ok(blk_err)
+}
+
+/// Apply global log-centered T1 update to a lambda map in place (deterministic
+/// strict ascending f64 sum).
+fn apply_log_centered_feedback(lambda_map: &mut [f32], errs: &[f64], weight: f32) {
+    let n = lambda_map.len().min(errs.len());
+    if n == 0 || weight == 0.0 {
+        return;
+    }
+    let mut sum_log = 0.0f64;
+    let mut cnt = 0usize;
+    for &e in &errs[..n] {
+        if e > 1e-4 {
+            sum_log += (e + 0.25).ln();
+            cnt += 1;
+        }
+    }
+    if cnt == 0 {
+        return;
+    }
+    let ref_log = sum_log / cnt as f64;
+    let w = weight as f64;
+    for i in 0..n {
+        let e = errs[i];
+        let delta = ((e + 0.25).ln() - ref_log).clamp(-0.75, 1.15);
+        lambda_map[i] = ((lambda_map[i] as f64) * (w * delta).exp()).clamp(0.30, 3.5) as f32;
+    }
+}
+
+/// Streaming closed-loop T1 update (unified perceptual error map, O(width) IDCT).
+#[allow(clippy::too_many_arguments)]
+fn update_t1_closed_loop_streaming(
+    use_xyb: bool,
+    is_color: bool,
+    y_bw: usize,
+    y_bh: usize,
+    cb_bw: usize,
+    cb_bh: usize,
+    cr_bw: usize,
+    cr_bh: usize,
+    y_raw: &[Block8x8f],
+    cb_raw: &[Block8x8f],
+    cr_raw: &[Block8x8f],
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    y_quant: &QuantTable,
+    cb_quant: &QuantTable,
+    cr_quant: &QuantTable,
+    luma_lambda_map: &mut [f32],
+    cb_lambda_map: &mut [f32],
+    cr_lambda_map: &mut [f32],
+    weight: f32,
+    seam_weight: f64,
+    chroma_weight: f64,
+    use_parallel: bool,
+) -> Result<()> {
+    let n_luma = y_bw * y_bh;
+
+    if !use_xyb {
+        let luma_s1 = y_quant.values[1].max(1) as f32;
+        let mut y_err = plane_closed_loop_errors_streaming(
+            y_raw,
+            y_blocks,
+            &y_quant.values,
+            VisMode::SelfLuma { luma_s1 },
+            y_bw,
+            y_bh,
+            luma_s1,
+            seam_weight,
+            use_parallel,
+        )?;
+
+        if is_color {
+            let full_res_chroma = cb_bw == y_bw && cb_bh == y_bh;
+            let cb_vis = if full_res_chroma {
+                VisMode::ExternalLuma {
+                    luma_raw: y_raw,
+                    luma_s1,
+                }
+            } else {
+                VisMode::None
+            };
+            let cb_err = plane_closed_loop_errors_streaming(
+                cb_raw,
+                cb_blocks,
+                &cb_quant.values,
+                cb_vis,
+                cb_bw,
+                cb_bh,
+                cb_quant.values[1].max(1) as f32,
+                seam_weight,
+                use_parallel,
+            )?;
+            let cr_err = plane_closed_loop_errors_streaming(
+                cr_raw,
+                cr_blocks,
+                &cr_quant.values,
+                cb_vis,
+                cr_bw,
+                cr_bh,
+                cr_quant.values[1].max(1) as f32,
+                seam_weight,
+                use_parallel,
+            )?;
+
+            if full_res_chroma {
+                for i in 0..n_luma {
+                    y_err[i] += chroma_weight * (cb_err[i] + cr_err[i]);
+                }
+                apply_log_centered_feedback(luma_lambda_map, &y_err, weight);
+                cb_lambda_map.copy_from_slice(luma_lambda_map);
+                cr_lambda_map.copy_from_slice(luma_lambda_map);
+            } else {
+                if chroma_weight > 0.0 {
+                    for by in 0..y_bh {
+                        let cby = (by * cb_bh / y_bh).min(cb_bh - 1);
+                        for bx in 0..y_bw {
+                            let cbx = (bx * cb_bw / y_bw).min(cb_bw - 1);
+                            let ci = cby * cb_bw + cbx;
+                            y_err[by * y_bw + bx] +=
+                                chroma_weight * 0.5 * (cb_err[ci] + cr_err[ci]);
+                        }
+                    }
+                }
+                apply_log_centered_feedback(luma_lambda_map, &y_err, weight);
+                let mapped = map_luma_to_plane(luma_lambda_map, y_bw, y_bh, cb_bw, cb_bh)?;
+                cb_lambda_map.copy_from_slice(&mapped);
+                cr_lambda_map.copy_from_slice(&mapped);
+            }
+        } else {
+            apply_log_centered_feedback(luma_lambda_map, &y_err, weight);
+        }
+    } else {
+        // XYB: comp 0 (y_*) = X, comp 1 (cb_*) = perceptual Y, comp 2 (cr_*) = B
+        let luma_s1 = cb_quant.values[1].max(1) as f32;
+        let x_err = plane_closed_loop_errors_streaming(
+            y_raw,
+            y_blocks,
+            &y_quant.values,
+            VisMode::ExternalLuma {
+                luma_raw: cb_raw,
+                luma_s1,
+            },
+            y_bw,
+            y_bh,
+            y_quant.values[1].max(1) as f32,
+            seam_weight,
+            use_parallel,
+        )?;
+        let mut y_luma_err = plane_closed_loop_errors_streaming(
+            cb_raw,
+            cb_blocks,
+            &cb_quant.values,
+            VisMode::SelfLuma { luma_s1 },
+            cb_bw,
+            cb_bh,
+            luma_s1,
+            seam_weight,
+            use_parallel,
+        )?;
+        let b_vis = if cr_bw == y_bw && cr_bh == y_bh {
+            VisMode::ExternalLuma {
+                luma_raw: cb_raw,
+                luma_s1,
+            }
+        } else {
+            VisMode::None
+        };
+        let b_err = plane_closed_loop_errors_streaming(
+            cr_raw,
+            cr_blocks,
+            &cr_quant.values,
+            b_vis,
+            cr_bw,
+            cr_bh,
+            cr_quant.values[1].max(1) as f32,
+            seam_weight,
+            use_parallel,
+        )?;
+
+        if chroma_weight > 0.0 {
+            for by in 0..y_bh {
+                let bby = (by * cr_bh / y_bh).min(cr_bh.saturating_sub(1));
+                for bx in 0..y_bw {
+                    let bbx = (bx * cr_bw / y_bw).min(cr_bw.saturating_sub(1));
+                    let i = by * y_bw + bx;
+                    let bi = bby * cr_bw + bbx;
+                    let be = b_err.get(bi).copied().unwrap_or(0.0);
+                    y_luma_err[i] += chroma_weight * (x_err[i] + 0.5 * be);
+                }
+            }
+        }
+
+        apply_log_centered_feedback(cb_lambda_map, &y_luma_err, weight);
+        luma_lambda_map.copy_from_slice(cb_lambda_map);
+        let mapped = map_luma_to_plane(cb_lambda_map, cb_bw, cb_bh, cr_bw, cr_bh)?;
+        cr_lambda_map.copy_from_slice(&mapped);
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -827,7 +1950,12 @@ fn estimate_eob_costs(
 // ============================================================================
 
 #[inline]
-fn compute_block_lambda(src: &[i32; DCT_BLOCK_SIZE], config: &TrellisConfig) -> f32 {
+fn compute_block_lambda(
+    src: &[i32; DCT_BLOCK_SIZE],
+    config: &TrellisConfig,
+    base_mode: LambdaBaseMode,
+    mult: f32,
+) -> f32 {
     let mut norm = 0.0f32;
     for &c in &src[1..] {
         let cf = c as f32;
@@ -835,13 +1963,26 @@ fn compute_block_lambda(src: &[i32; DCT_BLOCK_SIZE], config: &TrellisConfig) -> 
     }
     norm /= 63.0;
 
-    if config.lambda_log_scale2 > 0.0 {
-        let s1 = 2.0_f32.powf(config.lambda_log_scale1);
-        let s2 = 2.0_f32.powf(config.lambda_log_scale2);
-        s1 / (s2 + norm)
-    } else {
-        2.0_f32.powf(config.lambda_log_scale1 - 12.0)
-    }
+    let base = match base_mode {
+        LambdaBaseMode::MozjpegNorm => {
+            if config.lambda_log_scale2 > 0.0 {
+                let s1 = 2.0_f32.powf(config.lambda_log_scale1);
+                let s2 = 2.0_f32.powf(config.lambda_log_scale2);
+                s1 / (s2 + norm)
+            } else {
+                2.0_f32.powf(config.lambda_log_scale1 - 12.0)
+            }
+        }
+        LambdaBaseMode::DampedNorm {
+            norm_scale,
+            shift_s1,
+        } => {
+            let s1 = 2.0_f32.powf(config.lambda_log_scale1 + shift_s1);
+            let s2 = 2.0_f32.powf(config.lambda_log_scale2);
+            s1 / (s2 + norm_scale * norm)
+        }
+    };
+    base * mult
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -852,14 +1993,17 @@ fn quantize_plane_sequential_trellis(
     lambda_tbl: &[f32; DCT_BLOCK_SIZE],
     ac_table: &RateTable,
     config: &TrellisConfig,
+    base_mode: LambdaBaseMode,
+    lambda_map: Option<&[f32]>,
     max_dc_val: i32,
     use_parallel: bool,
 ) {
     let eob_len = ac_table.get_code_length(0x00).max(1) as f32;
 
-    let quant_one = |(raw, dst): (&Block8x8f, &mut [i16; DCT_BLOCK_SIZE])| {
+    let quant_one = |(idx, (raw, dst)): (usize, (&Block8x8f, &mut [i16; DCT_BLOCK_SIZE]))| {
+        let mult = lambda_map.and_then(|m| m.get(idx).copied()).unwrap_or(1.0);
         let src = dct_f32_to_i32(&raw.to_array());
-        let lambda = compute_block_lambda(&src, config);
+        let lambda = compute_block_lambda(&src, config, base_mode, mult);
         let mut natural = [0i16; DCT_BLOCK_SIZE];
         {
             let x = src[0].abs();
@@ -891,11 +2035,12 @@ fn quantize_plane_sequential_trellis(
         raw_dct
             .par_iter()
             .zip(out_zigzag.par_iter_mut())
+            .enumerate()
             .for_each(quant_one);
         return;
     }
     let _ = use_parallel;
-    for item in raw_dct.iter().zip(out_zigzag.iter_mut()) {
+    for item in raw_dct.iter().zip(out_zigzag.iter_mut()).enumerate() {
         quant_one(item);
     }
 }
@@ -1079,6 +2224,8 @@ fn quantize_plane_progressive_trellis(
     lambda_tbl: &[f32; DCT_BLOCK_SIZE],
     model: &ComponentProgModel,
     config: &TrellisConfig,
+    base_mode: LambdaBaseMode,
+    lambda_map: Option<&[f32]>,
     max_dc_val: i32,
     use_parallel: bool,
 ) {
@@ -1091,9 +2238,10 @@ fn quantize_plane_progressive_trellis(
     }
     let has_sa = model.first_scans.iter().any(|s| s.al > 0) || !model.refine_scans.is_empty();
 
-    let quant_one = |(raw, dst): (&Block8x8f, &mut [i16; DCT_BLOCK_SIZE])| {
+    let quant_one = |(idx, (raw, dst)): (usize, (&Block8x8f, &mut [i16; DCT_BLOCK_SIZE]))| {
+        let mult = lambda_map.and_then(|m| m.get(idx).copied()).unwrap_or(1.0);
         let src = dct_f32_to_i32(&raw.to_array());
-        let lambda = compute_block_lambda(&src, config);
+        let lambda = compute_block_lambda(&src, config, base_mode, mult);
         let mut natural = [0i16; DCT_BLOCK_SIZE];
 
         // DC rounding
@@ -1173,11 +2321,12 @@ fn quantize_plane_progressive_trellis(
         raw_dct
             .par_iter()
             .zip(out_zigzag.par_iter_mut())
+            .enumerate()
             .for_each(quant_one);
         return;
     }
     let _ = use_parallel;
-    for item in raw_dct.iter().zip(out_zigzag.iter_mut()) {
+    for item in raw_dct.iter().zip(out_zigzag.iter_mut()).enumerate() {
         quant_one(item);
     }
 }
@@ -1420,7 +2569,8 @@ fn run_dc_trellis_plane(
     blocks_w: usize,
     dc_quantval: u16,
     dc_table: &RateTable,
-    config: &TrellisConfig,
+    lambda_log_scale1: f32,
+    lambda_log_scale2: f32,
     delta_dc_weight: f32,
     max_dc_val: i32,
 ) -> Result<()> {
@@ -1464,8 +2614,8 @@ fn run_dc_trellis_plane(
             dc_quantval,
             dc_table,
             last_dc,
-            config.lambda_log_scale1,
-            config.lambda_log_scale2,
+            lambda_log_scale1,
+            lambda_log_scale2,
             delta_dc_weight,
             above_data,
             max_dc_val,
@@ -1576,8 +2726,18 @@ mod tests {
                     .optimization(OptimizationPreset::HybridProgressive),
             ),
             (
+                "hybrid_max_xyb",
+                EncoderConfig::xyb(75.0, XybSubsampling::BQuarter)
+                    .optimization(OptimizationPreset::HybridMaxCompression),
+            ),
+            (
                 "hybrid_prog_gray",
                 EncoderConfig::grayscale(75.0).optimization(OptimizationPreset::HybridProgressive),
+            ),
+            (
+                "hybrid_max_gray",
+                EncoderConfig::grayscale(75.0)
+                    .optimization(OptimizationPreset::HybridMaxCompression),
             ),
         ];
 
@@ -1727,6 +2887,8 @@ mod tests {
             &lambda_tbl,
             &model,
             &cfg,
+            LambdaBaseMode::MozjpegNorm,
+            None,
             1023,
             false,
         );
@@ -1734,5 +2896,461 @@ mod tests {
         assert_eq!(out[0][2], 1, "al=0 refine in band 1 (1..2) must run");
         assert_eq!(out[0][5], 1, "al=0 refine in band 2 (3..9) must run");
         assert_eq!(out[0][15], 1, "al=0 refine in band 3 (10..63) must run");
+    }
+
+    /// Reference full-plane T2 open-loop lambda map for bit-exact equivalence verification.
+    #[allow(clippy::too_many_arguments)]
+    fn reference_full_plane_t2(
+        use_xyb: bool,
+        y_bw: usize,
+        y_bh: usize,
+        cb_bw: usize,
+        cb_bh: usize,
+        cr_bw: usize,
+        cr_bh: usize,
+        y_raw: &[Block8x8f],
+        cb_raw: &[Block8x8f],
+        cr_raw: &[Block8x8f],
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+    ) -> Vec<f32> {
+        let tok = IdctToken::summon();
+        let oy: Vec<[f32; 64]> = y_raw.iter().map(|b| idct_raw_block(tok, b)).collect();
+        let ocb: Vec<[f32; 64]> = cb_raw.iter().map(|b| idct_raw_block(tok, b)).collect();
+        let ocr: Vec<[f32; 64]> = cr_raw.iter().map(|b| idct_raw_block(tok, b)).collect();
+
+        let (lo, c0, c1, ls1, c0s1, c1s1, c0bw, c0bh, c1bw, c1bh, n0, n1) = if use_xyb {
+            (
+                &ocb,
+                &oy,
+                &ocr,
+                cb_quant.values[1].max(1) as f32,
+                y_quant.values[1].max(1) as f32,
+                cr_quant.values[1].max(1) as f32,
+                y_bw,
+                y_bh,
+                cr_bw,
+                cr_bh,
+                XYB_X_NEUTRAL,
+                XYB_B_NEUTRAL,
+            )
+        } else {
+            (
+                &oy,
+                &ocb,
+                &ocr,
+                y_quant.values[1].max(1) as f32,
+                cb_quant.values[1].max(1) as f32,
+                cr_quant.values[1].max(1) as f32,
+                cb_bw,
+                cb_bh,
+                cr_bw,
+                cr_bh,
+                0.0f32,
+                0.0f32,
+            )
+        };
+
+        let nb = y_bw * y_bh;
+        let mut min_q = vec![0.0f32; nb];
+        let mut mean_q = vec![0.0f32; nb];
+        let mut sat_smooth = vec![0.0f32; nb];
+        for by in 0..y_bh {
+            for bx in 0..y_bw {
+                let idx = by * y_bw + bx;
+                let blk = &lo[idx];
+                let mut qa = [0.0f32; 4];
+                for qy in 0..2 {
+                    for qx in 0..2 {
+                        let mut sum = 0.0f32;
+                        for dy in 0..4 {
+                            let y = qy * 4 + dy;
+                            let y1 = (y + 1).min(7);
+                            for dx in 0..4 {
+                                let x = qx * 4 + dx;
+                                let x1 = (x + 1).min(7);
+                                let v = blk[y * 8 + x];
+                                sum += (v - blk[y * 8 + x1]).abs() + (v - blk[y1 * 8 + x]).abs();
+                            }
+                        }
+                        qa[qy * 2 + qx] = sum * (1.0 / 32.0) / ls1;
+                    }
+                }
+                min_q[idx] = qa[0].min(qa[1]).min(qa[2]).min(qa[3]);
+                mean_q[idx] = 0.25 * (qa[0] + qa[1] + qa[2] + qa[3]);
+
+                let c0_sx = c0bw < y_bw;
+                let c0_sy = c0bh < y_bh;
+                let cbx0 = if c0_sx {
+                    (bx / 2).min(c0bw - 1)
+                } else {
+                    bx.min(c0bw - 1)
+                };
+                let cby0 = if c0_sy {
+                    (by / 2).min(c0bh - 1)
+                } else {
+                    by.min(c0bh - 1)
+                };
+                let (m0, g0) = chroma_quadrant_mag_grad_from_block(
+                    &c0[cby0 * c0bw + cbx0],
+                    c0_sx,
+                    c0_sy,
+                    bx,
+                    by,
+                    n0,
+                    c0s1,
+                );
+                let c1_sx = c1bw < y_bw;
+                let c1_sy = c1bh < y_bh;
+                let cbx1 = if c1_sx {
+                    (bx / 2).min(c1bw - 1)
+                } else {
+                    bx.min(c1bw - 1)
+                };
+                let cby1 = if c1_sy {
+                    (by / 2).min(c1bh - 1)
+                } else {
+                    by.min(c1bh - 1)
+                };
+                let (m1, g1) = chroma_quadrant_mag_grad_from_block(
+                    &c1[cby1 * c1bw + cbx1],
+                    c1_sx,
+                    c1_sy,
+                    bx,
+                    by,
+                    n1,
+                    c1s1,
+                );
+                let am = 0.5 * (m0 + m1);
+                let ag = 0.5 * (g0 + g1);
+                sat_smooth[idx] = (am / (am + 8.0)) * (1.0 / (1.0 + ag * ag));
+            }
+        }
+        let mut raw = vec![0.0f64; nb];
+        let (mut asum, mut an, mut all) = (0.0f64, 0usize, 0.0f64);
+        for by in 0..y_bh {
+            let y0 = by.saturating_sub(1);
+            let y1 = (by + 1).min(y_bh - 1);
+            for bx in 0..y_bw {
+                let x0 = bx.saturating_sub(1);
+                let x1 = (bx + 1).min(y_bw - 1);
+                let (mut s_min, mut s_sum, mut s_cnt) = (f32::INFINITY, 0.0f32, 0.0f32);
+                for yy in y0..=y1 {
+                    for xx in x0..=x1 {
+                        let v = mean_q[yy * y_bw + xx];
+                        if v < s_min {
+                            s_min = v;
+                        }
+                        s_sum += v;
+                        s_cnt += 1.0;
+                    }
+                }
+                let idx = by * y_bw + bx;
+                let act = 0.45 * min_q[idx] + 0.30 * s_min + 0.25 * (s_sum / s_cnt);
+                let sc =
+                    -((act as f64) + 0.25).ln() + (T2_SAT_WEIGHT as f64) * (sat_smooth[idx] as f64);
+                raw[idx] = sc;
+                all += sc;
+                if mean_q[idx] > 0.05 {
+                    asum += sc;
+                    an += 1;
+                }
+            }
+        }
+        let mraw = if an > 0 {
+            asum / an as f64
+        } else {
+            all / nb as f64
+        };
+        let st = (T2_STRENGTH as f64) * coarse_damp_factor(ls1, true);
+        raw.into_iter()
+            .map(|r| (st * (r - mraw)).clamp(-0.85, 0.85).exp() as f32)
+            .collect()
+    }
+
+    /// Reference full-plane T1 seam+interior error map for bit-exact equivalence verification.
+    fn reference_full_plane_t1_errors(
+        raw_dct: &[Block8x8f],
+        quant_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        qvals: &[u16; DCT_BLOCK_SIZE],
+        vis_luma: Option<(&[Block8x8f], f32)>,
+        bw: usize,
+        bh: usize,
+        s1: f32,
+        seam_weight: f64,
+    ) -> Vec<f64> {
+        let tok = IdctToken::summon();
+        let orig: Vec<[f32; 64]> = raw_dct.iter().map(|b| idct_raw_block(tok, b)).collect();
+        let rec: Vec<[f32; 64]> = quant_blocks
+            .iter()
+            .map(|q| idct_quantized_zigzag(tok, q, qvals))
+            .collect();
+        let vis: Option<Vec<[f32; 64]>> = vis_luma.map(|(lr, ls1)| {
+            lr.iter()
+                .map(|b| block_visibility(&idct_raw_block(tok, b), ls1, 2.0))
+                .collect()
+        });
+        let inv_s1_sq = 1.0 / ((s1 as f64) * (s1 as f64)).max(1e-12);
+        let inv_seam_tau = 1.0 / ((1.5 * s1) as f64).max(1e-6);
+        let mut err = vec![0.0f64; bw * bh];
+
+        for by in 0..bh {
+            for bx in 0..bw {
+                let idx = by * bw + bx;
+                let ob = &orig[idx];
+                let rb = &rec[idx];
+                let v = vis.as_ref().map(|vv| &vv[idx]);
+                let mut acc = 0.0f64;
+                for k in 0..64 {
+                    let e = (ob[k] - rb[k]) as f64;
+                    let e2 = (e * e * inv_s1_sq).min(64.0);
+                    acc += v.map_or(1.0, |va| va[k] as f64) * (e2 + 0.15 * e2 * e2);
+                }
+                if bx > 0 {
+                    let mut hs = 0.0f64;
+                    for y in 0..8 {
+                        let oa = orig[idx - 1][y * 8 + 7];
+                        let obp = ob[y * 8];
+                        hs += seam_pair_cost(
+                            oa,
+                            obp,
+                            oa - rec[idx - 1][y * 8 + 7],
+                            obp - rb[y * 8],
+                            inv_seam_tau,
+                            inv_s1_sq,
+                        );
+                    }
+                    let term = seam_weight * hs;
+                    acc += term;
+                    err[idx - 1] += term;
+                }
+                err[idx] += acc;
+            }
+        }
+        for by in 1..bh {
+            for bx in 0..bw {
+                let ia = (by - 1) * bw + bx;
+                let ib = by * bw + bx;
+                let mut vs = 0.0f64;
+                for x in 0..8 {
+                    let oa = orig[ia][7 * 8 + x];
+                    let ob = orig[ib][x];
+                    vs += seam_pair_cost(
+                        oa,
+                        ob,
+                        oa - rec[ia][7 * 8 + x],
+                        ob - rec[ib][x],
+                        inv_seam_tau,
+                        inv_s1_sq,
+                    );
+                }
+                let term = seam_weight * vs;
+                err[ia] += term;
+                err[ib] += term;
+            }
+        }
+        err
+    }
+
+    #[test]
+    fn streaming_t1_and_t2_match_full_plane_bit_exact() {
+        // Cross multiple T1_STRIPE_ROWS (16) boundaries with odd width/height
+        // across 4:2:0, 4:4:4, 4:2:2, and XYB BQuarter geometries!
+        let make_blocks = |n: usize, seed: u32| -> (Vec<Block8x8f>, Vec<[i16; 64]>) {
+            let mut raw = Vec::with_capacity(n);
+            let mut quant = Vec::with_capacity(n);
+            for i in 0..n {
+                let mut rows = [[0.0f32; 8]; 8];
+                let mut q = [0i16; 64];
+                for r in 0..8 {
+                    for c in 0..8 {
+                        let h = ((i as u32).wrapping_mul(2654435761)
+                            ^ ((r * 8 + c) as u32).wrapping_mul(2246822519)
+                            ^ seed)
+                            >> 20;
+                        let val = ((h as i32) - 2048) as f32 / (12.0 + (r + c) as f32 * 8.0);
+                        rows[r][c] = val;
+                        let zz = JPEG_ZIGZAG_ORDER[r * 8 + c] as usize;
+                        q[zz] = (val * 8.0 / 14.0).round() as i16;
+                    }
+                }
+                raw.push(Block8x8f { rows });
+                quant.push(q);
+            }
+            (raw, quant)
+        };
+
+        let qt_y = QuantTable {
+            values: [14; 64],
+            precision: 0,
+        };
+        let qt_c = QuantTable {
+            values: [18; 64],
+            precision: 0,
+        };
+
+        let configs = [
+            // (label, use_xyb, y_bw, y_bh, cb_bw, cb_bh, cr_bw, cr_bh)
+            ("ycbcr_420_odd_multistripe", false, 19, 37, 10, 19, 10, 19),
+            ("ycbcr_444_multistripe", false, 17, 35, 17, 35, 17, 35),
+            ("ycbcr_422_multistripe", false, 18, 33, 9, 33, 9, 33),
+            ("xyb_bquarter_multistripe", true, 19, 37, 19, 37, 10, 19),
+        ];
+
+        for (label, use_xyb, y_bw, y_bh, cb_bw, cb_bh, cr_bw, cr_bh) in configs {
+            let (y_raw, y_q) = make_blocks(y_bw * y_bh, 0x1111);
+            let (cb_raw, cb_q) = make_blocks(cb_bw * cb_bh, 0x2222);
+            let (cr_raw, cr_q) = make_blocks(cr_bw * cr_bh, 0x3333);
+
+            // 1. T2 streaming vs full-plane (1T and MT)
+            let ref_t2 = reference_full_plane_t2(
+                use_xyb, y_bw, y_bh, cb_bw, cb_bh, cr_bw, cr_bh, &y_raw, &cb_raw, &cr_raw, &qt_y,
+                &qt_c, &qt_c,
+            );
+            for par in [false, true] {
+                let st_t2 = build_t2_imij_lambda_map_streaming(
+                    use_xyb,
+                    true,
+                    y_bw,
+                    y_bh,
+                    cb_bw,
+                    cb_bh,
+                    cr_bw,
+                    cr_bh,
+                    &y_raw,
+                    &cb_raw,
+                    &cr_raw,
+                    &qt_y,
+                    &qt_c,
+                    &qt_c,
+                    T2_STRENGTH,
+                    T2_SAT_WEIGHT,
+                    true,
+                    par,
+                )
+                .unwrap();
+                assert_eq!(st_t2.len(), ref_t2.len());
+                for (i, (&a, &b)) in st_t2.iter().zip(ref_t2.iter()).enumerate() {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "{label} T2 par={par} mismatch at block {i}: {a} vs {b}"
+                    );
+                }
+            }
+
+            // 2. T1 streaming vs full-plane (SelfLuma, ExternalLuma, None; 1T and MT)
+            let ref_t1_y = reference_full_plane_t1_errors(
+                &y_raw,
+                &y_q,
+                &qt_y.values,
+                Some((&y_raw, 14.0)),
+                y_bw,
+                y_bh,
+                14.0,
+                T1_SEAM_WEIGHT,
+            );
+            let ref_t1_c = reference_full_plane_t1_errors(
+                &cb_raw,
+                &cb_q,
+                &qt_c.values,
+                if cb_bw == y_bw && cb_bh == y_bh {
+                    Some((&y_raw, 14.0))
+                } else {
+                    None
+                },
+                cb_bw,
+                cb_bh,
+                18.0,
+                T1_SEAM_WEIGHT,
+            );
+            let _ = &cr_q;
+            for par in [false, true] {
+                let st_y = plane_closed_loop_errors_streaming(
+                    &y_raw,
+                    &y_q,
+                    &qt_y.values,
+                    VisMode::SelfLuma { luma_s1: 14.0 },
+                    y_bw,
+                    y_bh,
+                    14.0,
+                    T1_SEAM_WEIGHT,
+                    par,
+                )
+                .unwrap();
+                for (i, (&a, &b)) in st_y.iter().zip(ref_t1_y.iter()).enumerate() {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "{label} T1 Y par={par} mismatch at block {i}: {a} vs {b}"
+                    );
+                }
+
+                let c_vis = if cb_bw == y_bw && cb_bh == y_bh {
+                    VisMode::ExternalLuma {
+                        luma_raw: &y_raw,
+                        luma_s1: 14.0,
+                    }
+                } else {
+                    VisMode::None
+                };
+                let st_c = plane_closed_loop_errors_streaming(
+                    &cb_raw,
+                    &cb_q,
+                    &qt_c.values,
+                    c_vis,
+                    cb_bw,
+                    cb_bh,
+                    18.0,
+                    T1_SEAM_WEIGHT,
+                    par,
+                )
+                .unwrap();
+                for (i, (&a, &b)) in st_c.iter().zip(ref_t1_c.iter()).enumerate() {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "{label} T1 Cb par={par} mismatch at block {i}: {a} vs {b}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "__diagnostics")]
+    #[test]
+    fn diagnostics_capture_matches_hybrid_presets() {
+        let (w, h) = (64u32, 48u32);
+        let rgb = make_patterned_rgb(w as usize, h as usize);
+        for preset in [
+            OptimizationPreset::HybridBaseline,
+            OptimizationPreset::HybridProgressive,
+            OptimizationPreset::HybridMaxCompression,
+        ] {
+            let cfg = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter).optimization(preset);
+            let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+            let handle = enc.capture_diagnostics().unwrap();
+            enc.push_packed(&rgb, enough::Unstoppable).unwrap();
+            let jpg = enc.finish().unwrap();
+            let diag = handle.try_take().unwrap();
+            let decoded = crate::decode::Decoder::new()
+                .decode_coefficients(&jpg, enough::Unstoppable)
+                .unwrap();
+            assert_eq!(diag.components.len(), decoded.components.len());
+            for (comp, ref_comp) in diag.components.iter().zip(&decoded.components) {
+                let (bw, bh) = comp.block_grid;
+                for y in 0..bh as usize {
+                    for x in 0..bw as usize {
+                        assert_eq!(
+                            &comp.blocks[y * bw as usize + x].coef_levels[..],
+                            ref_comp.block_at(x, y),
+                            "{preset:?} comp {} block ({x},{y})",
+                            comp.component_id
+                        );
+                    }
+                }
+            }
+        }
     }
 }
