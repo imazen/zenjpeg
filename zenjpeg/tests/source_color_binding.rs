@@ -3,7 +3,7 @@
 //!
 //! When the caller supplies no colour metadata (the checked `EncodeRequest`
 //! path supplies none), the current pixel interpretation (descriptor primaries
-//! and transfer plus the `PixelSlice` colour context) is the only description
+//! and transfer plus the `PixelView` colour context) is the only description
 //! of the pixels. JPEG has no CICP carrier, so a non-sRGB interpretation needs
 //! an ICC profile; anything else is a silent relabel. Native transforms change
 //! the interpretation: linear input is stored sRGB-encoded, so a profile that
@@ -20,7 +20,7 @@ use zencodec::encode::{EncodeJob as _, EncodePolicy, Encoder as _, EncoderConfig
 use zencodec::operation::EncodeRequest;
 use zencodec::{CodecSet, ColorEmitPolicy, ImageFormat, Metadata, MetadataPolicy};
 use zenjpeg::JpegEncoderConfig;
-use zenpixels::{Cicp, ColorContext, ColorPrimaries, PixelDescriptor, PixelSlice};
+use zenpixels::{Cicp, ColorSpace, ImageSpec, PixelView, Primaries, RenderingIntent};
 use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 
 const W: u32 = 48;
@@ -67,8 +67,15 @@ impl Raster {
         &mut self.buf[at..at + self.stride]
     }
 
-    fn slice(&self, descriptor: PixelDescriptor) -> PixelSlice<'_> {
-        PixelSlice::new(&self.buf[self.start..], W, H, self.stride, descriptor).unwrap()
+    fn slice(&self, descriptor: ImageSpec) -> PixelView<'_> {
+        PixelView::new_with_spec_cow(
+            &self.buf[self.start..],
+            W,
+            H,
+            self.stride,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap()
     }
 }
 
@@ -119,8 +126,22 @@ fn srgb_to_linear(v: f32) -> f32 {
     }
 }
 
-fn p3(base: PixelDescriptor) -> PixelDescriptor {
-    base.with_primaries(ColorPrimaries::DisplayP3)
+fn p3(base: ImageSpec) -> ImageSpec {
+    base.with_primaries(Primaries::DisplayP3)
+}
+
+fn with_icc(mut spec: ImageSpec, profile: impl Into<Arc<[u8]>>) -> ImageSpec {
+    spec.color = ColorSpace::Icc {
+        profile: profile.into(),
+        channels: if spec.layout.order.is_gray_family() {
+            1
+        } else {
+            3
+        },
+        alpha: spec.color.alpha(),
+        intent: RenderingIntent::RelativeColorimetric,
+    };
+    spec
 }
 
 fn synthesized(cicp: Cicp) -> Vec<u8> {
@@ -158,7 +179,7 @@ fn assert_samples(samples: &[u8], tolerance: u8, what: &str) {
     }
 }
 
-fn checked(pixels: PixelSlice<'_>, policy: Option<EncodePolicy>) -> Result<Vec<u8>, String> {
+fn checked(pixels: PixelView<'_>, policy: Option<EncodePolicy>) -> Result<Vec<u8>, String> {
     let codecs = CodecSet::new().with_encoder(quality());
     let mut request = EncodeRequest::new(ImageFormat::Jpeg);
     if let Some(policy) = policy {
@@ -171,7 +192,7 @@ fn checked(pixels: PixelSlice<'_>, policy: Option<EncodePolicy>) -> Result<Vec<u
 }
 
 #[allow(deprecated)] // Exercises the legacy metadata setter.
-fn with_metadata(meta: Metadata, pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
+fn with_metadata(meta: Metadata, pixels: PixelView<'_>) -> Result<Vec<u8>, String> {
     quality()
         .job()
         .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
@@ -188,26 +209,17 @@ fn with_metadata(meta: Metadata, pixels: PixelSlice<'_>) -> Result<Vec<u8>, Stri
 #[test]
 fn checked_request_binds_display_p3_from_the_current_pixels() {
     let raster = rgb8();
-    let desc = p3(PixelDescriptor::RGB8_SRGB);
+    let desc = p3(ImageSpec::RGB8_SRGB);
     let p3_synth = synthesized(Cicp::DISPLAY_P3);
-    let cases: [(&str, Option<ColorContext>, &[u8]); 3] = [
+    for (what, spec, expected_icc) in [
         (
-            "context ICC",
-            Some(ColorContext::from_icc(DISPLAY_P3_V4)),
+            "active ICC",
+            with_icc(desc.clone(), DISPLAY_P3_V4),
             DISPLAY_P3_V4,
         ),
-        (
-            "context CICP",
-            Some(ColorContext::from_cicp(Cicp::DISPLAY_P3)),
-            &p3_synth,
-        ),
-        ("descriptor only", None, &p3_synth),
-    ];
-    for (what, context, expected_icc) in cases {
-        let mut pixels = raster.slice(desc);
-        if let Some(context) = context {
-            pixels = pixels.with_color_context(Arc::new(context));
-        }
+        ("active Display P3", desc, p3_synth.as_slice()),
+    ] {
+        let pixels = raster.slice(spec);
         let jpeg = checked(pixels, None).unwrap_or_else(|e| panic!("{what}: {e}"));
         let (samples, icc) = oracle(&jpeg);
         assert_eq!(
@@ -226,7 +238,7 @@ fn checked_request_binds_display_p3_from_the_current_pixels() {
 #[test]
 fn sixteen_bit_samples_decode_to_their_stored_values() {
     let srgb16 = rgb16();
-    let jpeg = checked(srgb16.slice(PixelDescriptor::RGB16_SRGB), None)
+    let jpeg = checked(srgb16.slice(ImageSpec::RGB16_SRGB), None)
         .expect("RGB16_SRGB is a supported descriptor");
     let (samples, icc) = oracle(&jpeg);
     assert_eq!(icc, None, "sRGB needs no carrier");
@@ -234,12 +246,18 @@ fn sixteen_bit_samples_decode_to_their_stored_values() {
 
     let linear16 = JpegEncoderConfig::supported_descriptors()
         .iter()
-        .copied()
         .find(|d| {
-            d.channel_type() == zenpixels::ChannelType::U16
-                && d.layout() == zenpixels::ChannelLayout::Rgb
-                && d.transfer() == zenpixels::TransferFunction::Linear
+            d.layout.sample == zenpixels::SampleType::U16
+                && d.layout.order == zenpixels::ChannelOrder::Rgb
+                && matches!(
+                    d.color,
+                    ColorSpace::Rgb {
+                        transfer: zenpixels::Transfer::Linear,
+                        ..
+                    }
+                )
         })
+        .cloned()
         .expect("a linear 16-bit RGB descriptor is advertised");
     let mut raster = Raster::new(6, 2, 0x5a);
     for y in 0..H {
@@ -271,9 +289,9 @@ fn sixteen_bit_one_shot_bytes_equal_row_encodes() {
         ),
     ];
     for (descriptor, channels) in [
-        (PixelDescriptor::RGB16_SRGB, 3),
-        (PixelDescriptor::RGBA16_SRGB, 4),
-        (PixelDescriptor::GRAY16_SRGB, 1),
+        (ImageSpec::RGB16_SRGB, 3),
+        (ImageSpec::RGBA16_SRGB, 4),
+        (ImageSpec::GRAY16_SRGB, 1),
     ] {
         let stride = (width as usize + 3) * channels * 2;
         let mut buf = vec![0x5a; stride * height as usize + 16];
@@ -285,7 +303,7 @@ fn sixteen_bit_one_shot_bytes_equal_row_encodes() {
                 buf[at..at + 2].copy_from_slice(&v.to_ne_bytes());
             }
         }
-        let pixels = || PixelSlice::new(&buf[start..], width, height, stride, descriptor).unwrap();
+        let pixels = || PixelView::new(&buf[start..], width, height, stride, &descriptor).unwrap();
         for (what, config) in &configs {
             let one_shot = config
                 .clone()
@@ -298,12 +316,16 @@ fn sixteen_bit_one_shot_bytes_equal_row_encodes() {
                 for declared in [true, false] {
                     let mut rows = config.clone().job().encoder().unwrap();
                     if declared {
-                        rows.begin(width, height, descriptor).unwrap();
+                        rows.begin(width, height, descriptor.clone()).unwrap();
                     }
                     let mut file = Vec::new();
                     for y in (0..height).step_by(batch) {
-                        rows.push_rows(pixels().sub_rows(y, (batch as u32).min(height - y)))
-                            .unwrap();
+                        rows.push_rows(
+                            pixels()
+                                .sub_rows(y, (batch as u32).min(height - y))
+                                .unwrap(),
+                        )
+                        .unwrap();
                         rows.take_output(&mut file);
                     }
                     file.extend_from_slice(rows.finish().unwrap().data());
@@ -324,24 +346,17 @@ fn sixteen_bit_one_shot_bytes_equal_row_encodes() {
 #[test]
 fn linear_input_writes_the_carrier_of_the_stored_samples() {
     let raster = rgbf32_linear();
-    let desc = p3(PixelDescriptor::RGBF32_LINEAR);
+    let desc = p3(ImageSpec::RGBF32_LINEAR);
     let linear_p3 = synthesized(Cicp::new(12, 8, 0, true));
     let p3_synth = synthesized(Cicp::DISPLAY_P3);
-    for (what, context) in [
+    for (what, spec) in [
         (
-            "context linear ICC",
-            Some(ColorContext::from_icc(linear_p3.clone())),
+            "active linear ICC",
+            with_icc(desc.clone(), linear_p3.clone()),
         ),
-        (
-            "context linear CICP",
-            Some(ColorContext::from_cicp(Cicp::new(12, 8, 0, true))),
-        ),
-        ("descriptor only", None),
+        ("active linear P3", desc.clone()),
     ] {
-        let mut pixels = raster.slice(desc);
-        if let Some(context) = context {
-            pixels = pixels.with_color_context(Arc::new(context));
-        }
+        let pixels = raster.slice(spec);
         let jpeg = checked(pixels, None).unwrap_or_else(|e| panic!("{what}: {e}"));
         let (samples, icc) = oracle(&jpeg);
         assert_ne!(
@@ -355,7 +370,7 @@ fn linear_input_writes_the_carrier_of_the_stored_samples() {
     // Post-transform sRGB-transfer metadata describes the stored samples.
     let encoded = with_metadata(
         Metadata::none().with_icc(p3_synth.clone()),
-        raster.slice(desc),
+        raster.slice(desc.clone()),
     )
     .unwrap();
     let (samples, icc) = oracle(&encoded);
@@ -363,17 +378,16 @@ fn linear_input_writes_the_carrier_of_the_stored_samples() {
     assert_samples(&samples, 4, "post-transform ICC metadata");
     // The same pre-transform profile supplied explicitly as metadata is a
     // request to describe samples the encoder does not store: refuse.
-    let pixels = raster.slice(desc);
+    let pixels = raster.slice(desc.clone());
     assert!(with_metadata(Metadata::none().with_icc(linear_p3.clone()), pixels).is_err());
     // An unidentifiable profile cannot be carried across the transform.
     let mut opaque = vec![0u8; 132];
     opaque[..4].copy_from_slice(&132u32.to_be_bytes());
+    opaque[12..16].copy_from_slice(b"mntr");
     opaque[16..20].copy_from_slice(b"RGB ");
     opaque[20..24].copy_from_slice(b"XYZ ");
     opaque[36..40].copy_from_slice(b"acsp");
-    let pixels = raster
-        .slice(desc)
-        .with_color_context(Arc::new(ColorContext::from_icc(opaque)));
+    let pixels = raster.slice(with_icc(desc.clone(), opaque));
     assert!(checked(pixels, None).is_err());
 }
 
@@ -383,17 +397,11 @@ fn linear_input_writes_the_carrier_of_the_stored_samples() {
 #[test]
 fn verbatim_policy_refuses_to_drop_the_only_colour_description() {
     let raster = rgb8();
-    let desc = p3(PixelDescriptor::RGB8_SRGB);
+    let desc = p3(ImageSpec::RGB8_SRGB);
     let verbatim = Some(EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim));
-    let cicp_only = raster
-        .slice(desc)
-        .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3)));
-    assert!(checked(cicp_only, verbatim).is_err());
-    let descriptor_only = raster.slice(desc);
+    let descriptor_only = raster.slice(desc.clone());
     assert!(checked(descriptor_only, verbatim).is_err());
-    let with_icc = raster
-        .slice(desc)
-        .with_color_context(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
+    let with_icc = raster.slice(with_icc(desc.clone(), DISPLAY_P3_V4));
     let jpeg = checked(with_icc, verbatim).expect("ICC context is carried verbatim");
     assert_eq!(oracle(&jpeg).1.as_deref(), Some(DISPLAY_P3_V4));
 }
@@ -404,16 +412,7 @@ fn verbatim_policy_refuses_to_drop_the_only_colour_description() {
 #[test]
 fn metadata_contradicting_the_current_context_refuses() {
     let raster = rgb8();
-    let srgb_now = raster
-        .slice(PixelDescriptor::RGB8_SRGB)
-        .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::SRGB)));
-    assert!(with_metadata(Metadata::none().with_icc(DISPLAY_P3_V4), srgb_now).is_err());
-
-    let p3_now = || {
-        raster
-            .slice(p3(PixelDescriptor::RGB8_SRGB))
-            .with_color_context(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)))
-    };
+    let p3_now = || raster.slice(with_icc(ImageSpec::RGB8_SRGB, DISPLAY_P3_V4));
     assert!(with_metadata(Metadata::none().with_cicp(Cicp::SRGB), p3_now()).is_err());
 
     let agreed = with_metadata(Metadata::none().with_icc(DISPLAY_P3_V4), p3_now()).unwrap();
@@ -428,7 +427,7 @@ fn metadata_contradicting_the_current_context_refuses() {
 #[allow(deprecated)] // The legacy setter is still a public way to forbid ICC output.
 fn forbidding_the_icc_carrier_refuses_wide_gamut_pixels() {
     let raster = rgb8();
-    let pixels = raster.slice(p3(PixelDescriptor::RGB8_SRGB));
+    let pixels = raster.slice(p3(ImageSpec::RGB8_SRGB));
     let encoder = quality()
         .job()
         .with_policy(EncodePolicy::none().with_embed_icc(false))
@@ -449,13 +448,11 @@ fn xyb_refuses_a_non_srgb_interpretation() {
         config
     };
     let encode = |pixels| xyb().job().encoder().unwrap().encode(pixels);
-    let described = raster.slice(p3(PixelDescriptor::RGB8_SRGB));
+    let described = raster.slice(p3(ImageSpec::RGB8_SRGB));
     assert!(encode(described).is_err());
-    let context = raster
-        .slice(PixelDescriptor::RGB8_SRGB)
-        .with_color_context(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
+    let context = raster.slice(with_icc(ImageSpec::RGB8_SRGB, DISPLAY_P3_V4));
     assert!(encode(context).is_err());
-    let srgb = raster.slice(PixelDescriptor::RGB8_SRGB);
+    let srgb = raster.slice(ImageSpec::RGB8_SRGB);
     assert!(encode(srgb).is_ok());
 }
 
@@ -464,38 +461,59 @@ fn xyb_refuses_a_non_srgb_interpretation() {
 #[test]
 fn default_srgb_bytes_are_identical_across_routes() {
     let raster = rgb8();
-    let pixels = || raster.slice(PixelDescriptor::RGB8_SRGB);
+    let pixels = || raster.slice(ImageSpec::RGB8_SRGB);
     let plain = checked(pixels(), None).unwrap();
-    let explicit = checked(
-        pixels().with_color_context(Arc::new(ColorContext::from_cicp(Cicp::SRGB))),
-        None,
-    )
-    .unwrap();
+    let explicit = with_metadata(Metadata::none().with_cicp(Cicp::SRGB), pixels()).unwrap();
     assert_eq!(plain, explicit);
     let mut rows = quality().job().encoder().unwrap();
-    rows.begin(W, H, PixelDescriptor::RGB8_SRGB).unwrap();
+    rows.begin(W, H, ImageSpec::RGB8_SRGB).unwrap();
     for y in (0..H).step_by(7) {
-        rows.push_rows(pixels().sub_rows(y, 7.min(H - y))).unwrap();
+        rows.push_rows(pixels().sub_rows(y, 7.min(H - y)).unwrap())
+            .unwrap();
     }
     assert_eq!(rows.finish().unwrap().into_vec(), plain);
     assert_eq!(oracle(&plain).1, None);
 }
 
-/// Descriptor primaries without an explicit colour context do not override
-/// or contradict job colour metadata: the metadata labels the output, as in
-/// zenpng's `explicit_icc_is_not_overridden_by_descriptor_derived_cicp`.
 #[test]
-fn descriptor_primaries_do_not_override_colour_metadata() {
+fn profile_metadata_must_agree_with_explicit_primaries() {
+    use zencodec::{ErrorCategory, RequestError};
     let raster = rgb8();
-    let bt2020 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::Bt2020);
-    let jpeg = with_metadata(
-        Metadata::none().with_icc(DISPLAY_P3_V4),
-        raster.slice(bt2020),
-    )
-    .expect("metadata labels descriptor-only pixels");
-    let (samples, icc) = oracle(&jpeg);
+    let job = || {
+        quality()
+            .job()
+            .try_with_metadata_policy(
+                Metadata::none().with_icc(DISPLAY_P3_V4),
+                MetadataPolicy::PreserveExact,
+            )
+            .unwrap()
+    };
+    let jpeg = job()
+        .encoder()
+        .unwrap()
+        .encode(raster.slice(p3(ImageSpec::RGB8_SRGB)))
+        .unwrap();
+    let (samples, icc) = oracle(jpeg.data());
     assert_eq!(icc.as_deref(), Some(DISPLAY_P3_V4));
-    assert_samples(&samples, 4, "metadata over descriptor");
+    assert_samples(&samples, 4, "Display P3 ICC on Display P3 samples");
+
+    let bt2020 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::Bt2020);
+    let error = job()
+        .encoder()
+        .unwrap()
+        .encode(raster.slice(bt2020.clone()))
+        .unwrap_err();
+    assert_eq!(
+        error.error().category(),
+        ErrorCategory::Request(RequestError::CmsRequired)
+    );
+    let mut rows = job().encoder().unwrap();
+    let error = rows.begin(W, H, bt2020).unwrap_err();
+    assert_eq!(
+        error.error().category(),
+        ErrorCategory::Request(RequestError::CmsRequired)
+    );
+    assert!(rows.pending_output().is_empty());
 }
 
 /// The authoritative ICC conversion must precede native transfer encoding on
@@ -506,14 +524,14 @@ fn linear_icc_one_shot_matches_every_row_feeding_path() {
     let (width, height) = (47, 31);
     let mut cases = 0;
     for descriptor in [
-        PixelDescriptor::RGBF32_LINEAR,
-        PixelDescriptor::RGBAF32_LINEAR,
-        PixelDescriptor::RGB16_SRGB.with_transfer(zenpixels::TransferFunction::Linear),
-        PixelDescriptor::RGBA16_SRGB.with_transfer(zenpixels::TransferFunction::Linear),
-        PixelDescriptor::GRAYF32_LINEAR,
-        PixelDescriptor::GRAY16_SRGB.with_transfer(zenpixels::TransferFunction::Linear),
+        ImageSpec::RGBF32_LINEAR,
+        ImageSpec::RGBAF32_LINEAR,
+        ImageSpec::RGB16_SRGB.with_transfer(zenpixels::Transfer::Linear),
+        ImageSpec::RGBA16_SRGB.with_transfer(zenpixels::Transfer::Linear),
+        ImageSpec::GRAYF32_LINEAR,
+        ImageSpec::GRAY16_SRGB.with_transfer(zenpixels::Transfer::Linear),
     ] {
-        let gray = descriptor.layout().channels() == 1;
+        let gray = descriptor.layout.order.channels() == 1;
         let descriptor = if gray { descriptor } else { p3(descriptor) };
         let icc = if gray {
             match SynthesizedIcc::for_gray_cicp(Cicp::new(1, 8, 0, true)) {
@@ -523,9 +541,9 @@ fn linear_icc_one_shot_matches_every_row_feeding_path() {
         } else {
             synthesized(Cicp::new(12, 8, 0, true))
         };
-        let context = Arc::new(ColorContext::from_icc(icc));
-        let bpp = descriptor.bytes_per_pixel();
-        let channels = descriptor.layout().channels();
+        let context = with_icc(descriptor.clone(), icc);
+        let bpp = descriptor.layout.bytes_per_pixel();
+        let channels = descriptor.layout.order.channels();
         let sample_bytes = bpp / channels;
         let mut raster = Raster::new(bpp, 3, 0xA5);
         for y in 0..H {
@@ -546,16 +564,21 @@ fn linear_icc_one_shot_matches_every_row_feeding_path() {
                 }
             }
         }
-        let pixels = || {
-            PixelSlice::new(
+        let pixels = |spec| {
+            PixelView::new_with_spec_cow(
                 &raster.buf[raster.start..],
                 width,
                 height,
                 raster.stride,
-                descriptor,
+                zenpixels::SpecCow::from_owned(spec),
             )
             .unwrap()
         };
+        let mut separate_owner = context.clone();
+        if let ColorSpace::Icc { profile, .. } = &mut separate_owner.color {
+            *profile = Arc::from(profile.as_ref());
+        }
+        let origin = zenpixels::ColorOrigin::from_cicp(Cicp::SRGB);
         for config in [
             quality(),
             quality().with_progressive(false).with_huffman(false),
@@ -565,7 +588,7 @@ fn linear_icc_one_shot_matches_every_row_feeding_path() {
                 .job()
                 .encoder()
                 .unwrap()
-                .encode(pixels().with_color_context(Arc::clone(&context)))
+                .encode(pixels(context.clone()))
                 .unwrap()
                 .into_vec();
             for mode in 0..4 {
@@ -578,26 +601,28 @@ fn linear_icc_one_shot_matches_every_row_feeding_path() {
                             job.encoder().unwrap()
                         };
                         if mode == 0 {
-                            rows.begin_declared(
-                                &EncodeDeclaration::new(width, height, descriptor)
-                                    .with_color(&context),
-                            )
+                            rows.begin_declared(&EncodeDeclaration::new(
+                                width,
+                                height,
+                                context.clone(),
+                            ))
                             .unwrap();
                         } else if mode == 1 {
-                            rows.begin(width, height, descriptor).unwrap();
+                            rows.begin(width, height, context.clone()).unwrap();
                         }
                         let mut file = Vec::new();
                         for y in (0..height).step_by(batch as usize) {
-                            let source = pixels();
-                            let mut part = source.sub_rows(y, batch.min(height - y));
-                            if contexts != 2 || (y == 0 && mode != 0) {
-                                let ctx = if contexts == 1 {
-                                    Arc::new((*context).clone())
-                                } else {
-                                    Arc::clone(&context)
-                                };
-                                part = part.with_color_context(ctx);
-                            }
+                            let spec = if contexts == 1 {
+                                separate_owner.clone()
+                            } else {
+                                context.clone()
+                            };
+                            let part = pixels(spec).sub_rows(y, batch.min(height - y)).unwrap();
+                            let part = if contexts == 2 {
+                                part.with_origin(&origin)
+                            } else {
+                                part
+                            };
                             rows.push_rows(part).unwrap_or_else(|e| panic!("{descriptor:?} mode={mode} batch={batch} contexts={contexts} y={y}: {e}"));
                             rows.take_output(&mut file);
                         }
@@ -619,15 +644,11 @@ fn linear_icc_one_shot_matches_every_row_feeding_path() {
 fn linear_icc_rejected_batches_leave_the_row_state_usable() {
     use zencodec::encode::EncodeDeclaration;
     let raster = rgbf32_linear();
-    let descriptor = p3(PixelDescriptor::RGBF32_LINEAR);
-    let context = Arc::new(ColorContext::from_icc(synthesized(Cicp::new(
-        12, 8, 0, true,
-    ))));
-    let pixels = || {
-        raster
-            .slice(descriptor)
-            .with_color_context(Arc::clone(&context))
-    };
+    let descriptor = with_icc(
+        ImageSpec::RGBF32_LINEAR,
+        synthesized(Cicp::new(12, 8, 0, true)),
+    );
+    let pixels = || raster.slice(descriptor.clone());
     let expected = quality()
         .job()
         .encoder()
@@ -638,31 +659,28 @@ fn linear_icc_rejected_batches_leave_the_row_state_usable() {
     for known_size in [true, false] {
         let mut rows = quality().job().encoder().unwrap();
         if known_size {
-            rows.begin_declared(&EncodeDeclaration::new(W, H, descriptor).with_color(&context))
+            rows.begin_declared(&EncodeDeclaration::new(W, H, descriptor.clone()))
                 .unwrap();
         }
-        rows.push_rows(pixels().sub_rows(0, 7)).unwrap();
-        let narrow = PixelSlice::new(
+        rows.push_rows(pixels().sub_rows(0, 7).unwrap()).unwrap();
+        let narrow = PixelView::new(
             &raster.buf[raster.start..],
             W - 1,
             1,
             raster.stride,
-            descriptor,
+            &descriptor,
         )
-        .unwrap()
-        .with_color_context(Arc::new((*context).clone()));
+        .unwrap();
         assert!(rows.push_rows(narrow).is_err());
-        let wrong = raster
-            .slice(PixelDescriptor::RGBF32_LINEAR)
-            .with_color_context(Arc::new((*context).clone()));
-        assert!(rows.push_rows(wrong.sub_rows(7, 1)).is_err());
-        rows.push_rows(raster.slice(descriptor).sub_rows(7, H - 7))
+        let wrong = raster.slice(ImageSpec::RGBF32_LINEAR);
+        assert!(rows.push_rows(wrong.sub_rows(7, 1).unwrap()).is_err());
+        rows.push_rows(pixels().sub_rows(7, H - 7).unwrap())
             .unwrap();
         assert_eq!(rows.finish().unwrap().data(), expected);
     }
     // A narrow-range declaration cannot be treated as a full-range ICC source.
-    let unsupported = descriptor.with_signal_range(zenpixels::SignalRange::Narrow);
-    let declaration = EncodeDeclaration::new(W, H, unsupported).with_color(&context);
+    let unsupported = ImageSpec::RGBF32_LINEAR.with_range(zenpixels::SignalRange::Narrow);
+    let declaration = EncodeDeclaration::new(W, H, unsupported);
     let mut rows = quality().job().encoder().unwrap();
     assert!(rows.begin_declared(&declaration).is_err());
     assert!(rows.pending_output().is_empty());
@@ -671,30 +689,32 @@ fn linear_icc_rejected_batches_leave_the_row_state_usable() {
 #[test]
 fn linear_icc_one_shot_propagates_cms_and_native_start_refusals() {
     let raster = rgbf32_linear();
-    let context = Arc::new(ColorContext::from_icc(synthesized(Cicp::new(
-        12, 8, 0, true,
-    ))));
-    let desc = p3(PixelDescriptor::RGBF32_LINEAR);
-    let narrow = raster
-        .slice(desc.with_signal_range(zenpixels::SignalRange::Narrow))
-        .with_color_context(Arc::clone(&context));
+    let nonlinear = raster.slice(with_icc(
+        ImageSpec::RGBF32_LINEAR,
+        zenpixels_convert::icc_profiles::ADOBE_RGB,
+    ));
+    assert!(
+        quality()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(nonlinear)
+            .is_err()
+    );
+    let raster = rgb16();
+    let narrow = raster.slice(ImageSpec::RGB16_SRGB.with_range(zenpixels::SignalRange::Narrow));
     assert!(quality().job().encoder().unwrap().encode(narrow).is_err());
-    let empty = PixelSlice::new(&[], 1, 0, 12, desc)
-        .unwrap()
-        .with_color_context(context);
-    assert!(quality().job().encoder().unwrap().encode(empty).is_err());
 }
 
 #[test]
 fn linear_icc_limits_and_geometry_precede_cms_preparation() {
     use zencodec::encode::EncodeDeclaration;
     let raster = rgbf32_linear();
-    let context = Arc::new(ColorContext::from_icc(synthesized(Cicp::new(
-        12, 8, 0, true,
-    ))));
-    // Narrow range would be refused by the CMS; limits must win before preparing it.
-    let desc = p3(PixelDescriptor::RGBF32_LINEAR).with_signal_range(zenpixels::SignalRange::Narrow);
-    let pixels = || raster.slice(desc).with_color_context(Arc::clone(&context));
+    let desc = with_icc(
+        ImageSpec::RGBF32_LINEAR,
+        synthesized(Cicp::new(12, 8, 0, true)),
+    );
+    let pixels = || raster.slice(desc.clone());
     let limited = || {
         quality()
             .job()
@@ -707,26 +727,23 @@ fn linear_icc_limits_and_geometry_precede_cms_preparation() {
     assert!(error.to_string().contains("image too large"), "{error}");
     assert!(encoder.pending_output().is_empty());
 
-    // Empty views carry arbitrarily large widths without allocating input.
-    // All feeding modes must validate native geometry before making a CMS row.
+    // A nonempty view satisfies the shared buffer contract. JPEG itself must
+    // refuse the width before allocating or preparing its CMS row.
     let width = 65_536;
-    let empty = || {
-        PixelSlice::new(&[], width, 0, width as usize * 12, desc)
-            .unwrap()
-            .with_color_context(Arc::clone(&context))
-    };
+    let row = vec![0.0f32; width as usize * 3];
+    let oversized = || PixelView::from_samples(&row, width, 1, &desc).unwrap();
     let error = quality()
         .job()
         .encoder()
         .unwrap()
-        .encode(empty())
+        .encode(oversized())
         .unwrap_err();
     assert!(error.to_string().contains("invalid dimensions"), "{error}");
-    let declaration = EncodeDeclaration::new(width, 1, desc).with_color(&context);
+    let declaration = EncodeDeclaration::new(width, 1, desc.clone());
     let job = quality().job();
     let error = job.plan_encode(&declaration).unwrap_err();
     assert!(error.to_string().contains("invalid dimensions"), "{error}");
-    let too_tall = EncodeDeclaration::new(1, width, desc).with_color(&context);
+    let too_tall = EncodeDeclaration::new(1, width, desc.clone());
     let error = job.plan_encode(&too_tall).unwrap_err();
     assert!(error.to_string().contains("invalid dimensions"), "{error}");
     let mut encoder = quality().job().encoder().unwrap();
@@ -734,14 +751,14 @@ fn linear_icc_limits_and_geometry_precede_cms_preparation() {
     assert!(error.to_string().contains("invalid dimensions"), "{error}");
     assert!(encoder.pending_output().is_empty());
     let mut encoder = quality().job().encoder().unwrap();
-    let error = encoder.push_rows(empty()).unwrap_err();
+    let error = encoder.push_rows(oversized()).unwrap_err();
     assert!(error.to_string().contains("invalid dimensions"), "{error}");
     let mut encoder = quality()
         .job()
         .with_canvas_size(width, 1)
         .encoder()
         .unwrap();
-    let error = encoder.push_rows(empty()).unwrap_err();
+    let error = encoder.push_rows(oversized()).unwrap_err();
     assert!(error.to_string().contains("invalid dimensions"), "{error}");
     assert!(encoder.pending_output().is_empty());
 }

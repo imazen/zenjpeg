@@ -4,7 +4,7 @@
 #![cfg(feature = "zencodec")]
 use zencodec::encode::EncoderConfig;
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::PixelView;
 
 #[test]
 fn color_configuration_gray_input_is_valid_and_matches_explicit_gray_samples() {
@@ -15,7 +15,7 @@ fn color_configuration_gray_input_is_valid_and_matches_explicit_gray_samples() {
             .collect();
         for progressive in [false, true] {
             let pixels = || {
-                PixelSlice::new(&raw, width, height, stride, PixelDescriptor::GRAY8_SRGB).unwrap()
+                PixelView::new(&raw, width, height, stride, &zenpixels::specs::GRAY8_SRGB).unwrap()
             };
             let automatic = JpegEncoderConfig::new()
                 .with_calibrated_quality(87.0)

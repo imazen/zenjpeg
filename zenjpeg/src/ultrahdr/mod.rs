@@ -54,10 +54,11 @@
 //! ```
 
 mod decode;
-#[cfg(feature = "zencodec")]
-pub(crate) use decode::metadata_with_xmp;
+pub(crate) use decode::decode_gainmap_jpeg;
 #[cfg(feature = "zencodec")]
 pub(crate) use decode::{base_color, prepare_base_pixels, ultrahdr_to_zenjpeg_error};
+#[cfg(feature = "zencodec")]
+pub(crate) use decode::{decode_gainmap_with_xmp, metadata_with_xmp};
 
 #[cfg(feature = "inventory")]
 pub(crate) use decode::{primary_xmp_gain_map, xmp_segment_range};

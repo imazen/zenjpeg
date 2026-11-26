@@ -11,7 +11,7 @@ use zencodec::decode::{
     Decode, DecodeJob, DecodeOutput, DecodeRowSink, DecoderConfig, SinkError, StreamingDecode,
 };
 use zenjpeg::{CmykHandling, JpegDecodeJob, JpegDecoderConfig};
-use zenpixels::{ChannelType, PixelDescriptor, PixelFormat, PixelSliceMut};
+use zenpixels::{ChannelOrder, ImageSpec, PixelViewMut, SampleType};
 
 const SEEDS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/seeds/native/");
 
@@ -25,7 +25,7 @@ fn corpus_12_bit() -> Vec<u8> {
     std::fs::read(dir.join("testorig12.jpg")).expect("testorig12.jpg")
 }
 
-fn decode(data: &[u8], preferred: &[PixelDescriptor]) -> DecodeOutput {
+fn decode(data: &[u8], preferred: &[ImageSpec]) -> DecodeOutput {
     JpegDecoderConfig::new()
         .job()
         .decoder(Cow::Borrowed(data), preferred)
@@ -77,7 +77,7 @@ fn output_words(output: &DecodeOutput) -> Vec<u16> {
 
 #[derive(Default)]
 struct Sink {
-    descriptor: Option<PixelDescriptor>,
+    descriptor: Option<ImageSpec>,
     size: (u32, u32),
     stride: usize,
     buffer: Vec<u16>,
@@ -85,16 +85,11 @@ struct Sink {
 }
 
 impl DecodeRowSink for Sink {
-    fn begin(
-        &mut self,
-        width: u32,
-        height: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<(), SinkError> {
+    fn begin(&mut self, width: u32, height: u32, descriptor: ImageSpec) -> Result<(), SinkError> {
         // Padded rows, so a write past a row's active samples is visible.
         self.size = (width, height);
-        self.descriptor = Some(descriptor);
-        self.stride = width as usize * descriptor.channels() + 5;
+        self.descriptor = Some(descriptor.clone());
+        self.stride = width as usize * descriptor.layout.order.channels() + 5;
         self.buffer = vec![0xABCD; self.stride * height as usize];
         Ok(())
     }
@@ -104,10 +99,10 @@ impl DecodeRowSink for Sink {
         y: u32,
         height: u32,
         width: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, SinkError> {
+        descriptor: ImageSpec,
+    ) -> Result<PixelViewMut<'_>, SinkError> {
         // The stride must be a whole number of pixels for the view.
-        let pixel = descriptor.channels();
+        let pixel = descriptor.layout.order.channels();
         let stride = self.stride.div_ceil(pixel) * pixel;
         if stride != self.stride {
             self.stride = stride;
@@ -116,7 +111,14 @@ impl DecodeRowSink for Sink {
         let start = y as usize * stride;
         let end = start + height as usize * stride;
         let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut self.buffer[start..end]);
-        Ok(PixelSliceMut::new(bytes, width, height, stride * 2, descriptor).unwrap())
+        Ok(PixelViewMut::new_with_spec_cow(
+            bytes,
+            width,
+            height,
+            stride * 2,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap())
     }
 
     fn finish(&mut self) -> Result<(), SinkError> {
@@ -126,22 +128,23 @@ impl DecodeRowSink for Sink {
 }
 
 /// One-shot, push and streaming exits for one preference list agree.
-fn check_paths(data: &[u8], preferred: &[PixelDescriptor]) -> (PixelDescriptor, Vec<u16>) {
+fn check_paths(data: &[u8], preferred: &[ImageSpec]) -> (ImageSpec, Vec<u16>) {
     check_job_paths(data, preferred, || JpegDecoderConfig::new().job())
 }
 
 fn check_job_paths(
     data: &[u8],
-    preferred: &[PixelDescriptor],
+    preferred: &[ImageSpec],
     job: impl Fn() -> JpegDecodeJob,
-) -> (PixelDescriptor, Vec<u16>) {
+) -> (ImageSpec, Vec<u16>) {
     let one_shot = job()
         .decoder(Cow::Borrowed(data), preferred)
         .unwrap()
         .decode()
         .unwrap();
-    let descriptor = one_shot.pixels().descriptor();
-    assert_eq!(descriptor.channel_type(), ChannelType::U16);
+    let pixels = one_shot.pixels();
+    let descriptor = pixels.spec();
+    assert_eq!(descriptor.layout.sample, SampleType::U16);
     let samples = output_words(&one_shot);
 
     let mut sink = Sink::default();
@@ -149,8 +152,8 @@ fn check_job_paths(
         .push_decoder(Cow::Borrowed(data), &mut sink, preferred)
         .unwrap();
     assert!(sink.finished);
-    assert_eq!(info.native_format, descriptor);
-    let active = sink.size.0 as usize * descriptor.channels();
+    assert_eq!(&info.native_format, descriptor);
+    let active = sink.size.0 as usize * descriptor.layout.order.channels();
     let mut pushed = Vec::new();
     for row in sink.buffer.chunks_exact(sink.stride) {
         pushed.extend_from_slice(&row[..active]);
@@ -166,11 +169,11 @@ fn check_job_paths(
         .unwrap();
     let mut streamed = Vec::new();
     while let Some((y, rows)) = streaming.next_batch().unwrap() {
-        assert_eq!(rows.descriptor(), descriptor);
+        assert_eq!(rows.spec(), descriptor);
         assert_eq!(y as usize, streamed.len() / active);
         assert_eq!(
-            rows.exact_depth(),
-            one_shot.pixels().exact_depth(),
+            rows.facts().depth,
+            one_shot.pixels().facts().depth,
             "streaming depth evidence"
         );
         for r in 0..rows.rows() {
@@ -178,21 +181,21 @@ fn check_job_paths(
         }
     }
     assert_eq!(streamed, samples, "streaming vs one-shot");
-    (descriptor, samples)
+    (descriptor.clone(), samples)
 }
 
 #[test]
 fn corpus_twelve_bit_keeps_its_depth_by_default() {
     let data = corpus_12_bit();
     let (descriptor, samples) = check_paths(&data, &[]);
-    assert_eq!(descriptor, PixelDescriptor::RGB16_SRGB);
+    assert_eq!(descriptor, ImageSpec::RGB16_SRGB);
     let codes = native_codes(&data, false, false);
     let expected: Vec<u16> = codes.iter().map(|&c| nearest_16(c, 12)).collect();
     assert_eq!(samples, expected);
 
     let output = decode(&data, &[]);
     assert_eq!(output.info().source_color.bit_depth, Some(12));
-    let exact = output.pixels().exact_depth().unwrap();
+    let exact = output.pixels().facts().depth.unwrap();
     assert!(exact.color_exact_at(16));
     // Every code returns through the descriptor's exact 12-bit grid.
     for (&code, &sample) in codes.iter().zip(&samples) {
@@ -208,13 +211,13 @@ fn output_info_and_advertised_exits_name_the_depth() {
     let job = JpegDecoderConfig::new().job();
     assert_eq!(
         job.output_info(&data).unwrap().native_format,
-        PixelDescriptor::RGB16_SRGB
+        ImageSpec::RGB16_SRGB
     );
     let advertised = JpegDecoderConfig::supported_descriptors();
     for descriptor in [
-        PixelDescriptor::RGB16_SRGB,
-        PixelDescriptor::RGBA16_SRGB,
-        PixelDescriptor::GRAY16_SRGB,
+        ImageSpec::RGB16_SRGB,
+        ImageSpec::RGBA16_SRGB,
+        ImageSpec::GRAY16_SRGB,
     ] {
         assert!(advertised.contains(&descriptor), "{descriptor:?}");
     }
@@ -241,9 +244,9 @@ fn every_seed_above_eight_bits_keeps_its_depth() {
         assert_eq!(
             descriptor,
             if gray {
-                PixelDescriptor::GRAY16_SRGB
+                ImageSpec::GRAY16_SRGB
             } else {
-                PixelDescriptor::RGB16_SRGB
+                ImageSpec::RGB16_SRGB
             },
             "{name}"
         );
@@ -305,9 +308,9 @@ fn orientation_applies_to_u16_exits_on_every_path() {
 #[test]
 fn rgba_exit_adds_opaque_alpha_without_touching_color() {
     let data = corpus_12_bit();
-    let (descriptor, rgba) = check_paths(&data, &[PixelDescriptor::RGBA16_SRGB]);
-    assert_eq!(descriptor, PixelDescriptor::RGBA16_SRGB);
-    let (_, rgb) = check_paths(&data, &[PixelDescriptor::RGB16_SRGB]);
+    let (descriptor, rgba) = check_paths(&data, &[ImageSpec::RGBA16_SRGB]);
+    assert_eq!(descriptor, ImageSpec::RGBA16_SRGB);
+    let (_, rgb) = check_paths(&data, &[ImageSpec::RGB16_SRGB]);
     for (px, expected) in rgba.as_chunks::<4>().0.iter().zip(rgb.as_chunks::<3>().0) {
         assert_eq!(&px[..3], expected);
         assert_eq!(px[3], 65535);
@@ -318,42 +321,36 @@ fn rgba_exit_adds_opaque_alpha_without_touching_color() {
 fn a_list_offering_more_than_u8_does_not_narrow() {
     let data = corpus_12_bit();
     for preferred in [
-        vec![PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB16_SRGB],
+        vec![ImageSpec::RGB8_SRGB, ImageSpec::RGB16_SRGB],
         JpegDecoderConfig::supported_descriptors().to_vec(),
     ] {
         let (descriptor, samples) = check_paths(&data, &preferred);
-        assert_eq!(descriptor, PixelDescriptor::RGB16_SRGB);
+        assert_eq!(descriptor, ImageSpec::RGB16_SRGB);
         assert_eq!(samples, output_words(&decode(&data, &[])));
     }
     // A later float offer holds the samples too, ahead of U8.
     let output = decode(
         &data,
         &[
-            PixelDescriptor::RGB8_SRGB,
-            PixelDescriptor::RGBF32_LINEAR,
-            PixelDescriptor::RGB16_SRGB,
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::RGBF32_LINEAR,
+            ImageSpec::RGB16_SRGB,
         ],
     );
-    assert_eq!(
-        output.pixels().descriptor().channel_type(),
-        ChannelType::F32
-    );
+    assert_eq!(output.pixels().spec().layout.sample, SampleType::F32);
     // Eight-bit frames keep plain first-supported ranking.
     let eight = seed("10-p8-c3-sof30-mode0-s1");
-    let output = decode(
-        &eight,
-        &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB16_SRGB],
-    );
-    assert_eq!(output.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
+    let output = decode(&eight, &[ImageSpec::RGB8_SRGB, ImageSpec::RGB16_SRGB]);
+    assert_eq!(output.pixels().spec(), &ImageSpec::RGB8_SRGB);
 }
 
 #[test]
 fn an_explicit_u8_request_is_honored_on_every_path() {
     let data = corpus_12_bit();
-    let preferred = [PixelDescriptor::RGB8_SRGB];
+    let preferred = [ImageSpec::RGB8_SRGB];
     let one_shot = decode(&data, &preferred);
-    assert_eq!(one_shot.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
-    assert_eq!(one_shot.pixels().exact_depth(), None);
+    assert_eq!(one_shot.pixels().spec(), &ImageSpec::RGB8_SRGB);
+    assert_eq!(one_shot.pixels().facts().depth, None);
     let bytes: Vec<u8> = (0..one_shot.pixels().rows())
         .flat_map(|y| one_shot.pixels().row(y).to_vec())
         .collect();
@@ -386,14 +383,14 @@ fn eight_bit_frames_widen_exactly_when_asked_and_stay_u8_otherwise() {
         let data = seed(name);
         let plain = decode(&data, &[]);
         assert_eq!(
-            plain.pixels().descriptor().channel_type(),
-            ChannelType::U8,
+            plain.pixels().spec().layout.sample,
+            SampleType::U8,
             "{name}"
         );
         let preferred = [if gray {
-            PixelDescriptor::GRAY16_SRGB
+            ImageSpec::GRAY16_SRGB
         } else {
-            PixelDescriptor::RGB16_SRGB
+            ImageSpec::RGB16_SRGB
         }];
         let (descriptor, samples) = check_paths(&data, &preferred);
         assert_eq!(descriptor, preferred[0], "{name}");
@@ -409,8 +406,8 @@ fn eight_bit_frames_widen_exactly_when_asked_and_stay_u8_otherwise() {
 fn lossless_below_eight_bits_widens_from_its_codes() {
     let data = seed("30-p2-c1-sof31-mode0-s1");
     let plain = decode(&data, &[]);
-    assert_eq!(plain.pixels().descriptor().channel_type(), ChannelType::U8);
-    let (_, samples) = check_paths(&data, &[PixelDescriptor::GRAY16_SRGB]);
+    assert_eq!(plain.pixels().spec().layout.sample, SampleType::U8);
+    let (_, samples) = check_paths(&data, &[ImageSpec::GRAY16_SRGB]);
     let expected: Vec<u16> = native_codes(&data, true, false)
         .iter()
         .map(|&c| nearest_16(c, 2))
@@ -427,8 +424,8 @@ fn deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named() {
         let data = seed(name);
         let output = decode(&data, &[]);
         assert_eq!(
-            output.pixels().descriptor().pixel_format(),
-            PixelFormat::CmykF32Inverted,
+            output.pixels().spec().layout,
+            zenpixels::SampleLayout::new(SampleType::F32, ChannelOrder::CmykInverted),
             "{name}"
         );
         let codes = zenjpeg::decoder::Decoder::new()
@@ -455,12 +452,16 @@ fn deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named() {
         let expected: Vec<f32> = codes.iter().map(|&c| f32::from(c) / max).collect();
         assert_eq!(floats, expected, "{name}");
 
-        let narrowed = decode(&data, &[PixelDescriptor::CMYK8]);
-        assert_eq!(
-            narrowed.pixels().descriptor(),
-            PixelDescriptor::CMYK8,
-            "{name}"
+        let inverted = ImageSpec::new(
+            zenpixels::SampleLayout::CMYK8_INVERTED,
+            zenpixels::ColorSpace::Cmyk {
+                inverted: true,
+                alpha: zenpixels::AlphaMode::None,
+                icc: None,
+            },
         );
+        let narrowed = decode(&data, core::slice::from_ref(&inverted));
+        assert_eq!(narrowed.pixels().spec(), &inverted, "{name}");
     }
 }
 
@@ -474,7 +475,7 @@ fn deep_cmyk_converted_to_rgb_keeps_its_depth() {
         .unwrap()
         .decode()
         .unwrap();
-    assert_eq!(output.pixels().descriptor(), PixelDescriptor::RGB16_SRGB);
+    assert_eq!(output.pixels().spec(), &ImageSpec::RGB16_SRGB);
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +539,11 @@ fn oracle_zencodec_u16_exit_matches_djpeg_codes() {
     for (name, data) in files {
         let (channels, expected) = djpeg(&[], &data);
         let output = decode(&data, &[]);
-        assert_eq!(output.pixels().descriptor().channels(), channels, "{name}");
+        assert_eq!(
+            output.pixels().spec().layout.order.channels(),
+            channels,
+            "{name}"
+        );
         let samples = output_words(&output);
         assert_eq!(samples.len(), expected.len(), "{name}");
         for (i, (&sample, &code)) in samples.iter().zip(&expected).enumerate() {

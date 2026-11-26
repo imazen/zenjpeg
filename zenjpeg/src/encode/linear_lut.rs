@@ -147,7 +147,7 @@ mod simd_fused {
     /// Returns sRGB values in [0, 255].
     #[rite]
     fn linear_to_srgb_255_simd(token: X64V3Token, linear: mt_f32x8) -> mt_f32x8 {
-        let srgb_arr = linear_srgb::tokens::x8::linear_to_srgb_v3(token, linear.to_array());
+        let srgb_arr = linear_srgb::target_features::x8::linear_to_srgb_v3(linear.to_array());
         mt_f32x8::from_array_t(token, srgb_arr) * mt_f32x8::splat_t(token, 255.0)
     }
 

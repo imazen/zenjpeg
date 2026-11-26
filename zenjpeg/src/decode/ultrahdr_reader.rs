@@ -64,7 +64,7 @@ use crate::types::Dimensions;
 
 #[cfg(feature = "ultrahdr")]
 use ultrahdr_core::{
-    ColorPrimaries as ColorGamut, GainMap, GainMapMetadata,
+    ColorPrimaries as ColorGamut, GainMapMetadata,
     gainmap::{RowDecoder, StreamDecoder},
 };
 
@@ -281,6 +281,7 @@ enum HdrDecoderState<'a> {
     StreamDecoder {
         decoder: Box<StreamDecoder>,
         gainmap_reader: Box<ScanlineReader<'a>>,
+        gainmap_channels: u8,
     },
 }
 
@@ -339,10 +340,13 @@ impl<'a> UltraHdrReader<'a> {
         // Get gain map JPEG slice from original data (zero-copy)
         let gainmap_data = &self.data[gm_start..gm_end];
 
+        let xmp_channels = crate::container::iso21496_from_gainmap_jpeg(gainmap_data)
+            .is_none_or(|record| record.is_err())
+            .then(|| metadata.is_single_channel());
         match self.config.memory_strategy {
             GainMapMemory::Full => {
                 // Decode gain map fully
-                let gainmap = decode_gainmap_jpeg(gainmap_data)?;
+                let gainmap = crate::ultrahdr::decode_gainmap_jpeg(gainmap_data, xmp_channels)?;
 
                 let width = self.base_reader.width();
                 let height = self.base_reader.height();
@@ -373,7 +377,16 @@ impl<'a> UltraHdrReader<'a> {
 
                 let gm_width = gm_info.dimensions.width;
                 let gm_height = gm_info.dimensions.height;
-                let gm_channels = if gm_info.num_components == 1 { 1 } else { 3 };
+                let gm_channels = match gm_info.num_components {
+                    1 => 1,
+                    3 if xmp_channels == Some(true) => 1,
+                    3 => 3,
+                    _ => {
+                        return Err(Error::unsupported_feature(
+                            "gain-map JPEG must contain one or three components",
+                        ));
+                    }
+                };
 
                 let sdr_width = self.base_reader.width();
                 let sdr_height = self.base_reader.height();
@@ -401,6 +414,7 @@ impl<'a> UltraHdrReader<'a> {
                 self.hdr_state = Some(HdrDecoderState::StreamDecoder {
                     decoder: Box::new(stream_decoder),
                     gainmap_reader: Box::new(gm_reader),
+                    gainmap_channels: gm_channels,
                 });
             }
         }
@@ -615,16 +629,21 @@ impl<'a> UltraHdrReader<'a> {
             HdrDecoderState::StreamDecoder {
                 decoder,
                 gainmap_reader,
-                ..
+                gainmap_channels,
             } => {
                 // Feed gain map rows until we can process the SDR batch
                 while !decoder.can_process(rows as u32) {
                     // Read gain map row
                     let gm_width = gainmap_reader.width() as usize;
-                    let gm_stride = gm_width * 3;
-                    let mut gm_row = vec![0u8; gm_stride];
+                    let gm_stride = gm_width * usize::from(*gainmap_channels);
+                    let mut gm_row =
+                        crate::foundation::alloc::try_alloc_vec(gm_stride, "gain-map row")?;
                     let gm_ref = imgref::ImgRefMut::new(&mut gm_row, gm_stride, 1);
-                    let gm_rows_read = gainmap_reader.read_rows_rgb8(gm_ref)?;
+                    let gm_rows_read = if *gainmap_channels == 1 {
+                        gainmap_reader.read_rows_gray8(gm_ref)?
+                    } else {
+                        gainmap_reader.read_rows_rgb8(gm_ref)?
+                    };
 
                     if gm_rows_read == 0 {
                         break;
@@ -714,10 +733,10 @@ impl<'a> UltraHdrReader<'a> {
 // Helper Functions
 // ============================================================================
 
-/// Convert sRGB u8 to linear f32 via 256-entry LUT.
+/// Use the same sRGB EOTF as full-frame gain-map reconstruction.
 #[inline]
 fn srgb_to_linear(srgb: u8) -> f32 {
-    linear_srgb::default::srgb_u8_to_linear(srgb)
+    linear_srgb::default::srgb_to_linear(f32::from(srgb) / 255.0)
 }
 
 /// Convert a buffer of sRGB RGB8 pixels to linear f32 RGB.
@@ -734,44 +753,6 @@ fn srgb_u8_to_linear_f32(srgb_data: &[u8], width: usize, rows: usize) -> Vec<f32
         linear.push(srgb_to_linear(pixel[2]));
     }
     linear
-}
-
-/// Decode a gain map JPEG to GainMap struct.
-#[cfg(feature = "ultrahdr")]
-fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
-    let decoded = crate::decode::Decoder::new().decode(jpeg_data, enough::Unstoppable)?;
-
-    let width = decoded.width();
-    let height = decoded.height();
-    let pixels = decoded.pixels_u8().unwrap().to_vec();
-
-    // Determine if single-channel or multi-channel based on content
-    let channels = if is_grayscale_content(&pixels) { 1 } else { 3 };
-
-    let data = if channels == 1 {
-        // Extract just the R (or first) channel
-        pixels.as_chunks::<3>().0.iter().map(|p| p[0]).collect()
-    } else {
-        pixels
-    };
-
-    Ok(GainMap {
-        width,
-        height,
-        channels,
-        data,
-    })
-}
-
-/// Check if decoded RGB content is actually grayscale (R==G==B for all pixels).
-#[cfg(feature = "ultrahdr")]
-fn is_grayscale_content(pixels: &[u8]) -> bool {
-    pixels
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .take(100) // Sample first 100 pixels
-        .all(|p| p[0] == p[1] && p[1] == p[2])
 }
 
 // ============================================================================

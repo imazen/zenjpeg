@@ -12,7 +12,7 @@ use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{
     CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation,
 };
-use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{ImageSpec, PixelBuf, PixelView, PixelViewMut};
 
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
@@ -35,6 +35,24 @@ mod api_tests {
     use rgb::{Gray, Rgb, Rgba};
     use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 
+    fn view<P: zenpixels::PixelType>(img: imgref::ImgRef<'_, P>) -> PixelView<'_> {
+        let spec = zencodec::helpers::codec_spec(P::LAYOUT).with_transfer(
+            if P::LAYOUT.sample == zenpixels::SampleType::U8 {
+                zenpixels::Transfer::Srgb
+            } else {
+                zenpixels::Transfer::Linear
+            },
+        );
+        PixelView::new_with_spec_cow(
+            bytemuck::cast_slice(img.buf()),
+            img.width() as u32,
+            img.height() as u32,
+            img.stride() * P::LAYOUT.bytes_per_pixel(),
+            zenpixels::SpecCow::from_owned(spec),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn encoding_default_roundtrip() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(80.0);
@@ -47,7 +65,7 @@ mod api_tests {
             64
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let output = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let output = enc.encode(view(img.as_ref())).unwrap();
         assert!(!output.data().is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
         assert_eq!(&output.data()[0..2], &[0xFF, 0xD8]);
@@ -60,16 +78,18 @@ mod api_tests {
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
         let img = Img::new(pixels.as_slice(), 4, 4);
 
-        let icc = b"fake icc profile data";
-        let meta = Metadata::default().with_icc(icc.as_slice());
+        let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        let meta = Metadata::default().with_icc(icc);
         let output = enc
             .job()
             .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()).into())
+            .encode(view(img.as_ref()))
             .unwrap();
-        assert!(!output.data().is_empty());
+        let mut independent = jpeg_decoder::Decoder::new(output.data());
+        independent.decode().unwrap();
+        assert_eq!(independent.icc_profile().as_deref(), Some(icc));
     }
 
     #[test]
@@ -89,7 +109,7 @@ mod api_tests {
             .with_policy(policy)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()).into())
+            .encode(view(img.as_ref()))
             .unwrap();
         // Should succeed but ICC may be stripped by strict policy
         assert!(!output.data().is_empty());
@@ -100,7 +120,7 @@ mod api_tests {
         let enc = JpegEncoderConfig::grayscale(90.0);
         let pixels = vec![Gray::new(128u8); 64];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let output = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let output = enc.encode(view(img.as_ref())).unwrap();
         assert!(!output.data().is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
     }
@@ -118,7 +138,7 @@ mod api_tests {
             64
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let output = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let output = enc.encode(view(img.as_ref())).unwrap();
         assert!(!output.data().is_empty());
     }
 
@@ -134,11 +154,11 @@ mod api_tests {
             8 * 8
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let slice: PixelSlice<'_> = PixelSlice::from(img.as_ref()).into();
+        let slice: PixelView<'_> = view(img.as_ref());
 
         let mut encoder = enc.job().encoder().unwrap();
-        let top = slice.sub_rows(0, 4);
-        let bottom = slice.sub_rows(4, 4);
+        let top = slice.sub_rows(0, 4).unwrap();
+        let bottom = slice.sub_rows(4, 4).unwrap();
         encoder.push_rows(top).unwrap();
         encoder.push_rows(bottom).unwrap();
         let output = encoder.finish().unwrap();
@@ -179,15 +199,15 @@ mod api_tests {
         assert!(header.is_xyb);
         assert!(header.icc_profile.is_some());
         assert_eq!(
-            decode_descriptor(&[], &header, None),
-            PixelDescriptor::RGB8_SRGB
+            decode_descriptor(&[], &header, None).unwrap(),
+            ImageSpec::RGB8_SRGB
         );
         assert_eq!(
-            decode_descriptor(&[PixelDescriptor::RGBAF32_LINEAR], &header, None),
-            PixelDescriptor::RGBAF32_LINEAR
+            decode_descriptor(&[ImageSpec::RGBAF32_LINEAR], &header, None).unwrap(),
+            ImageSpec::RGBAF32_LINEAR
         );
         let decoded = JpegDecoderConfig::new().decode(&encoded).unwrap();
-        assert_eq!(decoded.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(decoded.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
         assert_eq!(
             decoded.info().source_color.icc_profile.as_deref(),
             header.icc_profile.as_deref()
@@ -195,10 +215,13 @@ mod api_tests {
         // An arbitrary unconverted ICC must not receive the XYB exception.
         header.is_xyb = false;
         header.icc_profile = Some(b"invalid unconverted ICC".to_vec());
-        assert_eq!(
-            decode_descriptor(&[], &header, None).transfer(),
-            zenpixels::TransferFunction::Unknown
-        );
+        assert!(matches!(
+            decode_descriptor(&[], &header, None).unwrap().color,
+            zenpixels::ColorSpace::Rgb {
+                transfer: zenpixels::Transfer::Unknown,
+                ..
+            }
+        ));
     }
 
     /// A JPEG with an EXIF APP1 segment (copyright only, so no orientation
@@ -255,7 +278,7 @@ mod api_tests {
             .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()).into())
+            .encode(view(img.as_ref()))
             .unwrap();
         assert_eq!(exif_headers(reencoded.data()), 1);
         assert_eq!(
@@ -278,7 +301,7 @@ mod api_tests {
             .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()).into())
+            .encode(view(img.as_ref()))
             .unwrap();
         assert_eq!(exif_headers(reencoded.data()), 1);
         assert_eq!(
@@ -304,7 +327,7 @@ mod api_tests {
             64
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let output = dec.decode(encoded.data()).unwrap();
@@ -326,17 +349,17 @@ mod api_tests {
             64
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let output = dec
             .job()
-            .decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
+            .decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap()
             .decode()
             .unwrap();
         // Output should be RGB8 — the native format
-        assert_eq!(output.descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(output.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
         let pixel_data = output.pixels();
         assert_eq!(pixel_data.width(), 8);
         assert_eq!(pixel_data.rows(), 8);
@@ -349,7 +372,7 @@ mod api_tests {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
         let img = Img::new(pixels.as_slice(), 10, 10);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let info = dec.probe_header(encoded.data()).unwrap();
@@ -372,12 +395,12 @@ mod api_tests {
             16 * 16
         ];
         let img = Img::new(pixels.as_slice(), 16, 16);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(stream.info().width, 16);
@@ -409,12 +432,12 @@ mod api_tests {
             64 * 64
         ];
         let img = Img::new(pixels.as_slice(), 64, 64);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         let mut batch_count = 0;
@@ -447,13 +470,13 @@ mod api_tests {
             32 * 32
         ];
         let img = Img::new(pixels.as_slice(), 32, 32);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         // First decode with Cow::Borrowed as reference
         let dec = JpegDecoderConfig::new();
         let mut borrowed_stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         let mut borrowed_pixels = Vec::new();
@@ -466,7 +489,7 @@ mod api_tests {
         let dec2 = JpegDecoderConfig::new();
         let mut owned_stream = dec2
             .job()
-            .streaming_decoder(Cow::Owned(owned_data), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(owned_stream.info().width, 32);
@@ -503,7 +526,7 @@ mod api_tests {
             16 * 16
         ];
         let img = Img::new(pixels.as_slice(), 16, 16);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         // Create streaming decoder with owned data inside a scope,
         // then use it outside that scope (proves no external borrow).
@@ -511,7 +534,7 @@ mod api_tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Owned(owned_data), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Owned(owned_data), &[ImageSpec::RGB8_SRGB])
             .unwrap();
 
         // The stream should work after the owned_data variable is consumed
@@ -524,7 +547,7 @@ mod api_tests {
 
     // ── Encoder trait roundtrip tests ────────────────────────────────
 
-    fn encoder_trait_roundtrip(pixels: zenpixels::PixelSlice<'_>) {
+    fn encoder_trait_roundtrip(pixels: zenpixels::PixelView<'_>) {
         use zencodec::encode::Encoder;
         let config = JpegEncoderConfig::new().with_calibrated_quality(75.0);
         let encoder = config.job().encoder().unwrap();
@@ -544,7 +567,7 @@ mod api_tests {
             })
             .collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
@@ -558,14 +581,14 @@ mod api_tests {
             })
             .collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
     fn encoder_trait_gray8() {
         let pixels: Vec<Gray<u8>> = (0..16 * 16).map(|i| Gray((i % 256) as u8)).collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
@@ -578,7 +601,7 @@ mod api_tests {
             })
             .collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
@@ -592,14 +615,14 @@ mod api_tests {
             })
             .collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
     fn encoder_trait_gray16() {
         let pixels: Vec<Gray<u16>> = (0..16 * 16).map(|i| Gray((i * 256) as u16)).collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
@@ -615,7 +638,7 @@ mod api_tests {
             })
             .collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
@@ -632,14 +655,14 @@ mod api_tests {
             })
             .collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
     fn encoder_trait_gray_f32() {
         let pixels: Vec<Gray<f32>> = (0..16 * 16).map(|i| Gray(i as f32 / 255.0)).collect();
         let img = Img::new(pixels.as_slice(), 16, 16);
-        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+        encoder_trait_roundtrip(view(img.as_ref()));
     }
 
     #[test]
@@ -655,9 +678,7 @@ mod api_tests {
         let img = Img::new(pixels.as_slice(), 32, 32);
         let config = JpegEncoderConfig::new().with_calibrated_quality(80.0);
         let dyn_enc = config.job().dyn_encoder().unwrap();
-        let output = dyn_enc
-            .encode(zenpixels::PixelSlice::from(img.as_ref()).into())
-            .unwrap();
+        let output = dyn_enc.encode(view(img.as_ref())).unwrap();
         assert!(!output.is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
     }
@@ -753,9 +774,7 @@ mod api_tests {
             32 * 32
         ];
         let img = Img::new(pixels.as_slice(), 32, 32);
-        let encoded = JpegEncoderConfig::new()
-            .encode(PixelSlice::from(img.as_ref()).into())
-            .unwrap();
+        let encoded = JpegEncoderConfig::new().encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let limits = ResourceLimits::none().with_max_width(10);
@@ -781,9 +800,7 @@ mod api_tests {
             32 * 32
         ];
         let img = Img::new(pixels.as_slice(), 32, 32);
-        let encoded = JpegEncoderConfig::new()
-            .encode(PixelSlice::from(img.as_ref()).into())
-            .unwrap();
+        let encoded = JpegEncoderConfig::new().encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let limits = ResourceLimits::none().with_max_height(10);
@@ -812,9 +829,7 @@ mod api_tests {
             32 * 32
         ];
         let img = Img::new(pixels.as_slice(), 32, 32);
-        let encoded = JpegEncoderConfig::new()
-            .encode(PixelSlice::from(img.as_ref()).into())
-            .unwrap();
+        let encoded = JpegEncoderConfig::new().encode(view(img.as_ref())).unwrap();
 
         let dec = JpegDecoderConfig::new();
         let limits = ResourceLimits::none()
@@ -882,7 +897,7 @@ mod api_tests {
             .with_limits(limits)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()).into())
+            .encode(view(img.as_ref()))
             .expect_err("calibrated peak must exceed the 4 MiB cap");
         assert_eq!(
             err.error().category(),
@@ -912,7 +927,7 @@ mod api_tests {
             .with_limits(limits)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()).into())
+            .encode(view(img.as_ref()))
             .expect("64 MiB budget must admit a 1 MP encode");
         assert!(!out.data().is_empty());
         assert_eq!(&out.data()[0..2], &[0xFF, 0xD8]);
@@ -939,7 +954,7 @@ mod api_tests {
             64
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc.encode(view(img.as_ref())).unwrap();
 
         // Use the full supported descriptor list (includes f32 types)
         let dec = JpegDecoderConfig::new();
@@ -961,7 +976,7 @@ mod api_tests {
     fn encode_from_pull_basic() {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         use zencodec::encode::{EncodeJob as _, Encoder as _};
-        use zenpixels::PixelSliceMut;
+        use zenpixels::PixelViewMut;
 
         let width = 32u32;
         let height = 32u32;
@@ -985,7 +1000,7 @@ mod api_tests {
         let encoder = job.encoder().unwrap();
 
         let encoded = encoder
-            .encode_from(&mut |y, mut buf: PixelSliceMut<'_>| {
+            .encode_from(&mut |y, mut buf: PixelViewMut<'_>| {
                 let rows = buf.rows();
                 for row in 0..rows {
                     let src_y = y + row;
@@ -1019,12 +1034,12 @@ mod api_tests {
     #[test]
     fn encode_from_requires_canvas_size() {
         use zencodec::encode::{EncodeJob as _, Encoder as _};
-        use zenpixels::PixelSliceMut;
+        use zenpixels::PixelViewMut;
 
         let config = JpegEncoderConfig::new();
         // No with_canvas_size — should error
         let encoder = config.job().encoder().unwrap();
-        let result = encoder.encode_from(&mut |_y, _buf: PixelSliceMut<'_>| 0);
+        let result = encoder.encode_from(&mut |_y, _buf: PixelViewMut<'_>| 0);
         assert!(result.is_err());
     }
 }
@@ -1049,14 +1064,9 @@ mod streaming_test {
         let mut enc = job.dyn_encoder().unwrap();
         // enc borrows stop, both in same scope — compiles fine
         let pixels = vec![128u8; 64 * 64 * 4];
-        let slice = zenpixels::PixelSlice::new(
-            &pixels,
-            64,
-            64,
-            64 * 4,
-            zenpixels::PixelDescriptor::RGBA8_SRGB,
-        )
-        .unwrap();
+        let slice =
+            zenpixels::PixelView::new(&pixels, 64, 64, 64 * 4, &zenpixels::specs::RGBA8_SRGB)
+                .unwrap();
         enc.push_rows(slice).unwrap();
         let _output = enc.finish().unwrap();
     }
@@ -1112,7 +1122,7 @@ mod cmyk_tests {
         let pixels = output.pixels();
 
         // Verify 4 channels via CMYK8 descriptor
-        assert_eq!(pixels.descriptor().bytes_per_pixel(), 4);
+        assert_eq!(pixels.spec().layout.bytes_per_pixel(), 4);
 
         // source_color.channel_count should be 4 (CMYK)
         assert_eq!(info.source_color.channel_count, Some(4));
@@ -1170,8 +1180,8 @@ mod cmyk_tests {
         assert_eq!(rgb_info.height, cmyk_info.height);
 
         // BadRgb output is 3-channel RGB8, Passthrough is 4-channel CMYK8
-        assert_eq!(output_rgb.pixels().descriptor().bytes_per_pixel(), 3);
-        assert_eq!(output_cmyk.pixels().descriptor().bytes_per_pixel(), 4);
+        assert_eq!(output_rgb.pixels().spec().layout.bytes_per_pixel(), 3);
+        assert_eq!(output_cmyk.pixels().spec().layout.bytes_per_pixel(), 4);
 
         // Manual CMYK→RGB conversion on raw CMYK data should produce something
         // close to the auto-converted RGB (within the known maxDelta of ~39)
@@ -1240,7 +1250,9 @@ mod cmyk_tests {
             64
         ];
         let img = Img::new(pixels, 8, 8);
-        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let encoded = enc
+            .encode(PixelView::from_pixels(img.buf(), 8, 8, ImageSpec::RGB8_SRGB.color).unwrap())
+            .unwrap();
         let jpeg_data = encoded.into_vec();
 
         // Both CMYK handling modes should produce identical output for a
@@ -1261,8 +1273,8 @@ mod cmyk_tests {
             .unwrap();
 
         assert_eq!(
-            out_passthrough.pixels().descriptor().bytes_per_pixel(),
-            out_badrgb.pixels().descriptor().bytes_per_pixel()
+            out_passthrough.pixels().spec().layout.bytes_per_pixel(),
+            out_badrgb.pixels().spec().layout.bytes_per_pixel()
         );
         assert_eq!(out_passthrough.info().width, out_badrgb.info().width);
         assert_eq!(out_passthrough.info().height, out_badrgb.info().height);
@@ -1359,7 +1371,7 @@ mod cmyk_tests {
         let cmyk_info = output_cmyk.info();
         assert_eq!(cmyk_info.source_color.channel_count, Some(4));
         assert!(!cmyk_info.has_alpha);
-        assert_eq!(output_cmyk.pixels().descriptor().bytes_per_pixel(), 4);
+        assert_eq!(output_cmyk.pixels().spec().layout.bytes_per_pixel(), 4);
 
         // Same dimensions
         assert_eq!(output_rgb.info().width, cmyk_info.width);
@@ -1428,7 +1440,7 @@ mod push_decode_stride_tests {
     }
 
     impl DecodeRowSink for StridedSink {
-        fn begin(&mut self, w: u32, h: u32, _desc: PixelDescriptor) -> Result<(), SinkError> {
+        fn begin(&mut self, w: u32, h: u32, _desc: ImageSpec) -> Result<(), SinkError> {
             self.w = w;
             self.h = h;
             self.stride = ((w as usize * 4 + 31) / 32) * 32;
@@ -1440,8 +1452,8 @@ mod push_decode_stride_tests {
             y: u32,
             height: u32,
             width: u32,
-            descriptor: PixelDescriptor,
-        ) -> Result<zenpixels::PixelSliceMut<'_>, SinkError> {
+            descriptor: ImageSpec,
+        ) -> Result<zenpixels::PixelViewMut<'_>, SinkError> {
             let row_start = y as usize * self.stride;
             let row_bytes = width as usize * 4;
             let needed = if height > 0 {
@@ -1450,8 +1462,14 @@ mod push_decode_stride_tests {
                 0
             };
             let slice = &mut self.data[row_start..row_start + needed];
-            zenpixels::PixelSliceMut::new(slice, width, height, self.stride, descriptor)
-                .map_err(|e| -> SinkError { format!("{e}").into() })
+            zenpixels::PixelViewMut::new_with_spec_cow(
+                slice,
+                width,
+                height,
+                self.stride,
+                zenpixels::SpecCow::from_owned(descriptor),
+            )
+            .map_err(|e| -> SinkError { format!("{e}").into() })
         }
     }
 
@@ -1465,7 +1483,7 @@ mod push_decode_stride_tests {
             .collect();
         let jpeg = config.encode(&pixels, 64, 64).unwrap();
 
-        let preferred = [PixelDescriptor::BGRA8_SRGB];
+        let preferred = [ImageSpec::BGRA8_SRGB];
         let cfg = JpegDecoderConfig::new();
         let job = cfg.dyn_job();
         let mut sink = StridedSink {
@@ -1501,7 +1519,7 @@ mod push_decode_stride_tests {
         let jpeg = config.encode(&pixels, 64, 64).unwrap();
 
         // Buffered decode
-        let preferred = [PixelDescriptor::BGRA8_SRGB];
+        let preferred = [ImageSpec::BGRA8_SRGB];
         let cfg1 = JpegDecoderConfig::new();
         let job1 = cfg1.dyn_job();
         let dec = job1.into_decoder(Cow::Borrowed(&jpeg), &preferred).unwrap();
@@ -1625,8 +1643,8 @@ mod push_decode_stride_tests {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics};
 
         let compute = ComputeEnvironment::conservative();
-        let small = ImageCharacteristics::new(256, 256, PixelDescriptor::RGB8_SRGB);
-        let large = ImageCharacteristics::new(2048, 2048, PixelDescriptor::RGB8_SRGB);
+        let small = ImageCharacteristics::new(256, 256, ImageSpec::RGB8_SRGB);
+        let large = ImageCharacteristics::new(2048, 2048, ImageSpec::RGB8_SRGB);
 
         let cfg = JpegDecoderConfig::new();
         // Qualify the trait: zencodec 0.1.25's blanket `DynDecoderConfig` also

@@ -499,7 +499,7 @@ fn decode_f32(data: &[u8]) -> Vec<u8> {
     let out = job()
         .decoder(
             Cow::Owned(data.to_vec()),
-            &[zenpixels::PixelDescriptor::RGBF32_LINEAR],
+            &[zenpixels::ImageSpec::RGBF32_LINEAR],
         )
         .unwrap()
         .decode()
@@ -998,7 +998,7 @@ fn primary_iso_payload_is_not_gain_map_parameters() {
 
 #[cfg(feature = "ultrahdr")]
 fn pixels_of(g: &zencodec::decode::DecodedGainMap) -> Vec<u8> {
-    let ps = g.pixels.as_slice();
+    let ps = g.pixels.as_view();
     (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect()
 }
 

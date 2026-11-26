@@ -840,7 +840,7 @@ mod ultrahdr_tests {
         };
 
         // Generate XMP
-        let xmp = generate_xmp(&metadata, 5000);
+        let xmp = generate_xmp(&metadata, 5000).unwrap();
 
         // Create APP1 marker
         let app1 = create_xmp_app1_marker(&xmp);

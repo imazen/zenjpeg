@@ -21,7 +21,7 @@ use zencodec::storage::StorageBudget;
 use zencodec_io::{CollectSink, PolicyDecoder, drive_from_slice};
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::{JpegDecoderConfig, JpegEncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::PixelView;
 
 fn stack_bytes() -> usize {
     std::env::var("ZENJPEG_DECODE_STACK")
@@ -41,8 +41,8 @@ fn on_test_stack<T: Send + 'static>(what: String, f: impl FnOnce() -> T + Send +
         .unwrap_or_else(|_| panic!("{what} panicked"))
 }
 
-fn packed_rows(pixels: &PixelSlice<'_>) -> Vec<u8> {
-    let row = pixels.width() as usize * pixels.descriptor().bytes_per_pixel();
+fn packed_rows(pixels: &PixelView<'_>) -> Vec<u8> {
+    let row = pixels.width() as usize * pixels.spec().layout.bytes_per_pixel();
     (0..pixels.rows())
         .flat_map(|y| pixels.row(y)[..row].to_vec())
         .collect()
@@ -70,11 +70,11 @@ fn fixtures() -> Vec<(String, Arc<Vec<u8>>)> {
         ),
     ] {
         let pixels =
-            PixelSlice::new(&rgb, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+            PixelView::new(&rgb, w, h, w as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
         let encoded = config.job().encoder().unwrap().encode(pixels).unwrap();
         out.push((format!("{name} RGB"), Arc::new(encoded.into_vec())));
     }
-    let pixels = PixelSlice::new(&gray, w, h, w as usize, PixelDescriptor::GRAY8_SRGB).unwrap();
+    let pixels = PixelView::new(&gray, w, h, w as usize, &zenpixels::specs::GRAY8_SRGB).unwrap();
     let encoded = JpegEncoderConfig::new()
         .job()
         .encoder()

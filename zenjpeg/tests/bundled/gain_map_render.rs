@@ -11,11 +11,11 @@
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjpeg::JpegDecoderConfig;
 use zenjpeg::ultrahdr::encode_ultrahdr_luma;
-use zenpixels::{ChannelType, PixelBuffer, PixelDescriptor, TransferFunction};
+use zenpixels::{ImageSpec, PixelBuf, SampleType, Transfer};
 
 /// 32×32 linear HDR RGBA f32 fixture: left half SDR gray (0.25), right half
 /// 4× SDR white — enough headroom for the gain map to be meaningfully nonzero.
-fn hdr_fixture() -> PixelBuffer {
+fn hdr_fixture() -> PixelBuf {
     let w = 32u32;
     let h = 32u32;
     let mut px = Vec::with_capacity((w * h) as usize * 4);
@@ -26,8 +26,7 @@ fn hdr_fixture() -> PixelBuffer {
             px.extend_from_slice(&[v, v, v, 1.0]);
         }
     }
-    let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
-    PixelBuffer::from_vec(bytes, w, h, PixelDescriptor::RGBAF32_LINEAR).expect("fixture buffer")
+    PixelBuf::from_samples(px, w, h, ImageSpec::RGBAF32_LINEAR).expect("fixture buffer")
 }
 
 fn ultrahdr_jpeg() -> Vec<u8> {
@@ -51,8 +50,8 @@ fn base_only_default_decodes_sdr() {
         "BaseOnly must not surface a DecodedGainMap"
     );
     assert_eq!(
-        out.pixels().descriptor().channel_type(),
-        ChannelType::U8,
+        out.pixels().spec().layout.sample,
+        SampleType::U8,
         "BaseOnly output is the SDR base image"
     );
     assert!(
@@ -69,7 +68,7 @@ fn plain_jpeg_reports_no_gain_map_supplement() {
         .take(64)
         .flatten()
         .collect();
-    let slice = zenpixels::PixelSlice::new(&pixels, 8, 8, 8 * 3, PixelDescriptor::RGB8_SRGB)
+    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::specs::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()
         .job()
@@ -106,44 +105,10 @@ fn reconstruct_hdr_produces_linear_hdr_with_envelope() {
         .decode()
         .unwrap();
 
-    let desc = out.pixels().descriptor();
-    assert_eq!(desc.channel_type(), ChannelType::F32, "linear HDR output");
-    assert_eq!(desc.transfer(), TransferFunction::Linear);
-
-    // Above-SDR-white values must exist (the right half of the fixture was
-    // 4× SDR white; lossy encode + gain-map quantization keep it well > 1).
-    let bytes = out.pixels().contiguous_bytes();
-    let max = bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-        .fold(0.0f32, f32::max);
-    assert!(
-        max > 1.5,
-        "reconstructed HDR must exceed SDR white (max = {max})"
-    );
-
-    // Envelope obligation. CLL is MEASURED from the reconstructed pixels
-    // (appendix AA — zenpixels CllMeasure, MaxRGB, BT.2408 anchor), so the
-    // 4×-SDR-white fixture must read ≈ 4·203 = 812 nits (lossy encode +
-    // gain-map quantization give it slop) — a content measurement, not the
-    // gain map's declared capacity bound.
-    let sc = &out.info().source_color;
-    let cll = sc
-        .content_light_level
-        .expect("ReconstructHdr must populate content_light_level");
-    assert!(
-        (600..=1100).contains(&cll.max_content_light_level),
-        "measured content peak should be ~812 nits (4× SDR white), got {}",
-        cll.max_content_light_level
-    );
-    assert!(
-        cll.max_frame_average_light_level > 0,
-        "the measurement scan fills MaxFALL too"
-    );
-    assert!(
-        sc.mastering_display.is_some(),
-        "ReconstructHdr must populate mastering_display"
-    );
+    assert_eq!(out.pixels().spec().layout.sample, SampleType::F32);
+    assert!(matches!(out.pixels().spec().color,
+        zenpixels::ColorSpace::Rgb { transfer: Transfer::Linear, white: Some(white), .. } if white == zenpixels::DiffuseWhite::BT2408));
+    assert!(out.info().source_color.mastering_display.is_some());
 }
 
 /// Components: the SDR base decodes normally AND the decoded gain map is
@@ -159,8 +124,8 @@ fn components_surfaces_decoded_gain_map() {
         .decode()
         .unwrap();
     assert_eq!(
-        out.pixels().descriptor().channel_type(),
-        ChannelType::U8,
+        out.pixels().spec().layout.sample,
+        SampleType::U8,
         "Components keeps the SDR base as the primary buffer"
     );
     let dgm = out
@@ -182,7 +147,7 @@ fn reconstruct_on_plain_jpeg_decodes_base() {
         .take(64)
         .flatten()
         .collect();
-    let slice = zenpixels::PixelSlice::new(&pixels, 8, 8, 8 * 3, PixelDescriptor::RGB8_SRGB)
+    let slice = zenpixels::PixelView::new(&pixels, 8, 8, 8 * 3, &zenpixels::specs::RGB8_SRGB)
         .expect("pixel slice");
     let plain = zenjpeg::JpegEncoderConfig::new()
         .job()
@@ -201,7 +166,7 @@ fn reconstruct_on_plain_jpeg_decodes_base() {
         .decode()
         .unwrap();
     assert_eq!(out.pixels().width(), 8);
-    assert_eq!(out.pixels().descriptor().channel_type(), ChannelType::U8);
+    assert_eq!(out.pixels().spec().layout.sample, SampleType::U8);
 }
 
 // ── Orientation pairing (#151) ──────────────────────────────────────────────
@@ -209,7 +174,7 @@ fn reconstruct_on_plain_jpeg_decodes_base() {
 /// Non-square quadrant fixture (32×24): four distinct linear levels, so the
 /// gain field differs under every non-identity EXIF orientation (catches
 /// flips and 180 as well as the dimension-swapping transposes).
-fn hdr_quadrant_fixture() -> PixelBuffer {
+fn hdr_quadrant_fixture() -> PixelBuf {
     let (w, h) = (32u32, 24u32);
     let mut px = Vec::with_capacity((w * h) as usize * 4);
     for y in 0..h {
@@ -223,8 +188,7 @@ fn hdr_quadrant_fixture() -> PixelBuffer {
             px.extend_from_slice(&[v, v, v, 1.0]);
         }
     }
-    let bytes: Vec<u8> = px.iter().flat_map(|f| f.to_ne_bytes()).collect();
-    PixelBuffer::from_vec(bytes, w, h, PixelDescriptor::RGBAF32_LINEAR).expect("fixture buffer")
+    PixelBuf::from_samples(px, w, h, ImageSpec::RGBAF32_LINEAR).expect("fixture buffer")
 }
 
 /// Insert a minimal EXIF APP1 (TIFF carrying only the orientation tag)
@@ -295,16 +259,14 @@ fn reconstruct_hdr_exif_oriented_matches_preserve_plus_bake() {
             );
         }
 
-        let baked =
-            zenpixels_convert::PixelSliceConvertExt::oriented(&preserved.pixels(), orientation)
-                .unwrap();
+        let baked = zenpixels_convert::apply_orientation(&preserved.pixels(), orientation).unwrap();
         assert_eq!(
             (corrected.pixels().width(), corrected.pixels().rows()),
             (baked.width(), baked.height()),
             "EXIF {exif}: reconstructed dimensions"
         );
-        let a = corrected.pixels().contiguous_bytes();
-        let b = baked.as_slice().contiguous_bytes();
+        let a = corrected.pixels().as_contiguous_bytes().unwrap();
+        let b = baked.as_view().as_contiguous_bytes().unwrap();
         assert!(
             a == b,
             "EXIF {exif}: ReconstructHdr+Correct must be byte-identical to \
@@ -346,7 +308,7 @@ fn reconstruct_hdr_exif_oriented_quadrants_land_correctly() {
             .decode()
             .unwrap();
         let (w, h) = (out.pixels().width() as usize, out.pixels().rows() as usize);
-        let bytes = out.pixels().contiguous_bytes();
+        let bytes = out.pixels().as_contiguous_bytes().unwrap();
         // Red channel of the RGBA f32 pixel at quadrant centers.
         let sample = |x: usize, y: usize| -> f32 {
             let i = (y * w + x) * 16;
@@ -406,18 +368,15 @@ fn components_gain_map_oriented_with_base() {
             .extras::<zencodec::decode::DecodedGainMap>()
             .expect("Components must surface the DecodedGainMap");
 
-        let expected = zenpixels_convert::PixelSliceConvertExt::oriented(
-            &dgm_p.pixels.as_slice(),
-            orientation,
-        )
-        .unwrap();
+        let expected =
+            zenpixels_convert::apply_orientation(&dgm_p.pixels.as_view(), orientation).unwrap();
         assert_eq!(
             (dgm_c.pixels.width(), dgm_c.pixels.height()),
             (expected.width(), expected.height()),
             "EXIF {exif}: gain-map dimensions must follow the base orientation"
         );
-        let a = dgm_c.pixels.as_slice().contiguous_bytes();
-        let b = expected.as_slice().contiguous_bytes();
+        let a = dgm_c.pixels.as_view().as_contiguous_bytes().unwrap();
+        let b = expected.as_view().as_contiguous_bytes().unwrap();
         assert!(
             a == b,
             "EXIF {exif}: Components gain map must be oriented with the base ({})",
@@ -469,4 +428,81 @@ fn probe_honors_job_limits() {
         .probe(&jpeg)
         .expect("probe with raised max_pixels");
     assert_eq!((info.width, info.height), (12000, 11000));
+}
+
+#[path = "../support/ultrahdr_iso.rs"]
+mod ultrahdr_iso;
+
+#[test]
+fn display_p3_content_light_reports_measured_native_maxrgb() {
+    use zenpixels::{ContentLightLevel, DiffuseWhite, Primaries};
+    let patches = [[224, 0, 0], [0, 160, 0]];
+    let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    // The nominal headroom is 8×. The actual gain of each color is 4×.
+    let jpeg = ultrahdr_iso::fixture(&patches, Some(profile), 128, 3, [[16, 16, 8, 0, 0]; 3]);
+    let render = |specs: &[ImageSpec], target_headroom| {
+        JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr { target_headroom })
+            .decoder(jpeg.as_slice().into(), specs)
+            .unwrap()
+            .decode()
+            .unwrap()
+    };
+    let out = render(&[], None);
+    let pixels = out.pixels();
+    assert!(matches!(pixels.spec().color,
+        zenpixels::ColorSpace::Rgb { primaries: Primaries::DisplayP3,
+            transfer: Transfer::Linear, white: Some(white), .. } if white == DiffuseWhite::BT2408));
+    let decode_code = |code| ((f64::from(code) / 255.0 + 0.055) / 1.055).powf(2.4) * 4.0;
+    let (red, green) = (decode_code(224u8), decode_code(160u8));
+    for y in 0..8 {
+        for (x, px) in pixels
+            .row_as::<f32>(y)
+            .unwrap()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .enumerate()
+        {
+            let (channel, value) = if x < 8 { (0, red) } else { (1, green) };
+            assert!(
+                (f64::from(px[channel]) - value).abs() <= 0.000_2,
+                "patch {x}: {:?} versus {value}",
+                px
+            );
+            assert_eq!(px[1 - channel], 0.0);
+            assert_eq!(px[2..], [0.0, 1.0]);
+        }
+    }
+    let sc = &out.info().source_color;
+    let native = ContentLightLevel::new(605, 445);
+    assert_eq!(sc.content_light_level, Some(native));
+    assert_eq!(pixels.hdr().cll, Some(native));
+    let mastering = sc.mastering_display.unwrap();
+    assert_eq!(mastering.max_luminance, 1624.0);
+    assert_eq!(
+        mastering.primaries_xy,
+        [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]]
+    );
+    assert_eq!(mastering.white_point_xy, [0.3127, 0.3290]);
+    let fp16 = render(&[ImageSpec::RGBAF16_LINEAR], None);
+    assert_eq!(fp16.pixels().spec().layout.sample, SampleType::F16);
+    assert_eq!(fp16.info().source_color.content_light_level, Some(native));
+    let at_base = render(&[], Some(1.0));
+    assert_eq!(
+        at_base.info().source_color.content_light_level,
+        Some(ContentLightLevel::new(151, 111))
+    );
+    assert_eq!(
+        at_base.info().source_color.mastering_display,
+        Some(mastering)
+    );
+
+    // A linear P3→BT.2020 change of basis preserves CIE Y. For these
+    // saturated patches its two luminances are about 139 and 197 cd/m².
+    let (yr, yg) = (red * 0.228_974_56 * 203.0, green * 0.691_738_52 * 203.0);
+    let cie_y = ContentLightLevel::new(yr.max(yg).round() as u16, ((yr + yg) / 2.0).round() as u16);
+    assert_eq!(cie_y, ContentLightLevel::new(197, 168));
+    assert_ne!(native, cie_y);
 }

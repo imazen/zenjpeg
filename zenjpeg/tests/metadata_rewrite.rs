@@ -254,9 +254,8 @@ mod gain_map_scrub {
         for channel in &mut params.channels {
             channel.max = 2.0;
         }
-        let sdr =
-            zenpixels::PixelBuffer::from_vec(pixels, 16, 16, zenpixels::PixelDescriptor::RGB8_SRGB)
-                .unwrap();
+        let sdr = zenpixels::PixelBuf::from_bytes(pixels, 16, 16, zenpixels::ImageSpec::RGB8_SRGB)
+            .unwrap();
         zenjpeg::ultrahdr::encode_with_gainmap_format(
             &sdr,
             &gain,
@@ -363,8 +362,8 @@ mod gain_map_scrub {
         )
         .unwrap();
         assert_eq!(
-            a.as_slice().contiguous_bytes(),
-            b.as_slice().contiguous_bytes()
+            a.as_view().as_contiguous_bytes().unwrap(),
+            b.as_view().as_contiguous_bytes().unwrap()
         );
         use zenjpeg::ultrahdr::UltraHdrExtras;
         let a = zenjpeg::decoder::Decoder::new()

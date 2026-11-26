@@ -14,7 +14,7 @@ use zenjpeg::JpegEncoderConfig;
 use zenjpeg::encoder::{
     ChromaSubsampling, EncoderConfig as NativeConfig, ErrorKind, PixelLayout, YCbCrPlanes,
 };
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 
 /// A deadline that has passed once `polls` reaches `fail_at`, and stays passed.
 #[derive(Clone)]
@@ -105,7 +105,7 @@ fn rgb(stride: usize) -> Vec<u8> {
 fn zencodec_one_shot_and_row_encodes_keep_the_deadline_reason() {
     let data = rgb(W as usize * 3);
     let pixels =
-        || PixelSlice::new(&data, W, H, W as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        || PixelView::new(&data, W, H, W as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
     for (name, config) in [
         (
             "baseline",
@@ -140,17 +140,17 @@ fn zencodec_one_shot_and_row_encodes_keep_the_deadline_reason() {
                     .job()
                     .with_pulse(SharedPulse::new(stop))
                     .encoder()?;
-                encoder.begin(W, H, PixelDescriptor::RGB8_SRGB)?;
+                encoder.begin(W, H, ImageSpec::RGB8_SRGB)?;
                 for y in (0..H).step_by(16) {
                     let rows = (H - y).min(16);
                     let start = y as usize * W as usize * 3;
                     let end = start + rows as usize * W as usize * 3;
-                    let strip = PixelSlice::new(
+                    let strip = PixelView::new(
                         &data[start..end],
                         W,
                         rows,
                         W as usize * 3,
-                        PixelDescriptor::RGB8_SRGB,
+                        &zenpixels::specs::RGB8_SRGB,
                     )
                     .unwrap();
                     encoder.push_rows(strip)?;

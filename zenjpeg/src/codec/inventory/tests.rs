@@ -613,7 +613,7 @@ fn everything_fixture_passes_check_inventory() {
 fn encoder_output_passes_check_inventory() {
     use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
     use zencodec::{Metadata, MetadataPolicy};
-    use zenpixels::{PixelDescriptor, PixelSlice};
+    use zenpixels::PixelView;
     let (w, h) = (40u32, 24u32);
     let px: Vec<u8> = (0..w * h * 3).map(|i| (i * 37 % 251) as u8).collect();
     let tiff = b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0".to_vec();
@@ -622,7 +622,7 @@ fn encoder_output_passes_check_inventory() {
         .with_xmp(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>".to_vec());
     for progressive in [false, true] {
         let slice =
-            PixelSlice::new(&px, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+            PixelView::new(&px, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB).unwrap();
         let bytes = crate::JpegEncoderConfig::new()
             .with_progressive(progressive)
             .job()

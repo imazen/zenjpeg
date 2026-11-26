@@ -3087,9 +3087,8 @@ mod coverage_tests {
             ]) {
                 assert_eq!(a.bits, b.bits);
                 assert_eq!(a.values, b.values);
-                for symbol in 0..=255 {
-                    assert_eq!(a.encode(symbol), b.encode(symbol));
-                }
+                assert_eq!(a.table.codes, b.table.codes);
+                assert_eq!(a.table.lengths, b.table.lengths);
             }
         }
     }

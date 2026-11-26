@@ -13,6 +13,13 @@ use zenjpeg::ultrahdr::{
 };
 
 /// Create a simple HDR test image (linear RGB float).
+fn rgb_primaries(spec: &zenpixels::ImageSpec) -> zenpixels::Primaries {
+    let zenpixels::ColorSpace::Rgb { primaries, .. } = spec.color else {
+        panic!("expected RGB layout");
+    };
+    primaries
+}
+
 fn create_test_hdr(width: u32, height: u32) -> UhdrRawImage {
     let mut data = Vec::with_capacity((width * height * 16) as usize);
 
@@ -35,7 +42,7 @@ fn create_test_hdr(width: u32, height: u32) -> UhdrRawImage {
         data,
         width,
         height,
-        UhdrPixelFormat::RgbaF32,
+        UhdrPixelFormat::RGBAF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
     )
@@ -102,13 +109,24 @@ fn test_encode_decode_roundtrip() {
     assert!(gainmap.height > 0);
 }
 
-// NOTE: reconstruct_hdr was removed from the API - use UltraHdrReader instead
 #[test]
-#[ignore = "reconstruct_hdr API was removed - use UltraHdrReader for HDR reconstruction"]
 fn test_hdr_reconstruction() {
-    // This test used reconstruct_hdr() which no longer exists.
-    // Use UltraHdrReader with UltraHdrMode::Hdr for HDR reconstruction.
-    unimplemented!("reconstruct_hdr API was removed");
+    use zenjpeg::ultrahdr::{HdrOutputFormat, decode_ultrahdr_hdr, encode_ultrahdr_luma};
+    let jpeg = encode_ultrahdr_luma(&create_test_hdr(32, 24)).unwrap();
+    let sdr = decode_ultrahdr_hdr(&jpeg, 1.0, HdrOutputFormat::LinearFloat).unwrap();
+    let hdr = decode_ultrahdr_hdr(&jpeg, 4.0, HdrOutputFormat::LinearFloat).unwrap();
+    assert_eq!((hdr.width(), hdr.height()), (32, 24));
+    assert_ne!(
+        hdr.as_view().as_strided_bytes(),
+        sdr.as_view().as_strided_bytes()
+    );
+    assert!(
+        hdr.as_view()
+            .row_as::<f32>(12)
+            .unwrap()
+            .iter()
+            .any(|&v| v > 1.0)
+    );
 }
 
 #[test]
@@ -140,7 +158,7 @@ fn test_tonemapper_extraction() {
         vec![0u8; 64],
         2,
         2,
-        UhdrPixelFormat::RgbaF32,
+        UhdrPixelFormat::RGBAF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
     )
@@ -151,16 +169,44 @@ fn test_tonemapper_extraction() {
         .expect("Tonemapper application should succeed");
 }
 
-// NOTE: reencode_ultrahdr was removed from the API
 #[test]
-#[ignore = "reencode_ultrahdr API was removed"]
 fn test_reencode_ultrahdr() {
-    // This test used reencode_ultrahdr() which no longer exists.
-    unimplemented!("reencode_ultrahdr API was removed");
+    use zenjpeg::ultrahdr::{
+        GainMapEncodingFormat, decode_ultrahdr, encode_ultrahdr_luma, encode_with_gainmap_format,
+    };
+    let original = encode_ultrahdr_luma(&create_test_hdr(32, 24)).unwrap();
+    let base = decode_ultrahdr(&original).unwrap();
+    let decoded = Decoder::new().decode(&original, Unstoppable).unwrap();
+    let extras = decoded.extras().unwrap();
+    let gain = extras.decode_gainmap().unwrap().unwrap();
+    let (parameters, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+    let jpeg = encode_with_gainmap_format(
+        &base,
+        &gain,
+        &parameters,
+        &EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter),
+        95.0,
+        GainMapEncodingFormat::Iso21496,
+        Unstoppable,
+    )
+    .unwrap();
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (32, 24));
+    let extras = decoded.extras().unwrap();
+    let (actual, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+    assert_eq!(
+        actual.exact_metadata().unwrap(),
+        parameters.exact_metadata().unwrap()
+    );
+    let actual_gain = extras.decode_gainmap().unwrap().unwrap();
+    assert_eq!(
+        (actual_gain.width, actual_gain.height, actual_gain.channels),
+        (gain.width, gain.height, gain.channels)
+    );
 }
 
 /// Smoke test for the idiot-proof convenience entry: a single call should
-/// produce a valid Ultra HDR JPEG from an HDR `PixelBuffer` with no config
+/// produce a valid Ultra HDR JPEG from an HDR `PixelBuf` with no config
 /// assembly required.
 #[test]
 fn encode_ultrahdr_luma_smoke() {
@@ -571,7 +617,7 @@ fn encode_ultrahdr_with_tonemapper_round_trip() {
     assert!(extras2.is_ultrahdr());
 }
 
-/// Build a synthetic SDR `PixelBuffer` (Rgba8 / sRGB) the same shape as the
+/// Build a synthetic SDR `PixelBuf` (Rgba8 / sRGB) the same shape as the
 /// HDR test image. Used by the encode_with_gainmap_* coverage tests, which
 /// need a paired HDR+SDR to feed `compute_gainmap` — we don't have a public
 /// `tonemap_to_pixel_buffer` to derive SDR from HDR ourselves.
@@ -591,11 +637,11 @@ fn create_test_sdr(width: u32, height: u32) -> ultrahdr_core::PixelBuffer {
         data,
         width,
         height,
-        UhdrPixelFormat::Rgba8,
+        UhdrPixelFormat::RGBA8,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Srgb,
     )
-    .expect("synthetic SDR PixelBuffer")
+    .expect("synthetic SDR PixelBuf")
 }
 
 #[test]
@@ -729,7 +775,7 @@ fn gain_map_jpegs() -> (
 fn hdr_peak(jpeg: &[u8]) -> f32 {
     use zenjpeg::ultrahdr::{HdrOutputFormat, decode_ultrahdr_hdr};
     let hdr = decode_ultrahdr_hdr(jpeg, 8.0, HdrOutputFormat::LinearFloat).expect("HDR decode");
-    hdr.as_slice()
+    hdr.as_view()
         .as_strided_bytes()
         .as_chunks::<4>()
         .0
@@ -747,7 +793,7 @@ fn gain_map_metadata_round_trips_in_every_format() {
     };
     let (metadata, files) = gain_map_jpegs();
     let iso = parse_iso21496_fmt(
-        &serialize_iso21496_fmt(&metadata, Iso21496Format::JpegApp2BodyWithUrn),
+        &serialize_iso21496_fmt(&metadata, Iso21496Format::JpegApp2BodyWithUrn).unwrap(),
         Iso21496Format::JpegApp2BodyWithUrn,
     )
     .unwrap();
@@ -965,10 +1011,10 @@ fn strip_app1_xmp(jpeg: &[u8]) -> Vec<u8> {
 fn create_test_hdr_in(primaries: UhdrColorGamut) -> UhdrRawImage {
     let hdr = create_test_hdr(64, 64);
     pixel_buffer_from_vec(
-        hdr.as_slice().as_strided_bytes().to_vec(),
+        hdr.as_view().as_strided_bytes().to_vec(),
         64,
         64,
-        UhdrPixelFormat::RgbaF32,
+        UhdrPixelFormat::RGBAF32,
         primaries,
         UhdrColorTransfer::Linear,
     )
@@ -979,10 +1025,10 @@ fn create_test_hdr_in(primaries: UhdrColorGamut) -> UhdrRawImage {
 fn create_test_sdr_in(primaries: UhdrColorGamut) -> UhdrRawImage {
     let sdr = create_test_sdr(64, 64);
     pixel_buffer_from_vec(
-        sdr.as_slice().as_strided_bytes().to_vec(),
+        sdr.as_view().as_strided_bytes().to_vec(),
         64,
         64,
-        UhdrPixelFormat::Rgba8,
+        UhdrPixelFormat::RGBA8,
         primaries,
         UhdrColorTransfer::Srgb,
     )
@@ -1209,10 +1255,10 @@ fn convenience_hdr_readers_retain_display_p3_primaries() {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_with_gainmap(&sdr, &gainmap, &metadata, &config, 75.0, Unstoppable).unwrap();
     let base = decode_ultrahdr(&jpeg).unwrap();
-    assert_eq!(base.descriptor().primaries, UhdrColorGamut::DisplayP3);
+    assert_eq!(rgb_primaries(base.spec()), UhdrColorGamut::DisplayP3);
     let output =
         decode_ultrahdr_hdr(&jpeg, 4.0, zenjpeg::ultrahdr::HdrOutputFormat::LinearFloat).unwrap();
-    assert_eq!(output.descriptor().primaries, UhdrColorGamut::DisplayP3);
+    assert_eq!(rgb_primaries(output.spec()), UhdrColorGamut::DisplayP3);
     let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
     let rows = create_hdr_reconstructor(
         decoded.width(),
@@ -1254,7 +1300,7 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
             .unwrap()
             .decode()
             .unwrap();
-        let (r, g, b) = expected.descriptor().primaries.chromaticity().unwrap();
+        let (r, g, b) = rgb_primaries(expected.spec()).chromaticity().unwrap();
         assert_eq!(
             actual
                 .info()
@@ -1282,14 +1328,10 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
                 "file {index}"
             );
         }
-        assert_eq!(
-            actual.pixels().descriptor(),
-            expected.descriptor(),
-            "file {index}"
-        );
+        assert_eq!(actual.pixels().spec(), expected.spec(), "file {index}");
         assert_eq!(
             actual.pixels().as_strided_bytes(),
-            expected.as_slice().as_strided_bytes(),
+            expected.as_view().as_strided_bytes(),
             "file {index}"
         );
     }
@@ -1362,21 +1404,31 @@ fn codec_hdr_color_conversion_follows_gainmap_application() {
         .unwrap()
         .decode()
         .unwrap();
-    let descriptor = native.descriptor().with_primaries(UhdrColorGamut::Bt709);
-    let mut expected = zenpixels::PixelBuffer::new(native.width(), native.height(), descriptor);
-    let mut converter =
-        zenpixels_convert::RowConverter::new(native.descriptor(), descriptor).unwrap();
+    let descriptor = native.spec().clone().with_primaries(UhdrColorGamut::Bt709);
+    let mut expected =
+        zenpixels::PixelBuf::new(native.width(), native.height(), descriptor.clone()).unwrap();
+    let converter = zenpixels_convert::RowPlan::build(
+        native.spec().clone(),
+        descriptor.clone(),
+        &zenpixels_convert::ConvertPolicy::default()
+            .with_gamut(zenpixels_convert::GamutPolicy::PreserveExtended),
+        None,
+    )
+    .unwrap();
     for row in 0..native.height() {
-        converter.convert_row(
-            native.as_slice().row(row),
-            expected.as_slice_mut().row_mut(row),
-            native.width(),
-        );
+        converter
+            .convert_row(
+                native.as_view().row(row),
+                expected.as_view_mut().row_mut(row),
+                native.width(),
+                row,
+            )
+            .unwrap();
     }
-    assert_eq!(got.pixels().descriptor(), descriptor);
+    assert_eq!(got.pixels().spec(), &descriptor);
     assert_eq!(
         got.pixels().as_strided_bytes(),
-        expected.as_slice().as_strided_bytes()
+        expected.as_view().as_strided_bytes()
     );
 }
 
@@ -1505,10 +1557,10 @@ fn bt709_base_with_another_transfer_is_not_left_untagged() {
     let sdr = create_test_sdr_in(UhdrColorGamut::Bt709);
     let (gm, meta) = compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable).unwrap();
     let linear = pixel_buffer_from_vec(
-        sdr.as_slice().as_strided_bytes().to_vec(),
+        sdr.as_view().as_strided_bytes().to_vec(),
         64,
         64,
-        UhdrPixelFormat::Rgba8,
+        UhdrPixelFormat::RGBA8,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
     )

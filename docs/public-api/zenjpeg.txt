@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjpeg.txt 1817 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3636 lines (1031 hidden + 7098 excluded-feature)
+# files: zenjpeg.txt 1819 lines (supported surface) | zenjpeg.features.txt 677 added (features: boundary-rd,controlled-decode,extended-jpeg,extended-metadata,inventory,layout,metadata,metadata-rewrite,moxcms,parallel,recompress,recompress-expert,ultrahdr,web-sys,zencodec) | zenjpeg.internal.txt 3571 lines (966 hidden + 7098 excluded-feature)
 
 ## summary
 #
@@ -17,7 +17,7 @@
 #   free functions                             68
 #   inherent methods                          520
 #   struct fields                             421
-#   enum variants                             432
+#   enum variants                             434
 #   re-exports                                  2
 #   trait roster entries (type × trait)       551
 #   auto-trait-complete types                 115
@@ -26,7 +26,7 @@
 # per-module pub lines:
 #   (root)                           68
 #   blur                              1
-#   container                       295
+#   container                       297
 #   deblock                          16
 #   decoder                         577
 #   detect                          143
@@ -36,7 +36,7 @@
 #   profile                           7
 #   target_quality                   18
 
-## items (1670 lines)
+## items (1672 lines)
 
 pub mod zenjpeg
 pub mod blur
@@ -163,6 +163,7 @@ pub container::xmp::XmpError::LengthLimit
 pub container::xmp::XmpError::LengthLimit::got: usize
 pub container::xmp::XmpError::LengthLimit::max: usize
 pub container::xmp::XmpError::NotUltraHdr
+pub container::xmp::XmpError::ParametersAbsent
 #[non_exhaustive] pub enum container::GainMapPresence [also: container::probe]
 pub container::GainMapPresence::GContainerOnly
 pub container::GainMapPresence::Iso21496
@@ -226,6 +227,7 @@ pub container::XmpError::LengthLimit
 pub container::XmpError::LengthLimit::got: usize
 pub container::XmpError::LengthLimit::max: usize
 pub container::XmpError::NotUltraHdr
+pub container::XmpError::ParametersAbsent
 #[non_exhaustive] pub struct container::ContainerItem [also: container::types]
 pub container::ContainerItem::length: core::option::Option<usize>
 pub container::ContainerItem::mime: alloc::string::String
@@ -286,11 +288,11 @@ pub fn container::create_mpf_header_typed(usize, &[(container::types::MpImageTyp
 pub fn container::create_xmp_app1_marker(&str) -> alloc::vec::Vec<u8> [also: container::xmp]
 pub fn container::find_jpeg_boundaries(&[u8]) -> alloc::vec::Vec<core::ops::range::Range<usize>> [also: container::marker]
 pub fn container::generate_container_directory(&[container::types::ContainerItem]) -> alloc::string::String [also: container::types]
-pub fn container::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> alloc::string::String [also: container::xmp]
+pub fn container::generate_gainmap_xmp(&zencodec::gainmap::GainMapParams) -> core::result::Result<alloc::string::String, container::xmp::XmpError> [also: container::xmp]
 pub fn container::generate_primary_xmp(usize) -> alloc::string::String [also: container::xmp]
 pub fn container::generate_primary_xmp_with_items(&[container::types::ContainerItem]) -> alloc::string::String [also: container::xmp]
-pub fn container::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> alloc::string::String [also: container::xmp]
-pub fn container::generate_xmp_with_items(&zencodec::gainmap::GainMapParams, &[container::types::ContainerItem]) -> alloc::string::String [also: container::xmp]
+pub fn container::generate_xmp(&zencodec::gainmap::GainMapParams, usize) -> core::result::Result<alloc::string::String, container::xmp::XmpError> [also: container::xmp]
+pub fn container::generate_xmp_with_items(&zencodec::gainmap::GainMapParams, &[container::types::ContainerItem]) -> core::result::Result<alloc::string::String, container::xmp::XmpError> [also: container::xmp]
 pub fn container::is_ultrahdr(&[u8]) -> bool [also: container::probe]
 pub fn container::iter(&[u8]) -> container::marker::MarkerIter<'_> [also: container::marker]
 pub fn container::parse_container_items(&str) -> alloc::vec::Vec<container::types::ContainerItem> [also: container::types]
@@ -875,7 +877,7 @@ pub decoder::PreserveConfig::icc: decoder::IccPreserve
 pub decoder::PreserveConfig::iptc: bool
 pub decoder::PreserveConfig::jfif: bool
 pub decoder::PreserveConfig::mpf_depth: bool
-pub decoder::PreserveConfig::mpf_filter: core::option::Option<alloc::sync::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
+pub decoder::PreserveConfig::mpf_filter: core::option::Option<alloc::rcs::arc::Arc<(dyn core::ops::function::Fn(usize, container::types::MpImageType, u32) -> bool + core::marker::Send + core::marker::Sync)>>
 pub decoder::PreserveConfig::mpf_gainmaps: bool
 pub decoder::PreserveConfig::mpf_multiframe: bool
 pub decoder::PreserveConfig::mpf_thumbnails: bool
@@ -1859,5 +1861,5 @@ decoder::ScanlineReader<'a>: !RefUnwindSafe !UnwindSafe
 encoder::BytesEncoder: !RefUnwindSafe !Sync !UnwindSafe
 encoder::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 encoder::Error: !RefUnwindSafe !UnwindSafe
-encoder::RgbEncoder<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+encoder::RgbEncoder<P>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 encoder::YCbCrPlanarEncoder: !RefUnwindSafe !Sync !UnwindSafe

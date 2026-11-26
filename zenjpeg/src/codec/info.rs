@@ -1,7 +1,7 @@
 //! Shared helpers converting zenjpeg header info to zencodec types.
 
 use zencodec::{ImageFormat, ImageInfo};
-use zenpixels::PixelDescriptor;
+use zenpixels::ImageSpec;
 
 use super::decode::{select_decode_descriptor, will_auto_orient};
 
@@ -92,38 +92,66 @@ pub(super) fn source_color_from_header(
 
 /// Whether reads for `descriptor` need the strip's planes (gray and f32
 /// reads of YCbCr frames), which the wave-only scanline reader does not keep.
-pub(super) fn needs_plane_reads(descriptor: PixelDescriptor) -> bool {
-    use zenpixels::{ChannelLayout, ChannelType};
-    descriptor.channel_type() == ChannelType::F32 || descriptor.layout() == ChannelLayout::Gray
+pub(super) fn needs_plane_reads(descriptor: &ImageSpec) -> bool {
+    use zenpixels::{ChannelOrder, SampleType};
+    descriptor.layout.sample == SampleType::F32 || descriptor.layout.order == ChannelOrder::Gray
 }
 
-/// Derive the correct [`PixelDescriptor`] for decoded JPEG pixels.
+/// Derive the correct [`ImageSpec`] for decoded JPEG pixels.
 ///
 /// Uses the shared zencodec utility to map source color metadata to a
 /// descriptor that accurately reflects the pixel data's color space.
 pub(super) fn decode_descriptor(
-    preferred: &[PixelDescriptor],
+    preferred: &[ImageSpec],
     header: &crate::decode::JpegInfo,
     correct_color: Option<&crate::color::icc::TargetColorSpace>,
-) -> PixelDescriptor {
+) -> Result<ImageSpec, crate::error::Error> {
     let base = select_decode_descriptor(preferred, header.num_components, header.precision);
     let sc = source_color_from_header(header);
-    // XYB is inverted to sRGB by the decoder even without optional ICC
-    // correction. The source ICC describes encoded XYB, not the returned RGB.
-    let corrected_cicp = (header.is_xyb || correct_color.is_some())
-        .then_some(zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
-    let decoded = zencodec::helpers::descriptor_for_decoded_pixels_v2(
-        base.pixel_format(),
-        &sc,
-        corrected_cicp.as_ref(),
-    );
-    if header.is_xyb || base.channel_type() == zenpixels::ChannelType::F32 {
-        // Float rows return linear-light samples; source transfer describes the
-        // encoded samples, not these returned pixels.
-        decoded.with_transfer(base.transfer())
-    } else {
-        decoded
+    // XYB inversion produces sRGB. Native float reconstruction returns linear values.
+    decoded_pixel_spec(base, &sc, header.is_xyb, correct_color)
+}
+
+pub(super) fn decoded_pixel_spec(
+    base: ImageSpec,
+    source: &zencodec::decode::SourceColor,
+    xyb: bool,
+    corrected: Option<&crate::color::icc::TargetColorSpace>,
+) -> Result<ImageSpec, crate::error::Error> {
+    use crate::color::icc::TargetColorSpace;
+    use zenpixels::{Primaries, SampleType, Transfer};
+
+    if xyb {
+        return Ok(base);
     }
+    if cfg!(feature = "moxcms")
+        && source.icc_profile.is_some()
+        && base.layout.order.is_rgb_family()
+        && corrected.is_some()
+    {
+        let primaries = match corrected {
+            Some(TargetColorSpace::DisplayP3) => Primaries::DisplayP3,
+            Some(TargetColorSpace::Rec2020) => Primaries::Bt2020,
+            _ => Primaries::Bt709,
+        };
+        return Ok(base.with_primaries(primaries));
+    }
+    if base.layout.sample == SampleType::F32 {
+        let origin = source.authoritative_origin();
+        let primaries = if let Some(profile) = origin.icc {
+            zenpixels::icc::IccIdentification::from_icc(&profile)
+                .map_or(Primaries::Unknown, |id| id.primaries)
+        } else if let Some(cicp) = origin.cicp {
+            Primaries::from_cicp(cicp.color_primaries).unwrap_or(Primaries::Unknown)
+        } else {
+            Primaries::Bt709
+        };
+        return Ok(base
+            .with_primaries(primaries)
+            .with_transfer(Transfer::Linear));
+    }
+    zencodec::helpers::descriptor_for_decoded_pixels_v2(base.layout, source, None)
+        .map_err(|error| crate::error::Error::icc_error(alloc::format!("{error}")))
 }
 
 /// Populate [`ImageInfo`] metadata (ICC / EXIF + orientation / XMP / JFIF

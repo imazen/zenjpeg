@@ -988,9 +988,13 @@ pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
 ///
 /// Decodes via `zenpng`; any source depth/channel layout (gray, gray+alpha,
 /// RGB, RGBA, 16-bit) is normalized to RGB8 via
-/// [`zenpixels_convert::PixelBufferConvertTypedExt::to_rgb8`].
+/// [`zenpixels_convert::convert_to_buf`] without applying PNG color-space
+/// (`gAMA`/`cHRM`/ICC) re-encoding so test fixtures retain their exact stored
+/// pixel values.
 pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
-    use zenpixels_convert::PixelBufferConvertTypedExt;
+    use zenpixels_convert::{
+        AlphaPolicy, ChannelOrder, ColorSpace, ConvertPolicy, ImageSpec, convert_to_buf,
+    };
 
     let output = zenpng::decode(
         data,
@@ -998,17 +1002,24 @@ pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
         &enough::Unstoppable,
     )
     .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    let width = output.info.width as usize;
-    let height = output.info.height as usize;
-    let rgb8 = output.pixels.to_rgb8();
-    let bytes = rgb8.as_slice().contiguous_bytes();
-    let pixels: Vec<RGB8> = bytes
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|c| RGB8::new(c[0], c[1], c[2]))
-        .collect();
-    Ok(ImgVec::new(pixels, width, height))
+    let src_spec = output.pixels.spec();
+    let alpha = src_spec.color.alpha();
+    let raw_color = match src_spec.layout.order {
+        ChannelOrder::Gray | ChannelOrder::GrayAlpha => ColorSpace::GRAY_SRGB.with_alpha(alpha),
+        _ => ColorSpace::SRGB.with_alpha(alpha),
+    };
+    let pixels = output
+        .pixels
+        .relabel_color(raw_color)
+        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
+    let rgb8 = convert_to_buf(
+        &pixels.as_view(),
+        ImageSpec::RGB8_SRGB,
+        &ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardUnchecked),
+    )
+    .map_err(|e| PngLoadError::Decode(e.to_string()))?;
+    rgb8.into_imgvec::<RGB8>()
+        .map_err(|e| PngLoadError::Decode(e.to_string()))
 }
 
 /// Error loading a PNG file.

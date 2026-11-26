@@ -594,7 +594,7 @@ impl<'a> JpegParser<'a> {
         full_data: &[u8],
     ) -> Result<(Option<(usize, usize)>, Option<zencodec::GainMapParams>)> {
         use super::extras::{MpfDirectory, SegmentType, detect_segment_type, parse_mpf_directory};
-        use crate::container::xmp::parse_xmp;
+        use crate::container::xmp::{XmpError, parse_xmp};
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
         const MPF_SIG: &[u8] = b"MPF\0";
@@ -686,13 +686,14 @@ impl<'a> JpegParser<'a> {
             pos += data_len;
         }
 
-        // Parse metadata from XMP
-        let metadata = xmp_data
-            .as_ref()
-            .and_then(|xmp| parse_xmp(xmp).ok().map(|(m, _)| m));
-
-        // hdrgm XMP or the ISO 21496-1 version record in the primary image.
-        let primary_signals = metadata.is_some() || primary_iso;
+        let primary_xmp = xmp_data.as_deref().map(parse_xmp);
+        // Directory-only XMP identifies a raw secondary without supplying
+        // rendering parameters. The secondary may carry the numeric record.
+        let primary_signals =
+            primary_iso || matches!(&primary_xmp, Some(Ok(_) | Err(XmpError::ParametersAbsent)));
+        let metadata = primary_xmp
+            .and_then(core::result::Result::ok)
+            .map(|(params, _)| params);
 
         // Extract gain map JPEG byte range from MPF directory
         // MPF offsets are relative to the start of the MP header (right after "MPF\0")
