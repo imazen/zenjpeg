@@ -404,7 +404,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=590afee17f115bc8f0bd26de3dd452efaf85f796#590afee17f115bc8f0bd26de3dd452efaf85f796"
+source = "git+https://github.com/imazen/ultrahdr?rev=5220840ec1098ab00905c3bc758e6fe36ff58d5c#5220840ec1098ab00905c3bc758e6fe36ff58d5c"
 dependencies = [
  "bytemuck",
  "enough",

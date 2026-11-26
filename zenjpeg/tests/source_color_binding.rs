@@ -246,7 +246,6 @@ fn sixteen_bit_samples_decode_to_their_stored_values() {
 
     let linear16 = JpegEncoderConfig::supported_descriptors()
         .iter()
-        .cloned()
         .find(|d| {
             d.layout.sample == zenpixels::SampleType::U16
                 && d.layout.order == zenpixels::ChannelOrder::Rgb
@@ -258,6 +257,7 @@ fn sixteen_bit_samples_decode_to_their_stored_values() {
                     }
                 )
         })
+        .cloned()
         .expect("a linear 16-bit RGB descriptor is advertised");
     let mut raster = Raster::new(6, 2, 0x5a);
     for y in 0..H {

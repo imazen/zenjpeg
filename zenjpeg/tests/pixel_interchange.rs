@@ -313,7 +313,14 @@ fn adobe_cmyk_and_ycck_passthrough_declare_inverted_ink() {
             ColorSpace::Cmyk { inverted: true, .. }
         ));
         for y in 0..pixels.rows() {
-            assert!(pixels.row(y).chunks_exact(4).all(|pixel| pixel == expected));
+            assert!(
+                pixels
+                    .row(y)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|&pixel| pixel == expected)
+            );
         }
     }
 }

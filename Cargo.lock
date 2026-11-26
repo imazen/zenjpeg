@@ -2195,7 +2195,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=590afee17f115bc8f0bd26de3dd452efaf85f796#590afee17f115bc8f0bd26de3dd452efaf85f796"
+source = "git+https://github.com/imazen/ultrahdr?rev=5220840ec1098ab00905c3bc758e6fe36ff58d5c#5220840ec1098ab00905c3bc758e6fe36ff58d5c"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -2216,7 +2216,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-rs"
 version = "0.4.1"
-source = "git+https://github.com/imazen/ultrahdr?rev=590afee17f115bc8f0bd26de3dd452efaf85f796#590afee17f115bc8f0bd26de3dd452efaf85f796"
+source = "git+https://github.com/imazen/ultrahdr?rev=5220840ec1098ab00905c3bc758e6fe36ff58d5c#5220840ec1098ab00905c3bc758e6fe36ff58d5c"
 dependencies = [
  "bytemuck",
  "enough",
@@ -3136,7 +3136,7 @@ dependencies = [
 [[package]]
 name = "zensim"
 version = "0.3.0"
-source = "git+https://github.com/imazen/zensimx?rev=abec986d1000472c62334272aee165438e693028#abec986d1000472c62334272aee165438e693028"
+source = "git+https://github.com/imazen/zensimx?rev=ce6d3d99b41596485ea06e5dd594c8b5336624d1#ce6d3d99b41596485ea06e5dd594c8b5336624d1"
 dependencies = [
  "archmage 0.9.33",
  "archmage-macros 0.9.33",
@@ -3156,7 +3156,7 @@ dependencies = [
 [[package]]
 name = "zensim-regress"
 version = "0.4.0"
-source = "git+https://github.com/imazen/zensimx?rev=abec986d1000472c62334272aee165438e693028#abec986d1000472c62334272aee165438e693028"
+source = "git+https://github.com/imazen/zensimx?rev=ce6d3d99b41596485ea06e5dd594c8b5336624d1#ce6d3d99b41596485ea06e5dd594c8b5336624d1"
 dependencies = [
  "base64",
  "bytemuck",
@@ -3169,7 +3169,7 @@ dependencies = [
  "taffy",
  "thiserror 2.0.21",
  "zenblend",
- "zenpixels 0.3.1",
+ "zenpixels 0.5.0",
  "zenpng",
  "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=e3975fb9d6d6b7baa96038a0eb8e27febb37c012)",
  "zensim",

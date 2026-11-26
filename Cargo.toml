@@ -49,7 +49,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # Dev-only quality regression and measurement tooling; not a library dependency.
-zensim = { git = "https://github.com/imazen/zensimx", rev = "abec986d1000472c62334272aee165438e693028" }
+zensim = { git = "https://github.com/imazen/zensimx", rev = "ce6d3d99b41596485ea06e5dd594c8b5336624d1" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
@@ -208,8 +208,8 @@ zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d
 zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
 zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "590afee17f115bc8f0bd26de3dd452efaf85f796" }
-ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr", rev = "590afee17f115bc8f0bd26de3dd452efaf85f796" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "5220840ec1098ab00905c3bc758e6fe36ff58d5c" }
+ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr", rev = "5220840ec1098ab00905c3bc758e6fe36ff58d5c" }
 
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 
