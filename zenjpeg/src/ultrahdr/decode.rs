@@ -369,7 +369,7 @@ pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Re
         target.layout,
         zenpixels::ColorSpace::Icc {
             profile: alloc::sync::Arc::from(icc),
-            channels: 3,
+            color_channels: 3,
             alpha: target.color.alpha(),
             intent: zenpixels::RenderingIntent::RelativeColorimetric,
         },

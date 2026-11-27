@@ -80,7 +80,7 @@ fn decode_rgb8(bytes: &[u8]) -> (Vec<u8>, usize, usize) {
         .decode()
         .expect("decode jpeg");
     let px = out.pixels();
-    let (w, h) = (px.width() as usize, px.rows() as usize);
+    let (w, h) = (px.width() as usize, px.height() as usize);
     let raw = px
         .as_contiguous_bytes()
         .expect("decoded RGB8 is contiguous")

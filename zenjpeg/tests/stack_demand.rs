@@ -43,7 +43,7 @@ fn on_test_stack<T: Send + 'static>(what: String, f: impl FnOnce() -> T + Send +
 
 fn packed_rows(pixels: &PixelView<'_>) -> Vec<u8> {
     let row = pixels.width() as usize * pixels.format().layout.bytes_per_pixel();
-    (0..pixels.rows())
+    (0..pixels.height())
         .flat_map(|y| pixels.row(y)[..row].to_vec())
         .collect()
 }

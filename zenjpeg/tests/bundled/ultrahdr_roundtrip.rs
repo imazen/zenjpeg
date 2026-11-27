@@ -1420,11 +1420,11 @@ fn codec_hdr_color_conversion_follows_gainmap_application() {
     .unwrap();
     for row in 0..native.height() {
         converter
-            .convert_row(
+            .convert_row_at(
+                row,
                 native.as_view().row(row),
                 expected.as_view_mut().row_mut(row),
                 native.width(),
-                row,
             )
             .unwrap();
     }

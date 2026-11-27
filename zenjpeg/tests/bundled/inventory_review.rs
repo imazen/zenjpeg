@@ -79,7 +79,7 @@ fn decode(job: JpegDecodeJob, data: &[u8]) -> Result<DecodeOutput, String> {
 
 fn pixels(out: &DecodeOutput) -> Vec<u8> {
     let ps = out.pixels();
-    (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect()
+    (0..ps.height()).flat_map(|y| ps.row(y).to_vec()).collect()
 }
 
 /// The innermost part covering `off`.
@@ -383,7 +383,7 @@ fn orientation_uses_the_same_exif_for_pixels_and_info() {
         );
         let mut streamed_pixels = Vec::new();
         while let Some((_, batch)) = corrected_stream.next_batch().unwrap() {
-            for row in 0..batch.rows() {
+            for row in 0..batch.height() {
                 streamed_pixels.extend_from_slice(batch.row(row));
             }
         }
@@ -999,7 +999,7 @@ fn primary_iso_payload_is_not_gain_map_parameters() {
 #[cfg(feature = "ultrahdr")]
 fn pixels_of(g: &zencodec::decode::DecodedGainMap) -> Vec<u8> {
     let ps = g.pixels.as_view();
-    (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect()
+    (0..ps.height()).flat_map(|y| ps.row(y).to_vec()).collect()
 }
 
 /// The container probe (`zenjpeg::container::probe`) and the inventory

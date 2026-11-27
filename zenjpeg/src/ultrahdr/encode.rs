@@ -354,7 +354,7 @@ fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
     let desc = slice.format();
     let format = desc.layout;
     let transfer = transfer(desc);
-    let stride = slice.stride();
+    let stride = slice.stride_bytes();
     let data = slice.as_strided_bytes();
     let width = slice.width() as usize;
     let row_off = y as usize * stride;
@@ -514,9 +514,9 @@ fn curve_input_scale_nits(hdr: &PixelBuffer) -> f32 {
 /// we don't need a private duplicate (#71).
 fn linear_f32_to_srgb_rgba8(sdr_linear: &PixelBuffer) -> Result<PixelBuffer> {
     let slice = sdr_linear.as_view();
-    let stride = slice.stride();
+    let stride = slice.stride_bytes();
     let width = slice.width();
-    let height = slice.rows();
+    let height = slice.height();
     let bytes = slice.as_strided_bytes();
 
     let mut out = Vec::with_capacity((width as usize) * (height as usize) * 4);
@@ -911,8 +911,8 @@ fn encode_sdr_base(
     let view = sdr.as_view();
     encoder.push(
         view.as_strided_bytes(),
-        view.rows() as usize,
-        view.stride(),
+        view.height() as usize,
+        view.stride_bytes(),
         stop,
     )?;
     encoder.finish()
@@ -945,7 +945,7 @@ fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     let desc = sdr.format();
     if let zenpixels::ColorSpace::Icc {
         profile,
-        channels: 3,
+        color_channels: 3,
         ..
     } = &desc.color
     {
@@ -965,7 +965,7 @@ fn base_icc_profile(sdr: &PixelBuffer) -> Result<Option<Cow<'static, [u8]>>> {
     {
         return Ok(None);
     }
-    let synthesized = desc.color.to_cicp().map(SynthesizedIcc::for_cicp);
+    let synthesized = desc.color.to_cicp_lossy().map(SynthesizedIcc::for_cicp);
     match synthesized {
         Some(SynthesizedIcc::Profile(icc)) => Ok(Some(icc)),
         Some(SynthesizedIcc::NotNeeded) => Ok(None),

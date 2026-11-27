@@ -70,7 +70,7 @@ fn words(bytes: &[u8]) -> Vec<u16> {
 
 fn output_words(output: &DecodeOutput) -> Vec<u16> {
     let pixels = output.pixels();
-    (0..pixels.rows())
+    (0..pixels.height())
         .flat_map(|y| words(pixels.row(y)))
         .collect()
 }
@@ -176,7 +176,7 @@ fn check_job_paths(
             one_shot.pixels().facts().depth,
             "streaming depth evidence"
         );
-        for r in 0..rows.rows() {
+        for r in 0..rows.height() {
             streamed.extend(words(rows.row(r)));
         }
     }
@@ -351,7 +351,7 @@ fn an_explicit_u8_request_is_honored_on_every_path() {
     let one_shot = decode(&data, &preferred);
     assert_eq!(one_shot.pixels().format(), &PixelFormat::RGB8_SRGB);
     assert_eq!(one_shot.pixels().facts().depth, None);
-    let bytes: Vec<u8> = (0..one_shot.pixels().rows())
+    let bytes: Vec<u8> = (0..one_shot.pixels().height())
         .flat_map(|y| one_shot.pixels().row(y).to_vec())
         .collect();
     let expected: Vec<u8> = native_codes(&data, false, false)
@@ -366,7 +366,7 @@ fn an_explicit_u8_request_is_honored_on_every_path() {
         .unwrap();
     let mut streamed = Vec::new();
     while let Some((_, rows)) = streaming.next_batch().unwrap() {
-        for r in 0..rows.rows() {
+        for r in 0..rows.height() {
             streamed.extend_from_slice(rows.row(r));
         }
     }
@@ -394,7 +394,7 @@ fn eight_bit_frames_widen_exactly_when_asked_and_stay_u8_otherwise() {
         }];
         let (descriptor, samples) = check_paths(&data, &preferred);
         assert_eq!(descriptor, preferred[0], "{name}");
-        let bytes: Vec<u8> = (0..plain.pixels().rows())
+        let bytes: Vec<u8> = (0..plain.pixels().height())
             .flat_map(|y| plain.pixels().row(y).to_vec())
             .collect();
         let expected: Vec<u16> = bytes.iter().map(|&b| u16::from(b) * 257).collect();
@@ -437,7 +437,7 @@ fn deep_raw_cmyk_leaves_as_f32_unless_cmyk8_is_named() {
             .unwrap()
             .to_vec();
         let pixels = output.pixels();
-        let floats: Vec<f32> = (0..pixels.rows())
+        let floats: Vec<f32> = (0..pixels.height())
             .flat_map(|y| {
                 pixels
                     .row(y)

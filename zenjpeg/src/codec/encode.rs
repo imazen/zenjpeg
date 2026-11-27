@@ -854,7 +854,7 @@ fn profile_of(spec: &PixelFormat) -> Option<&Arc<[u8]>> {
 fn icc_carrier(profile: &Arc<[u8]>, gray: bool) -> ColorSpace {
     ColorSpace::Icc {
         profile: Arc::clone(profile),
-        channels: if gray { 1 } else { 3 },
+        color_channels: if gray { 1 } else { 3 },
         alpha: zenpixels::AlphaMode::None,
         intent: zenpixels::RenderingIntent::RelativeColorimetric,
     }
@@ -937,7 +937,7 @@ impl LinearCms {
             descriptor.layout,
             ColorSpace::Icc {
                 profile: target_icc,
-                channels: if layout.is_grayscale() { 1 } else { 3 },
+                color_channels: if layout.is_grayscale() { 1 } else { 3 },
                 alpha: descriptor.color.alpha(),
                 intent: zenpixels::RenderingIntent::RelativeColorimetric,
             },
@@ -958,7 +958,7 @@ impl LinearCms {
         rows: &PixelView<'_>,
         mut emit: impl FnMut(&[u8]) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        for y in 0..rows.rows() {
+        for y in 0..rows.height() {
             let mut dst = self.row.as_view_mut();
             let dst = dst.row_mut(0);
             self.transform
@@ -1758,7 +1758,7 @@ impl JpegEncoder {
         layout: PixelLayout,
         binding: &ColorBinding,
     ) -> Result<EncodeOutput, Error> {
-        let (width, height) = (pixels.width(), pixels.rows());
+        let (width, height) = (pixels.width(), pixels.height());
         self.check_limits(width, height, layout)?;
         let mut enc = self
             .build_request(layout, binding)?
@@ -1920,12 +1920,12 @@ impl zencodec::encode::Encoder for JpegEncoder {
         self.check_one_shot()?;
         let descriptor = pixels.format().clone();
         let layout = self.pixel_layout(&descriptor)?;
-        self.check_limits(pixels.width(), pixels.rows(), layout)?;
+        self.check_limits(pixels.width(), pixels.height(), layout)?;
         let binding = self.bind_color(&descriptor, layout)?;
         if let Some(icc) = LinearCms::source_icc(&descriptor, layout) {
             let mut encoder = self.build_request(layout, &binding)?.encode_from_bytes(
                 pixels.width(),
-                pixels.rows(),
+                pixels.height(),
                 layout,
             )?;
             let mut cms = LinearCms::new(&descriptor, icc, layout, pixels.width())?;
@@ -1943,13 +1943,19 @@ impl zencodec::encode::Encoder for JpegEncoder {
         }
         let contiguous =
             pixels
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .map_err(crate::color::icc::pixel_buffer_error(
                     0,
                     "packed JPEG input",
                 ))?;
-        self.encode_bytes_inner(&contiguous, pixels.width(), pixels.rows(), layout, &binding)
-            .map_err(Into::into)
+        self.encode_bytes_inner(
+            &contiguous,
+            pixels.width(),
+            pixels.height(),
+            layout,
+            &binding,
+        )
+        .map_err(Into::into)
     }
 
     fn encode_srgba8(
@@ -2090,7 +2096,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 decode_srgb16(&rows, &mut self.srgb16_rows)?;
                 enc.push(
                     &self.srgb16_rows,
-                    rows.rows() as usize,
+                    rows.height() as usize,
                     rows.width() as usize * layout.bytes_per_pixel(),
                     stop,
                 )?;
@@ -2098,8 +2104,8 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
                 enc.push(
                     rows.as_strided_bytes(),
-                    rows.rows() as usize,
-                    rows.stride(),
+                    rows.height() as usize,
+                    rows.stride_bytes(),
                     stop,
                 )?;
             }
@@ -2121,7 +2127,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
             .accumulator
             .as_ref()
             .map_or(0, |acc| acc.total_rows)
-            .checked_add(rows.rows())
+            .checked_add(rows.height())
             .ok_or_else(|| Error::size_overflow("push_rows height"))?;
         self.check_limits(width, total_rows, layout)?;
         if self.accumulator.is_none() {
@@ -2161,7 +2167,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
             &self.srgb16_rows
         } else {
             contiguous = rows
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .map_err(crate::color::icc::pixel_buffer_error(0, "packed JPEG rows"))?;
             &contiguous
         };
@@ -2170,7 +2176,7 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 self.bound = Some(self.bind_color(&desc, layout)?);
                 let bpp = desc.layout.bytes_per_pixel();
                 let row_bytes = width as usize * bpp;
-                let estimated_total = row_bytes * rows.rows() as usize * 4;
+                let estimated_total = row_bytes * rows.height() as usize * 4;
                 let mut buf = Vec::new();
                 buf.try_reserve(estimated_total)
                     .map_err(|_| Error::allocation_failed(estimated_total, "push_rows buffer"))?;
@@ -2178,14 +2184,14 @@ impl zencodec::encode::Encoder for JpegEncoder {
                 self.accumulator = Some(RowAccumulator {
                     data: buf,
                     width,
-                    total_rows: rows.rows(),
+                    total_rows: rows.height(),
                     layout,
                     descriptor: desc,
                 });
             }
             Some(acc) => {
                 acc.data.extend_from_slice(data);
-                acc.total_rows += rows.rows();
+                acc.total_rows += rows.height();
             }
         }
         Ok(())
@@ -2361,7 +2367,7 @@ fn decode_srgb16(rows: &PixelView<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
     let samples = rows.width() as usize * desc.layout.order.channels();
     let rgba = desc.layout.order == zenpixels::ChannelOrder::Rgba;
     let len = samples
-        .checked_mul(4 * rows.rows() as usize)
+        .checked_mul(4 * rows.height() as usize)
         .ok_or_else(|| Error::allocation_failed(usize::MAX, "16-bit sRGB rows"))?;
     out.clear();
     out.try_reserve(len)
@@ -2373,7 +2379,7 @@ fn decode_srgb16(rows: &PixelView<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
         .and_then(|()| linear.try_reserve(samples))
         .map_err(|_| Error::allocation_failed(samples * 6, "16-bit sRGB row"))?;
     linear.resize(samples, 0.0);
-    for y in 0..rows.rows() {
+    for y in 0..rows.height() {
         encoded.clear();
         encoded.extend(
             rows.row(y)
@@ -2437,7 +2443,7 @@ mod tests {
         use zenpixels_convert::icc_profiles::SynthesizedIcc;
         for unavailable in [
             SynthesizedIcc::NotNeeded,
-            SynthesizedIcc::NeedsCms,
+            SynthesizedIcc::IccDbDisabled,
             SynthesizedIcc::CmsUnsupported,
         ] {
             assert!(
@@ -2462,7 +2468,7 @@ mod tests {
             zenpixels::SampleLayout::RGBF32,
             ColorSpace::Icc {
                 profile: Arc::from(safe),
-                channels: 3,
+                color_channels: 3,
                 alpha: zenpixels::AlphaMode::None,
                 intent: zenpixels::RenderingIntent::RelativeColorimetric,
             },

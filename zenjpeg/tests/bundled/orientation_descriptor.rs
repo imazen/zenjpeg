@@ -224,7 +224,7 @@ fn descriptor_keeps_display_p3_icc() {
 
     assert!(matches!(
         &output.pixels().format().color,
-        zenpixels::ColorSpace::Icc { profile, channels: 3, .. }
+        zenpixels::ColorSpace::Icc { profile, color_channels: 3, .. }
             if profile.as_ref() == fake_icc
     ));
 
@@ -311,7 +311,7 @@ fn streaming_decoder_reports_identity_after_auto_orient() {
     let mut batch_width = 0u32;
     while let Some((_, batch)) = streamer.next_batch().expect("batch failed") {
         batch_width = batch.width();
-        total_rows += batch.rows();
+        total_rows += batch.height();
     }
     // Rotate90 swaps: 4x2 → 2x4
     assert_eq!(batch_width, 2, "streaming batch width after Rotate90");

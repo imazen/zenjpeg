@@ -253,15 +253,15 @@ fn reconstruct_hdr_exif_oriented_matches_preserve_plus_bake() {
         // Sanity: the injected EXIF is honored — transposing codes swap dims.
         if orientation.swaps_axes() {
             assert_eq!(
-                (corrected.pixels().width(), corrected.pixels().rows()),
-                (preserved.pixels().rows(), preserved.pixels().width()),
+                (corrected.pixels().width(), corrected.pixels().height()),
+                (preserved.pixels().height(), preserved.pixels().width()),
                 "EXIF {exif}: Correct must report display dimensions"
             );
         }
 
         let baked = zenpixels_convert::apply_orientation(&preserved.pixels(), orientation).unwrap();
         assert_eq!(
-            (corrected.pixels().width(), corrected.pixels().rows()),
+            (corrected.pixels().width(), corrected.pixels().height()),
             (baked.width(), baked.height()),
             "EXIF {exif}: reconstructed dimensions"
         );
@@ -307,7 +307,10 @@ fn reconstruct_hdr_exif_oriented_quadrants_land_correctly() {
             .unwrap()
             .decode()
             .unwrap();
-        let (w, h) = (out.pixels().width() as usize, out.pixels().rows() as usize);
+        let (w, h) = (
+            out.pixels().width() as usize,
+            out.pixels().height() as usize,
+        );
         let bytes = out.pixels().as_contiguous_bytes().unwrap();
         // Red channel of the RGBA f32 pixel at quadrant centers.
         let sample = |x: usize, y: usize| -> f32 {
@@ -386,7 +389,7 @@ fn components_gain_map_oriented_with_base() {
         // And the surfaced pair is aspect-consistent (not transposed).
         let (bw, bh) = (
             f64::from(corrected.pixels().width()),
-            f64::from(corrected.pixels().rows()),
+            f64::from(corrected.pixels().height()),
         );
         let (gw, gh) = (
             f64::from(dgm_c.pixels.width()),
@@ -478,7 +481,7 @@ fn display_p3_content_light_reports_measured_native_maxrgb() {
     let sc = &out.info().source_color;
     let native = ContentLightLevel::new(605, 445);
     assert_eq!(sc.content_light_level, Some(native));
-    assert_eq!(pixels.hdr().cll, Some(native));
+    assert_eq!(pixels.hdr().content_light_level, Some(native));
     let mastering = sc.mastering_display.unwrap();
     assert_eq!(mastering.max_luminance, 1624.0);
     assert_eq!(

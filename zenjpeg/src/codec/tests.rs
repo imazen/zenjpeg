@@ -362,7 +362,7 @@ mod api_tests {
         assert_eq!(output.pixels().format().clone(), ZenPixelFormat::RGB8_SRGB);
         let pixel_data = output.pixels();
         assert_eq!(pixel_data.width(), 8);
-        assert_eq!(pixel_data.rows(), 8);
+        assert_eq!(pixel_data.height(), 8);
         // 8*8*3 = 192 bytes
         assert!(pixel_data.as_contiguous_bytes().is_some());
     }
@@ -411,8 +411,8 @@ mod api_tests {
             assert_eq!(y, total_rows);
             assert_eq!(batch.width(), 16);
             // Each batch should be MCU-row sized (multiple rows)
-            assert!(batch.rows() >= 1);
-            total_rows += batch.rows();
+            assert!(batch.height() >= 1);
+            total_rows += batch.height();
         }
         assert_eq!(total_rows, 16);
     }
@@ -444,7 +444,7 @@ mod api_tests {
         let mut total_rows = 0u32;
         while let Some((_y, batch)) = stream.next_batch().unwrap() {
             batch_count += 1;
-            total_rows += batch.rows();
+            total_rows += batch.height();
         }
         assert_eq!(total_rows, 64);
         // With MCU batching, we should have fewer batches than rows
@@ -500,7 +500,7 @@ mod api_tests {
         while let Some((y, batch)) = owned_stream.next_batch().unwrap() {
             assert_eq!(y, total_rows);
             owned_pixels.extend_from_slice(batch.as_strided_bytes());
-            total_rows += batch.rows();
+            total_rows += batch.height();
         }
         assert_eq!(total_rows, 32);
 
@@ -540,7 +540,7 @@ mod api_tests {
         // The stream should work after the owned_data variable is consumed
         let mut total_rows = 0u32;
         while let Some((_y, batch)) = stream.next_batch().unwrap() {
-            total_rows += batch.rows();
+            total_rows += batch.height();
         }
         assert_eq!(total_rows, 16);
     }
@@ -1001,7 +1001,7 @@ mod api_tests {
 
         let encoded = encoder
             .encode_from(&mut |y, mut buf: PixelViewMut<'_>| {
-                let rows = buf.rows();
+                let rows = buf.height();
                 for row in 0..rows {
                     let src_y = y + row;
                     if src_y >= height {
@@ -1141,7 +1141,7 @@ mod cmyk_tests {
 
         // Verify pixel data has correct size: w * h * 4
         let expected_bytes = info.width as usize * info.height as usize * 4;
-        let actual_bytes = pixels.width() as usize * pixels.rows() as usize * 4;
+        let actual_bytes = pixels.width() as usize * pixels.height() as usize * 4;
         assert_eq!(actual_bytes, expected_bytes);
     }
 
@@ -1190,7 +1190,7 @@ mod cmyk_tests {
         let cmyk_pixels = output_cmyk.pixels();
         let cmyk_bytes: Vec<u8> = {
             let mut all = Vec::with_capacity(w * h * 4);
-            for row in 0..cmyk_pixels.rows() {
+            for row in 0..cmyk_pixels.height() {
                 all.extend_from_slice(cmyk_pixels.row(row));
             }
             all
@@ -1198,7 +1198,7 @@ mod cmyk_tests {
         let rgb_pixels = output_rgb.pixels();
         let rgb_bytes: Vec<u8> = {
             let mut all = Vec::with_capacity(w * h * 3);
-            for row in 0..rgb_pixels.rows() {
+            for row in 0..rgb_pixels.height() {
                 all.extend_from_slice(rgb_pixels.row(row));
             }
             all
@@ -1252,7 +1252,8 @@ mod cmyk_tests {
         let img = Img::new(pixels, 8, 8);
         let encoded = enc
             .encode(
-                PixelView::from_pixels(img.buf(), 8, 8, ZenPixelFormat::RGB8_SRGB.color).unwrap(),
+                PixelView::from_pixels_with_color(img.buf(), 8, 8, ZenPixelFormat::RGB8_SRGB.color)
+                    .unwrap(),
             )
             .unwrap();
         let jpeg_data = encoded.into_vec();
@@ -1283,8 +1284,8 @@ mod cmyk_tests {
 
         let px_a = out_passthrough.pixels();
         let px_b = out_badrgb.pixels();
-        assert_eq!(px_a.rows(), px_b.rows());
-        for row in 0..px_a.rows() {
+        assert_eq!(px_a.height(), px_b.height());
+        for row in 0..px_a.height() {
             assert_eq!(
                 px_a.row(row),
                 px_b.row(row),
@@ -1384,7 +1385,7 @@ mod cmyk_tests {
         let cmyk_pixels = output_cmyk.pixels();
         let cmyk_bytes: Vec<u8> = {
             let mut all = Vec::with_capacity(w * h * 4);
-            for row in 0..cmyk_pixels.rows() {
+            for row in 0..cmyk_pixels.height() {
                 all.extend_from_slice(cmyk_pixels.row(row));
             }
             all
@@ -1392,7 +1393,7 @@ mod cmyk_tests {
         let rgb_pixels = output_rgb.pixels();
         let rgb_bytes: Vec<u8> = {
             let mut all = Vec::with_capacity(w * h * 3);
-            for row in 0..rgb_pixels.rows() {
+            for row in 0..rgb_pixels.height() {
                 all.extend_from_slice(rgb_pixels.row(row));
             }
             all
@@ -1527,7 +1528,7 @@ mod push_decode_stride_tests {
         let dec = job1.into_decoder(Cow::Borrowed(&jpeg), &preferred).unwrap();
         let output = dec.decode().unwrap();
         let ps = output.pixels();
-        let buffered: Vec<u8> = (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect();
+        let buffered: Vec<u8> = (0..ps.height()).flat_map(|y| ps.row(y).to_vec()).collect();
 
         // Push decode into strided buffer
         let cfg2 = JpegDecoderConfig::new();
@@ -1600,7 +1601,7 @@ mod push_decode_stride_tests {
                 .decode()
                 .unwrap();
             let ps = out.pixels();
-            (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect()
+            (0..ps.height()).flat_map(|y| ps.row(y).to_vec()).collect()
         };
 
         let assert_all_modes_agree = |jpeg: &[u8], label: &str| {

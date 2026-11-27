@@ -851,7 +851,7 @@ fn push_decoder_native<'a>(
         let mut dst = sink
             .provide_next_buffer(y, batch_max as u32, width as u32, descriptor.clone())
             .map_err(wrap)?;
-        let dst_stride = dst.stride();
+        let dst_stride = dst.stride_bytes();
         let dst_bytes = dst.as_strided_bytes_mut();
 
         let count = match (ch_type, ch_layout) {
@@ -1008,7 +1008,7 @@ fn push_decoder_direct<'a>(
     let mut dst = sink
         .provide_next_buffer(0, h, w, descriptor.clone())
         .map_err(wrap)?;
-    let dst_stride = dst.stride();
+    let dst_stride = dst.stride_bytes();
     let bpp = format.bytes_per_pixel();
     let row_bytes = w as usize * bpp;
 
@@ -1093,7 +1093,7 @@ fn push_decoder_direct<'a>(
     let out_h = decoded_h.min(h);
     let fb_row_bytes = out_w as usize * decoded_bpp;
 
-    let dst_stride = dst.stride();
+    let dst_stride = dst.stride_bytes();
     let dst_bytes = dst.as_strided_bytes_mut();
 
     for y in 0..out_h as usize {
@@ -1145,7 +1145,7 @@ fn push_decoder_via_full_decode<'a>(
     let pixels = output.pixels();
     let descriptor = pixels.format().clone();
     let w = pixels.width();
-    let h = pixels.rows();
+    let h = pixels.height();
 
     sink.begin(w, h, descriptor.clone()).map_err(wrap)?;
 
@@ -1732,7 +1732,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             }
 
             // Check output size limits
-            let output_bytes = output.pixels().rows() as u64
+            let output_bytes = output.pixels().height() as u64
                 * output.pixels().width() as u64
                 * output.pixels().format().layout.bytes_per_pixel() as u64;
             self.limits.check_output_size(output_bytes).map_err(|_| {
@@ -1905,7 +1905,7 @@ impl JpegDecoder<'_> {
                 for row in 0..h {
                     stop.check()?;
                     converter
-                        .convert_row(src.row(row), dst.row_mut(row), w, row)
+                        .convert_row_at(row, src.row(row), dst.row_mut(row), w)
                         .map_err(crate::ultrahdr::ultrahdr_to_zenjpeg_error)?;
                 }
                 output
@@ -1941,7 +1941,7 @@ impl JpegDecoder<'_> {
         let hdr =
             hdr.with_origin(info.source_color.color_origin())
                 .with_hdr(zenpixels::HdrMetadata {
-                    cll: info.source_color.content_light_level,
+                    content_light_level: info.source_color.content_light_level,
                     mastering: info.source_color.mastering_display,
                 });
         let mut output = DecodeOutput::new(hdr, info).with_extras(extras);
@@ -1950,7 +1950,7 @@ impl JpegDecoder<'_> {
             output = output.with_source_encoding_details(probe);
         }
 
-        let output_bytes = output.pixels().rows() as u64
+        let output_bytes = output.pixels().height() as u64
             * output.pixels().width() as u64
             * output.pixels().format().layout.bytes_per_pixel() as u64;
         limits.check_output_size(output_bytes).map_err(|_| {
@@ -1978,7 +1978,7 @@ fn reconstructed_max_rgb(
         sum += f64::from(v);
     };
     let buffer_error = || crate::color::icc::pixel_buffer_error(0, "JPEG HDR light level");
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         if view.format().layout.sample == SampleType::F16 {
             let row = view.row_as::<u16>(y).map_err(buffer_error())?;
             let to_f32 = |bits| half::f16::from_bits(bits).to_f32();
@@ -1993,7 +1993,7 @@ fn reconstructed_max_rgb(
         }
     }
     let scale = f64::from(zenpixels::DiffuseWhite::BT2408.nits());
-    let len = f64::from(view.width()) * f64::from(view.rows());
+    let len = f64::from(view.width()) * f64::from(view.height());
     Ok(zenpixels::ContentLightLevel::new(
         (f64::from(max) * scale + 0.5) as u16,
         (sum / len * scale + 0.5) as u16,
@@ -2019,8 +2019,8 @@ fn orient_reconstructed_hdr(
             .map_err(crate::ultrahdr::ultrahdr_to_zenjpeg_error);
     };
     let next = |i: usize| {
-        let (x, y) =
-            orientation.forward_map((i % w as usize) as u32, (i / w as usize) as u32, w, h);
+        let (x, y) = orientation
+            .map_pixel_coordinates(((i % w as usize) as u32, (i / w as usize) as u32), (w, h));
         y as usize * ow as usize + x as usize
     };
     let swap = |bytes: &mut [u8], a: usize, b: usize| {
@@ -2054,7 +2054,7 @@ fn orient_reconstructed_hdr(
     let mut parts = image.into_parts();
     parts.width = ow;
     parts.height = oh;
-    parts.stride = ow as usize * bpp;
+    parts.stride_bytes = ow as usize * bpp;
     let oriented = PixelBuf::from_parts(parts).map_err(crate::color::icc::pixel_buffer_error(
         pixels * bpp,
         "JPEG HDR orientation",
@@ -2133,7 +2133,7 @@ fn decode_gain_map_components(
     let desc = ZenPixelFormat::new(
         layout,
         zenpixels::ColorSpace::Untagged {
-            channels: gainmap.channels,
+            total_channels: gainmap.channels,
             alpha: zenpixels::AlphaMode::None,
         },
     );

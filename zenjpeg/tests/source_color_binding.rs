@@ -133,7 +133,7 @@ fn p3(base: PixelFormat) -> PixelFormat {
 fn with_icc(mut spec: PixelFormat, profile: impl Into<Arc<[u8]>>) -> PixelFormat {
     spec.color = ColorSpace::Icc {
         profile: profile.into(),
-        channels: if spec.layout.order.is_gray_family() {
+        color_channels: if spec.layout.order.is_gray_family() {
             1
         } else {
             3

@@ -539,7 +539,7 @@ fn everything_fixture_dispositions_match_the_decoder() {
         info.orientation,
         zencodec::Orientation::from_exif(6).unwrap()
     );
-    assert_eq!((out.pixels().width(), out.pixels().rows()), (16, 8));
+    assert_eq!((out.pixels().width(), out.pixels().height()), (16, 8));
 }
 
 #[test]

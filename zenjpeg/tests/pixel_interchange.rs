@@ -138,7 +138,7 @@ fn icc_only_p3_and_xyb_bind_current_rgb_and_source_icc() {
     let pixels = decoded.pixels();
     let ColorSpace::Icc {
         profile,
-        channels: 3,
+        color_channels: 3,
         ..
     } = &pixels.format().color
     else {
@@ -240,12 +240,12 @@ fn ultrahdr_reconstruction_bakes_exif_after_applying_the_map() {
         let sc = &output.info().source_color;
         assert!(sc.content_light_level.is_some());
         assert!(sc.mastering_display.is_some());
-        assert_eq!(pixels.hdr().cll, sc.content_light_level);
+        assert_eq!(pixels.hdr().content_light_level, sc.content_light_level);
         assert_eq!(pixels.hdr().mastering, sc.mastering_display);
     }
     assert_eq!(corrected.pixels().hdr(), stored.pixels().hdr());
     assert_eq!(
-        (corrected.pixels().width(), corrected.pixels().rows()),
+        (corrected.pixels().width(), corrected.pixels().height()),
         (h, w)
     );
     let reference =
@@ -312,7 +312,7 @@ fn adobe_cmyk_and_ycck_passthrough_declare_inverted_ink() {
             pixels.format().color,
             ColorSpace::Cmyk { inverted: true, .. }
         ));
-        for y in 0..pixels.rows() {
+        for y in 0..pixels.height() {
             assert!(
                 pixels
                     .row(y)
@@ -340,7 +340,7 @@ fn linear_gray_codes_keep_their_gray_icc_carrier() {
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::from(profile.as_ref()),
-            channels: 1,
+            color_channels: 1,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },

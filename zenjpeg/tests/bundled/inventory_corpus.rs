@@ -129,7 +129,7 @@ fn decoded_pixels(data: &[u8]) -> Option<Vec<u8>> {
         .and_then(|d| d.decode())
         .ok()?;
     let ps = out.pixels();
-    Some((0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect())
+    Some((0..ps.height()).flat_map(|y| ps.row(y).to_vec()).collect())
 }
 
 /// The zencodec decode's verdict: `Ok` or the error text.

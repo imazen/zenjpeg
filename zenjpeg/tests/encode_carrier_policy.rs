@@ -110,7 +110,7 @@ fn icc(jpeg: &[u8]) -> Option<Vec<u8>> {
 fn icc_color(bytes: Vec<u8>) -> ColorSpace {
     ColorSpace::Icc {
         profile: bytes.into(),
-        channels: 3,
+        color_channels: 3,
         alpha: zenpixels::AlphaMode::None,
         intent: zenpixels::RenderingIntent::RelativeColorimetric,
     }

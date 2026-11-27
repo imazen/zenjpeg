@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             p3.layout,
             ColorSpace::Icc {
                 profile: zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into(),
-                channels: 3,
+                color_channels: 3,
                 alpha: zenpixels::AlphaMode::None,
                 intent: zenpixels::RenderingIntent::RelativeColorimetric,
             },

@@ -287,14 +287,14 @@ fn late_orientation_is_bound_before_adoption_and_matches_direct_decode() {
         drive_from_slice(&mut session, &bytes, &mut sink, None, 11).unwrap();
         let actual = sink.as_pixel_slice().unwrap();
         assert_eq!(
-            (actual.width(), actual.rows()),
+            (actual.width(), actual.height()),
             (direct.width(), direct.height())
         );
         assert_eq!(
             session.info().unwrap().orientation,
             direct.info().orientation
         );
-        for y in 0..actual.rows() {
+        for y in 0..actual.height() {
             assert_eq!(actual.row(y), direct.pixels().row(y));
         }
     }
@@ -452,8 +452,8 @@ fn ordinary_float_rgb_strips_compact_rgba_and_keep_linear_labels() {
             assert_eq!(y, ry);
             assert_eq!(rgb.format(), &PixelFormat::RGBF32_LINEAR);
             assert_eq!(rgba.format(), &PixelFormat::RGBAF32_LINEAR);
-            assert_eq!(rgb.rows(), rgba.rows());
-            for row in 0..rgb.rows() {
+            assert_eq!(rgb.height(), rgba.height());
+            for row in 0..rgb.height() {
                 for (rgb, rgba) in rgb
                     .row(row)
                     .as_chunks::<12>()
@@ -746,7 +746,7 @@ fn controlled_grayscale_fixtures_match_reference_raster_hashes() {
         let pixels = sink.as_pixel_slice().unwrap();
         assert_eq!(pixels.format(), &PixelFormat::GRAY8_SRGB);
         let mut hash = Sha256::new();
-        for y in 0..pixels.rows() {
+        for y in 0..pixels.height() {
             for &sample in pixels.row(y) {
                 hash.update(u16::from(sample).to_be_bytes());
             }
@@ -878,7 +878,7 @@ fn linear_grayscale_streaming_rows_match_native_samples() {
         let mut count = 0;
         while let Some((y, pixels)) = reader.next_batch().unwrap() {
             assert_eq!(pixels.format(), &PixelFormat::GRAYF32_LINEAR);
-            for row in 0..pixels.rows() {
+            for row in 0..pixels.height() {
                 assert_eq!(
                     pixels.row(row),
                     bytemuck::cast_slice::<f32, u8>(
@@ -886,7 +886,7 @@ fn linear_grayscale_streaming_rows_match_native_samples() {
                     )
                 );
             }
-            count += pixels.rows();
+            count += pixels.height();
         }
         assert_eq!(count, HEIGHT);
     }

@@ -21,7 +21,7 @@ fn active_icc(spec: PixelFormat, profile: impl Into<Arc<[u8]>>) -> PixelFormat {
         spec.layout,
         ColorSpace::Icc {
             profile: profile.into(),
-            channels: 3,
+            color_channels: 3,
             alpha,
             intent: zenpixels::RenderingIntent::RelativeColorimetric,
         },

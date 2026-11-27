@@ -18,7 +18,7 @@ use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 fn p3_icc() -> ColorSpace {
     ColorSpace::Icc {
         profile: DISPLAY_P3_V4.into(),
-        channels: 3,
+        color_channels: 3,
         alpha: zenpixels::AlphaMode::None,
         intent: zenpixels::RenderingIntent::RelativeColorimetric,
     }
@@ -566,11 +566,11 @@ fn row_encodes_refuse_a_pre_blur_they_cannot_apply() {
         .encoder()
         .unwrap()
         .encode_from(&mut |y, mut out: zenpixels::PixelViewMut<'_>| {
-            for row in 0..out.rows() {
+            for row in 0..out.height() {
                 let at = (y + row) as usize * stride;
                 out.row_mut(row).copy_from_slice(&data[at..at + row_bytes]);
             }
-            out.rows() as usize
+            out.height() as usize
         });
     assert!(pulled.is_err(), "pull encode");
 }

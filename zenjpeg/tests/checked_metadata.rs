@@ -21,7 +21,7 @@ fn pixels(data: &[u8]) -> PixelView<'_> {
         zenpixels::SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(ADOBE_RGB),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -315,11 +315,11 @@ fn checked_exif_xmp_reach_pull_and_srgba_paths() {
         .encoder()
         .unwrap()
         .encode_from(&mut |y, mut out: zenpixels::PixelViewMut<'_>| {
-            for row in 0..out.rows() {
+            for row in 0..out.height() {
                 let offset = (y + row) as usize * 48;
                 out.row_mut(row).copy_from_slice(&raw[offset..offset + 48]);
             }
-            out.rows() as usize
+            out.height() as usize
         })
         .unwrap();
     assert_retained(pulled.data(), &expected);
@@ -370,7 +370,7 @@ fn later_conflicting_color_declaration_refuses_before_header() {
         .unwrap();
     let conflicting = ColorSpace::Icc {
         profile: Arc::from(DISPLAY_P3_V4),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     };

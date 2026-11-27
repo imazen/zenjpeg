@@ -49,7 +49,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # Dev-only quality regression and measurement tooling; not a library dependency.
-zensim = { git = "https://github.com/imazen/zensimx", rev = "4cdba866c67cda48efbda8d69a6bbd1f8b0ba636" }
+zensim = { git = "https://github.com/imazen/zensimx", rev = "713af46ff9d4450f628240debb030ab14fa22441" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
@@ -195,21 +195,21 @@ manual_is_multiple_of = "allow"  # Common pattern in ported code
 zenresize = { git = "https://github.com/imazen/zenresize", rev = "b5afc8adac77b1800c26e6747faac670c0cd34dd" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdbae793938fa229d40ac4fe4c39" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "fc437267f5d4d9e1c6d1e22fd8a07291a479af90" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "c55a2ff702d765312d7855bcb6ab477c5f24363d" }
 
 # Legacy development tools and the optional resize pipeline still use 0.3.
 zenpixels-03 = { package = "zenpixels", git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
 
 # Pixel and codec interchange cohort for this migration.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "0dd7af2a00d7ec4e573d80b764d323467c61cb5d" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "0dd7af2a00d7ec4e573d80b764d323467c61cb5d" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "b5316594e6770fd282f84256bd61ad222a785b3d" }
-ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr", rev = "b5316594e6770fd282f84256bd61ad222a785b3d" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "d40a957e95d19ea3fb5c29472820c86e8a34b09e" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "d40a957e95d19ea3fb5c29472820c86e8a34b09e" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "26326a6e1ab59086c7f8683eb27f4c8e054d5e54" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "26326a6e1ab59086c7f8683eb27f4c8e054d5e54" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "26326a6e1ab59086c7f8683eb27f4c8e054d5e54" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "26326a6e1ab59086c7f8683eb27f4c8e054d5e54" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "26326a6e1ab59086c7f8683eb27f4c8e054d5e54" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "5bc640c6adcd358587ab70b6645fa4e19da31af5" }
+ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr", rev = "5bc640c6adcd358587ab70b6645fa4e19da31af5" }
 
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 
